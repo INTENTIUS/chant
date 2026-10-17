@@ -7,7 +7,7 @@ import { describe, test, expect } from "vitest";
 import { contentDigest } from "../content-digest";
 import { makeRelease } from "../lifecycle/release-store";
 import type { DriverComponent } from "./driver";
-import { pinReleaseTemplates, targetFor, RELEASE_TEMPLATES_DIR } from "./release-promote";
+import { isImplicitRelease, pinReleaseTemplates, targetFiles, targetFor, RELEASE_TEMPLATES_DIR } from "./release-promote";
 
 const prodTemplate = `{"env":"prod"}\n`;
 const release = makeRelease({
@@ -61,5 +61,36 @@ describe("pinReleaseTemplates", () => {
   test("targetFor names the environments a release was compiled for", () => {
     expect(targetFor(release, "prod")).toEqual({ target: prod });
     expect(targetFor(release, "qa")).toEqual({ error: expect.stringMatching(/has no target for "qa"; it was compiled for prod, staging/) });
+  });
+});
+
+describe("an implicit release (#4046)", () => {
+  const yaml = "kind: Deployment\n";
+  const implicit = makeRelease({
+    member: null,
+    commit: "d".repeat(40),
+    artifactDigests: [],
+    targets: [{ env: "prod", templates: [{ component: null, path: "dist/build.yaml", digest: contentDigest(yaml) }], params: [] }],
+  });
+  const target = implicit.targets[0];
+
+  test("is a release with no artifacts whose templates all have no component", () => {
+    expect(isImplicitRelease(implicit)).toBe(true);
+    expect(isImplicitRelease(release)).toBe(false);
+    expect(isImplicitRelease(makeRelease({ ...implicit, targets: [{ env: "prod", templates: [], params: [] }] }))).toBe(false);
+  });
+
+  test("targetFiles gives the recorded bytes at their recorded paths, checked against the digest", async () => {
+    expect(await targetFiles(implicit, target, async () => yaml)).toEqual({ files: [{ path: "dist/build.yaml", content: yaml }] });
+    const tampered = await targetFiles(implicit, target, async () => "kind: Secret\n");
+    expect("errors" in tampered && tampered.errors[0]).toMatch(/hashes to sha256:.*refusing to write it/);
+    const missing = await targetFiles(implicit, target, async () => null);
+    expect("errors" in missing && missing.errors[0]).toMatch(/not on the chant\/lifecycle branch/);
+  });
+
+  test("targetFiles refuses a path that leaves the member's directory", async () => {
+    const escaping = { env: "prod", templates: [{ component: null, path: "../x.yaml", digest: contentDigest(yaml) }], params: [] };
+    const out = await targetFiles(implicit, escaping, async () => yaml);
+    expect("errors" in out && out.errors[0]).toMatch(/not a path inside the member's directory/);
   });
 });

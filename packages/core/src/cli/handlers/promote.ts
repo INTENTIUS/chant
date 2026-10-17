@@ -410,7 +410,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   let under: UnderRelease | undefined;
   if (args.release) {
     const { resolveRelease } = await import("../../lifecycle/release-store");
-    const { targetFor } = await import("../../components/release-promote");
+    const { targetFor, isImplicitRelease } = await import("../../components/release-promote");
     const found = await resolveRelease(args.release);
     if (!found) {
       console.error(formatError({ message: `no release is labelled or digested "${args.release}" in this member`, hint: "List them with: chant release list" }));
@@ -419,6 +419,16 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     const target = targetFor(found.release, to);
     if ("error" in target) {
       console.error(formatError({ message: target.error }));
+      return 1;
+    }
+    // #4046: a release of a project with no components records build output
+    // and no component, so there is no deploy step here to point at it.
+    if (isImplicitRelease(found.release)) {
+      const name = found.label ?? found.release.releaseDigest;
+      console.error(formatError({
+        message: `release ${name} is of a project with no components, so promote has no component to deploy`,
+        hint: `Write its "${to}" build output with \`chant release export ${name} --env ${to}\`, then run the project's own deploy against those files.`,
+      }));
       return 1;
     }
     under = { release: found.release, label: found.label, target: target.target };

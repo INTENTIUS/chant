@@ -26,6 +26,8 @@ import {
 import { readBlobFromPath, writeLedgerFiles } from "./git";
 import { contentDigest } from "../content-digest";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
+import { isImplicitRelease } from "../components/release-promote";
+import { releasesDocument } from "../workspace/releases";
 
 function git(dir: string, ...args: string[]): string {
   const r = spawnSync("git", args, { cwd: dir, encoding: "utf-8" });
@@ -261,6 +263,104 @@ describe("cutRelease", () => {
       green(dir, sha);
       const err = await cutRelease({ cwd: dir, compiler: fixtureCompiler(), label: null, actor: "a", environments: [], env: {} }).catch((e: unknown) => e);
       expect((err as ReleaseCutError).code).toBe("release-no-environments");
+    });
+  });
+});
+
+/** A project with no components (#4046): each environment compiles to the files its build writes, with no component. */
+function implicitCompiler(): TargetCompiler & { built: string[][] } {
+  const built: string[][] = [];
+  return {
+    built,
+    async compile(env): Promise<CompiledTarget> {
+      return {
+        env,
+        params: [{ name: "replicas", value: env === "prod" ? 3 : 1, source: "params-file" }],
+        components: [],
+        buildSteps: {},
+        buildInputs: {},
+        componentFiles: {},
+        templates: [
+          { component: null, path: "dist/build.yaml", content: `replicas: ${env === "prod" ? 3 : 1}\n` },
+          { component: null, path: "dist/ops/deploy/op.json", content: `{"name":"deploy"}\n` },
+        ],
+      };
+    },
+    async buildArtifacts(env, components): Promise<ReleaseArtifact[]> {
+      built.push([env, ...components]);
+      return [];
+    },
+  };
+}
+
+describe("an implicit release, of a project with no components (#4046)", () => {
+  function initPlainRepo(dir: string): string {
+    git(dir, "init", "-q", "-b", "main");
+    git(dir, "config", "user.email", "test@chant.dev");
+    git(dir, "config", "user.name", "Test");
+    writeFileSync(join(dir, "chant.config.ts"), `export default { environments: ["dev", "prod"] };\n`);
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "init");
+    return git(dir, "rev-parse", "HEAD");
+  }
+
+  test("is cut with no artifacts and a target per environment holding the build output, and lists like any release", async () => {
+    await withTestDir(async (dir) => {
+      const sha = initPlainRepo(dir);
+      green(dir, sha);
+      const compiler = implicitCompiler();
+      const result = await cut(dir, compiler, "v1");
+      expect(compiler.built).toEqual([]);
+      const { release } = result;
+      expect(release.artifactDigests).toEqual([]);
+      expect(release.targets).toEqual([
+        {
+          env: "dev",
+          templates: [
+            { component: null, path: "dist/build.yaml", digest: contentDigest("replicas: 1\n") },
+            { component: null, path: "dist/ops/deploy/op.json", digest: contentDigest(`{"name":"deploy"}\n`) },
+          ],
+          params: [{ name: "replicas", value: 1, source: "params-file" }],
+        },
+        {
+          env: "prod",
+          templates: [
+            { component: null, path: "dist/build.yaml", digest: contentDigest("replicas: 3\n") },
+            { component: null, path: "dist/ops/deploy/op.json", digest: contentDigest(`{"name":"deploy"}\n`) },
+          ],
+          params: [{ name: "replicas", value: 3, source: "params-file" }],
+        },
+      ]);
+      expect(await readReleaseTemplate(contentDigest("replicas: 3\n"), { cwd: dir })).toBe("replicas: 3\n");
+      expect(isImplicitRelease(release)).toBe(true);
+
+      // A second cut of the commit is the same release.
+      const again = await cut(dir, implicitCompiler(), null, "bob");
+      expect(again.release.releaseDigest).toBe(release.releaseDigest);
+      expect(again.cut).toBeNull();
+
+      const doc = await releasesDocument({ cwd: dir });
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(doc.releases).toHaveLength(1);
+      expect(doc.releases[0]).toMatchObject({ releaseDigest: release.releaseDigest, label: "v1", artifactDigests: [], environments: [] });
+      expect(doc.releases[0].targets[1].templates[0]).toEqual({ component: null, path: "dist/build.yaml", digest: contentDigest("replicas: 3\n") });
+    });
+  });
+
+  test("is still refused when components are declared but none is enabled and nothing was compiled", async () => {
+    await withTestDir(async (dir) => {
+      const sha = initPlainRepo(dir);
+      green(dir, sha);
+      const empty: TargetCompiler = {
+        async compile(env) {
+          return { env, params: [], components: [], buildSteps: {}, buildInputs: {}, componentFiles: {}, templates: [] };
+        },
+        async buildArtifacts() {
+          return [];
+        },
+      };
+      const err = await cut(dir, empty, "v1").catch((e: unknown) => e);
+      expect((err as ReleaseCutError).code).toBe("release-no-components");
     });
   });
 });

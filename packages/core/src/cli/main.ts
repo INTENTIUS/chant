@@ -258,7 +258,8 @@ CI:
                         signs its tags with.
 
 Releases:
-  release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>] [--sign [<key file>]]
+  release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>]
+              [--src <dir>] [-o <file>] [--lexicon <name>] [--sign [<key file>]]
                         Cut a release of this member from HEAD, which must
                         carry a ci/green tag: compile every environment in
                         the config's environments, build the artifacts once,
@@ -267,9 +268,16 @@ Releases:
                         read, with CHANT_ENV set; {env} in --params-file is
                         replaced by the environment. --sign signs the cut with
                         the actor's ssh key; an identity.gates release entry
-                        requires it.
+                        requires it. A project with no components releases
+                        what chant build --env <env> writes: --src <dir> is
+                        the build root, -o <file> the output (dist/build.yaml),
+                        --lexicon narrows it.
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
+  release export <label|digest> --env <env> [-o <dir>] [--json]
+                        Write the files the release recorded for <env>, each
+                        checked against its digest, at their recorded paths
+                        under <dir> (default: here), for a deploy to read.
 
 Change sets:
   change-set summary <file>  The grouped plan summary of a change-set
@@ -1242,6 +1250,7 @@ export const commandRegistry: CommandDef[] = [
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
+  { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },
   // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
   { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },

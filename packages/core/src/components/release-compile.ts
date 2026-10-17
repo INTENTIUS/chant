@@ -16,6 +16,12 @@
  * `values` field ({@link TEMPLATE_FIELDS}), read after the environment's build
  * command has run. A path with the `archive:` prefix names the file after it.
  * A path that names a directory, such as a chart, is not a template.
+ *
+ * A project with no components (#4046) is compiled the way `chant build --env
+ * <env> -o <output>` builds it ({@link compileBuildOutput}): every file that
+ * build writes is a template with `component: null`, and the target's params
+ * are the build's `buildParams`. The files are kept in memory rather than read
+ * back from disk, so a file an earlier build left behind is never recorded.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -167,7 +173,20 @@ export interface CompileInputs {
   params?: Record<string, string>;
   /** `--params-file`, with `{env}` replaced by the environment's name. */
   paramsFile?: string;
+  /** For a project with no components: the build root, relative to the member's directory. Defaults to `chant.config.ts` `sourceDir`, then the member's directory, as `chant lifecycle` resolves it. */
+  src?: string;
+  /** For a project with no components: the build's output file, relative to the member's directory, as `chant build -o` takes it. Defaults to {@link DEFAULT_BUILD_OUTPUT}. */
+  output?: string;
+  /** For a project with no components: build only this lexicon, as `chant build --lexicon` does. */
+  lexicon?: string;
 }
+
+/**
+ * Where a project with no components writes its build output when the cut
+ * names no `-o`. YAML, since the k8s and helm serializers write YAML whatever
+ * the extension, and a JSON output converts to it.
+ */
+export const DEFAULT_BUILD_OUTPUT = "dist/build.yaml";
 
 /** Thrown when an environment can't be compiled. */
 export class ReleaseCompileError extends Error {
@@ -177,7 +196,10 @@ export class ReleaseCompileError extends Error {
   }
 }
 
-async function loadComponents(inputs: CompileInputs, env: string): Promise<{ config: ChantConfig; params: ReleaseParam[]; components: Array<{ component: DriverComponent; file: string }> }> {
+async function loadComponents(
+  inputs: CompileInputs,
+  env: string,
+): Promise<{ config: ChantConfig; params: ReleaseParam[]; declared: number; components: Array<{ component: DriverComponent; file: string }> }> {
   const { config } = await loadChantConfig(inputs.projectDir).catch(() => ({ config: {} as ChantConfig }));
   const resolved = resolveCliBuildParams(config.buildParams, {
     ...(inputs.params ? { cli: inputs.params } : {}),
@@ -198,6 +220,7 @@ async function loadComponents(inputs: CompileInputs, env: string): Promise<{ con
   return {
     config,
     params: resolved.provenance.map(({ name, value, source }) => ({ name, value, source })),
+    declared: all.length,
     components: enabled.map((c) => ({ component: applyConfigDefaults(c, config), file: fileOf.get(c.name)! })),
   };
 }
@@ -218,7 +241,8 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
     });
     if (run.status !== 0) throw new ReleaseCompileError(`the build command for "${env}" exited ${run.status ?? "with a signal"}: ${inputs.buildCommand}`);
   }
-  const { params, components } = await loadComponents(inputs, env);
+  const { config, params, declared, components } = await loadComponents(inputs, env);
+  if (declared === 0) return compileBuildOutput(inputs, env, config);
   const rel = (p: string): string => (isAbsolute(p) ? relative(inputs.projectDir, p) : p);
   const templates: CompiledTemplate[] = [];
   const seen = new Set<string>();
@@ -245,6 +269,76 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
     buildSteps: Object.fromEntries(components.map(({ component }) => [component.name, buildStepsOf(component)])),
     buildInputs: Object.fromEntries(components.map(({ component }) => [component.name, buildInputPaths(component)])),
     componentFiles: Object.fromEntries(components.map(({ component, file }) => [component.name, rel(file)])),
+    templates,
+  };
+}
+
+/**
+ * Compile a project with no components for `env` (#4046, ws-104 question 5):
+ * build it as `chant build <src> --env <env> -o <output>` would, and record
+ * each file that build writes as a template with `component: null`, by its
+ * path relative to the member's directory. The params are the build's own
+ * `buildParams`. Nothing is written to disk.
+ */
+export async function compileBuildOutput(inputs: CompileInputs, env: string, config: ChantConfig): Promise<CompiledTarget> {
+  if (!inputs.src && config.stacks && config.stacks.length > 0) {
+    throw new ReleaseCompileError(
+      `this project declares ${config.stacks.length} stack(s) in chant.config.ts and no component, and a release of a project with no components compiles one build root; ` +
+        "name it with --src <dir>",
+    );
+  }
+  const projectDir = resolve(inputs.projectDir);
+  const root = resolve(projectDir, inputs.src ?? config.sourceDir ?? ".");
+  const output = resolve(projectDir, inputs.output ?? DEFAULT_BUILD_OUTPUT);
+  const rel = relative(projectDir, output);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new ReleaseCompileError(`the build output "${inputs.output}" is outside the member's directory; name a file inside it`);
+  }
+  // Loaded here: a project with components never needs the lexicon plugins in this process.
+  const { loadPlugins, resolveProjectLexicons } = await import("../cli/plugins");
+  const { buildCommand, printWarnings, resolveBuildFormat } = await import("../cli/commands/build");
+  const plugins = await loadPlugins(await resolveProjectLexicons(projectDir, inputs.lexicon ? { lexicon: inputs.lexicon } : {}));
+  const serializers = plugins.map((p) => p.serializer).filter((s) => !inputs.lexicon || s.name === inputs.lexicon);
+  if (serializers.length === 0) {
+    throw new ReleaseCompileError(
+      inputs.lexicon ? `no serializer found for lexicon "${inputs.lexicon}"` : "this project has no component and no lexicon, so there is nothing to compile a release from",
+    );
+  }
+  const files = new Map<string, string>();
+  const result = await buildCommand({
+    path: root,
+    output,
+    format: resolveBuildFormat(undefined, output).format,
+    serializers,
+    plugins,
+    env,
+    ...(inputs.params ? { params: inputs.params } : {}),
+    ...(inputs.paramsFile ? { paramsFile: inputs.paramsFile.replaceAll("{env}", env) } : {}),
+    writeFile: (path, content) => files.set(path, content),
+  });
+  printWarnings(result.warnings);
+  if (!result.success) {
+    throw new ReleaseCompileError(`the build for "${env}" failed:\n${result.errors.join("\n")}`);
+  }
+  if (result.fileCount === 0 && result.resourceCount === 0) {
+    throw new ReleaseCompileError(`no source files were found under ${relative(projectDir, root) || "."}, so there is nothing to compile a release from`);
+  }
+  const templates: CompiledTemplate[] = [];
+  for (const [path, content] of files) {
+    const p = relative(projectDir, path);
+    if (p.startsWith("..") || isAbsolute(p)) {
+      throw new ReleaseCompileError(`the build for "${env}" writes ${path}, outside the member's directory, so the release can't record it`);
+    }
+    templates.push({ component: null, path: p.split("\\").join("/"), content });
+  }
+  templates.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return {
+    env,
+    params: (result.buildParams ?? []).map(({ name, value, source }) => ({ name, value, source })),
+    components: [],
+    buildSteps: {},
+    buildInputs: {},
+    componentFiles: {},
     templates,
   };
 }
@@ -324,6 +418,9 @@ function runChild(command: readonly string[], args: readonly string[], cwd: stri
 export function spawnTargetCompiler(inputs: CompileInputs, command: readonly string[] = ownChantCommand()): TargetCompiler {
   const common = (): string[] => {
     const args: string[] = [];
+    if (inputs.src) args.push("--src", inputs.src);
+    if (inputs.output) args.push("--output", inputs.output);
+    if (inputs.lexicon) args.push("--lexicon", inputs.lexicon);
     for (const [k, v] of Object.entries(inputs.params ?? {})) args.push("--param", `${k}=${v}`);
     if (inputs.paramsFile) args.push("--params-file", inputs.paramsFile);
     return args;
