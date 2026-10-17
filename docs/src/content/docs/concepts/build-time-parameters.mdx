@@ -57,7 +57,7 @@ LOOM_ENV=staging chant build
 chant build
 ```
 
-Precedence, most to least specific: `--param` > `--params-file` > the parameter's own declared `env` mapping > `default`. A parameter with no default and no supplied value is a build error naming the parameter — never a silently-`undefined` value, and never a thrown error from inside project source:
+Precedence, most to least specific: `--param` > `--params-file` > the parameter's own declared `env` mapping > a workspace flag's value for the environment > `default`. A parameter with no default and no supplied value is a build error naming the parameter — never a silently-`undefined` value, and never a thrown error from inside project source:
 
 ```
 build parameter "tier" has no value — pass --param tier=<value>, use --params-file, or add a default in chant.config.ts's buildParams
@@ -75,6 +75,16 @@ function tierFromEnv(): Tier {
 ```
 
 A declared `enum` reports the same violation as a build error naming the parameter, instead of a thrown `Error` from inside a function chant has no way to attribute.
+
+### From a workspace flag
+
+In a workspace member, a parameter may be backed by a [feature flag](/chant/guide/feature-flags/): a workspace record that names the member, the parameter and a value per environment ([#4024](https://github.com/INTENTIUS/chant/issues/4024)). `chant build --env <env>` takes the flag's value for that environment and records it with `source: "flag:<name>"`. A build without `--env`, and a project outside a workspace, reads no flags.
+
+Where the environment has a gate, meaning a component enabled in it declares a gate step, `--param`, `--params-file` and the `env` mapping can't set a flag-backed parameter. The build refuses, so turning a flag on there goes through a reviewed change to the record and the environment's gate:
+
+```
+build parameter "newCheckout" is backed by the flag "new-checkout", and "prod" has a gate, so --param can't set it; change the flag record and let the change go through the gate (gates: prod-release)
+```
 
 ## Reference
 
@@ -108,7 +118,7 @@ An explicitly supplied empty string (`--param name=` or an exported-but-empty en
 
 Because the value is known at build invocation — before any project file is imported or folded — a `params.<name>` reference resolves to a **literal**, not a symbolic node, and not a function call. `env: process.env.LOOM_ENV ?? "dev"` cannot fold: the value comes from ambient state at module-evaluation time. `env: params.env` folds to `"dev"` (or whatever the build was invoked with) the same way a `const` does, so [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) reduces it with zero module execution.
 
-Determinism is preserved, not weakened: same parameters in, same output out. The parameters are supplied explicitly and recorded (`BuildResult.buildParams`), rather than read invisibly from whatever environment happened to be running the build.
+Determinism is preserved, not weakened: same parameters in, same output out. The parameters are supplied explicitly and recorded (`BuildResult.buildParams`, each with its `source`: `cli`, `params-file`, `env`, `default` or `flag:<name>`), rather than read invisibly from whatever environment happened to be running the build.
 
 ## The ownership marker follows the parameter
 

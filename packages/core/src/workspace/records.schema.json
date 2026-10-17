@@ -254,7 +254,7 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base, or (added by #2772) a work record's acceptance criteria unmet when it is done, or met by a manual verdict from its implementer, or (added by #3147) a work record's contract that no record has or nobody approved, or a builder tier its kind does not list. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base, or (added by #2772) a work record's acceptance criteria unmet when it is done, or met by a manual verdict from its implementer, or (added by #3147) a work record's contract that no record has or nobody approved, or a builder tier its kind does not list, or (added by #4024) a flag record's work item that no record has, or a flag due for removal. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
         },
@@ -321,6 +321,23 @@
         "contract": {
           "description": "Added in contract 1 by #3147, on every parsed record of a work kind whose work block names a contract kind. The contract record the item builds, by the id in the work block's contract field, with that record's state now; state is null when no record of the contract kind has the id. Null when the item names no contract.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLink" }]
+        },
+        "flag": {
+          "description": "Added in contract 1 by #4024, on every parsed record of a flag kind (a kind with a flag block). work is the work item the flag hides, with that item's state (null when no record of the flag kind's work kind has it), or null when the record names none. implements lists each decision the item implements, with its state and confirmed: true when it is in one of its kind's closed states and nothing supersedes it. stale is true when the item implements at least one decision and every one is confirmed: the flag is due for removal, warned flag-stale, and chant workspace check reports it as WSP118.",
+          "type": "object",
+          "required": ["work", "implements", "stale"],
+          "properties": {
+            "work": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLink" }] },
+            "implements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "state", "confirmed"],
+                "properties": { "id": { "type": "string" }, "state": { "type": ["string", "null"] }, "confirmed": { "type": "boolean" } }
+              }
+            },
+            "stale": { "type": "boolean" }
+          }
         },
         "answers": {
           "description": "Added in contract 1 by #3147, on every record with an id of a work kind whose work block names an answer kind. The decision-point answers about the item: each answer record whose constrains names the item's id, in path order, joined by id and never copied onto the item. Read at the same revision; in the working tree, with the answers a steward keeps on the lifecycle ledger laid over it. Absent when the answer kind can't be read.",
@@ -414,7 +431,9 @@
             "answer-point-unknown",
             "answer-point-changed",
             "record-unattested",
-            "record-ratified-below-quorum"
+            "record-ratified-below-quorum",
+            "flag-work-unknown",
+            "flag-stale"
           ]
         },
         "message": { "type": "string" }

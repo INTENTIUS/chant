@@ -344,6 +344,19 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "signature": "-----BEGIN SSH SIGNATURE-----\n...",
           "signatureCheck": { "status": "verified", "key": "SHA256:...", "reason": "signed by github:alice, in the class releaser" }
         }
+      ],
+      "featureFlags": [
+        {
+          "id": "new-checkout",
+          "param": "newCheckout",
+          "owner": "alice",
+          "values": { "dev": true, "prod": false },
+          "work": { "id": "W-012", "state": "in-progress" },
+          "implements": [{ "id": "ws-110", "state": "decided", "confirmed": false }],
+          "stale": false,
+          "kind": "flags/flag.kind.mjs",
+          "path": "flags/new-checkout.flag.md"
+        }
       ]
     }
   ],
@@ -392,6 +405,8 @@ Gates have a reason of their own, in `gateLedger.reason`. It doesn't change `rea
 `promotionOrder` gives the order a member promotes a release through: the literal entries of the `environments` array in its `chant.config.ts`, each as `{ "name": "staging", "canary": false }`. `chant components promote` reads the same [order](/chant/cli/components/#the-promotion-order). The list is empty for a config with no environments, and `promotionOrder` is `null` when the config fails to load. `canary: true` is declared and shown only. Output from a chant older than 0.124.28 has no `promotionOrder`.
 
 `releaseCuts` lists the member's [release cuts](/chant/cli/release/#release-cut) oldest first ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). Each cut has the fields of its line in `_releases/cuts.jsonl` and the commit of its release. `signatureCheck` says whether the signature verifies for the actor against `.chant/allowed_signers` at base. When the declaration names a `release` gate with a class, it also says whether the role grants at base put the actor in that class. The check runs on every read and gives `verified`, `unsigned` or `unverified` with the key's fingerprint and the reason. An empty list means nothing is cut, and `null` means the cuts can't be read. The text view adds a table of cuts when there are any. The field is new in 0.124.28, so an older chant writes none.
+
+`featureFlags` lists the member's [feature flags](/chant/guide/feature-flags/) by id ([#4024](https://github.com/INTENTIUS/chant/issues/4024)): each record of a declared flag kind whose `member` names this member. Each has the build parameter it sets, its owner, its `values` per environment, the work item it hides with that item's state, the decisions the item implements with whether each is confirmed, and `stale`, true when the flag is due for removal (`WSP118`). An empty list means no flag names the member, and `null` means the flag records can't be read. The text view adds a table of flags with each one's value in the environment asked for. The field is named `featureFlags` because a deploy record's `flags` already holds `legacy-digest`, and chant 0.124.29 is the first to write it.
 
 Stewards have reasons of their own, in `stewardReasons`. They don't change `readable` or the summary.
 

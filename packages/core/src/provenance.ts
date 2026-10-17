@@ -297,6 +297,6 @@ export interface BuildParamProvenance {
   name: string;
   /** The resolved, type-coerced value actually bound to `params.<name>` for this build. */
   value: string | number | boolean;
-  /** Which input supplied the value. */
-  source: "cli" | "params-file" | "env" | "default";
+  /** Which input supplied the value: `flag:<name>` names the workspace flag record it came from (#4024). */
+  source: "cli" | "params-file" | "env" | "default" | `flag:${string}`;
 }

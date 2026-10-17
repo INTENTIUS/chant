@@ -199,6 +199,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `work-contract-unknown` | warning, `records` and `graph --intent` | A work record names a contract that no record of its kind's contract kind has ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). The record stays valid. |
 | `work-contract-undecided` | warning, `records` and `graph --intent` | A work record names a contract whose state is not approved, such as a draft. The record stays valid. |
 | `work-tier-unknown` | warning, `records` and `graph --intent` | A work record names a builder tier that its kind's `work.tier.tiers` doesn't list. The record stays valid. |
+| `flag-work-unknown` | warning, `records` | A flag record names a work item that no record of its kind's work kind has ([#4024](https://github.com/INTENTIUS/chant/issues/4024)). The record stays valid, and the flag is never stale. |
+| `flag-stale` | warning, `records`; finding, `check` | Every decision a flag's work item implements is confirmed: in one of its kind's closed states and superseded by nothing. The flag is due for removal ([#4024](https://github.com/INTENTIUS/chant/issues/4024)), and `check` reports it as `WSP118`. |
 | `answer-points-unreadable` | warning, `records` and `points` | The points file the answer kind names can't be read, or is not valid ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). |
 | `answer-point-unknown` | warning, `records` and `points` | The answer's point is not declared in the points file the answer kind names. |
 | `answer-point-changed` | warning, `records` and `points` | The point's declaration changed since the question was asked, so the answer is to an older version of the question. |
@@ -814,7 +816,7 @@ The release model adds these fields to contract 1. Every one is optional or null
 | `releaseDigest`, `environment` | a release gate's change-set document | the release and environment it was planned for, both in its `digest` | 0.124.28 |
 | the `change-set-show` output schema, `v1` | the read contract | one stored change set, each entry with its graph `node` | 0.124.28 |
 | `changeSet` | `status` gate item | the stored change set the gate binds | 0.124.28 |
-| `featureFlags` | `status` member | each flag and its value per environment | the release with #4024 |
+| `featureFlags` | `status` member | each flag, its value per environment, the work item it hides and whether it is due for removal ([#4024](https://github.com/INTENTIUS/chant/issues/4024)) | 0.124.29 |
 
 ## Stored change sets
 
@@ -848,6 +850,8 @@ These fields are optional in their documents. Each schema description names the 
 | `releases` | `releases[].revoked` | 0.124.29 | The revoked tag on the release's commit, `{ commit, tag, tagged, phase, run, signer }`, or `null` ([#4033](https://github.com/INTENTIUS/chant/issues/4033), [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md)). Derived from local tags on every read |
 | `status` | `releases[].revoked` | 0.124.29 | Present when the deploy names a release cut from a revoked commit: the revoked tag, the commit, `releaseDigest`, `label` and `rollback`, the `chant components rollback` line. Absent otherwise ([#4033](https://github.com/INTENTIUS/chant/issues/4033)) |
 | `status` | `gates[].revoked` | 0.124.29 | Present on a release gate whose release was cut from a revoked commit: the revoked tag and the commit. The gate's `state` is then `superseded`, or `expired` ([#4033](https://github.com/INTENTIUS/chant/issues/4033)) |
+| `status` | `members[].featureFlags` | 0.124.29 | The member's feature flags, each with `param`, `owner`, `values` per environment, `work`, `implements` and `stale`, or `null` when the flag records can't be read ([#4024](https://github.com/INTENTIUS/chant/issues/4024)) |
+| `records` | `records[].flag` | 0.124.29 | On every parsed record of a kind with a `flag` block: `work`, `implements` with `confirmed` on each decision, and `stale` ([#4024](https://github.com/INTENTIUS/chant/issues/4024)) |
 | `ci-last-green` | `ignored` | 0.124.28 | The tags the walk passed over for want of a valid statement, newest first, shaped as in `ci-list` ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
 | `ci-list` | `commits[].phases[].runs[].opRun`, `commits[].revoked.run.opRun` | 0.124.28 | The Op run behind a result when the source is chant runs, `{ id, env, signer }`, where `signer` is the runner whose statement the run carries. The run's `name` is then the Op's name and its `id` is `null`. Absent for a check run ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |
 | `ci-list` | `commits[].ignoredRuns` | 0.124.28 | Present only when the source is chant runs: the Op runs on the commit that don't count for want of a valid statement, each `{ run, op, env, status, reason }`, with `status` as in `ignored` ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |

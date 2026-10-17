@@ -38,6 +38,7 @@ import { sourceBlock, sourceBlockProblems, transcriptDrift } from "./source-bloc
 import type { WorkspaceTree } from "./tree";
 import type { DecisionWork, WorkAcceptance, WorkLink, WorkWarningCode } from "./work";
 import type { AnswerWarningCode } from "./points";
+import type { FlagState, FlagWarningCode } from "./flags";
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
 
@@ -209,8 +210,8 @@ export interface VerdictAttestation {
 }
 
 export interface RecordWarning {
-  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), an answer kind's those of `ANSWER_WARNING_CODES` (#2739), and `records` adds `SEAL_WARNING_CODES` (#2688, #2878). */
-  code: RecordWarningCode | WorkWarningCode | SealWarningCode | AnswerWarningCode;
+  /** A work kind's records also carry the codes of `WORK_WARNING_CODES` (#2683), an answer kind's those of `ANSWER_WARNING_CODES` (#2739), a flag kind's those of `FLAG_WARNING_CODES` (#4024), and `records` adds `SEAL_WARNING_CODES` (#2688, #2878). */
+  code: RecordWarningCode | WorkWarningCode | SealWarningCode | AnswerWarningCode | FlagWarningCode;
   message: string;
 }
 
@@ -490,6 +491,31 @@ export const recordKindSchema = z
      */
     answers: z.object({ points: z.string().min(1) }).strict().optional(),
     /**
+     * A flag kind (#4024): each record is a feature flag, a workspace record
+     * a member's build reads as one build-time parameter. The block names the
+     * fields that hold the member whose parameter it sets, the parameter's
+     * name, the flag's owner and its value per environment, and the field
+     * naming the work item the flag hides, with that work kind's file
+     * (relative to this kind file). The record's id is the flag's name.
+     *
+     * With it, `chant build --env <env>` in that member resolves the
+     * parameter from the flag (`flag-params.ts`), `chant workspace status`
+     * lists the flag under the member's `featureFlags`, and `records` warns
+     * `flag-work-unknown` for a work item no record has and `flag-stale`
+     * when every decision the work item implements is confirmed, so the
+     * flag is due for removal (`check` WSP118). Optional.
+     */
+    flag: z
+      .object({
+        member: z.string().min(1),
+        param: z.string().min(1),
+        owner: z.string().min(1),
+        values: z.string().min(1),
+        work: z.object({ field: z.string().min(1), kind: z.string().min(1) }).strict(),
+      })
+      .strict()
+      .optional(),
+    /**
      * The top-level field that holds a closed record's seal (#2546, ws-003,
      * ws-063): {@link recordSeal}, the whole-file JCS/SHA-256 of the record
      * without that field. `records amend` and `records new` write it when a
@@ -558,6 +584,10 @@ export const recordKindSchema = z
   .refine((k) => !k.work || (k.states !== undefined && k.states.includes(k.work.open) && k.states.includes(k.work.done)), {
     message: "a work kind must have states, and its work open and done states must be listed in them",
     path: ["work"],
+  })
+  .refine((k) => !k.flag || k.idField !== undefined, {
+    message: "a flag kind names its id with idField: a flag's id is its name, and a build finds it by that name",
+    path: ["flag"],
   })
   .refine((k) => !k.work?.acceptance || k.pins !== undefined, {
     message: "a work kind with acceptance criteria must have pins: a criterion is met by the evidence in its pins field",
@@ -1229,6 +1259,8 @@ export interface RecordEntry {
   acceptance?: WorkAcceptance | null;
   /** For a work kind with a contract link (#3147): the contract record the item builds, with its state, or null when it names none. */
   contract?: WorkLink | null;
+  /** For a flag kind (#4024): the work item the flag hides, the decisions it implements, and whether the flag is due for removal. */
+  flag?: FlagState;
 }
 
 export interface ReadRecordsOptions {
@@ -1575,6 +1607,8 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
   const work = kind.work ? await (await import("./work")).applyWork(loaded, entries, options) : undefined;
   // An answer kind's points (ws-058): an answer whose point is gone or changed is warned about.
   if (kind.answers) (await import("./points")).applyAnswers(loaded, entries, options);
+  // A flag kind's work item and whether the flag is due for removal (#4024).
+  if (kind.flag) await (await import("./flags")).applyFlags(loaded, entries, options);
 
   for (const e of entries) e.valid = e.reasons.length === 0;
   const records = options.current ? entries.filter((e) => e.supersededBy === null) : entries;

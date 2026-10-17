@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { resolveBuildParams, type BuildParamsConfig } from "../build-params";
+import { resolveBuildParams, type BuildParamFlags, type BuildParamsConfig } from "../build-params";
 import type { BuildParamProvenance } from "../provenance";
 import { formatError, formatInfo } from "./format";
 
@@ -40,6 +40,10 @@ export interface CliBuildParamsArgs {
   paramsFile?: string;
   /** `--verbose` — list every resolved parameter one per line instead of the one-line count (#1424). */
   verbose?: boolean;
+  /** The workspace flags backing parameters in this build's environment (#4024), from `../flag-params.ts`. */
+  flags?: BuildParamFlags;
+  /** `false` to resolve without printing the summary line, for a caller that checks more before it prints ({@link echoBuildParams}). */
+  echo?: boolean;
 }
 
 export interface CliBuildParamsResolution {
@@ -94,6 +98,7 @@ export function resolveCliBuildParams(
     cli: args.cli,
     fromFile,
     env: process.env,
+    ...(args.flags ? { flags: args.flags } : {}),
   });
   for (const message of resolution.errors) {
     errors.push(formatError({ message }));
@@ -103,21 +108,25 @@ export function resolveCliBuildParams(
     return { success: false, provenance: [], errors };
   }
 
+  if (args.echo !== false) echoBuildParams(resolution.provenance, args.verbose);
+  return { success: true, provenance: resolution.provenance, errors: [] };
+}
+
+/** Print a successful resolution: the one-line summary, or every value under `--verbose` or `CHANT_PARAM_ECHO=all` (#1424). */
+export function echoBuildParams(provenance: readonly BuildParamProvenance[], verboseFlag?: boolean): void {
   // #1424 — one line by default. A project with two dozen declared
   // parameters printed two dozen grey lines on every build, ahead of the
   // warnings the reader actually needed. The count by source still answers
   // "did my override reach the build" (the failure mode
   // warnIfParamsCannotReachProject exists for); --verbose names every value.
-  const verbose = args.verbose === true || process.env.CHANT_PARAM_ECHO === "all";
+  const verbose = verboseFlag === true || process.env.CHANT_PARAM_ECHO === "all";
   if (verbose) {
-    for (const p of resolution.provenance) {
+    for (const p of provenance) {
       console.error(formatInfo(`[param] ${p.name} = ${JSON.stringify(p.value)} (${p.source})`));
     }
-  } else if (resolution.provenance.length > 0) {
-    console.error(formatInfo(summarizeBuildParams(resolution.provenance)));
+  } else if (provenance.length > 0) {
+    console.error(formatInfo(summarizeBuildParams(provenance)));
   }
-
-  return { success: true, provenance: resolution.provenance, errors: [] };
 }
 
 /**
@@ -127,8 +136,12 @@ export function resolveCliBuildParams(
  */
 export function summarizeBuildParams(provenance: readonly { source: string }[]): string {
   const counts = new Map<string, number>();
-  for (const p of provenance) counts.set(p.source, (counts.get(p.source) ?? 0) + 1);
-  const order = ["cli", "params-file", "env", "default"];
+  // Every flag source (`flag:<name>`, #4024) counts as one, "from flags".
+  for (const p of provenance) {
+    const source = p.source.startsWith("flag:") ? "flags" : p.source;
+    counts.set(source, (counts.get(source) ?? 0) + 1);
+  }
+  const order = ["cli", "params-file", "env", "flags", "default"];
   const rank = (s: string) => (order.includes(s) ? order.indexOf(s) : order.length);
   const parts = [...counts.keys()]
     .sort((a, b) => rank(a) - rank(b))

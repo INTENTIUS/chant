@@ -15,7 +15,7 @@ import { pointAnswerCommand, renderHuman, renderJson } from "../../op/local-outp
 import { loadPlugins } from "../plugins";
 import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
-import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
+import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 import { stewardBesideFor, stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
 import { holdBesideLease } from "../../op/steward-beside";
@@ -1107,11 +1107,13 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
 
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
-  const paramsResolution = resolveCliBuildParams(config.buildParams, {
+  // #4024: with --env, a workspace member's flag records back their parameters.
+  const { resolveFlaggedBuildParams } = await import("../../flag-params");
+  const paramsResolution = await resolveFlaggedBuildParams(projectPath, config.buildParams, {
     cli: parseParamFlags(ctx.args.param),
     paramsFile: ctx.args.paramsFile,
     verbose: ctx.args.verbose,
-  });
+  }, ctx.args.env);
   if (!paramsResolution.success) {
     for (const message of paramsResolution.errors) console.error(message);
     return 1;

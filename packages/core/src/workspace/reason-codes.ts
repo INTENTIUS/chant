@@ -95,6 +95,9 @@ export const REASONS = {
   "work-contract-unknown": "A work record names a contract that no record of its kind's contract kind has.",
   "work-contract-undecided": "A work record names a contract whose state is not approved, such as a draft.",
   "work-tier-unknown": "A work record names a builder tier that its kind's work.tier.tiers does not list.",
+  // A feature flag that is valid but warned about (records, check, #4024).
+  "flag-work-unknown": "A flag record names a work item that no record of its kind's work kind has.",
+  "flag-stale": "Every decision a flag's work item implements is confirmed, so the flag is due for removal. check reports it (WSP118).",
   // An answer to a decision point that is valid but warned about (records, points, ws-058, #2739).
   "answer-points-unreadable": "The points file the answer kind names can't be read, or is not valid.",
   "answer-point-unknown": "The answer's point is not declared in the points file the answer kind names.",
