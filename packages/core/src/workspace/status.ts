@@ -146,7 +146,7 @@ export interface StatusRelease {
    * Set when the deploy names a release (`releaseDigest` on its record) that
    * was cut from a revoked commit (#4033, ws-105): the revoked tag on that
    * commit, the release and its label, and the line that rolls the component
-   * back. Absent otherwise, and from chant older than 0.124.28.
+   * back. Absent otherwise, and from chant older than 0.124.29.
    */
   revoked?: StatusRevokedRelease;
 }

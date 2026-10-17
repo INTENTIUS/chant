@@ -180,7 +180,7 @@
           }
         },
         "revoked": {
-          "description": "Added within contract version 1 by #4033, written by chant 0.124.28 and newer. The ci/revoked/<sha> tag on the release's commit, or null when the commit is not revoked. A revoked release is never promoted (chant components promote --release refuses it) and its pending release gates refuse approval. Null too when the ci tags can't be judged, as when ci.green.signedSince names no commit here, which chant workspace check reports.",
+          "description": "Added within contract version 1 by #4033, written by chant 0.124.29 and newer. The ci/revoked/<sha> tag on the release's commit, or null when the commit is not revoked. A revoked release is never promoted (chant components promote --release refuses it) and its pending release gates refuse approval. Null too when the ci tags can't be judged, as when ci.green.signedSince names no commit here, which chant workspace check reports.",
           "oneOf": [
             {
               "type": "null"

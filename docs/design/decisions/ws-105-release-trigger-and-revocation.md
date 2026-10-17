@@ -128,10 +128,10 @@ Every field is added within contract 1 and is optional or nullable, so a reader 
 
 | Field | On | Holds | Floor |
 |---|---|---|---|
-| `revoked` | `releases` entry | the revoked tag on the release's commit, or `null` | 0.124.28 |
-| `revoked` | `status` release item | the same, with `releaseDigest`, `label` and `rollback`; absent when the release is not revoked | 0.124.28 |
-| `revoked` | `status` gate item | the revoked tag, on a release gate whose release is revoked; absent otherwise | 0.124.28 |
-| `superseded` for a revoked release | `status` gate item `state` | an existing value, given for one more cause | 0.124.28 |
+| `revoked` | `releases` entry | the revoked tag on the release's commit, or `null` | 0.124.29 |
+| `revoked` | `status` release item | the same, with `releaseDigest`, `label` and `rollback`; absent when the release is not revoked | 0.124.29 |
+| `revoked` | `status` gate item | the revoked tag, on a release gate whose release is revoked; absent otherwise | 0.124.29 |
+| `superseded` for a revoked release | `status` gate item `state` | an existing value, given for one more cause | 0.124.29 |
 
 ## Assumptions for #4034 and #4035
 
