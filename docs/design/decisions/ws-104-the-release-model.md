@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-104"
 title: "The release model"
-state: "proposed"
+state: "decided"
 area: "D17"
 source:
   issue: "INTENTIUS/chant#4028"
@@ -22,8 +22,14 @@ options:
     label: "as a, and a release may also be cut from the deployed release's commit with newer flag records applied on top"
     how: "Besides releases cut from a green commit, a flag-only release is cut from the commit an environment runs, with the flag records of a later green commit applied to it, so a flag can ship without the commits merged before it."
     tradeoff: "A flag can ship alone. The release no longer traces to one commit: its source is a commit plus records from another, a pair that never went green together, and the hash input, the cut checks and #4033's revocation all need a second form."
-choice: null
-rejected: []
+choice:
+  option: "a"
+  reason: "It keeps one rule, that a release is one green commit compiled, and needs no second versioned object. Promote-by-digest is a promise about artifact bytes, and a config-only release keeps it by carrying the same artifact digests. Option b invents a target revision that has no commit of its own, and option c gives a release a source that never went green as a whole. The cost is that a flag flip ships with trunk; that is answered in question 6. On question 6 the empty-change-set pass is accepted as drafted, and on question 3 a label names one digest and a digest takes at most one label."
+rejected:
+  - option: "b"
+    why: "A target revision has no green commit of its own and needs a second versioned object, its own gate binding and its own lane column."
+  - option: "c"
+    why: "A flag-only release would have two sources that never went green together, so the hash input, the cut checks and revocation would each need a second form."
 supersedes: []
 evidence:
   - title: "INTENTIUS/chant#4028, decision: the release model"
@@ -74,8 +80,8 @@ evidence:
   - title: "ws-103, CI green and revoked tags"
     url: "https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md"
     as_of: "2026-10-16T00:00:00Z"
-decided_by: null
-decided_on: null
+decided_by: "lex00"
+decided_on: "2026-10-16"
 reviews: []
 constrains:
   - "INTENTIUS/chant#4028"
@@ -95,14 +101,11 @@ constrains:
   - "path:packages/core/src/lifecycle/release-ledger.ts"
   - "path:packages/core/src/lifecycle/gate-ledger.ts"
   - "path:packages/core/src/workspace/status.schema.json"
-x-recommendation:
-  option: "a"
-  reason: "It keeps one rule, that a release is one green commit compiled, and needs no second versioned object. Promote-by-digest is a promise about artifact bytes, and a config-only release keeps it by carrying the same artifact digests. Option b invents a target revision that has no commit of its own, and option c gives a release a source that never went green as a whole. The cost is that a flag flip ships with trunk; that is answered in question 6."
 ---
 
 # The release model
 
-Proposed, not decided. Each answer below is a recommendation for lex00 to accept or change. Code was read at origin/main 8b045980c. Option letters in the front matter answer questions 1 and 6 together; questions 2 to 5 are answered here.
+Decided by lex00 on 2026-10-16, accepting each recommendation below as drafted. Code was read at origin/main 8b045980c. Option letters in the front matter answer questions 1 and 6 together; questions 2 to 5 are answered here.
 
 A word on names used below. The release is the new object, cut once from a green commit of one member. A deploy record is the existing per-component line, `ReleaseRecord` in `<env>/releases.jsonl` (`lifecycle/release-ledger.ts:73-178`).
 
