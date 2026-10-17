@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json",
+  "title": "chant workspace metrics output",
+  "description": "What `chant workspace metrics --json` prints (#4039): the four DORA metrics (deployment frequency, lead time, change failure rate and time to restore) per member and environment, computed from the deploy records in <env>/releases.jsonl, the releases in _releases/, the release gate's resolutions and the counted ci/revoked/<sha> tags. It reads the local chant/lifecycle branch and local tags and never fetches. behold and a Grafana panel read the same numbers from it, and #3990's metrics contract can adopt it. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.29 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "Exit code 0, with or without deploys.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "lifecycle",
+        "window",
+        "failureWindowDays",
+        "members"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "workspace": {
+          "description": "The workspace read, or null for a project outside a workspace, whose own ledger is read as one member with member null.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "lifecycle": {
+          "type": "object",
+          "description": "The branch read and its tip, null when the checkout has no chant/lifecycle branch.",
+          "required": [
+            "ref",
+            "commit"
+          ],
+          "properties": {
+            "ref": {
+              "const": "chant/lifecycle"
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "window": {
+          "type": "object",
+          "description": "The span deploys are counted in, both ends inclusive. --since sets since; the default is 56 days (eight weeks) before until, which is now.",
+          "required": [
+            "since",
+            "until",
+            "days"
+          ],
+          "properties": {
+            "since": {
+              "type": "string",
+              "description": "ISO 8601."
+            },
+            "until": {
+              "type": "string",
+              "description": "ISO 8601."
+            },
+            "days": {
+              "type": "number",
+              "description": "The window's length in days, to two decimals."
+            }
+          }
+        },
+        "failureWindowDays": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The declaration's metrics.failureWindowDays, or 7. A deploy fails when, within this many days after it, the commit it deployed is revoked or the environment is rolled back from it."
+        },
+        "members": {
+          "type": "array",
+          "description": "Each member read, in declaration order. --member keeps only the members it names.",
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "description": "One member's metrics.",
+      "required": [
+        "member",
+        "environments",
+        "reason"
+      ],
+      "properties": {
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member's name, or null for a project outside a workspace."
+        },
+        "environments": {
+          "type": "array",
+          "description": "Each environment the member has a deploy ledger for, sorted by name. --env keeps only that one.",
+          "items": {
+            "$ref": "#/$defs/environment"
+          }
+        },
+        "reason": {
+          "description": "Null when everything was read. ledger-malformed when some deploy record lines or release files could not be read; the rest are counted. ledger-unreadable when the ledger could not be read, and environments is empty.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ledger-unreadable",
+                    "ledger-malformed"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "The four metrics of one member in one environment. A deploy is one deploy record: one component deployed once, by a promote, a run or a rollback. A redeploy is counted apart.",
+      "required": [
+        "env",
+        "deployments",
+        "leadTime",
+        "changeFailure",
+        "restore",
+        "failures"
+      ],
+      "properties": {
+        "env": {
+          "type": "string"
+        },
+        "deployments": {
+          "type": "object",
+          "description": "Deployment frequency.",
+          "required": [
+            "count",
+            "redeploys",
+            "runs",
+            "fromRelease",
+            "perWeek"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Deploy records whose timestamp is in the window, leaving out redeploys. Rollbacks count."
+            },
+            "redeploys": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Redeploys in the window (records with redeploys set): they put the running release back, so they are counted here and in no other metric."
+            },
+            "runs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Distinct runId values among them: a run that deploys several components counts once."
+            },
+            "fromRelease": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of count, the deploys made from a release: the record names one in releaseDigest, or its release gate admission does."
+            },
+            "perWeek": {
+              "type": "number",
+              "minimum": 0,
+              "description": "count over the window's length in weeks, to two decimals."
+            }
+          }
+        },
+        "leadTime": {
+          "type": "object",
+          "description": "Lead time from commit to running release. A change is a release, timed at the first deploy record in this environment that names it, or a commit deployed from no release, timed at the first deploy record with that gitSha. Its lead time runs from the commit's committer time to that deploy. Only changes whose first deploy here is in the window count.",
+          "required": [
+            "changes",
+            "fromRelease",
+            "fromCommit",
+            "unknown",
+            "medianSeconds"
+          ],
+          "properties": {
+            "changes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fromRelease": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of changes, releases."
+            },
+            "fromCommit": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of changes, commits deployed from no release."
+            },
+            "unknown": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Changes left out because their commit is not in this repository."
+            },
+            "medianSeconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "The median lead time, or null when changes is 0."
+            }
+          }
+        },
+        "changeFailure": {
+          "type": "object",
+          "description": "Change failure rate.",
+          "required": [
+            "deployments",
+            "failed",
+            "revoked",
+            "rolledBack",
+            "rate"
+          ],
+          "properties": {
+            "deployments": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The same as deployments.count."
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Deploys in the window that failed: the commit they deployed (a release's commit, or the record's gitSha for a deploy made from no release) carries a counted ci/revoked tag made no later than failureWindowDays after the deploy, or the environment was rolled back from them within failureWindowDays. A revoked tag with no time counts whenever it was made."
+            },
+            "revoked": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of failed, those whose commit was revoked."
+            },
+            "rolledBack": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of failed, those rolled back from: the next deploy record of the same component in the environment, leaving out redeploys, is a rollback."
+            },
+            "rate": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1,
+              "description": "failed over deployments, to four decimals, or null with no deployments."
+            }
+          }
+        },
+        "restore": {
+          "type": "object",
+          "description": "Time to restore. A failed deploy is restored by the next deploy record of the same component in the environment, leaving out redeploys, whose commit is not revoked.",
+          "required": [
+            "restored",
+            "open",
+            "medianSeconds"
+          ],
+          "properties": {
+            "restored": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "open": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Failed deploys with no restore yet."
+            },
+            "medianSeconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "The median time from a failed deploy to its restore, or null when none is restored."
+            }
+          }
+        },
+        "failures": {
+          "type": "array",
+          "description": "Each failed deploy in the window, oldest first.",
+          "items": {
+            "$ref": "#/$defs/failure-entry"
+          }
+        }
+      }
+    },
+    "failure-entry": {
+      "type": "object",
+      "description": "One failed deploy.",
+      "required": [
+        "component",
+        "timestamp",
+        "runId",
+        "releaseDigest",
+        "label",
+        "commit",
+        "causes",
+        "revoked",
+        "rolledBackBy",
+        "restoredBy",
+        "restoreSeconds"
+      ],
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "releaseDigest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release it deployed, or null for a deploy made from no release."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "That release's label, or null."
+        },
+        "commit": {
+          "type": "string",
+          "description": "The commit it deployed."
+        },
+        "causes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "revoked",
+              "rolled-back"
+            ]
+          }
+        },
+        "revoked": {
+          "description": "The counted revoked tag on the commit, when revoked is a cause, else null.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "tag",
+                "tagged"
+              ],
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "tagged": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "When the tag was made, or null for a lightweight tag."
+                }
+              }
+            }
+          ]
+        },
+        "rolledBackBy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "runId",
+                "timestamp"
+              ],
+              "properties": {
+                "runId": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                }
+              }
+            }
+          ],
+          "description": "The rollback record, named by runId and timestamp, when rolled-back is a cause, else null."
+        },
+        "restoredBy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "runId",
+                "timestamp"
+              ],
+              "properties": {
+                "runId": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                }
+              }
+            }
+          ],
+          "description": "The deploy record that restored it, or null while it is not restored."
+        },
+        "restoreSeconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "environment-invalid"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -63,6 +63,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `identity` | no | Who a person-attributed record or gate approval may name, and which gates pass only on a signed approval. See [Identity](#identity). It was added in chant 0.102.0. |
 | `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.108.0. |
 | `retention` | no | How long `chant lifecycle gc` keeps stored change sets, releases and run event files. See [Retention](#retention). It was added in chant 0.124.29. |
+| `metrics` | no | The failure window `chant workspace metrics` counts a failed deploy in, new in chant 0.124.29. See [Metrics](#metrics). |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. [`status --json`](/chant/cli/workspace-status/#output) and [`ls --json`](/chant/cli/workspace-ls/#output) print them back, as written, on the object of their output that the declaration holds them on ([#3595](https://github.com/INTENTIUS/chant/issues/3595)), so a tool reads what it wrote without parsing the file. |
@@ -370,6 +371,16 @@ With `signedSince`, the annotation also holds the statement a runner key signed,
 | `runEvents` | `<git-common-dir>/chant/run-events/<run>.jsonl` on each host | 14, counted from the last write | 100 |
 
 `days` and `keep` are whole numbers from 0. A release is kept while it is promotable: cut within `days`, or among the newest `keep` releases of its member, and its commit has no `ci/revoked` tag. The policy never lets go of a release an environment runs, of what a pending gate binds, or of a change set a gate names with a kept release; [What is never pruned](/chant/cli/lifecycle/#what-is-never-pruned) lists the rules. The ledgers are never pruned. A declaration with `retention` sets `minReader` to `0.124.29` or newer.
+
+## Metrics
+
+`metrics` sets how [`chant workspace metrics`](/chant/cli/workspace-metrics/) counts a failed deploy ([#4039](https://github.com/INTENTIUS/chant/issues/4039)).
+
+```json
+"metrics": { "failureWindowDays": 14 }
+```
+
+`failureWindowDays` is the number of days after a deploy in which a revocation of the commit it deployed, or a rollback of the environment from it, counts the deploy as failed. It is a whole number from 1 to 365, and the default is 7. `workspace metrics` takes it from the declaration in the working tree. Older chant releases refuse the block, which is why its `minReader` floor is `0.124.29`.
 
 ## Diagrams
 

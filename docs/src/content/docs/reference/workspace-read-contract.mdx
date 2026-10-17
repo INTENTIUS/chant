@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `releases`, `change-set-show` and `run-event`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `releases`, `change-set-show`, `run-event` and `delivery-metrics`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -50,6 +50,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
+| [`chant workspace metrics`](/chant/cli/workspace-metrics/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -817,6 +818,16 @@ The release model adds these fields to contract 1. Every one is optional or null
 | the `change-set-show` output schema, `v1` | the read contract | one stored change set, each entry with its graph `node` | 0.124.28 |
 | `changeSet` | `status` gate item | the stored change set the gate binds | 0.124.28 |
 | `featureFlags` | `status` member | each flag, its value per environment, the work item it hides and whether it is due for removal ([#4024](https://github.com/INTENTIUS/chant/issues/4024)) | 0.124.29 |
+| `featureFlags` | `status` member | each flag and its value per environment | the release with #4024 |
+| the `delivery-metrics` output schema, `v1` | the read contract | the four DORA metrics per member and environment ([#4039](https://github.com/INTENTIUS/chant/issues/4039)) | 0.124.29 |
+
+## Delivery metrics
+
+`chant workspace metrics --json` prints the four DORA metrics per member and environment ([#4039](https://github.com/INTENTIUS/chant/issues/4039)). The document follows `delivery-metrics.schema.json` at `v1` within contract 1, and chant 0.124.29 is the first to write it. behold and a Grafana panel read the same numbers from it, and the delivery metrics of [#3990](https://github.com/INTENTIUS/chant/issues/3990) can adopt it. chant computes the document from the records above and stores nothing of its own. The revocations come from the counted `ci/revoked/<sha>` tags, read from local tags at read time.
+
+`window` names the span counted, `since` to `until`, and `failureWindowDays` the days after a deploy in which a revocation or a rollback fails it, from the declaration's [`metrics`](/chant/reference/workspace-declaration/#metrics) block or 7. Each entry of `members[].environments` holds `deployments`, `leadTime`, `changeFailure`, `restore` and the `failures` behind them, each naming its deploy by `runId` and `timestamp`. A member whose ledger can't be read is listed with `ledger-unreadable`, and one with lines that can't be read with `ledger-malformed`; the rest is counted. The [`workspace metrics`](/chant/cli/workspace-metrics/#the-metrics) page defines each metric.
+
+A deploy record written before chant 0.124.29 may lack `releaseDigest`. It counts as a deploy made from no release: its commit is its `gitSha`, and its change is counted in `leadTime.fromCommit`.
 
 ## Stored change sets
 

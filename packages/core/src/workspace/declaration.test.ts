@@ -435,3 +435,17 @@ describe("retention (#4036)", () => {
     }
   });
 });
+
+describe("metrics (#4039)", () => {
+  test("failureWindowDays is read as written, without x- keys, and the block is null when absent", () => {
+    expect(parse(base([])).metrics).toBeNull();
+    expect(parse(base([], { minReader: "0.80.0", metrics: { failureWindowDays: 14, "x-why": "weekly" } })).metrics).toEqual({ failureWindowDays: 14 });
+    expect(parse(base([], { metrics: {} })).metrics).toEqual({});
+  });
+
+  test("an unknown field, 0, a fraction and more than a year are refused", () => {
+    for (const metrics of [{ window: 7 }, { failureWindowDays: 0 }, { failureWindowDays: 1.5 }, { failureWindowDays: 366 }]) {
+      expect(failure(base([], { metrics })).code).toBe("declaration-invalid");
+    }
+  });
+});

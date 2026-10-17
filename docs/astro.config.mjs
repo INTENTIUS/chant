@@ -317,6 +317,7 @@ export default defineConfig({
 								{ label: 'workspace init', slug: 'cli/workspace-init' },
 								{ label: 'workspace ls', slug: 'cli/workspace-ls' },
 								{ label: 'workspace status', slug: 'cli/workspace-status' },
+								{ label: 'workspace metrics', slug: 'cli/workspace-metrics' },
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'workspace work', slug: 'cli/workspace-work' },
 								{ label: 'workspace runs', slug: 'cli/workspace-runs' },

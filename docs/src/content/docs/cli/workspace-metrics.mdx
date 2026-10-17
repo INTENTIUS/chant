@@ -1,0 +1,75 @@
+---
+title: "chant workspace metrics"
+description: The four DORA metrics per member and environment, computed from the release ledgers on chant/lifecycle and the ci revoked tags
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace metrics [dir] [--env <env>] [--member <name>] [--since <date>] [--json]
+```
+
+## Description
+
+`chant workspace metrics` reports the four DORA metrics for each member and environment ([#4039](https://github.com/INTENTIUS/chant/issues/4039)). It computes them from records chant already keeps. Each environment's `releases.jsonl` says what ran when, and the [releases](/chant/cli/release/) say which commit each record came from. The `ci/revoked/<sha>` tags say which commits [were revoked](/chant/cli/ci/).
+
+The command finds the declaration by walking up from `dir` (default: the current directory) and reads every member's ledger. `--member` keeps the members it names, and `--env` keeps one environment. Outside a workspace it reads the project's own ledger and lists it as one member, `null`. It reads the local `chant/lifecycle` branch and the local tags, and never fetches.
+
+```
+window 2026-08-06T00:00:00.000Z to 2026-10-01T00:00:00.000Z (56 days), failure window 7 days
+api prod: 9 deploys (1.13/week), lead time 1d, change failure 22.2% (2/9), restore 3.5d
+api staging: 14 deploys (1.75/week), lead time 6.5h, change failure 0% (0/14), restore none
+```
+
+The window covers the last 56 days (eight weeks) up to now. `--since <date>` starts it at another date or time, given in ISO 8601.
+
+## The metrics
+
+Each record in an environment's `releases.jsonl` counts once: one component put in one environment, by `components promote`, `run --components`, `components release` or `components rollback`. A [`components redeploy`](/chant/cli/components/) puts the running release back. It is counted as `redeploys` and left out of every metric.
+
+| Metric | How chant counts it |
+|---|---|
+| Deployment frequency | the records whose timestamp falls in the window, and their number per week. `runs` counts the distinct run ids among them, so a promote of several components counts once there |
+| Lead time | for each release, the time from its commit's committer time to the first record in the environment that names it; the median over the releases that reached the environment in the window |
+| Change failure rate | the failed records over all records in the window |
+| Time to restore | for each failure, the time to the next record of the same component in the same environment whose commit is not revoked, leaving out redeploys; the median over those restored |
+
+A record names its release in `releaseDigest`, or through the release gate resolution its `admission` points at, as [`joinRelease`](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys) follows it. A record that names no release still counts. Its commit is its `gitSha`, and for lead time it counts as a change of its own, timed at the first record with that `gitSha`. The document gives the two kinds apart, as `leadTime.fromRelease` and `leadTime.fromCommit`. A commit that isn't in the repository has no committer time. Its change is counted in `leadTime.unknown` and left out of the median.
+
+### Failures
+
+A record counts as failed when either of these happens within the failure window after it:
+
+- its commit gets a counted `ci/revoked/<sha>` tag, which revokes every release cut from it ([ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md));
+- the environment is rolled back from it: the next record of the same component in the environment, leaving out redeploys, is a rollback.
+
+The failure window is 7 days by default. A workspace sets it with `metrics.failureWindowDays` in its [declaration](/chant/reference/workspace-declaration/#metrics). The tags are judged as `release cut` judges them, so with `ci.green.signedSince` an unsigned revoked tag revokes nothing. A revoked tag made before the record also fails it, since a revoked commit went into the environment. So does a lightweight tag, which has no time.
+
+A rollback is a record that `chant components rollback` wrote, with `restores` naming the record it put back. The rollback itself usually restores the failure, since the release it puts back is seldom revoked.
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `dir` | Where to look for the declaration. The default is the current directory. |
+| `--env <env>` | Only this environment. |
+| `--member <name>` | Only this member. Repeat it, or give a comma list, for several. |
+| `--since <date>` | The start of the window, in ISO 8601. The default is 56 days before now. |
+| `--json` | Print the read-contract document. |
+
+## Output
+
+`--json` prints a document that follows `delivery-metrics.schema.json` in the [read contract](/chant/reference/workspace-read-contract/#delivery-metrics). behold and a Grafana panel read the same numbers from it. Each member has `environments`, one entry per environment with a deploy ledger, each holding `deployments`, `leadTime`, `changeFailure`, `restore` and `failures`. Each failure names its record and its `causes`. It also names the revoked tag or the rollback that failed it, and the record that restored it with `restoreSeconds`. A member whose ledger can't be read is still listed, with a reason code. The command exits 1 when the declaration can't be read or `--env` can't name an environment. It also exits 1 outside a git repository.
+
+## Compared with terragucci
+
+terragucci computes the same four metrics from its audit trail ([`reference/delivery-metrics`](https://intentius.io/terragucci/reference/delivery-metrics/)). The names match, and the inputs differ.
+
+| | chant | terragucci |
+|---|---|---|
+| A deployment | a record in `releases.jsonl`, per component | an applied wave |
+| Lead time starts at | the commit's committer time | the change's first plan, split into before, at and after the gate |
+| A failure | a revoked commit, or a rollback, within the failure window | a failed apply, or drift within 7 days |
+| Restored by | the component's next record whose commit is not revoked | the next apply of the roots, or a drift check that finds none |
+| The window | a rolling 56 days, or `--since` | the newest eight weeks, Monday to Sunday, with a row per week |
