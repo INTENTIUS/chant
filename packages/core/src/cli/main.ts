@@ -283,13 +283,15 @@ Releases:
                         what chant build --env <env> writes: --src <dir> is
                         the build root, -o <file> the output (dist/build.yaml),
                         --lexicon narrows it.
-  release publish <label|digest> [--json]
-                        Publish a cut release. Refuses a revoked release, and
-                        an unsigned one under an identity.gates release entry.
-                        Warns first when the run has no OIDC token, so what
-                        it publishes carries no provenance. chant has no
-                        publish target yet (#4047), so it publishes nothing
-                        and says so.
+  release publish <label|digest> [--yes] [--json]
+                        Publish a cut release to the targets release.publish
+                        in chant.config.ts declares (npm, OCI registries,
+                        forge release assets). A dry run without --yes.
+                        Refuses a revoked release, an unsigned one under an
+                        identity.gates release entry, and with a target a
+                        checkout that is not the release's commit. Warns first
+                        when the run has no OIDC token, so what it publishes
+                        carries no provenance.
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
   release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -1296,7 +1298,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
-  // #4027: publish a cut release. Its targets are #4047's.
+  // #4027: publish a cut release, to the targets #4047 declares.
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },

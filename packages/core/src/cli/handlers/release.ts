@@ -7,10 +7,11 @@
  *       and tags the commit `release/<label>` locally;
  *       --sign signs the cut with the actor's ssh key (#4031); `--src`, `-o` and
  *       `--lexicon` shape the build of a project with no components (#4046)
- *   release publish <label|digest> [--json]
- *       publish a cut release (#4027): refuses a revoked one, and an unsigned one
- *       under identity.gates.release; warns with no OIDC provenance; its
- *       targets are #4047's, so today it publishes nothing and says so
+ *   release publish <label|digest> [--yes] [--json]
+ *       publish a cut release (#4027) to the targets release.publish declares
+ *       (#4047): a dry run unless --yes; refuses a revoked one, an unsigned one
+ *       under identity.gates.release, and with a target a checkout that is not
+ *       the release's commit; warns with no OIDC provenance
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
@@ -33,7 +34,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(ctx: CommandContext, params: Record<string, string> | undefined): import("../../components/release-compile").CompileInputs {
@@ -113,7 +114,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   const { pushLifecycleReport, getHeadCommit } = await import("../../lifecycle/git");
   const { resolveCiRun } = await import("../../lifecycle/release-ledger");
   const ws = await import("../../lifecycle/release-workstation");
-  const { detectProvenance } = await import("../../lifecycle/release-publish");
+  const { detectProvenance, releasePublishTargets } = await import("../../lifecycle/release-publish");
   const fail = (code: string, message: string, fix?: string): number => {
     console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
     return 1;
@@ -188,6 +189,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       }
       const ref = plan.label ?? plan.alreadyCut ?? plan.releaseDigest;
       const provenance = detectProvenance();
+      // The targets release publish would run, as the config here declares them; their files are read at publish.
+      const publishTargets = await releasePublishTargets(cwd).then(
+        (ts) => ts.map((t) => `${t.name} to ${t.destination}`),
+        (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
+      );
       const deployRef = plan.label ?? "<label|digest>";
       const doc = {
         dryRun: true,
@@ -198,7 +204,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         trunk,
         sign: args.sign !== undefined ? { key: publicKey !== null ? publicKey.split(" ")[0] : null, readable: publicKey !== null } : null,
         tag: tag ? { name: tag.name, exists: tag.state === "present" } : null,
-        publish: { targets: [] as string[], provenance },
+        publish: { targets: Array.isArray(publishTargets) ? publishTargets : [], provenance },
         next: [sameWithYes(process.argv.slice(2))],
       };
       if (args.json) {
@@ -226,7 +232,10 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       for (const p of plan.publishSteps) {
         console.log(`  ${p.component}: ${p.kind}${p.to ? ` to ${p.to}` : ""} in ${p.envs.join(", ")}, by that environment's deploy (chant components promote --release ${deployRef})`);
       }
-      console.log(`  chant release publish ${ref ?? "<label|digest>"}: nothing, since chant has no publish target for a release yet (#4047)`);
+      const publishCmd = `chant release publish ${ref ?? "<label|digest>"}`;
+      if (!Array.isArray(publishTargets)) console.log(`  ${publishCmd}: the publish targets can't be read: ${publishTargets.message}`);
+      else if (publishTargets.length === 0) console.log(`  ${publishCmd}: nothing, since this member declares no publish target (release.publish in chant.config.ts)`);
+      else for (const t of publishTargets) console.log(`  ${publishCmd}: ${t}`);
       if (!provenance.oidc) console.log(`  a publish from here would carry no OIDC provenance: ${provenance.reason}`);
       console.error(`Dry run: nothing was cut, signed or tagged. Run again with --yes to cut: ${doc.next[0]}`);
       return 0;
@@ -293,12 +302,16 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * `release publish <label|digest>` (#4027): publish a cut release. It
- * refuses a release no cut names, one cut from a revoked commit, and under
- * identity.gates.release one with no verified signature. It warns before
- * publishing when the run has no OIDC token, so what it publishes carries no
- * provenance. The targets are #4047's: until then it publishes nothing and
- * says so. Nothing is recorded.
+ * `release publish <label|digest> [--yes]` (#4027, #4047): publish a cut
+ * release to the targets the member declares under `release.publish` in
+ * its `chant.config.ts`. It refuses a release no cut names, one cut from a
+ * revoked commit, under identity.gates.release one with no verified
+ * signature, and, when there is a target, a checkout that is not the
+ * release's commit with a clean tree. It warns before publishing when the
+ * run has no OIDC token, so what it publishes carries no provenance. Every
+ * target is planned (its files read and checked, its credentials found)
+ * before any publishes. Without `--yes` it is a dry run that prints the plan
+ * and uploads nothing. Nothing is recorded, and every line is redacted.
  */
 export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -307,63 +320,92 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "release publish needs a release", hint: USAGE }));
     return 1;
   }
+  const dryRun = args.yes !== true;
   const cwd = resolve(".");
   const fail = (code: string, message: string, fix?: string): number => {
     console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
     return 1;
   };
   const { fetchLifecycle } = await import("../../lifecycle/git");
-  const { preparePublish } = await import("../../lifecycle/release-publish");
+  const { preparePublish, publishContext, PublishTargetError } = await import("../../lifecycle/release-publish");
   await fetchLifecycle({ cwd }).catch(() => false);
   const prepared = await preparePublish({ cwd, ref });
   if ("refusal" in prepared) return fail(prepared.refusal.code, prepared.refusal.message, prepared.refusal.fix);
-  const { release, label, signature, provenance, warning, targets } = prepared;
+  const { release, label, signature, provenance, warning, targets, redactor } = prepared;
   const name = label ?? release.releaseDigest;
   const deploySteps = release.targets.map((t) => t.env);
+  const say = (line: string) => console.error(redactor.redact(line));
+  const failed = (code: string, message: string, fix?: string) => fail(code, redactor.redact(message), fix);
+  const errorOf = (err: unknown): { code: string; message: string; fix?: string } =>
+    err instanceof PublishTargetError ? { code: err.code, message: err.message, ...(err.fix ? { fix: err.fix } : {}) } : { code: "publish-failed", message: err instanceof Error ? err.message : String(err) };
 
   if (!args.json) {
-    console.error(`Publishing ${formatBold(name)} (${release.releaseDigest}) from commit ${release.commit.slice(0, 12)}`);
-    console.error(`  ${signature.status === "verified" ? `signed by ${signature.actor}` : signature.status === "unsigned" ? "not signed" : `signature unverified: ${signature.reason}`}`);
+    say(`${dryRun ? "Dry run: publish" : "Publishing"} ${formatBold(name)} (${release.releaseDigest}) from commit ${release.commit.slice(0, 12)}`);
+    say(`  ${signature.status === "verified" ? `signed by ${signature.actor}` : signature.status === "unsigned" ? "not signed" : `signature unverified: ${signature.reason}`}`);
   }
   // The warning goes to stderr with --json too, before any target runs.
   if (warning) console.error(formatWarning({ message: warning }));
-  const published: Array<{ target: string; destination: string }> = [];
+  const pctx = publishContext(prepared, { cwd, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
+
+  // Every target is planned before any publishes, so a missing file or credential stops the publish with nothing sent.
+  const planned: Array<{ kind: string; name: string; destination: string; items: import("../../lifecycle/release-publish").PublishItem[] }> = [];
   for (const target of targets) {
-    if (!args.json) console.error(`  publishing to ${target.destination}`);
-    published.push(await target.publish({ release, label, provenance, cwd }));
+    try {
+      planned.push({ kind: target.kind, name: target.name, destination: target.destination, items: await target.plan(pctx) });
+    } catch (err) {
+      const e = errorOf(err);
+      return failed(e.code, `nothing was published: ${target.name}: ${e.message}`, e.fix);
+    }
   }
-  const nothing = targets.length === 0;
-  if (args.json) {
-    console.log(
-      JSON.stringify(
-        {
-          releaseDigest: release.releaseDigest,
-          label,
-          commit: release.commit,
-          signature,
-          provenance,
-          warnings: warning ? [warning] : [],
-          targets: targets.map((t) => ({ name: t.name, destination: t.destination })),
-          published,
-          environments: deploySteps,
-        },
-        null,
-        2,
-      ),
-    );
+  const promoteHint = (): string | null => {
+    if (deploySteps.length === 0) return null;
+    const noComponents = release.artifactDigests.length === 0 && release.targets.every((t) => t.templates.every((tpl) => tpl.component === null));
+    return noComponents
+      ? `  Each environment deploys the files the release recorded: chant release export ${name} --env ${deploySteps[0]}`
+      : `  A component's publish steps run in each environment's deploy of the release: chant components promote --release ${name} --to ${deploySteps[0]}`;
+  };
+  const base = { releaseDigest: release.releaseDigest, label, commit: release.commit, signature, provenance, warnings: warning ? [warning] : [] };
+
+  if (dryRun) {
+    const next = [sameWithYes(process.argv.slice(2))];
+    if (args.json) {
+      console.log(redactor.redact(JSON.stringify({ dryRun: true, ...base, targets: planned, published: [], environments: deploySteps, next }, null, 2)));
+      return 0;
+    }
+    const out = (line: string) => console.log(redactor.redact(line));
+    out("What would be published where:");
+    if (planned.length === 0) out("  nothing: this member declares no publish target (release.publish in chant.config.ts)");
+    for (const p of planned) {
+      out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}:`);
+      for (const i of p.items) out(`    ${i.name} to ${i.destination}`);
+    }
+    say(`Dry run: nothing was published. Run again with --yes to publish: ${next[0]}`);
+    const hint = planned.length === 0 ? promoteHint() : null;
+    if (hint) say(hint);
     return 0;
   }
-  if (nothing) {
-    console.error(`Nothing was published: chant has no publish target for a release yet (#4047).`);
-    if (deploySteps.length > 0) {
-      const noComponents = release.artifactDigests.length === 0 && release.targets.every((t) => t.templates.every((tpl) => tpl.component === null));
-      console.error(
-        noComponents
-          ? `  Each environment deploys the files the release recorded: chant release export ${name} --env ${deploySteps[0]}`
-          : `  A component's publish steps run in each environment's deploy of the release: chant components promote --release ${name} --to ${deploySteps[0]}`,
-      );
+
+  const published: import("../../lifecycle/release-publish").PublishedTarget[] = [];
+  for (const target of targets) {
+    if (!args.json) say(`  publishing to ${target.destination}`);
+    try {
+      published.push(await target.publish(pctx));
+    } catch (err) {
+      const e = errorOf(err);
+      const before = published.length > 0 ? `; published before it: ${published.map((p) => p.target).join(", ")}` : "";
+      return failed(e.code, `${target.name}: ${e.message}${before}`, e.fix);
     }
+  }
+  if (args.json) {
+    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, environments: deploySteps }, null, 2)));
+    return 0;
+  }
+  if (targets.length === 0) {
+    say("Nothing was published: this member declares no publish target (release.publish in chant.config.ts).");
+    const hint = promoteHint();
+    if (hint) say(hint);
   } else {
+    for (const p of published) for (const i of p.items) say(`  ${i.present ? "already there" : "published"}: ${i.name} to ${i.destination}`);
     console.error(formatSuccess(`Published ${name} to ${published.length} target(s)`));
   }
   return 0;

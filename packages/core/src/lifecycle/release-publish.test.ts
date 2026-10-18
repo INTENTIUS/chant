@@ -2,7 +2,9 @@
  * #4027: `chant release publish`'s contract. It refuses a release no cut
  * names, a revoked one, and under identity.gates.release one with no
  * verified signature; it warns when the run has no OIDC token; and with no
- * publish target yet (#4047) it has nothing to publish.
+ * publish target declared it has nothing to publish. With a target (#4047)
+ * it reads them from release.publish and refuses a checkout that is not the
+ * release's commit with a clean tree.
  */
 
 import { afterAll, describe, expect, test } from "vitest";
@@ -84,6 +86,7 @@ describe("chant release publish", () => {
       "this publish runs without OIDC, so what it publishes carries no provenance: this run is not in CI, and a workstation has no OIDC token. Publish from CI to get provenance.",
     );
     expect(p.targets).toEqual([]);
+    expect(p.releaseTag).toBe("release/v1");
 
     const inCi = (await preparePublish({
       cwd: r.dir,
@@ -136,4 +139,37 @@ describe("chant release publish", () => {
     const refused = refusal(await preparePublish({ cwd: r.dir, ref: "v2", env: WORKSTATION }));
     expect(refused?.code).toBe("release-signature-unverified");
   });
+
+  test("reads the targets release.publish declares, and with one refuses a checkout that is not the release's commit or has changes", async () => {
+    const { r } = setup(null);
+    r.write("chant.config.ts", `export default { environments: ["dev"], release: { publish: [{ type: "npm", packages: ["pkg"] }, { type: "oci", image: "img", repository: "ghcr.io/acme/api" }] } };\n`);
+    const head = r.commit("declare targets");
+    r.git(["tag", `ci/green/${head}`]);
+    await cut(r, "v1");
+    const p = (await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION })) as PublishPlan;
+    expect(refusal(p)).toBeNull();
+    expect(p.targets.map((t) => [t.kind, t.name, t.destination])).toEqual([
+      ["npm", "npm (1 package)", "npm the registry npm's config names"],
+      ["oci", "oci ghcr.io/acme/api", "ghcr.io/acme/api"],
+    ]);
+    expect(p.targets[1]!.credentialEnv).toEqual(["OCI_PASSWORD"]);
+
+    r.write("untracked.txt", "x\n");
+    expect(refusal(await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION }))?.code).toBe("release-worktree-dirty");
+    rmSync(`${r.dir}/untracked.txt`);
+    r.commit("later");
+    const moved = refusal(await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION }));
+    expect(moved?.code).toBe("release-head-mismatch");
+    expect(moved?.fix).toContain(`git checkout ${head}`);
+  });
+
+  test("refuses a release.publish block that does not validate, before anything is read", async () => {
+    const { r } = setup(null);
+    await cut(r, "v1");
+    r.write("chant.config.ts", `export default { environments: ["dev"], release: { publish: [{ type: "npm", packages: [] }] } };\n`);
+    const refused = refusal(await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION }));
+    expect(refused?.code).toBe("publish-config-invalid");
+    expect(refused?.message).toMatch(/release\.publish\.0\.packages/);
+  });
 });
+
