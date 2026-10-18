@@ -7,7 +7,7 @@ prompt: |
   Write a vitest suite for this project with `deployStack` from `@intentius/chant/testing`: deploy in `beforeAll`, assert with `assertLive`, and `destroy()` in `afterAll`.
   Set `ownership.stack` and a `{ name: "test-*", endpoint: "http://localhost:4566" }` environment in `chant.config.ts`, so the suite runs against a local emulator.
   Boot the emulator with `npx chant emulator up`, run the suite, and show me the output. Then open a pull request with the suite and the config.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

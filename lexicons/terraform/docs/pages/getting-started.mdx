@@ -7,7 +7,7 @@ prompt: |
   Install `@intentius/chant-lexicon-terraform`, and name this repository's Terraform root modules under `terraform.roots` in `chant.config.ts`, with `binary` set to the tool the repository uses.
   Run `npx chant build` and `npx chant graph --format ir`, and report what the post-synth checks find in each root.
   Do not run `terraform apply` or `tofu apply`, and do not declare a `TerraformApplyOp`. Open a pull request with the config.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Most chant lexicons ask you to declare infrastructure in TypeScript. This one

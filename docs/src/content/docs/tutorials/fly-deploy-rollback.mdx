@@ -7,7 +7,7 @@ prompt: |
   In `examples/fly-deploy-rollback`, run `npm install`. Export `FLY_FLAPS_BASE_URL=http://localhost:4280` and `SPRITES_BASE_URL=http://localhost:4290`, and run `npx chant run fly-deploy --no-record` against the emulators.
   Then run `npx chant run fly-deploy-guarded --no-record`, and show me the output of both runs, with the rollback to the checkpoint in the second.
   Keep both emulator overrides set and set no Fly or Sprites token.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

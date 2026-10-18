@@ -1,0 +1,52 @@
+---
+title: Read Delivery Metrics
+description: Read deployment frequency, lead time, change failure rate and time to restore for each member and environment with chant workspace metrics, from the records the release flow already keeps.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/delivery-metrics/.
+  Fetch the tags with `git fetch origin --tags`, run `npx chant workspace metrics --json` for the members and environment I name, and summarize each metric with the failures behind the change failure rate.
+  Change no file and open no pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+The four DORA metrics come out of records the [release flow](/chant/concepts/trunk-and-releases/) writes anyway. Each environment's deploy records say what ran when, the releases they name give the commit, and the `ci/revoked` tags mark the commits that failed later. [`chant workspace metrics`](/chant/cli/workspace-metrics/) computes the metrics from them, and its reference page says how each one is counted.
+
+## Read the metrics
+
+The command reads the local `chant/lifecycle` branch and the local tags, and never fetches. A revocation the clone has not fetched does not count as a failure, so bring both up to date first.
+
+```bash
+git fetch origin chant/lifecycle:chant/lifecycle
+git fetch origin --tags
+chant workspace metrics
+```
+
+Each line covers one member in one environment, over the last 56 days.
+
+```
+api prod: 9 deploys (1.13/week), lead time 1d, change failure 22.2% (2/9), restore 3.5d
+```
+
+Narrow it with `--member` and `--env`, or move the start of the window with `--since`.
+
+```bash
+chant workspace metrics --member api --env prod --since 2026-09-01
+```
+
+## Find what failed
+
+A deploy counts as failed when its commit is revoked within the failure window, or when the environment is rolled back from it in that time. The window is 7 days. `--json` names each failure, its causes and the record that restored it, in the `delivery-metrics.schema.json` document of the [read contract](/chant/reference/workspace-read-contract/#delivery-metrics). A dashboard such as behold or a Grafana panel reads the same document.
+
+```bash
+chant workspace metrics --env prod --json
+```
+
+To count a revocation or rollback that comes later, set `metrics.failureWindowDays` in `chant.workspace.json` with `minReader` at `0.124.29` or newer. [Metrics](/chant/reference/workspace-declaration/#metrics) in the declaration reference has the field.
+
+```json
+"metrics": { "failureWindowDays": 14 }
+```
+
+## Make the numbers mean more
+
+Lead time is measured from a release's commit, so it is most useful when deploys name their release. Deploy with [`chant components promote --release`](/chant/guide/promote-a-release/) rather than a plain `chant run --components`, and each record carries the release digest. A record that names no release still counts. Its own commit then stands for the change, timed from the first record with that commit.

@@ -7,7 +7,7 @@ prompt: |
   Add the CRDs of the operator I name to `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts`, pinned to a release in a version const and kept to the kinds a project uses, with the doc comment the other entries carry.
   Run `npm run generate -w @intentius/chant-lexicon-k8s` and `npm run build -w @intentius/chant-lexicon-k8s`, check that each kind appears in `lexicons/k8s/src/generated/index.d.ts`, and open a pull request with the result.
   Do not point a source at a whole provider bundle, and do not set `CHANT_K8S_ALLOW_CRD_FAILURES`.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. For KubeRay, Argo CD, cert-manager or Crossplane, add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.

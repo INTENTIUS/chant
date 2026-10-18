@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/k8s/testing/.
   In a chant checkout, run `just full-roundtrip --skip-clone` in lexicons/k8s (without `--skip-clone` the first time), then `just k3d-validate`, which creates and deletes a local k3d cluster.
   Show me the output, and name each manifest that failed and the phase it failed in.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The Kubernetes lexicon has scripts that check the import and serialize round trip and apply the serialized YAML to a real cluster.

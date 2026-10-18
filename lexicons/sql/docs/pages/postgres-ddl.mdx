@@ -9,7 +9,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/sql/postgres-ddl/.
   Declare the Postgres schemas, tables, indexes, views, types or functions I describe as tagged templates from `@intentius/chant-lexicon-sql/postgres`, with every column reference written as `${table.columns.name}`, and a rename written with `-- previously:`.
   Run `npx chant build src --lexicon sql -o dist/schema.json` and `npx chant lint src` until both are clean, and open a pull request with the declarations.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A Postgres object is declared as its own DDL, inside a tagged template from `@intentius/chant-lexicon-sql/postgres`:

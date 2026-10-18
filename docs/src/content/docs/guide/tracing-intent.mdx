@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/guide/tracing-intent/.
   Run `npx chant workspace graph --intent <path or path:line>` with the decision kind for the code I name, and add `--at <rev>` when I name a revision.
   Show me the output, and for each finding, ask the question the page's table pairs with it. Read only: change no file and write no record.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Use `chant workspace graph --intent` when you are looking at some code in a workspace and want to know how it got this way and who decided it should be this way. The command gathers the commits that touched the code, the decisions that govern it and the artifacts those decisions rest on. It shows you where they leave gaps, and the judgment stays with you.

@@ -8,7 +8,7 @@ prompt: |
   In this chant project, use `npx chant kube get`, `describe`, `events`, `logs` and `source` to answer the question I ask about the environment I name, passing `--env <env>`.
   Report what you find with the verdict chant gives each object.
   Read only: never pass `--yes` to `chant kube apply` or `chant kube delete`.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

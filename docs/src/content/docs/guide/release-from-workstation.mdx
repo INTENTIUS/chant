@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/guide/release-from-workstation/.
   Add the publish workflow the page shows for this repository's forge, triggered by release/** tags, in a pull request.
   Run `npx chant release cut <version>` without `--yes` on a clean checkout of a green trunk commit, and show me what it prints; do not run it with `--yes`, push a tag, or run `chant release publish` yourself.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

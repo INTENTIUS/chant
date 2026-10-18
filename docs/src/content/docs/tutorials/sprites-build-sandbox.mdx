@@ -7,7 +7,7 @@ prompt: |
   In `examples/sprites-build-sandbox`, run `npm install` and `npx chant emulator up`, export `SPRITES_BASE_URL=http://localhost:4290`, and run `npx chant run build-sandbox --no-record`.
   Show me the output and the artifact the build read out, then run `npx chant emulator down`.
   Set no Sprites token.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/guide/drift-to-source/.
   In a chant checkout, run `just drift-to-source-e2e` and show me the output. It needs Docker and jq as well as k3d and kubectl, and it deletes the k3d cluster it makes.
   For each drifted field it reports, tell me the origin and the file and line the report names. Do not edit the source; the change it proposes is mine to make.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

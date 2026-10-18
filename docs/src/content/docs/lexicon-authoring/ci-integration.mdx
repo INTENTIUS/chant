@@ -7,7 +7,7 @@ prompt: |
   In the chant repository, run `npx tsx packages/core/src/cli/main.ts dev onboard <name>` for the lexicon I name, then `npm install`. Do the manual steps the page lists after onboard, including an example that imports the lexicon.
   Run `npx vitest run lexicons/<name>` and `npx vitest run --project unit`, and open a pull request with the result.
   Leave `just smoke`, `just release`, `just release-lexicon` and the first npm publish to me; list them in the pull request description.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';

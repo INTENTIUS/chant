@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicon-authoring/scaffold/.
   In the chant repository, run `npx tsx packages/core/src/cli/main.ts init lexicon <name>` for the lexicon I name and then `npm install`. Run `chant dev check-lexicon lexicons/<name>`.
   Show me the two tier-1 checks a fresh scaffold fails and what the page says closes each, and open a pull request with the scaffold.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Start a new lexicon with `chant init lexicon`:

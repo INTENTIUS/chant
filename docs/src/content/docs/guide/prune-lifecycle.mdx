@@ -1,0 +1,56 @@
+---
+title: Prune chant/lifecycle
+description: Set a retention policy for the ledger branch, look at what a prune would remove, and prune with one commit that never rewrites history.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/prune-lifecycle/.
+  Run `npx chant lifecycle gc --json` as a dry run and summarize what it would remove, what it keeps and why, and the size before and after.
+  If I give you a retention policy, add it as the `retention` block of `chant.workspace.json` with the `minReader` the page names, and open a pull request; do not run the prune with `--yes`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Every cut stores a release on the `chant/lifecycle` branch, and every release gate stores a change set. Neither is ever rewritten, so the branch's tree grows with each one. [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) removes the ones a retention policy no longer keeps. It never removes a release an environment runs, a change set or release a pending gate binds, or any ledger line.
+
+## Choose a policy
+
+With no policy, `gc` keeps a change set for 14 days. A release is kept for 14 days or while it is among the newest 10 of its member, and a run event file on this host for 14 days or while it is among the newest 100. To keep more or less, add a `retention` block to `chant.workspace.json`. Any kind or field you leave out keeps its default.
+
+```json
+"minReader": "0.124.29",
+"retention": {
+  "changeSets": { "days": 30 },
+  "releases": { "days": 30, "keep": 20 }
+}
+```
+
+`gc` reads the block from the declaration at base, so merge it before the prune that should use it. [Retention](/chant/reference/workspace-declaration/#retention) lists every field.
+
+## Look at a dry run
+
+Without `--yes`, `gc` fetches the branch and plans the prune, and changes nothing.
+
+```bash
+chant lifecycle gc
+```
+
+It prints what would go and the tree's size before and after. `--verbose` lists each file. `--json` gives each kept file its reasons, such as `deployed` for a release an environment runs or `pending-gate` for a change set a gate is waiting on. [What is never pruned](/chant/cli/lifecycle/#what-is-never-pruned) explains each code.
+
+## Prune
+
+A person with push access to the ledger branch runs the prune.
+
+```bash
+chant lifecycle gc --yes --push
+```
+
+The prune is one new commit on top of the branch that removes files. It never rewrites history and never force-pushes, so every removed file is still in the commits before it. `gc` refuses when the local branch and the remote's have forked, or when the remote does not answer. Fetch and try again.
+
+After a prune, `chant release list` no longer lists a pruned release, and `chant change-set show` reports a pruned change set as missing. To read one back, find it in the history.
+
+```bash
+git log --oneline chant/lifecycle -- '_releases/<digest>.json'
+```
+
+## Run it on a schedule
+
+Run event files live on each host under the git common directory, so a prune covers only the host it runs on. A scheduled job that runs `chant lifecycle gc --yes --push` once a day keeps the branch bounded. On a workstation, `chant lifecycle gc --yes` clears that host's run events, and the prune commit it makes stays local until the next push of `chant/lifecycle`.

@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/aws/examples/.
   In a checkout of https://github.com/INTENTIUS/chant, pick the example under lexicons/aws/examples/ closest to what I describe, and in its directory run `npm install`, `npx chant build`, `npx chant lint` and `npx vitest run`.
   Show me the output and the resources the template declares, then copy the example into this project as the starting point and open a pull request with it.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Runnable examples live in the lexicon's `examples/` directory, one per built-in composite. Clone the repo and try them:

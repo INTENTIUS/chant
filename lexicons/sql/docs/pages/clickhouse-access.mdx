@@ -10,7 +10,7 @@ prompt: |
   Declare the users, roles, row policies, quotas, settings profiles and grants I describe with the tags from `@intentius/chant-lexicon-sql/clickhouse`, next to the tables they name, and set `access: true` on the profiles of the environments I name.
   Declare no password: leave a user that needs one without an `IDENTIFIED` clause, and list it in the pull request description for a person to create.
   Run `npx chant build` and `npx chant lint`, then `npx chant sql plan` against the local server from `npx chant emulator up --lexicon sql`, and open a pull request with the plan in its description.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ClickHouse keeps users, roles, row policies, quotas, settings profiles and grants outside any table. The sql lexicon declares each with its own tag from `@intentius/chant-lexicon-sql/clickhouse`:

@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/local-testing/overview/.
   In `examples/local-cloud-trio`, run `npm install`, then `npx chant run aws --no-record`, `npx chant run azure --no-record` and `npx chant run gcp --no-record`, each against its local Floci emulator. They need Docker, `aws` and `curl`.
   Show me the output of each run, and tell me which resource each one verified. Keep every `endpoint` override in place.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';

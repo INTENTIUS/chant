@@ -7,7 +7,7 @@ prompt: |
   In `examples/fly-durable-deploy`, run `npm install` and export `FLY_FLAPS_BASE_URL=http://localhost:4280`. Run `npx chant run fly-durable-deploy --no-record` twice against mudflaps.
   Show me the output of both runs and the Machine state mudflaps reports after each.
   Run `npm run build:fountain` and `npm run lint`, and show me the findings. Do not post the Op to a fountain steward with `--on fountain`.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

@@ -10,7 +10,7 @@ prompt: |
   Add an `ApplyOp` with `target: "clickhouse"` for the environment I name, as `ops/schema-apply.op.ts`, with `delete: "gated"` and a gate if I ask for prune, and set the profile's `topology` in `chant.config.ts`.
   Build to `dist/schema.json` and run `npx chant sql plan <env> dist/schema.json` against the local server from `npx chant emulator up --lexicon sql`, then try the Op there with `npx chant run schema-apply --no-record`.
   Open a pull request with the Op and the config, and put the plan in its description.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `clickhouseApply` makes the ClickHouse server an environment is bound to hold what a `chant build` declares. `ApplyOp` runs it for `target: "clickhouse"`, and a hand-written Op can call it as a step.

@@ -1,0 +1,66 @@
+---
+title: Tag Green Commits
+description: Declare which CI phases make a trunk commit green, generate the workflow that runs chant ci tick, and read the green and revoked tags back with chant ci list and chant ci last-green.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/green-commits/.
+  Add a `ci.green` block to `chant.workspace.json` for the trunk branch and the phases I name, generate the tick's workflow with `npx chant ci workflow`, and open a pull request with both.
+  Check the block with `npx chant ci tick --dry-run` and `npx chant ci list`, and show me what they print.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This page sets up the green tags a [release](/chant/concepts/trunk-and-releases/#green) is cut from. Each trunk sha that passes every required CI phase gets `ci/green/<sha>`, and one that fails later gets `ci/revoked/<sha>`. [`chant ci`](/chant/cli/ci/) is the reference for every flag used below.
+
+## Declare the phases
+
+Name the branch and the check runs that make up each phase in the `ci` block of `chant.workspace.json`. A phase lists check-run name patterns, where `*` stands for any run of characters, and `require` lists the phases that must pass.
+
+```json
+"ci": {
+  "green": {
+    "branch": "main",
+    "phases": {
+      "lint": ["lint"],
+      "test": ["test (*)"]
+    },
+    "require": ["lint", "test"]
+  }
+}
+```
+
+The other fields, `window`, `signedSince` and `source`, are in the [declaration reference](/chant/reference/workspace-declaration/#ci). On GitLab or Forgejo, set `"source": "runs"` and run each phase as a chant Op, since GitHub is the only forge whose check runs the tick reads. [Chant runs as the status source](/chant/cli/ci/#chant-runs-as-the-status-source) shows that pipeline.
+
+## Generate the workflow and check it
+
+On GitHub, `chant ci workflow` writes `.github/workflows/chant-ci-green.yml`. That workflow runs the tick when a workflow holding a required check finishes, and on a 15-minute schedule. It warns about any required pattern that no job in `.github/workflows/` can report. When a change on trunk can touch a workflow file, give the push a token that may update workflows, as [Pushing tags to commits that change workflows](/chant/cli/ci/#pushing-tags-to-commits-that-change-workflows) explains. Before the first tick, a dry run reads the check runs and prints the tags it would make, and makes none.
+
+```bash
+chant ci workflow --token-secret CI_GREEN_TOKEN
+GITHUB_REPOSITORY=acme/app GITHUB_TOKEN=... chant ci tick --dry-run
+chant ci list --forge github --limit 10
+```
+
+`chant ci list` prints each recent sha with its state and every phase's result. Before any tag exists, all of them are `undecided`. With `--forge github` it reads their phases from the forge, and a phase that no check run matches yet shows up as `pending`. Put the workflow and the declaration in one pull request.
+
+## Read the tags
+
+Once the workflow has run on trunk, the tags are in the remote. Fetch them, then read the newest green sha or the recent history.
+
+```bash
+git fetch origin --tags
+chant ci last-green
+chant ci list --limit 20
+```
+
+A line ends with `; why unknown:` when its commit names no work item, or a wrong one, and [Link commits to work items](/chant/guide/work-items/#link-commits-to-work-items) fixes that from then on. `--json` on either command prints a read-contract document for a tool to read. `--since <sha>` lists only what came after a sha you have already seen.
+
+A revoked line shows the phase and run that failed, and every release cut from that sha is revoked with it. It stays revoked until a person deletes the revoked tag, which they do only when the failure was not the change's fault.
+
+```bash
+git push origin --delete ci/revoked/<sha>
+git tag -d ci/revoked/<sha>
+```
+
+## Sign the tags
+
+Anyone who may push a tag could push `ci/green/<sha>` by hand. Setting `ci.green.signedSince` makes every reader ignore a tag past that point that a runner key did not sign. Turn it on in the order [The runner key](/chant/cli/ci/#the-runner-key) gives. List the key in `.chant/trust.json` and store it as a secret, regenerate the workflow with `--runner-key-secret`, and then set `signedSince`.

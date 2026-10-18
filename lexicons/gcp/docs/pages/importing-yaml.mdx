@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/gcp/importing-yaml/.
   Import the Config Connector YAML files I name into TypeScript under src/ with `npx chant import`, and check that `npx chant build src/ --output manifests.yaml` writes the same resources.
   Run `npx chant lint src/`, and open a pull request with src/ and a list of anything the import left out or changed. Keep the original YAML.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant import` reads Config Connector YAML and writes TypeScript.

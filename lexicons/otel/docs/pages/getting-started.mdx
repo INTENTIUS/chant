@@ -7,7 +7,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/otel/getting-started/.
   In a new directory, install the otel lexicon, declare the collector from the page in src/, and run `npx chant build src --lexicon otel -o collector.yaml` and `npx chant lint src`.
   If `otelcol-contrib` is installed, run `otelcol-contrib validate --config collector.yaml`. Show me collector.yaml and the output.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This walks through a collector that receives OTLP, batches it and sends traces to a tracing backend.

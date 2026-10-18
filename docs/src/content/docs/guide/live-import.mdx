@@ -7,7 +7,7 @@ prompt: |
   Run `npx chant lifecycle plan <env>` and `npx chant import --from <env> --output src/` only for the environment I name, with `--name` or `--type` to select the resources I ask for. Both only read the live system.
   Review the generated files for secrets before anything else, replace each secret with a reference, and tell me what you replaced.
   Run `npx chant build` and `npx chant lint`, and open a pull request with the new source.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant import <template-file>` reads a template from disk. `chant import --from <env>` reads the **live** cloud or cluster instead, regenerating chant TypeScript from what is actually running. This is the `cloud → code` direction. Use it to adopt infrastructure you didn't author or to pull an orphan back into source.

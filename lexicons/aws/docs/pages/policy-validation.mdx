@@ -7,7 +7,7 @@ prompt: |
   Run `npx chant build src -o template.json`, then run the policy tools this repository already uses against it (`cfn-guard validate`, `conftest test`, `checkov -f` or `cfn-lint`), and show me each finding.
   If I ask for it as an Op step, add `guardValidate("rules.guard")` in a phase before the apply phase of the Op, run `npx chant lint src`, and open a pull request.
   Do not run the Op.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 chant emits **standard CloudFormation JSON**: `chant build` writes exactly what `aws cloudformation deploy` accepts. `cfn-guard`, `OPA`/`conftest`, `Checkov` and `cfn-lint` all validate `template.json` unchanged, the same way they validate a template written by hand or emitted by CDK's `CfnInclude` escape hatch.

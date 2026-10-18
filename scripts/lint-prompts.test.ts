@@ -118,6 +118,38 @@ describe("checkPrompt", () => {
     expect(checkPrompt(promptFor("guide/ops", "Run `npx chant run status deploy`."), url, "x")).toEqual([]);
   });
 
+  test("the never-line forbids the release, the ci tags and the flag values (chant #4038)", () => {
+    expect(neverLine).toContain("`chant release cut --yes`");
+    expect(neverLine).toContain("`chant release publish`");
+    expect(neverLine).toContain("`ci/*` tag");
+    expect(neverLine).toContain("change the value of an existing flag");
+    const old = neverLine.replace(/ never cut or publish a release .*?existing flag;/, "");
+    const problems = checkPrompt([`Read ${url}.`, "Open a pull request.", old].join("\n"), url, "x").join("\n");
+    expect(problems).toContain("misses the release, the ci/* tags, the flag values");
+  });
+
+  test("a sentence that cuts, publishes, pushes a ci tag or flips a flag fails (chant #4038)", () => {
+    const fails = (line: string) => checkPrompt(promptFor("guide/ops", line), url, "x").join("\n");
+    expect(fails("Run `npx chant release cut v1.4.0 --yes`.")).toContain("cuts a release");
+    expect(fails("Then run `npx chant release publish v1.4.0`.")).toContain("publishes a release");
+    expect(fails("Run `npx chant ci tick` to tag the commit.")).toContain("pushes ci/* tags");
+    expect(fails("Tag it with `git push origin ci/green/abc123`.")).toContain("ci/* tag");
+    expect(fails("Delete the ci/revoked tag for the commit.")).toContain("ci/* tag");
+    expect(fails("Prune with `npx chant lifecycle gc --yes --push`.")).toContain("prunes chant/lifecycle");
+    expect(fails("Turn the new-checkout flag on in prod.")).toContain("change a flag's value");
+    expect(fails("Change the flag's prod value to true.")).toContain("change a flag's value");
+  });
+
+  test("a dry run, a read of the tags and a new flag record pass (chant #4038)", () => {
+    const ok = (line: string) => checkPrompt(promptFor("guide/ops", line), url, "x");
+    expect(ok("Run `npx chant release cut v1.4.0` without its confirming flag and show me what it prints.")).toEqual([]);
+    expect(ok("Run `npx chant ci tick --dry-run` and `npx chant ci list`.")).toEqual([]);
+    expect(ok("Fetch the tags with `git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'`.")).toEqual([]);
+    expect(ok("Run `npx chant lifecycle gc` and show me what it would prune.")).toEqual([]);
+    expect(ok("Add a flag record with the value off in every environment.")).toEqual([]);
+    expect(ok("Do not run `chant release publish` yourself.")).toEqual([]);
+  });
+
   test("frontPrompt reads one-line, block and setup forms", () => {
     expect(frontPrompt("---\ntitle: T\nprompt: setup\n---\n")).toBe(setupPrompt);
     expect(frontPrompt("---\ntitle: T\nprompt: |\n  a\n  b\ndiataxis: how-to\n---\n")).toBe("a\nb");

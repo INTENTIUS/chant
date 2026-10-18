@@ -7,7 +7,7 @@ prompt: |
   Declare the decision point I describe in the points file this workspace keeps (such as `decisions/points.json`), with its question, its inputs named for read-contract outputs, and its deciders.
   Run `npx chant workspace check` and fix every WSP116 finding, then open a pull request with the points file.
   List open questions with `npx chant workspace points --open --json` and show them to me. Do not answer, retract or withdraw a question with `chant workspace points`; people answer them.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Some questions come up again and again, such as which builder tier builds a work item or whether a release may skip the human gate. A decision point declares one such question as data, with the inputs it reads and the deciders that answer it, and every answer it gets is a record in the workspace ([ws-058](https://github.com/INTENTIUS/chant/issues/2723)).

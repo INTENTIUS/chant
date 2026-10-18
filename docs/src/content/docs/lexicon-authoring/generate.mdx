@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicon-authoring/generate/.
   Wire the generate step of the lexicon I name with `generatePipeline` and the callbacks the page lists. Fetch only through `fetchWithCache`, and write into `src/generated/` with `writeGeneratedArtifacts`.
   Declare `upstreamPin` in `src/plugin.ts` for the pinned spec version, run `npm run generate` and `npm run bundle` in the lexicon and `chant dev pinned-upgrade lexicons/<name>`, and open a pull request with the result.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The `generate` lifecycle method fetches the upstream spec, parses it, and produces TypeScript types, a runtime index, and a registry. Core's `generatePipeline` runs these steps; you supply provider-specific callbacks.

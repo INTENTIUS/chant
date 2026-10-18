@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicon-authoring/docs-site/.
   For the lexicon I name, create `src/codegen/docs.ts` and `src/codegen/docs-cli.ts` as the page shows. Register `docs()` in `src/plugin.ts` and add the `docs` script. Write its prose pages under `docs/pages/` with a `diataxis` field on each.
   Run `npm run prepack` on a clean checkout, then `npm run docs` in the lexicon and `chant dev check-lexicon lexicons/<name>`, and open a pull request with the sources. Do not commit the generated pages.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 The docs are built with [Astro Starlight](https://starlight.astro.build/). Where they end up depends on where the package lives.
