@@ -22,6 +22,7 @@ import { isAbsolute, normalize, relative, resolve } from "node:path";
 import type { PublishDeclaration } from "./publish-declaration";
 import { PublishTargetError, type PublishDeps, type PublishTarget } from "./release-publish";
 import type { Release, ReleaseArtifact } from "./release-store";
+import { sortedJsonReplacer } from "../utils";
 
 /** Make each declaration a target, in the order declared. */
 export async function createPublishTargets(decls: readonly PublishDeclaration[], deps: PublishDeps = {}): Promise<PublishTarget[]> {
@@ -40,6 +41,15 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
     }
   }
   return out;
+}
+
+/**
+ * The key of a target made from `decl` (#4048): its kind and the first 16 hex
+ * digits of the SHA-256 of its sorted JSON. A declaration holds variable
+ * names, never a credential, so the key holds none either.
+ */
+export function publishTargetKey(decl: PublishDeclaration): string {
+  return `${decl.type}:${createHash("sha256").update(JSON.stringify(decl, sortedJsonReplacer)).digest("hex").slice(0, 16)}`;
 }
 
 /** `path` resolved in the member at `cwd`, refused when it is not there. */

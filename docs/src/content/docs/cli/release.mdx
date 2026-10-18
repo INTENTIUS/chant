@@ -231,18 +231,20 @@ Dry run: publish v1.4.0 (jcs1-sha256:...) from commit 3f2a9c1d0b7e
   signed by alice@example.com
 What would be published where:
   npm (2 packages), with --provenance:
-    @acme/core@1.4.0 to the registry npm's config names, dist-tag latest
-    @acme/cli@1.4.0 to the registry npm's config names, dist-tag latest
+    @acme/core@1.4.0 to the registry npm's config names, dist-tag next, then latest
+    @acme/cli@1.4.0 to the registry npm's config names, dist-tag next, then latest
   oci ghcr.io/acme/api:
     dist/api.oci.tar (tag v1.4.0) to ghcr.io/acme/api@sha256:...
 Dry run: nothing was published. Run again with --yes to publish: chant release publish v1.4.0 --yes
 ```
 
-With `--yes` it runs the targets in the order declared and prints each item it published. A target that fails stops the publish, and the error names the targets and items already published. Publishing all or nothing and resuming are [#4048](https://github.com/INTENTIUS/chant/issues/4048). Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049). A publish writes no record. Every line it prints, and its `--json` document, has its credentials masked.
+With `--yes` it publishes in two passes ([#4048](https://github.com/INTENTIUS/chant/issues/4048)). First it stages every target in the order declared, where no consumer resolves it yet: npm packages under the `next` dist-tag, images by digest, forge assets on a draft release. Only when every target has staged does it reveal them in the same order. Revealing moves npm's `latest` with the first package declared going first. It also moves the OCI tags and publishes the forge release. It prints each item it published. Each step is appended to `_releases/publishes.jsonl` on `chant/lifecycle` and pushed.
+
+A target that fails stops the publish. The error says whether anything is visible yet and which targets staged, and ends with the same command to run again. Run again, the publish reads the record and skips what an earlier run staged or revealed, and a stage asks its registry first and sends nothing that is there. So a resume publishes nothing twice, from the same checkout or from a fresh CI clone of the release's commit. The dry run says which targets an earlier run staged or published. [Staging and resuming](/chant/reference/publish-targets/#staging-and-resuming) has the details. Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049). Every line a publish prints, its `--json` document and its record have their credentials masked.
 
 With no target declared it makes its checks and prints its warning. It then says that nothing was published and exits 0. The publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`, `load-image-on-host`) are deploy steps. They run in each environment's deploy of the release, [`chant components promote --release`](/chant/cli/components/#promoting-a-release), and not here.
 
-The document `--json` gives for a publish holds `dryRun` and the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), the `warnings`, the `targets` (each `kind`, `name`, `destination` and its planned `items`), what was `published` (each `target`, `destination` and `items`; empty in a dry run) and the release's `environments`. A dry run adds `next`. The warning is printed on stderr in either form.
+The document `--json` gives for a publish holds `dryRun` and the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), the `warnings`, the `targets` (each `kind`, `name`, `destination`, its `progress` from earlier runs, `none`, `staged` or `revealed`, and its planned `items`), what was `published` (each `target`, `destination` and `items`; empty in a dry run) and the release's `environments`. A dry run adds `next`, and a publish adds `resumed`, the targets an earlier run had staged or revealed, each with its `target` and `step`. The warning is printed on stderr in either form.
 
 ## release export
 

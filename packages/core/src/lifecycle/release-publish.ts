@@ -17,8 +17,12 @@
  * declares them under `release.publish` in its `chant.config.ts` (#4047).
  * With a target, the checkout must be the release's commit with a clean
  * tree ({@link checkCheckoutIsRelease}), every target is planned before any
- * publishes, and without `--yes` nothing is published. All-or-nothing and
- * resume are #4048, and signing, SBOMs and provenance are #4049. The publish steps a component
+ * publishes, and without `--yes` nothing is published. With `--yes`,
+ * {@link runPublish} stages every target, then reveals them (#4048): nothing a
+ * consumer resolves changes until every target has staged, and a publish
+ * that failed resumes from the record in `_releases/publishes.jsonl`
+ * (./publish-record.ts) without publishing again what went out. Signing,
+ * SBOMs and provenance are #4049. The publish steps a component
  * declares (`publish-image`, `publish-artifact`, `publish-asset`,
  * `load-image-on-host`) are deploy steps: they run in each environment's
  * deploy of the release (`chant components promote --release`), never here.
@@ -71,6 +75,20 @@ export interface PublishItem {
   present?: boolean;
 }
 
+/**
+ * What one target staged: its items, out where the target publishes but not
+ * where a consumer resolves them yet, and the values its reveal needs that it
+ * can't read again from the checkout, such as a draft release's id. The
+ * publish record keeps it, so a resume reveals without staging again. It never
+ * holds a credential.
+ */
+export interface StagedTarget {
+  target: string;
+  destination: string;
+  items: PublishItem[];
+  state: Record<string, string>;
+}
+
 /** What one target published. */
 export interface PublishedTarget {
   target: string;
@@ -104,9 +122,10 @@ export interface PublishContext {
   /** The member's directory, which the declaration's paths are relative to. */
   cwd: string;
   /**
-   * A tag to publish under in place of the target's own: npm's dist-tag
-   * (default `latest`) and the OCI tags. Null for the target's own. #4048
-   * stages a set of packages under one, then moves it.
+   * The tag a reveal points at what was staged, in place of the target's
+   * own: npm's dist-tag (default `latest`) and the OCI tags. Null for the
+   * target's own. Staging never uses it: npm stages under `next`
+   * ({@link NPM_STAGE_TAG}) and OCI by digest.
    */
   tag: string | null;
   /** The environment credentials are read from. */
@@ -129,6 +148,9 @@ export class PublishTargetError extends Error {
   }
 }
 
+/** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
+export const NPM_STAGE_TAG = "next";
+
 /**
  * One place a release is published to (#4047). A target publishes the
  * release's artifacts as they were built at the cut, checked against their
@@ -148,6 +170,12 @@ export interface PublishTarget {
   /** The environment variables it reads credentials from, whose values are masked in all output. */
   credentialEnv: string[];
   /**
+   * Names the declaration across runs, so a resume finds the target's lines
+   * in the publish record: the kind and a digest of the declaration, which
+   * holds variable names and never a credential.
+   */
+  key: string;
+  /**
    * Read what it would publish and check that it can: the files are there,
    * they match the release's digests, the credentials it needs are set.
    * Uploads nothing and makes no request that changes anything. Throws
@@ -155,8 +183,23 @@ export interface PublishTarget {
    * publish plans every target before any of them publishes.
    */
   plan(ctx: PublishContext): Promise<PublishItem[]>;
-  /** Publish. Throws {@link PublishTargetError} naming what was already published when it fails part way. */
-  publish(ctx: PublishContext): Promise<PublishedTarget>;
+  /**
+   * Put every item where the target publishes, where no consumer resolves it
+   * yet (#4048): npm under the `next` dist-tag, OCI by digest with no tag
+   * moved, forge assets on a draft release (GitLab: in the package registry,
+   * with no release link). An item the destination already holds is not sent
+   * again and comes back `present`, so a stage run again after a failure
+   * sends only what is missing. Throws {@link PublishTargetError}.
+   */
+  stage(ctx: PublishContext): Promise<StagedTarget>;
+  /**
+   * The one last step that makes what {@link stage} put out visible: npm
+   * moves `latest` (or `ctx.tag`) package by package in the declared order,
+   * the first package first; OCI points the tags at the digest; a forge
+   * publishes the draft (GitLab: creates the release with its links). Run
+   * again, it moves nothing that already moved. Throws {@link PublishTargetError}.
+   */
+  reveal(ctx: PublishContext, staged: StagedTarget): Promise<PublishedTarget>;
 }
 
 /** The targets the member at `cwd` declares under `release.publish` in its `chant.config.ts`. */
@@ -324,4 +367,136 @@ export function publishContext(plan: PublishPlan, req: { cwd: string; env?: Node
     redactor: plan.redactor,
     log: (line) => req.log(plan.redactor.redact(line)),
   };
+}
+
+/** What {@link runPublish} did. */
+export interface PublishRun {
+  /** Each target, revealed, in the order declared. */
+  published: PublishedTarget[];
+  /** The targets an earlier run had staged or revealed, so this one did not stage them again. */
+  resumed: Array<{ target: string; step: "staged" | "revealed" }>;
+  /** Why a record line was not written or not pushed, when one wasn't. A resume then asks the registries. */
+  recordWarning: string | null;
+}
+
+/** A publish that stopped, with what it left staged and revealed so a run of the same command resumes. */
+export class PublishRunError extends PublishTargetError {
+  constructor(
+    code: string,
+    message: string,
+    fix: string | undefined,
+    readonly step: "stage" | "reveal",
+    readonly staged: string[],
+    readonly revealed: string[],
+  ) {
+    super(code, message, fix);
+    this.name = "PublishRunError";
+  }
+}
+
+/**
+ * Publish `targets` all or nothing (#4048), from the record of earlier runs:
+ *
+ * 1. Stage every target in the order declared, skipping one the record says
+ *    staged or revealed. Each stage is recorded and pushed as it finishes.
+ *    A failure here leaves nothing visible to a consumer.
+ * 2. Only when every target has staged, reveal each in the same order,
+ *    skipping one the record says revealed, and record each reveal.
+ *
+ * A run of the same publish after a failure resumes: what went out is not
+ * published again, and a stage that failed part way sends only what its
+ * destination does not hold. Throws {@link PublishRunError}.
+ */
+export async function runPublish(req: {
+  cwd: string;
+  release: Release;
+  label: string | null;
+  targets: readonly PublishTarget[];
+  ctx: PublishContext;
+  /** Write the record. Default true. */
+  record?: boolean;
+  /** Print one line of progress. Redacted by the caller. */
+  say?: (line: string) => void;
+  now?: () => Date;
+}): Promise<PublishRun> {
+  const { appendPublishRecord, publishProgress, readPublishRecords } = await import("./publish-record");
+  const { pushLifecycleReport } = await import("./git");
+  const { resolveRunId } = await import("./release-ledger");
+  const { cwd, release, label, targets, ctx } = req;
+  const say = req.say ?? (() => undefined);
+  const now = req.now ?? (() => new Date());
+  const record = req.record ?? true;
+  const runId = resolveRunId(undefined, ctx.env).runId;
+  const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
+  let recordWarning: string | null = null;
+
+  const write = async (target: PublishTarget, step: "staged" | "revealed", items: PublishItem[], state: Record<string, string>) => {
+    if (!record) return;
+    try {
+      await appendPublishRecord(
+        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, runId, timestamp: now().toISOString() },
+        ctx.redactor,
+        { cwd },
+      );
+      const push = await pushLifecycleReport({ cwd });
+      if (push.pushWarning && recordWarning === null) recordWarning = push.pushWarning;
+    } catch (err) {
+      recordWarning ??= `the publish record was not written: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+  const fail = (err: unknown, target: PublishTarget, step: "stage" | "reveal", staged: string[], revealed: string[]): never => {
+    const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-failed", err instanceof Error ? err.message : String(err));
+    throw new PublishRunError(e.code, ctx.redactor.redact(`${target.name}: ${e.message}`), e.fix, step, staged, revealed);
+  };
+
+  const resumed: PublishRun["resumed"] = [];
+  const staged = new Map<string, StagedTarget>();
+  const stagedNames: string[] = [];
+  for (const target of targets) {
+    if (progress.revealed.has(target.key)) {
+      resumed.push({ target: target.name, step: "revealed" });
+      say(`  ${target.name}: published by an earlier run; skipped`);
+      continue;
+    }
+    const earlier = progress.staged.get(target.key);
+    if (earlier) {
+      resumed.push({ target: target.name, step: "staged" });
+      say(`  ${target.name}: staged by an earlier run; not staged again`);
+      staged.set(target.key, { ...earlier, target: target.name, destination: target.destination });
+      stagedNames.push(target.name);
+      continue;
+    }
+    say(`  staging to ${target.destination}`);
+    let s: StagedTarget;
+    try {
+      s = await target.stage(ctx);
+    } catch (err) {
+      return fail(err, target, "stage", stagedNames, []);
+    }
+    staged.set(target.key, s);
+    stagedNames.push(target.name);
+    await write(target, "staged", s.items, s.state);
+  }
+
+  const published: PublishedTarget[] = [];
+  const revealedNames: string[] = [];
+  for (const target of targets) {
+    const done = progress.revealed.get(target.key);
+    if (done) {
+      published.push({ ...done, target: target.name, destination: target.destination, items: done.items.map((i) => ({ ...i, present: true })) });
+      revealedNames.push(target.name);
+      continue;
+    }
+    say(`  revealing ${target.name}`);
+    let p: PublishedTarget;
+    try {
+      p = await target.reveal(ctx, staged.get(target.key)!);
+    } catch (err) {
+      return fail(err, target, "reveal", stagedNames, revealedNames);
+    }
+    published.push(p);
+    revealedNames.push(target.name);
+    await write(target, "revealed", p.items, {});
+  }
+  return { published, resumed, recordWarning };
 }

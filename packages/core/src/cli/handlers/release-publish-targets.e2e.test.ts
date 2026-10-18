@@ -3,10 +3,12 @@
  * declares an npm target of two packages and an OCI target is cut, then
  * published to stand-ins only, a fake `npm` first on PATH and a registry fake
  * on 127.0.0.1 that this test starts and closes. The publish is a dry run
- * without --yes; with --yes and a CI OIDC token it runs npm with
- * --provenance for each package in order and pushes the image by digest; no
- * credential appears in its output or on `chant/lifecycle`; and a checkout
- * that moved past the release's commit is refused.
+ * without --yes; with --yes and a CI OIDC token it stages each package under
+ * next with --provenance and the image by digest, then moves latest and the
+ * tag (#4048); no credential appears in its output or on `chant/lifecycle`;
+ * and a checkout that moved past the release's commit is refused. A publish
+ * that fails part way is resumed from a fresh clone, as a CI job would, from
+ * the record it pushed, and publishes nothing again.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -16,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { REPO } from "../../workspace/__fixtures__/contract-repo";
-import { startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
+import { readFakeNpmRegistry, startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
 
 const CHANT = [process.execPath, "--import", pathToFileURL(join(REPO, "node_modules", "tsx", "dist", "loader.mjs")).href, join(REPO, "packages", "core", "src", "cli", "main.ts")];
 const CI_VARS = [
@@ -127,7 +129,7 @@ describe("chant release publish with targets", () => {
       const dry = await chant(dir, ["release", "publish", "v1"], { ...path, ...secrets, ...oidc });
       expect(dry.code, dry.stderr).toBe(0);
       expect(dry.stdout).toContain("What would be published where:");
-      expect(dry.stdout).toContain("  npm (2 packages), with --provenance:\n    @acme/core@1.0.0 to the registry npm's config names, dist-tag latest\n    @acme/cli@1.0.0 to");
+      expect(dry.stdout).toContain("  npm (2 packages), with --provenance:\n    @acme/core@1.0.0 to the registry npm's config names, dist-tag next, then latest\n    @acme/cli@1.0.0 to");
       expect(dry.stdout).toContain(`    image (tag v1) to ${reg.host}/acme/api@${digest}`);
       expect(dry.stderr).toContain("Dry run: nothing was published. Run again with --yes to publish: chant release publish v1 --yes");
       expect(calls()).toEqual([]);
@@ -136,8 +138,12 @@ describe("chant release publish with targets", () => {
       const pub = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(pub.code, pub.stderr).toBe(0);
       expect(calls().map((c) => c.args)).toEqual([
-        ["publish", join(dir, "packages/core"), "--access", "public", "--provenance"],
-        ["publish", join(dir, "packages/cli"), "--access", "public", "--provenance"],
+        ["view", "@acme/core@1.0.0", "version"],
+        ["publish", join(dir, "packages/core"), "--tag", "next", "--access", "public", "--provenance"],
+        ["view", "@acme/cli@1.0.0", "version"],
+        ["publish", join(dir, "packages/cli"), "--tag", "next", "--access", "public", "--provenance"],
+        ["dist-tag", "add", "@acme/core@1.0.0", "latest"],
+        ["dist-tag", "add", "@acme/cli@1.0.0", "latest"],
       ]);
       expect(calls().every((c) => c.tokenSet)).toBe(true);
       expect(reg.manifests.has(digest)).toBe(true);
@@ -165,7 +171,82 @@ describe("chant release publish with targets", () => {
       const moved = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(moved.code).toBe(1);
       expect(moved.stderr).toMatch(/\[release-head-mismatch\]/);
-      expect(calls()).toHaveLength(2);
+      expect(calls()).toHaveLength(6);
+    },
+    240_000,
+  );
+  test(
+    "a publish that failed at the image is resumed from a fresh clone with the record it pushed, and stages no package again",
+    async () => {
+      const work = join(root, "resume");
+      const remote = join(root, "resume-origin.git");
+      git(root, "init", "-q", "--bare", "-b", "main", remote);
+      git(root, "init", "-q", "-b", "main", work);
+      git(work, "config", "user.email", "t@chant.dev");
+      git(work, "config", "user.name", "T");
+      const publish = [
+        { type: "npm", packages: ["packages/core", "packages/cli"] },
+        { type: "oci", image: "image", repository: `${reg.host}/acme/resume` },
+      ];
+      writeFileSync(join(work, "chant.config.ts"), `export default { environments: ["dev"], release: { publish: ${JSON.stringify(publish)} } };\n`);
+      writeFileSync(
+        join(work, "api.component.ts"),
+        `export const api = { name: "api", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "dist/api.template.json" }] }] };\n`,
+      );
+      writeFileSync(join(work, ".gitignore"), "dist/\n");
+      writePackage(join(work, "packages", "core"), "@acme/rcore", "3.0.0");
+      writePackage(join(work, "packages", "cli"), "@acme/rcli", "3.0.0");
+      const { digest } = writeOciLayout(join(work, "image"), "resume layer");
+      git(work, "add", ".");
+      git(work, "commit", "-q", "-m", "init");
+      git(work, "remote", "add", "origin", remote);
+      git(work, "push", "-q", "origin", "main");
+      git(work, "fetch", "-q", "origin");
+      git(work, "tag", `ci/green/${git(work, "rev-parse", "HEAD")}`);
+
+      const log = join(root, "resume-npm.log");
+      const bin = join(root, "resume-bin");
+      writeFakeNpm(bin, log);
+      const path = { PATH: `${bin}:${process.env.PATH}` };
+      const calls = () => (existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { args: string[] }).args) : []);
+      const cut = await chant(work, ["release", "cut", "r3", "--build", BUILD, "--yes"], path);
+      expect(cut.code, cut.stderr).toBe(0);
+
+      // The registry refuses the password: npm staged, the image did not, and no tag moved. These packages
+      // are new, and npm makes a new package's first version latest whatever tag it was published under.
+      const failed = await chant(work, ["release", "publish", "r3", "--yes"], { ...path, OCI_USERNAME: "robot", OCI_PASSWORD: "wrong-password-0042" });
+      expect(failed.code).toBe(1);
+      expect(failed.stderr).toMatch(/\[publish-oci-failed\]/);
+      expect(failed.stderr).toContain("nothing is visible yet; staged: npm (2 packages)");
+      expect(failed.stderr).toContain("Run the same command again to resume; what went out is not published again: chant release publish r3 --yes");
+      expect(failed.stderr).not.toContain("wrong-password-0042");
+      expect(readFakeNpmRegistry(log).packages["@acme/rcore"]!.distTags).toEqual({ next: "3.0.0", latest: "3.0.0" });
+      expect(calls().filter((a) => a[0] === "dist-tag")).toEqual([]);
+      expect([...reg.manifests.keys()].filter((k) => k === "r3")).toEqual([]);
+
+      // A CI job resumes on a fresh clone of the release's commit: the record came with chant/lifecycle.
+      const fresh = join(root, "resume-fresh");
+      git(root, "clone", "-q", remote, fresh);
+      git(fresh, "config", "user.email", "ci@chant.dev");
+      git(fresh, "config", "user.name", "CI");
+      const before = calls().length;
+      const dry = await chant(fresh, ["release", "publish", "r3"], path);
+      expect(dry.code, dry.stderr).toBe(0);
+      expect(dry.stdout).toContain("npm (2 packages) (staged by an earlier run; only revealed):");
+      const resumed = await chant(fresh, ["release", "publish", "r3", "--yes", "--json"], { ...path, OCI_USERNAME: "robot", OCI_PASSWORD });
+      expect(resumed.code, resumed.stderr).toBe(0);
+      expect(calls().slice(before)).toEqual([
+        ["dist-tag", "add", "@acme/rcore@3.0.0", "latest"],
+        ["dist-tag", "add", "@acme/rcli@3.0.0", "latest"],
+      ]);
+      expect(reg.manifests.has(digest)).toBe(true);
+      expect(reg.manifests.has("r3")).toBe(true);
+      const doc = JSON.parse(resumed.stdout);
+      expect(doc.resumed).toEqual([{ target: "npm (2 packages)", step: "staged" }]);
+      expect(doc.targets.map((t: { progress: string }) => t.progress)).toEqual(["staged", "none"]);
+      const record = git(fresh, "show", "chant/lifecycle:_releases/publishes.jsonl").split("\n").map((l) => JSON.parse(l) as { kind: string; step: string });
+      expect(record.map((l) => `${l.kind} ${l.step}`)).toEqual(["npm staged", "oci staged", "npm revealed", "oci revealed"]);
+      expect(git(fresh, "log", "-p", "--all")).not.toContain(OCI_PASSWORD);
     },
     240_000,
   );

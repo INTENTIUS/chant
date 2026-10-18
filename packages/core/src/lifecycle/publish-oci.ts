@@ -7,11 +7,13 @@
  * names one manifest: an image manifest, or an index of them. The target
  * speaks the registry HTTP API (the OCI distribution spec) through an
  * injectable `fetch`, so it needs no docker, crane or oras, and the tests
- * run it against a registry fake on 127.0.0.1. For each image manifest it
+ * run it against a registry fake on 127.0.0.1. A publish is two steps
+ * (#4048). The stage pushes by digest only: for each image manifest it
  * uploads the config and layers the registry does not hold yet, then puts
- * the manifest by its digest, then the index when there is one, and last
- * points each tag at that digest. Every blob is checked against its digest
- * before it is sent.
+ * the manifest by its digest, then the index when there is one. A registry
+ * that already holds the top manifest's digest is sent nothing. Every blob
+ * is checked against its digest before it is sent. Nothing a consumer pulls
+ * by tag changes until the reveal, which points each tag at that digest.
  *
  * Credentials come from `usernameEnv` and `passwordEnv` (default
  * `OCI_USERNAME`, `OCI_PASSWORD`), or else from the `auths` entry for the
@@ -33,7 +35,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { OciPublishDeclaration } from "./publish-declaration";
-import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile } from "./publish-targets";
+import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
 
 const INDEX_TYPES = new Set(["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"]);
@@ -230,6 +232,12 @@ class Registry {
     return true;
   }
 
+  /** Whether the registry holds the manifest `digest`. */
+  async hasManifest(digest: string, mediaType: string): Promise<boolean> {
+    const res = await this.request("HEAD", `/v2/${this.repo.name}/manifests/${digest}`, { accept: mediaType });
+    return res.status === 200;
+  }
+
   async putManifest(ref: string, mediaType: string, bytes: Uint8Array): Promise<void> {
     const res = await this.request("PUT", `/v2/${this.repo.name}/manifests/${ref}`, { "content-type": mediaType }, bytes);
     if (res.status !== 201) this.fail(`putting manifest ${ref}`, res.status, await res.text());
@@ -266,31 +274,50 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
       digest,
     };
   };
+  const connect = (ctx: PublishContext) => {
+    const cred = ociCredential(decl, repo, ctx);
+    return { cred, registry: new Registry(repo, fetchImpl, cred, ctx) };
+  };
   return {
     kind: "oci",
     name: `oci ${decl.repository}`,
     destination: decl.repository,
     credentialEnv: [decl.passwordEnv ?? "OCI_PASSWORD"],
+    key: publishTargetKey(decl),
     async plan(ctx) {
       const layout = inspect(ctx);
       layout.cleanup();
       return [item(ctx, layout.top.digest)];
     },
-    async publish(ctx) {
+    async stage(ctx) {
       const layout = inspect(ctx);
       try {
-        const cred = ociCredential(decl, repo, ctx);
-        ctx.log(`pushing ${decl.image} to ${decl.repository} by digest ${layout.top.digest}, ${cred ? `with credentials from ${cred.password.from}` : "anonymously"}`);
-        const registry = new Registry(repo, fetchImpl, cred, ctx);
+        const { cred, registry } = connect(ctx);
+        const staged = { ...item(ctx, layout.top.digest), name: decl.image };
+        if (await registry.hasManifest(layout.top.digest, layout.top.mediaType)) {
+          ctx.log(`${decl.repository} already holds ${layout.top.digest}; nothing pushed`);
+          return { target: this.name, destination: this.destination, items: [{ ...staged, present: true }], state: {} };
+        }
+        ctx.log(`pushing ${decl.image} to ${decl.repository} by digest ${layout.top.digest}, ${cred ? `with credentials from ${cred.password.from}` : "anonymously"}; no tag moves yet`);
         let uploaded = 0;
         for (const m of layout.manifests) {
           for (const b of m.blobs) if (await registry.pushBlob(b.digest, () => layout.readBlob(b.digest))) uploaded++;
           await registry.putManifest(m.digest, m.mediaType, m.bytes);
         }
         if (INDEX_TYPES.has(layout.top.mediaType)) await registry.putManifest(layout.top.digest, layout.top.mediaType, layout.top.bytes);
+        ctx.log(`  ${uploaded} blob(s) uploaded`);
+        return { target: this.name, destination: this.destination, items: [staged], state: {} };
+      } finally {
+        layout.cleanup();
+      }
+    },
+    async reveal(ctx) {
+      const layout = inspect(ctx);
+      try {
+        const { registry } = connect(ctx);
         const tags = ociTags(decl, ctx);
         for (const t of tags) await registry.putManifest(t, layout.top.mediaType, layout.top.bytes);
-        ctx.log(`  ${uploaded} blob(s) uploaded${tags.length > 0 ? `, tagged ${tags.join(", ")}` : ""}`);
+        ctx.log(tags.length > 0 ? `tagged ${layout.top.digest} ${tags.join(", ")}` : `no tag to point at ${layout.top.digest}`);
         return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest)] };
       } finally {
         layout.cleanup();
