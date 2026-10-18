@@ -245,9 +245,9 @@ The records name one another through the release digest ([#4043](https://github.
 |---|---|---|
 | commit | releases | the `commit` of each `_releases/<releaseDigest>.json` |
 | release | gates | `releaseDigest` on the facts of `_gates/release.jsonl` |
-| release | deploy records | `releaseDigest` on the records of every `<env>/releases.jsonl` |
+| release | deploy records | `releaseDigest` on the records of every `<env>/releases.jsonl`, or for a record with none, the release gate resolution its `admission` names |
 | deploy record | release | its `releaseDigest`, or for a record with none but an `admission` of op `release`, the resolution that admission names |
 
 A deploy record's `env` with its `releaseDigest` names the target. `components promote --release` and [`run --components --release`](/chant/cli/run/#running-a-release---release) write the field, and `components rollback` and `components redeploy` copy it from the record they restore. [`workspace status`](/chant/cli/workspace-status/) lists it on each item as `releaseDigest`, with `releaseLabel`, the label the cut gave.
 
-`joinRelease` in `lifecycle/release-join.ts` does the walk for a library reader. It takes `{ commit }`, `{ release }`, `{ deploy }` or `{ gate }` and returns what it found, each with its `label`, `commit`, `cuts`, `gates` and `deploys`. A commit can have several. A starting point that names nothing returns an empty list and a `reason`.
+`joinRelease` in `lifecycle/release-join.ts` does the walk for a library reader. It takes `{ commit }`, `{ commits }`, `{ release }`, `{ deploy }` or `{ gate }` and returns what it found, each with its `label`, `commit`, `cuts`, `gates` and `deploys`. A commit can have several. `{ commits }` joins every release cut from any of several commits and reads the ledgers once ([#4023](https://github.com/INTENTIUS/chant/issues/4023)). A starting point that names nothing returns an empty list and a `reason`. [`workspace graph --intent`](/chant/cli/workspace-graph/#the-why-chain) uses it for the why chain, from a piece of code to the releases and deploys that shipped it.

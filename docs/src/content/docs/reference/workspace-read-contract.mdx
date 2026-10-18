@@ -549,9 +549,9 @@ A record kind with an `answers` block is an answer kind ([ws-058](https://github
 
 ## The intent graph
 
-`chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). Besides a path, a line range and a graph node id, the region can be `path#symbol`: a TypeScript or JavaScript declaration, resolved to its current lines ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
+`chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). Besides a path, a line range and a graph node id, the region can be `path#symbol`: a TypeScript or JavaScript declaration, resolved to its current lines ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). It can also be a commit sha, when no path or node has the name ([#4023](https://github.com/INTENTIUS/chant/issues/4023)): the region is then the commit and the files it changed against its first parent, and the history holds that commit alone. It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
 
-A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each kind file with its `name`, the record kind it reads and the form of its `commitJoins`. The files are the `--kind` files, or without `--kind`, every kind the declaration names, in its order ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. `why` answers why the region is like this, as described [below](#why-the-region-is-like-this). A failure has `error: { code, message }` with a declaration code, a record kind code, `intent-region-invalid`, or an `intent-symbol-` code for a symbol that can't be resolved.
+A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each kind file with its `name`, the record kind it reads and the form of its `commitJoins`. The files are the `--kind` files, or without `--kind`, every kind the declaration names, in its order ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. `why` answers why the region is like this, as described [below](#why-the-region-is-like-this), and `trace` is [the why chain](#the-why-chain), from each commit to the work item it names and the releases and deploys that shipped it. A failure has `error: { code, message }` with a declaration code, a record kind code, `intent-region-invalid`, or an `intent-symbol-` code for a symbol that can't be resolved.
 
 The walk runs in this order, and the nodes are listed in it:
 
@@ -565,7 +565,7 @@ The walk runs in this order, and the nodes are listed in it:
 
 | Node kind | Id | Fields |
 |---|---|---|
-| `region` | `region:<path>`, `region:<path>:<start>-<end>` or `region:<path>#<symbol>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, `node` when the region was given as a graph node id, and `symbol` as `{ name, qualified, kind }` when it was given as `path#symbol`, with the symbol's current lines in `lines` |
+| `region` | `region:<path>`, `region:<path>:<start>-<end>`, `region:<path>#<symbol>` or `region:commit:<sha>` | `path` from the workspace root (`.` for a commit), `lines` or `null`, `member`, `at`, `type` (`file`, `dir`, or `commit` for a commit, whose full sha is in `commit`), `generated` for a file, `node` when the region was given as a graph node id, and `symbol` as `{ name, qualified, kind }` when it was given as `path#symbol`, with the symbol's current lines in `lines` |
 | `file` | `file:<path>` | `path`, `member`, `generated` |
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
 | `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read, and `joins`, what [chant's trailers](#commit-trailers) on it say. With `--follow-squash`, a squash commit also has `squash`: `{ pullRequest, forge, ref, head, fetched, followed, commits }`, its pull request's original commits, each with `sha`, `subject`, `author`, `date`, `trailers`, `signature` and `joins` ([#3035](https://github.com/INTENTIUS/chant/issues/3035)) |
@@ -621,6 +621,62 @@ A recorded run's work item and the records it names are carried by each commit t
 A commit joins a run in this order: its `Chant-Run` trailer, then the run's own list of commits, then, only when neither gives a run, its patch-id ([#3036](https://github.com/INTENTIUS/chant/issues/3036)). A patch-id join never overrides the others. A commit one run claims by trailer or record whose content matches a commit another run recorded keeps its join, and the walk reports `intent-commit-join-conflict`. A squash commit is followed to its pull request's original commits only with `--follow-squash` ([#3035](https://github.com/INTENTIUS/chant/issues/3035)): the read then fetches a pull request ref the clone lacks, and a ref it can't read is `squash-unfollowed`, never a failure. `patch-id` and `squash` in `joinedBy`, `recordedAs`, `via`, `squash` and the `joinedBy` fields of `why` were added within contract 1: a reader that finds no `joinedBy` on a span is reading an older chant, and a reader that switches on `joinedBy` values treats one it doesn't know as a join it can't vouch for.
 
 The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
+
+### The why chain
+
+`trace` follows each commit of the walk to what shipped it ([#4023](https://github.com/INTENTIUS/chant/issues/4023)), so "who asked for this, and who let it ship" takes one read. It adds no node and changes no other field. `trace.commits` holds one entry per commit node, in the same order. `trace.releases` and `trace.deploys` hold each record those entries name once. The fields below come in the order a reader follows the chain.
+
+| `trace.commits[]` field | Holds |
+|---|---|
+| `commit`, `sha` | the commit node and its sha |
+| `work` | `{ state, items, problems }`, the [commit link](#the-forward-coverage-check) judgement of [#4029](https://github.com/INTENTIUS/chant/issues/4029): `linked`, `unlinked`, `wrong` or `merge`. `items` names each work item a `Chant-Record` or `Chant-Lease` trailer links, as `{ id, node, source }`. `null` when no work kind was read |
+| `windowMatches` | the work items whose window holds the commit, the `within` edges with `state: "worked"`, as `{ id, node, source }`. A window match does not link the commit |
+| `tag` | `{ state, green, revoked, ignored }`, judged as `release cut` judges tags ([#4031](https://github.com/INTENTIUS/chant/issues/4031)). `state` is `revoked`, `green` or `none`. A counted tag has `tag`, `tagged`, `signer` and `source`, and a revoked one also `phase` and `run`. `ignored` lists the tags that don't count |
+| `releases` | each `{ release, link, source }`, where `release` is a `releaseDigest`. The releases cut from the commit have `link: "cut-from"`. When there are none, the first release cut from a commit that has it in its history is listed with `link: "contains"` |
+| `deploys` | each `{ deploy, env, link, source }`: per environment, the first deploy record built from the commit (`built-from`) or from a commit that has it in its history (`contains`) |
+
+| `trace.releases[]` field | Holds |
+|---|---|
+| `releaseDigest`, `label`, `member` | the release |
+| `commit`, `tag` | the green commit it was cut from, and that commit's tag |
+| `cuts` | its cuts, each with its `label`, `actor` and `timestamp`, whether it is `signed`, and its `runOrigin` |
+| `gates` | the release gate's resolutions for it, oldest first |
+| `deploys` | the ids of its deploy records |
+
+A gate resolution, in `gates` and in a deploy's `admittedBy`, has these fields.
+
+| Gate field | Holds |
+|---|---|
+| `op`, `gate`, `environment` | where the resolution sits in the gate ledger |
+| `resolvedBy`, `relayedBy` | who resolved it, and who carried the approval for them, or `null` |
+| `channel` | the channel it was authored on: `cli`, `mcp`, `acp`, or `null` when the record doesn't say |
+| `at` | the resolution's timestamp |
+| `planDigest`, `changeSet` | the plan it approved, and that digest again when a [change set](#stored-change-sets) is stored under it, else `null` |
+| `empty`, `sealed` | whether it passed an empty change set, and whether it carries an ssh seal |
+| `url` | the address it was resolved at, or `null` |
+
+| `trace.deploys[]` field | Holds |
+|---|---|
+| `id` | `deploy:<member>/<env>/<component>/<runId>@<timestamp>`, with `.` for a ledger of no member |
+| the `ReleaseRecord` fields | as the record in `<env>/releases.jsonl` holds them, with `approver` and `runOrigin` set to `null` when absent |
+| `release`, `releaseSource` | its `releaseDigest`, or with none the one on the release gate resolution its `admission` names, or `null` for a deploy made from no release |
+| `admittedBy` | the gate resolution its `admission` names, or `null` |
+| `plan` | `{ document, source }`, the release plan its `digest` names in `_plans/` ([ws-055](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-055-dev-model-ledgers.md)), or `null` |
+
+The joins are [`joinRelease`](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys)'s ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). A commit has another in its history when it is that commit or one of its descendants in the history read.
+
+Every link has a `source` object. Its `ref` names the record the link comes from, and its `field` and `value` say what made the join, such as `Chant-Record`, `commit`, `releaseDigest`, `admission` or `gitSha`.
+
+| `source.ref` | For |
+|---|---|
+| a commit sha | a `Chant-Record` or `Chant-Lease` trailer |
+| `refs/tags/ci/<green or revoked>/<sha>` | a ci tag |
+| a work record's file | a window match |
+| `chant/lifecycle:<path>` | a ledger record, such as a release file or a line of a `.jsonl` |
+
+The chain reads the ledger of the region's member. A region in no member reads every member's ledger and the workspace's own. It reads local tags and the local `chant/lifecycle` branch only. `trace.reasons` holds `ledger-unreadable` for a ledger that could not be read and `declaration-invalid` for tags that could not be judged. The rest of the chain stands.
+
+[#3171](https://github.com/INTENTIUS/chant/issues/3171) lets a work item's evidence cite what the chain names. [#3616](https://github.com/INTENTIUS/chant/issues/3616) has each gate name the decisions that cover its member. The chain joins records that already exist and adds neither. chant 0.124.29 is the first to write `trace` and to take a commit as the region. Both are contract 1 additions.
 
 ### One record's walk
 
@@ -828,6 +884,7 @@ The release model adds these fields to contract 1. Every one is optional or null
 `window` names the span counted, `since` to `until`, and `failureWindowDays` the days after a deploy in which a revocation or a rollback fails it, from the declaration's [`metrics`](/chant/reference/workspace-declaration/#metrics) block or 7. Each entry of `members[].environments` holds `deployments`, `leadTime`, `changeFailure`, `restore` and the `failures` behind them, each naming its deploy by `runId` and `timestamp`. A member whose ledger can't be read is listed with `ledger-unreadable`, and one with lines that can't be read with `ledger-malformed`; the rest is counted. The [`workspace metrics`](/chant/cli/workspace-metrics/#the-metrics) page defines each metric.
 
 A deploy record written before chant 0.124.29 may lack `releaseDigest`. It counts as a deploy made from no release: its commit is its `gitSha`, and its change is counted in `leadTime.fromCommit`.
+| `trace` | `intent` | the why chain from each commit to its work item, ci tag, release, gate resolutions and deploys ([#4023](https://github.com/INTENTIUS/chant/issues/4023)) | 0.124.29 |
 
 ## Stored change sets
 
@@ -865,6 +922,8 @@ These fields are optional in their documents. Each schema description names the 
 | `records` | `records[].flag` | 0.124.29 | On every parsed record of a kind with a `flag` block: `work`, `implements` with `confirmed` on each decision, and `stale` ([#4024](https://github.com/INTENTIUS/chant/issues/4024)) |
 | `releases` | `releases[].cuts[].runId` | 0.124.29 | The run the cut ran in: the CI run's id in CI, or `local-<epoch ms>` minted on the machine that cut. `null` on a cut written before 0.124.29 ([#4027](https://github.com/INTENTIUS/chant/issues/4027)) |
 | `releases` | `releases[].cuts[].runOrigin` | 0.124.29 | A cut outside CI writes `{ "forge": "local" }`, where it wrote `null`. A cut written before 0.124.29 still reads `null` outside CI ([#4027](https://github.com/INTENTIUS/chant/issues/4027)) |
+| `intent` | `trace` | 0.124.29 | The why chain: each commit's work item, ci tag, release, gate resolutions and deploy records, every link with its `source` ([#4023](https://github.com/INTENTIUS/chant/issues/4023)). See [The why chain](#the-why-chain) |
+| `intent` | the commit region: a region `type` of `commit`, the region node's `commit`, and `history.follows` of `commit` | 0.124.29 | A region given as a commit sha ([#4023](https://github.com/INTENTIUS/chant/issues/4023)). A reader that switches on `type` or `follows` treats a value it does not know as one it can't read |
 | `ci-last-green` | `ignored` | 0.124.28 | The tags the walk passed over for want of a valid statement, newest first, shaped as in `ci-list` ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
 | `ci-list` | `commits[].phases[].runs[].opRun`, `commits[].revoked.run.opRun` | 0.124.28 | The Op run behind a result when the source is chant runs, `{ id, env, signer }`, where `signer` is the runner whose statement the run carries. The run's `name` is then the Op's name and its `id` is `null`. Absent for a check run ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |
 | `ci-list` | `commits[].ignoredRuns` | 0.124.28 | Present only when the source is chant runs: the Op runs on the commit that don't count for want of a valid statement, each `{ run, op, env, status, reason }`, with `status` as in `ignored` ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |

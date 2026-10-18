@@ -431,11 +431,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace graph --composites` (#2662)
       result.composites = true;
     } else if (arg === "--intent") {
-      // `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651), or `--intent --record <id>` with no region.
+      // `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha>` (#2651), or `--intent --record <id>` with no region.
       const value = args[i + 1];
       if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
       else if (args.includes("--record")) result.intent = "";
-      else throw new Error("--intent needs a region: --intent <path[:start-end]|path#symbol>, or --intent --record <id>");
+      else throw new Error("--intent needs a region: --intent <path[:start-end]|path#symbol|member/node|sha>, or --intent --record <id>");
     } else if (arg === "--follow-squash") {
       // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
       result.followSquash = true;

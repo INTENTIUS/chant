@@ -217,6 +217,8 @@ Each row follows, in the order of the table above.
 | reason code | `ir-version-unsupported` | chant | composites.schema.json, graph.schema.json | The member's IR has a version this chant can't read. |
 | reason code | `ledger-unreadable` | chant | change-set-show.schema.json, delivery-metrics.schema.json, releases.schema.json, status.schema.json | Reading the ledger failed, so nothing from it is listed. |
 | reason code | `ledger-malformed` | chant | change-set-show.schema.json, delivery-metrics.schema.json, releases.schema.json, status.schema.json | Some lines of the ledger aren't release records; the rest are listed. |
+| reason code | `ledger-unreadable` | chant | change-set-show.schema.json, intent.schema.json, releases.schema.json, status.schema.json | Reading the ledger failed, so nothing from it is listed. |
+| reason code | `ledger-malformed` | chant | change-set-show.schema.json, releases.schema.json, status.schema.json | Some lines of the ledger aren't release records; the rest are listed. |
 | reason code | `gates-no-ledger` | chant | status.schema.json | The checkout has no chant/lifecycle branch, so there is no gate ledger to read. |
 | reason code | `gates-no-gate-ledger` | chant | status.schema.json | The branch has no gate ledger for the member: no run of it has reached a gate. |
 | reason code | `gates-ledger-unreadable` | chant | status.schema.json | Reading the member's gate ledger failed, so no gate is listed. |

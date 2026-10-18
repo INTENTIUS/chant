@@ -801,7 +801,7 @@ rows:
   - category: "reason-code"
     concept: "ledger-unreadable"
     owner: "chant"
-    carrier: "change-set-show.schema.json, delivery-metrics.schema.json, releases.schema.json, status.schema.json"
+    carrier: "change-set-show.schema.json, delivery-metrics.schema.json, intent.schema.json, releases.schema.json, status.schema.json"
     what: "Reading the ledger failed, so nothing from it is listed."
   - category: "reason-code"
     concept: "ledger-malformed"
