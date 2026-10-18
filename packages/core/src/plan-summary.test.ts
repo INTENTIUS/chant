@@ -261,3 +261,23 @@ describe("addresses", () => {
     expect(escapeMarkerAddress('aws_s3_bucket.logs["a*b"]')).toBe("aws_s3_bucket.logs:a+00002Ab");
   });
 });
+
+describe("a no-change group with holes (#4084)", () => {
+  const part = (member: string, holes: ChangeSetPart["member"]["holes"] = []): ChangeSetPart => ({
+    member: { member, lexicon: "aws", planner: "chant", status: "planned", planDigest: `jcs1-sha256:${member}`, holes },
+    entries: [],
+  });
+  const hole = { address: "cluster-a", type: "AWS::CloudFormation::Stack", reason: "inputs from network; re-checked on apply" };
+
+  test("does not say no changes for a member whose plan has holes, and keeps the group and its id", () => {
+    const withHole = groupChangeSet(composeChangeSet([part("app-01"), part("app-02"), part("cluster-a", [hole])]));
+    const without = groupChangeSet(composeChangeSet([part("app-01"), part("app-02"), part("cluster-a")]));
+    expect(withHole.groups.map((g) => [g.id, g.units, g.noChanges])).toEqual(without.groups.map((g) => [g.id, g.units, g.noChanges]));
+    const id = withHole.groups[0].id;
+    const text = renderPlanSummaryText(withHole);
+    expect(text).toContain(`Group ${id}: 3 members, no changes known: 1 with holes, listed above:`);
+    expect(text).toContain("cluster-a: cluster-a: inputs from network; re-checked on apply");
+    expect(renderPlanSummaryMarkdown(withHole)).toContain(`#### Group ${id}: 3 members, no changes known: 1 with holes, listed above`);
+    expect(renderPlanSummaryText(without)).toContain(`Group ${id}: 3 members, no changes:`);
+  });
+});
