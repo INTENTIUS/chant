@@ -4,7 +4,7 @@ description: The release.publish block in chant.config.ts and the targets it dec
 diataxis: reference
 ---
 
-`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials. It ends with the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/#release-publish).
+`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials, how a publish stages every target before any becomes visible and resumes after a failure ([#4048](https://github.com/INTENTIUS/chant/issues/4048)), and the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/#release-publish).
 
 ## Declaring targets
 
@@ -33,13 +33,17 @@ A target never builds. It uploads the files that are there. A file that the rele
 
 | Field | Meaning |
 |---|---|
-| `packages` | Package directories or `.tgz` files from `npm pack` in the order to publish them |
+| `packages` | Package directories or `.tgz` files from `npm pack` in the order to publish them. The first is the set's core |
 | `registry` | The registry URL. Default: the one npm's own config names |
 | `access` | `public` or `restricted` for npm's `--access` |
 
-For each package the target runs `npm publish <package>` with the declared `--registry` and `--access`. It adds `--tag <tag>` when the publish has a tag and `--provenance` when the run has an OIDC token. A publish from GitHub Actions with `id-token: write` gets npm provenance this way. So does one from GitLab CI with `SIGSTORE_ID_TOKEN`, and npm trusted publishing works in both. Order the list so a package comes after the packages it depends on. When one package fails, the error names the packages published before it.
+The stage runs, for each package, `npm view <name>@<version> version` to ask whether the registry already holds the version. When it doesn't, it runs `npm publish <package> --tag next` with the declared `--registry` and `--access`, and `--provenance` when the run has an OIDC token. A publish from GitHub Actions with `id-token: write` gets npm provenance this way. So does one from GitLab CI with `SIGSTORE_ID_TOKEN`, and npm trusted publishing works in both. A version under `next` is not what `latest` or a range resolves to, so a consumer sees nothing yet. A version already on the registry is not published again. When one package fails, the error names the packages staged before it.
 
-npm authenticates with its own config. chant reads no npm token and writes no `.npmrc`. On a workstation that is `npm login`. In GitHub Actions, `actions/setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`, and trusted publishing needs no token. npm runs with the run's environment, and chant masks what it prints.
+The reveal runs `npm dist-tag add <name>@<version> latest` for each package in the declared order, with the declared `--registry`. The first package declared is the set's core, and its `latest` moves first, so a consumer that resolves a new package also finds its new core. Order the list core first, then each package after the packages it depends on. This is the order chant's own releases use ([#3903](https://github.com/INTENTIUS/chant/issues/3903)).
+
+A new package is the exception: npm makes its first version `latest` whatever tag it is published under, so that version is visible as soon as it stages. Moving a dist-tag needs credentials that may change dist-tags. Over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record, which is separate from publishing.
+
+For both steps npm authenticates with its own config. chant reads no npm token and writes no `.npmrc`. On a workstation that is `npm login`. In GitHub Actions, `actions/setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`, and trusted publishing needs no token. npm runs with the run's environment, and chant masks what it prints.
 
 ## OCI registries
 
@@ -50,7 +54,7 @@ npm authenticates with its own config. chant reads no npm token and writes no `.
 | `tags` | Tags to point at the pushed digest. `{label}` is the release's label. The default is `["{label}"]` when the release has a label |
 | `usernameEnv` and `passwordEnv` | The variables holding the registry user and its password or token. The defaults are `OCI_USERNAME` and `OCI_PASSWORD` |
 
-The target speaks the registry HTTP API directly, so it needs no registry client installed. It uploads each config and layer blob the registry does not hold yet, checking each against its digest first. Then it puts each manifest by its digest, then the index when there is one. Last it points each tag at that digest. A `Basic` challenge takes the credentials as they are. A `Bearer` challenge, as GHCR and Docker Hub send, exchanges them for a token at the realm it names.
+The target speaks the registry HTTP API directly, so it needs no registry client installed. The stage pushes by digest only. It asks whether the registry already holds the image's manifest digest and sends nothing when it does. Otherwise it uploads each config and layer blob the registry does not hold yet, checking each against its digest first, then puts each manifest by its digest, then the index when there is one. A consumer that pulls by tag sees none of it. The reveal points each tag at that digest. A `Basic` challenge takes the credentials as they are. A `Bearer` challenge, as GHCR and Docker Hub send, exchanges them for a token at the realm it names.
 
 With neither variable set, the target reads the registry's `auths` entry from the docker config file (`$DOCKER_CONFIG/config.json`, else `~/.docker/config.json`) that `docker login` writes. It does not run a credential helper (`credsStore`). With none of these, the push is anonymous.
 
@@ -67,15 +71,37 @@ With neither variable set, the target reads the registry's `auths` entry from th
 | `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
 
-The target finds the forge's release for the tag and creates it at the release's commit when there is none. GitHub and Forgejo then create the tag on the forge if it was not pushed. A release with no label and no declared `tag` is refused (`publish-forge-no-tag`).
+A release with no label and no declared `tag` is refused (`publish-forge-no-tag`). The stage puts the assets where no consumer sees them, and the reveal makes the release visible with all of them at once.
 
-| Forge | How an asset is attached |
+| Forge | Stage | Reveal |
+|---|---|---|
+| GitHub | Finds the draft release for the tag, or creates one with `draft: true` at the release's commit, and uploads each asset to its `upload_url` | Publishes the draft, and GitHub creates the tag if it was not pushed |
+| Forgejo | The same draft, with a multipart upload of each asset to `/repos/{repo}/releases/{id}/assets` | Publishes the draft, as GitHub does |
+| GitLab | Puts each asset in the project's generic package registry as package `release` at the label's version. GitLab has no draft release, so it makes none | Creates the release at the commit with a link to each asset, in one request |
+
+An asset already on the draft with the same name and a matching `digest` is left as it is, so a stage run again uploads only what is missing. One whose digest differs is refused (`publish-forge-asset-exists`), and so is one on Forgejo, which reports no digest. A release already published for the tag is refused (`publish-forge-release-published`), since assets uploaded to it would show one at a time. The exception is a published release that already holds every asset, which is what an earlier publish leaves; the stage then does nothing.
+
+## Staging and resuming
+
+A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them, in the same order. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package. A failure while revealing leaves the targets before it visible and the rest staged.
+
+Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifecycle`, beside `cuts.jsonl` and under the member's prefix. The file is append-only, and each line is pushed as soon as it is written. This line, `version` 1, is what chant 0.124.29 and newer write after staging an npm target:
+
+```json
+{"version":1,"releaseDigest":"jcs1-sha256:...","label":"v1.4.0","target":"npm:3fa2b1c4d5e6f708","kind":"npm","name":"npm (2 packages)","step":"staged","items":[{"name":"@acme/core@1.4.0","destination":"..."}],"state":{},"runId":"8123456789","timestamp":"2026-10-17T10:00:00.000Z"}
+```
+
+| Field | Meaning |
 |---|---|
-| GitHub | Uploaded to the release's `upload_url`. An asset already there with the same name and a matching `digest` is left as it is |
-| Forgejo | A multipart upload to `/repos/{repo}/releases/{id}/assets` |
-| GitLab | Put in the project's generic package registry as package `release` at the label's version, then linked to the release |
+| `target` | The target's key: its kind and the first 16 hex digits of the SHA-256 of its declaration. A declaration holds variable names and never a credential |
+| `step` | `staged` or `revealed` |
+| `items` | What the step published, with each destination and digest |
+| `state` | What the reveal needs that it can't read from the checkout, such as a draft release's `releaseId` |
+| `runId` | The CI run, or a `local-<epoch ms>` id on a workstation |
 
-Forgejo and GitLab report no digest for an asset, so an asset of the same name there is refused (`publish-forge-asset-exists`). On GitHub that happens when the digests differ.
+Run again after a failure, the publish reads the record first. A target with a `revealed` line is skipped. A target with a `staged` line is revealed without staging again. The rest stage, and each stage asks its destination before it sends anything: an npm version on the registry, an image digest the registry holds, or an asset on the draft is not sent twice. So a resume publishes nothing twice, and that holds even when a record line was not written or not pushed, only slower. The record is pushed so that a CI job on a fresh clone of the release's commit resumes where the failed job stopped, since `chant release publish` fetches `chant/lifecycle` first. A push that fails is a warning, not a failure.
+
+The record is on the branch rather than read from the registries alone, because a registry can say that a version or a digest is there but not that it belongs to this release's publish, or that every target of the set has staged, which is when the reveals may start. Each line is redacted before it is written, and holds names, destinations, digests and draft ids, never a credential.
 
 ## Credentials
 
@@ -100,14 +126,18 @@ interface PublishTarget {
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
   credentialEnv: string[]; // variables it reads credentials from, masked from the start
+  key: string;             // names the declaration across runs, for the publish record
   plan(ctx: PublishContext): Promise<PublishItem[]>;
-  publish(ctx: PublishContext): Promise<PublishedTarget>;
+  stage(ctx: PublishContext): Promise<StagedTarget>;
+  reveal(ctx: PublishContext, staged: StagedTarget): Promise<PublishedTarget>;
 }
 ```
 
-`plan` reads what the target would publish and checks that it can: the files are there, they match the release's digests, the credentials are set. It uploads nothing and sends no request that changes anything. The publish plans every target before any of them publishes, and the dry run prints what `plan` returns. `publish` publishes and returns each item with where it went. Both throw `PublishTargetError` with a `code`, a message and an optional `fix`. A failure part way names what was already published.
+`plan` reads what the target would publish and checks that it can: the files are there, they match the release's digests, the credentials are set. It uploads nothing and sends no request that changes anything. The publish plans every target before any of them stages, and the dry run prints what `plan` returns.
 
-Both are given a `PublishContext` with these fields.
+`stage` puts every item where the target publishes but where no consumer resolves it yet. It asks the destination first, sends nothing already there, and returns such an item with `present: true`. The `StagedTarget` that comes back holds the items and a `state` of strings the reveal needs. The record keeps that state, so it must never hold a credential. `reveal` is the one last step that makes the staged items visible, given what `stage` returned in this run or in an earlier one. Run again, it must move nothing that already moved. All three throw `PublishTargetError` with a `code`, a message and an optional `fix`. A failure part way names what was already staged or revealed.
+
+All three are given a `PublishContext` with these fields.
 
 | Field | Meaning |
 |---|---|
@@ -115,15 +145,15 @@ Both are given a `PublishContext` with these fields.
 | `releaseTag` | The tag the cut made, or null with no label |
 | `provenance` | Whether the run has an OIDC token, and why not |
 | `cwd` | The member's directory |
-| `tag` | A tag to publish under in place of the target's own (npm's dist-tag, the OCI tags), or null |
+| `tag` | A tag for the reveal to move in place of the target's own (npm's `latest`, the OCI tags), or null. Staging never uses it |
 | `env` | The environment credentials are read from |
 | `redactor` | Masks credentials. A target adds each credential and token it reads |
 | `log(line)` | Prints a line of progress, redacted |
 
-The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI and forge targets use and the `npm` executable. In the tests npm runs as a fake binary and the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, while the forge targets call a recording fetch function.
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI and forge targets use and the `npm` executable. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
 
 Adding a kind of target takes three changes. Its schema joins the declaration union in `lifecycle/publish-declaration.ts`, and a factory in a module of its own returns its `PublishTarget`. Then `createPublishTargets` in `lifecycle/publish-targets.ts` gets a case that calls the factory.
 
 ## What comes next
 
-Publishing a set all or nothing, staging under the `tag` parameter and resuming a publish that failed part way are [#4048](https://github.com/INTENTIUS/chant/issues/4048). Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049).
+Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049).

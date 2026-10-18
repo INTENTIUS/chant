@@ -662,6 +662,27 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`chant ci tick` lists every check run on each commit within `ci.green`'s window, to judge its phases by each run's latest attempt (#3573). The client takes an injected `fetch`, so no test opens a socket.",
   },
   {
+    file: "packages/core/src/lifecycle/release-publish.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the registries and forges a member's `release.publish` declares",
+    why: "`chant release publish --yes` (#4047, #4048) hands the global `fetch` to the OCI and forge targets as their default HTTP client. It only names the default; the requests are the targets'. Tests inject a fake `fetch`.",
+  },
+  {
+    file: "packages/core/src/lifecycle/publish-oci.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "an OCI registry a `release.publish` target names (GHCR, Docker Hub, any registry API v2)",
+    why: "`chant release publish --yes` pushes a release's images by digest and, at the reveal, moves their tags (#4047, #4048). Tests run against a registry fake on 127.0.0.1.",
+  },
+  {
+    file: "packages/core/src/lifecycle/publish-forge.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the GitHub, GitLab or Forgejo API a `release.publish` forge target names",
+    why: "`chant release publish --yes` uploads a release's assets to a draft release and publishes it at the reveal (#4047, #4048). Tests inject a recording `fetch`.",
+  },
+  {
     file: "packages/core/src/op/activities/pipeline-audit.ts",
     primitives: ["fetch"],
     phase: "apply",

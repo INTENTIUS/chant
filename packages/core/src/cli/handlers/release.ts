@@ -72,7 +72,7 @@ export function nextCommands(req: {
 /** The command line that ran, without `--json`, with `--yes` added: what a dry run says to run next. */
 export function sameWithYes(argv: readonly string[]): string {
   const quote = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`);
-  return ["chant", ...argv.filter((a) => a !== "--json"), "--yes"].map(quote).join(" ");
+  return ["chant", ...argv.filter((a) => a !== "--json" && a !== "--yes"), "--yes"].map(quote).join(" ");
 }
 
 function describeActorSource(source: import("../../lifecycle/release-workstation").ActorSource): string {
@@ -311,7 +311,9 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
  * run has no OIDC token, so what it publishes carries no provenance. Every
  * target is planned (its files read and checked, its credentials found)
  * before any publishes. Without `--yes` it is a dry run that prints the plan
- * and uploads nothing. Nothing is recorded, and every line is redacted.
+ * and uploads nothing. With `--yes` it stages every target, then reveals them
+ * (#4048, `runPublish`), recording each step in `_releases/publishes.jsonl`,
+ * so running it again after a failure resumes. Every line is redacted.
  */
 export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -327,7 +329,8 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     return 1;
   };
   const { fetchLifecycle } = await import("../../lifecycle/git");
-  const { preparePublish, publishContext, PublishTargetError } = await import("../../lifecycle/release-publish");
+  const { preparePublish, publishContext, runPublish, PublishTargetError, PublishRunError } = await import("../../lifecycle/release-publish");
+  const { publishProgress, progressOf, readPublishRecords } = await import("../../lifecycle/publish-record");
   await fetchLifecycle({ cwd }).catch(() => false);
   const prepared = await preparePublish({ cwd, ref });
   if ("refusal" in prepared) return fail(prepared.refusal.code, prepared.refusal.message, prepared.refusal.fix);
@@ -348,10 +351,11 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   const pctx = publishContext(prepared, { cwd, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
 
   // Every target is planned before any publishes, so a missing file or credential stops the publish with nothing sent.
-  const planned: Array<{ kind: string; name: string; destination: string; items: import("../../lifecycle/release-publish").PublishItem[] }> = [];
+  const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
+  const planned: Array<{ kind: string; name: string; destination: string; progress: "none" | "staged" | "revealed"; items: import("../../lifecycle/release-publish").PublishItem[] }> = [];
   for (const target of targets) {
     try {
-      planned.push({ kind: target.kind, name: target.name, destination: target.destination, items: await target.plan(pctx) });
+      planned.push({ kind: target.kind, name: target.name, destination: target.destination, progress: progressOf(progress, target), items: await target.plan(pctx) });
     } catch (err) {
       const e = errorOf(err);
       return failed(e.code, `nothing was published: ${target.name}: ${e.message}`, e.fix);
@@ -376,7 +380,8 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     out("What would be published where:");
     if (planned.length === 0) out("  nothing: this member declares no publish target (release.publish in chant.config.ts)");
     for (const p of planned) {
-      out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}:`);
+      const earlier = p.progress === "revealed" ? " (published by an earlier run; skipped)" : p.progress === "staged" ? " (staged by an earlier run; only revealed)" : "";
+      out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}${earlier}:`);
       for (const i of p.items) out(`    ${i.name} to ${i.destination}`);
     }
     say(`Dry run: nothing was published. Run again with --yes to publish: ${next[0]}`);
@@ -385,19 +390,26 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     return 0;
   }
 
-  const published: import("../../lifecycle/release-publish").PublishedTarget[] = [];
-  for (const target of targets) {
-    if (!args.json) say(`  publishing to ${target.destination}`);
-    try {
-      published.push(await target.publish(pctx));
-    } catch (err) {
-      const e = errorOf(err);
-      const before = published.length > 0 ? `; published before it: ${published.map((p) => p.target).join(", ")}` : "";
-      return failed(e.code, `${target.name}: ${e.message}${before}`, e.fix);
+  if (targets.length > 0 && !args.json) say("  every target stages first, and none is visible until all have staged");
+  let run: import("../../lifecycle/release-publish").PublishRun;
+  try {
+    run = await runPublish({ cwd, release, label, targets, ctx: pctx, say: (line) => (args.json ? undefined : say(line)) });
+  } catch (err) {
+    if (err instanceof PublishRunError) {
+      const again = sameWithYes(process.argv.slice(2));
+      const where =
+        err.step === "stage"
+          ? `nothing is visible yet${err.staged.length > 0 ? `; staged: ${err.staged.join(", ")}` : ""}`
+          : `revealed: ${err.revealed.length > 0 ? err.revealed.join(", ") : "none"}; staged and not yet revealed: ${err.staged.filter((t) => !err.revealed.includes(t)).join(", ")}`;
+      return failed(err.code, `${err.message}; ${where}`, `${err.fix ? `${err.fix} ` : ""}Run the same command again to resume; what went out is not published again: ${again}`);
     }
+    const e = errorOf(err);
+    return failed(e.code, e.message, e.fix);
   }
+  const { published } = run;
+  if (run.recordWarning && targets.length > 0) console.error(formatWarning({ message: redactor.redact(`${run.recordWarning}. A resume asks the registries what is already there.`) }));
   if (args.json) {
-    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, environments: deploySteps }, null, 2)));
+    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, resumed: run.resumed, environments: deploySteps }, null, 2)));
     return 0;
   }
   if (targets.length === 0) {

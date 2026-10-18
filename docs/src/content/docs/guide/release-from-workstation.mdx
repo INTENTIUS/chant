@@ -82,7 +82,7 @@ on:
   push:
     tags: ["release/**"]
 permissions:
-  contents: read
+  contents: write
   id-token: write
 jobs:
   publish:
@@ -101,7 +101,7 @@ jobs:
       - run: npx chant release publish "${GITHUB_REF_NAME#release/}" --yes
 ```
 
-`setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`; with npm trusted publishing set up for the package, the OIDC token is enough. `chant release publish` fetches `chant/lifecycle` itself. It refuses a release whose commit was revoked after the cut, and under a `release` gate it refuses one with no verified signature. On GitLab, the job declares an ID token instead:
+`setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`; with npm trusted publishing set up for the package, the OIDC token is enough. `chant release publish` fetches `chant/lifecycle` itself. It refuses a release whose commit was revoked after the cut, and under a `release` gate it refuses one with no verified signature. The job needs `contents: write` because the publish pushes its record to `chant/lifecycle`, and a forge target makes a release. When a publish fails part way, re-run the job: it resumes from that record and publishes nothing again (see [staging and resuming](/chant/reference/publish-targets/#staging-and-resuming)). On GitLab, the job declares an ID token instead:
 
 ```yaml
 release-publish:

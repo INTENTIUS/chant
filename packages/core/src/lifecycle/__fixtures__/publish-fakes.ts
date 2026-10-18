@@ -1,13 +1,14 @@
 /**
  * Test stand-ins for the publish targets (#4047): an OCI registry fake that
  * listens on 127.0.0.1 inside the test process and answers with a Bearer
- * challenge as GHCR and Docker Hub do, an OCI image layout writer, and a fake
- * `npm` that records each call. Nothing here reaches a network or a real
+ * challenge as GHCR and Docker Hub do, an OCI image layout writer, a fake
+ * `npm` that records each call and keeps a registry with dist-tags in a file,
+ * and a forge fake with draft releases (#4048). Nothing here reaches a network or a real
  * registry, and every server a test starts is closed by it.
  */
 
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -67,6 +68,10 @@ export async function startFakeRegistry(creds: { username: string; password: str
     m = url.pathname.match(/^\/v2\/(.+)\/blobs\/(sha256:[0-9a-f]+)$/);
     if (m && req.method === "HEAD") return send(blobs.has(m[2]!) ? 200 : 404);
     m = url.pathname.match(/^\/v2\/(.+)\/manifests\/(.+)$/);
+    if (m && (req.method === "HEAD" || req.method === "GET")) {
+      const found = manifests.get(m[2]!);
+      return found ? send(200, { "content-type": found.type, "docker-content-digest": sha(found.bytes) }, req.method === "GET" ? found.bytes.toString("utf-8") : "") : send(404);
+    }
     if (m && req.method === "PUT") {
       const ref = m[2]!;
       if (ref.startsWith("sha256:") && sha(body) !== ref) return send(400, {}, "manifest digest invalid");
@@ -115,10 +120,37 @@ export function writeOciLayout(dir: string, content = "layer bytes"): { digest: 
   return { digest: manifest.digest, configDigest: config.digest };
 }
 
+/** What the fake npm's registry holds: each package's versions and dist-tags. */
+export interface FakeNpmRegistry {
+  packages: Record<string, { versions: string[]; distTags: Record<string, string> }>;
+}
+
+/** The registry file a fake npm writing calls to `log` keeps its state in. */
+export const fakeNpmRegistryFile = (log: string) => `${log}.registry.json`;
+
+/** Read the fake npm's registry. */
+export function readFakeNpmRegistry(log: string): FakeNpmRegistry {
+  const file = fakeNpmRegistryFile(log);
+  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf-8")) as FakeNpmRegistry) : { packages: {} };
+}
+
+/** Seed the fake npm's registry, such as with an earlier version as `latest`. */
+export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): void {
+  writeFileSync(fakeNpmRegistryFile(log), JSON.stringify(registry));
+}
+
 /**
  * Write a fake `npm` at `<binDir>/npm` that appends `{ args, tokenSet }` to
- * `log` for each call, prints the token it was given (so a test can show it
- * is masked), and exits 1 when its package path contains `$FAKE_NPM_FAIL`.
+ * `log` for each call and prints the token it was given (so a test can show
+ * it is masked). It keeps a registry in `<log>.registry.json`, as npm's does:
+ *
+ * - `publish <dir|tgz> [--tag <t>]` adds the version under `<t>` (default
+ *   `latest`), and refuses a version already there with a 403. As npm's
+ *   registry does, a package's first version is also `latest`. It exits 1
+ *   when the package path contains `$FAKE_NPM_FAIL`.
+ * - `view <name>@<version> version` prints the version when it is there.
+ * - `dist-tag add <name>@<version> <tag>` points the tag at a version that is
+ *   there. It exits 1 when the name contains `$FAKE_NPM_FAIL_TAG`.
  */
 export function writeFakeNpm(binDir: string, log: string): string {
   mkdirSync(binDir, { recursive: true });
@@ -127,17 +159,157 @@ export function writeFakeNpm(binDir: string, log: string): string {
     file,
     `#!${process.execPath}
 const fs = require("fs");
+const path = require("path");
+const { execFileSync } = require("child_process");
 const args = process.argv.slice(2);
 const token = process.env.NODE_AUTH_TOKEN || "";
+const regFile = ${JSON.stringify(log)} + ".registry.json";
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, tokenSet: token !== "" }) + "\\n");
 console.log("npm notice using //registry.example/:_authToken=" + token);
 console.error("npm notice token " + token);
-if (process.env.FAKE_NPM_FAIL && args[1] && args[1].includes(process.env.FAKE_NPM_FAIL)) { console.error("npm error 403 Forbidden"); process.exit(1); }
-console.log("+ " + args[1]);
+const reg = fs.existsSync(regFile) ? JSON.parse(fs.readFileSync(regFile, "utf-8")) : { packages: {} };
+const save = () => fs.writeFileSync(regFile, JSON.stringify(reg));
+const flag = (name) => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1]; };
+const split = (spec) => { const at = spec.lastIndexOf("@"); return [spec.slice(0, at), spec.slice(at + 1)]; };
+if (args[0] === "publish") {
+  if (process.env.FAKE_NPM_FAIL && args[1] && args[1].includes(process.env.FAKE_NPM_FAIL)) { console.error("npm error 403 Forbidden"); process.exit(1); }
+  const text = fs.statSync(args[1]).isDirectory() ? fs.readFileSync(path.join(args[1], "package.json"), "utf-8") : execFileSync("tar", ["-xzOf", args[1], "package/package.json"], { encoding: "utf-8" });
+  const { name, version } = JSON.parse(text);
+  const p = reg.packages[name] || (reg.packages[name] = { versions: [], distTags: {} });
+  if (p.versions.includes(version)) { console.error("npm error 403 You cannot publish over the previously published versions: " + version); process.exit(1); }
+  p.versions.push(version);
+  p.distTags[flag("--tag") || "latest"] = version;
+  if (!p.distTags.latest) p.distTags.latest = version;
+  save();
+  console.log("+ " + name + "@" + version);
+} else if (args[0] === "view") {
+  const [name, version] = split(args[1]);
+  const p = reg.packages[name];
+  if (!p) { console.error("npm error 404 Not Found - " + name); process.exit(1); }
+  if (p.versions.includes(version)) console.log(version);
+} else if (args[0] === "dist-tag" && args[1] === "add") {
+  const [name, version] = split(args[2]);
+  if (process.env.FAKE_NPM_FAIL_TAG && name.includes(process.env.FAKE_NPM_FAIL_TAG)) { console.error("npm error 403 Forbidden - no permission to change dist-tags"); process.exit(1); }
+  const p = reg.packages[name];
+  if (!p || !p.versions.includes(version)) { console.error("npm error 404 " + args[2] + " is not in the npm registry"); process.exit(1); }
+  p.distTags[args[3]] = version;
+  save();
+  console.log("+" + args[3] + ": " + args[2]);
+} else {
+  console.error("fake npm: unknown command " + args.join(" ")); process.exit(2);
+}
 `,
   );
   chmodSync(file, 0o755);
   return file;
+}
+
+/** A forge release as {@link startFakeForge} keeps it. */
+export interface FakeForgeRelease {
+  id: number;
+  tag_name: string;
+  draft: boolean;
+  target: string;
+  assets: Array<{ name: string; digest: string | null; bytes: string }>;
+}
+
+/** A forge fake answering through `fetch`: GitHub or Forgejo with draft releases, or GitLab with releases, links and a generic package registry. */
+export interface FakeForge {
+  fetch: (url: string, init: { method: string; headers: Record<string, string>; body?: Uint8Array | string }) => Promise<{ ok: boolean; status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+  calls: Array<{ method: string; url: string; headers: Record<string, string>; body?: Uint8Array | string }>;
+  releases: FakeForgeRelease[];
+  /** GitLab: the package registry's files, by URL. */
+  packages: Map<string, string>;
+  /** The releases a consumer sees: published (not draft) ones, with their asset names. */
+  visible(): Array<{ tag: string; assets: string[] }>;
+  /** Make the next request whose `METHOD url` starts with `prefix` answer 500. */
+  failOnce(prefix: string): void;
+}
+
+/** A forge fake at `api` for `repo`, which holds `releases` to begin with. */
+export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: string, repo: string, releases: FakeForgeRelease[] = []): FakeForge {
+  const calls: FakeForge["calls"] = [];
+  const packages = new Map<string, string>();
+  const failures: string[] = [];
+  let nextId = 100 + releases.length;
+  const root = forge === "gitlab" ? `${api}/projects/${encodeURIComponent(repo)}` : `${api}/repos/${repo}`;
+  const uploads = forge === "github" ? "https://uploads.forge.test" : api;
+  const json = (status: number, body: unknown) => ({ ok: status < 300, status, headers: { get: () => null }, text: async () => (body === undefined ? "" : JSON.stringify(body)) });
+  const view = (r: FakeForgeRelease) =>
+    forge === "gitlab"
+      ? { tag_name: r.tag_name, assets: { links: r.assets.map((a) => ({ name: a.name })) } }
+      : { id: r.id, tag_name: r.tag_name, draft: r.draft, upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
+  const text = (b: Uint8Array | string | undefined) => (b === undefined ? "" : typeof b === "string" ? b : Buffer.from(b).toString("utf-8"));
+  const fetch: FakeForge["fetch"] = async (url, init) => {
+    calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
+    const key = `${init.method} ${url}`;
+    const f = failures.findIndex((p) => key.startsWith(p));
+    if (f >= 0) {
+      failures.splice(f, 1);
+      return json(500, { message: "Internal Server Error" });
+    }
+    const u = new URL(url);
+    const path = url.split("?")[0]!;
+    if (forge === "gitlab") {
+      if (init.method === "PUT" && path.startsWith(`${root}/packages/generic/`)) {
+        packages.set(path, text(init.body));
+        return json(201, { message: "201 Created" });
+      }
+      const byTag = path.startsWith(`${root}/releases/`) ? decodeURIComponent(path.slice(`${root}/releases/`.length)) : null;
+      if (init.method === "GET" && byTag !== null) {
+        const r = releases.find((x) => x.tag_name === byTag);
+        return r ? json(200, view(r)) : json(404, { message: "404 Not Found" });
+      }
+      if (init.method === "POST" && path === `${root}/releases`) {
+        const b = JSON.parse(text(init.body)) as { tag_name: string; ref: string; assets?: { links?: Array<{ name: string; url: string }> } };
+        if (releases.some((x) => x.tag_name === b.tag_name)) return json(409, { message: "Release already exists" });
+        const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: false, target: b.ref, assets: (b.assets?.links ?? []).map((l) => ({ name: l.name, digest: null, bytes: packages.get(l.url) ?? "" })) };
+        releases.push(r);
+        return json(201, view(r));
+      }
+      return json(404, { message: "404 Not Found" });
+    }
+    if (init.method === "GET" && path.startsWith(`${root}/releases/tags/`)) {
+      const tag = decodeURIComponent(path.slice(`${root}/releases/tags/`.length));
+      const r = releases.find((x) => x.tag_name === tag && !x.draft);
+      return r ? json(200, view(r)) : json(404, { message: "Not Found" });
+    }
+    if (init.method === "GET" && path === `${root}/releases`) return json(200, releases.map(view));
+    if (init.method === "POST" && path === `${root}/releases`) {
+      const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean };
+      const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [] };
+      releases.push(r);
+      return json(201, view(r));
+    }
+    const asset = path.match(/\/releases\/(\d+)\/assets$/);
+    if (init.method === "POST" && asset && (path.startsWith(uploads) || path.startsWith(root))) {
+      const r = releases.find((x) => x.id === Number(asset[1]));
+      const name = u.searchParams.get("name") ?? "";
+      if (!r) return json(404, { message: "Not Found" });
+      if (r.assets.some((a) => a.name === name)) return json(422, { message: "already_exists" });
+      let bytes = text(init.body);
+      if (forge === "forgejo") bytes = bytes.split("\r\n\r\n")[1]?.split("\r\n--")[0] ?? "";
+      r.assets.push({ name, digest: sha(bytes), bytes });
+      return json(201, { name, browser_download_url: `https://forge.test/${repo}/releases/download/${r.tag_name}/${name}` });
+    }
+    const edit = path.match(/\/releases\/(\d+)$/);
+    if (init.method === "PATCH" && edit) {
+      const r = releases.find((x) => x.id === Number(edit[1]));
+      if (!r) return json(404, { message: "Not Found" });
+      const b = JSON.parse(text(init.body)) as { draft?: boolean };
+      if (b.draft === false) r.draft = false;
+      return json(200, view(r));
+    }
+    return json(404, { message: "Not Found" });
+  };
+  return {
+    fetch,
+    calls,
+    releases,
+    packages,
+    visible: () => releases.filter((r) => !r.draft).map((r) => ({ tag: r.tag_name, assets: r.assets.map((a) => a.name) })),
+    failOnce: (prefix) => void failures.push(prefix),
+  };
 }
 
 /** Write an npm package directory. */
