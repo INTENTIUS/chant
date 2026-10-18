@@ -48,6 +48,7 @@ export const TILES = [
 export const ROLES = [
 	{ id: 'agents', label: 'I work with a coding agent', room: 'agents' },
 	{ id: 'platform', label: 'I run a platform team', room: 'platform' },
+	{ id: 'releases', label: 'I ship releases from trunk', room: 'releases' },
 	{ id: 'security', label: 'I review security', room: 'security' },
 	{ id: 'evaluate', label: 'I am evaluating', room: 'evaluate' },
 ];
@@ -343,6 +344,57 @@ export const ROOMS = [
 		reference: [
 			{ label: 'Config File', href: 'configuration/config-file' },
 			{ label: 'Lint rules', href: 'lint-rules/overview' },
+		],
+	},
+	{
+		id: 'releases',
+		title: 'chant for teams shipping from trunk',
+		lede: 'For a team that merges every change to one branch and ships from it: CI marks the commits that passed as git tags, a person cuts a release from one, and the release moves through each environment behind a gate bound to what changes there.',
+		works: [
+			'`chant ci tick` tags each trunk commit that passed the required CI phases `ci/green/<sha>`, and revokes the tag when a re-run fails',
+			'`chant release cut` compiles one green commit for every environment once, and `chant release publish` ships it from CI with provenance',
+			'`chant components promote --release` deploys the recorded templates and artifacts in promotion order, each environment behind a gate that binds the release, the environment and the change set',
+			'Feature flags as reviewed workspace records, read by the build, so unfinished work merges switched off',
+			'Rollback to an earlier release, revocation read from the tags, retention, and DORA metrics from the same records',
+		],
+		differs: {
+			gitlab: ['GitLab has no check-run reader, so set `ci.green.source` to `runs`: each phase is a chant Op run with a runner key, and the tick goes in the pipeline after them.'],
+			forgejo: ['Forgejo has no check-run reader, so set `ci.green.source` to `runs`: each phase is a chant Op run with a runner key, and the tick goes in the pipeline after them.'],
+		},
+		first: {
+			note: 'Declare `ci.green` in `chant.workspace.json` first; the dry run then prints the tags the tick would make.',
+			command: { any: 'npx chant ci workflow\nnpx chant ci tick --dry-run\nnpx chant ci list --limit 10' },
+			link: { label: 'Tag Green Commits', href: 'guide/green-commits' },
+			prompt: roomPrompt(
+				'releases',
+				`Following ${pageUrl('guide/green-commits')}, add a \`ci.green\` block to \`chant.workspace.json\` for the trunk branch and the CI phases I name, and generate the tick's workflow with \`npx chant ci workflow\`.`,
+				'Run `npx chant ci tick --dry-run` and `npx chant ci list`, show me what they print, and open a pull request with the declaration and the workflow.',
+			),
+		},
+		examples: ['examples/components-aws-e2e'],
+		tasks: [
+			{ label: 'Tag Green Commits', href: 'guide/green-commits' },
+			{ label: 'Link commits to work items', href: 'guide/work-items#link-commits-to-work-items' },
+			{ label: 'Release from Your Workstation', href: 'guide/release-from-workstation' },
+			{ label: 'Promote a Release', href: 'guide/promote-a-release' },
+			{ label: 'Feature Flags', href: 'guide/feature-flags' },
+			{ label: 'Prune chant/lifecycle', href: 'guide/prune-lifecycle' },
+			{ label: 'Read Delivery Metrics', href: 'guide/delivery-metrics' },
+		],
+		background: [
+			{ label: 'Trunk and Releases', href: 'concepts/trunk-and-releases' },
+			{ label: 'Build-Time Parameters', href: 'concepts/build-time-parameters' },
+			{ label: 'State and Governance', href: 'concepts/governance' },
+		],
+		reference: [
+			{ label: 'chant ci', href: 'cli/ci' },
+			{ label: 'chant release', href: 'cli/release' },
+			{ label: 'chant components promote', href: 'cli/components#components-promote' },
+			{ label: 'chant change-set', href: 'cli/change-set' },
+			{ label: 'chant workspace status', href: 'cli/workspace-status' },
+			{ label: 'chant workspace metrics', href: 'cli/workspace-metrics' },
+			{ label: 'chant lifecycle gc', href: 'cli/lifecycle#lifecycle-gc' },
+			{ label: 'Workspace Declaration: CI', href: 'reference/workspace-declaration#ci' },
 		],
 	},
 	{

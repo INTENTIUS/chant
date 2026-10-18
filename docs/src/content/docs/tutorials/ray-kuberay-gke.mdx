@@ -7,7 +7,7 @@ prompt: |
   In `examples/ray-kuberay-gke`, run `npm install` from the repository root. Then run the local k3d smoke test the README describes, with k3d and kubectl only.
   Show me the output, including the result of the test job.
   Do not run `just bootstrap`, `npm run build:gcp` with `kubectl apply`, or any other step against GCP, and do not push an image.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

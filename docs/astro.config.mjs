@@ -107,6 +107,7 @@ export default defineConfig({
 						{ label: 'Fly and containers', link: '/for/fly/' },
 						{ label: 'I work with a coding agent', link: '/for/agents/' },
 						{ label: 'I run a platform team', link: '/for/platform/' },
+						{ label: 'I ship releases from trunk', link: '/for/releases/' },
 						{ label: 'I review security', link: '/for/security/' },
 						{ label: 'I am evaluating', link: '/for/evaluate/' },
 					],
@@ -200,7 +201,17 @@ export default defineConfig({
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
 								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
+							],
+						},
+						{
+							label: 'Trunk and releases',
+							collapsed: true,
+							items: [
+								{ label: 'Tag Green Commits', slug: 'guide/green-commits' },
 								{ label: 'Release from Your Workstation', slug: 'guide/release-from-workstation' },
+								{ label: 'Promote a Release', slug: 'guide/promote-a-release' },
+								{ label: 'Prune chant/lifecycle', slug: 'guide/prune-lifecycle' },
+								{ label: 'Read Delivery Metrics', slug: 'guide/delivery-metrics' },
 							],
 						},
 						{
@@ -443,6 +454,7 @@ export default defineConfig({
 								{ label: 'Components', slug: 'concepts/components' },
 								{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 								{ label: 'Build-Time Parameters', slug: 'concepts/build-time-parameters' },
+								{ label: 'Trunk and Releases', slug: 'concepts/trunk-and-releases' },
 								{ label: 'Where Values Come From', slug: 'concepts/where-values-come-from' },
 								{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 								{ label: 'State and Governance', slug: 'concepts/governance' },

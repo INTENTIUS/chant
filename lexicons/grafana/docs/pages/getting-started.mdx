@@ -7,7 +7,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/grafana/getting-started/.
   In a new directory, follow the page: install the grafana lexicon, declare the Prometheus datasource, the `job` variable, the two panels and the dashboard, and run `npx chant build src --lexicon grafana -o dist/grafana/index.json`.
   Start the local `grafana/grafana:12.4.11` container with the docker command the page gives, check that `http://localhost:3000/d/scrape-health` loads, and show me the output. Stop the container when you are done.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This walks through one dashboard with a Prometheus datasource, a variable and two panels, then loads it into Grafana.

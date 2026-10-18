@@ -1,0 +1,76 @@
+---
+title: Promote a Release
+description: Move a cut release through each environment in promotion order behind a gate bound to its change set, then roll an environment back to an earlier release or settle one that applied partly.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/promote-a-release/.
+  Fetch the tags with `git fetch origin --tags` and run `npx chant release list` in the member's directory.
+  Then run `npx chant components promote --to <env> --release <label> --dry-run` for the label and environment I name, and show me the plan.
+  If a gate is pending, show me its change set with `npx chant change-set show <digest>` and the `chant approve` line a person runs; do not run the promote without `--dry-run` and do not approve it.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This page takes a release that [`chant release cut`](/chant/guide/release-from-workstation/) made and deploys it to each environment in turn. Every deploy uses the templates and artifacts the cut recorded, so prod runs what staging ran. The flags are in the [`chant components`](/chant/cli/components/#components-promote) reference, and [Trunk and Releases](/chant/concepts/trunk-and-releases/#gates-and-promotion) explains the gate.
+
+## Before you start
+
+The member declares its `environments` in `chant.config.ts` in the order a release moves through them, and that array is its [promotion order](/chant/configuration/config-file/#promotion-order-and-canary). Fetch the tags and the ledger branch, so the promote sees revocations and what each environment runs now. Then list the releases. Each line gives a label and digest with the commit it was cut from, who signed the cut, and the environments that run it.
+
+```bash
+git fetch origin --tags
+git fetch origin chant/lifecycle:chant/lifecycle
+chant release list
+```
+
+## Deploy the first environment, then promote
+
+A promote reads the environment before `--to` in the promotion order, so the first environment has nothing to promote from. Deploy it from a checkout of the release's commit with `chant run --components` and `--release`, which checks that the release was cut from `HEAD` and records it ([Running a release](/chant/cli/run/#running-a-release---release)).
+
+```bash
+git checkout "$(git rev-list -n 1 release/v1.4.0)"
+chant run --components all --env dev --release v1.4.0
+```
+
+From there, promote. Look at the plan first: the dry run prints each component, the digest it will deploy and the steps that will not run.
+
+```bash
+chant components promote --to staging --release v1.4.0 --dry-run
+chant components promote --to staging --release v1.4.0
+```
+
+Each deploy reads the templates the release recorded for `staging`, checked against their digests, with the artifacts the environment before it ran. The promote refuses a skip, such as dev straight to prod, unless you pass `--allow-skip`.
+
+## Pass the gate
+
+When a component's composition declares a gate, the promote plans the release's change set for the environment and stores it. It prints the change set's digest and stops with exit 3 at the gate. The reviewer reads the change set and approves the release gate for that environment. Then the same promote runs again and continues past it.
+
+```bash
+chant change-set show <digest>
+chant approve release prod-release --env prod
+chant components promote --to prod --release v1.4.0
+```
+
+An approval counts only for the release, environment and change set it names. An approval for staging does not pass prod, and one for this release does not pass the next. An environment whose change set is empty passes without an approval, and the promote records the pass. Once the last environment in the order is through, `chant release list` lists each one under the release.
+
+## Roll an environment back
+
+To put an earlier release back in an environment, roll back to its label. Every component of that release is restored at the digest the environment ran from it, through the same gate.
+
+```bash
+chant components rollback prod --release v1.3.2 --dry-run
+chant components rollback prod --release v1.3.2
+```
+
+A release whose commit was revoked is refused by promote and rollback alike, with `release-revoked`. [`chant workspace status`](/chant/cli/workspace-status/#revoked-releases) prints the rollback line for each environment running one.
+
+## Settle a deploy that applied partly
+
+A promote or rollback that deploys some components and fails on another leaves the environment mixed. `chant workspace status` shows it, with the lines that settle it.
+
+```
+  prod is mixed: api runs release v1.4.0; web failed (promote 4471), recorded release v1.3.2
+    redeploy: chant components redeploy prod --component web
+    roll back: chant components rollback prod --release v1.3.2
+```
+
+Fix the cause and run the same promote again, or run the redeploy line to put back what the component ran before. The environment reads as settled once each of those components has a newer record. [When a deploy applies partly](/chant/cli/components/#when-a-deploy-applies-partly) has the details.

@@ -7,7 +7,7 @@ prompt: |
   Run `npx chant helm classify <chart-dir>`, with `--values <file>` for each values file I name, and `npx chant helm localize <chart-dir>`, and tell me the verdict and each pin that would close an unstable line.
   Run `npx chant helm renders` and report any render it marks UNSTABLE.
   Read only: change no file, and do not run `chant helm diff --live` against a shared environment.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant helm` holds the pinned-render commands. It is a lexicon command, so it exists only in projects whose config loads the `helm` lexicon.

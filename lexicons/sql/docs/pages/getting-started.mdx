@@ -10,7 +10,7 @@ prompt: |
   In a checkout of the chant repository, follow the tutorial in `lexicons/sql/examples/getting-started`: build and lint the example, start the local servers with `npx chant emulator up --lexicon sql`, and run `npx chant sql plan dev dist/schema.json`.
   Add `ops/schema-apply.op.ts` as the page shows, apply it to the local ClickHouse server with `npx chant run schema-apply --no-record`, then make the TTL and sort key changes and show me the output of each plan and `chant sql diff`.
   Use only the local server the emulator started, and run `npx chant emulator down --lexicon sql` when you finish.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This walks through the example the lexicon ships: a database, three tables and a materialized view. You build it, apply it to a ClickHouse server running in Docker, then change two things and see how each change is classified.

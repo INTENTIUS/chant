@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/github/getting-started/.
   In this repository, install `@intentius/chant` and `@intentius/chant-lexicon-github`, write the workflow from the page in `src/ci.ts`, and run `npx chant build src/ --output .github/workflows/ci.yml` and `npx chant lint src/`.
   Open a pull request with the source and the generated workflow.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## 1. Install

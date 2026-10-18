@@ -1,0 +1,45 @@
+// The trunk-and-release flow, drawn on concepts/trunk-and-releases (chant #4038).
+// trunk-release-flow.dot and trunk-release-flow-dark.dot hold the same graph
+// in the light and dark palettes of the repainted diagrams; change both.
+digraph trunk_release_flow {
+  graph [rankdir=TB, bgcolor="transparent", fontname="Helvetica", fontsize=12, fontcolor="#E6EDF3", nodesep=0.35, ranksep=0.4, pad=0.2, newrank=true];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, fontcolor="#E6EDF3", color="#3A434F", fillcolor="#161B24", margin="0.18,0.08"];
+  edge  [color="#7A8699", fontname="Helvetica", fontsize=10, fontcolor="#8A93A3", arrowsize=0.7];
+
+  subgraph cluster_trunk {
+    label="Trunk: what CI decides"; labeljust=l; style="rounded,dashed"; color="#3A434F";
+    merge   [label="A pull request merges to trunk\n(a flag change is a commit too)"];
+    phases  [label="CI runs the required phases\non the commit"];
+    tick    [label="chant ci tick"];
+    green   [label="ci/green/<sha>", color="#43DC94", fillcolor="#102A1E"];
+    revoked [label="ci/revoked/<sha>", color="#FF5A5F", fillcolor="#2A1417"];
+  }
+
+  subgraph cluster_release {
+    label="Release: what a person decides"; labeljust=l; style="rounded,dashed"; color="#3A434F";
+    cut     [label="chant release cut --yes\non a green commit"];
+    rel     [label="The release\none commit, artifacts built once,\na compiled target per environment", color="#4C8DFF", fillcolor="#141A24"];
+    publish [label="chant release publish\nin CI, on the release/<label> tag"];
+  }
+
+  subgraph cluster_envs {
+    label="Environments, in promotion order"; labeljust=l; style="rounded,dashed"; color="#3A434F";
+    dev     [label="dev\ngate: release + env + change set"];
+    staging [label="staging\ngate: release + env + change set"];
+    prod    [label="prod\ngate: release + env + change set"];
+    back    [label="chant components rollback\n<env> --release <earlier>"];
+  }
+
+  { rank=same; green; revoked; }
+  merge -> phases -> tick;
+  tick -> green   [label=" every required\n phase passed"];
+  tick -> revoked [label=" a green commit\n later failed", style=dashed];
+  green -> cut;
+  cut -> rel;
+  rel -> publish;
+  rel -> dev     [label=" promote --release"];
+  dev -> staging [label=" promote"];
+  staging -> prod [label=" promote"];
+  prod -> back   [style=dashed, label=" when it goes wrong"];
+  revoked -> rel [style=dashed, color="#FF5A5F", label=" revokes every release\n cut from the commit"];
+}

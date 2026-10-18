@@ -8,7 +8,7 @@ prompt: |
   Pick the example the page lists that fits what I describe (getting-started, dashboards-from-declarations or alerting), and copy it into this repository's chant project.
   Adapt its datasources and queries to my services, run `npx chant build src --lexicon grafana` with the other lexicons the page names for it, and `npx chant lint src`, until both are clean.
   Open a pull request with the result.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`, alerting also with `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run the GRAF1xx checks over the output, and validate each dashboard against the pinned Grafana schema.

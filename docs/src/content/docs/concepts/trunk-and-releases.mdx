@@ -1,0 +1,74 @@
+---
+title: Trunk and Releases
+description: How chant carries a change from trunk to production, from the git tags CI puts on passing shas to the build a person cuts and promotes through each environment behind a gate
+diataxis: explanation
+---
+
+import Diagram from '../../../components/Diagram.astro';
+
+chant's delivery model has one branch that every change merges to. A person picks a sha CI passed on it and builds it once for every environment, and that build moves through the environments in order. This page explains the parts and why each sits where it does. The commands have their own reference pages, linked from each section, and the decisions behind the model are [ws-103](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-103-ci-green-and-revoked-tags.md), [ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md) and [ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md).
+
+<Diagram name="trunk-release-flow" alt="A flow in three parts. On trunk, a merged pull request runs the required CI phases, and chant ci tick tags the sha green when they pass, or revoked when it fails later. A person cuts a build from a green sha with chant release cut, and CI publishes it. The build is promoted through dev and staging to prod behind a gate in each. A rollback restores an earlier one, and a revoked tag revokes every build cut from that sha." caption="CI decides what is green, and a person decides what ships. Each environment's gate decides what reaches it." />
+
+## Trunk
+
+Trunk is the branch every pull request merges to, `main` unless `ci.green.branch` names another. There are no release branches. Work that is not ready still merges, switched off behind a [flag](#flags), so nothing on trunk waits on another branch catching up.
+
+Each change names the work item it serves. [`chant workspace check --changes`](/chant/cli/workspace-check/#commits-that-name-no-work-item) reports one that names none or a wrong one, and [Link commits to work items](/chant/guide/work-items/#link-commits-to-work-items) shows how to name it. That link lets a reader go from a deploy back to the reason for it.
+
+## Green
+
+A sha is green when it passed every CI phase the workspace requires. The phases are declared in the [`ci.green`](/chant/reference/workspace-declaration/#ci) block, and [`chant ci tick`](/chant/cli/ci/#ci-tick) reads their results and records the verdict as git tags. A passing sha gets `ci/green/<sha>`. One that is green and later fails a required phase, such as on a re-run, gets `ci/revoked/<sha>`.
+
+The verdict lives in git rather than in the forge, so anyone with a clone and the tags can ask what is green, with no token and no API call. `chant ci last-green` prints the newest green sha, and [`chant ci list`](/chant/cli/ci/#ci-list) prints the recent history with each state and the result of every phase. The results come from the forge's check runs by default, or from chant's own signed Op runs with `ci.green.source: "runs"`, which works on any forge. With `ci.green.signedSince`, a tag counts only when a runner key signed it, so a tag someone pushed by hand is ignored.
+
+chant never moves or deletes a tag. A person may delete a `ci/revoked/<sha>` tag to restore a sha, and that is the only edit the model expects.
+
+## Releases
+
+A release is one green sha compiled for every environment the member declares. It holds the sha, the digest of each artifact built once from it, and one target per environment with that environment's template digests and build parameters. All of that is hashed into one digest, and a label such as `v1.4.0` names it. Because the artifacts are built once, the bytes prod runs are the bytes staging tested.
+
+[`chant release cut`](/chant/cli/release/#release-cut) makes one. It refuses a dirty tree, a sha that is not on trunk, and a sha with no green tag. Without `--yes` it is a dry run that prints what it would compile and publish. A person runs it with `--yes`, on a workstation or in a CI job. The tick never cuts. The workspace declares who may cut in its `release` gate, and cutting every green sha would make builds nobody meant to ship. A project that does want that adds the cut as a pipeline step, as [Cutting on green](/chant/cli/release/#cutting-on-green) shows.
+
+[`chant release publish`](/chant/cli/release/#release-publish) runs in CI on the tag the cut made, where the job's OIDC token gives what it uploads provenance. [Release from Your Workstation](/chant/guide/release-from-workstation/) walks through the cut and the publish.
+
+## Gates and promotion
+
+An environment gets the build through [`chant components promote --release`](/chant/cli/components/#promoting-a-release), in the order the member's `environments` array declares. A promote that skips a step is refused unless it passes `--allow-skip`.
+
+When a component's composition declares a gate, the promote plans a [change set](/chant/reference/change-set/) for that environment and stores it. The [release gate](/chant/cli/components/#the-release-gate) binds three values: the build's digest, the environment, and the change set's digest. An approval counts only when all three match. One given for staging does not pass prod, and one given for this build does not pass the next. A reviewer reads the change set with [`chant change-set show`](/chant/cli/change-set/#change-set-show).
+
+An environment whose change set is empty passes its gate without an approval, and the pass is recorded. That way a flag flipped for prod alone moves through staging, where nothing changes, without waiting on a click.
+
+## Flags
+
+A [feature flag](/chant/guide/feature-flags/) is a workspace record that a member's build reads as a [build-time parameter](/chant/concepts/build-time-parameters/). Turning one on in an environment is a change to the record, reviewed like any other. Once that change is green, the build cut from it carries the new value, and the environment's change set shows the parameter that moved.
+
+A flag change does not ship on its own. It goes out with everything merged to trunk before it, so what ships still traces to one sha that went green as a whole. Unfinished work sits behind a flag that is off, which keeps that safe.
+
+## When something goes wrong
+
+There are two ways back, and they answer different questions.
+
+A sha can turn out to be bad after it was cut. Revoking it revokes each build made from it, and nothing new is written for that. Each reader joins the build's sha to the `ci/revoked` tags, judged the way the cut judges them. A promote of a revoked build is refused, `chant approve` refuses its gate, and [`chant workspace status`](/chant/cli/workspace-status/#revoked-releases) flags each environment running it, with the line that rolls it back.
+
+An environment can also need an earlier build back for its own reasons. [`chant components rollback <env> --release <label>`](/chant/cli/components/#rolling-back-a-release) restores every component of it through the same gate. A promote or rollback that deploys some components and fails on others leaves the environment [mixed](/chant/cli/workspace-status/#mixed-environments), and `workspace status` prints the redeploy and rollback lines that settle it.
+
+## Reading it back
+
+Each part of the flow is recorded where a reader can join it to the others. The tags are in git. What chant stores for a cut, its gates and its deploys is on the `chant/lifecycle` branch, and each record names the same digest, so [one lookup goes each way](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys). [`chant release list`](/chant/cli/release/#release-list) says where each one runs.
+
+The same records give the delivery numbers. [`chant workspace metrics`](/chant/cli/workspace-metrics/) computes the four DORA metrics from the deploy records and the revoked tags, with no extra bookkeeping. [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) prunes old cuts and change sets by a retention policy, and never one an environment runs or a pending gate binds.
+
+## What a coding agent may do
+
+An agent can author changes, run the dry runs and read every record above. The steps that commit an organization to shipping stay with people. The never-line every agent prompt on this site ends with forbids cutting or publishing, pushing or deleting a `ci/*` tag, and changing the value of an existing flag, on top of deploying to a shared environment, approving and merging. `scripts/lint-prompts.mjs` fails a prompt that drops it or that asks an agent to do one of those things.
+
+## Next
+
+- [Tag Green Commits](/chant/guide/green-commits/) sets up the tick and reads its tags.
+- [Release from Your Workstation](/chant/guide/release-from-workstation/) signs a cut on your machine and ships it from CI.
+- [Promote a Release](/chant/guide/promote-a-release/) moves a build through the environments and back.
+- [Feature Flags](/chant/guide/feature-flags/) keeps unfinished work on trunk.
+- [Prune chant/lifecycle](/chant/guide/prune-lifecycle/) and [Read Delivery Metrics](/chant/guide/delivery-metrics/) cover the records the flow leaves behind.
+- [chant for teams shipping from trunk](/chant/for/releases/) collects these pages in one room.

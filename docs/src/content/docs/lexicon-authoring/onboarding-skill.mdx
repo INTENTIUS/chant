@@ -7,7 +7,7 @@ prompt: |
   Follow the page's steps 1 to 5 for the lexicon I name in the chant repository: scaffold it, close every tier-1 failure of `chant dev check-lexicon lexicons/<name>`, add an example, run `dev onboard`, then `npx vitest run lexicons/<name>`, `npm run prepack -w @intentius/chant-lexicon-<name>` and `just check`.
   Open a pull request, and say in its description that steps 6 and 7 of the page are left for me.
   Do not publish to npm or run `just release`.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';

@@ -7,7 +7,7 @@ prompt: |
   Read https://intentius.io/chant/lexicons/prometheus/getting-started/.
   In a new directory, install the prometheus lexicon, declare the rule group and its Alertmanager routing from the page, and run `npx chant build src --lexicon prometheus -o dist/rules.yml`.
   Run `promtool check rules dist/rules.yml` and `amtool check-config dist/alertmanager.yml` when the tools are installed, and show me the two files and the output.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This walks through one alert for an HTTP API, from declaration to a rule file Prometheus loads and an `alertmanager.yml` that routes the alert.

@@ -7,7 +7,7 @@ prompt: |
   In `examples/agent-observability`, run `npm run build` and `npm run lint` and fix any finding the lint reports.
   Then run the steps under "Run it" on a local k3d cluster only: build the image, create the cluster from `dist/k3d.yaml`, import the image and `kubectl apply -f dist/k8s.yaml`.
   Show me the output and which alerts fire in Alertmanager after a few minutes. Delete the k3d cluster when I say so.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Aside } from '@astrojs/starlight/components';

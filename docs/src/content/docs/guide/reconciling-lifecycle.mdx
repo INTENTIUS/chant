@@ -7,7 +7,7 @@ prompt: |
   Declare the `ReconcileOp` or `ApplyOp` I describe in an `*.op.ts` file, with `env`, `scope`, `onDrift`, `target`, `delete` and `gate` as I name them. Give every `ApplyOp` a gate.
   Run `npx chant build` and `npx chant lint`, and `npx chant run --generate <forge>` if the Op has a schedule, and open a pull request.
   Do not run either Op.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 Drift detection tells you the cloud and your source disagree. Reconciliation closes the gap. There are two directions, and chant exposes each as an Op composite. Which one you use, if either, is the [dial](/chant/concepts/lifecycle-models/#the-dial), set per environment.

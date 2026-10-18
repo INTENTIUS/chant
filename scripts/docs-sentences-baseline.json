@@ -505,6 +505,10 @@
   "claude/colon-reveal": 2,
   "formatting/bold-first-bullet": 1
  },
+ "docs/src/content/docs/concepts/trunk-and-releases.mdx": {
+  "discourse/punchy-fragments": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/concepts/typescript-as-data.mdx": {
   "formatting/em-dash-density": 51,
   "discourse/punchy-fragments": 2,

@@ -6,13 +6,20 @@
 //   page, so a page whose task is the setup itself carries it instead);
 // - each carries the never-line in docs/src/prompts.mjs word for word, so no
 //   prompt can drop the real account, the approval, the override, the merge,
-//   the signers file or chant/lifecycle;
+//   the release, the `ci/*` tags, the flag values, the signers file or
+//   chant/lifecycle;
 // - every `diataxis: tutorial` and `diataxis: how-to` page has one, core and
 //   lexicon (scripts/check-docs-diataxis.mjs holds that field equal to the
 //   sidebar group the page sits in);
 // - a sentence that names the signers file or chant/lifecycle forbids it;
 // - a sentence that has the agent run `chant run` passes `--no-record` or sets
 //   CHANT_NO_RECORD, since a recorded run writes and pushes chant/lifecycle;
+// - a sentence that does not forbid them has the agent run neither
+//   `chant release cut --yes` nor `chant release publish`, push or delete no
+//   `ci/*` tag (`chant ci tick` without `--dry-run` pushes them), prune
+//   chant/lifecycle with `chant lifecycle gc --yes`, or change a flag's value
+//   (chant #4038): people cut and publish releases, and the tick and people
+//   own the tags and the flags;
 // - every room's First step carries a prompt (`'setup'` or one that names the
 //   room's page), from docs/src/data/rooms.mjs;
 // - the setup prompt has one source, docs/src/prompts.mjs, and README.md, the
@@ -76,12 +83,41 @@ const NEVER_PARTS = [
   ["approve (a pull request review, `chant approve` or `chant run approve`)", "the approvals"],
   ["override a policy denial (`chant approve policy-override`)", "the override"],
   ["or merge;", "merge"],
+  ["never cut or publish a release (`chant release cut --yes` or `chant release publish`)", "the release"],
+  ["push or delete a `ci/*` tag (`chant ci tick` pushes them)", "the ci/* tags"],
+  ["or change the value of an existing flag;", "the flag values"],
   ["never touch `.chant/allowed_signers`", "the signers file"],
   ["or `chant/lifecycle`.", "chant/lifecycle"],
 ];
 
 // `chant run` subcommands that run no Op and record nothing.
 const RUN_READS = /^chant run (--generate|list|status|log)\b/;
+
+/**
+ * What a sentence has the agent do that only people (or the tick) do, as the
+ * problem to report, or undefined (chant #4038). The sentence is one that does
+ * not forbid it. A dry run of the cut (`chant release cut` without `--yes`),
+ * `chant ci tick --dry-run`, and reading the tags (`git fetch`, `chant ci
+ * list`) pass.
+ */
+export function releaseProblems(s) {
+  const out = [];
+  for (const [, cmd] of s.matchAll(/`([^`]*)`/g)) {
+    if (/\bchant release cut\b/.test(cmd) && /(^|\s)(--yes|-y)\b/.test(cmd)) out.push(`"${cmd}" cuts a release; have the agent run the dry run, without --yes, and leave the cut to a person`);
+    if (/\bchant release publish\b/.test(cmd)) out.push(`"${cmd}" publishes a release; only a person or the release pipeline publishes`);
+    if (/\bchant ci tick\b/.test(cmd) && !/--dry-run\b/.test(cmd)) out.push(`"${cmd}" pushes ci/* tags; pass --dry-run, or leave the tick to CI`);
+    if (/\bgit (push|tag)\b/.test(cmd) && /\bci\//.test(cmd)) out.push(`"${cmd}" pushes, moves or deletes a ci/* tag; only the tick and people do that`);
+    if (/\bchant lifecycle gc\b/.test(cmd) && /(^|\s)--yes\b/.test(cmd)) out.push(`"${cmd}" prunes chant/lifecycle; have the agent run the dry run, without --yes`);
+  }
+  const prose = s.replace(/`[^`]*`/g, "");
+  if (/\b(push|delete|remove|move)\w*\b/i.test(prose) && /\bci\/(\*|green|revoked)/.test(s) && !/`[^`]*\bgit fetch\b/.test(s)) {
+    out.push(`"${s}" has the agent push, move or delete a ci/* tag; only the tick and people do that`);
+  }
+  if (/\bflags?\b/i.test(prose) && (/\b(flip|toggle)\w*\b/i.test(prose) || /\bturn\w*\b[^.;]*\b(on|off)\b/i.test(prose) || /\b(change|edit|update)\w*\b[^.;]*\bvalues?\b/i.test(prose))) {
+    out.push(`"${s}" has the agent change a flag's value; a person does that in a reviewed change`);
+  }
+  return out;
+}
 
 /** Problems with one prompt, `url` the address it must name (none for the setup prompt), `where` for the messages. */
 export function checkPrompt(prompt, url, where) {
@@ -101,6 +137,7 @@ export function checkPrompt(prompt, url, where) {
       if (RUN_READS.test(run) || /--no-record\b/.test(cmd) || /CHANT_NO_RECORD/.test(s)) continue;
       problems.push(`${where}: "${cmd}" records on chant/lifecycle and pushes it; pass --no-record (or set CHANT_NO_RECORD=1)`);
     }
+    for (const p of releaseProblems(s)) problems.push(`${where}: ${p}`);
   }
   return problems;
 }

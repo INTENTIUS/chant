@@ -9,9 +9,9 @@
 
 export const SITE = 'https://intentius.io/chant';
 
-/** In every prompt, word for word. People deploy to real environments, approve, override and merge. */
+/** In every prompt, word for word. People deploy to real environments, approve, override and merge, and people cut and publish releases, move `ci/*` tags and change flag values (chant #4038). */
 export const neverLine =
-	"Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.";
+	"Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.";
 
 /** The site address of a docs page, by slug (`guide/ops`, `lexicons/aws/examples`, `index`). */
 export const pageUrl = (slug) => (slug === 'index' || slug === '' ? `${SITE}/` : `${SITE}/${slug.replace(/\/?index$/, '')}/`);

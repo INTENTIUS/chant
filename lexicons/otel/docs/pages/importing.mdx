@@ -8,7 +8,7 @@ prompt: |
   Import the collector config I name with `npx chant import <file> --output src` in this project, whose chant.config.ts lists otel.
   Run `npx chant build src --lexicon otel -o collector.yaml` and `npx chant lint src`, compare collector.yaml with the original, and fix the generated source until they match.
   Open a pull request with src/, and list every warning the import printed in its description.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `chant import` reads a collector config file and writes TypeScript that declares the same collector with this lexicon's classes. `chant build` on the result gives back the config you started from, with key order and quoting normalised.

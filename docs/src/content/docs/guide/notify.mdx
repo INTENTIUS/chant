@@ -7,7 +7,7 @@ prompt: |
   Add a `notify` block to this repository's Op waves spec with the environment variable names I give for `slack`, `teams`, `webhook` and `key`, and the `events` I name. Put no URL or key in any file.
   Run `npx chant run --generate <forge>` to write the pipelines again, and open a pull request.
   List in its description each secret or CI/CD variable I must create; do not create them yourself.
-  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 This guide is for a team that wants to hear when a wave waits for an approval or a run goes wrong, without watching the pipeline. chant posts one event, `chant.notify/v1`, to chat incoming webhooks (Slack and Microsoft Teams) and to a webhook of your own. The webhook's copy is signed so the receiver can check it came from your pipeline.
