@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant release cut [<label>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
-chant release publish <label|digest> [--json]
+chant release publish <label|digest> [--yes] [--json]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
 ```
@@ -64,7 +64,7 @@ Dry run: cut v1.4.0 from commit 3f2a9c1d0b7e (on origin/main, green)
   digest decided when the artifacts are built
 What will be published where:
   api: publish-image to $env.registry in dev, prod, by that environment's deploy (chant components promote --release v1.4.0)
-  chant release publish v1.4.0: nothing, since chant has no publish target for a release yet (#4047)
+  chant release publish v1.4.0: npm (2 packages) to npm the registry npm's config names
   a publish from here would carry no OIDC provenance: this run is not in CI, and a workstation has no OIDC token
 ```
 
@@ -199,10 +199,11 @@ A release is revoked when the commit it was cut from gets a `ci/revoked/<sha>` t
 
 ## release publish
 
-Publishes a cut release ([#4027](https://github.com/INTENTIUS/chant/issues/4027)). It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
+Publishes a cut release to the targets its member declares under `release.publish` in `chant.config.ts` ([#4027](https://github.com/INTENTIUS/chant/issues/4027), [#4047](https://github.com/INTENTIUS/chant/issues/4047)): npm packages, an image in an OCI registry such as GHCR or Docker Hub, and release assets on GitHub, GitLab or Forgejo. [Publish Targets](/chant/reference/publish-targets/) lists the declaration, each target and its credentials. It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
 
 ```bash
-chant release publish v1.4.0
+chant release publish v1.4.0          # a dry run: prints what would be published where
+chant release publish v1.4.0 --yes    # publishes
 ```
 
 After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes anything when:
@@ -213,12 +214,35 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `release-revoked` | The release's commit is [revoked](#revoked-releases). |
 | `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and no cut of the release is signed. |
 | `release-signature-unverified` | Under that gate, no cut's signature verifies for its actor against the signers file at base, in the gate's class when it names one. |
+| `publish-config-invalid` | `release.publish` in `chant.config.ts` does not validate. |
+| `release-head-mismatch` | A target is declared, and the checkout's `HEAD` is not the release's commit. |
+| `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. |
 
-It then checks whether the run has an OIDC token. In GitHub Actions that means `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `permissions: id-token: write` gets. In GitLab CI it means an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN` under the job's `id_tokens`. Without one, as on a workstation, it prints a warning on stderr before it publishes anything: what it publishes carries no provenance. The warning never stops the publish.
+The last two hold because a target uploads files from the checkout it runs in, which are the release's only at its commit. A CI job on the release's tag passes both. A publish with no target reads nothing and checks neither.
 
-chant has no publish target for a release yet. Targets and their credentials are [#4047](https://github.com/INTENTIUS/chant/issues/4047), publishing all or nothing and resuming are [#4048](https://github.com/INTENTIUS/chant/issues/4048), and signing, SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049). Until they ship, `release publish` makes its checks and prints its warning. It then prints `Nothing was published` and exits 0. It writes no record. The publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`, `load-image-on-host`) are deploy steps. They run in each environment's deploy of the release, [`chant components promote --release`](/chant/cli/components/#promoting-a-release), and not here.
+It then checks whether the run has an OIDC token. In GitHub Actions that means `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `permissions: id-token: write` gets. In GitLab CI it means an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN` under the job's `id_tokens`. Without one, as on a workstation, it prints a warning on stderr before it publishes anything: what it publishes carries no provenance. The warning never stops the publish. With a token, the npm target passes `--provenance`.
 
-The document `--json` gives for a publish holds the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), the `warnings`, the `targets`, what was `published` and the release's `environments`. The warning is printed on stderr in either form.
+Next it plans every target: each reads the files it would upload, checks a file the release records as an artifact against the release's digest, and finds its credentials. A target that can't stops the publish with its own code, such as `publish-file-missing`, `publish-artifact-digest-mismatch` or `publish-credentials-missing`, before anything is sent.
+
+Without `--yes` the publish is a dry run. It prints what each target would publish and where, and uploads nothing:
+
+```
+Dry run: publish v1.4.0 (jcs1-sha256:...) from commit 3f2a9c1d0b7e
+  signed by alice@example.com
+What would be published where:
+  npm (2 packages), with --provenance:
+    @acme/core@1.4.0 to the registry npm's config names, dist-tag latest
+    @acme/cli@1.4.0 to the registry npm's config names, dist-tag latest
+  oci ghcr.io/acme/api:
+    dist/api.oci.tar (tag v1.4.0) to ghcr.io/acme/api@sha256:...
+Dry run: nothing was published. Run again with --yes to publish: chant release publish v1.4.0 --yes
+```
+
+With `--yes` it runs the targets in the order declared and prints each item it published. A target that fails stops the publish, and the error names the targets and items already published. Publishing all or nothing and resuming are [#4048](https://github.com/INTENTIUS/chant/issues/4048). Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049). A publish writes no record. Every line it prints, and its `--json` document, has its credentials masked.
+
+With no target declared it makes its checks and prints its warning. It then says that nothing was published and exits 0. The publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`, `load-image-on-host`) are deploy steps. They run in each environment's deploy of the release, [`chant components promote --release`](/chant/cli/components/#promoting-a-release), and not here.
+
+The document `--json` gives for a publish holds `dryRun` and the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), the `warnings`, the `targets` (each `kind`, `name`, `destination` and its planned `items`), what was `published` (each `target`, `destination` and `items`; empty in a dry run) and the release's `environments`. A dry run adds `next`. The warning is printed on stderr in either form.
 
 ## release export
 

@@ -1,0 +1,129 @@
+---
+title: Publish Targets
+description: The release.publish block in chant.config.ts and the targets it declares, with their credentials and the contract a new target implements
+diataxis: reference
+---
+
+`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials. It ends with the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/#release-publish).
+
+## Declaring targets
+
+Targets are declared under `release.publish` in the member's `chant.config.ts`, a list that the publish runs in order:
+
+```ts
+export default {
+  environments: ["dev", "prod"],
+  release: {
+    publish: [
+      { type: "npm", packages: ["packages/core", "packages/cli"], access: "public" },
+      { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
+      { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
+    ],
+  },
+};
+```
+
+Paths are relative to the member's directory. A declaration names the environment variables its credentials are read from, and never holds a credential: an unknown key, such as `password`, fails validation. A block that does not validate stops the publish with `publish-config-invalid`.
+
+The config is read from the checkout the publish runs in. With at least one target, the publish refuses a checkout whose `HEAD` is not the release's commit (`release-head-mismatch`) or whose tree has a change or an untracked file git does not ignore (`release-worktree-dirty`). So the config, and every file a target reads, are the release commit's. A CI job that checks out the release's tag passes both checks. Build outputs that the job makes before it publishes belong in `.gitignore`.
+
+A target never builds. It uploads the files that are there. A file that the release records as an artifact of the same kind at the same path must match the release's digest, or the publish stops with `publish-artifact-digest-mismatch`.
+
+## npm
+
+| Field | Meaning |
+|---|---|
+| `packages` | Package directories or `.tgz` files from `npm pack` in the order to publish them |
+| `registry` | The registry URL. Default: the one npm's own config names |
+| `access` | `public` or `restricted` for npm's `--access` |
+
+For each package the target runs `npm publish <package>` with the declared `--registry` and `--access`. It adds `--tag <tag>` when the publish has a tag and `--provenance` when the run has an OIDC token. A publish from GitHub Actions with `id-token: write` gets npm provenance this way. So does one from GitLab CI with `SIGSTORE_ID_TOKEN`, and npm trusted publishing works in both. Order the list so a package comes after the packages it depends on. When one package fails, the error names the packages published before it.
+
+npm authenticates with its own config. chant reads no npm token and writes no `.npmrc`. On a workstation that is `npm login`. In GitHub Actions, `actions/setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`, and trusted publishing needs no token. npm runs with the run's environment, and chant masks what it prints.
+
+## OCI registries
+
+| Field | Meaning |
+|---|---|
+| `image` | An OCI image layout as a directory or as the tar file `docker save` writes. Its `index.json` names one image manifest or one index |
+| `repository` | `<registry host>/<name>` like `ghcr.io/acme/api` |
+| `tags` | Tags to point at the pushed digest. `{label}` is the release's label. The default is `["{label}"]` when the release has a label |
+| `usernameEnv` and `passwordEnv` | The variables holding the registry user and its password or token. The defaults are `OCI_USERNAME` and `OCI_PASSWORD` |
+
+The target speaks the registry HTTP API directly, so it needs no registry client installed. It uploads each config and layer blob the registry does not hold yet, checking each against its digest first. Then it puts each manifest by its digest, then the index when there is one. Last it points each tag at that digest. A `Basic` challenge takes the credentials as they are. A `Bearer` challenge, as GHCR and Docker Hub send, exchanges them for a token at the realm it names.
+
+With neither variable set, the target reads the registry's `auths` entry from the docker config file (`$DOCKER_CONFIG/config.json`, else `~/.docker/config.json`) that `docker login` writes. It does not run a credential helper (`credsStore`). With none of these, the push is anonymous.
+
+`docker.io` is reached at `registry-1.docker.io`, and a one-part Docker Hub name is under `library/`. A host of `localhost`, `127.0.0.1` or `[::1]` is reached over http, any other over https. Pushing an image to a cloud registry per environment is still the `publish-image` deploy step's job ([Build Archive](/chant/components/build-archive/)); this target is for registries that publish the release itself.
+
+## Forge release assets
+
+| Field | Meaning |
+|---|---|
+| `forge` | `github`, `gitlab` or `forgejo` |
+| `repo` | `owner/name` on GitHub and Forgejo; the project path or numeric id on GitLab |
+| `assets` | Files to attach. Each is named by its file name, which must be unique |
+| `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
+| `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
+| `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
+
+The target finds the forge's release for the tag and creates it at the release's commit when there is none. GitHub and Forgejo then create the tag on the forge if it was not pushed. A release with no label and no declared `tag` is refused (`publish-forge-no-tag`).
+
+| Forge | How an asset is attached |
+|---|---|
+| GitHub | Uploaded to the release's `upload_url`. An asset already there with the same name and a matching `digest` is left as it is |
+| Forgejo | A multipart upload to `/repos/{repo}/releases/{id}/assets` |
+| GitLab | Put in the project's generic package registry as package `release` at the label's version, then linked to the release |
+
+Forgejo and GitLab report no digest for an asset, so an asset of the same name there is refused (`publish-forge-asset-exists`). On GitHub that happens when the digests differ.
+
+## Credentials
+
+Every credential comes from the environment of the run, which is the shell on a workstation and the job's secrets in CI. chant holds it in memory for the requests that need it and never writes it to `chant/lifecycle` or to a file it keeps. Each line a publish prints passes through a redactor first, and so do the `--json` document and each error.
+
+| The redactor masks | Such as |
+|---|---|
+| Each credential a target read, and each token a registry handed back for it | the value of `OCI_PASSWORD`, a GHCR bearer token |
+| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD` |
+| The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
+| A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
+
+A target that needs a credential and finds none stops the publish before anything is sent, with `publish-credentials-missing`.
+
+## The target contract
+
+A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
+
+```ts
+interface PublishTarget {
+  kind: "npm" | "oci" | "forge";
+  name: string;            // for messages, such as "npm (2 packages)"
+  destination: string;     // printed before it runs
+  credentialEnv: string[]; // variables it reads credentials from, masked from the start
+  plan(ctx: PublishContext): Promise<PublishItem[]>;
+  publish(ctx: PublishContext): Promise<PublishedTarget>;
+}
+```
+
+`plan` reads what the target would publish and checks that it can: the files are there, they match the release's digests, the credentials are set. It uploads nothing and sends no request that changes anything. The publish plans every target before any of them publishes, and the dry run prints what `plan` returns. `publish` publishes and returns each item with where it went. Both throw `PublishTargetError` with a `code`, a message and an optional `fix`. A failure part way names what was already published.
+
+Both are given a `PublishContext` with these fields.
+
+| Field | Meaning |
+|---|---|
+| `release`, `label` | The release and its label, or null |
+| `releaseTag` | The tag the cut made, or null with no label |
+| `provenance` | Whether the run has an OIDC token, and why not |
+| `cwd` | The member's directory |
+| `tag` | A tag to publish under in place of the target's own (npm's dist-tag, the OCI tags), or null |
+| `env` | The environment credentials are read from |
+| `redactor` | Masks credentials. A target adds each credential and token it reads |
+| `log(line)` | Prints a line of progress, redacted |
+
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI and forge targets use and the `npm` executable. In the tests npm runs as a fake binary and the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, while the forge targets call a recording fetch function.
+
+Adding a kind of target takes three changes. Its schema joins the declaration union in `lifecycle/publish-declaration.ts`, and a factory in a module of its own returns its `PublishTarget`. Then `createPublishTargets` in `lifecycle/publish-targets.ts` gets a case that calls the factory.
+
+## What comes next
+
+Publishing a set all or nothing, staging under the `tag` parameter and resuming a publish that failed part way are [#4048](https://github.com/INTENTIUS/chant/issues/4048). Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049).

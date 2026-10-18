@@ -12,6 +12,7 @@ import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
 import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
 import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
+import { PublishDeclarationSchema, type PublishDeclaration } from "./lifecycle/publish-declaration";
 
 /**
  * One project-declared environment (chant #1166). Historically always a bare
@@ -169,6 +170,7 @@ export const ChantConfigSchema = z.object({
   ).optional(),
   release: z.object({
     autoRecord: z.boolean().optional(),
+    publish: z.array(PublishDeclarationSchema).optional(),
   }).optional(),
   // Strict: a misspelt key here would leave Ops on the local runtime with
   // nothing said (#2523).
@@ -382,6 +384,12 @@ export interface ChantConfig {
   release?: {
     /** Set false to disable auto-emitting a release record after a successful component deploy project-wide. The `--no-release-record` CLI flag overrides this per-invocation. */
     autoRecord?: boolean;
+    /**
+     * Where `chant release publish` publishes a cut release (#4047): npm
+     * packages, an image in an OCI registry, release assets on a forge. Run in
+     * the order given. See ./lifecycle/publish-declaration.ts.
+     */
+    publish?: PublishDeclaration[];
   };
 
   /** Defaults for `chant run` and its subcommands (#2523). */

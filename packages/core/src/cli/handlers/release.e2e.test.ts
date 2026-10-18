@@ -3,7 +3,8 @@
  * compiles each environment in a child chant with CHANT_ENV set, in a temp
  * repo with a temp bare remote, and the list prints the read contract's
  * `releases` document. No cloud is touched: the fixture's deploy is never
- * run, no tag is pushed, and nothing is published.
+ * run, no tag is pushed, and nothing is published: this member declares no
+ * publish target (release-publish-targets.e2e.test.ts publishes to stand-ins).
  */
 
 import { describe, test, expect } from "vitest";
@@ -112,7 +113,7 @@ describe("chant release cut, publish and list", () => {
         expect(dry.stdout).toContain("  actor t@chant.dev (from git user.email)");
         expect(dry.stdout).toContain("  tag release/v1, made here and not pushed");
         expect(dry.stdout).toContain("  dev: 1 template(s)");
-        expect(dry.stdout).toContain("chant release publish v1: nothing, since chant has no publish target for a release yet (#4047)");
+        expect(dry.stdout).toContain("chant release publish v1: nothing, since this member declares no publish target (release.publish in chant.config.ts)");
         expect(dry.stderr).toContain(`Dry run: nothing was cut, signed or tagged. Run again with --yes to cut: ${sameWithYes(["release", "cut", "v1", "--build", BUILD])}`);
         const dryJson = JSON.parse(cut("--json").stdout);
         expect(dryJson).toMatchObject({ dryRun: true, label: "v1", commit: sha, actor: "t@chant.dev", actorSource: "git", tag: { name: "release/v1", exists: false }, build: [] });
@@ -150,11 +151,17 @@ describe("chant release cut, publish and list", () => {
         expect(doc.releases[0]).toMatchObject({ releaseDigest: result.release.releaseDigest, label: "v1", environments: [] });
         expect(doc.releases[0].cuts[0]).toMatchObject({ runId: result.cut.runId, runOrigin: { forge: "local" } });
 
+        // A publish is a dry run without --yes, as a cut is.
+        const dryPub = chant(dir, ["release", "publish", "v1"]);
+        expect(dryPub.code, dryPub.stderr).toBe(0);
+        expect(dryPub.stdout).toContain("What would be published where:\n  nothing: this member declares no publish target (release.publish in chant.config.ts)");
+        expect(dryPub.stderr).toContain("Dry run: nothing was published. Run again with --yes to publish: chant release publish v1 --yes");
+
         // Publish from the workstation: the warning comes before anything else is said about publishing.
-        const pub = chant(dir, ["release", "publish", "v1"]);
+        const pub = chant(dir, ["release", "publish", "v1", "--yes"]);
         expect(pub.code, pub.stderr).toBe(0);
         const warning = pub.stderr.indexOf("this publish runs without OIDC, so what it publishes carries no provenance");
-        const nothing = pub.stderr.indexOf("Nothing was published: chant has no publish target for a release yet (#4047).");
+        const nothing = pub.stderr.indexOf("Nothing was published: this member declares no publish target (release.publish in chant.config.ts).");
         expect(warning).toBeGreaterThan(-1);
         expect(nothing).toBeGreaterThan(warning);
         expect(pub.stderr).toContain("chant components promote --release v1 --to dev");
@@ -164,7 +171,7 @@ describe("chant release cut, publish and list", () => {
         const fromCi = chant(dir, ["release", "publish", "v1", "--json"], oidc);
         expect(fromCi.code, fromCi.stderr).toBe(0);
         expect(fromCi.stderr).not.toContain("without OIDC");
-        expect(JSON.parse(fromCi.stdout)).toMatchObject({ label: "v1", provenance: { oidc: true, ci: "github" }, warnings: [], targets: [], published: [] });
+        expect(JSON.parse(fromCi.stdout)).toMatchObject({ dryRun: true, label: "v1", provenance: { oidc: true, ci: "github" }, warnings: [], targets: [], published: [] });
 
         const unknown = chant(dir, ["release", "publish", "v9"]);
         expect(unknown.code).toBe(1);

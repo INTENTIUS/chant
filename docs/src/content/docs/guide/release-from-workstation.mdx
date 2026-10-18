@@ -45,9 +45,7 @@ Read three parts of the output before you go on:
 - The `tag` line names the tag the cut makes, `release/v1.4.0`.
 - The lines under `What will be published where` list each component's `publish-*` steps with the environments whose deploy runs them, and what the release command would upload.
 
-<Aside type="caution">
-`chant release publish` has no targets yet. They arrive with [#4047](https://github.com/INTENTIUS/chant/issues/4047). Until then it makes its checks and prints its warning, and uploads nothing. A component's `publish-image` and `publish-artifact` steps run when an environment deploys the release with `chant components promote --release`.
-</Aside>
+The publish targets come from `release.publish` in `chant.config.ts`. See [Publish Targets](/chant/reference/publish-targets/) to declare npm packages, an image for an OCI registry, or forge release assets. A component's `publish-image` and `publish-artifact` steps are separate: they run when an environment deploys the release with `chant components promote --release`.
 
 ## Cut, sign and tag
 
@@ -75,7 +73,7 @@ git push origin release/v1.4.0
 
 ## Publish from CI
 
-The workflow below runs on a `release/**` tag and ships the release the tag names. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance.
+The workflow below runs on a `release/**` tag and ships the release the tag names. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance. The job checks out the tag, so the checkout is the release's commit, as a publish with targets requires. A publish never builds, so build what the targets upload before it runs, into paths `.gitignore` covers.
 
 ```yaml
 # .github/workflows/release-publish.yml
@@ -96,12 +94,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
       - run: npm ci
+      - run: npm run build
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
-      - run: npx chant release publish "${GITHUB_REF_NAME#release/}"
+      - run: npx chant release publish "${GITHUB_REF_NAME#release/}" --yes
 ```
 
-`chant release publish` fetches `chant/lifecycle` itself. It refuses a release whose commit was revoked after the cut, and under a `release` gate it refuses one with no verified signature. On GitLab, the job declares an ID token instead:
+`setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`; with npm trusted publishing set up for the package, the OIDC token is enough. `chant release publish` fetches `chant/lifecycle` itself. It refuses a release whose commit was revoked after the cut, and under a `release` gate it refuses one with no verified signature. On GitLab, the job declares an ID token instead:
 
 ```yaml
 release-publish:
@@ -112,13 +112,14 @@ release-publish:
       aud: sigstore
   script:
     - npm ci
+    - npm run build
     - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
-    - npx chant release publish "${CI_COMMIT_TAG#release/}"
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
 ```
 
 ## Ship with no CI
 
-A project with no CI can run `chant release publish v1.4.0` on the workstation. Before it uploads anything it warns that the run has no OIDC token, so nothing it uploads carries provenance. The warning does not stop it.
+A project with no CI can run `chant release publish v1.4.0` on the workstation to see the plan, then again with `--yes` to publish. The targets read their credentials from your shell, such as `OCI_PASSWORD` or `GITHUB_TOKEN`, and npm uses your `npm login`. Before it uploads anything it warns that the run has no OIDC token, so nothing it uploads carries provenance. The warning does not stop it.
 
 ## Cut in CI instead
 
