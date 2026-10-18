@@ -17,7 +17,7 @@ import { createPublishTargets } from "./publish-targets";
 import { parseRepository } from "./publish-oci";
 import { PublishTargetError, type PublishContext, type PublishFetch } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
-import { startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage } from "./__tests__/publish-fakes";
+import { startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
 
 const dirs: string[] = [];
 afterAll(() => {

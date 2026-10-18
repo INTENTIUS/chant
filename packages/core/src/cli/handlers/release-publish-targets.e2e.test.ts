@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { REPO } from "../../workspace/__fixtures__/contract-repo";
-import { startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__tests__/publish-fakes";
+import { startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
 
 const CHANT = [process.execPath, "--import", pathToFileURL(join(REPO, "node_modules", "tsx", "dist", "loader.mjs")).href, join(REPO, "packages", "core", "src", "cli", "main.ts")];
 const CI_VARS = [
