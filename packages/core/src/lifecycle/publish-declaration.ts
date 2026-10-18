@@ -27,6 +27,9 @@ import { z } from "zod";
 
 const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "an environment variable name");
 
+/** An SBOM file, or `false` to publish without one (#4049). */
+const sbomField = z.union([z.string().min(1), z.literal(false)]);
+
 /** npm: `npm publish` for each package, in the order given. */
 export const NpmPublishSchema = z
   .object({
@@ -36,6 +39,12 @@ export const NpmPublishSchema = z
     /** The registry, else the one npm's own config names. */
     registry: z.string().url().optional(),
     access: z.enum(["public", "restricted"]).optional(),
+    /**
+     * The SBOM each package carries at its root (#4049), a file name relative
+     * to the package. Default: the first of `sbom.spdx.json`, `sbom.cdx.json`,
+     * `sbom.cyclonedx.json` it holds. `false` publishes without one.
+     */
+    sbom: sbomField.optional(),
   })
   .strict();
 
@@ -53,6 +62,8 @@ export const OciPublishSchema = z
     usernameEnv: envName.optional(),
     /** The variable holding the registry password or token. Default `OCI_PASSWORD`. */
     passwordEnv: envName.optional(),
+    /** The SBOM pushed as a referrer of the image (#4049), relative to the member. Default: one written from the member's lockfile. `false` publishes without one. */
+    sbom: sbomField.optional(),
   })
   .strict();
 
@@ -71,6 +82,8 @@ export const ForgePublishSchema = z
     tag: z.string().min(1).optional(),
     /** The variable holding the token. Default `GITHUB_TOKEN`, `GITLAB_TOKEN` (then `CI_JOB_TOKEN`), or `FORGEJO_TOKEN`. */
     tokenEnv: envName.optional(),
+    /** The SBOM attached to the release (#4049), relative to the member. Default: one written from the member's lockfile. `false` publishes without one. */
+    sbom: sbomField.optional(),
   })
   .strict();
 

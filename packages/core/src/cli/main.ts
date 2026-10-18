@@ -283,15 +283,21 @@ Releases:
                         what chant build --env <env> writes: --src <dir> is
                         the build root, -o <file> the output (dist/build.yaml),
                         --lexicon narrows it.
-  release publish <label|digest> [--yes] [--json]
+  release publish <label|digest> [--yes] [--allow-unsigned]
+                  [--require-provenance] [--json]
                         Publish a cut release to the targets release.publish
                         in chant.config.ts declares (npm, OCI registries,
-                        forge release assets). A dry run without --yes.
-                        Refuses a revoked release, an unsigned one under an
-                        identity.gates release entry, and with a target a
-                        checkout that is not the release's commit. Warns first
-                        when the run has no OIDC token, so what it publishes
-                        carries no provenance.
+                        forge release assets), each with an SBOM and the
+                        release's provenance. A dry run without --yes.
+                        Refuses a revoked release, one whose signature does
+                        not verify against .chant/allowed_signers unless
+                        --allow-unsigned, and with a target a checkout that
+                        is not the release's commit. Warns first when the run
+                        has no OIDC token, so what it publishes carries no
+                        OIDC provenance; --require-provenance refuses instead.
+  release verify <label|digest> [--json]
+                        Check, offline, that the release was signed by a key
+                        .chant/allowed_signers lists at the release's commit.
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
   release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -1300,6 +1306,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
   // #4027: publish a cut release, to the targets #4047 declares.
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
+  // #4049: check a release's signature offline.
+  { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },

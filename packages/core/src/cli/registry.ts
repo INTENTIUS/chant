@@ -149,6 +149,10 @@ export interface ParsedArgs {
   allowCode?: boolean;
   /** `chant components promote --allow-skip` (#4030): promote past a step of the member's declared promotion order. */
   allowSkip?: boolean;
+  /** `chant release publish --allow-unsigned` (#4049): publish a release with no signature that verifies, with a warning. Never overrides identity.gates.release. */
+  allowUnsigned?: boolean;
+  /** `chant release publish --require-provenance` (#4049): refuse a run with no OIDC token, where it warns. */
+  requireProvenance?: boolean;
   /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
   source?: string;
   /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */

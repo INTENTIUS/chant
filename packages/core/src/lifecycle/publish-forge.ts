@@ -31,12 +31,20 @@
  * asset, which is what a publish revealed earlier leaves (on Forgejo and
  * GitLab, which report no digest, by name).
  *
+ * With the declared assets the stage attaches two more files (#4049): the
+ * SBOM (the file `sbom` names, else `sbom.spdx.json` written from the
+ * member's lockfile) and `release.intoto.json`, the release's provenance
+ * statement over the assets' digests, which carries the cut's signature
+ * (./publish-attachments.ts). They go on the draft with the assets, so
+ * nothing is visible before they are attached.
+ *
  * The token is read from `tokenEnv`, else `GITHUB_TOKEN`, `GITLAB_TOKEN`
  * then `CI_JOB_TOKEN`, or `FORGEJO_TOKEN`, and is masked in all output.
  */
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
+import { memberSbom, releaseProvenance } from "./publish-attachments";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
@@ -61,6 +69,8 @@ interface Asset {
   name: string;
   bytes: Uint8Array;
   digest: string;
+  /** Set on the SBOM and the provenance statement chant attaches (#4049). */
+  attachment?: "sbom" | "provenance";
 }
 
 interface ForgeRelease {
@@ -211,6 +221,13 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       checkReleaseDigest(ctx.release, "asset", ctx.cwd, p, [digest]);
       return { path: p, name: basename(p), bytes, digest };
     });
+    // #4049: the SBOM and the provenance statement over the assets go on the release with them.
+    const sbom = memberSbom(ctx, decl.sbom, `${decl.repo}@${tag}`, `the ${decl.forge} target`);
+    const provenance = releaseProvenance(
+      ctx,
+      assets.map((a) => ({ name: a.name, digest: a.digest })),
+    );
+    for (const a of [sbom, provenance]) if (a) assets.push({ path: a.name, name: a.name, bytes: a.bytes, digest: a.digest, attachment: a.kind });
     const names = new Set<string>();
     for (const a of assets) {
       if (names.has(a.name)) throw new PublishTargetError("publish-forge-asset-name-taken", `two assets are named ${a.name}, and a release holds one asset per name`);
@@ -218,6 +235,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     }
     return { tag, api, token, assets };
   };
+  const att = (a: Asset): Pick<PublishItem, "attachment"> => (a.attachment ? { attachment: a.attachment } : {});
   const where = (tag: string, name: string) => `${decl.forge} ${decl.repo} release ${tag}, asset ${name}`;
   const exists = (tag: string, a: Asset, theirs: string | null | undefined, before: PublishItem[]) =>
     new PublishTargetError(
@@ -233,7 +251,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     key: publishTargetKey(decl),
     async plan(ctx) {
       const { tag, assets } = setup(ctx);
-      return assets.map((a) => ({ name: a.path, destination: where(tag, a.name), digest: a.digest }));
+      return assets.map((a) => ({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a) }));
     },
     async stage(ctx): Promise<StagedTarget> {
       const { tag, api, token, assets } = setup(ctx);
@@ -255,7 +273,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
           }
           const theirs = published.assets.get(a.name);
           if (theirs !== a.digest && !(decl.forge !== "github" && theirs === null)) throw exists(tag, a, theirs, items);
-          items.push({ name: a.path, destination: where(tag, a.name), digest: a.digest, present: true });
+          items.push({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a), present: true });
         }
         ctx.log(`release ${tag} is already published with every asset`);
         return done(items, { published: "true" });
@@ -267,7 +285,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         const items: PublishItem[] = [];
         for (const a of assets) {
           ctx.log(`uploading ${a.name} (${a.bytes.byteLength} bytes) to the generic package registry`);
-          items.push({ name: a.path, destination: await client.upload(null, version, a), digest: a.digest });
+          items.push({ name: a.path, destination: await client.upload(null, version, a), digest: a.digest, ...att(a) });
         }
         return done(items, {});
       }
@@ -278,19 +296,19 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         if (rel.assets.has(a.name)) {
           const theirs = rel.assets.get(a.name);
           if (theirs !== a.digest) throw exists(tag, a, theirs, items);
-          items.push({ name: a.path, destination: where(tag, a.name), digest: a.digest, present: true });
+          items.push({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a), present: true });
           ctx.log(`${a.name} is already on the draft release ${tag}`);
           continue;
         }
         ctx.log(`uploading ${a.name} (${a.bytes.byteLength} bytes) to the draft`);
-        items.push({ name: a.path, destination: await client.upload(rel, version, a), digest: a.digest });
+        items.push({ name: a.path, destination: await client.upload(rel, version, a), digest: a.digest, ...att(a) });
       }
       return done(items, { releaseId: rel.id });
     },
     async reveal(ctx, staged) {
       const { tag, api, token } = setup(ctx);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
-      const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}) }));
+      const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}), ...(i.attachment ? { attachment: i.attachment } : {}) }));
       if (staged.state.published === "true") return { target: this.name, destination: this.destination, items: items.map((i) => ({ ...i, present: true })) };
       if (decl.forge === "gitlab") {
         ctx.log(`creating the gitlab release ${tag} at ${ctx.release.commit.slice(0, 12)} with ${items.length} asset link(s)`);

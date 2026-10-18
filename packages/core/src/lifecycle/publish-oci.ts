@@ -15,6 +15,13 @@
  * is checked against its digest before it is sent. Nothing a consumer pulls
  * by tag changes until the reveal, which points each tag at that digest.
  *
+ * The stage also pushes, by digest, two referrers of the image (#4049): its
+ * SBOM and the release's provenance statement (./publish-attachments.ts),
+ * each an OCI artifact manifest whose `subject` is the image, so a registry
+ * with the referrers API lists them under the image's digest and `oras
+ * discover` or `cosign tree` finds them. A referrer the registry already
+ * holds is not pushed again.
+ *
  * Credentials come from `usernameEnv` and `passwordEnv` (default
  * `OCI_USERNAME`, `OCI_PASSWORD`), or else from the `auths` entry for the
  * registry in the docker config file (`$DOCKER_CONFIG/config.json` or
@@ -33,6 +40,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
@@ -244,6 +252,35 @@ class Registry {
   }
 }
 
+/** The media type of the empty config an artifact manifest names. */
+const EMPTY_CONFIG = { mediaType: "application/vnd.oci.empty.v1+json", bytes: new Uint8Array(Buffer.from("{}")) };
+const IMAGE_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+
+/** One referrer of the image: an attached file and the artifact manifest that names the image as its subject. */
+interface Referrer {
+  attachment: Attachment;
+  manifest: Uint8Array;
+  digest: string;
+}
+
+/**
+ * The artifact manifest that attaches `a` to the image `subject` (OCI image
+ * spec 1.1): `artifactType` is the file's media type, the config is the empty
+ * descriptor, the one layer is the file, and `subject` is the image.
+ */
+export function referrerManifest(a: Attachment, subject: { mediaType: string; digest: string; size: number }): Uint8Array {
+  const manifest = {
+    schemaVersion: 2,
+    mediaType: IMAGE_MANIFEST,
+    artifactType: a.mediaType,
+    config: { mediaType: EMPTY_CONFIG.mediaType, digest: bytesDigest(EMPTY_CONFIG.bytes), size: EMPTY_CONFIG.bytes.byteLength },
+    layers: [{ mediaType: a.mediaType, digest: a.digest, size: a.bytes.byteLength, annotations: { "org.opencontainers.image.title": a.name } }],
+    subject,
+    annotations: { "org.opencontainers.image.title": a.name },
+  };
+  return new Uint8Array(Buffer.from(JSON.stringify(manifest)));
+}
+
 /** The tags to point at the digest: the context's tag when set, else the declared ones with `{label}` filled in. */
 export function ociTags(decl: OciPublishDeclaration, ctx: Pick<PublishContext, "tag" | "label">): string[] {
   if (ctx.tag) return [ctx.tag];
@@ -274,6 +311,19 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
       digest,
     };
   };
+  /** The SBOM and the provenance statement, each with the artifact manifest that refers to the image. */
+  const referrers = (ctx: PublishContext, layout: LayoutImage): Referrer[] => {
+    const subject = { mediaType: layout.top.mediaType, digest: layout.top.digest, size: layout.top.bytes.byteLength };
+    const files = [
+      memberSbom(ctx, decl.sbom, `${decl.repository}@${layout.top.digest}`, `oci ${decl.repository}`),
+      releaseProvenance(ctx, [{ name: `${decl.repository}@${layout.top.digest}`, digest: layout.top.digest }]),
+    ].filter((a): a is Attachment => a !== null);
+    return files.map((attachment) => {
+      const manifest = referrerManifest(attachment, subject);
+      return { attachment, manifest, digest: bytesDigest(manifest) };
+    });
+  };
+  const referrerItem = (r: Referrer): PublishItem => ({ name: r.attachment.name, destination: `${decl.repository}@${r.digest}, a referrer of the image`, digest: r.digest, attachment: r.attachment.kind });
   const connect = (ctx: PublishContext) => {
     const cred = ociCredential(decl, repo, ctx);
     return { cred, registry: new Registry(repo, fetchImpl, cred, ctx) };
@@ -286,27 +336,46 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     key: publishTargetKey(decl),
     async plan(ctx) {
       const layout = inspect(ctx);
-      layout.cleanup();
-      return [item(ctx, layout.top.digest)];
+      try {
+        return [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem)];
+      } finally {
+        layout.cleanup();
+      }
     },
     async stage(ctx) {
       const layout = inspect(ctx);
       try {
+        const attached = referrers(ctx, layout);
         const { cred, registry } = connect(ctx);
-        const staged = { ...item(ctx, layout.top.digest), name: decl.image };
+        const staged: PublishItem = { ...item(ctx, layout.top.digest), name: decl.image };
+        const items: PublishItem[] = [];
         if (await registry.hasManifest(layout.top.digest, layout.top.mediaType)) {
-          ctx.log(`${decl.repository} already holds ${layout.top.digest}; nothing pushed`);
-          return { target: this.name, destination: this.destination, items: [{ ...staged, present: true }], state: {} };
+          ctx.log(`${decl.repository} already holds ${layout.top.digest}; the image is not pushed again`);
+          items.push({ ...staged, present: true });
+        } else {
+          ctx.log(`pushing ${decl.image} to ${decl.repository} by digest ${layout.top.digest}, ${cred ? `with credentials from ${cred.password.from}` : "anonymously"}; no tag moves yet`);
+          let uploaded = 0;
+          for (const m of layout.manifests) {
+            for (const b of m.blobs) if (await registry.pushBlob(b.digest, () => layout.readBlob(b.digest))) uploaded++;
+            await registry.putManifest(m.digest, m.mediaType, m.bytes);
+          }
+          if (INDEX_TYPES.has(layout.top.mediaType)) await registry.putManifest(layout.top.digest, layout.top.mediaType, layout.top.bytes);
+          ctx.log(`  ${uploaded} blob(s) uploaded`);
+          items.push(staged);
         }
-        ctx.log(`pushing ${decl.image} to ${decl.repository} by digest ${layout.top.digest}, ${cred ? `with credentials from ${cred.password.from}` : "anonymously"}; no tag moves yet`);
-        let uploaded = 0;
-        for (const m of layout.manifests) {
-          for (const b of m.blobs) if (await registry.pushBlob(b.digest, () => layout.readBlob(b.digest))) uploaded++;
-          await registry.putManifest(m.digest, m.mediaType, m.bytes);
+        // #4049: the SBOM and the provenance statement, as referrers of the image, by digest.
+        for (const r of attached) {
+          if (await registry.hasManifest(r.digest, IMAGE_MANIFEST)) {
+            items.push({ ...referrerItem(r), present: true });
+            continue;
+          }
+          ctx.log(`attaching ${r.attachment.name} to ${layout.top.digest} as referrer ${r.digest}`);
+          await registry.pushBlob(bytesDigest(EMPTY_CONFIG.bytes), () => EMPTY_CONFIG.bytes);
+          await registry.pushBlob(r.attachment.digest, () => r.attachment.bytes);
+          await registry.putManifest(r.digest, IMAGE_MANIFEST, r.manifest);
+          items.push(referrerItem(r));
         }
-        if (INDEX_TYPES.has(layout.top.mediaType)) await registry.putManifest(layout.top.digest, layout.top.mediaType, layout.top.bytes);
-        ctx.log(`  ${uploaded} blob(s) uploaded`);
-        return { target: this.name, destination: this.destination, items: [staged], state: {} };
+        return { target: this.name, destination: this.destination, items, state: {} };
       } finally {
         layout.cleanup();
       }
@@ -318,7 +387,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
         const tags = ociTags(decl, ctx);
         for (const t of tags) await registry.putManifest(t, layout.top.mediaType, layout.top.bytes);
         ctx.log(tags.length > 0 ? `tagged ${layout.top.digest} ${tags.join(", ")}` : `no tag to point at ${layout.top.digest}`);
-        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest)] };
+        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem)] };
       } finally {
         layout.cleanup();
       }

@@ -7,11 +7,16 @@
  *       and tags the commit `release/<label>` locally;
  *       --sign signs the cut with the actor's ssh key (#4031); `--src`, `-o` and
  *       `--lexicon` shape the build of a project with no components (#4046)
- *   release publish <label|digest> [--yes] [--json]
+ *   release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
  *       publish a cut release (#4027) to the targets release.publish declares
- *       (#4047): a dry run unless --yes; refuses a revoked one, an unsigned one
- *       under identity.gates.release, and with a target a checkout that is not
- *       the release's commit; warns with no OIDC provenance
+ *       (#4047): a dry run unless --yes; refuses a revoked one, one with no
+ *       signature that verifies against .chant/allowed_signers unless
+ *       --allow-unsigned (#4049), and with a target a checkout that is not
+ *       the release's commit; warns with no OIDC provenance, and refuses
+ *       under --require-provenance; attaches SBOMs and provenance (#4049)
+ *   release verify <label|digest> [--json]
+ *       check the release's signature offline against .chant/allowed_signers
+ *       at the release's commit (#4049)
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
@@ -34,7 +39,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(ctx: CommandContext, params: Record<string, string> | undefined): import("../../components/release-compile").CompileInputs {
@@ -305,10 +310,13 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
  * `release publish <label|digest> [--yes]` (#4027, #4047): publish a cut
  * release to the targets the member declares under `release.publish` in
  * its `chant.config.ts`. It refuses a release no cut names, one cut from a
- * revoked commit, under identity.gates.release one with no verified
- * signature, and, when there is a target, a checkout that is not the
- * release's commit with a clean tree. It warns before publishing when the
- * run has no OIDC token, so what it publishes carries no provenance. Every
+ * revoked commit, one with no signature that verifies against the signers
+ * file at base unless `--allow-unsigned` (#4049; never under
+ * identity.gates.release), and, when there is a target, a checkout that is
+ * not the release's commit with a clean tree. It warns before publishing
+ * when the run has no OIDC token, so what it publishes carries no
+ * provenance, and refuses under `--require-provenance`. Each target attaches
+ * an SBOM and the release's provenance statement (#4049). Every
  * target is planned (its files read and checked, its credentials found)
  * before any publishes. Without `--yes` it is a dry run that prints the plan
  * and uploads nothing. With `--yes` it stages every target, then reveals them
@@ -332,9 +340,9 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   const { preparePublish, publishContext, runPublish, PublishTargetError, PublishRunError } = await import("../../lifecycle/release-publish");
   const { publishProgress, progressOf, readPublishRecords } = await import("../../lifecycle/publish-record");
   await fetchLifecycle({ cwd }).catch(() => false);
-  const prepared = await preparePublish({ cwd, ref });
+  const prepared = await preparePublish({ cwd, ref, allowUnsigned: args.allowUnsigned === true, requireProvenance: args.requireProvenance === true });
   if ("refusal" in prepared) return fail(prepared.refusal.code, prepared.refusal.message, prepared.refusal.fix);
-  const { release, label, signature, provenance, warning, targets, redactor } = prepared;
+  const { release, label, signature, provenance, warning, signatureWarning, targets, redactor } = prepared;
   const name = label ?? release.releaseDigest;
   const deploySteps = release.targets.map((t) => t.env);
   const say = (line: string) => console.error(redactor.redact(line));
@@ -346,7 +354,8 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     say(`${dryRun ? "Dry run: publish" : "Publishing"} ${formatBold(name)} (${release.releaseDigest}) from commit ${release.commit.slice(0, 12)}`);
     say(`  ${signature.status === "verified" ? `signed by ${signature.actor}` : signature.status === "unsigned" ? "not signed" : `signature unverified: ${signature.reason}`}`);
   }
-  // The warning goes to stderr with --json too, before any target runs.
+  // The warnings go to stderr with --json too, before any target runs.
+  if (signatureWarning) console.error(formatWarning({ message: signatureWarning }));
   if (warning) console.error(formatWarning({ message: warning }));
   const pctx = publishContext(prepared, { cwd, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
 
@@ -368,7 +377,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
       ? `  Each environment deploys the files the release recorded: chant release export ${name} --env ${deploySteps[0]}`
       : `  A component's publish steps run in each environment's deploy of the release: chant components promote --release ${name} --to ${deploySteps[0]}`;
   };
-  const base = { releaseDigest: release.releaseDigest, label, commit: release.commit, signature, provenance, warnings: warning ? [warning] : [] };
+  const base = { releaseDigest: release.releaseDigest, label, commit: release.commit, signature, provenance, warnings: [signatureWarning, warning].filter((w): w is string => w !== null) };
 
   if (dryRun) {
     const next = [sameWithYes(process.argv.slice(2))];
@@ -382,7 +391,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     for (const p of planned) {
       const earlier = p.progress === "revealed" ? " (published by an earlier run; skipped)" : p.progress === "staged" ? " (staged by an earlier run; only revealed)" : "";
       out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}${earlier}:`);
-      for (const i of p.items) out(`    ${i.name} to ${i.destination}`);
+      for (const i of p.items) out(`    ${describeItem(i)}`);
     }
     say(`Dry run: nothing was published. Run again with --yes to publish: ${next[0]}`);
     const hint = planned.length === 0 ? promoteHint() : null;
@@ -417,9 +426,57 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     const hint = promoteHint();
     if (hint) say(hint);
   } else {
-    for (const p of published) for (const i of p.items) say(`  ${i.present ? "already there" : "published"}: ${i.name} to ${i.destination}`);
+    for (const p of published) for (const i of p.items) say(`  ${i.present ? "already there" : "published"}: ${describeItem(i)}`);
     console.error(formatSuccess(`Published ${name} to ${published.length} target(s)`));
   }
+  return 0;
+}
+
+/** One item a target publishes, for a line: what, where, and the SBOM or attachment it is (#4049). */
+function describeItem(i: import("../../lifecycle/release-publish").PublishItem): string {
+  const what = i.attachment === "sbom" ? `${i.name} (SBOM)` : i.attachment === "provenance" ? `${i.name} (provenance)` : i.name;
+  return `${what} to ${i.destination}${i.sbom ? `, carrying ${i.sbom}` : ""}`;
+}
+
+/**
+ * `release verify <label|digest> [--json]` (#4049): check, offline, that the
+ * release was signed by a key `.chant/allowed_signers` lists at the release's
+ * commit, and that its file is the digest of what it holds. Exits 0 when it
+ * verifies and 1 when it does not or can't be checked.
+ */
+export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional;
+  if (!ref) {
+    console.error(formatError({ message: "release verify needs a release", hint: USAGE }));
+    return 1;
+  }
+  const { verifyRelease, verificationCode } = await import("../../lifecycle/release-verify");
+  const result = await verifyRelease({ cwd: resolve("."), ref });
+  if ("error" in result) {
+    if (args.json) console.log(JSON.stringify({ ref, error: result.error }, null, 2));
+    else console.error(formatError({ message: `${result.error.message} [${result.error.code}]`, ...(result.error.fix ? { hint: result.error.fix } : {}) }));
+    return 1;
+  }
+  const code = verificationCode(result);
+  if (args.json) {
+    console.log(JSON.stringify({ ...result, ...(code ? { error: { code, message: result.reason } } : {}) }, null, 2));
+    return code ? 1 : 0;
+  }
+  const name = result.label ? `${formatBold(result.label)} (${result.releaseDigest})` : result.releaseDigest;
+  for (const c of result.cuts) {
+    console.log(`  cut by ${c.actor} at ${c.timestamp}: ${c.signatureCheck.status}${c.signatureCheck.key ? ` (${c.signatureCheck.key})` : ""}`);
+  }
+  if (code) {
+    console.error(
+      formatError({
+        message: `${name} does not verify: ${result.reason} [${code}]`,
+        hint: code === "release-digest-mismatch" ? "Do not publish or deploy it; cut the release again." : `Cut it again signed with a key ${result.signers.path} lists: chant release cut ${result.label ?? "<label>"} --sign --yes`,
+      }),
+    );
+    return 1;
+  }
+  console.error(formatSuccess(`Verified ${name}: ${result.reason}`));
   return 0;
 }
 

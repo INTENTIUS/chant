@@ -7,23 +7,27 @@
  *
  * - a release no cut names (`release-not-found`);
  * - a release cut from a revoked commit (`release-revoked`, #4033);
- * - under an `identity.gates` entry for `release` (#4031), a release none of
- *   whose cuts carries a signature that verifies for its actor, in the gate's
- *   class when it names one (`release-unsigned` or `release-signature-unverified`).
+ * - a release none of whose cuts carries a signature that verifies for its
+ *   actor against `.chant/allowed_signers` at base (`release-unsigned` or
+ *   `release-signature-unverified`, #4049), and under an `identity.gates`
+ *   entry for `release` (#4031) one whose signer is not in the gate's class.
+ *   `--allow-unsigned` publishes one with no verified signature anyway, with
+ *   a warning, except under the release gate, which it never overrides.
  *
  * It then says whether the run has an OIDC token to sign provenance with
  * ({@link detectProvenance}), and warns when it has none, before any target
- * runs. The targets come from {@link releasePublishTargets}: the member
- * declares them under `release.publish` in its `chant.config.ts` (#4047).
+ * runs; `--require-provenance` refuses instead (`publish-provenance-missing`).
+ * The targets come from {@link releasePublishTargets}: the member declares them under `release.publish` in its `chant.config.ts` (#4047).
  * With a target, the checkout must be the release's commit with a clean
  * tree ({@link checkCheckoutIsRelease}), every target is planned before any
  * publishes, and without `--yes` nothing is published. With `--yes`,
  * {@link runPublish} stages every target, then reveals them (#4048): nothing a
  * consumer resolves changes until every target has staged, and a publish
  * that failed resumes from the record in `_releases/publishes.jsonl`
- * (./publish-record.ts) without publishing again what went out. Signing,
- * SBOMs and provenance are #4049. The publish steps a component
- * declares (`publish-image`, `publish-artifact`, `publish-asset`,
+ * (./publish-record.ts) without publishing again what went out. Each target
+ * attaches an SBOM and the release's provenance statement, which carries the
+ * cut's signature, when it stages (./publish-attachments.ts, #4049). The
+ * publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`,
  * `load-image-on-host`) are deploy steps: they run in each environment's
  * deploy of the release (`chant components promote --release`), never here.
  */
@@ -73,6 +77,20 @@ export interface PublishItem {
   digest?: string;
   /** True when the destination already held it, so nothing was uploaded. */
   present?: boolean;
+  /** Set on a file attached to what the target publishes (#4049): an SBOM or the release's provenance statement. */
+  attachment?: "sbom" | "provenance";
+  /** The SBOM file an npm package carries at its root (#4049). */
+  sbom?: string;
+}
+
+/** The cut a publish carries the signature of (#4049): the cut whose signature verified, else the newest. */
+export interface PublishCut {
+  actor: string;
+  label: string | null;
+  timestamp: string;
+  runId: string | null;
+  /** The armored ssh signature in the `chant-release` namespace, or null for an unsigned cut. */
+  signature: string | null;
 }
 
 /**
@@ -119,6 +137,8 @@ export interface PublishContext {
   /** The tag the cut made for the release, `release/<label>` or `release/<member>/<label>`, or null for a release with no label. */
   releaseTag: string | null;
   provenance: ProvenanceCheck;
+  /** The cut whose signature the provenance statement carries (#4049), or null when none is known. */
+  cut?: PublishCut | null;
   /** The member's directory, which the declaration's paths are relative to. */
   cwd: string;
   /**
@@ -217,6 +237,7 @@ export interface PublishRefusal {
     | "release-revoked"
     | "release-unsigned"
     | "release-signature-unverified"
+    | "publish-provenance-missing"
     | "publish-config-invalid"
     | "release-head-mismatch"
     | "release-worktree-dirty";
@@ -233,6 +254,10 @@ export interface PublishPlan {
   provenance: ProvenanceCheck;
   /** The warning printed before publishing, when the run has no OIDC token. */
   warning: string | null;
+  /** The warning printed before publishing a release with no verified signature under `--allow-unsigned` (#4049). */
+  signatureWarning: string | null;
+  /** The cut whose signature the provenance statement carries: the verified one, else the newest. */
+  cut: PublishCut | null;
   /** The tag the cut made, or null for a release with no label. */
   releaseTag: string | null;
   targets: PublishTarget[];
@@ -244,8 +269,19 @@ export interface PublishPlan {
  * Resolve `ref` (a label or a digest) in the member at `cwd` and decide
  * whether it may be published, reading the local `chant/lifecycle` branch,
  * the local tags and the declaration at base. Fetches nothing.
+ *
+ * `allowUnsigned` publishes a release with no verified signature, which is
+ * refused otherwise (#4049); it does not override the release gate.
+ * `requireProvenance` refuses a run with no OIDC token, where it warns.
  */
-export async function preparePublish(req: { cwd: string; ref: string; env?: NodeJS.ProcessEnv; deps?: PublishDeps }): Promise<PublishPlan | { refusal: PublishRefusal }> {
+export async function preparePublish(req: {
+  cwd: string;
+  ref: string;
+  env?: NodeJS.ProcessEnv;
+  deps?: PublishDeps;
+  allowUnsigned?: boolean;
+  requireProvenance?: boolean;
+}): Promise<PublishPlan | { refusal: PublishRefusal }> {
   const { resolveRelease, readCuts } = await import("./release-store");
   const { readRevokedCommits, revocationOf, describeRevocation } = await import("./release-revocation");
   const { scopeSource } = await import("../workspace/write-scope");
@@ -275,8 +311,8 @@ export async function preparePublish(req: { cwd: string; ref: string; env?: Node
     check: checkReleaseSignature(rule.rule, { releaseDigest: c.releaseDigest, label: c.label, actor: c.actor, timestamp: c.timestamp, signature: c.signature }),
   }));
   const verified = checks.find((c) => c.check.status === "verified");
+  const unsigned = checks.every((c) => c.check.status === "unsigned");
   if (rule.requirement && !verified) {
-    const unsigned = checks.every((c) => c.check.status === "unsigned");
     return {
       refusal: {
         code: unsigned ? "release-unsigned" : "release-signature-unverified",
@@ -287,10 +323,30 @@ export async function preparePublish(req: { cwd: string; ref: string; env?: Node
       },
     };
   }
+  // #4049: with or without the gate, a publish refuses a release whose signature does not verify, unless --allow-unsigned.
+  let signatureWarning: string | null = null;
+  if (!verified) {
+    const why = unsigned
+      ? `${name} has no signed cut`
+      : `no cut of ${name} carries a signature that verifies against the signers file at base: ${checks.map((c) => c.check.reason).join("; ")}`;
+    if (!req.allowUnsigned) {
+      return {
+        refusal: {
+          code: unsigned ? "release-unsigned" : "release-signature-unverified",
+          message: `${why}, and chant release publish publishes only a release signed by a key in .chant/allowed_signers`,
+          fix: `Cut it signed with a key .chant/allowed_signers lists for the chant-release namespace: chant release cut ${label ?? "<label>"} --sign --yes. To publish it unsigned anyway, pass --allow-unsigned.`,
+        },
+      };
+    }
+    signatureWarning = `${why}; publishing it anyway under --allow-unsigned, so chant release verify ${label ?? release.releaseDigest} will fail for it`;
+  }
   const shown = verified ?? checks.at(-1);
   const signature: PublishPlan["signature"] = shown
     ? { status: shown.check.status, actor: shown.cut.actor, key: shown.check.key, reason: shown.check.reason }
     : { status: "unsigned", actor: null, key: null, reason: "no cut names the release" };
+  const cut: PublishCut | null = shown
+    ? { actor: shown.cut.actor, label: shown.cut.label, timestamp: shown.cut.timestamp, runId: shown.cut.runId ?? null, signature: shown.cut.signature ?? null }
+    : null;
 
   let targets: PublishTarget[];
   try {
@@ -306,6 +362,15 @@ export async function preparePublish(req: { cwd: string; ref: string; env?: Node
 
   const env = req.env ?? process.env;
   const provenance = detectProvenance(env);
+  if (req.requireProvenance && !provenance.oidc) {
+    return {
+      refusal: {
+        code: "publish-provenance-missing",
+        message: `${name} would be published without OIDC provenance, and --require-provenance asks for it: ${provenance.reason}`,
+        fix: "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), or drop --require-provenance.",
+      },
+    };
+  }
   const warning = provenance.oidc
     ? null
     : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
@@ -315,7 +380,7 @@ export async function preparePublish(req: { cwd: string; ref: string; env?: Node
   const member = ledger.members.length > 0 ? ledger.members.join("/") : null;
   const releaseTag = label !== null ? releaseTagName(member, label) : null;
   const redactor = createRedactor(env, targets.flatMap((t) => t.credentialEnv));
-  return { release, label, signature, provenance, warning, releaseTag, targets, redactor };
+  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, targets, redactor };
 }
 
 /**
@@ -361,6 +426,7 @@ export function publishContext(plan: PublishPlan, req: { cwd: string; env?: Node
     label: plan.label,
     releaseTag: plan.releaseTag,
     provenance: plan.provenance,
+    cut: plan.cut,
     cwd: req.cwd,
     tag: req.tag ?? null,
     env: req.env ?? process.env,

@@ -17,7 +17,7 @@ import { parsePublishRecords, PUBLISHES_FILE } from "./publish-record";
 import { createPublishTargets } from "./publish-targets";
 import { PublishRunError, runPublish, type PublishContext, type PublishTarget } from "./release-publish";
 import type { ReleaseArtifact } from "./release-store";
-import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
+import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { TestRepo } from "../workspace/trust/test-repo";
 
@@ -53,6 +53,7 @@ async function release(r: TestRepo) {
   writePackage(join(r.dir, "packages", "cli"), "@acme/cli", "2.0.0");
   writeOciLayout(join(r.dir, "image"));
   r.write("dist/api.tar.gz", "asset bytes");
+  writeLockfile(r.dir);
   const head = r.commit("init");
   r.git(["tag", `ci/green/${head}`]);
   const cut = await cutRelease({ cwd: r.dir, compiler, label: "v2", actor: "alice", env: {}, now: () => new Date("2026-10-17T10:00:00.000Z") });
@@ -114,7 +115,8 @@ describe("a publish that fails resumes", () => {
       ]);
       expect(reg.uploads).toBe(ociBefore.uploads);
       expect(reg.requests.filter((q) => q.method === "PUT")).toHaveLength(ociBefore.puts);
-      expect(forge.releases).toMatchObject([{ draft: true, assets: [{ name: "api.tar.gz" }] }]);
+      expect(forge.releases).toMatchObject([{ draft: true }]);
+      expect(forge.releases[0]!.assets.map((a) => a.name)).toEqual(["api.tar.gz", "sbom.spdx.json", "release.intoto.json"]);
       expect(lines).toContain("  npm (2 packages): staged by an earlier run; not staged again");
       expect(records().map((x) => [x.kind, x.step])).toEqual([["npm", "staged"], ["oci", "staged"], ["forge", "staged"]]);
 
@@ -127,7 +129,7 @@ describe("a publish that fails resumes", () => {
       expect(npmCalls().slice(npm3).map((a) => a[2])).toEqual(["@acme/core@2.0.0", "@acme/cli@2.0.0"]);
       expect(reg.uploads).toBe(ociUploads);
       expect(forge.calls.slice(forge3).map((c) => c.method)).toEqual(["PATCH"]);
-      expect(visible()).toEqual({ npm: { "@acme/core": "2.0.0", "@acme/cli": "2.0.0" }, ociTags: ["v2"], forge: [{ tag: "release/v2", assets: ["api.tar.gz"] }] });
+      expect(visible()).toEqual({ npm: { "@acme/core": "2.0.0", "@acme/cli": "2.0.0" }, ociTags: ["v2"], forge: [{ tag: "release/v2", assets: ["api.tar.gz", "sbom.spdx.json", "release.intoto.json"] }] });
       expect(done.resumed).toEqual([
         { target: "npm (2 packages)", step: "staged" },
         { target: `oci ${reg.host}/acme/api`, step: "staged" },

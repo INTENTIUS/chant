@@ -4,7 +4,7 @@ description: The release.publish block in chant.config.ts and the targets it dec
 diataxis: reference
 ---
 
-`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials, how a publish stages every target before any becomes visible and resumes after a failure ([#4048](https://github.com/INTENTIUS/chant/issues/4048)), and the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/#release-publish).
+`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials, how a publish stages every target before any becomes visible and resumes after a failure ([#4048](https://github.com/INTENTIUS/chant/issues/4048)), the SBOM and provenance each target attaches ([#4049](https://github.com/INTENTIUS/chant/issues/4049)), and the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/#release-publish).
 
 ## Declaring targets
 
@@ -36,12 +36,15 @@ A target never builds. It uploads the files that are there. A file that the rele
 | `packages` | Package directories or `.tgz` files from `npm pack` in the order to publish them. The first is the set's core |
 | `registry` | The registry URL. Default: the one npm's own config names |
 | `access` | `public` or `restricted` for npm's `--access` |
+| `sbom` | The SBOM file each package carries at its root. Default: the first of `sbom.spdx.json`, `sbom.cdx.json` and `sbom.cyclonedx.json` it holds. `false` publishes without one |
 
 The stage runs, for each package, `npm view <name>@<version> version` to ask whether the registry already holds the version. When it doesn't, it runs `npm publish <package> --tag next` with the declared `--registry` and `--access`, and `--provenance` when the run has an OIDC token. A publish from GitHub Actions with `id-token: write` gets npm provenance this way. So does one from GitLab CI with `SIGSTORE_ID_TOKEN`, and npm trusted publishing works in both. A version under `next` is not what `latest` or a range resolves to, so a consumer sees nothing yet. A version already on the registry is not published again. When one package fails, the error names the packages staged before it.
 
 The reveal runs `npm dist-tag add <name>@<version> latest` for each package in the declared order, with the declared `--registry`. The first package declared is the set's core, and its `latest` moves first, so a consumer that resolves a new package also finds its new core. Order the list core first, then each package after the packages it depends on. This is the order chant's own releases use ([#3903](https://github.com/INTENTIUS/chant/issues/3903)).
 
 A new package is the exception: npm makes its first version `latest` whatever tag it is published under, so that version is visible as soon as it stages. Moving a dist-tag needs credentials that may change dist-tags. Over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record, which is separate from publishing.
+
+With an OIDC token, the reveal then checks what it published. In an empty temporary directory it runs `npm install --ignore-scripts --no-audit --no-fund` for every package at its version, then `npm audit signatures`, both with the declared `--registry`. npm fails the audit when a package's registry signature or provenance attestation does not verify, and the publish stops with `publish-npm-audit-failed`. By then `latest` has moved, so the error says the packages were published. Run again, the publish moves no tag that moved and audits again. A workstation has no token and so no npm provenance to audit, and there the step does not run.
 
 For both steps npm authenticates with its own config. chant reads no npm token and writes no `.npmrc`. On a workstation that is `npm login`. In GitHub Actions, `actions/setup-node` with `registry-url` writes an `.npmrc` that reads `NODE_AUTH_TOKEN`, and trusted publishing needs no token. npm runs with the run's environment, and chant masks what it prints.
 
@@ -53,8 +56,9 @@ For both steps npm authenticates with its own config. chant reads no npm token a
 | `repository` | `<registry host>/<name>` like `ghcr.io/acme/api` |
 | `tags` | Tags to point at the pushed digest. `{label}` is the release's label. The default is `["{label}"]` when the release has a label |
 | `usernameEnv` and `passwordEnv` | The variables holding the registry user and its password or token. The defaults are `OCI_USERNAME` and `OCI_PASSWORD` |
+| `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: one written from the member's lockfile. `false` attaches none |
 
-The target speaks the registry HTTP API directly, so it needs no registry client installed. The stage pushes by digest only. It asks whether the registry already holds the image's manifest digest and sends nothing when it does. Otherwise it uploads each config and layer blob the registry does not hold yet, checking each against its digest first, then puts each manifest by its digest, then the index when there is one. A consumer that pulls by tag sees none of it. The reveal points each tag at that digest. A `Basic` challenge takes the credentials as they are. A `Bearer` challenge, as GHCR and Docker Hub send, exchanges them for a token at the realm it names.
+The target speaks the registry HTTP API directly, so it needs no registry client installed. The stage pushes by digest only. It asks whether the registry already holds the image's manifest digest and sends nothing when it does. Otherwise it uploads each config and layer blob the registry does not hold yet, checking each against its digest first, then puts each manifest by its digest, then the index when there is one. It then pushes the SBOM and the provenance statement as referrers of the image, each by its digest and only when the registry does not hold it. A consumer that pulls by tag sees none of it. The reveal points each tag at that digest. A `Basic` challenge takes the credentials as they are. A `Bearer` challenge, as GHCR and Docker Hub send, exchanges them for a token at the realm it names.
 
 With neither variable set, the target reads the registry's `auths` entry from the docker config file (`$DOCKER_CONFIG/config.json`, else `~/.docker/config.json`) that `docker login` writes. It does not run a credential helper (`credsStore`). With none of these, the push is anonymous.
 
@@ -70,8 +74,9 @@ With neither variable set, the target reads the registry's `auths` entry from th
 | `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
 | `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
+| `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: `sbom.spdx.json` written from the member's lockfile. `false` attaches none |
 
-A release with no label and no declared `tag` is refused (`publish-forge-no-tag`). The stage puts the assets where no consumer sees them, and the reveal makes the release visible with all of them at once.
+A release with no label and no declared `tag` is refused (`publish-forge-no-tag`). The SBOM and `release.intoto.json`, the provenance statement, go with the declared assets as two more, so their names must not be taken by an asset. The stage puts the assets where no consumer sees them, and the reveal makes the release visible with all of them at once.
 
 | Forge | Stage | Reveal |
 |---|---|---|
@@ -80,6 +85,57 @@ A release with no label and no declared `tag` is refused (`publish-forge-no-tag`
 | GitLab | Puts each asset in the project's generic package registry as package `release` at the label's version. GitLab has no draft release, so it makes none | Creates the release at the commit with a link to each asset, in one request |
 
 An asset already on the draft with the same name and a matching `digest` is left as it is, so a stage run again uploads only what is missing. One whose digest differs is refused (`publish-forge-asset-exists`), and so is one on Forgejo, which reports no digest. A release already published for the tag is refused (`publish-forge-release-published`), since assets uploaded to it would show one at a time. The exception is a published release that already holds every asset, which is what an earlier publish leaves; the stage then does nothing.
+
+## SBOMs and provenance
+
+Each target attaches an SBOM and the release's provenance statement to what it publishes ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). Both are attached in the stage, so nothing is visible before they are.
+
+| Target | SBOM | Provenance in CI | Provenance from a workstation |
+|---|---|---|---|
+| npm | A file in each package, since npm keeps no file beside a package | npm's own, from `--provenance`, checked with `npm audit signatures` | The release's signature on `chant/lifecycle` only |
+| OCI | An OCI referrer of the image | The provenance statement as a referrer of the image | The same statement, which says its provenance is the signature |
+| Forge | An asset of the release | `release.intoto.json`, an asset of the release | The same asset, which says its provenance is the signature |
+
+### The SBOM
+
+An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Keep it in what npm packs: a package with a `files` list names it there. A package with none is refused with `publish-sbom-missing` in the plan, before anything is sent.
+
+The OCI and forge targets attach the file `sbom` names. Without one they write an SPDX document from the nearest `package-lock.json` or `pom.xml`, in the member's directory or above it inside the repository, with the hermetic writer the [`generate-sbom`](/chant/components/build-archive/) capability uses. It lists the declared dependencies and not an image's base layers, so an image built with a layer scan (BuildKit's `--sbom`, `syft`) should name that scan's file in `sbom`. The document is dated with the cut's time, so a publish run again writes the same bytes. With neither a declared file nor a lockfile, the target is refused with `publish-sbom-missing`. A file that is not SPDX or CycloneDX JSON is refused with `publish-sbom-invalid`. `sbom: false` publishes without an SBOM.
+
+### The provenance statement
+
+The provenance statement is an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) with the media type `application/vnd.in-toto+json`. Its subjects are the digests of what the target publishes: the image's manifest digest, or each forge asset's. The predicate type is `https://intentius.io/chant/release/v1`, and a predicate looks like this.
+
+```json
+{
+  "releaseDigest": "jcs1-sha256:...",
+  "label": "v1.4.0",
+  "member": null,
+  "commit": "3f2a9c1d0b7e...",
+  "cut": { "actor": "alice", "label": "v1.4.0", "timestamp": "2026-10-17T10:00:00.000Z", "runId": "local-1760695200000", "namespace": "chant-release", "signature": "-----BEGIN SSH SIGNATURE-----..." },
+  "provenance": { "kind": "oidc", "ci": "github" }
+}
+```
+
+`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/#release-verify), offline, against the signers file at the release's commit. `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token: in CI, npm's provenance is the one a registry records and signs, and for images, an attestation signed with the job's token is the CI's to add, such as `actions/attest-build-provenance`. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
+
+### A CI job that checks provenance
+
+A CI job that publishes passes `--require-provenance`, so a job whose OIDC token is missing fails instead of publishing without provenance. The npm target runs `npm audit signatures` after its reveal:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+steps:
+  - uses: actions/checkout@v4
+    with: { fetch-depth: 0 }
+  - uses: actions/setup-node@v4
+    with: { node-version: 22, registry-url: https://registry.npmjs.org }
+  - run: npm ci && npm run build
+  - run: npx chant release verify "${GITHUB_REF_NAME#release/}"
+  - run: npx chant release publish "${GITHUB_REF_NAME#release/}" --require-provenance --yes
+```
 
 ## Staging and resuming
 
@@ -144,6 +200,7 @@ All three are given a `PublishContext` with these fields.
 | `release`, `label` | The release and its label, or null |
 | `releaseTag` | The tag the cut made, or null with no label |
 | `provenance` | Whether the run has an OIDC token, and why not |
+| `cut` | The cut whose signature the provenance statement carries: `actor`, `label`, `timestamp`, `runId` and `signature`. Optional; null when none is known |
 | `cwd` | The member's directory |
 | `tag` | A tag for the reveal to move in place of the target's own (npm's `latest`, the OCI tags), or null. Staging never uses it |
 | `env` | The environment credentials are read from |
@@ -154,6 +211,4 @@ The targets take their dependencies through `PublishDeps`, which holds the `fetc
 
 Adding a kind of target takes three changes. Its schema joins the declaration union in `lifecycle/publish-declaration.ts`, and a factory in a module of its own returns its `PublishTarget`. Then `createPublishTargets` in `lifecycle/publish-targets.ts` gets a case that calls the factory.
 
-## What comes next
-
-Signing what is published and attaching SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049).
+A target attaches its SBOM and provenance with the helpers in `lifecycle/publish-attachments.ts`: `memberSbom` for an SBOM beside what it publishes, `packageSbom` for one inside a package, and `releaseProvenance` for the statement. Each attached file comes back as a `PublishItem` with `attachment` set to `sbom` or `provenance`.
