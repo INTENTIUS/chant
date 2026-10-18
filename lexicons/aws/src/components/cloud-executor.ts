@@ -45,6 +45,13 @@ export interface CfnChange {
   resourceType: string;
   /** True when CloudFormation must replace (destroy + recreate) this resource to apply the change. */
   replacement: boolean;
+  /**
+   * CloudFormation's own `Replacement` value, when the backend reports one.
+   * `Conditional` means the replacement depends on a value CloudFormation
+   * resolves only while applying; `replacement` is false for it, and a plan
+   * counts it as a replace (#4084).
+   */
+  replacementMode?: "True" | "False" | "Conditional";
   /** Resource-specific detail, when the executor's changeset backend provides it (e.g. property/scope). */
   details?: string[];
 }
@@ -60,6 +67,15 @@ export interface CfnChangeSet {
   statusReason?: string;
   /** True the first time this stack is created (no prior stack exists). */
   isCreate: boolean;
+  /** The change set's type: CREATE for a stack that does not exist yet or was never executed, else UPDATE. */
+  changeSetType?: "CREATE" | "UPDATE";
+  /**
+   * True when no stack existed before this change set, so CloudFormation made
+   * an empty `REVIEW_IN_PROGRESS` stack to hold it. A plan that deletes the
+   * change set without executing it deletes that stack too
+   * (`deleteStackShell`, #4084).
+   */
+  stackCreated?: boolean;
   changes: CfnChange[];
 }
 
@@ -92,6 +108,13 @@ export interface CloudFormationClient {
   describeStack(stackName: string): Promise<CfnStackStatus>;
   /** Trigger CloudFormation's native rollback-to-last-known-good-state for a stack (saga compensation). */
   rollbackStack(stackName: string): Promise<void>;
+  /**
+   * Delete a stack only while it is the empty `REVIEW_IN_PROGRESS` stack a
+   * CREATE change set made, and say whether it deleted it (#4084). A stack in
+   * any other status is left alone. Optional: without it, a plan leaves the
+   * empty stack, and the next CREATE change set reuses it.
+   */
+  deleteStackShell?(stackName: string): Promise<boolean>;
 }
 
 // ── ECS ──────────────────────────────────────────────────────────────────��─
@@ -376,14 +399,17 @@ const realEcr: EcrClient = {
   },
 };
 
-/** CREATE for a stack that doesn't exist (or is stuck in REVIEW_IN_PROGRESS from a prior unexecuted CREATE), else UPDATE. */
-async function cfnChangeSetType(stackName: string): Promise<"CREATE" | "UPDATE"> {
+/**
+ * CREATE for a stack that doesn't exist (or is stuck in REVIEW_IN_PROGRESS from
+ * a prior unexecuted CREATE), else UPDATE; and whether a stack existed at all.
+ */
+async function cfnChangeSetType(stackName: string): Promise<{ type: "CREATE" | "UPDATE"; existed: boolean }> {
   try {
     const { stdout } = await run(`aws cloudformation describe-stacks --stack-name ${q(stackName)}`);
     const status = (JSON.parse(stdout) as { Stacks?: Array<{ StackStatus?: string }> }).Stacks?.[0]?.StackStatus;
-    return status === "REVIEW_IN_PROGRESS" ? "CREATE" : "UPDATE";
+    return { type: status === "REVIEW_IN_PROGRESS" ? "CREATE" : "UPDATE", existed: true };
   } catch {
-    return "CREATE"; // describe-stacks errors when the stack doesn't exist
+    return { type: "CREATE", existed: false }; // describe-stacks errors when the stack doesn't exist
   }
 }
 
@@ -429,7 +455,7 @@ const realCloudFormation: CloudFormationClient = {
     // exist yet ("Stack ... does not exist"). Pick CREATE for a new stack, and
     // for one still in REVIEW_IN_PROGRESS (a prior CREATE change set never
     // executed), mirroring what `aws cloudformation deploy` does under the hood.
-    const changeSetType = await cfnChangeSetType(args.stackName);
+    const { type: changeSetType, existed } = await cfnChangeSetType(args.stackName);
     let body = "";
     try {
       body = readFileSync(args.templatePath, "utf8");
@@ -473,11 +499,16 @@ const realCloudFormation: CloudFormationClient = {
       status: described.Status,
       statusReason: described.StatusReason,
       isCreate: described.Status === "CREATE_COMPLETE" && !described.Changes?.length,
+      changeSetType,
+      stackCreated: !existed,
       changes: (described.Changes ?? []).map((c) => ({
         action: c.ResourceChange.Action as CfnChange["action"],
         logicalResourceId: c.ResourceChange.LogicalResourceId,
         resourceType: c.ResourceChange.ResourceType,
         replacement: c.ResourceChange.Replacement === "True",
+        ...(c.ResourceChange.Replacement === "True" || c.ResourceChange.Replacement === "False" || c.ResourceChange.Replacement === "Conditional"
+          ? { replacementMode: c.ResourceChange.Replacement }
+          : {}),
         details: c.ResourceChange.Details?.map((d) => d.Target?.Name).filter((x): x is string => !!x),
       })),
     };
@@ -514,6 +545,17 @@ const realCloudFormation: CloudFormationClient = {
   },
   async rollbackStack(stackName) {
     await run(`aws cloudformation rollback-stack --stack-name ${q(stackName)}`);
+  },
+  async deleteStackShell(stackName) {
+    let status: string;
+    try {
+      status = (await realCloudFormation.describeStack(stackName)).stackStatus;
+    } catch {
+      return false; // gone already
+    }
+    if (status !== "REVIEW_IN_PROGRESS") return false;
+    await run(`aws cloudformation delete-stack --stack-name ${q(stackName)}`);
+    return true;
   },
 };
 

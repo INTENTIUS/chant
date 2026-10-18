@@ -56,7 +56,7 @@ import type { CapabilityRegistry } from "./capability";
 import { deployContext, resolveComponentGraph, resolveStepInput, type DriverComponent, type DriverGate, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { gateName, RELEASE_GATE_OP } from "../op/gate-name";
-import { capabilitySteps, readComponentOutputs } from "./wave-plan";
+import { capabilitySteps, planContext, readComponentOutputs } from "./wave-plan";
 import {
   composeChangeSet,
   isEmptyChangeSet,
@@ -265,7 +265,7 @@ export async function planReleaseChangeSet(input: ReleaseChangeSetInput): Promis
       }
       for (const step of plannable) {
         const { kind, ...rest } = step;
-        const planned = await registry.resolve(kind).plan!(ctx, resolveStepInput(rest, {}, outputs) as never);
+        const planned = await registry.resolve(kind).plan!(planContext(ctx, rest, outputs), resolveStepInput(rest, {}, outputs) as never);
         parts.push(
           planned.changeSet ?? {
             member: {

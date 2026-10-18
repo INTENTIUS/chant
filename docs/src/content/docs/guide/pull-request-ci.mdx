@@ -65,6 +65,14 @@ export const app: Component = {
 
 A root is changed when a changed file sits in its directory, in a local module it calls, or is one of its var files. A pull request that edits `roots/a` plans `a` and `app`. It does not plan `net`.
 
+### CloudFormation stacks
+
+A component whose step is `cfn-deploy` is planned with a CloudFormation change set. The plan creates one for the stack's template and resolved parameters, reads the changes it proposes and deletes it without executing it. The member is named after the stack. An `Add` counts as a create, a `Modify` as an update, or as a replace when CloudFormation says `Replacement: True` or `Conditional`, and a `Remove` as a delete. A change set with nothing to apply gives the member no changes. The proposed changes are part of the digest the gate binds, as every planner's are, so a change set that proposes something else at merge moves the digest and the apply refuses.
+
+A stack that does not exist yet gets a CREATE change set, so every resource counts as a create. CloudFormation holds that change set in an empty stack in `REVIEW_IN_PROGRESS`, and the plan deletes that empty stack too. It never deletes a stack in any other status. The plan reads the stack outputs a dependent's `stackOutput()` names as they stand now. When the upstream stack does not exist yet, the dependent creates no change set: its row says `inputs from network; re-checked on apply`, with `?` for its counts, and the summary lists it under holes.
+
+The plan job needs the same AWS credentials and region as the apply job, with permission to create, describe and delete change sets, and to delete a stack. Build the templates before `pr-plan`, as before the apply.
+
 ## Generate the pipeline
 
 ```bash

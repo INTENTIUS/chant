@@ -19,7 +19,11 @@
  * invoke, or SSM host command).
  */
 
-import type { Capability } from "@intentius/chant/components/capability";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import type { Capability, CapabilityPlan, DeployContext } from "@intentius/chant/components/capability";
+import type { ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
+import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
 
 /** CloudFormation's wording when a change set has nothing to apply — the stack
@@ -43,6 +47,172 @@ export function isNoopChangeSet(changeSet: CfnChangeSet): boolean {
 }
 
 // ── cfn-deploy ───────────────────────────────────────────────────────────────
+
+/**
+ * Whether a proposed change replaces its resource. CloudFormation's
+ * `Replacement: Conditional` counts: the replacement depends on a value it
+ * resolves only while applying, so a reviewer has to read it as one (#4084).
+ */
+export function cfnChangeReplaces(change: CfnChange): boolean {
+  return change.replacement || change.replacementMode === "Conditional";
+}
+
+/**
+ * One CloudFormation resource change as a change-set entry (#4084). The
+ * address is the logical id, which is also the entity name the aws
+ * lexicon's graph IR gives the resource, so the entry maps onto its node
+ * (#4022). `Add` is a create, `Modify` an update or (when it replaces) a
+ * replace, `Remove` a delete, `Import` an import that changes nothing else,
+ * and `Dynamic` an update CloudFormation could not describe further.
+ */
+export function cfnChangeEntry(member: string, change: CfnChange): ChangeSetEntry {
+  const attributes = [...new Set(change.details ?? [])].sort().map((path) => ({ path }));
+  const base = {
+    member,
+    lexicon: "aws",
+    planner: "chant" as const,
+    address: change.logicalResourceId,
+    type: change.resourceType,
+    name: change.logicalResourceId,
+    attributes,
+  };
+  switch (change.action) {
+    case "Add":
+      return { ...base, action: "create" };
+    case "Remove":
+      return { ...base, action: "delete", disruption: "destroy" };
+    case "Import":
+      return { ...base, action: "no-op", importing: true };
+    case "Dynamic":
+      return { ...base, action: cfnChangeReplaces(change) ? "replace" : "update", disruption: cfnChangeReplaces(change) ? "replace" : "unknown" };
+    default:
+      return cfnChangeReplaces(change)
+        ? { ...base, action: "replace", disruption: "replace" }
+        : { ...base, action: "update", disruption: "in-place" };
+  }
+}
+
+/** The template's bytes as a digest, or `null` when it cannot be read here (the change set then reports why). */
+function templateDigest(path: string): string | null {
+  try {
+    return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a `cfn-deploy` plan binds: the environment, the stack, the template's
+ * bytes and the parameters as resolved, and the stacks whose outputs were
+ * not known yet. The proposed changes are not in it; they are the member's
+ * entries, which the change-set document's digest binds (#4084).
+ */
+function cfnPlanDigest(
+  ctx: DeployContext,
+  stack: string,
+  input: CfnDeployInput,
+  parameters: Record<string, string | null>,
+  unresolved: string[],
+): string {
+  return computePlanDigest("cfn-deploy-plan", {
+    env: ctx.env,
+    stack,
+    template: input.template,
+    templateDigest: templateDigest(input.template),
+    parameters,
+    unresolved,
+  });
+}
+
+/**
+ * Plan a `cfn-deploy` step without changing the stack (#4084): create a
+ * change set for the template and the resolved parameters, read the changes
+ * it proposes, and delete it without executing it. A stack that does not
+ * exist yet gets a CREATE change set, so every resource reads as a create,
+ * and the empty `REVIEW_IN_PROGRESS` stack CloudFormation made to hold it is
+ * deleted too. A change set with nothing to apply (`isNoopChangeSet`) gives
+ * a member with no entries. A step whose parameters read outputs that are
+ * not known yet, from a stack the same run applies first, creates no change
+ * set: its member gets a hole saying whose outputs it waits on.
+ */
+async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input: CfnDeployInput): Promise<CapabilityPlan> {
+  const stack = input.stack ?? ctx.component;
+  const raw: Record<string, unknown> = { ...(input.inputs ?? {}), ...(input.imageRef !== undefined ? { ImageRef: input.imageRef } : {}) };
+  const parameters: Record<string, string | null> = {};
+  const missing: string[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === undefined || value === null) {
+      parameters[key] = null;
+      missing.push(key);
+    } else parameters[key] = typeof value === "string" ? value : JSON.stringify(value);
+  }
+  const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
+  const planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved);
+  const member = (holes: ChangeSetHole[]): ChangeSetPart["member"] => ({
+    member: stack,
+    lexicon: "aws",
+    planner: "chant",
+    status: "planned",
+    planDigest,
+    holes,
+  });
+
+  if (unresolved.length > 0 || missing.length > 0) {
+    const reason =
+      unresolved.length > 0
+        ? `inputs from ${unresolved.join(", ")}; re-checked on apply`
+        : `inputs ${missing.sort().join(", ")} are known only at apply; re-checked on apply`;
+    return {
+      member: stack,
+      planDigest,
+      changeSet: { member: member([{ address: stack, type: "AWS::CloudFormation::Stack", reason }]), entries: [] },
+    };
+  }
+
+  const changeSet = await executor.cloudformation.createChangeSet({
+    stackName: stack,
+    templatePath: input.template,
+    parameters: flattenCfnInputs(input),
+  });
+  try {
+    if (isNoopChangeSet(changeSet)) {
+      return { member: stack, planDigest, changeSet: { member: member([]), entries: [] } };
+    }
+    if (changeSet.status === "FAILED") {
+      throw new Error(
+        `cfn-deploy "${stack}": CloudFormation could not create a change set to plan it${changeSet.statusReason ? `: ${changeSet.statusReason}` : ""}`,
+      );
+    }
+    const entries = changeSet.changes.map((c) => cfnChangeEntry(stack, c));
+    return { member: stack, planDigest, changeSet: { member: member([]), entries } };
+  } finally {
+    await cleanUpPlanChangeSet(executor, changeSet);
+  }
+}
+
+/**
+ * Delete a plan's change set, and the empty stack a CREATE change set made
+ * when no stack existed before. A failure to clean up does not fail the
+ * plan: the change set holds nothing that applies, and the next CREATE
+ * change set reuses an empty stack left behind.
+ */
+async function cleanUpPlanChangeSet(executor: CloudExecutor, changeSet: CfnChangeSet): Promise<void> {
+  try {
+    await executor.cloudformation.deleteChangeSet({ stackName: changeSet.stackName, changeSetName: changeSet.changeSetName });
+  } catch (err) {
+    console.error(`cfn-deploy plan "${changeSet.stackName}": could not delete change set ${changeSet.changeSetName}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (changeSet.stackCreated && executor.cloudformation.deleteStackShell) {
+    try {
+      await executor.cloudformation.deleteStackShell(changeSet.stackName);
+    } catch (err) {
+      console.error(`cfn-deploy plan "${changeSet.stackName}": could not delete the empty stack its CREATE change set made: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+/** Whether a CloudFormation error says the stack does not exist. */
+const STACK_MISSING = /does not exist/i;
 
 /**
  * How `cfn-deploy` handles a changeset that requires resource replacement.
@@ -132,6 +302,19 @@ export function createCfnDeployCapability(
 ): Capability<CfnDeployInput, CfnDeployOutput> {
   return {
     kind: "cfn-deploy",
+    plan(ctx, input) {
+      return planCfnDeploy(executor, ctx, input);
+    },
+    async outputs(ctx, input) {
+      // The outputs the stack has now, for a dependent planned before it
+      // applies (#3183). A stack that does not exist yet has none.
+      try {
+        return (await executor.cloudformation.describeStack(input.stack ?? ctx.component)).outputs;
+      } catch (err) {
+        if (STACK_MISSING.test(err instanceof Error ? err.message : String(err))) return {};
+        throw err;
+      }
+    },
     async run(ctx, input) {
       const stack = input.stack ?? ctx.component;
       const onReplace = input.onReplace ?? "block";

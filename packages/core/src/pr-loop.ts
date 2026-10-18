@@ -204,6 +204,17 @@ export function memberCounts(doc: Pick<ChangeSetDocument, "summary">, member: st
   return { create: n("create"), update: n("update"), replace: n("replace"), delete: n("delete") };
 }
 
+/**
+ * Why a member's plan cannot say everything it will change: its holes'
+ * reasons, each once, in order (#4084). A `cfn-deploy` member whose inputs
+ * come from a stack the same run applies first says `inputs from <stack>;
+ * re-checked on apply`.
+ */
+export function memberHoleReasons(report: Pick<PrReport, "changeSet">, member: string): string[] {
+  const m = report.changeSet.members.find((x) => x.member === member);
+  return [...new Set((m?.holes ?? []).map((h) => h.reason))];
+}
+
 /** The approve command a reviewer runs for this report's digest. */
 export function prApproveCommand(report: Pick<PrReport, "op" | "gate" | "digest">, approver = "<you>"): string {
   return `chant approve ${report.op} ${report.gate} --plan ${report.digest} --approver ${approver} --sign`;
@@ -295,8 +306,16 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   if (report.members.length > 0) {
     out.push("", "| Member | Component | Status | Create | Update | Replace | Delete |", "|---|---|---|---:|---:|---:|---:|");
     for (const m of report.members) {
-      const status = STATUS_WORDS[m.status] + (m.inputsMoved?.length ? `, inputs from ${m.inputsMoved.join(", ")} moved` : "");
-      out.push(`| ${code(m.member)} | ${m.component} | ${status} | ${m.counts.create} | ${m.counts.update} | ${m.counts.replace} | ${m.counts.delete} |`);
+      const holes = memberHoleReasons(report, m.member);
+      const status =
+        STATUS_WORDS[m.status] +
+        (m.inputsMoved?.length ? `, inputs from ${m.inputsMoved.join(", ")} moved` : "") +
+        (holes.length > 0 ? `; ${holes.length > 2 ? `${holes[0]}; and ${holes.length - 1} more, listed under Holes` : holes.join("; ")}` : "");
+      // A member whose plan has holes and no entries says nothing about what
+      // it changes, so its counts are unknown, not zero (#4084).
+      const unknown = holes.length > 0 && !report.changeSet.entries.some((e) => e.member === m.member);
+      const n = (k: keyof PrMemberCounts): string => (unknown ? "?" : String(m.counts[k]));
+      out.push(`| ${code(m.member)} | ${m.component} | ${status} | ${n("create")} | ${n("update")} | ${n("replace")} | ${n("delete")} |`);
     }
     if (report.members.some((m) => m.inputsMoved?.length)) {
       out.push("", "A member whose inputs moved applied the plan it was approved with. The next run plans it against the new values.");
@@ -328,9 +347,11 @@ export function prStatusDescription(report: PrReport): string {
     case "nothing":
       text = "nothing to plan";
       break;
-    case "planned":
-      text = `${n} member${n === 1 ? "" : "s"}: ${sum.change} to change, ${sum.destroy} to destroy or replace${digest}`;
+    case "planned": {
+      const unknown = report.members.filter((m) => memberHoleReasons(report, m.member).length > 0).length;
+      text = `${n} member${n === 1 ? "" : "s"}: ${sum.change} to change, ${sum.destroy} to destroy or replace${unknown > 0 ? `, ${unknown} with holes` : ""}${digest}`;
       break;
+    }
     case "plan-failed":
       text = `a member failed to plan${digest}`;
       break;

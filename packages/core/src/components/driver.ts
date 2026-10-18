@@ -345,6 +345,42 @@ export function resolveStepInput(
   return walk(input) as Record<string, unknown>;
 }
 
+/**
+ * The components (or stacks) whose outputs `input` reads through
+ * cross-component wiring, `stackOutput()` or `@<component>.publish.*`, and
+ * which have no value for it in `componentOutputs`, sorted and each once
+ * (#4084). {@link resolveStepInput} turns each such reference into
+ * `undefined`; a plan uses this to say whose outputs it is waiting on.
+ */
+export function unresolvedWiringSources(
+  input: Record<string, unknown>,
+  componentOutputs: Record<string, Record<string, unknown>>,
+): string[] {
+  const found = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (PRIOR_STEP_REF.test(value)) return;
+      const ref = value.match(COMPONENT_ARTIFACT_REF);
+      if (ref && resolvePath(componentOutputs[ref[1]]?.publish, ref[2]) === undefined) found.add(ref[1]);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+    if (value && typeof value === "object") {
+      if ("stackOutput" in value) {
+        const { stack, name } = (value as { stackOutput: { stack: string; name: string } }).stackOutput;
+        if (resolvePath(componentOutputs[stack], name) === undefined) found.add(stack);
+        return;
+      }
+      Object.values(value as Record<string, unknown>).forEach(walk);
+    }
+  };
+  walk(input);
+  return [...found].sort();
+}
+
 // ── Step + phase execution ───────────────────────────────────────────────
 
 /**

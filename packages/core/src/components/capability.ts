@@ -61,6 +61,15 @@ export interface DeployContext {
    * Absent outside a fan-out that writes a record.
    */
   carry?: (member: string, value: unknown) => void;
+  /**
+   * Set when a step is planned (#4084): the components or stacks whose
+   * outputs this step's input reads through `stackOutput()` or
+   * `@<component>.publish.*` and which had nothing to read yet, so the input
+   * holds `undefined` there. Their values are known only when the run
+   * applies them. A `plan` that needs them can say so instead of planning
+   * against missing values.
+   */
+  unresolvedInputs?: string[];
 }
 
 /**

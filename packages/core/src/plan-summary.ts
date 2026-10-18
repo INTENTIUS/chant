@@ -689,7 +689,14 @@ function groupTitle(s: PlanSummary, g: PlanSummaryGroup): string {
   if (g.resource) t += ` of ${g.resource}`;
   if (g.outlier) t += " (outlier)";
   if (g.provisional) t += " (provisional)";
-  if (g.noChanges) t += ", no changes";
+  if (g.noChanges) {
+    // A member with holes planned no entries, but its plan says nothing about
+    // what the holes cover, so the group cannot say "no changes" for it
+    // (#4084). Only the heading says so: the group and its id are unchanged.
+    const holed = s.unit === "member" ? new Set(s.holes.map((h) => h.member)) : new Set<string>();
+    const unknown = g.units.filter((u) => holed.has(u)).length;
+    t += unknown > 0 ? `, no changes known: ${unknown} with holes, listed above` : ", no changes";
+  }
   else if (g.extends) t += `, group ${g.extends}'s change plus`;
   else if (g.units.length > 1) t += ", identical change";
   else t += ", change";

@@ -19,7 +19,7 @@
  * `@<component>.publish.*`) resolves.
  */
 
-import { resolveStepInput, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
+import { resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 import type { WaveMember } from "../gated-waves";
@@ -60,6 +60,19 @@ export function capabilitySteps(phases: readonly DriverPhase[]): DriverStep[] {
   return out;
 }
 
+/**
+ * The context a step is planned with: `ctx`, plus the components whose
+ * outputs the step reads and could not read yet (`unresolvedInputs`, #4084).
+ */
+export function planContext(
+  ctx: DeployContext,
+  stepInput: Record<string, unknown>,
+  componentOutputs: Record<string, Record<string, unknown>>,
+): DeployContext {
+  const unresolved = unresolvedWiringSources(stepInput, componentOutputs);
+  return unresolved.length > 0 ? { ...ctx, unresolvedInputs: unresolved } : ctx;
+}
+
 /** Plan one component against the outputs earlier waves produced. Never throws: a failure comes back as `error`. */
 export async function planWaveComponent(
   component: DriverComponent,
@@ -76,7 +89,7 @@ export async function planWaveComponent(
       if (!capability.plan) continue;
       const { kind: _kind, ...rest } = step;
       const input = resolveStepInput(rest, {}, componentOutputs);
-      const planned = await capability.plan(ctx, input as never);
+      const planned = await capability.plan(planContext(ctx, rest, componentOutputs), input as never);
       const member = { member: planned.member, planDigest: planned.planDigest };
       members.push(member);
       parts.push(planned.changeSet ?? emptyPart(member));
