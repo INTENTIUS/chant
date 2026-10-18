@@ -1,5 +1,5 @@
 /**
- * `chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]`
+ * `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]`
  * (#2651, #3034): the intent graph over one region (`intent.ts`), printed as JSON
  * with `--json` or as a walk, one line per node, in the order of #2650
  * section B: the region, its decisions, their artifacts, the commits, and the
@@ -7,16 +7,19 @@
  * the decisions governing it, most relevant first. Under each decision come the commits made inside its window, and
  * when any of them is not the decision's own work, the question #2650 B puts
  * to the person about it (#2656). Without `--kind`, the walk reads every
- * record kind the declaration names (#2680).
+ * record kind the declaration names (#2680). Last comes the why chain (#4023):
+ * each commit's work item, ci tag and release, and each release's gates and
+ * deploys.
  */
 
 import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { intentRecord, type IntentRecordDocument } from "./intent-record";
+import type { IntentTrace, TraceGate } from "./intent-trace";
 import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type RunNode, type WhyAnswer, type WorkNode } from "./intent";
 
-const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
+const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
 const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
 
 type Result = Exclude<IntentDocument, { error: unknown }>;
@@ -162,6 +165,42 @@ export function whyLines(doc: Result, why: WhyAnswer): string[] {
   return out;
 }
 
+const gateLabel = (g: TraceGate) =>
+  `${g.op}/${g.gate}${g.environment ? ` ${g.environment}` : ""}: ${g.empty ? "passed over an empty change set" : `${g.resolvedBy}${g.relayedBy ? ` relayed by ${g.relayedBy}` : ""}`}${g.channel ? ` on ${g.channel}` : ""} at ${g.at}${g.planDigest ? `, plan ${g.planDigest.slice(0, 24)}${g.changeSet ? " (change set stored)" : ""}` : ""}${g.sealed ? ", sealed" : ""}`;
+
+/**
+ * The why chain (#4023), in its order: for each commit that names a work item
+ * or was tagged, released or deployed, a line; then each release with its
+ * cuts, gates and deploys, and the deploys of no release.
+ */
+export function traceLines(trace: IntentTrace): string[] {
+  const out: string[] = [];
+  const label = (digest: string) => trace.releases.find((r) => r.releaseDigest === digest)?.label ?? digest.slice(0, 24);
+  for (const c of trace.commits) {
+    const parts: string[] = [];
+    if (c.work && c.work.state !== "unlinked") parts.push(c.work.state === "linked" ? `work ${c.work.items.map((w) => `${w.id} (${w.source.field})`).join(", ") || "by a lease not checked"}` : `work ${c.work.state}`);
+    if (c.windowMatches.length > 0) parts.push(`in the window of ${c.windowMatches.map((w) => w.id).join(", ")}`);
+    if (c.tag.state !== "none") parts.push(c.tag.state);
+    for (const r of c.releases) parts.push(`${r.link === "cut-from" ? "released as" : "shipped in"} ${label(r.release)}`);
+    for (const d of c.deploys) parts.push(`${d.env} since ${trace.deploys.find((x) => x.id === d.deploy)?.timestamp ?? "?"}`);
+    if (parts.length > 0) out.push(`trace     ${short(c.sha)} ${parts.join("; ")}`);
+  }
+  for (const r of trace.releases) {
+    const cut = r.cuts[0];
+    out.push(`release   ${r.label ?? r.releaseDigest.slice(0, 24)} from ${short(r.commit)}, ${r.tag.state}${cut ? `; cut by ${cut.actor} at ${cut.timestamp}${cut.signed ? ", signed" : ""}` : ""}`);
+    for (const g of r.gates) out.push(`  gate      ${gateLabel(g)}`);
+    for (const id of r.deploys) {
+      const d = trace.deploys.find((x) => x.id === id);
+      if (d) out.push(`  deploy    ${d.env} ${d.component} at ${d.timestamp} by ${d.actor}${d.admittedBy ? `, admitted by ${d.admittedBy.op}/${d.admittedBy.gate} (${d.admittedBy.resolvedBy})` : ""}`);
+    }
+  }
+  for (const d of trace.deploys.filter((x) => x.release === null)) {
+    out.push(`deploy    ${d.env} ${d.component} at ${d.timestamp} by ${d.actor} from ${short(d.gitSha)}, no release${d.admittedBy ? `; admitted by ${gateLabel(d.admittedBy)}` : ""}${d.plan ? `; plan ${d.plan.document.digest.slice(0, 24)}` : ""}`);
+  }
+  for (const x of trace.reasons) out.push(`reason    ${x.code}: ${x.message}`);
+  return out;
+}
+
 /** The walk as text, one line each, in the order of #2650 section B. */
 export function formatIntent(doc: Result): string {
   const out: string[] = [];
@@ -170,7 +209,8 @@ export function formatIntent(doc: Result): string {
     const lines = region.lines ? `:${region.lines.start}${region.lines.end === region.lines.start ? "" : `-${region.lines.end}`}` : "";
     const where = doc.at ? `at ${short(doc.at)}` : "in the working tree";
     const symbol = region.symbol ? `#${region.symbol.name} (${region.symbol.kind} ${region.symbol.qualified}, lines ${region.lines ? span(region.lines) : "none"})` : lines;
-    out.push(`region    ${region.path}${symbol} (${region.type}, member ${region.member ?? "none"}${region.generated ? ", generated" : ""}) ${where}${region.node ? `, from node ${region.node}` : ""}`);
+    if (region.commit) out.push(`region    commit ${short(region.commit)} (member ${region.member ?? "none"}) ${doc.at ? `at ${short(doc.at)}` : "in the working tree"}`);
+    else out.push(`region    ${region.path}${symbol} (${region.type}, member ${region.member ?? "none"}${region.generated ? ", generated" : ""}) ${where}${region.node ? `, from node ${region.node}` : ""}`);
   }
   const files = ofKind(doc, "file");
   if (files.length > 0) out.push(`files     ${files.length} under the region, ${files.filter((f) => f.generated).length} generated`);
@@ -188,6 +228,7 @@ export function formatIntent(doc: Result): string {
   }
   for (const r of doc.reasons) out.push(`reason    ${r.code}: ${r.message}`);
   if (doc.why) out.push(...whyLines(doc, doc.why));
+  if (doc.trace) out.push(...traceLines(doc.trace));
   const kinds = doc.kinds.length === 0 ? "; no --kind, so no decisions were read" : "";
   const work = ofKind(doc, "work").length;
   out.push(`${doc.summary.commits} commits, ${doc.summary.decisions} decisions, ${work > 0 ? `${work} work ${work === 1 ? "item" : "items"}, ` : ""}${doc.summary.artifacts} artifacts, ${doc.summary.findings} findings${kinds}`);
@@ -243,7 +284,7 @@ export async function runWorkspaceIntent(ctx: CommandContext, cwd: string): Prom
     return runRecord(ctx, cwd, args.kinds ?? (args.kind !== undefined ? [args.kind] : undefined));
   }
   if (!args.intent) {
-    console.error(formatError({ message: "--intent needs a region: a path, path:line, path:start-end or path#symbol", hint: USAGE }));
+    console.error(formatError({ message: "--intent needs a region: a path, path:line, path:start-end, path#symbol, a graph node id or a commit sha", hint: USAGE }));
     return 1;
   }
   // No --kind: undefined, so the walk reads the kinds the declaration names (#2680).

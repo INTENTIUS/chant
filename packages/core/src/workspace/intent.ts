@@ -1,6 +1,6 @@
 /**
  * The intent graph over one region: `chant workspace graph --intent
- * <path[:start-end]|path#symbol>` (#2651; #2650 sections B and C1; #2524 D8,
+ * <path[:start-end]|path#symbol|member/node|sha>` (#2651; #2650 sections B and C1; #2524 D8,
  * D15; #3034).
  *
  * A person points at some code and asks how it got this way and who decided
@@ -77,6 +77,7 @@ import { followSquashes, squashLineOrigins, type Forge, type SquashFollow } from
 import { memberDirOnDisk, memberSymbolResolvers, type SymbolPluginLoader } from "./lexicon-symbols";
 import { resolveSymbol, symbolResolverFor, type SymbolResolver } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
+import { buildTrace, type IntentTrace } from "./intent-trace";
 import { joinPath, skippedDir, workingTree, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
@@ -204,9 +205,12 @@ export interface RegionNode {
   /** The member whose directory holds the path, or null. */
   member: string | null;
   at: string | null;
-  type: "file" | "dir";
-  /** For a file region, whether the file is generated (#2524 D14); null for a directory. */
+  /** `commit` for a region given as a commit sha (#4023): the files that commit changed. */
+  type: "file" | "dir" | "commit";
+  /** For a file region, whether the file is generated (#2524 D14); null for a directory or a commit. */
   generated: boolean | null;
+  /** Set when the region was given as a commit sha (#4023): its full sha. `path` is then `.`. */
+  commit?: string;
   /** Set when the region was given as a graph node id. */
   node: string | null;
   /** Set when the region was given as `path#symbol` (#3034): the symbol as given, the declaration it resolved to, and its kind. `lines` holds its current lines. */
@@ -582,20 +586,22 @@ export type IntentDocument =
       at: string | null;
       workspace: { name: string; root: string };
       region: string;
-      history: { rev: string | null; follows: "line-range" | "file" | "directory"; shallow: boolean };
+      history: { rev: string | null; follows: "line-range" | "file" | "directory" | "commit"; shallow: boolean };
       kinds: { file: string; name: string; records: string | null; joins: "function" | "data" | null }[];
       nodes: IntentNode[];
       edges: IntentEdge[];
       reasons: IntentReason[];
       summary: { commits: number; decisions: number; artifacts: number; findings: number };
       why: WhyAnswer;
+      /** The why chain (#4023): each commit's work item, ci tag, release, gate resolutions and deploys. Added within contract 1 by chant 0.124.29. */
+      trace?: IntentTrace;
     })
   | (Head & { error: { code: IntentErrorCode; message: string } });
 
 export interface IntentQuery {
   /** Where the walk up to the declaration starts, and what the region path is relative to. */
   cwd: string;
-  /** `path`, `path:line`, `path:start-end` or `path#symbol`, or a graph node id `<member>/<id>`. */
+  /** `path`, `path:line`, `path:start-end` or `path#symbol`, a graph node id `<member>/<id>`, or a commit sha (#4023). */
   region: string;
   at?: string;
   /** Follow squash merges to their pull requests' original commits, fetching a missing pull request ref from `origin` (#3035). */
@@ -765,6 +771,22 @@ export function closingCommit(top: string, rev: string, path: string, stateField
     closing = sha;
   }
   return closing;
+}
+
+/**
+ * The files a commit changed, from the workspace root (#4023): against its
+ * first parent, or every file for a root commit. Files outside the workspace
+ * are left out.
+ */
+export function changedFiles(top: string, sha: string, workspacePrefix: string): string[] {
+  const out = tryGit(top, ["diff-tree", "--no-commit-id", "-r", "--name-only", "--root", "-m", "--first-parent", "-z", sha]) ?? "";
+  const files = new Set<string>();
+  for (const f of out.split("\0")) {
+    if (!f) continue;
+    if (workspacePrefix === "") files.add(f);
+    else if (f.startsWith(`${workspacePrefix}/`)) files.add(f.slice(workspacePrefix.length + 1));
+  }
+  return [...files].sort();
 }
 
 /** The commit a decision record's window opens at: the one that decided it, or, when it is not approved, the one that added it. */
@@ -973,7 +995,12 @@ interface ResolvedRegion {
   lines: LineRange | null;
   node: string | null;
   symbol: { name: string; qualified: string; kind: string } | null;
+  /** The full sha, for a region given as a commit (#4023). */
+  commit?: string;
 }
+
+/** A commit sha as a region may give it: 7 to 64 hex digits. */
+const COMMIT_REGION = /^[0-9a-fA-F]{7,64}$/;
 
 async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, declaration: Declaration): Promise<ResolvedRegion> {
   const parsed = parseRegion(query.region);
@@ -1019,7 +1046,12 @@ async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, decl
       return { path: file === "" ? "." : file, lines: loc.line ? { start: loc.line, end: loc.line } : null, node: query.region, symbol: null };
     }
   }
-  throw new IntentError("intent-region-invalid", `${query.region} is not a path in the workspace${located.tree.label}, a path#symbol, or a graph node id`);
+  // A commit sha, when no path or node has the name (#4023): the commit and the files it changed.
+  if (COMMIT_REGION.test(query.region) && located.top) {
+    const sha = tryGit(located.top, ["rev-parse", "--verify", "--quiet", `${query.region}^{commit}`])?.trim();
+    if (sha) return { path: ".", lines: null, node: null, symbol: null, commit: sha };
+  }
+  throw new IntentError("intent-region-invalid", `${query.region} is not a path in the workspace${located.tree.label}, a path#symbol, a graph node id or a commit`);
 }
 
 /** Build the intent document. Never throws an {@link IntentError}, {@link WorkspaceReadError} or {@link RecordReadError}. */
@@ -1041,7 +1073,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   if (!top) throw new IntentError("not-a-git-repository", "the intent graph reads git history, and this directory is not in a git repository");
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
   const region = await resolveRegion(query, located, declaration);
-  const type = region.path === "." ? "dir" : located.tree.stat(region.path);
+  const type: "file" | "dir" | "commit" | undefined = region.commit ? "commit" : region.path === "." ? "dir" : located.tree.stat(region.path);
   if (!type) throw new IntentError("intent-region-invalid", `${region.path} does not exist${located.tree.label}`);
   if (region.lines) {
     if (type !== "file") throw new IntentError("intent-region-invalid", `${region.path} is a directory, and a line range needs a file`);
@@ -1065,8 +1097,21 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   };
 
   // The region, its files and its member.
-  const member = region.path === "." ? (declaration.members.find((m) => m.dir === ".")?.name ?? null) : memberHolding(region.path, declaration.members);
-  const rid = regionId(region.path, region.lines, region.symbol?.name);
+  // A commit region (#4023) covers the files the commit changed, from the workspace root, and the members holding them.
+  const workspacePrefix = located.root === "." ? "" : located.root;
+  const changed = region.commit ? changedFiles(top, region.commit, workspacePrefix) : [];
+  const changedMembers = [...new Set(changed.map((f) => memberHolding(f, declaration.members)).filter((m): m is string => m !== null))];
+  const member = region.commit
+    ? changedMembers.length === 1
+      ? changedMembers[0]
+      : null
+    : region.path === "."
+      ? (declaration.members.find((m) => m.dir === ".")?.name ?? null)
+      : memberHolding(region.path, declaration.members);
+  const regionMembers = region.commit ? changedMembers : member ? [member] : [];
+  const rid = region.commit ? `region:commit:${region.commit}` : regionId(region.path, region.lines, region.symbol?.name);
+  /** How messages name the region: its path, or the commit. */
+  const regionLabel = region.commit ? `commit ${region.commit.slice(0, 8)}` : region.path;
   add<RegionNode>({
     id: rid,
     kind: "region",
@@ -1078,6 +1123,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     generated: type === "file" ? isGeneratedPath(declaration, region.path) : null,
     node: region.node,
     symbol: region.symbol,
+    ...(region.commit ? { commit: region.commit } : {}),
   });
   const files = type === "dir" ? filesUnder(located.tree, region.path) : [];
   for (const f of files) add<FileNode>({ id: `file:${f}`, kind: "file", path: f, member: memberHolding(f, declaration.members), generated: isGeneratedPath(declaration, f) });
@@ -1091,9 +1137,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   const rev = located.at ?? (tryGit(top, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?.trim() || null);
   const shallow = tryGit(top, ["rev-parse", "--is-shallow-repository"])?.trim() === "true";
   if (shallow) reasons.push({ code: "intent-history-shallow", message: "this is a shallow clone, so the history stops at its boundary and the oldest commit listed may stand for many" });
-  const workspacePrefix = located.root === "." ? "" : located.root;
   const gitPath = joinPath(workspacePrefix, region.path);
-  const touched = rev ? regionHistory(top, rev, gitPath, type, region.lines) : [];
+  const touched = region.commit ? [{ sha: region.commit, lines: null }] : rev && type !== "commit" ? regionHistory(top, rev, gitPath, type, region.lines) : [];
   // Who last wrote each current line of a file region (#3034). A commit blame
   // names and the history walk missed, as when a move confuses git log -L,
   // joins the commits that touched the region.
@@ -1309,14 +1354,16 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         const p = entry.slice("path:".length);
         if (!isWorkspacePath(p)) continue;
         const full = joinPath(kindPrefix, p);
-        if (regionFull !== "" && constraintCovers(full, regionFull)) {
+        if (type === "commit") {
+          if (changed.some((f) => constraintCovers(full, joinPath(workspacePrefix, f)))) matched.push({ entry, granularity: "path", to: rid });
+        } else if (regionFull !== "" && constraintCovers(full, regionFull)) {
           matched.push({ entry, granularity: "path", to: rid });
         } else if (type === "dir" && full !== regionFull && (regionFull === "" || full.startsWith(`${regionFull}/`))) {
           // A path below a directory region constrains the files under it, not the whole region.
           for (const f of fileNodesUnder(full)) matched.push({ entry, granularity: "path", to: `file:${f}` });
         }
       } else if (entry.startsWith("member:")) {
-        if (member !== null && entry.slice("member:".length) === member) matched.push({ entry, granularity: "member", to: rid });
+        if (regionMembers.includes(entry.slice("member:".length))) matched.push({ entry, granularity: "member", to: rid });
       } else {
         const issue = entry.match(ISSUE);
         if (issue && origin !== null && issue[1].toLowerCase() === origin && commitRefs.has(issue[2])) matched.push({ entry, granularity: "issue", to: rid });
@@ -1691,7 +1738,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       if (h.node!.constrains.some((x) => x.granularity === "path") && inWorkWindow(h, t.sha)) edges.push({ kind: "within", from: c.id, to: h.node!.id, state: "worked" });
     }
     if (readsRecords && c.state === "undecided") {
-      find("intent-commit-undecided", `${t.sha.slice(0, 8)} changed the region when no decision constrained ${region.path} by path`, [c.id, rid]);
+      find("intent-commit-undecided", `${t.sha.slice(0, 8)} changed the region when no decision constrained ${regionLabel} by path`, [c.id, rid]);
     }
     if (readsRecords && !j.unit && j.carries.length === 0 && c.pullRequest === null && coveredAt(t.sha, ["path", "member", "contract", "issue"]).length === 0) {
       find("intent-commit-bare", `${t.sha.slice(0, 8)} names no unit, no record, no pull request and no decision`, [c.id]);
@@ -1706,11 +1753,11 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   if (readsRecords) {
     const current = covering.filter((c) => c.node.supersededBy === null);
     if (covering.length === 0) {
-      find("intent-region-unconstrained", `no decision constrains ${region.path}`, [rid]);
+      find("intent-region-unconstrained", `no decision constrains ${regionLabel}`, [rid]);
     } else if (current.length === 0) {
-      find("intent-decision-superseded-live", `every decision constraining ${region.path} is superseded: ${covering.map((c) => `${c.node.record} by ${c.node.supersededBy}`).join(", ")}`, [rid, ...covering.map((c) => c.node.id)]);
+      find("intent-decision-superseded-live", `every decision constraining ${regionLabel} is superseded: ${covering.map((c) => `${c.node.record} by ${c.node.supersededBy}`).join(", ")}`, [rid, ...covering.map((c) => c.node.id)]);
     } else if (current.every((c) => !c.node.closed)) {
-      find("intent-decision-provisional", `the decisions constraining ${region.path} are ${[...new Set(current.map((c) => c.node.state ?? "stateless"))].join(" or ")}, and none is in a closed state`, [rid, ...current.map((c) => c.node.id)]);
+      find("intent-decision-provisional", `the decisions constraining ${regionLabel} are ${[...new Set(current.map((c) => c.node.state ?? "stateless"))].join(" or ")}, and none is in a closed state`, [rid, ...current.map((c) => c.node.id)]);
     }
     // A current decision with a dissent nobody addressed or withdrew (#2686), from its quorum.
     for (const c of current) {
@@ -1721,14 +1768,14 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         id: `finding:intent-decision-contested:${findings.filter((f) => f.code === "intent-decision-contested").length + 1}`,
         kind: "finding",
         code: "intent-decision-contested",
-        message: `${c.node.record} constrains ${region.path} and has ${open.length} open ${open.length === 1 ? "concern" : "concerns"}, from ${open.map((o) => o.reviewer).join(", ")}: a dissent neither addressed nor withdrawn`,
+        message: `${c.node.record} constrains ${regionLabel} and has ${open.length} open ${open.length === 1 ? "concern" : "concerns"}, from ${open.map((o) => o.reviewer).join(", ")}: a dissent neither addressed nor withdrawn`,
         concerns: [c.node.id, rid],
         openConcerns: { count: open.length, principals },
       });
     }
     const granularities = new Set(covering.flatMap((c) => c.node.constrains.map((x) => x.granularity)));
     if (covering.length > 0 && !granularities.has("path") && granularities.has("member")) {
-      find("intent-constraint-coarse", `${region.path} is constrained only through its member, ${member}`, [rid, ...covering.map((c) => c.node.id)]);
+      find("intent-constraint-coarse", `${regionLabel} is constrained only through its member, ${regionMembers.join(", ")}`, [rid, ...covering.map((c) => c.node.id)]);
     }
   }
 
@@ -1739,7 +1786,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       if (implementersOf(c.node).length > 0) continue;
       const w = windows.get(c.node.id);
       if (w && touched.some((t) => w.from.has(t.sha) && !w.until?.has(t.sha))) continue;
-      find("intent-decision-unimplemented", `${c.node.record} is ${c.node.state} and constrains ${region.path}, and no work item that is not dropped implements it, and no commit changed the region in its window`, [c.node.id, rid]);
+      find("intent-decision-unimplemented", `${c.node.record} is ${c.node.state} and constrains ${regionLabel}, and no work item that is not dropped implements it, and no commit changed the region in its window`, [c.node.id, rid]);
     }
     for (const h of workCovering) {
       const node = h.node!;
@@ -1757,7 +1804,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       if (impl.length === 0 || impl.some((h) => h.view.state === workSpec(h).done)) continue;
       find(
         "intent-work-open-decided-code",
-        `${own.length} ${own.length === 1 ? "commit" : "commits"} in ${region.path} ${own.length === 1 ? "is" : "are"} ${d.record}'s own work, and ${impl.map((h) => `${h.view.id} is ${h.view.state ?? "stateless"}`).join(", ")}: the code says done and the queue says not`,
+        `${own.length} ${own.length === 1 ? "commit" : "commits"} in ${regionLabel} ${own.length === 1 ? "is" : "are"} ${d.record}'s own work, and ${impl.map((h) => `${h.view.id} is ${h.view.state ?? "stateless"}`).join(", ")}: the code says done and the queue says not`,
         [d.id, ...own, ...impl.map((h) => workNode(h).id)],
       );
     }
@@ -1827,6 +1874,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       const kindPrefix = h.kind.records!.workspaceRoot === "." ? "" : h.kind.records!.workspaceRoot;
       const full = joinPath(kindPrefix, parsed.path);
       const contains = (a: string, b: string) => a === b || a === "" || b.startsWith(`${a}/`);
+      if (type === "commit") return changed.some((f) => contains(full, joinPath(workspacePrefix, f)) || contains(joinPath(workspacePrefix, f), full));
       if (!contains(full, regionFull) && !contains(regionFull, full)) return false;
       if (full === regionFull && parsed.lines && region.lines) return parsed.lines.start <= region.lines.end && region.lines.start <= parsed.lines.end;
       return true;
@@ -1840,7 +1888,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         if (gap && h.view.state === workSpec(h).done) {
           const node = workNode(h);
           if (!node.warnings.some((w) => w.code === "work-done-gap-open")) {
-            node.warnings.push({ code: "work-done-gap-open", message: `${node.record} is ${h.view.state}, and ${f.code}, the gap it came from, still fires on ${region.path}` });
+            node.warnings.push({ code: "work-done-gap-open", message: `${node.record} is ${h.view.state}, and ${f.code}, the gap it came from, still fires on ${regionLabel}` });
           }
         }
       }
@@ -1881,13 +1929,53 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   for (const f of findings) nodes.set(f.id, f);
   const why = explain();
   const all = [...nodes.values()];
+
+  // The why chain (#4023): each commit's work item, ci tag, release, gate resolutions and deploys.
+  const workIds = new Map<string, Set<string>>();
+  const workNodeIds = new Map<string, string>();
+  for (const h of workAll) {
+    const name = h.kind.records!.loaded.kind.name;
+    (workIds.get(name) ?? workIds.set(name, new Set()).get(name)!).add(h.view.id!);
+    if (h.node) workNodeIds.set(`${name}:${h.view.id}`, h.node.id);
+  }
+  for (const k of workKinds) if (!workIds.has(k.records!.loaded.kind.name)) workIds.set(k.records!.loaded.kind.name, new Set());
+  const windowsOf = new Map<string, { id: string; node: string; path: string }[]>();
+  for (const e of edges) {
+    if (e.kind !== "within" || e.state !== "worked") continue;
+    const w = nodes.get(e.to) as WorkNode | undefined;
+    if (!w) continue;
+    const sha = e.from.slice("commit:".length);
+    (windowsOf.get(sha) ?? windowsOf.set(sha, []).get(sha)!).push({ id: `${w.recordKind}:${w.record}`, node: w.id, path: w.path });
+  }
+  const later = new Map<string, Set<string>>();
+  const trace = await buildTrace({
+    top,
+    commits: all.filter((n): n is CommitNode => n.kind === "commit").map((c) => ({ id: c.id, sha: c.sha, trailers: c.trailers, joins: c.joins })),
+    work: readsWork ? { index: { kinds: workIds }, nodes: workNodeIds } : null,
+    windows: windowsOf,
+    // The region's member's ledger; for a region in no member, every member's and the workspace's own.
+    ledgers: (regionMembers.length > 0 ? regionMembers : declaration.members.map((m) => m.name))
+      .map((name) => {
+        const dir = declaration.members.find((m) => m.name === name)!.dir;
+        return { member: name as string | null, cwd: memberDirOnDisk(located.rootOnDisk, dir), within: dir === "." ? null : `_members/${name}/` };
+      })
+      .concat(regionMembers.length > 0 ? [] : [{ member: null, cwd: located.rootOnDisk, within: null }]),
+    green: declaration.ci?.green ?? null,
+    contains: (sha, commit) => {
+      if (commit === sha) return true;
+      if (!rev || !FULL_COMMIT_ID.test(commit)) return false;
+      let set = later.get(sha);
+      if (!set) later.set(sha, (set = descendants(top, sha, rev)));
+      return set.has(commit);
+    },
+  });
   return {
     doc: {
       ...head,
       at: located.at,
       workspace: { name: declaration.name, root: located.root },
       region: rid,
-      history: { rev, follows: region.lines ? "line-range" : type === "file" ? "file" : "directory", shallow },
+      history: { rev, follows: region.commit ? "commit" : region.lines ? "line-range" : type === "file" ? "file" : "directory", shallow },
       kinds: kinds.map((k) => ({ file: k.display, name: k.name, records: k.records?.loaded.kind.name ?? null, joins: k.joins?.form ?? null })),
       nodes: all,
       edges,
@@ -1899,6 +1987,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         findings: findings.length,
       },
       why,
+      trace,
     },
     failed: reasons.some((r) => r.code === "intent-plugin-failed"),
   };
@@ -2019,12 +2108,12 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     if (!explained) {
       gaps.push({
         code: "intent-why-no-decision",
-        message: readsRecords ? `no current decision governs ${region.path}, and none is carried out by what made its lines` : `no record kind was read, so no decision can account for ${region.path}`,
+        message: readsRecords ? `no current decision governs ${regionLabel}, and none is carried out by what made its lines` : `no record kind was read, so no decision can account for ${regionLabel}`,
       });
     }
     const committed = who.filter((w) => w.sha !== null);
     if (fileLines !== null ? committed.length > 0 && committed.every((w) => w.runs.length === 0) : touched.length > 0 && runNodes.length === 0) {
-      gaps.push({ code: "intent-why-no-run", message: `no agent run is joined to the commits that made ${fileLines !== null ? "the current lines of " : ""}${region.path}` });
+      gaps.push({ code: "intent-why-no-run", message: `no agent run is joined to the commits that made ${fileLines !== null ? "the current lines of " : ""}${regionLabel}` });
     }
     const uncommitted = who.filter((w) => w.sha === null).map((w) => w.line);
     if (uncommitted.length > 0) gaps.push({ code: "intent-why-uncommitted", message: `${uncommitted.length} ${uncommitted.length === 1 ? "line is" : "lines are"} not committed yet`, lines: ranges(uncommitted) });

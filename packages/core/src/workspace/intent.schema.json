@@ -66,7 +66,7 @@
         },
         "region": {
           "type": "string",
-          "description": "The id of the region node: region:<path>, with :<start>-<end> for a line range or #<symbol> for a symbol."
+          "description": "The id of the region node: region:<path>, with :<start>-<end> for a line range or #<symbol> for a symbol, or region:commit:<sha> for a commit (#4023)."
         },
         "history": {
           "type": "object",
@@ -88,9 +88,10 @@
               "enum": [
                 "line-range",
                 "file",
-                "directory"
+                "directory",
+                "commit"
               ],
-              "description": "line-range: git log -L over the region's lines, a symbol's current lines included. file: git log --follow over the file. directory: git log over the directory."
+              "description": "line-range: git log -L over the region's lines, a symbol's current lines included. file: git log --follow over the file. directory: git log over the directory. commit: the one commit a commit region names (#4023), added within version 1 by chant 0.124.29."
             },
             "shallow": {
               "type": "boolean",
@@ -185,6 +186,9 @@
         },
         "why": {
           "$ref": "#/$defs/why"
+        },
+        "trace": {
+          "$ref": "#/$defs/trace"
         }
       }
     },
@@ -243,7 +247,7 @@
       }
     },
     "region": {
-      "description": "The region the walk starts from. Its id is region:<path>, with :<start>-<end> for a line range, or #<symbol> for a symbol (#3034).",
+      "description": "The region the walk starts from. Its id is region:<path>, with :<start>-<end> for a line range, or #<symbol> for a symbol (#3034). A region given as a commit sha (#4023) has the id region:commit:<sha>, type commit, path \".\" and commit set: it covers the files the commit changed against its first parent, and its member is the one member holding them all, else null.",
       "type": "object",
       "required": [
         "id",
@@ -296,8 +300,10 @@
         "type": {
           "enum": [
             "file",
-            "dir"
-          ]
+            "dir",
+            "commit"
+          ],
+          "description": "file or dir; commit for a region given as a commit sha (#4023), added within version 1 by chant 0.124.29, so a reader that switches on it treats another value as one it does not know."
         },
         "generated": {
           "type": [
@@ -342,6 +348,11 @@
             }
           ],
           "description": "For a region given as path#symbol (#3034): the symbol and the declaration it resolved to in the tree read; its current lines are in lines and are followed through history as a line range. Null otherwise. Added within version 1, so an older document may lack it."
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "Added within version 1 by #4023, written by chant 0.124.29 and newer. The full sha, for a region given as a commit. Absent otherwise."
         }
       }
     },
@@ -2413,6 +2424,679 @@
             }
           },
           "description": "The original commits, oldest first: the head's commits the squash's parent doesn't have, merges left out."
+        }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "required": [
+        "commits",
+        "releases",
+        "deploys",
+        "reasons"
+      ],
+      "description": "Added within version 1 by #4023, written by chant 0.124.29 and newer, so an older document lacks it. The why chain: for each commit, the work item it names, its ci tag, the release that shipped it, the gate resolutions that admitted that release and the deploy records per environment. Every link states its source record. Read from local tags and the local chant/lifecycle branch; nothing is fetched. A commit contains another when it has it as an ancestor in the history read.",
+      "properties": {
+        "commits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/traceCommit"
+          }
+        },
+        "releases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/traceRelease"
+          }
+        },
+        "deploys": {
+          "type": "array",
+          "description": "Oldest first.",
+          "items": {
+            "$ref": "#/$defs/traceDeploy"
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "description": "Parts of the chain that could not be read; the rest stands.",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "ledger-unreadable",
+                  "declaration-invalid"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "traceCommit": {
+      "type": "object",
+      "required": [
+        "commit",
+        "sha",
+        "work",
+        "windowMatches",
+        "tag",
+        "releases",
+        "deploys"
+      ],
+      "description": "One commit of the walk, in the order of the commit nodes, with its chain.",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^commit:"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "work": {
+          "description": "The work items the commit names, judged as check --changes judges it (#4029). Null when no work kind was read.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "state",
+                "items",
+                "problems"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "linked",
+                    "unlinked",
+                    "wrong",
+                    "merge"
+                  ]
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/traceWork"
+                  },
+                  "description": "Each work item a Chant-Record or Chant-Lease trailer names. Empty for a lease that could not be checked."
+                },
+                "problems": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "trailer",
+                      "message"
+                    ],
+                    "properties": {
+                      "trailer": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "windowMatches": {
+          "type": "array",
+          "description": "The work items whose window holds the commit, the within edges with state worked. They do not link the commit.",
+          "items": {
+            "$ref": "#/$defs/traceWork"
+          }
+        },
+        "tag": {
+          "$ref": "#/$defs/traceTag"
+        },
+        "releases": {
+          "type": "array",
+          "description": "The releases cut from the commit, or when there are none, the first release cut from a commit that has it in its history.",
+          "items": {
+            "type": "object",
+            "required": [
+              "release",
+              "link",
+              "source"
+            ],
+            "properties": {
+              "release": {
+                "type": "string",
+                "description": "A releaseDigest in trace.releases."
+              },
+              "link": {
+                "enum": [
+                  "cut-from",
+                  "contains"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/traceSource"
+              }
+            }
+          }
+        },
+        "deploys": {
+          "type": "array",
+          "description": "Per environment, the first deploy record built from the commit or from a commit that has it in its history.",
+          "items": {
+            "type": "object",
+            "required": [
+              "deploy",
+              "env",
+              "link",
+              "source"
+            ],
+            "properties": {
+              "deploy": {
+                "type": "string",
+                "description": "An id in trace.deploys."
+              },
+              "env": {
+                "type": "string"
+              },
+              "link": {
+                "enum": [
+                  "built-from",
+                  "contains"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/traceSource"
+              }
+            }
+          }
+        }
+      }
+    },
+    "traceSource": {
+      "type": "object",
+      "required": [
+        "ref",
+        "field",
+        "value"
+      ],
+      "additionalProperties": false,
+      "description": "Where a link comes from, so a reader can follow it: the record and the field of it whose value made the join.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "A commit sha (a trailer), a tag ref refs/tags/ci/<green|revoked>/<sha>, a work record's file from the repository root (a window match), or a path on the local chant/lifecycle branch as chant/lifecycle:<path>."
+        },
+        "field": {
+          "type": "string",
+          "description": "The trailer, field or edge that joins: Chant-Record, Chant-Lease, window, name (a tag), commit (a release file), releaseDigest, admission, gitSha, runId, digest (a plan), planDigest (a change set) or gate."
+        },
+        "value": {
+          "type": "string",
+          "description": "Its value as the record holds it. For admission, <gate>@<resolvedAt>."
+        }
+      }
+    },
+    "traceWork": {
+      "type": "object",
+      "required": [
+        "id",
+        "node",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "<kind>:<id>."
+        },
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The work node in nodes, or null when no kind read has the record."
+        },
+        "source": {
+          "$ref": "#/$defs/traceSource"
+        }
+      }
+    },
+    "traceTag": {
+      "type": "object",
+      "required": [
+        "state",
+        "green",
+        "revoked",
+        "ignored"
+      ],
+      "description": "The commit's ci tags as readers count them, judged as release cut judges them (#4031, ws-103).",
+      "properties": {
+        "state": {
+          "enum": [
+            "green",
+            "revoked",
+            "none"
+          ],
+          "description": "revoked when a revoked tag counts, else green when a green tag counts, else none."
+        },
+        "green": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/traceTagView"
+            }
+          ]
+        },
+        "revoked": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/traceTagView"
+            }
+          ]
+        },
+        "ignored": {
+          "type": "array",
+          "description": "Tags on the commit that exist and don't count, as ci list's ignored lists them.",
+          "items": {
+            "type": "object",
+            "required": [
+              "tag",
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "unsigned",
+                  "invalid",
+                  "untrusted",
+                  "mismatch"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "traceTagView": {
+      "type": "object",
+      "required": [
+        "tag",
+        "tagged",
+        "signer",
+        "source"
+      ],
+      "properties": {
+        "tag": {
+          "type": "string",
+          "description": "ci/green/<sha> or ci/revoked/<sha>."
+        },
+        "tagged": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "When the tag was made, ISO 8601, or null for a lightweight tag."
+        },
+        "signer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The runner whose statement the tag carries, or null for a tag that counts unsigned (#4031)."
+        },
+        "phase": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "On a revoked tag: the phase its annotation names as failed."
+        },
+        "run": {
+          "description": "On a revoked tag: the run its annotation names, as ci list shows it, or null."
+        },
+        "source": {
+          "$ref": "#/$defs/traceSource"
+        }
+      }
+    },
+    "traceGate": {
+      "type": "object",
+      "required": [
+        "op",
+        "gate",
+        "environment",
+        "resolvedBy",
+        "relayedBy",
+        "channel",
+        "at",
+        "planDigest",
+        "changeSet",
+        "changeSetSource",
+        "empty",
+        "sealed",
+        "url",
+        "source"
+      ],
+      "description": "One gate resolution from _gates/<op>.jsonl: who let the change through, on which channel, when, and for which plan.",
+      "properties": {
+        "op": {
+          "type": "string",
+          "description": "release for a release gate, or the op or component whose gate ledger holds it."
+        },
+        "gate": {
+          "type": "string"
+        },
+        "environment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolvedBy": {
+          "type": "string"
+        },
+        "relayedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Who carried the approval to chant for resolvedBy (#3402), or null."
+        },
+        "channel": {
+          "enum": [
+            "cli",
+            "mcp",
+            "acp",
+            null
+          ],
+          "description": "The channel the resolution was authored on (#2384), or null when the record does not say."
+        },
+        "at": {
+          "type": "string",
+          "description": "The resolution's timestamp."
+        },
+        "planDigest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The plan the approval is for, or null."
+        },
+        "changeSet": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "planDigest, when a change set is stored under it on chant/lifecycle (#4022); chant change-set show <changeSet> --json prints it. Null otherwise, as for a component gate's lifecycle-plan digest."
+        },
+        "changeSetSource": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/traceSource"
+            }
+          ]
+        },
+        "empty": {
+          "type": "boolean",
+          "description": "A pass over an empty change set, written by the promote itself (#4045). It is no person's approval."
+        },
+        "sealed": {
+          "type": "boolean",
+          "description": "Whether the approval carries an ssh seal (chant approve --sign, #3163). status judges the seal against the signers at base."
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/traceSource"
+        }
+      }
+    },
+    "traceRelease": {
+      "type": "object",
+      "required": [
+        "releaseDigest",
+        "label",
+        "member",
+        "commit",
+        "tag",
+        "source",
+        "cuts",
+        "gates",
+        "deploys"
+      ],
+      "description": "A release that shipped a commit of the walk, joined by joinRelease (#4043).",
+      "properties": {
+        "releaseDigest": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": "string",
+          "description": "The green commit it was cut from."
+        },
+        "tag": {
+          "$ref": "#/$defs/traceTag"
+        },
+        "source": {
+          "$ref": "#/$defs/traceSource"
+        },
+        "cuts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "actor",
+              "timestamp",
+              "signed",
+              "runOrigin",
+              "source"
+            ],
+            "properties": {
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "actor": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              },
+              "signed": {
+                "type": "boolean",
+                "description": "Whether the cut carries a signature (#4031). release list judges it."
+              },
+              "runOrigin": {
+                "description": "The CI run the cut ran in, or null."
+              },
+              "source": {
+                "$ref": "#/$defs/traceSource"
+              }
+            }
+          }
+        },
+        "gates": {
+          "type": "array",
+          "description": "The release gate's resolutions for the release (_gates/release.jsonl), oldest first.",
+          "items": {
+            "$ref": "#/$defs/traceGate"
+          }
+        },
+        "deploys": {
+          "type": "array",
+          "description": "The ids of its deploy records in trace.deploys, oldest first.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "traceDeploy": {
+      "type": "object",
+      "required": [
+        "id",
+        "member",
+        "env",
+        "component",
+        "timestamp",
+        "actor",
+        "approver",
+        "runId",
+        "runOrigin",
+        "gitSha",
+        "digest",
+        "release",
+        "releaseSource",
+        "admittedBy",
+        "plan",
+        "source"
+      ],
+      "description": "A deploy record, a ReleaseRecord in <env>/releases.jsonl.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^deploy:",
+          "description": "deploy:<member>/<env>/<component>/<runId>@<timestamp>, with . for a ledger of no member."
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "approver": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runId": {
+          "type": "string"
+        },
+        "runOrigin": {
+          "description": "Where runId resolves (#2045), or null."
+        },
+        "gitSha": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "release": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release it was made from: its releaseDigest, or with none the one the release gate resolution its admission names carries (#4043). Null for a deploy that was not made from a release, such as a plain run --components."
+        },
+        "releaseSource": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/traceSource"
+            }
+          ]
+        },
+        "admittedBy": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/traceGate"
+            }
+          ],
+          "description": "The gate resolution its admission names (#4020), or null for an ungated deploy, one recorded before chant 0.124.28, or one whose resolution is not on this checkout's chant/lifecycle."
+        },
+        "plan": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "document",
+                "source"
+              ],
+              "properties": {
+                "document": {
+                  "type": "object",
+                  "required": [
+                    "digest"
+                  ],
+                  "properties": {
+                    "digest": {
+                      "type": "string"
+                    }
+                  },
+                  "description": "The plan as stored, any JSON object with its own digest."
+                },
+                "source": {
+                  "$ref": "#/$defs/traceSource"
+                }
+              }
+            }
+          ],
+          "description": "The release plan its digest names in _plans/ (ws-055): the work items and evidence the release shipped. Null when none is stored."
+        },
+        "source": {
+          "$ref": "#/$defs/traceSource"
         }
       }
     }

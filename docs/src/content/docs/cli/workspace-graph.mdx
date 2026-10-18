@@ -10,7 +10,7 @@ title: "chant workspace graph"
 chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [-o <file>] [--member <name>] [--kind <kind file>]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
-chant workspace graph [dir] --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
 chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
 ```
 
@@ -275,7 +275,7 @@ The reference workspace's `delivery` member declares the app with the docker lex
 
 With `--intent <region>`, the command prints a different document: the intent graph over one region of the workspace ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). A person looking at a piece of code asks how it got this way and who decided it should be this way. The document lays out what the workspace records about both and leaves the judgment to the person. No member runs, and git is read through a local `git` process, so the command needs no network unless `--follow-squash` has to fetch a pull request ref.
 
-The region is a path from `dir` (or the current directory): a file, a directory, `path:line` or `path:start-end`. A graph node id such as `delivery/appService` works too, when no path by that name exists. The region is then the file and line in the node's `sourceLoc`.
+The region is a path from `dir` (or the current directory): a file, a directory, `path:line` or `path:start-end`. A graph node id such as `delivery/appService` works too, when no path by that name exists. The region is then the file and line in the node's `sourceLoc`. A commit sha, 7 to 64 hex digits, works when neither a path nor a node has the name ([#4023](https://github.com/INTENTIUS/chant/issues/4023)). The walk then covers that one commit and the files it changed against its first parent. A decision or work item covers it when a `path:` entry covers one of those files, or a `member:` entry names a member holding one. Its region node has `type: "commit"` and the sha in `commit`, and the walk reads no blame.
 
 `path#symbol` names a declaration instead of lines, such as `lobby/server.mjs#createApp` ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). Line numbers drift as a file is edited, and a symbol does not. chant resolves the symbol to its current lines in the tree read and follows them through history like a line range. The lines run from the declaration's doc comment to its last line. Symbols resolve in TypeScript and JavaScript files, and in any language a lexicon of the file's member resolves: the walk loads the lexicons the member's `chant.config` names and asks each plugin's [`symbolResolvers()`](/chant/lexicon-authoring/lsp-mcp/#symbol-resolvers) ([#3313](https://github.com/INTENTIUS/chant/issues/3313)). Core's resolver keeps `.ts` and `.js`. A dotted path such as `Server.listen` names a member, and a bare name that is not top-level finds the one member it names. The region node's `symbol` says what the name resolved to. A file no resolver reads is refused with `intent-symbol-unsupported`, and the message says when a member's lexicon could not be loaded. A line range still works there. A name the file does not declare is `intent-symbol-unknown`, and its message lists the top-level declarations. A name that matches two members is `intent-symbol-ambiguous`, and its message lists the qualified names to choose from.
 
@@ -340,6 +340,29 @@ why       explained, lines 2-4
 A commit joins its run by its `Chant-Run` trailer or by the run's own list of commits. When it has neither, as after a rebase or a cherry-pick that dropped the trailer, it joins every run whose end recorded a commit with the same `git patch-id --stable` ([#3036](https://github.com/INTENTIUS/chant/issues/3036)). That join is by content: its `made-by` edge has `joinedBy: ["patch-id"]` and `recordedAs`, the commit the run recorded, and the span and the run in `why` carry `joinedBy` so a reader can show it apart from a trailer join. The run's recorded `hunks` don't narrow a content join, since the rewritten commit's line numbers may have moved. A trailer join comes first and a record join second. A patch-id join is made only when neither gives a run. When one run's trailer or record claims a commit whose content matches another run's recorded commit, the commit keeps its join and the walk reports `intent-commit-join-conflict`. A squash of several commits has a patch-id of its own, so it never joins this way. The text walk adds `joined by content` to such a run and span.
 
 The [read contract](/chant/reference/workspace-read-contract/#why-the-region-is-like-this) lists the fields.
+
+### The why chain
+
+The document's `trace` answers two questions in one read: who asked for this, and who let it ship ([#4023](https://github.com/INTENTIUS/chant/issues/4023)). It follows each commit of the walk forward to the records that shipped it, in this order:
+
+1. The work items the commit names. A `Chant-Record` trailer that names a work record, or a `Chant-Lease` trailer whose lease history names one, links it, as [`check --changes`](/chant/reference/workspace-read-contract/#the-forward-coverage-check) judges it ([#4029](https://github.com/INTENTIUS/chant/issues/4029)). A commit that only falls in a work item's window is listed apart, under `windowMatches`, and is not linked.
+2. Its ci tag, `ci/green/<sha>` or `ci/revoked/<sha>`, judged as `release cut` judges it, with the signer when the tag carries a runner's statement ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
+3. The release cut from the commit. When none was, the first release cut from a later commit that has it in its history, marked `contains`.
+4. The release gate's resolutions for that release: who resolved it, on which channel (`cli`, `mcp` or `acp`), when, and the plan digest, with the stored change set when the promote stored one ([#4022](https://github.com/INTENTIUS/chant/issues/4022)).
+5. The deploy records: for each environment, the first deploy built from the commit or from a later commit that has it in its history. Each names its release, the gate resolution its `admission` points at ([#4020](https://github.com/INTENTIUS/chant/issues/4020)), and the release plan in `_plans/` that its digest names, when one is stored.
+
+Every link carries a `source` object, which names the record it comes from in `ref` and the field and value that made the join. For a ledger record `ref` is its path on `chant/lifecycle`, so a reader can open the line. The releases, gates and deploys are joined with [`joinRelease`](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys) ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). A deploy record with no `releaseDigest` still joins its release through the release gate resolution its admission names. A plain `run --components` deploy has neither, so it shows with `release: null`.
+
+The chain reads the ledger of the region's member. A file at the root belongs to no member, so its chain reads every member's ledger and the workspace's own. The chain reads local tags and the local `chant/lifecycle` branch and never fetches. Fetch both first to see the remote's records. The text walk prints the chain last:
+
+```
+trace     4f1c2a9e work work:W-001 (Chant-Record); green; released as v1.0.0; prod since 2026-10-16T10:41:07.512Z
+release   v1.0.0 from 4f1c2a9e, green; cut by alice at 2026-10-16T10:00:00.000Z
+  gate      release/prod-release prod: alice on cli at 2026-10-16T10:40:55.104Z, plan jcs1-sha256:9b0e4f1d7a2c (change set stored)
+  deploy    prod api at 2026-10-16T10:41:07.512Z by bob, admitted by release/prod-release (alice)
+```
+
+Each field is in the read contract's [why chain](/chant/reference/workspace-read-contract/#the-why-chain) section.
 
 ### Following a squash merge
 
@@ -471,7 +494,7 @@ A trace over one region may take at most twice as long as [`chant workspace stat
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
 | `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. With `--intent` it is repeatable, and each file is a record kind, a plugin with [commit joins](#commit-joins), or both. Without it, `--intent` reads every kind the declaration names. |
 | `--composites` | Print the [composite instances and their components](#composites-and-components) instead of the composed graph. Takes neither `--kind` nor `--intent`. |
-| `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line`, `path:start-end` or `path#symbol` instead of the composed graph. |
+| `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line`, `path:start-end`, `path#symbol`, a graph node id or a commit sha instead of the composed graph. |
 | `--record <id>` | With `--intent` and no region, print [one record's walk](#one-records-walk) over every entry its `constrains` lists. |
 | `--follow-squash` | With `--intent`, [follow each squash merge](#following-a-squash-merge) to its pull request's original commits, fetching a pull request ref the clone lacks from `origin`. |
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |

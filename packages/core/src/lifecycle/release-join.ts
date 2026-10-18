@@ -30,6 +30,11 @@ import type { LedgerLocation } from "./git";
 export type ReleaseJoinStart =
   /** A full commit sha, or a prefix of at least 7 characters. Joins to every release cut from it. */
   | { commit: string }
+  /**
+   * Several full commit shas, or prefixes of at least 7 characters. Joins to
+   * every release cut from any of them, reading the ledgers once (#4023).
+   */
+  | { commits: readonly string[] }
   /** A release's label or its `releaseDigest`. */
   | { release: string }
   /**
@@ -53,7 +58,7 @@ export interface JoinedRelease {
   cuts: ReleaseCut[];
   /** The release gate's facts for this release (`_gates/release.jsonl`), oldest first. */
   gates: { pending: PendingGateRecord[]; resolutions: GateResolutionRecord[] };
-  /** Every deploy record that names the release, across environments, oldest first. Each record's `env` with the release names the target. */
+  /** Every deploy record that names the release, across environments, oldest first: by its `releaseDigest`, or, without one, by the release gate resolution its admission names. Each record's `env` with the release names the target. */
   deploys: ReleaseRecord[];
 }
 
@@ -88,6 +93,13 @@ export async function joinRelease(from: ReleaseJoinStart, loc: LedgerLocation = 
     }
     digests = releases.filter((r) => r.commit.toLowerCase().startsWith(sha)).map((r) => r.releaseDigest);
     if (digests.length === 0) reason = `no release was cut from commit ${from.commit}`;
+  } else if ("commits" in from) {
+    const shas = from.commits.map((c) => c.toLowerCase());
+    if (shas.some((sha) => sha.length < MIN_COMMIT_PREFIX)) {
+      return { releases: [], reason: `a commit needs at least ${MIN_COMMIT_PREFIX} characters to join on` };
+    }
+    digests = releases.filter((r) => shas.some((sha) => r.commit.toLowerCase().startsWith(sha))).map((r) => r.releaseDigest);
+    if (digests.length === 0) reason = shas.length === 0 ? "no commit was given to join on" : `no release was cut from ${shas.length === 1 ? `commit ${from.commits[0]}` : `any of ${shas.length} commits`}`;
   } else if ("release" in from) {
     const ref = from.release;
     const byDigest = releases.find((r) => r.releaseDigest === ref);
@@ -111,10 +123,13 @@ export async function joinRelease(from: ReleaseJoinStart, loc: LedgerLocation = 
   if (wanted.length === 0) return { releases: [], ...(reason ? { reason } : {}) };
 
   const gateLedger = await readGateLedger(RELEASE_GATE_OP, loc);
-  const records: ReleaseRecord[] = [];
+  // A record names its release by `releaseDigest`, or, with none, through the
+  // release gate resolution its admission names (#4045), as releaseOfDeploy reads it.
+  const records: { record: ReleaseRecord; digest: string }[] = [];
   for (const env of await listReleaseEnvironments(loc)) {
     for (const record of (await readReleaseLedger(env, loc)).records) {
-      if (record.releaseDigest !== undefined && wanted.includes(record.releaseDigest)) records.push(record);
+      const digest = releaseOfDeploy(record, gateLedger.resolutions);
+      if (digest !== undefined && wanted.includes(digest)) records.push({ record, digest });
     }
   }
   const byTime = (a: { timestamp: string }, b: { timestamp: string }): number => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0);
@@ -132,7 +147,7 @@ export async function joinRelease(from: ReleaseJoinStart, loc: LedgerLocation = 
           pending: gateLedger.pending.filter((p) => p.releaseDigest === digest),
           resolutions: gateLedger.resolutions.filter((r) => r.releaseDigest === digest),
         },
-        deploys: records.filter((r) => r.releaseDigest === digest).sort(byTime),
+        deploys: records.filter((r) => r.digest === digest).map((r) => r.record).sort(byTime),
       };
     }),
   };
