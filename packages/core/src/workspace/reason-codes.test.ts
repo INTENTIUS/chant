@@ -51,6 +51,7 @@ import { CI_GREEN_ERROR_CODES } from "./ci-green";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
 import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
 import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
+import { METRICS_ERROR_CODES, METRICS_REASON_CODES } from "./delivery-metrics";
 
 const HERE = import.meta.dirname;
 
@@ -123,6 +124,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   ROTATION_REFUSAL_CODES,
   SIGNERS_ERROR_CODES,
   EVIDENCE_ERROR_CODES,
+  METRICS_ERROR_CODES,
+  METRICS_REASON_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */

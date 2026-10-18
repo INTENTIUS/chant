@@ -458,6 +458,13 @@ Workspace (level 1, #2524):
                         beside it and marks the members whose digests differ.
                         Read only; never fetches. --json prints the
                         read-contract document
+  workspace metrics [dir] [--env <env>] [--member <name>] [--since <date>] [--json]
+                        The four DORA metrics per member and environment
+                        (#4039): deployment frequency, lead time from commit
+                        to running release, change failure rate and time to
+                        restore, from the deploy records, releases and ci
+                        revoked tags. Eight weeks back by default. Read only;
+                        never fetches. --json prints the read-contract document
   workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
                         Without --kind, every record kind the declaration
                         names. Read the records a record kind locates, validated
@@ -1349,6 +1356,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace work", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/work-cli")).runWorkspaceWork(ctx) },
   // #3033 — the agent run record: what each run cost and which commits it made. chant records runs and never starts one.
   { name: "workspace runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/runs-cli")).runWorkspaceRuns(ctx) },
+  // #4039 — DORA metrics from the deploy, release and revocation records.
+  { name: "workspace metrics", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/delivery-metrics")).runWorkspaceMetrics(ctx) },
   { name: "workspace status", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },

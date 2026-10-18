@@ -608,6 +608,13 @@ export interface Declaration {
    * defaults. Null when the declaration has no `retention` block.
    */
   retention: RetentionOverride | null;
+  /**
+   * The `metrics` block (#4039): `failureWindowDays`, the days after a deploy
+   * in which a revocation or a rollback counts it as failed, when set. Null
+   * when the declaration has no `metrics` block; `chant workspace metrics`
+   * then uses 7.
+   */
+  metrics: { failureWindowDays?: number } | null;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -985,6 +992,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     identity: identityOf(obj.identity),
     ci,
     retention: retentionOf(obj.retention),
+    metrics: metricsOf(obj.metrics),
     file,
   };
   written.set(declaration, raw);
@@ -1055,6 +1063,13 @@ function identityOf(raw: unknown): IdentityPolicy | null {
  * The `ci` block, already validated by the schema, with its defaults and the
  * rule the schema can't say (#3573): every phase `require` names is declared.
  */
+/** The `metrics` block, already validated by the schema, without its `x-` keys (#4039). */
+function metricsOf(raw: unknown): { failureWindowDays?: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const days = (raw as { failureWindowDays?: unknown }).failureWindowDays;
+  return typeof days === "number" ? { failureWindowDays: days } : {};
+}
+
 /** The `retention` block, already validated by the schema, without its `x-` keys (#4036). */
 function retentionOf(raw: unknown): RetentionOverride | null {
   if (!raw || typeof raw !== "object") return null;

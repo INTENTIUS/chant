@@ -215,6 +215,22 @@
           }
         }
       }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": true
+      },
+      "description": "How chant workspace metrics counts the DORA metrics (#4039). Added in schema 1 by chant 0.124.29, so a declaration that uses it sets minReader to 0.124.29 or newer.",
+      "properties": {
+        "failureWindowDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "description": "A deploy counts as failed when, within this many days after it, the commit it deployed is revoked or the environment is rolled back from it. The default is 7."
+        }
+      }
     }
   },
   "patternProperties": {
