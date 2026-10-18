@@ -54,6 +54,7 @@ import { factoryView, listingView, plantability, treeBytes, type FactoryView, ty
 import { declaredRecordKinds, extensionsAt, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import type { FlagDecision, FlagValue } from "./flags";
+import type { OverlapChangeSetRef, OverlapReport } from "./overlap";
 import type { WorkLink } from "./work";
 import { readMemberPromotionOrder, type PromotionStep } from "./promotion-order";
 import { gateAdmissionFrom, releaseRuleFrom } from "./identity";
@@ -393,6 +394,14 @@ export type StatusDocument =
       acceptance: StatusAcceptance[];
       /** How far each ref the box's replicate policy names is from its remote (#3172), read locally; null when no box declares one. */
       replication: ReplicationState | null;
+      /**
+       * Overlap between in-flight work items (#4025): pairs of items whose
+       * linked commits touch the same files, or that both reach one entry of
+       * a change set a pending or approved gate binds. A report, never a
+       * lock. Null when no work kind is declared or the work records or
+       * history can't be read. Added in contract 1 by chant 0.124.29.
+       */
+      overlap: OverlapReport | null;
       summary: { members: number; released: number; unreadable: number; differing: number | null };
     }
   | {
@@ -774,6 +783,16 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
 
     const leases = await readWorkspaceLeases(declaration.members, found.dir, new Date(now));
     const acceptance = await readWorkspaceAcceptance(declaration, found.dir);
+    // #4025: the change sets still waiting to apply, the ones a pending or approved gate binds.
+    const pendingChangeSets: OverlapChangeSetRef[] = [];
+    for (const m of members) {
+      const own = m.gateLedger.layout === "members";
+      for (const g of m.gates) {
+        if (g.changeSet === undefined || (g.state !== "pending" && g.state !== "approved")) continue;
+        pendingChangeSets.push({ digest: g.changeSet, cwd: resolve(found.dir, m.dir), ledgerMember: own ? m.name : null, gitSha: g.gitSha ?? null });
+      }
+    }
+    const overlap = await readStatusOverlap(declaration, found.dir, top, pendingChangeSets);
 
     return {
       ...head,
@@ -787,6 +806,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       leases,
       acceptance,
       replication: replicationOf(declaration, top),
+      overlap,
       summary: {
         members: members.length,
         released: members.filter((m) => m.environments[0].releases.length > 0).length,
@@ -857,6 +877,17 @@ async function readStatusFlags(declaration: Declaration, root: string): Promise<
     return flags
       .map((f) => ({ id: f.id, member: f.member, param: f.param, owner: f.owner, values: f.values, work: f.work, implements: f.implements, stale: f.stale, kind: f.kind, path: f.path }))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  } catch {
+    return null;
+  }
+}
+
+/** The overlap report (#4025); null when no work kind is declared or it can't be read. */
+async function readStatusOverlap(declaration: Declaration, root: string, top: string, changeSets: OverlapChangeSetRef[]): Promise<OverlapReport | null> {
+  if (declaredRecordKinds(declaration).length === 0) return null;
+  try {
+    const { readOverlap } = await import("./overlap");
+    return await readOverlap({ declaration, root, top, changeSets });
   } catch {
     return null;
   }
@@ -1001,6 +1032,16 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
         const value = f.values[doc.env];
         rows.push([`${m.name}/${f.id}`, f.param, value === undefined ? "default" : JSON.stringify(value), f.work ? `${f.work.id} (${f.work.state ?? "unknown"})` : "-", f.stale ? "due for removal" : ""]);
       }
+    }
+    lines.push(...table(rows));
+  }
+  // #4025: in-flight work items that changed the same thing.
+  if (doc.overlap && doc.overlap.pairs.length > 0) {
+    lines.push("");
+    const rows: string[][] = [["OVERLAP", "FILES", "ADDRESSES"]];
+    for (const p of doc.overlap.pairs) {
+      const list = (xs: string[]) => (xs.length === 0 ? "-" : xs.length <= 2 ? xs.join(", ") : `${xs.slice(0, 2).join(", ")} and ${xs.length - 2} more`);
+      rows.push([`${p.items[0]} and ${p.items[1]}`, list(p.files), list([...new Set(p.addresses.map((x) => x.node ?? x.address))])]);
     }
     lines.push(...table(rows));
   }

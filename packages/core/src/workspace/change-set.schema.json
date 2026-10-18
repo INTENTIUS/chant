@@ -26,7 +26,7 @@
     "digest": {
       "type": "string",
       "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
-      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries without their node, the side effects, and on a release gate's document its releaseDigest and environment, provisional members and their entries left out. What a gate over the whole run binds."
+      "description": "computePlanDigest(\"change-set-document\", \u2026) over the set digest (computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member), each member's member, status and holes, the entries without their node and source, the side effects, and on a release gate's document its releaseDigest and environment, provisional members and their entries left out. What a gate over the whole run binds."
     },
     "releaseDigest": {
       "type": "string",
@@ -271,6 +271,10 @@
         "node": {
           "type": ["string", "null"],
           "description": "Added in contract 1 by #4022, written by chant 0.124.28 and newer on a stored change set (chant change-set show). The graph node the entry changes, as chant graph --format ir names it, with the member in front (<member>/<id>) inside a workspace, as chant workspace graph names it. A chant entry's node is its address; a terraform-family entry's is <root>/<block key>, where the block key is each module call as module.<name>/ and then the block's address with no index. Null when the graph holds no node for the address, such as a delete of a block the source no longer declares. Absent on a document never mapped onto a graph. Not part of digest."
+        },
+        "source": {
+          "type": "string",
+          "description": "Added in contract 1 by #4025, written by chant 0.124.29 and newer on a stored change set. The source file that declares the entry's node, as a path from the repository root: the node's sourceLoc.file in the member's graph IR with the member's directory in front. Absent when node is null or the node has no source location, and on a change set stored by an older chant. workspace status attributes the entry to a work item through the commits linked to the item that changed this file. Not part of digest."
         }
       }
     },

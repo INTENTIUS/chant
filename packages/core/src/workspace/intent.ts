@@ -448,6 +448,16 @@ export interface WorkNode {
    * to the review through it. Empty when none does. Added within contract 1.
    */
   reviews?: WorkReview[];
+  /**
+   * The other in-flight work items whose linked commits touch a file this
+   * item's linked commits touch (#4025), as `workspace status --json` reports
+   * in `overlap`, each with the shared files. Empty when none does, or when
+   * this item is not in flight. Absent on a read with `--at` and when the
+   * overlap can't be read. The change-set entries two items share are in
+   * `status`, which reads the gates. Added within contract 1 by chant
+   * 0.124.29.
+   */
+  overlaps?: { with: string; files: string[] }[];
 }
 
 /**
@@ -1055,6 +1065,29 @@ async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, decl
 }
 
 /** Build the intent document. Never throws an {@link IntentError}, {@link WorkspaceReadError} or {@link RecordReadError}. */
+/**
+ * Give each work node the in-flight items it overlaps by file (#4025). Only a
+ * working-tree read, since the overlap is about the branches as they are now;
+ * a read that fails leaves the field off.
+ */
+async function addOverlaps(work: WorkNode[], declaration: Declaration, root: string, top: string, at: string | null): Promise<void> {
+  if (work.length === 0 || at !== null) return;
+  let report: import("./overlap").OverlapReport | null;
+  try {
+    const { readOverlap } = await import("./overlap");
+    report = await readOverlap({ declaration, root, top, changeSets: [] });
+  } catch {
+    return;
+  }
+  if (report === null) return;
+  for (const n of work) {
+    const self = `${n.recordKind}:${n.record}`;
+    n.overlaps = report.pairs
+      .filter((p) => p.items.includes(self) && p.files.length > 0)
+      .map((p) => ({ with: p.items[0] === self ? p.items[1] : p.items[0], files: p.files }));
+  }
+}
+
 export async function intentGraph(query: IntentQuery): Promise<IntentResult> {
   const head: Head = { $schema: INTENT_OUTPUT_SCHEMA_ID, contract: INTENT_CONTRACT_VERSION, chant: readerVersion() };
   try {
@@ -1927,6 +1960,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     }
   }
   for (const f of findings) nodes.set(f.id, f);
+  await addOverlaps([...nodes.values()].filter((n): n is WorkNode => n.kind === "work"), declaration, located.rootOnDisk, top, located.at);
   const why = explain();
   const all = [...nodes.values()];
 

@@ -210,6 +210,31 @@ With `--json`, the document also lists every [work lease](/chant/cli/workspace-w
 | `met` | criteria met by passing evidence of their verification |
 | `total` | criteria the item lists |
 
+### Overlap between work items
+
+`overlap` says which in-flight work items changed the same thing ([#4025](https://github.com/INTENTIUS/chant/issues/4025)). It is a report and locks nothing: a [work lease](/chant/cli/workspace-work/) still covers one item, and two people or agents who see their items paired here sort it out between them. The policy is in [#4016](https://github.com/INTENTIUS/chant/issues/4016).
+
+A work item is in flight unless it implements at least one decision and every one is confirmed, which means in one of its kind's closed states and superseded by nothing, as `featureFlags` reads it for a [feature flag](/chant/guide/feature-flags/). Its commits are the ones linked to it the way [`workspace check --changes`](/chant/cli/workspace-check/) judges a link ([#4029](https://github.com/INTENTIUS/chant/issues/4029)): a `Chant-Record: <work kind>:<id>` trailer, or a `Chant-Lease` trailer whose lease was taken on the item. A commit inside a decision's window is not linked. The walk covers every local branch, every remote-tracking branch and `HEAD`, so a branch someone pushed shows once it is fetched. The `chant/` ledger branches are left out, merges are skipped, and nothing is fetched.
+
+Two items overlap by file when their linked commits touch one path. They overlap by address when one entry of a planned change set is attributed to both. The change sets read are the ones a pending or approved gate in this view binds, under each member's `gates[].changeSet`. An entry is attributed to a work item when all three of these hold:
+
+- The entry has a `source`: the file that declares its graph node, recorded from the repository root when the gate stored the change set. A change set stored by chant 0.124.28 has none.
+- A commit linked to the item changed that file.
+- That commit is in the history the change set was planned from: the commit its graph was read at, else the commit the gate was reached at, or an ancestor of it. When neither is known, every linked commit counts.
+
+A release bundles many work items, so one entry can be attributed to several, and only an entry two items share is reported. Entries with no `source` count in `unattributed`.
+
+| Field | Value |
+|---|---|
+| `items[]` | each in-flight work item with a linked commit: `item` as `<work kind>:<id>`, the record's `path` from the repository root, its `state`, and its `commits`, newest first |
+| `pairs[]` | each pair that shares something: `items`, the two items in sorted order, `files`, the shared paths from the repository root, and `addresses`, the shared entries, each with `changeSet` (the digest for [`chant change-set show`](/chant/cli/change-set/)), `ledgerMember`, the entry's `member`, `address` and `node`, and the `source` file both items changed |
+| `changeSets` | the digests of the change sets read |
+| `unattributed` | entries of those change sets with no `source` |
+
+`overlap` is `null` when the workspace declares no work kind, or the work records or the history can't be read. The text view adds an OVERLAP table when a pair exists. Output from chant before 0.124.29 has no `overlap` at all. The [intent graph](/chant/cli/workspace-graph/) gives each work node the same pairs by file in `overlaps`.
+
+The read has a time budget: a ratio of 1, so at most as long as `chant workspace status --json` takes on the same machine, median of 5 runs of each. On a developer machine the read takes about half that, most of it starting node and loading chant. CI's `check` job measures it with `scripts/bench-overlap.ts` on a clone of chant's own repository with 20 in-flight work items and 60 linked commits on 20 branches, and fails when the read is over budget.
+
 A box block with a host also has its [isolation](/chant/reference/workspace-declaration/#isolation) resolved, and `isolation` is `null` in a block without one ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). It comes from the declaration alone, so it is the same whatever environment is asked for. A runtime that plants or starts a box sets these values instead of choosing its own. A state path keeps its environment reference, such as `${XDG_STATE_HOME}`, for the runtime to expand on its machine. The text view shows one line for each box with a host. It gives the host and slot, then the port block and the state directory.
 
 The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
@@ -410,6 +435,23 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
   "acceptance": [
     { "member": null, "kind": "work/work.kind.mjs", "item": "W-001", "state": "in-progress", "met": 1, "total": 2 }
   ],
+  "overlap": {
+    "items": [
+      { "item": "work:W-001", "path": "work/W-001-the-queue.md", "state": "in-progress", "commits": ["4f1c..."] },
+      { "item": "work:W-002", "path": "work/W-002-the-retry.md", "state": "in-progress", "commits": ["9a2e...", "77b0..."] }
+    ],
+    "pairs": [
+      {
+        "items": ["work:W-001", "work:W-002"],
+        "files": ["shop/queue.ts"],
+        "addresses": [
+          { "changeSet": "jcs1-sha256:...", "ledgerMember": "shop", "member": "shop", "address": "events", "node": "shop/events", "source": "shop/queue.ts" }
+        ]
+      }
+    ],
+    "changeSets": ["jcs1-sha256:..."],
+    "unattributed": 0
+  },
   "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }
 }
 ```

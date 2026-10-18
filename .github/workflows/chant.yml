@@ -248,6 +248,16 @@ jobs:
           git remote set-head origin main
           npx tsx scripts/bench-trace.ts | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # #4025: the overlap report (`workspace status --json` overlap) may take
+      # at most as long as `workspace status --json` itself on the same
+      # runner, median of 5 runs of each, interleaved. chant declares no work
+      # kind, so the script reads a shared clone with 20 in-flight work items
+      # and 60 linked commits on 20 branches. About a minute.
+      - name: Overlap time budget (#4025)
+        run: |
+          set -o pipefail
+          npx tsx scripts/bench-overlap.ts | tee -a "$GITHUB_STEP_SUMMARY"
+
       # #2817: each run's length in its summary, so drift shows before it
       # becomes a timeout.
       - name: Record the job's duration

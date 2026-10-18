@@ -122,6 +122,16 @@ export interface ChangeSetEntry {
    * part of the digest.
    */
   node?: string | null;
+  /**
+   * The source file that declares the entry's node, from the repository
+   * root (#4025): the node's `sourceLoc.file` in the member's graph IR, with
+   * the member's directory in front. Set beside `node` when a stored change
+   * set is mapped onto a graph whose node has a source location, absent
+   * otherwise. Like `node`, never part of the digest. The overlap report
+   * attributes the entry to a work item through the commits that changed
+   * this file.
+   */
+  source?: string;
 }
 
 /** Something a planner could not read, so the plan says nothing about it. */
@@ -288,12 +298,13 @@ export function changeSetDocumentDigest(
     .filter((m) => !provisional.has(m.member))
     .map((m) => ({ member: m.member, status: m.status, holes: m.holes }))
     .sort((a, b) => byString(a.member, b.member));
-  // An entry's graph node (#4022) says where on the graph the change is,
-  // not what the plan does, so it stays outside the digest: mapping a stored
+  // An entry's graph node (#4022) and its source file (#4025) say where on
+  // the graph the change is, not what the plan does, so they stay outside
+  // the digest: mapping a stored
   // document onto a graph never moves the value its gate bound.
   const entries = doc.entries
     .filter((e) => !provisional.has(e.member))
-    .map(({ node: _node, ...e }) => e)
+    .map(({ node: _node, source: _source, ...e }) => e)
     .sort((a, b) => byString(entryKey(a), entryKey(b)));
   const sideEffects = (doc.sideEffects ?? []).filter((s) => !provisional.has(s.member)).sort(bySideEffect);
   const planned =

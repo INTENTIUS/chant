@@ -13,7 +13,8 @@
  * {@link changeSetNodeCandidates} lists the ids an entry's address can have,
  * by planner. {@link mapChangeSetToGraph} keeps the first that the graph
  * holds and puts the member's name in front, as `chant workspace graph`
- * does. An entry whose address the graph does not hold gets `node: null`:
+ * does, with the node's source file as `source` when the graph gives one
+ * (#4025). An entry whose address the graph does not hold gets `node: null`:
  * a delete of a block the source no longer declares, or a warden or sql
  * change outside the graph.
  *
@@ -31,6 +32,12 @@ export interface ChangeSetGraphNodes {
   at: string | null;
   /** Every node id of the member's `chant graph --format ir`, without the member in front. */
   ids: Iterable<string>;
+  /**
+   * The source file of each node that has one (#4025), by the same ids, as a
+   * path from the repository root. An entry mapped onto such a node gets it
+   * as `source`.
+   */
+  sources?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -126,7 +133,8 @@ export function mapChangeSetToGraph(doc: ChangeSetDocument, graph: ChangeSetGrap
     ...doc,
     entries: doc.entries.map((e) => {
       const id = changeSetNodeCandidates(e).find((c) => ids.has(c));
-      return { ...e, node: id === undefined ? null : `${prefix}${id}` };
+      const source = id === undefined ? undefined : graph.sources?.get(id);
+      return { ...e, node: id === undefined ? null : `${prefix}${id}`, ...(source !== undefined ? { source } : {}) };
     }),
     graph: { member: graph.member, at: graph.at },
   };

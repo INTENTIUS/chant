@@ -1019,6 +1019,18 @@
             }
           }
         },
+        "overlaps": {
+          "description": "Added within contract 1 by #4025, written by chant 0.124.29 and newer. The other in-flight work items whose linked commits touch a file this item's linked commits touch, as chant workspace status --json reports in overlap, each with the shared files from the repository root. Empty when none does, or the item is not in flight. Absent on a read with --at and when the overlap can't be read. The change-set entries two items share are in status, which reads the gates.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["with", "files"],
+            "properties": {
+              "with": { "type": "string", "description": "The other item, <work kind>:<id>." },
+              "files": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
         "reviews": {
           "description": "The review sessions whose comments led to this item (#3154, E21 in arugula-salad/hud#823): each record of a session kind read whose comments[].follow_ups, or its own follow_ups, name the item as <kind>:<id>. A commit that carries the item by its Chant-Record trailer joins back to the review through it. Absent when none does. Added within contract 1.",
           "type": "array",
