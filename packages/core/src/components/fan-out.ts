@@ -89,6 +89,10 @@ export interface FanOutRequest {
    * {@link FanOutPlan.digest} so an approval is bound to *what* would be
    * applied and not only to who would run. Absent, the digest still identifies
    * the derivation — the selection, the order and the edges it came from.
+   *
+   * `chant components fan-out` does not pass it: its approval stays bound to
+   * the derivation, and it binds a resumed attempt's progress to each
+   * component's input instead (./fan-out-inputs.ts, #4081).
    */
   inputDigests?: Record<string, string>;
   /**

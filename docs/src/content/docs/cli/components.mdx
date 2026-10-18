@@ -283,6 +283,16 @@ Only the earlier attempt's completions are carried forward. Its failures are rec
 
 A record whose digest does not match the fan-out derived now is refused with a warning, and its progress is not applied. The derivation changed, which makes this a different change, and carrying `cluster-a already applied` into it would be a claim about work nobody did.
 
+A matching digest is not enough on its own. A later change that touches the same components in the same shape derives the same digest as the attempt before it. For that reason the record also keeps the input digest of each component it applied, and a component carries as `already-applied` only when its input digest is the same now. The input digest is taken over the environment and the component's steps as written. It also takes in the bytes of every file or directory a step input names inside the project, such as a `cfn-deploy` step's built `template`, and the input digests of the components it depends on. A parameter read from an upstream output therefore counts as changed when that upstream changed. A component whose input moved runs again, and the run prints a line for it on stderr:
+
+```
+cluster-a: changed since the earlier attempt, so it runs again
+```
+
+A record written by a chant release older than this one keeps no input digests. None of its progress carries, the run says so in a warning, and everything selected runs.
+
+Progress and approval are bound to different things. The gate's approval is bound to the plan digest, so the fix after a failure keeps the approval it already has. Progress is bound to each component's input digest, so a different change with the same shape gets none of it. A standing approval does cover a later change of the same shape until it expires. When each change's content needs its own approval, use `pr-apply`, which binds its approval to the planned change set.
+
 #### Seeding and progress
 
 `--seed-outputs <file>` (repeatable) loads component outputs before the run, so a `stackOutput()` or `@<dep>.publish.*` reference into a component the plan lists under `seeds` resolves. `--dump-outputs <file>` writes what the run holds afterwards. `--progress-json` streams one NDJSON progress record per line to stdout as the waves execute, and `--events-json` streams the [run-event stream](/chant/reference/workspace-read-contract/#run-events) instead. These behave as they do on [`chant run --components`](/chant/cli/run/).
@@ -355,7 +365,9 @@ chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --resume .chan
 
 The re-run skips the components that applied and plans the rest against the outputs the approved plans read. It then checks each member it plans against the approved change set. A member is covered when it plans to the approved digest, or when every change it plans is one the approved plan made: the same address and action (or the create or delete left of an approved replace), and each attribute written to the approved value or to a value the approved plan knew only after apply. A sensitive value is covered only where the approved plan wrote it as sensitive too. When every member is covered and the approval still stands for the approved digest, the rest applies with no fresh approval, and the report's `resumed.applied` and the note name what the earlier attempt applied.
 
-The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own. A record whose change set does not hash to the digest it names carries nothing either.
+Progress carries the same way it does for `fan-out --resume`: a component the earlier attempt applied is skipped only when its input digest is the same now. One whose input moved prints `changed since the earlier attempt`, is planned again and has to be covered by the approved change set like any member left over. The approval stays bound to the change-set digest.
+
+The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when it keeps no input digests, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own. A record whose change set does not hash to the digest it names carries nothing either.
 
 The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) passes `--resume .chant/pr-resume/pr-apply.json` and keeps the file in the CI cache under the pushed commit, so re-running a failed apply job finishes it.
 

@@ -70,3 +70,13 @@ describe("prApply (#3464)", () => {
     for (const name of ["a.json", "b.json", "c.json"]) expect(readFanOutAttempt(join(dir, name))?.prApply).toBeUndefined();
   });
 });
+
+describe("inputs (#4081)", () => {
+  test("round-trips, and a record without them reads as none", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fan-out-record-"));
+    writeFanOutAttempt(join(dir, "a.json"), { digest: "d", completed: ["net"], failed: [], outputs: {}, inputs: { net: "jcs1-sha256:x" } });
+    expect(readFanOutAttempt(join(dir, "a.json"))?.inputs).toEqual({ net: "jcs1-sha256:x" });
+    writeFileSync(join(dir, "b.json"), JSON.stringify({ digest: "d", completed: ["net"], failed: [], outputs: {} }));
+    expect(readFanOutAttempt(join(dir, "b.json"))?.inputs).toBeUndefined();
+  });
+});
