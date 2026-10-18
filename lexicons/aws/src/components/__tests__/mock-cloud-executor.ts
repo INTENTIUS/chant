@@ -73,6 +73,15 @@ export interface FakeStackConfig {
    * update with an empty diff — cfn-deploy must treat it as an idempotent no-op
    * success (#960). */
   noChanges?: boolean;
+  /**
+   * When true, no stack exists yet: `describeStack` throws CloudFormation's
+   * "does not exist", a change set is a CREATE that makes an empty
+   * `REVIEW_IN_PROGRESS` stack (`stackCreated`), and `deleteStackShell`
+   * removes it (#4084).
+   */
+  missing?: boolean;
+  /** Set by the mock: the empty `REVIEW_IN_PROGRESS` stack a CREATE change set made for a missing stack. */
+  shell?: boolean;
 }
 
 export interface FakeDeploymentConfig {
@@ -218,11 +227,15 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
         };
       }
       pendingChangeSets.set(changeSetName, { stackName: args.stackName, changes });
+      const created = config?.missing === true;
+      if (created) stacks.set(args.stackName, { ...config, missing: false, shell: true });
       return {
         changeSetName,
         stackName: args.stackName,
         status: "CREATE_COMPLETE",
-        isCreate: config?.isCreate ?? false,
+        isCreate: config?.isCreate ?? created,
+        changeSetType: created || config?.isCreate ? "CREATE" : "UPDATE",
+        stackCreated: created,
         changes,
       };
     },
@@ -236,7 +249,16 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
     },
     async describeStack(stackName: string) {
       record("cloudformation", "describeStack", stackName);
+      if (stacks.get(stackName)?.missing) throw new Error(`Stack with id ${stackName} does not exist`);
+      if (stacks.get(stackName)?.shell) return { stackStatus: "REVIEW_IN_PROGRESS", outputs: {} };
       return stackStatus(stackName);
+    },
+    async deleteStackShell(stackName: string) {
+      record("cloudformation", "deleteStackShell", stackName);
+      const config = stacks.get(stackName);
+      if (!config?.shell) return false;
+      stacks.set(stackName, { ...config, shell: false, missing: true });
+      return true;
     },
     async waitForStack(stackName: string) {
       record("cloudformation", "waitForStack", stackName);

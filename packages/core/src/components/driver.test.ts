@@ -26,6 +26,7 @@ import {
   resolveWiring,
   runComponentDeploy,
   runInterpretDriver,
+  unresolvedWiringSources,
   type DriverComponent,
   type DriverStepRecord,
   type RunProgressEvent,
@@ -1147,5 +1148,28 @@ describe("the release a deploy step sees (#3061, ws-081)", () => {
       releaseIdentity: () => ({ revision: "r0" }),
     });
     expect(deploy.calls[0]!.ctx.release).toEqual({ revision: "r0", version: "sha256:recorded" });
+  });
+});
+
+describe("unresolvedWiringSources (#4084)", () => {
+  it("names each component whose cross-component output has no value yet, sorted and once", () => {
+    const input = {
+      template: "dist/a.json",
+      inputs: {
+        topic: { stackOutput: { stack: "network", name: "TopicArn" } },
+        queue: { stackOutput: { stack: "network", name: "QueueUrl" } },
+        table: { stackOutput: { stack: "cluster-a", name: "TableName" } },
+        image: "@api-image.publish.digest",
+        local: "@Publish.digest",
+      },
+    };
+    expect(unresolvedWiringSources(input, {})).toEqual(["api-image", "cluster-a", "network"]);
+    expect(
+      unresolvedWiringSources(input, {
+        network: { TopicArn: "t", QueueUrl: "q" },
+        "cluster-a": { TableName: "x" },
+        "api-image": { publish: { digest: "sha256:1" } },
+      }),
+    ).toEqual([]);
   });
 });
