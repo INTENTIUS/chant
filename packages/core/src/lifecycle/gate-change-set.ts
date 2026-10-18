@@ -10,19 +10,27 @@
  * (`../change-set-graph.ts`), and stores the document under its digest
  * (`./change-set-store.ts`).
  *
+ * Each entry mapped onto a node that has a source location also records that
+ * file from the repository root as `source` (#4025), which the overlap report
+ * in `workspace status` attributes the entry to work items by.
+ *
  * The graph is read only when the digest is not stored yet. A graph that
  * can't be read never stops the gate: the document is stored with `graph:
  * null` and every `node` null, and the caller gets a warning to print.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { posix } from "node:path";
 import { mapChangeSetToGraph, type ChangeSetGraphNodes } from "../change-set-graph";
 import type { ChangeSetDocument, ChangeSetGraph } from "../change-set";
 import { persistChangeSet, readStoredChangeSet } from "./change-set-store";
 import { resolveMemberLedger } from "./member-ledger";
 
-/** Reads the node ids of the graph of the project at `projectDir`. */
-export type GraphIdReader = (projectDir: string) => Promise<{ ids: string[] } | { error: string }>;
+/**
+ * Reads the node ids of the graph of the project at `projectDir`, with each
+ * node's source file (relative to `projectDir`) when the graph gives one.
+ */
+export type GraphIdReader = (projectDir: string) => Promise<{ ids: string[]; sources?: Record<string, string> } | { error: string }>;
 
 const GRAPH_TIMEOUT_MS = 300_000;
 
@@ -32,7 +40,7 @@ const GRAPH_TIMEOUT_MS = 300_000;
  * one), as `chant workspace graph` runs each member. `args` are passed after
  * `graph --format ir`, such as the run's `--param` flags.
  */
-export async function readGraphIds(projectDir: string, args: readonly string[] = []): Promise<{ ids: string[] } | { error: string }> {
+export async function readGraphIds(projectDir: string, args: readonly string[] = []): Promise<{ ids: string[]; sources: Record<string, string> } | { error: string }> {
   const { readerToolchain, resolveToolchain } = await import("../workspace/member-commands");
   const { readMemberIr } = await import("../workspace/compose-graph");
   const { findWorkspaceRoot } = await import("../project-root");
@@ -61,7 +69,9 @@ export async function readGraphIds(projectDir: string, args: readonly string[] =
   }
   const read = readMemberIr(out.stdout);
   if ("reason" in read) return { error: read.reason.message };
-  return { ids: read.ir.nodes.map((n) => n.id) };
+  const sources: Record<string, string> = {};
+  for (const n of read.ir.nodes) if (n.sourceLoc?.file) sources[n.id] = n.sourceLoc.file;
+  return { ids: read.ir.nodes.map((n) => n.id), sources };
 }
 
 let graphReaderOverride: GraphIdReader | undefined;
@@ -103,6 +113,27 @@ export interface StoreGateChangeSetResult {
 }
 
 /**
+ * Each node's source file as a path from the repository root (#4025): the
+ * graph gives it relative to the member's directory at `cwd`. Undefined when
+ * the graph gives none or `cwd` is in no git repository.
+ */
+function repoSources(cwd: string, sources: Record<string, string> | undefined): Map<string, string> | undefined {
+  if (!sources || Object.keys(sources).length === 0) return undefined;
+  let prefix: string;
+  try {
+    prefix = execFileSync("git", ["rev-parse", "--show-prefix"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return undefined;
+  }
+  const out = new Map<string, string>();
+  for (const [id, file] of Object.entries(sources)) {
+    const path = posix.normalize(posix.join(prefix, file.split("\\").join("/")));
+    if (!path.startsWith("../") && path !== "..") out.set(id, path);
+  }
+  return out;
+}
+
+/**
  * Store `doc` under its digest in the member's ledger at `cwd`, mapped onto
  * the member's graph, unless it is stored already. Does not push; the gate's
  * pending fact or resolution pushes the branch after it.
@@ -118,7 +149,7 @@ export async function storeGateChangeSet(input: StoreGateChangeSetInput): Promis
   try {
     const read = await (input.readGraph ?? gateGraphReader())(cwd);
     if ("error" in read) warning = read.error;
-    else nodes = { member, at: input.at ?? null, ids: read.ids };
+    else nodes = { member, at: input.at ?? null, ids: read.ids, sources: repoSources(cwd, read.sources) };
   } catch (err) {
     warning = err instanceof Error ? err.message : String(err);
   }

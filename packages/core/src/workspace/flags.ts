@@ -100,6 +100,16 @@ export interface WorkspaceFlags {
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 
 /**
+ * Whether a decision is confirmed: in one of its kind's `closed` states and
+ * superseded by nothing. An unknown decision is not. The overlap report
+ * (#4025) shares it: a work item is in flight while any decision it
+ * implements is not confirmed.
+ */
+export function decisionConfirmed(decision: { state: string | null; supersededBy: string | null } | undefined, closed: ReadonlySet<string>): boolean {
+  return decision !== undefined && decision.state !== null && closed.has(decision.state) && decision.supersededBy === null;
+}
+
+/**
  * Give each record of a flag kind its {@link FlagState} and warnings, in
  * place. Throws a `RecordReadError` when the work kind it names can't be read
  * or is not a work kind.
@@ -132,7 +142,7 @@ export async function applyFlags(loaded: LoadedRecordKind, entries: RecordEntry[
     }
     const implementsList: FlagDecision[] = (item.implements ?? []).map((d) => {
       const decision = decisions.get(d.id);
-      return { ...d, confirmed: decision !== undefined && decision.state !== null && closed.has(decision.state) && decision.supersededBy === null };
+      return { ...d, confirmed: decisionConfirmed(decision, closed) };
     });
     const stale = implementsList.length > 0 && implementsList.every((d) => d.confirmed);
     e.flag = { work: { id: named, state: item.state }, implements: implementsList, stale };

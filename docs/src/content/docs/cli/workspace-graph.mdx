@@ -293,6 +293,8 @@ Pass a work kind too, such as `--kind work/work.kind.mjs`, and the walk adds the
 
 A review session can lead to a work item. When a session kind is read and one of its records names the item in a comment's `follow_ups` (or its own `follow_ups`) as `<kind>:<id>`, the work node lists that session under `reviews`, with the numbers of those comments, counted from 1 ([#3154](https://github.com/INTENTIUS/chant/issues/3154)). A builder's commit carries the item through its `Chant-Record: work:<id>` trailer, so the change joins back to the review that asked for it. hud writes the `follow_ups` when a review's changes are kept.
 
+A work node also has `overlaps` on a read of the working tree ([#4025](https://github.com/INTENTIUS/chant/issues/4025)): each other in-flight work item whose linked commits touch a file this item's linked commits touch, as `{ with, files }`. It is the file side of the [overlap report](/chant/cli/workspace-status/#overlap-between-work-items) in `workspace status --json`, and the list is empty when the item overlaps nothing or is not in flight. The change-set entries two items share are in `status`, which reads the gates. A read with `--at` leaves the field off.
+
 Without `--json` the walk prints as text with one line per node. The region comes first and the findings last, in the order the walk runs. Under each decision come the commits made inside its window, and when any of them is not the decision's own work, the question the person has to answer about it:
 
 ```

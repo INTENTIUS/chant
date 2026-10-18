@@ -123,6 +123,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/acceptance" }
         },
+        "overlap": {
+          "description": "Added in contract 1 by #4025, written by chant 0.124.29 and newer; absent from older output, so a reader treats a missing field as unknown. Overlap between in-flight work items: a work item (a current record of a declared work kind) is in flight unless it implements at least one decision and every one is confirmed (in one of its kind's closed states and superseded by nothing, as featureFlags reads it). Its commits are the ones linked to it as #4029 defines linked (a Chant-Record: <work kind>:<id> trailer, or a Chant-Lease trailer that resolves to it), read from every local and remote-tracking branch and HEAD, the chant/ ledger branches left out, merges skipped, and never fetched. Two items overlap when their commits touch the same file, or when one entry of a change set a pending or approved gate binds is attributed to both: an entry is attributed to an item when a commit linked to the item changed the entry's source file (recorded on the stored change set) and that commit is in the history the change set was planned from. A report only: nothing is locked or refused. Null when the workspace declares no work kind, or the work records or history can't be read.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/overlap" }]
+        },
         "summary": {
           "type": "object",
           "required": ["members", "released", "unreadable", "differing"],
@@ -272,6 +276,56 @@
           "type": ["array", "null"],
           "items": { "$ref": "#/$defs/featureFlag" }
         }
+      }
+    },
+    "overlap": {
+      "type": "object",
+      "required": ["items", "pairs", "changeSets", "unattributed"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "Each in-flight work item with at least one linked commit, sorted by item.",
+          "items": {
+            "type": "object",
+            "required": ["item", "path", "state", "commits"],
+            "properties": {
+              "item": { "type": "string", "description": "<work kind>:<id>, as a Chant-Record trailer names it." },
+              "path": { "type": "string", "description": "The work record file, from the repository root." },
+              "state": { "type": ["string", "null"] },
+              "commits": { "type": "array", "items": { "type": "string" }, "description": "The commits linked to the item, newest first." }
+            }
+          }
+        },
+        "pairs": {
+          "type": "array",
+          "description": "Each pair of items that share a file or a change-set entry, sorted by the first item and then the second. Empty when nothing overlaps.",
+          "items": {
+            "type": "object",
+            "required": ["items", "files", "addresses"],
+            "properties": {
+              "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "The two items, in sorted order." },
+              "files": { "type": "array", "items": { "type": "string" }, "description": "The paths, from the repository root, that both items' linked commits add, change or delete, sorted. A rename counts as a delete and an add." },
+              "addresses": {
+                "type": "array",
+                "description": "The change-set entries attributed to both items, by change set, member and address.",
+                "items": {
+                  "type": "object",
+                  "required": ["changeSet", "ledgerMember", "member", "address", "node", "source"],
+                  "properties": {
+                    "changeSet": { "type": "string", "description": "The change set's digest, for chant change-set show." },
+                    "ledgerMember": { "type": ["string", "null"], "description": "The workspace member whose ledger stores the change set, or null for the flat ledger." },
+                    "member": { "type": "string", "description": "The entry's change-set member." },
+                    "address": { "type": "string", "description": "The entry's planner address." },
+                    "node": { "type": ["string", "null"], "description": "The entry's graph node." },
+                    "source": { "type": "string", "description": "The entry's source file, from the repository root, that both items' commits changed." }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "changeSets": { "type": "array", "items": { "type": "string" }, "description": "The digests of the stored change sets read: those a pending or approved gate binds, sorted." },
+        "unattributed": { "type": "integer", "minimum": 0, "description": "Entries of those change sets with no source (stored by a chant before 0.124.29, or mapped onto no node with a source location), so attributed to no item." }
       }
     },
     "featureFlag": {
