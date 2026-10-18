@@ -37,18 +37,21 @@ export const stdoutLine = (line: string): void => void process.stdout.write(line
 
 /**
  * The run's stream on stdout when `--events-json` was passed, else
- * undefined. The run is named by `runId` when the caller has one (so a
+ * undefined. Each line goes to stdout, to this host's store and to `also`
+ * when given. The run is named by `runId` when the caller has one (so a
  * release record and the stream name the same run), else by the CI run or a
  * local id.
  */
 export async function openCliRunEvents(
   args: Pick<ParsedArgs, "eventsJson">,
   run: { kind: RunEventKind; name: string; runId?: string; cwd?: string },
+  also?: (line: string) => void,
 ): Promise<RunEventStream | undefined> {
   if (!args.eventsJson) return undefined;
   const resolved = await resolveRunEventRun(run);
   // #4042: the stream is also kept on this host, so `chant run events <run>`
   // replays it. Only a command that was asked for a stream keeps one.
   const store = await openRunEventStore(run.cwd ?? process.cwd(), resolved.runId);
-  return openRunEventStream(resolved, teeLines(stdoutLine, store?.write.bind(store))!);
+  // `also`: a third copy of each line, such as `--report-url`'s upload (#4007).
+  return openRunEventStream(resolved, teeLines(stdoutLine, store?.write.bind(store), also)!);
 }

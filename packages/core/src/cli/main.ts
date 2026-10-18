@@ -871,7 +871,11 @@ Component release ledger + status:
                             --member <name>, both commands: a workspace
                             member's loop, gate op pr-<n>-<member>;
                             --resume <file> finishes an apply that failed
-                            partway under the same approval)
+                            partway under the same approval;
+                            --events-json, both commands: the run-event
+                            stream on stdout; --report-url <s3 or file URL>,
+                            both commands: copy the report, the change set
+                            and the events to <url>/<pr>/<commit>/)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);

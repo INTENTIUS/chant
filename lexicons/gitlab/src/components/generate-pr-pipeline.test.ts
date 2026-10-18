@@ -63,6 +63,16 @@ describe("the GitLab merge-request pipeline", () => {
     expect(doc.apply.artifacts).toEqual({ when: "always", paths: [".chant/pr"] });
   });
 
+  test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {
+    const loud = parseYAML(generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "$CHANT_REPORT_URL" } }).yaml) as { plan: Job; apply: Job };
+    for (const job of [loud.plan, loud.apply]) {
+      expect(job.script.at(-1)).toContain('--events-json --report-url "$CHANT_REPORT_URL"');
+      expect(job.variables.CHANT_RUN_EVENTS_DIR).toBe(".chant/pr/run-events");
+      expect(job.artifacts).toEqual({ when: "always", paths: [".chant/pr"] });
+    }
+    expect(result.yaml).not.toContain("--events-json");
+  });
+
   test("runs in an image with git and installs OpenTofu, unless the caller names an image", () => {
     expect(doc.plan.image).toBe("node:22");
     expect(doc.apply.script[0]).toBe(PR_LOOP_SETUP[0]);

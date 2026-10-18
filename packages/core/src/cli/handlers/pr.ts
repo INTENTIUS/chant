@@ -33,7 +33,15 @@
  * one `run-event.schema.json` line each: the planning as a `plan` phase with
  * a step per component, the gate's decision as a `gate` phase, and on
  * pr-apply the apply's waves and components as `chant run --components`
- * streams them.
+ * streams them. A component the apply does not start settles too, `blocked`
+ * behind a failed dependency or `already-applied` on a resumed apply.
+ * With or without it, pr-apply prints a line on stderr as each wave starts
+ * and as each component settles, so a job log shows the waves in order.
+ *
+ * `--report-url <s3 or file URL>` (#4007) copies `pr-<stage>.json`,
+ * `change-set.json` and, with `--events-json`, the events to
+ * `<url>/<pr>/<commit>/`, the events again as each wave and component
+ * settles (`../../pr-report-url.ts`).
  *
  * `--member <name>` (#3465) runs a workspace member's loop: the member's
  * generated pipeline passes it from the member's directory. The gate is
@@ -62,8 +70,9 @@ import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApply
 import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { gitGateLedgerPort, type GateCheck } from "../../op/gate";
 import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
-import type { RunEventSettleStatus } from "../../run-event";
+import type { RunEventBody, RunEventComponentSettle, RunEventSettleStatus } from "../../run-event";
 import { openCliRunEvents, refusesEventsWithJson } from "../run-events";
+import { openPrReportUpload, parseReportUrl, reportKey, type PrReportUpload, type ReportTarget } from "../../pr-report-url";
 import {
   describePlanChanged,
   PR_APPLY_GATE,
@@ -262,12 +271,18 @@ function settleOf(status: PrReport["status"]): RunEventSettleStatus {
   }
 }
 
-/** Write the report, the change set and the note; print the note's path. */
-function writeOutputs(ctx: CommandContext, report: PrReport, note: string): void {
+/** Write the report, the change set and the note, and hand the first two to `--report-url`'s upload. */
+function writeOutputs(ctx: CommandContext, report: PrReport, note: string, upload?: PrReportUpload): void {
   const dir = resolve(ctx.args.output ?? PR_REPORT_DIR);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `pr-${report.stage}.json`), JSON.stringify(report, null, 2) + "\n");
-  writeFileSync(join(dir, "change-set.json"), JSON.stringify(report.changeSet, null, 2) + "\n");
+  const files: Array<[string, string]> = [
+    [`pr-${report.stage}.json`, JSON.stringify(report, null, 2) + "\n"],
+    ["change-set.json", JSON.stringify(report.changeSet, null, 2) + "\n"],
+  ];
+  for (const [name, body] of files) {
+    writeFileSync(join(dir, name), body);
+    upload?.file(name, body);
+  }
   writeFileSync(join(dir, "pr-note.md"), note);
 }
 
@@ -310,21 +325,32 @@ function printMembers(report: PrReport): void {
   }
 }
 
-async function finish(ctx: CommandContext, p: Prepared, report: PrReport): Promise<void> {
+async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload?: PrReportUpload): Promise<void> {
   const note = noteFor(report, p.forge);
-  writeOutputs(ctx, report, note);
+  writeOutputs(ctx, report, note, upload);
   await publish(p.forge, report, note);
   if (ctx.args.json) console.log(JSON.stringify(report, null, 2));
 }
 
-/** A stage's stream, held so that a stage that returns or throws before it settles still ends it. */
+/**
+ * A stage's stream and its `--report-url` upload, held so that a stage that
+ * returns or throws before it settles still ends the stream and uploads.
+ */
 interface StageEvents {
   stream?: RunEventStream;
+  /** Where `--report-url` points, read before the stage starts. */
+  target?: ReportTarget;
+  upload?: PrReportUpload;
 }
 
-/** Run a stage, and end its stream as `failed` when the stage did not settle it. */
-async function withStageEvents(stage: string, run: (events: StageEvents) => Promise<number>): Promise<number> {
+/** Run a stage, end its stream as `failed` when the stage did not settle it, and finish its upload. */
+async function withStageEvents(stage: string, ctx: CommandContext, run: (events: StageEvents) => Promise<number>): Promise<number> {
   const events: StageEvents = {};
+  if (ctx.args.reportUrl !== undefined) {
+    const target = parseReportUrl(ctx.args.reportUrl);
+    if ("error" in target) return fail(target.error);
+    events.target = target;
+  }
   try {
     return await run(events);
   } catch (err) {
@@ -332,13 +358,32 @@ async function withStageEvents(stage: string, run: (events: StageEvents) => Prom
     throw err;
   } finally {
     events.stream?.settle("failed", `${stage} stopped before it finished`);
+    if (events.upload) {
+      await events.upload.close();
+      console.error(formatInfo(`report  : ${events.upload.where}/`));
+    }
   }
 }
 
-/** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] */
+/**
+ * Open the stage's `--report-url` upload under its pull request and commit,
+ * when the flag was given. Its events are the lines `openCliRunEvents` writes.
+ */
+function openUpload(events: StageEvents, stage: "plan" | "apply", pr: number | null, p: Prepared): PrReportUpload | undefined {
+  if (!events.target) return undefined;
+  events.upload = openPrReportUpload({
+    target: events.target,
+    key: reportKey(pr, p.head, p.member),
+    stage,
+    warn: (message) => console.error(formatWarning({ message })),
+  });
+  return events.upload;
+}
+
+/** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrPlan(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
-  return withStageEvents("pr-plan", (events) => prPlan(ctx, events));
+  return withStageEvents("pr-plan", ctx, (events) => prPlan(ctx, events));
 }
 
 async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> {
@@ -348,8 +393,9 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
   const op = prOp(ctx.args.pr, p.member);
+  const upload = openUpload(stage, "plan", ctx.args.pr, p);
   // `--events-json` (#4041): planning, then where the approval stands.
-  const events = await openCliRunEvents(ctx.args, { kind: "component", name: `pr-plan ${op}`, cwd: resolve(".") });
+  const events = await openCliRunEvents(ctx.args, { kind: "component", name: `pr-plan ${op}`, cwd: resolve(".") }, upload?.line);
   stage.stream = events;
   events?.emit({ type: "run-start", waves: p.plan.waves });
   const set = await planAll(p, events?.emit);
@@ -381,7 +427,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     approval,
     status,
   });
-  await finish(ctx, p, report);
+  await finish(ctx, p, report, upload);
   // The plan stage settles on its planning: an approval still to come is what it reports, not a stop.
   events?.settle(settleOf(status), status === "plan-failed" ? "a member failed to plan" : undefined);
 
@@ -394,10 +440,10 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   return status === "plan-failed" ? 1 : 0;
 }
 
-/** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] */
+/** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
-  return withStageEvents("pr-apply", (events) => prApply(ctx, events));
+  return withStageEvents("pr-apply", ctx, (events) => prApply(ctx, events));
 }
 
 async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number> {
@@ -418,7 +464,8 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   // The run id the release records carry, chosen before the run so that
   // `--events-json` (#4041, #4007) names the run by it too.
   const release = autoReleaseRun(`${op}-${Date.now()}`);
-  const events = await openCliRunEvents(args, { kind: "component", name: `pr-apply ${op}`, runId: release.runId, cwd: resolve(".") });
+  const upload = openUpload(stage, "apply", pr, p);
+  const events = await openCliRunEvents(args, { kind: "component", name: `pr-apply ${op}`, runId: release.runId, cwd: resolve(".") }, upload?.line);
   stage.stream = events;
   events?.emit({ type: "run-start", waves: p.plan.waves });
 
@@ -436,13 +483,24 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   }
   const resumed = pr !== null && p.plan.order.length > 0 && attempt ? await tryResume(p, attempt, args.resume!, op) : undefined;
 
-  if (resumed) emitResumedGate(events, op, p.gate, resumed.check);
+  // The components an earlier attempt applied settle first (#4007), each in
+  // the wave the derivation gave it, which is the run-start's.
+  const log = applyLog();
+  if (resumed) {
+    const waveOf = new Map(p.plan.waves.flatMap((wave, i) => wave.map((name) => [name, i + 1] as const)));
+    for (const component of p.plan.order.filter((name) => resumed.completed.includes(name))) {
+      const body: RunEventComponentSettle = { type: "component-settle", wave: waveOf.get(component)!, component, status: "already-applied" };
+      events?.emit(body);
+      log(body);
+    }
+    emitResumedGate(events, op, p.gate, resumed.check);
+  }
   const set = resumed?.set ?? (await planAll(p, events?.emit));
   const base = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set };
 
   const stop = async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
     events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-apply ${report.status}` : undefined);
-    await finish(ctx, p, report);
+    await finish(ctx, p, report, upload);
     console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-apply: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
     if (report.message) console.error(report.message);
     printMembers(report);
@@ -569,8 +627,12 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     env: p.env,
     set,
     ...(resumed ? { resumed: prior } : {}),
-    // The apply is this run's waves, so the fan-out's own run framing is dropped.
-    ...(events ? { onRunEvent: events.nested } : {}),
+    // The apply is this run's waves, so the fan-out's own run framing is
+    // dropped. The log's lines go to stderr with or without --events-json.
+    onRunEvent: (body: RunEventBody) => {
+      events?.nested(body);
+      log(body);
+    },
     ...(resumePath
       ? {
           onComponentSettled: (settled, outputs) => {
@@ -598,6 +660,37 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const code = await stop(report, applied.status === "applied" ? 0 : 1, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
+}
+
+/** What a component's settle says in the job log. */
+function settleWords(body: RunEventComponentSettle): string {
+  switch (body.status) {
+    case "ok":
+      return "applied";
+    case "failed":
+      return "failed";
+    case "gated":
+      return "stopped at its own gate";
+    case "waiting":
+      return "waiting on a decision";
+    case "blocked":
+      return `blocked by ${body.blockedBy ?? "a dependency"}, not run`;
+    case "already-applied":
+      return "already applied in an earlier attempt";
+  }
+}
+
+/**
+ * pr-apply's job log (#4007): a line on stderr as each wave starts and as
+ * each component settles, so the log shows the waves in order while they run.
+ */
+function applyLog(): (body: RunEventBody) => void {
+  let waves = 0;
+  return (body) => {
+    if (body.type === "run-start") waves = body.waves?.length ?? 0;
+    else if (body.type === "wave-start") console.error(formatInfo(`wave ${body.wave}${waves ? `/${waves}` : ""}: ${body.components.join(", ")}`));
+    else if (body.type === "component-settle") console.error(formatInfo(`  ${body.component}: ${settleWords(body)}`));
+  };
 }
 
 /** A resumed apply's gate (#3464), decided against the approved digest, as the run's `gate` phase. */

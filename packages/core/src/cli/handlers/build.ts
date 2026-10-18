@@ -8,6 +8,21 @@ import { loadChantConfigUpward, type ChantConfig } from "../../config";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { findWorkspaceRoot } from "../../project-root";
 import { resolvePromotionSource } from "../../components/promote-order";
+import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
+
+/**
+ * The `prLoop` generator option from `--pr-loop`'s flags (#3183): the gate
+ * and the branch, and with `--events-json` and `--report-url` (#4007) the
+ * flags the generated jobs pass to pr-plan and pr-apply.
+ */
+function prLoopOption(args: CommandContext["args"]): PrLoopPipelineOptions {
+  return {
+    ...(args.gate ? { gate: args.gate } : {}),
+    ...(args.branch ? { branch: args.branch } : {}),
+    ...(args.eventsJson ? { events: true } : {}),
+    ...(args.reportUrl ? { reportUrl: args.reportUrl } : {}),
+  };
+}
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -86,7 +101,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         params: args.param,
         paramsFile: args.paramsFile,
         ...(args.waveGate ? { waveGate: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } } : {}),
-        ...(args.prLoop ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } } : {}),
+        ...(args.prLoop ? { prLoop: prLoopOption(args) } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       });
@@ -116,9 +131,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
-      ...(args.prLoop
-        ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } }
-        : {}),
+      ...(args.prLoop ? { prLoop: prLoopOption(args) } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

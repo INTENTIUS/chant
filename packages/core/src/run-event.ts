@@ -126,11 +126,31 @@ export interface RunEventComponentStart {
   component: string;
 }
 
+/**
+ * How a component settled: a {@link RunEventSettleStatus}, or one of two
+ * statuses for a component the run did not start (#4007), added within
+ * contract 1 by chant 0.124.29. `blocked`: a dependency failed or stopped at
+ * a gate, so it never ran. `already-applied`: an earlier attempt that this
+ * run resumed applied it. Neither has a `component-start` before it. A reader
+ * that knows only the four settle statuses reads either as a component that
+ * did not run in this run.
+ */
+export type RunEventComponentSettleStatus = RunEventSettleStatus | "blocked" | "already-applied";
+
+/** The first chant that writes `blocked`, `already-applied` and `blockedBy` on `component-settle` (#4007). */
+export const RUN_EVENT_COMPONENT_SKIP_FLOOR = "0.124.29";
+
 export interface RunEventComponentSettle {
   type: "component-settle";
+  /**
+   * 1-based, into `run-start`'s `waves`. On an `already-applied` settle it is
+   * the wave the component had in the derivation the earlier attempt ran.
+   */
   wave: number;
   component: string;
-  status: RunEventSettleStatus;
+  status: RunEventComponentSettleStatus;
+  /** With `blocked`: the failed or gated component the run reached this one from. */
+  blockedBy?: string;
 }
 
 /** An Op's phase, a component composition's phase, or a pipeline's stage. `component` is null outside a component run. */

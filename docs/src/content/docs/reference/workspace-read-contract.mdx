@@ -491,7 +491,7 @@ An Op run, a component run and a CI pipeline run all report progress as one stre
 | `chant run --components` | `component` | waves, components, each composition's phases and steps, and component gates |
 | `chant components promote`, `rollback` and `redeploy` | `component` | the same, named `<verb> <components> in <env>` |
 | `chant components fan-out` | `component` | the same, with `--gate` or `--wave-gate` as a `gate` phase with no component, settled before the components it lets through start |
-| `chant components pr-plan` and `pr-apply` | `component` | a `plan` phase with a `plan` step per component, the pull request's gate as a `gate` phase, and on pr-apply the waves and components of the apply. A refused apply settles `gated` |
+| `chant components pr-plan` and `pr-apply` | `component` | a `plan` phase with a `plan` step per component, the pull request's gate as a `gate` phase, and on pr-apply the waves and components of the apply. A refused apply settles `gated`. `--events-json` is these commands' stream; they have no `--progress-json`. With `--report-url` the stream is also copied where a reader outside CI can fetch it, as [Pull request reports](#pull-request-reports) describes |
 
 A component run, a promote, a fan-out and a pr-apply are named by the run id their release records carry, so the stream and the ledger join. In CI that is the CI run's id, with its `runOrigin`. An Op run keeps its own run id in CI, as its run record does, with the CI run's `runOrigin`. `--events-json` is refused beside `--progress-json`, since both print to stdout.
 
@@ -515,14 +515,21 @@ The `type` field names the event. A stream opens with `run-start` and ends with 
 |---|---|
 | `run-start` | `waves`, the component waves in a component run, `null` otherwise |
 | `wave-start`, `wave-settle` | `wave`, counted from 1, and `components` or `status` |
-| `component-start`, `component-settle` | `wave`, `component`, and `status` on settle |
+| `component-start`, `component-settle` | `wave`, `component`, and `status` on settle; `blockedBy` on a `blocked` settle |
 | `phase-start`, `phase-settle` | `component` (`null` outside a component run), `phase`, and `status` on settle |
 | `step-start`, `step-settle` | `component`, `phase`, `step`, `index`; on settle `status`, `durationMs`, and `skip`, `error` or `message` when they apply |
 | `gate-waiting` | `component`, `phase`, `step`, `index`, `op` (what `chant approve` takes), `gate` and `point`, the answer record id of an open question |
 | `gate-resolved` | `component`, `phase`, `step`, `index`, `op`, `gate`, `resolvedBy`, `resolvedAt`, `via` and `url` |
 | `run-settle` | `status`, `durationMs`, and `error` on a failed run |
 
-A run, wave, component or phase settles `ok`, `failed`, `gated` or `waiting`. `gated` stops at a gate nobody has approved, and `waiting` stops at a decision point nobody has answered. Neither is a failure. A step settles `ok`, `failed`, `skipped`, `cached`, `gated` or `waiting`. `cached` is for a cache hit standing in for the step ([#4015](https://github.com/INTENTIUS/chant/issues/4015)). In a pipeline run a stage is a phase and a job is a step. A skipped step says why in `skip`.
+A run, wave, component or phase settles `ok`, `failed`, `gated` or `waiting`. `gated` stops at a gate nobody has approved, and `waiting` stops at a decision point nobody has answered. Neither is a failure. A component the run does not start settles too, with no `component-start` before it ([#4007](https://github.com/INTENTIUS/chant/issues/4007)):
+
+| Component `status` | The component |
+|---|---|
+| `blocked` | never ran, because a dependency failed or stopped at a gate. `blockedBy` names that dependency. It settles right after the wave whose failure held it back settles, and before the next wave starts, with `wave` the wave it would have run in |
+| `already-applied` | was applied by an earlier attempt that this run resumed, so it did not run again. It settles after `run-start`, before the first wave, with `wave` the wave the component had in the derivation the earlier attempt ran. `pr-apply`'s `run-start` lists those waves. A resumed `components fan-out` lists the waves of what is left, laid out again, so there the number can name a different wave, and a reader places the component by name |
+
+`chant components pr-apply` and `chant components fan-out` write both, and `--progress-json` prints neither. The two statuses and `blockedBy` were added within contract 1 by chant `0.124.29`. A status set gains values only this way, as an addition within a version that this page lists, so a reader switches on `status` with a case for a value it does not know. A reader that knows only the four settle statuses can read `blocked` and `already-applied` as a component that did not run in this run, and still parses every line. A step settles `ok`, `failed`, `skipped`, `cached`, `gated` or `waiting`. `cached` is for a cache hit standing in for the step ([#4015](https://github.com/INTENTIUS/chant/issues/4015)). In a pipeline run a stage is a phase and a job is a step. A skipped step says why in `skip`.
 
 | `skip` | The step |
 |---|---|
@@ -536,7 +543,19 @@ A step that starts gets a `step-start` before its `step-settle`, and a step that
 
 The two older streams keep their shape behind `--progress-json`. `runEventOfProgress` maps a `RunProgressEvent`, a line of `chant run --components --progress-json`, onto a run-event body. `runEventsOfStepRecord` maps a `StepRecord` line of `chant run <op> --progress-json` onto a `step-settle`. When the record holds a gate, a `gate-resolved` or `gate-waiting` comes before it. The executor writes one bare skipped `StepRecord` for several of these cases, so such a record maps to `skip: null`. New readers should read the run-event stream rather than either older shape.
 
-## Decision points
+## Pull request reports
+
+`chant components pr-plan` and `pr-apply` write `pr-<stage>.json` (`pr-report.schema.json`) and `change-set.json` under `--output`. With `--report-url <url>` ([#4007](https://github.com/INTENTIUS/chant/issues/4007)) they also copy them, and the stage's run events when `--events-json` is on, where a reader outside CI can fetch them:
+
+```
+<url>/<pr>/<commit>/pr-<stage>.json
+<url>/<pr>/<commit>/change-set.json
+<url>/<pr>/<commit>/pr-<stage>.events.jsonl
+```
+
+`<pr>` is the pull or merge request number, or `unknown` when pr-apply found no pull request for the commit. `<commit>` is the full sha the stage ran on: the pull request's head for pr-plan and the pushed commit for pr-apply. A workspace member's loop (`--member <name>`) adds `/<name>` after the commit. There is no index file. A reader that knows the pull request and the commit has the key, and the forge knows both. The events file is named for its stage because a pull request merged by fast-forward gives pr-plan and pr-apply the same commit.
+
+The events file holds the run-event lines `--events-json` prints, byte for byte. It is uploaded again, whole, after each `wave-settle`, `component-settle` and `run-settle`, so a reader that polls the URL sees each wave as it applies. One upload is in flight at a time, a failed upload as the run goes is a warning that doesn't stop the apply, and the last upload after `run-settle` carries the whole stream along with the report and the change set. `<url>` is `s3://<bucket>/<prefix>`, uploaded with the AWS CLI and the credentials the job's environment gives it, or `file://<directory>`.
 
 A record kind with an `answers` block is an answer kind ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). Its `answers.points` names a JSON points file, validated against `decision-points.schema.json`, which `@intentius/chant` exports as `@intentius/chant/workspace/decision-points.schema.json`. Each input a point reads is named for one of this contract's outputs, optionally followed by dotted field names.
 
@@ -939,6 +958,7 @@ These fields are optional in their documents. Each schema description names the 
 | `ci-list` | `commits[].phases[].runs[].opRun`, `commits[].revoked.run.opRun` | 0.124.28 | The Op run behind a result when the source is chant runs, `{ id, env, signer }`, where `signer` is the runner whose statement the run carries. The run's `name` is then the Op's name and its `id` is `null`. Absent for a check run ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |
 | `ci-list` | `commits[].ignoredRuns` | 0.124.28 | Present only when the source is chant runs: the Op runs on the commit that don't count for want of a valid statement, each `{ run, op, env, status, reason }`, with `status` as in `ignored` ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |
 | `ls` | `ci.green.source` | 0.124.28 | `runs` when the declaration sets `ci.green.source` to `runs`, and absent otherwise, which means check runs ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |
+| `run-event` | `component-settle` `status` values `blocked` and `already-applied`, and `blockedBy` | 0.124.29 | A component the run did not start: held back by a failed or gated dependency, which `blockedBy` names, or applied by the earlier attempt a resumed run carries on ([#4007](https://github.com/INTENTIUS/chant/issues/4007)). See [Run events](#run-events) |
 | `ls` | `ci.green.signedSince` | 0.124.28 | The declaration's `ci.green.signedSince`, the full sha of the first commit whose tags must be signed, present only when it is set ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
 
 The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and `statement` when a runner key signed it ([#4044](https://github.com/INTENTIUS/chant/issues/4044)), and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.

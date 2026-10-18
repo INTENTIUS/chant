@@ -381,6 +381,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
     } else if (arg === "--require-review") {
       result.requireReview = true;
+    } else if (arg === "--report-url") {
+      // `chant components pr-plan|pr-apply --report-url <url>` (#4007).
+      const url = args[++i];
+      if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix> or file://<directory>");
+      result.reportUrl = url;
     } else if (arg === "--allow-unsigned") {
       // `chant release publish --allow-unsigned` (#4049).
       result.allowUnsigned = true;

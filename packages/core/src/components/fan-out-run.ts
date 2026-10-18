@@ -61,6 +61,46 @@ function fanOutSink(options: FanOutRunOptions): RunEventSink | undefined {
   return joinRunEventSinks(options.onRunEvent, progressSinkOf(options.onProgress));
 }
 
+/** The 1-based wave of each component in `waves`. */
+function waveNumbers(waves: string[][]): Map<string, number> {
+  const out = new Map<string, number>();
+  waves.forEach((wave, i) => wave.forEach((name) => out.set(name, i + 1)));
+  return out;
+}
+
+/**
+ * The settles of components a fan-out does not start (#4007): `blocked`
+ * when a dependency failed or stopped at a gate, `already-applied` when an
+ * earlier attempt applied it. Each is said once, with no `component-start`
+ * before it, so a reader of the stream sees every component of the plan.
+ */
+function skipSettles(emit: RunEventSink | undefined, waveOf: Map<string, number>) {
+  const said = new Set<string>();
+  const say = (component: string, wave: number | undefined, body: { status: "blocked"; blockedBy: string } | { status: "already-applied" }): void => {
+    if (!emit || wave === undefined || said.has(component)) return;
+    said.add(component);
+    emit({ type: "component-settle", wave, component, ...body });
+  };
+  return {
+    /** Each component in `blockedBy` not yet said, in wave order then by name. */
+    blocked(blockedBy: Map<string, string>): void {
+      const order = [...blockedBy.keys()].sort((a, b) => (waveOf.get(a) ?? 0) - (waveOf.get(b) ?? 0) || a.localeCompare(b));
+      for (const component of order) say(component, waveOf.get(component), { status: "blocked", blockedBy: blockedBy.get(component)! });
+    },
+    /**
+     * What an earlier attempt left (`remainingFanOut`'s skips): the components
+     * it applied, and the ones its failures blocked. Their wave is the one
+     * they have in the derivation, `derived`, which a resumed run re-layers.
+     */
+    carried(skipped: FanOutSkip[], derived: Map<string, number>): void {
+      for (const skip of skipped) {
+        if (skip.reason === "already-applied") say(skip.component, derived.get(skip.component), { status: "already-applied" });
+        else if (skip.reason === "blocked" && skip.blockedBy) say(skip.component, derived.get(skip.component), { status: "blocked", blockedBy: skip.blockedBy });
+      }
+    },
+  };
+}
+
 /**
  * One gate per wave (#3049), each bound to its wave's set digest. The other
  * mode beside {@link FanOutGate}: that one approves the whole set once, this
@@ -220,6 +260,8 @@ export async function runFanOut(
 
   const emit = fanOutSink(options);
   emit?.({ type: "run-start", waves: active.waves });
+  const skips = skipSettles(emit, waveNumbers(active.waves));
+  skips.carried(active.skipped, waveNumbers(plan.waves));
 
   if (options.gate) {
     const gate = options.gate;
@@ -320,6 +362,8 @@ export async function runFanOut(
       wave: waveNum,
       status: waveFailed ? "failed" : waveResults.some((r) => r.status === "gated") ? "gated" : "ok",
     });
+    // What this wave's failures and gates hold back settles now, before the next wave starts.
+    skips.blocked(blockedBy);
   }
 
   const blocked: FanOutSkip[] = [...blockedBy.entries()]
@@ -411,6 +455,8 @@ async function runGatedWaves(
 
   const emit = fanOutSink(options);
   emit?.({ type: "run-start", waves: plan.waves });
+  const skips = skipSettles(emit, waveNumbers(plan.waves));
+  skips.carried(active.skipped, waveNumbers(plan.waves));
 
   /** What planning one wave gave. */
   interface Planned {
@@ -478,6 +524,7 @@ async function runGatedWaves(
         results.push(planFailure(f.component, f.error ?? "plan failed"));
         markBlocked(f.component);
       }
+      skips.blocked(blockedBy);
 
       const toRun = runnable.filter((name) => plansFor.has(name));
       const record: WaveRecord = {
@@ -569,6 +616,7 @@ async function runGatedWaves(
         wave: waveNum,
         status: waveFailures.length > 0 ? "failed" : waveResults.some((r) => r.status === "gated") ? "gated" : "ok",
       });
+      skips.blocked(blockedBy);
       return "next";
     },
   });

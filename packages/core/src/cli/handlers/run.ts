@@ -470,7 +470,13 @@ async function runOpLogOnRuntime(ctx: CommandContext, name: string): Promise<num
 export function humanRunEventLine(e: RunEvent): string {
   const x = e as unknown as Record<string, unknown>;
   const where = [x.component, x.phase, x.step].filter((v): v is string => typeof v === "string").join("/");
-  const detail = [where, typeof x.status === "string" ? x.status : "", typeof x.error === "string" ? x.error : ""].filter(Boolean).join(" ");
+  const detail = [
+    where,
+    typeof x.status === "string" ? x.status : "",
+    // A blocked component (#4007) names what held it back.
+    typeof x.blockedBy === "string" ? `by ${x.blockedBy}` : "",
+    typeof x.error === "string" ? x.error : "",
+  ].filter(Boolean).join(" ");
   return `${String(x.at ?? "")}  ${String(x.type).padEnd(16)}${detail}`.trimEnd();
 }
 

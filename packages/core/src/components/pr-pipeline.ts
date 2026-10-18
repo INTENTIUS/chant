@@ -29,6 +29,13 @@
  * squash merges and rebase merges alike, and every job measures from the
  * merge base of that commit and its own head (`resolveMergeBase`).
  *
+ * With `events` (#4007) both commands pass `--events-json`, so the job log
+ * carries the run-event stream, and keep a copy of it under the report
+ * directory through `CHANT_RUN_EVENTS_DIR`, so the report artifact carries
+ * it too. With `reportUrl` both pass `--report-url`, which copies the report,
+ * the change set and the events where a reader outside CI can fetch them;
+ * the job's own environment brings the credentials an `s3://` URL needs.
+ *
  * In a workspace member (#3465) both commands run in the member's directory
  * and pass `--member <name>`, so the member's gate (`pr-<number>-<member>`),
  * note and statuses stay apart from every other member's on the same pull
@@ -68,6 +75,13 @@ export function prLoopSetup(image: string): string[] {
   return image === PR_LOOP_IMAGE ? PR_LOOP_SETUP : [];
 }
 
+/**
+ * Where the jobs keep their run-event files with `events` (#4007), as
+ * `CHANT_RUN_EVENTS_DIR`: inside the report directory, so the report
+ * artifact carries them.
+ */
+export const PR_LOOP_EVENTS_DIR = `${PR_LOOP_REPORT_DIR}/run-events`;
+
 /** The `prLoop` generator option (`ComponentPipelineOptions.prLoop`). */
 export interface PrLoopPipelineOptions {
   /** The gate the apply waits on. Default `pr-apply`. */
@@ -79,6 +93,18 @@ export interface PrLoopPipelineOptions {
   branch?: string;
   /** Count an approval only from someone who approved the pull request on the forge. Default true. */
   requireReview?: boolean;
+  /**
+   * Stream each job's run events (#4007): `--events-json` on both commands,
+   * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
+   */
+  events?: boolean;
+  /**
+   * Copy each job's report, change set and events to this `s3://` or
+   * `file://` URL (#4007, `--report-url`), under `<pr>/<commit>/`. It is
+   * passed in double quotes, so it may name a variable the job expands,
+   * such as `$CHANT_REPORT_URL`.
+   */
+  reportUrl?: string;
   /**
    * Which GitHub-shaped forge the workflow is for. Set by the forgejo
    * generator, which reuses the github one; a caller never needs to.
@@ -112,16 +138,21 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const common = [
     "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
+    ...(options.events ? ["--events-json"] : []),
+    ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
   ];
   const github = forge !== "gitlab";
-  const token: Record<string, string> = github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {};
+  const jobEnv: Record<string, string> = {
+    ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}),
+    ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
+  };
   return [
     {
       jobName: "plan",
       command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common].join(" "),
       env: github
-        ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...token }
-        : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" },
+        ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
+        : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv },
     },
     {
       jobName: "apply",
@@ -130,7 +161,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
         ...(options.requireReview === false ? [] : ["--require-review"]),
         "--resume", PR_APPLY_RECORD,
       ].join(" "),
-      env: github ? { BASE_SHA: "${{ github.event.before }}", ...token } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA" },
+      env: github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv },
       ...(github ? {} : { setup: [gitlabBaseFallback(options.branch)] }),
     },
   ];

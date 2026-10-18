@@ -46,6 +46,12 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).not.toMatch(/^\s*permissions:/m);
   });
 
+  test("events and reportUrl reach Forgejo's jobs as they reach GitHub's (#4007)", () => {
+    const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "file:///srv/chant-reports" } }).yaml;
+    expect(yaml.match(/--forge forgejo --events-json --report-url "file:\/\/\/srv\/chant-reports"/g)).toHaveLength(2);
+    expect(yaml.match(/CHANT_RUN_EVENTS_DIR: \.chant\/pr\/run-events/g)).toHaveLength(2);
+  });
+
   test("the apply keeps its resume record in the runner's cache, through the Forgejo mirror of actions/cache (#3543)", () => {
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/restore@v4");
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/save@v4");

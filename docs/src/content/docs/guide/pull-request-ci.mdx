@@ -151,6 +151,23 @@ Both jobs keep `.chant/pr` as an artifact:
 | `pr-plan.json`, `pr-apply.json` | The report: the selection, every member's plan digest and counts, the digest the gate binds, where the approval stands and how the run ended. It follows the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/). |
 | `change-set.json` | The [change-set document](/chant/reference/change-set/) over every member. [`chant change-set summary`](/chant/cli/change-set/) prints its grouped summary. |
 | `pr-note.md` | The note as posted. |
+| `run-events/<run id>.jsonl` | With `--events-json`: the stage's run events, the lines it printed on stdout. |
+
+## Follow an apply while it runs
+
+The apply job's log prints a line as each wave starts and as each component settles, so the waves read in order while the job runs. A component held back by a failed dependency reads `blocked by <dependency>, not run`.
+
+Generate the pipeline with `--events-json` to have both jobs print the run-event stream on stdout. The jobs also set `CHANT_RUN_EVENTS_DIR` to `.chant/pr/run-events`, so the report artifact carries the stream too.
+
+Add `--report-url <url>` to have each job copy its report and change set to `<url>/<pr>/<commit>/`. The events go there as well, and they go up again whenever a wave or a component settles. A viewer such as behold reads the apply from there while it runs and after the job is gone. The generator options are `events: true` and `reportUrl`.
+
+```bash
+chant build --components --generate github --pr-loop --env prod \
+  --events-json --report-url 's3://acme-chant-reports/prod' \
+  --output .github/workflows/chant-pr.yml
+```
+
+The AWS CLI uploads to an `s3://` URL with the credentials in the job's environment. Give the jobs an identity that can write only that prefix. The URL is passed in double quotes, so `$CHANT_REPORT_URL` names a CI variable the job expands. [Pull request reports](/chant/reference/workspace-read-contract/#pull-request-reports) gives the layout.
 
 ## Limits
 
