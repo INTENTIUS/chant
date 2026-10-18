@@ -67,6 +67,7 @@ import {
   type PrPlanSet,
 } from "../../components/pr-run";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
+import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { gitGateLedgerPort, type GateCheck } from "../../op/gate";
 import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
@@ -481,7 +482,9 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
       return fail(`--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  const resumed = pr !== null && p.plan.order.length > 0 && attempt ? await tryResume(p, attempt, args.resume!, op) : undefined;
+  // What each component would apply now (#4081): progress carries only where it is unchanged.
+  const inputsNow = resumePath ? componentInputDigests(p.components, { projectRoot: resolve("."), env: p.env }) : {};
+  const resumed = pr !== null && p.plan.order.length > 0 && attempt ? await tryResume(p, attempt, args.resume!, op, inputsNow) : undefined;
 
   // The components an earlier attempt applied settle first (#4007), each in
   // the wave the derivation gave it, which is the run-start's.
@@ -596,6 +599,9 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   // one settles, so a run killed partway still knows what applied.
   const prior = resumed ? { completed: resumed.completed, outputs: resumed.outputs } : { completed: [], outputs: {} };
   const completedSoFar = new Set<string>(prior.completed);
+  const inputsSoFar: Record<string, string> = Object.fromEntries(
+    prior.completed.filter((name) => inputsNow[name] !== undefined).map((name) => [name, inputsNow[name]!]),
+  );
   const failedSoFar: string[] = [];
   const outputsSoFar: Record<string, Record<string, unknown>> = { ...prior.outputs };
   const record: PrApplyRecord = {
@@ -615,6 +621,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
       completed: [...completedSoFar].sort(),
       failed: [...failedSoFar].sort(),
       outputs: outputsSoFar,
+      inputs: Object.fromEntries(Object.entries(inputsSoFar).sort(([a], [b]) => a.localeCompare(b))),
       prApply: record,
     });
   };
@@ -638,6 +645,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
           onComponentSettled: (settled, outputs) => {
             if (settled.status === "ok") {
               completedSoFar.add(settled.component);
+              if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
               if (outputs) outputsSoFar[settled.component] = outputs;
             } else if (settled.status === "fail") {
               failedSoFar.push(settled.component);
@@ -751,8 +759,13 @@ interface Resumed {
  * derivation; when its approval still stands; and when every member left is
  * covered by the approved set. Otherwise it says why on stderr and the apply
  * runs as it would with no record.
+ *
+ * Of the components it applied, only those whose input digest is the same
+ * now carry (#4081), as in `components fan-out --resume`. One that changed
+ * runs again, under the same approval when the approved set covers its new
+ * plan. A record without input digests carries nothing.
  */
-async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: string): Promise<Resumed | undefined> {
+async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: string, inputsNow: Record<string, string>): Promise<Resumed | undefined> {
   const skip = (why: string): undefined => {
     console.error(formatWarning({ message: `--resume: "${file}" does not carry: ${why}`, hint: "Every member is planned again, and the plan needs an approval of its own." }));
     return undefined;
@@ -763,6 +776,11 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
   if (record.head !== p.head) return skip(`it records an apply of ${record.head.slice(0, 12)}, not ${p.head.slice(0, 12)}`);
   if (!samePlanDigest(attempt.digest, p.plan.digest)) return skip("the change selects other components than it did");
   if (attempt.completed.length === 0) return undefined;
+  const split = progressThatCarries(attempt, inputsNow);
+  if (split.unrecorded) return skip("it does not record what each component applied, since it was written before chant recorded component inputs");
+  for (const name of split.changed) console.error(formatInfo(`${name}: changed since the earlier attempt, so it runs again`));
+  if (split.carried.length === 0) return undefined;
+  const completed = split.carried;
 
   let check;
   try {
@@ -772,7 +790,7 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
   }
   if (!check.satisfied) return skip(`no approval stands for the plan it applied (${record.digest}) any more`);
 
-  const outputs = Object.fromEntries(Object.entries(attempt.outputs).filter(([name]) => attempt.completed.includes(name)));
+  const outputs = Object.fromEntries(Object.entries(attempt.outputs).filter(([name]) => completed.includes(name)));
   const resumed = await resumePrSet({
     components: p.components,
     plan: p.plan,
@@ -780,9 +798,9 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
     env: p.env,
     seededOutputs: p.seededOutputs,
     record,
-    completed: attempt.completed,
+    completed,
   });
   if (!resumed.ok) return skip(`what is left is not what was approved. ${resumed.reasons.join("; ")}`);
-  console.error(formatInfo(`resume  : ${attempt.completed.join(", ")} applied in an earlier attempt; applying ${resumed.plan.order.join(", ") || "nothing more"} under the approval of ${record.digest}`));
-  return { plan: resumed.plan, set: resumed.set, check, approval: approvalOf(check), completed: attempt.completed, outputs };
+  console.error(formatInfo(`resume  : ${completed.join(", ")} applied in an earlier attempt; applying ${resumed.plan.order.join(", ") || "nothing more"} under the approval of ${record.digest}`));
+  return { plan: resumed.plan, set: resumed.set, check, approval: approvalOf(check), completed, outputs };
 }

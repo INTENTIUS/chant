@@ -243,6 +243,47 @@ describe("pr-apply's job log (#4007)", () => {
   });
 });
 
+describe("--resume carries only an unchanged input (#4081)", () => {
+  test("a component whose input moved since the attempt runs again, and says why", async () => {
+    await planAndApprove();
+    const resume = join(dir, "attempt.json");
+    failing.add("app");
+    expect(await runComponentsPrApply(ctx({ pr: 12, resume, eventsJson: false }))).toBe(1);
+    expect(JSON.parse(readFileSync(resume, "utf8")).inputs).toEqual({ net: expect.stringMatching(/^jcs1-sha256:/) });
+    failing.clear();
+    errors = [];
+    const step = ESTATE[0]!.deploy[0]!.steps[0] as Record<string, unknown>;
+    step.note = "a different change of the same shape";
+    const ran: string[] = [];
+    onRun = (name) => ran.push(name);
+    try {
+      expect(await runComponentsPrApply(ctx({ pr: 12, resume, eventsJson: false }))).toBe(0);
+    } finally {
+      delete step.note;
+    }
+    expect(ran).toEqual(["net", "app"]);
+    expect(errors.join("\n")).toContain("net: changed since the earlier attempt, so it runs again");
+  });
+
+  test("a record without input digests does not carry", async () => {
+    await planAndApprove();
+    const resume = join(dir, "attempt.json");
+    failing.add("app");
+    expect(await runComponentsPrApply(ctx({ pr: 12, resume, eventsJson: false }))).toBe(1);
+    const { writeFileSync } = await import("node:fs");
+    const record = JSON.parse(readFileSync(resume, "utf8"));
+    delete record.inputs;
+    writeFileSync(resume, JSON.stringify(record));
+    failing.clear();
+    errors = [];
+    const ran: string[] = [];
+    onRun = (name) => ran.push(name);
+    expect(await runComponentsPrApply(ctx({ pr: 12, resume, eventsJson: false }))).toBe(0);
+    expect(ran).toEqual(["net", "app"]);
+    expect(errors.join("\n")).toMatch(/does not carry: it does not record what each component applied/);
+  });
+});
+
 describe("--report-url (#4007)", () => {
   test("refuses a URL it can't upload to, before anything plans", async () => {
     expect(await runComponentsPrPlan(ctx({ pr: 12, reportUrl: "https://example.invalid/reports" }))).toBe(1);

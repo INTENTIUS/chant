@@ -233,7 +233,8 @@ describe("proof: a plan-only invocation prints the derivation and dispatches not
 
       ran = [];
       stderrLines = [];
-      expect(await runComponentsFanOut(ctx({ base: "main", resume, dryRun: true }))).toBe(0);
+      // The same environment: progress is bound to it (#4081).
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume, dryRun: true }))).toBe(0);
 
       expect(ran).toEqual([]);
       const out = stderr();
@@ -708,5 +709,143 @@ describe("--events-json (#4041)", () => {
   test("beside --progress-json it is refused", async () => {
     expect(await runComponentsFanOut(ctx({ base: "main", eventsJson: true, progressJson: true }))).toBe(1);
     expect(stderr()).toContain("--events-json and --progress-json both stream to stdout");
+  });
+});
+
+describe("progress carries only for an unchanged input (#4081)", () => {
+  /** The estate with each component deploying a built template from `templates/`, read relative to the project. */
+  const templated = ESTATE.map((c) => ({
+    ...c,
+    deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: `${c.name}-stack`, template: `templates/${c.name}.json` }] }],
+  }));
+  let dir: string;
+  const writeTemplate = (name: string, body: unknown) =>
+    writeFile(join(dir, "templates", `${name}.json`), JSON.stringify(body));
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "fan-out-inputs-"));
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(dir, "templates"));
+    for (const c of templated) await writeTemplate(c.name, { Resources: { [c.name]: { Type: "AWS::SNS::Topic" } } });
+    // The project is the temp directory, so the templates are read from there and nothing touches the checkout.
+    vi.spyOn(process, "cwd").mockReturnValue(dir);
+    discoverComponentsMock.mockResolvedValue({
+      components: new Map(templated.map((c) => [c.name, { component: c, exportName: c.name, filePath: `${c.name}.component.ts` }])),
+      sourceFiles: [],
+      errors: [],
+    });
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("same shape, changed content: a stale record does not skip the components whose input moved", async () => {
+    const resume = join(dir, "attempt.json");
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+    const first = JSON.parse(await readFile(resume, "utf8"));
+    expect(first.completed).toEqual(["app-one", "app-three", "app-two", "cluster-a", "cluster-b", "net"]);
+    expect(Object.keys(first.inputs).sort()).toEqual(first.completed);
+    const digest = /plan: (jcs1-sha256:[0-9a-f]{64})/.exec(stderr())?.[1];
+
+    // The next change: net's topic gets a display name and cluster-a a queue.
+    // Same components, same edges, so the same plan digest.
+    await writeTemplate("net", { Resources: { net: { Type: "AWS::SNS::Topic", Properties: { DisplayName: "estate" } } } });
+    await writeTemplate("cluster-a", { Resources: { "cluster-a": { Type: "AWS::SNS::Topic" }, events: { Type: "AWS::SQS::Queue" } } });
+    ran = [];
+    stderrLines = [];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+
+    expect([...ran].sort()).toEqual(["app-one", "app-three", "app-two", "cluster-a", "cluster-b", "net"]);
+    const out = stderr();
+    expect(out).toContain(`plan: ${digest}`);
+    expect(out).toContain("net: changed since the earlier attempt, so it runs again");
+    expect(out).toContain("cluster-a: changed since the earlier attempt, so it runs again");
+    // Downstream of net, so its parameters read a changed upstream.
+    expect(out).toContain("app-three: changed since the earlier attempt, so it runs again");
+    expect(out).not.toMatch(/already-applied/);
+    expect(out).toContain("fan-out completed: 6 applied, 0 failed, 0 blocked");
+    const second = JSON.parse(await readFile(resume, "utf8"));
+    expect(second.inputs.net).not.toBe(first.inputs.net);
+    expect(second.inputs["cluster-b"]).not.toBe(first.inputs["cluster-b"]);
+  });
+
+  test("a change below the root reruns only its own subtree", async () => {
+    const resume = join(dir, "attempt.json");
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+    await writeTemplate("cluster-a", { Resources: { "cluster-a": { Type: "AWS::SNS::Topic" }, events: { Type: "AWS::SQS::Queue" } } });
+    ran = [];
+    stderrLines = [];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+    expect(ran).toEqual(["cluster-a", "app-one", "app-two"]);
+    expect(stderr()).toMatch(/cluster-b +already-applied/);
+    expect(stderr()).not.toContain("net: changed");
+  });
+
+  test("the README's fail-then-fix: the fix reruns the failed subtree and the rest stay already-applied", async () => {
+    const resume = join(dir, "attempt.json");
+    failing = ["cluster-a"];
+    await writeTemplate("cluster-a", { Resources: { events: { Type: "AWS::SQS::Queue", Properties: { FifoQueue: true, QueueName: "events" } } } });
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(1);
+    const digest = /plan: (jcs1-sha256:[0-9a-f]{64})/.exec(stderr())?.[1];
+
+    // The fix changes cluster-a's template, which never applied.
+    failing = [];
+    await writeTemplate("cluster-a", { Resources: { events: { Type: "AWS::SQS::Queue", Properties: { FifoQueue: true, QueueName: "events.fifo" } } } });
+    ran = [];
+    stderrLines = [];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+    expect(ran).toEqual(["cluster-a", "app-one", "app-two"]);
+    const out = stderr();
+    expect(out).toContain(`plan: ${digest}`);
+    expect(out).not.toContain("changed since the earlier attempt");
+    for (const name of ["net", "cluster-b", "app-three"]) expect(out).toMatch(new RegExp(`${name} +already-applied`));
+    expect(out).toContain("fan-out completed: 3 applied, 0 failed, 0 blocked");
+  });
+
+  test("the fix keeps the approval: approval binds the derivation, progress binds the inputs", async () => {
+    const resume = join(dir, "attempt.json");
+    failing = ["cluster-a"];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", resume }))).toBe(3);
+    const pending = gateLedger.appended[0]!;
+    gateLedger = memoryGateLedgerPort({
+      pending: [pending],
+      resolutions: [
+        {
+          version: 1,
+          kind: "resolution",
+          op: "fan-out",
+          gate: "release",
+          resolvedBy: "operator",
+          timestamp: new Date(Date.parse(pending.timestamp) + 1000).toISOString(),
+          planDigest: pending.planDigest,
+        },
+      ],
+    });
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", resume }))).toBe(1);
+
+    failing = [];
+    await writeTemplate("cluster-a", { Resources: { fixed: { Type: "AWS::SQS::Queue" } } });
+    ran = [];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", resume }))).toBe(0);
+    expect(ran).toEqual(["cluster-a", "app-one", "app-two"]);
+  });
+
+  test("the input digest is per environment: progress against one does not carry into another", async () => {
+    const resume = join(dir, "attempt.json");
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+    ran = [];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "prod", resume }))).toBe(0);
+    expect(ran).toHaveLength(6);
+  });
+
+  test("a record without input digests carries nothing, and says so", async () => {
+    const resume = join(dir, "attempt.json");
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", dryRun: true }))).toBe(0);
+    const digest = /plan: (jcs1-sha256:[0-9a-f]{64})/.exec(stderr())![1]!;
+    await writeFile(resume, JSON.stringify({ digest, completed: ["net", "cluster-b"], failed: [], outputs: {} }));
+    stderrLines = [];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+    expect(ran).toHaveLength(6);
+    expect(stderr()).toContain("does not record what each component applied, so none of its progress carries");
   });
 });

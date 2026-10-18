@@ -254,6 +254,31 @@ needs its outputs and it is no longer in the run. The digest is the same string
 as before, carried rather than recomputed, so an approval already given still
 stands. Finishing an interrupted fan-out means repeating the command.
 
+What carries is bound to more than the digest. The record keeps, for each
+component that applied, the digest of what it applied: the environment, the
+component's steps, the bytes of the built template its `cfn-deploy` step
+names, and the same digest for each component it depends on. A component is
+`already-applied` only while that input digest is the same. `cluster-a` never
+applied in section 4, so the fix in section 5 changes nothing the record
+vouches for, and the other eight stay `already-applied`.
+
+A different change with the same shape is where the two differ. Commit the
+fix, then change `network`'s `DisplayName` and give `cluster-a` another queue,
+rebuild, and run the same command with the same `--resume` file. The plan
+digest is the same as before, since the same fifteen components run off the
+same edges, but `network` and `cluster-a` have new templates, and everything
+below `network` reads its outputs. Each of the fifteen prints
+`<name>: changed since the earlier attempt, so it runs again` on stderr, and
+all fifteen apply.
+
+The approval and the progress are bound to different things. The `release`
+gate's approval is bound to the plan digest, the derivation, which is why the
+fix in section 5 needs no new approval. The progress is bound to each
+component's input, which is why this later change applies in full. A standing
+approval for the derivation also covers a later change of the same shape until
+it expires; `chant components pr-apply` is the command whose approval is bound
+to the planned change set itself.
+
 ## Related
 
 - chant #2417 built the derivation, the ordering and the runner.

@@ -25,6 +25,14 @@
  * `carried` holds what a step asked to keep for its member (#3459). It rides
  * in the record rather than beside it because the record is the one file a
  * per-wave CI job hands to the next.
+ *
+ * `inputs` holds, for each component in `completed`, the input digest it
+ * applied (#4081, ./fan-out-inputs.ts). The plan digest only identifies the
+ * derivation, and two different changes with the same shape derive the same
+ * one, so the digest alone would carry "cluster-a already applied" into a
+ * change that never applied it. A resumed attempt carries a component only
+ * when its input digest is the same now. A record written before #4081 has
+ * no `inputs`, and none of its progress carries.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -68,6 +76,11 @@ export interface FanOutAttempt {
   carried?: Record<string, unknown>;
   /** A pull request's apply only (#3464). */
   prApply?: PrApplyRecord;
+  /**
+   * The input digest each completed component applied (#4081), keyed by
+   * name. Absent on a record written before it, which then carries nothing.
+   */
+  inputs?: Record<string, string>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -109,6 +122,11 @@ export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
   }
   const waves = readWaveRecords(parsed.waves);
   const prApply = readPrApplyRecord(parsed.prApply);
+  let inputs: Record<string, string> | undefined;
+  if (isRecord(parsed.inputs)) {
+    inputs = {};
+    for (const [name, value] of Object.entries(parsed.inputs)) if (typeof value === "string") inputs[name] = value;
+  }
   return {
     digest: typeof parsed.digest === "string" ? parsed.digest : "",
     completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is string => typeof n === "string") : [],
@@ -117,6 +135,7 @@ export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
     ...(waves.length > 0 ? { waves } : {}),
     ...(isRecord(parsed.carried) && Object.keys(parsed.carried).length > 0 ? { carried: parsed.carried } : {}),
     ...(prApply ? { prApply } : {}),
+    ...(inputs ? { inputs } : {}),
   };
 }
 

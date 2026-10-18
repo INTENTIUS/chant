@@ -34,6 +34,15 @@
  * the plan before the gate is decided, and the digest is carried rather than
  * recomputed, so the approval still stands.
  *
+ * The approval and the progress are bound to different things (#4081). The
+ * approval is bound to the plan digest, the derivation: who runs, in what
+ * order, off which edges. The progress is bound to each component's input
+ * digest (../../components/fan-out-inputs.ts): a component the earlier
+ * attempt applied stays `already-applied` only while what it would apply is
+ * the same, and one whose template, step inputs or upstream moved runs again
+ * with a line saying so. The fix after a failure keeps the approval, and a
+ * different change of the same shape does not inherit the progress.
+ *
  * `--wave-gate <name>` (#3049) swaps the one gate for one per wave: the same
  * repeated command stops at each wave's gate in turn, each planned after the
  * wave before it applied, and `chant approve fan-out <name>-wave-<n>` answers
@@ -49,6 +58,7 @@ import { changedFilesBetween, lexiconChangedUnits } from "../../components/chang
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import { EarlierWaveNotAppliedError, runFanOut } from "../../components/fan-out-run";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../../components/fan-out-record";
+import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { describeChangedWave, withWaveRecord, type WaveRecord } from "../../gated-waves";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
@@ -253,7 +263,12 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // real run happens inside `runFanOut`, before the gate is decided, so an
   // approval survives the resume rather than being re-asked for.
   const resumePath = args.resume ? resolve(args.resume) : undefined;
+  // What each component would apply now (#4081). The record keeps it for
+  // every component that applies, and a later attempt carries progress only
+  // where it is unchanged.
+  const inputsNow = resumePath ? componentInputDigests(derived.components, { projectRoot: projectPath, env: args.env ?? "local" }) : {};
   let priorCompleted: string[] = [];
+  let priorInputs: Record<string, string> = {};
   let priorOutputs: Record<string, Record<string, unknown>> = {};
   let priorWaves: WaveRecord[] = [];
   let priorCarried: Record<string, unknown> = {};
@@ -277,11 +292,28 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       // as progress would block their subtrees again on the very run that
       // exists to retry them — the operator repeated the command precisely
       // because the thing that failed is now expected to work.
-      priorCompleted = attempt.completed;
+      //
+      // And only the part of `completed` whose input is the same now (#4081).
+      // The plan digest identifies the derivation, which a different change
+      // of the same shape shares; the input digest says what was applied.
+      const split = progressThatCarries(attempt, inputsNow);
+      if (split.unrecorded && split.changed.length > 0) {
+        console.error(formatWarning({
+          message: `--resume: "${args.resume}" does not record what each component applied, so none of its progress carries`,
+          hint: "It was written before chant recorded component inputs. Everything selected will run.",
+        }));
+      } else {
+        for (const name of split.changed) {
+          console.error(formatInfo(`${name}: changed since the earlier attempt, so it runs again`));
+        }
+      }
+      const carried = new Set(split.carried);
+      priorCompleted = split.carried;
+      priorInputs = Object.fromEntries(split.carried.map((name) => [name, inputsNow[name]!]));
       priorOutputs = Object.fromEntries(
-        Object.entries(attempt.outputs).filter(([name]) => attempt.completed.includes(name)),
+        Object.entries(attempt.outputs).filter(([name]) => carried.has(name)),
       );
-      progress = { completed: attempt.completed };
+      progress = { completed: split.carried };
       priorWaves = attempt.waves ?? [];
       // What steps kept per member (#3459), such as a choudoufu root's wave
       // resume file. Each step decides whether what it kept still applies.
@@ -319,6 +351,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // runner, ctrl-c) then still knows that the first two applied, and the
   // repeated command picks up from there instead of redoing them.
   const completedSoFar = new Set(priorCompleted);
+  const inputsSoFar: Record<string, string> = { ...priorInputs };
   const failedSoFar: string[] = [];
   const outputsSoFar = { ...priorOutputs };
   let wavesSoFar = priorWaves;
@@ -330,6 +363,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       completed: [...completedSoFar].sort(),
       failed: [...failedSoFar].sort(),
       outputs: outputsSoFar,
+      inputs: Object.fromEntries(Object.entries(inputsSoFar).sort(([a], [b]) => a.localeCompare(b))),
       ...(wavesSoFar.length > 0 ? { waves: wavesSoFar } : {}),
       ...(Object.keys(carriedSoFar).length > 0 ? { carried: carriedSoFar } : {}),
     };
@@ -377,6 +411,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
             onComponentSettled: (settled, outputs) => {
               if (settled.status === "ok") {
                 completedSoFar.add(settled.component);
+                if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
                 if (outputs) outputsSoFar[settled.component] = outputs;
               } else if (settled.status === "fail") {
                 failedSoFar.push(settled.component);
