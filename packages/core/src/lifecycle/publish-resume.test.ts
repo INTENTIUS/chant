@@ -17,7 +17,7 @@ import { parsePublishRecords, PUBLISHES_FILE } from "./publish-record";
 import { createPublishTargets } from "./publish-targets";
 import { PublishRunError, runPublish, type PublishContext, type PublishTarget } from "./release-publish";
 import type { ReleaseArtifact } from "./release-store";
-import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage } from "./__tests__/publish-fakes";
+import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { TestRepo } from "../workspace/trust/test-repo";
 
