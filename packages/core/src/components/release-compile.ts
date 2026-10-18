@@ -72,6 +72,13 @@ export interface CompiledTarget {
   components: string[];
   /** Each component's build-time steps, as declared for this environment, in composition order. */
   buildSteps: Record<string, unknown[]>;
+  /**
+   * Each component's publish steps (`PUBLISH_STEP_KINDS`), as declared for
+   * this environment, in composition order (#4027). The cut's dry run shows
+   * them as what each environment's deploy publishes. Absent from a compiler
+   * that does not report them.
+   */
+  publishSteps?: Record<string, unknown[]>;
   /** For each component, the files its build steps read, relative to the member's directory. Used to tell whether an artifact's source changed. */
   buildInputs: Record<string, string[]>;
   /** For each component, the file that declares it, relative to the member's directory. */
@@ -130,6 +137,11 @@ export function templateRefs(component: DriverComponent): TemplateRef[] {
 /** A component's build-time steps ({@link BUILD_STEP_KINDS}), each as declared, in composition order. */
 export function buildStepsOf(component: DriverComponent): DriverStep[] {
   return stepsOf(component.deploy).map((s) => s.step).filter((s) => BUILD_STEP_KINDS.includes(s.kind));
+}
+
+/** A component's publish steps ({@link PUBLISH_STEP_KINDS}), each as declared, in composition order. */
+export function publishStepsOf(component: DriverComponent): DriverStep[] {
+  return stepsOf(component.deploy).map((s) => s.step).filter((s) => PUBLISH_STEP_KINDS.includes(s.kind));
 }
 
 /** The literal paths a component's archive steps read: `docker-build`'s `context` and `dockerfile`, `zip-package`'s `source`, `jvm-build`'s `path`. */
@@ -268,6 +280,7 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
     params,
     components: components.map((c) => c.component.name),
     buildSteps: Object.fromEntries(components.map(({ component }) => [component.name, buildStepsOf(component)])),
+    publishSteps: Object.fromEntries(components.map(({ component }) => [component.name, publishStepsOf(component)])),
     buildInputs: Object.fromEntries(components.map(({ component }) => [component.name, buildInputPaths(component)])),
     componentFiles: Object.fromEntries(components.map(({ component, file }) => [component.name, rel(file)])),
     templates,

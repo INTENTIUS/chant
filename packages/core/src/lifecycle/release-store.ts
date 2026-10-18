@@ -111,7 +111,16 @@ export interface ReleaseCut {
   label: string | null;
   actor: string;
   timestamp: string;
-  /** The CI run the cut ran in, or null outside CI. */
+  /**
+   * The run the cut ran in (#4027): the CI run's id in CI, or an id minted on
+   * the machine that cut (`local-<epoch ms>`). Null on every cut written
+   * before 0.124.29.
+   */
+  runId: string | null;
+  /**
+   * Where that run ran: the CI run's origin, or `{ forge: "local" }` for a
+   * minted id (#4027). A cut written before 0.124.29 holds null outside CI.
+   */
   runOrigin: RunOrigin | null;
   /**
    * The cut's signature (#4031): an armored ssh signature by the actor's key
@@ -310,12 +319,13 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         typeof c.actor === "string" &&
         typeof c.timestamp === "string" &&
         (c.runOrigin === null || (typeof c.runOrigin === "object" && typeof c.runOrigin?.forge === "string")) &&
-        (c.signature === null || c.signature === undefined || typeof c.signature === "string");
+        (c.signature === null || c.signature === undefined || typeof c.signature === "string") &&
+        (c.runId === null || c.runId === undefined || typeof c.runId === "string");
       if (!ok) {
         malformed++;
         continue;
       }
-      cuts.push({ ...(c as ReleaseCut), signature: c.signature ?? null });
+      cuts.push({ ...(c as ReleaseCut), runId: c.runId ?? null, signature: c.signature ?? null });
     } catch {
       malformed++;
     }
@@ -351,7 +361,7 @@ const CUT_RETRY_ATTEMPTS = 5;
  * label another digest has, throws {@link ReleaseLabelError}. Does not push.
  */
 export async function appendCut(
-  input: Omit<ReleaseCut, "version" | "signature"> & { signature?: string | null },
+  input: Omit<ReleaseCut, "version" | "signature" | "runId"> & { signature?: string | null; runId?: string | null },
   opts?: { cwd?: string },
 ): Promise<CutOutcome> {
   if (input.label !== null) {
@@ -387,6 +397,7 @@ export async function appendCut(
       label: input.label,
       actor: input.actor,
       timestamp: input.timestamp,
+      runId: input.runId ?? null,
       runOrigin: input.runOrigin,
       signature: input.signature ?? null,
     };

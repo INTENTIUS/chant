@@ -263,12 +263,18 @@ CI:
                         signs its tags with.
 
 Releases:
-  release cut [<label>] [--build <command>] [--param <k=v>] [--params-file <file>]
-              [--src <dir>] [-o <file>] [--lexicon <name>] [--sign [<key file>]]
-                        Cut a release of this member from HEAD, which must
-                        carry a ci/green tag: compile every environment in
-                        the config's environments, build the artifacts once,
-                        and store it on chant/lifecycle under its digest.
+  release cut [<label>] [--yes] [--build <command>] [--param <k=v>]
+              [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
+              [--actor <name>] [--sign [<key file>]] [--json]
+                        A dry run of a cut of this member from HEAD, which
+                        must be clean, on trunk and pushed, and carry a
+                        ci/green tag: compile every environment in the
+                        config's environments and print what the cut would
+                        build, record and tag, and what publishes where.
+                        --yes cuts: builds the artifacts once, stores the
+                        release on chant/lifecycle under its digest, records
+                        the actor and run id, tags the commit release/<label>
+                        here, and prints the next command.
                         --build runs before each environment's templates are
                         read, with CHANT_ENV set; {env} in --params-file is
                         replaced by the environment. --sign signs the cut with
@@ -277,6 +283,13 @@ Releases:
                         what chant build --env <env> writes: --src <dir> is
                         the build root, -o <file> the output (dist/build.yaml),
                         --lexicon narrows it.
+  release publish <label|digest> [--json]
+                        Publish a cut release. Refuses a revoked release, and
+                        an unsigned one under an identity.gates release entry.
+                        Warns first when the run has no OIDC token, so what
+                        it publishes carries no provenance. chant has no
+                        publish target yet (#4047), so it publishes nothing
+                        and says so.
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
   release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -1276,6 +1289,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
+  // #4027: publish a cut release. Its targets are #4047's.
+  { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },

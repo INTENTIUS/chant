@@ -43,10 +43,14 @@ import { resolveMemberLedger } from "./member-ledger";
 import { resolveCiRun } from "./release-ledger";
 import {
   appendCut,
+  invalidLabel,
+  labelsByDigest,
   makeRelease,
   persistRelease,
   readAllReleases,
   readCuts,
+  readRelease,
+  ReleaseLabelError,
   type Release,
   type ReleaseArtifact,
   type ReleaseCut,
@@ -181,15 +185,28 @@ async function previousRelease(top: string, commit: string, cwd: string): Promis
   return candidates[0]?.r;
 }
 
+/** What every cut and every dry run reads and compiles before it decides. */
+interface Prepared {
+  cwd: string;
+  commit: string;
+  envs: readonly string[];
+  compiled: CompiledTarget[];
+  releaseRule: ReturnType<typeof import("../workspace/identity").releaseRuleFrom>;
+  /** The components to build, by the environment they are built in. */
+  toBuild: Map<string, string[]>;
+  /** The artifacts carried from an earlier release. */
+  carried: ReleaseArtifact[];
+  reused: CutResult["reused"];
+  member: string | null;
+}
+
 /**
- * Cut a release of the member at `req.cwd` from its checkout's `HEAD`. Writes
- * the release and the cut to the local `chant/lifecycle` branch and does not
- * push. Throws {@link ReleaseCutError} before anything is written when the
- * commit isn't green, the tree is dirty, or an environment can't be compiled
- * to the same artifacts, and `ReleaseLabelError` (./release-store.ts) when the
- * label is taken or the release already carries another one.
+ * The checks and the compile a cut makes before it builds or writes: the
+ * commit is green and not revoked, the cut is signed when the release gate
+ * asks, the tree is clean, every environment compiles with the same build
+ * steps, and which artifacts are carried from an earlier release.
  */
-export async function cutRelease(req: CutRequest): Promise<CutResult> {
+async function prepare(req: CutRequest): Promise<Prepared> {
   const cwd = resolve(req.cwd);
   const top = tryGit(cwd, ["rev-parse", "--show-toplevel"]);
   if (!top) throw new ReleaseCutError("not-a-git-repository", "a release is cut from a commit, and this directory is not in a git repository");
@@ -291,11 +308,22 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     }
     toBuild.set(target.env, [...(toBuild.get(target.env) ?? []), component]);
   }
-  for (const env of envs) {
-    const names = toBuild.get(env);
-    if (names) artifacts.push(...(await req.compiler.buildArtifacts(env, names)));
-  }
+  const ledger = await resolveMemberLedger(cwd);
+  return {
+    cwd,
+    commit,
+    envs,
+    compiled,
+    releaseRule,
+    toBuild,
+    carried: artifacts,
+    reused,
+    member: ledger.members.length > 0 ? ledger.members.join("/") : null,
+  };
+}
 
+/** The targets and template bytes of a compile, each template by its content digest. */
+function targetsOf(compiled: readonly CompiledTarget[]): { targets: ReleaseTarget[]; templates: TemplateContent[] } {
   const templates: TemplateContent[] = [];
   const targets: ReleaseTarget[] = compiled.map((t) => ({
     env: t.env,
@@ -306,9 +334,121 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       return { component: tpl.component, path: tpl.path, digest };
     }),
   }));
+  return { targets, templates };
+}
 
-  const ledger = await resolveMemberLedger(cwd);
-  const release = makeRelease({ member: ledger.members.length > 0 ? ledger.members.join("/") : null, commit, artifactDigests: artifacts, targets });
+/** What a dry run of the cut found (#4027): what the cut would do, with nothing built, signed or written. */
+export interface CutPlan {
+  commit: string;
+  member: string | null;
+  label: string | null;
+  /** The release's digest when no artifact needs building, so it is known now; null when a build decides it. */
+  releaseDigest: string | null;
+  /** The digest already cut under `label`, or this digest when it is already cut: the cut would then write no new release. */
+  alreadyCut: string | null;
+  /** Each environment's target: its params, and its templates by component and path. */
+  targets: Array<{ env: string; params: ReleaseTarget["params"]; templates: Array<{ component: string | null; path: string }> }>;
+  /** The components whose artifacts would be built, and the environment each is built in. */
+  build: Array<{ component: string; env: string }>;
+  /** The components whose artifacts would be carried from an earlier release. */
+  reused: CutResult["reused"];
+  /** Each component's publish steps, with the environments whose deploy runs them. */
+  publishSteps: Array<{ component: string; kind: string; to: string | null; envs: string[] }>;
+  /** Whether the release gate in identity.gates requires a signed cut. */
+  signatureRequired: boolean;
+}
+
+/**
+ * The dry run of {@link cutRelease} (#4027): the same checks and compile,
+ * then what the cut would build, carry and record, without building an
+ * artifact, signing, or writing anything. Throws what the cut throws before
+ * it builds, and `ReleaseLabelError` when the label is invalid or names a
+ * release of another commit.
+ */
+export async function planRelease(req: CutRequest): Promise<CutPlan> {
+  const p = await prepare(req);
+  const { targets } = targetsOf(p.compiled);
+  const build: CutPlan["build"] = [];
+  for (const env of p.envs) for (const component of p.toBuild.get(env) ?? []) build.push({ component, env });
+  const releaseDigest = build.length === 0 ? makeRelease({ member: p.member, commit: p.commit, artifactDigests: p.carried, targets }).releaseDigest : null;
+
+  const { cuts } = await readCuts({ cwd: p.cwd });
+  const labels = labelsByDigest(cuts);
+  let alreadyCut: string | null = null;
+  if (req.label !== null) {
+    const why = invalidLabel(req.label);
+    if (why) throw new ReleaseLabelError("release-label-invalid", why);
+    const named = [...labels].find(([, l]) => l === req.label)?.[0];
+    if (named !== undefined) {
+      const other = await readRelease(named, { cwd: p.cwd });
+      const sameCommit = other?.commit === p.commit;
+      if (!sameCommit || (releaseDigest !== null && named !== releaseDigest)) {
+        throw new ReleaseLabelError(
+          "release-label-taken",
+          `the label "${req.label}" already names release ${named}${other && !sameCommit ? `, cut from commit ${other.commit.slice(0, 12)}` : ""}`,
+        );
+      }
+      alreadyCut = named;
+    }
+  }
+  if (releaseDigest !== null && alreadyCut === null && cuts.some((c) => c.releaseDigest === releaseDigest)) {
+    const own = labels.get(releaseDigest);
+    if (own !== undefined && req.label !== null && own !== req.label) {
+      throw new ReleaseLabelError("release-already-labelled", `release ${releaseDigest} is already labelled "${own}", and a release takes one label`);
+    }
+    alreadyCut = releaseDigest;
+  }
+
+  const steps = new Map<string, CutPlan["publishSteps"][number]>();
+  for (const t of p.compiled) {
+    for (const [component, list] of Object.entries(t.publishSteps ?? {})) {
+      for (const step of list as Array<{ kind?: unknown; to?: unknown }>) {
+        const kind = typeof step.kind === "string" ? step.kind : "publish";
+        const to = typeof step.to === "string" ? step.to : null;
+        const key = JSON.stringify([component, kind, to]);
+        const entry = steps.get(key) ?? { component, kind, to, envs: [] };
+        if (!entry.envs.includes(t.env)) entry.envs.push(t.env);
+        steps.set(key, entry);
+      }
+    }
+  }
+
+  return {
+    commit: p.commit,
+    member: p.member,
+    label: req.label,
+    releaseDigest,
+    alreadyCut,
+    targets: targets.map((t) => ({ env: t.env, params: t.params, templates: t.templates.map(({ component, path }) => ({ component, path })) })),
+    build,
+    reused: p.reused,
+    publishSteps: [...steps.values()],
+    signatureRequired: p.releaseRule.requirement !== null,
+  };
+}
+
+/**
+ * Cut a release of the member at `req.cwd` from its checkout's `HEAD`. Writes
+ * the release and the cut to the local `chant/lifecycle` branch and does not
+ * push. Throws {@link ReleaseCutError} before anything is written when the
+ * commit isn't green, the tree is dirty, or an environment can't be compiled
+ * to the same artifacts, and `ReleaseLabelError` (./release-store.ts) when the
+ * label is taken or the release already carries another one.
+ *
+ * The cut line names its run (#4027): the CI run's id and origin in CI, and
+ * outside CI an id minted from the cut's time, `local-<epoch ms>`, with the
+ * origin `{ forge: "local" }`.
+ */
+export async function cutRelease(req: CutRequest): Promise<CutResult> {
+  const p = await prepare(req);
+  const { cwd, commit, compiled, releaseRule, reused } = p;
+  const artifacts = [...p.carried];
+  for (const env of p.envs) {
+    const names = p.toBuild.get(env);
+    if (names) artifacts.push(...(await req.compiler.buildArtifacts(env, names)));
+  }
+  const { targets, templates } = targetsOf(compiled);
+  const release = makeRelease({ member: p.member, commit, artifactDigests: artifacts, targets });
   const timestamp = (req.now ?? (() => new Date()))().toISOString();
   const signed = { releaseDigest: release.releaseDigest, label: req.label, actor: req.actor, timestamp };
   let signature: string | null = null;
@@ -347,7 +487,8 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       label: req.label,
       actor: req.actor,
       timestamp,
-      runOrigin: ci?.runOrigin ?? null,
+      runId: ci?.runId ?? `local-${Date.parse(timestamp)}`,
+      runOrigin: ci?.runOrigin ?? { forge: "local" },
       signature,
     },
     { cwd },

@@ -200,6 +200,7 @@ export default defineConfig({
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
 								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
+								{ label: 'Release from Your Workstation', slug: 'guide/release-from-workstation' },
 							],
 						},
 						{

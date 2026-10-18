@@ -1,14 +1,15 @@
 ---
 title: "chant release"
-description: Cut a release from a green commit, compiled once for every environment the member declares, and list the releases with the environments that run them
+description: Cut and publish a release, the compiled output of one green commit for every environment the member declares, and list where each release runs
 diataxis: reference
 ---
 
 ## Synopsis
 
 ```
-chant release cut [<label>] [--build <command>] [--param <name=value>]... [--params-file <file>]
+chant release cut [<label>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
+chant release publish <label|digest> [--json]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
 ```
@@ -19,28 +20,71 @@ This is a separate object from a deploy record. A deploy record is a line of `<e
 
 ## release cut
 
-Cuts a release of the member in the current directory from the checkout's `HEAD`. A release is only ever cut by this command; [`chant ci tick`](/chant/cli/ci/#ci-tick) never cuts one ([ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md), proposed). See [Cutting on green](#cutting-on-green) for a pipeline that cuts every green commit.
+Cuts a release of the member in the current directory from the checkout's `HEAD`. A release is only ever cut by this command; [`chant ci tick`](/chant/cli/ci/#ci-tick) never cuts one ([ws-105](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-105-release-trigger-and-revocation.md), proposed). See [Cutting on green](#cutting-on-green) for a pipeline that cuts every green commit, and [Release from your workstation](/chant/guide/release-from-workstation/) for a cut made on a laptop and published from CI.
 
 ```bash
 git fetch origin --tags
 git checkout "$(chant ci last-green)"
-chant release cut v1.4.0 --build "npm run build"
+chant release cut v1.4.0 --build "npm run build"         # a dry run: prints the plan
+chant release cut v1.4.0 --build "npm run build" --yes   # cuts, records and tags
 ```
+
+Without `--yes` the cut is a dry run ([#4027](https://github.com/INTENTIUS/chant/issues/4027)). It makes every check below and compiles every environment, then prints what the cut would record and tag, and what will be published where. Nothing is built or signed, and nothing is written to `chant/lifecycle` or tagged. Run the same command again with `--yes` to cut. The same command runs unchanged in CI, where it needs `--yes` as well.
 
 The cut refuses before it writes anything when:
 
 | Code | When |
 |---|---|
+| `release-worktree-dirty` | A tracked file has uncommitted changes, or a file git does not ignore is untracked, so the compile would not be the commit's. A new `*.component.ts` left untracked would otherwise be compiled into the release. |
+| `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>`. Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
+| `release-commit-not-pushed` | `HEAD` is on the local trunk branch but not on `origin/<trunk>`, or this clone has no `origin/<trunk>`. The check reads the remote-tracking branch as this clone last fetched it and fetches nothing, so a commit pushed from elsewhere needs a `git fetch origin <trunk>` first. |
 | `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
-| `release-worktree-dirty` | A tracked file has uncommitted changes, so the compile would not be the commit's. |
+| `release-tag-taken` | The tag the release would get, `release/<label>`, already names another commit. |
+| `release-tag-invalid` | The label makes a tag name git refuses. |
 | `release-no-environments` | The member's `chant.config.ts` declares no `environments`. |
 | `release-no-components` | The member declares components, none is enabled in any environment, and nothing was compiled. A project that declares no component is released from its build output instead, see [a project with no components](#a-project-with-no-components). |
 | `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and the cut is not signed. See [Who may cut](#who-may-cut). |
 | `release-signer-refused` | The cut's signature does not verify for the actor against the signers file at base, or the actor is not in the `release` gate's class. Nothing is written. |
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
 
-The code is printed in square brackets at the end of the message.
+The code is printed in square brackets at the end of the message. The dry run refuses with the same codes, and also with `release-label-taken` when the label already names a release of another commit.
+
+### What the dry run prints
+
+```
+Dry run: cut v1.4.0 from commit 3f2a9c1d0b7e (on origin/main, green)
+  actor alice@example.com (from git user.email)
+  run minted on this machine at the cut (local)
+  not signed
+  tag release/v1.4.0, made here and not pushed
+  dev: 1 template(s)
+  prod: 1 template(s)
+  api: artifacts built in dev
+  digest decided when the artifacts are built
+What will be published where:
+  api: publish-image to $env.registry in dev, prod, by that environment's deploy (chant components promote --release v1.4.0)
+  chant release publish v1.4.0: nothing, since chant has no publish target for a release yet (#4047)
+  a publish from here would carry no OIDC provenance: this run is not in CI, and a workstation has no OIDC token
+```
+
+The digest is printed when no artifact needs building, since it is then known without a build. `--json` prints the same as a document with `dryRun: true`: the commit, `label`, `releaseDigest` (or null), `alreadyCut`, `targets`, `build`, `reused`, `publishSteps`, `signatureRequired`, `actor` and `actorSource`, `run`, `trunk`, `sign`, `tag`, `publish` and `next`.
+
+### What --yes records
+
+With `--yes` the cut builds the artifacts and stores the release. It then appends the cut line, signed when `--sign` is given. The line names who cut and the run it ran in:
+
+| Field | On a workstation | In CI |
+|---|---|---|
+| `actor` | `--actor`, else the principal the signers file at base lists for the `--sign` key, else git's `user.email`, else `USER` | `--actor`, else the signer, else `GITHUB_ACTOR` or `GITLAB_USER_LOGIN` |
+| `runId` | `local-<epoch ms>`, minted from the cut's time | `GITHUB_RUN_ID` or `CI_PIPELINE_ID` |
+| `runOrigin` | `{ "forge": "local" }` | `github` or `gitlab`, with the repository and a link to the run |
+
+Everything else in the line, and the whole release, is the same wherever the cut runs. A cut of one commit on a workstation and in CI stores byte-identical release files, and cut lines that differ only in `runId`, `runOrigin`, `actor` and `timestamp`, and in `signature` when two keys signed.
+
+The cut then tags the commit `release/<label>`, or `release/<member>/<label>` in a workspace member, as an annotated tag whose message names the release digest. The tag is made in this clone only. chant pushes `chant/lifecycle` when there is a remote and never pushes the tag, so pushing it is a step you take, and a CI workflow can publish on it. A release cut without a label gets no tag. Cutting a release that is already cut is a no-op, and makes the tag if it is missing.
+
+The last lines name the next command. In CI that is `chant release publish <label>`. On a workstation it is `git push origin release/<label>`, so that CI publishes. After that it names the publish command and the deploy of the first environment as other choices.
 
 ### What the cut compiles
 
@@ -76,7 +120,7 @@ The release is stored on `chant/lifecycle` under its digest, and a cut is a line
 | Path | Holds |
 |---|---|
 | `_releases/<releaseDigest>.json` | The release, written once and never rewritten. `:` is written as `_`. |
-| `_releases/cuts.jsonl` | One line per cut: `{ version, releaseDigest, label, actor, timestamp, runOrigin, signature }`. |
+| `_releases/cuts.jsonl` | One line per cut: `{ version, releaseDigest, label, actor, timestamp, runId, runOrigin, signature }`. |
 | `_releases/templates/<digest>.txt` | Each template's bytes, by content digest, for a promote to deploy. |
 
 A workspace member's copies sit under `_members/<member>/`. The cut writes the local branch and pushes it when there is a remote.
@@ -86,12 +130,12 @@ A workspace member's copies sit under `_members/<member>/`. The cut writes the l
 | In the digest | Outside it |
 |---|---|
 | `member`, `commit` and `artifactDigests` | each parameter's `source` |
-| each target's `env` and `templates` | the cut line's `label`, `actor`, `timestamp`, `runOrigin` and `signature` |
+| each target's `env` and `templates` | the cut line's `label`, `actor`, `timestamp`, `runId`, `runOrigin` and `signature` |
 | each parameter's `name` and `value` | the chant version |
 
 So two cuts of one commit give the same digest.
 
-The label is a human name such as `v1.4.0`. It starts with a letter or digit, and after that it may also hold `.`, `_`, `+` and `-`. Within a member, a label names one digest and a digest takes at most one label. Cutting the same digest again is a no-op that prints its label. Cutting it under another label is refused with `release-already-labelled`, and a label that already names another digest is refused with `release-label-taken`. A digest cut without a label can be given one by a later cut. `signature` holds the cut's signature, or `null` for an unsigned cut. `runOrigin` names the CI run, or is `null` outside CI.
+The label is a human name such as `v1.4.0`. It starts with a letter or digit, and after that it may also hold `.`, `_`, `+` and `-`. Within a member, a label names one digest and a digest takes at most one label. Cutting the same digest again is a no-op that prints its label. Cutting it under another label is refused with `release-already-labelled`, and a label that already names another digest is refused with `release-label-taken`. A digest cut without a label can be given one by a later cut. `signature` holds the cut's signature, or `null` for an unsigned cut. `runId` and `runOrigin` name the run, as [What --yes records](#what-yes-records) lists. A cut line written before 0.124.29 has no `runId`, which reads as `null`, and its `runOrigin` is `null` outside CI.
 
 ### Who may cut
 
@@ -107,11 +151,13 @@ Who may cut a release is an `identity.gates` entry for a gate named `release` ([
 
 With the entry, a cut must be signed with `--sign`, by a key `.chant/allowed_signers` at base lists for the actor. With `class`, the role grants in `.chant/trust.json` at base must also put the actor in that class. A class no pinned package supplies lets nothing through. Without the entry anyone may cut, and a signature is optional.
 
-`--sign <key file>` signs with that ssh key, and `--sign` alone uses git's `user.signingkey` when `gpg.format` is `ssh`, as `chant approve --sign` does for a [signed gate](/chant/reference/workspace-declaration/#identity). `--actor` names the signer, as in the cut below.
+`--sign <key file>` signs with that ssh key, and `--sign` alone uses git's `user.signingkey` when `gpg.format` is `ssh`, as `chant approve --sign` does for a [signed gate](/chant/reference/workspace-declaration/#identity). When `--actor` is not given, the actor is the principal the signers file at base lists for that key, if it lists exactly one. `--actor` names the signer otherwise, as in the cut below.
 
 ```bash
-chant release cut v1.4.0 --actor github:alice --sign ~/.ssh/id_ed25519
+chant release cut v1.4.0 --actor github:alice --sign ~/.ssh/id_ed25519 --yes
 ```
+
+Under the gate the dry run reads the key's public half and refuses with `release-signer-refused` when the signers file at base lists it for someone other than the actor. A key whose public half can't be read without its passphrase is checked when it signs.
 
 The signature is `ssh-keygen -Y sign` in the `chant-release` namespace over four lines. They hold the release digest and the label (empty for none), then the actor and the cut's time. Changing any of them in the cut line stops it verifying. The cut checks the signature and the class before it stores anything.
 
@@ -119,13 +165,14 @@ The signature is `ssh-keygen -Y sign` in the `chant-release` namespace over four
 
 | Flag | Meaning |
 |---|---|
-| `<label>` or `--label <label>` | The release's label. Optional. |
+| `<label>` or `--label <label>` | The release's label, such as a version. Optional; a release with no label gets no tag. |
+| `--yes` | Cut. Without it the command is a dry run. |
 | `--build <command>` | A shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. |
 | `--param <name=value>` | A build parameter for every environment. Repeatable. |
 | `--params-file <file>` | A JSON file of build parameters. `{env}` in the path is replaced by each environment's name, as in `params.{env}.json`. |
-| `--actor <name>` | Who made the cut. Defaults to `GITHUB_ACTOR`, `GITLAB_USER_LOGIN` or `USER`. A signed cut names the signer here. |
+| `--actor <name>` | Who made the cut. Defaults to the signer of `--sign`'s key, then `GITHUB_ACTOR` or `GITLAB_USER_LOGIN`, then git's `user.email`, then `USER`. |
 | `--sign [<key file>]` | Sign the cut with an ssh key, or with git's `user.signingkey` when no file is given. See [Who may cut](#who-may-cut). |
-| `--json` | Print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release. |
+| `--json` | With `--yes`, print the release, its label, the cut line written (`null` when the release was already cut), whether the release file was written now, and the components whose artifacts were carried from an earlier release, with `dryRun: false`, `actor`, `actorSource`, `tag` (`{ name, created }`, or `null`) and `next`. Without `--yes`, print the dry run's document. |
 
 ### Cutting on green
 
@@ -134,10 +181,10 @@ A project that wants a release for every green commit runs the cut in its own pi
 ```bash
 git fetch origin --tags
 git checkout "$(chant ci last-green)"
-chant release cut --build "npm run build"
+chant release cut --build "npm run build" --yes
 ```
 
-The step needs only git, the tags and the member's build, so it runs on any runner, including one whose tick reads [chant runs](/chant/cli/ci/#chant-runs-as-the-status-source). Under a `release` gate in `identity.gates` the cut must be signed by a signer in the gate's class. The job then needs that signer's key, so the declaration decides whether CI may cut.
+The checkout must have `origin/<trunk>` for the trunk check, so fetch the branch with the tags (`fetch-depth: 0` with `actions/checkout`). The step needs only git, the tags and the member's build, so it runs on any runner, including one whose tick reads [chant runs](/chant/cli/ci/#chant-runs-as-the-status-source). Under a `release` gate in `identity.gates` the cut must be signed by a signer in the gate's class. The job then needs that signer's key, so the declaration decides whether CI may cut.
 
 ### Revoked releases
 
@@ -149,6 +196,29 @@ A release is revoked when the commit it was cut from gets a `ci/revoked/<sha>` t
 | [`chant components promote --release`](/chant/cli/components/#promoting-a-release) | Refuses it with `release-revoked` before anything runs. |
 | [`chant approve`](/chant/cli/operator/#approve-op-gate) on its release gate | Refuses with `release-revoked`, so a gate pending for it never passes. `chant approve release <gate> --expire` clears the pending fact. |
 | [`chant workspace status`](/chant/cli/workspace-status/#revoked-releases) | Flags each component of an environment that runs it, with the `chant components rollback` line, and reads its pending gate as `superseded`. |
+
+## release publish
+
+Publishes a cut release ([#4027](https://github.com/INTENTIUS/chant/issues/4027)). It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
+
+```bash
+chant release publish v1.4.0
+```
+
+After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes anything when:
+
+| Code | When |
+|---|---|
+| `release-not-found` | No cut names the label or digest in this member. |
+| `release-revoked` | The release's commit is [revoked](#revoked-releases). |
+| `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and no cut of the release is signed. |
+| `release-signature-unverified` | Under that gate, no cut's signature verifies for its actor against the signers file at base, in the gate's class when it names one. |
+
+It then checks whether the run has an OIDC token. In GitHub Actions that means `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `permissions: id-token: write` gets. In GitLab CI it means an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN` under the job's `id_tokens`. Without one, as on a workstation, it prints a warning on stderr before it publishes anything: what it publishes carries no provenance. The warning never stops the publish.
+
+chant has no publish target for a release yet. Targets and their credentials are [#4047](https://github.com/INTENTIUS/chant/issues/4047), publishing all or nothing and resuming are [#4048](https://github.com/INTENTIUS/chant/issues/4048), and signing, SBOMs and provenance are [#4049](https://github.com/INTENTIUS/chant/issues/4049). Until they ship, `release publish` makes its checks and prints its warning. It then prints `Nothing was published` and exits 0. It writes no record. The publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`, `load-image-on-host`) are deploy steps. They run in each environment's deploy of the release, [`chant components promote --release`](/chant/cli/components/#promoting-a-release), and not here.
+
+The document `--json` gives for a publish holds the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), the `warnings`, the `targets`, what was `published` and the release's `environments`. The warning is printed on stderr in either form.
 
 ## release export
 
