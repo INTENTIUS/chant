@@ -46,7 +46,8 @@ const GATE_PREFIX = "gate:";
 /**
  * A run-event body as the older `RunProgressEvent`, or undefined when that
  * stream had no such event. It never printed a gate step, a skipped step,
- * a phase outside a component or a gate's decision, so those map to nothing
+ * a phase outside a component, a gate's decision or a component the run did
+ * not start (`blocked`, `already-applied`, #4007), so those map to nothing
  * and `--progress-json` prints what it printed before #4041.
  */
 export function progressOfRunEvent(body: RunEventBody): RunProgressEvent | undefined {
@@ -79,6 +80,8 @@ export function progressOfRunEvent(body: RunEventBody): RunProgressEvent | undef
         ? undefined
         : { type: "phase-done", component: body.component, phase: body.phase, status: progressStatus(body.status) };
     case "component-settle":
+      // A component the run did not start (#4007) was never in the older stream.
+      if (body.status === "blocked" || body.status === "already-applied") return undefined;
       return { type: "component-done", wave: body.wave, component: body.component, status: progressStatus(body.status) };
     case "wave-settle":
       return { type: "wave-done", wave: body.wave, status: progressStatus(body.status) };

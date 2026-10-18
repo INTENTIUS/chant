@@ -117,6 +117,18 @@ describe("the GitHub pull-request workflow", () => {
     expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no wave or promote jobs/);
   });
 
+  test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {
+    const loud = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "s3://chant-reports/acme" } }).yaml) as { jobs: Record<string, Job> };
+    for (const job of ["plan", "apply"]) {
+      const run = loud.jobs[job].steps.find((s) => s.run?.startsWith("chant components"))!;
+      expect(run.run).toContain('--events-json --report-url "s3://chant-reports/acme"');
+      expect(run.env?.CHANT_RUN_EVENTS_DIR).toBe(".chant/pr/run-events");
+    }
+    // Off by default: the golden carries neither.
+    expect(result.yaml).not.toContain("--events-json");
+    expect(result.yaml).not.toContain("CHANT_RUN_EVENTS_DIR");
+  });
+
   test("inside a workspace member: runs in the member's directory and keeps its own gate, note and apply group (#3465)", () => {
     const member = { name: "network", dir: "infra/network", file: ".github/workflows/chant-pr.network.prod.yml" };
     const scoped = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member });

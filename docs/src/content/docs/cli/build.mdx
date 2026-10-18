@@ -157,7 +157,7 @@ chant build --components --generate github --env staging --promote-to prod --out
 
 ### Pull-request pipeline
 
-`--pr-loop` generates a pipeline with two jobs instead of one per component. `plan` runs on each pull request and posts the plan of the components the change reaches. `apply` runs on each push to the target branch and applies that plan once a reviewer approved it. `--gate <name>` renames the gate from `pr-apply`, and `--branch <name>` names the target branch (default `main`, or the project's default branch on GitLab). [Generated CI for pull requests](/chant/guide/pull-request-ci/) walks through it on each forge.
+`--pr-loop` generates a pipeline with two jobs instead of one per component. `plan` runs on each pull request and posts the plan of the components the change reaches. `apply` runs on each push to the target branch and applies that plan once a reviewer approved it. `--gate <name>` renames the gate from `pr-apply`, and `--branch <name>` names the target branch (default `main`, or the project's default branch on GitLab). `--events-json` makes both jobs stream their [run events](/chant/reference/workspace-read-contract/#run-events) and keep them in the report artifact, and `--report-url <url>` makes both copy their reports and events to an `s3://` or `file://` URL ([#4007](https://github.com/INTENTIUS/chant/issues/4007)). [Generated CI for pull requests](/chant/guide/pull-request-ci/) walks through it on each forge.
 
 ```bash
 chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml

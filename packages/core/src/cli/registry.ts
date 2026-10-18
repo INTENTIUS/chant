@@ -315,6 +315,12 @@ export interface ParsedArgs {
    */
   requireReview?: boolean;
   /**
+   * `chant components pr-plan|pr-apply --report-url <url>` (#4007) — copy
+   * the stage's report, change set and run events to `<url>/<pr>/<commit>/`,
+   * an `s3://` or `file://` URL, the events as each wave and component settles.
+   */
+  reportUrl?: string;
+  /**
    * `chant build --components --generate <lexicon> --pr-loop` (#3183) —
    * generate the pull-request pipeline: plan on the pull request, apply on
    * merge bound to the approved digest.

@@ -351,6 +351,15 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     why: "`git push --force <remote> <commit>:refs/heads/<branch>`, only for the proposal branch (default `chant/upgrade/<scope>`). The activity refuses the default branch, the base branch and the checked-out branch (#2550).",
   },
   {
+    binary: "aws",
+    subcommand: "s3",
+    command: "chant components pr-plan --report-url s3://... and chant components pr-apply --report-url s3://...",
+    file: "packages/core/src/pr-report-url.ts",
+    phase: "ci",
+    destination: "the S3 bucket `--report-url` names, at the endpoint and region the AWS CLI reads from the job's environment",
+    why: "`aws s3 cp - s3://<bucket>/<prefix>/<pr>/<commit>/<file>` copies the stage's report, its change set and, with `--events-json`, its run events, the events again as each wave and component settles, so a reader outside CI can fetch them (#4007). Credentials are the CLI's own; chant passes none and prints none. A `file://` URL reaches nothing, and without `--report-url` it never runs.",
+  },
+  {
     binary: "docker",
     subcommand: "run",
     command: "npm run generate in lexicons/sql after a ClickHouse pin move, or with --force",

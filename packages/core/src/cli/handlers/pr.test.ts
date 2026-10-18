@@ -8,6 +8,7 @@
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DriverComponent } from "../../components/driver";
@@ -58,6 +59,8 @@ vi.mock("../../op/gate", async () => {
 });
 
 const failing = new Set<string>();
+/** Called as a component's apply starts, before it can fail. */
+let onRun: (root: string) => void = () => {};
 vi.mock("../../components/fan-out-support", async () => {
   const { CapabilityRegistry } = await import("../../components/capability");
   const { planFanOut } = await import("../../components/fan-out");
@@ -78,6 +81,7 @@ vi.mock("../../components/fan-out-support", async () => {
       return {};
     },
     async run(_ctx: DeployContext, input: { root: string }) {
+      onRun(input.root);
       if (failing.has(input.root)) throw new Error(`${input.root} failed`);
       return { outputs: {} };
     },
@@ -106,6 +110,7 @@ const { checkRunEventLines, stepTrail } = await import("../../workspace/__fixtur
 
 let dir: string;
 let out: string[];
+let errors: string[];
 
 const ctx = (a: Partial<ParsedArgs>) =>
   ({ args: { command: "components", path: "pr-apply", format: "", fix: false, watch: false, verbose: false, help: false, live: false, base: "main", env: "prod", output: dir, eventsJson: true, ...a } as ParsedArgs, plugins: [] }) as never;
@@ -113,10 +118,12 @@ const ctx = (a: Partial<ParsedArgs>) =>
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "pr-events-"));
   out = [];
+  errors = [];
   failing.clear();
+  onRun = () => {};
   gateLedger = memoryGateLedgerPort();
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.map(String).join(" ")); });
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
@@ -179,6 +186,105 @@ describe("pr-apply --events-json", () => {
     expect(events.find((e) => e.type === "gate-resolved")).toMatchObject({ resolvedBy: "github:alice" });
     expect(events.find((e) => e.type === "component-settle" && e.component === "app")).toMatchObject({ status: "failed" });
     expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed" });
+  });
+});
+
+/** Plan pull request 12 and approve its digest, as a reviewer would. */
+async function planAndApprove(): Promise<void> {
+  await runComponentsPrPlan(ctx({ pr: 12 }));
+  const digest = await plannedDigest();
+  gateLedger = memoryGateLedgerPort({
+    resolutions: [{ version: 1, kind: "resolution", op: "pr-12", gate: "pr-apply", resolvedBy: "github:alice", timestamp: new Date().toISOString(), planDigest: digest }],
+  });
+  out = [];
+  errors = [];
+}
+
+/** The job log's wave and component lines, without colour. */
+const logLines = (): string[] =>
+  errors.map((l) => l.replace(/\u001b\[[0-9;]*m/g, "")).filter((l) => /^wave \d|^ {2}\S+: /.test(l));
+
+describe("pr-apply's job log (#4007)", () => {
+  test("without --events-json, a line as each wave starts and as each component settles, in order", async () => {
+    await planAndApprove();
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(0);
+    expect(out).toEqual([]);
+    expect(logLines()).toEqual(["wave 1/2: net", "  net: applied", "wave 2/2: app", "  app: applied"]);
+  });
+
+  test("a failed dependency: the component behind it settles blocked, naming it, in the log and the stream", async () => {
+    await planAndApprove();
+    failing.add("net");
+    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(1);
+    expect(logLines()).toEqual(["wave 1/2: net", "  net: failed", "  app: blocked by net, not run"]);
+    const events = checkRunEventLines(out);
+    const blocked = events.find((e) => e.type === "component-settle" && e.component === "app");
+    expect(blocked).toMatchObject({ type: "component-settle", wave: 2, component: "app", status: "blocked", blockedBy: "net" });
+    expect(events.some((e) => e.type === "component-start" && e.component === "app")).toBe(false);
+    expect(events.some((e) => e.type === "wave-start" && e.wave === 2)).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed" });
+  });
+
+  test("a resumed apply settles what the earlier attempt applied as already-applied, before the gate", async () => {
+    await planAndApprove();
+    const resume = join(dir, "attempt.json");
+    failing.add("app");
+    expect(await runComponentsPrApply(ctx({ pr: 12, resume, eventsJson: false }))).toBe(1);
+    failing.clear();
+    out = [];
+    errors = [];
+    expect(await runComponentsPrApply(ctx({ pr: 12, resume }))).toBe(0);
+    const events = checkRunEventLines(out);
+    const settles = events.filter((e) => e.type === "component-settle").map((e) => [e.component, (e as { status: string }).status, (e as { wave: number }).wave]);
+    expect(settles).toEqual([["net", "already-applied", 1], ["app", "ok", 1]]);
+    const gate = events.findIndex((e) => e.type === "phase-start" && e.phase === "gate");
+    expect(events.findIndex((e) => e.type === "component-settle" && e.component === "net")).toBeLessThan(gate);
+    expect(logLines()).toEqual(["  net: already applied in an earlier attempt", "wave 1/1: app", "  app: applied"]);
+  });
+});
+
+describe("--report-url (#4007)", () => {
+  test("refuses a URL it can't upload to, before anything plans", async () => {
+    expect(await runComponentsPrPlan(ctx({ pr: 12, reportUrl: "https://example.invalid/reports" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/takes an s3:\/\/<bucket>\/<prefix> or file:\/\/<directory> URL/);
+    expect(out).toEqual([]);
+  });
+
+  test("file://: the report, the change set and the events land under <pr>/<commit>/, the events as each wave settles", async () => {
+    const { pathToFileURL } = await import("node:url");
+    const { readFile } = await import("node:fs/promises");
+    const reports = join(dir, "reports");
+    const reportUrl = pathToFileURL(reports).href;
+    await runComponentsPrPlan(ctx({ pr: 12, reportUrl }));
+    const at = join(reports, "12", HEAD);
+    expect(JSON.parse(await readFile(join(at, "pr-plan.json"), "utf8"))).toMatchObject({ stage: "plan", pr: 12, status: "planned" });
+    expect(checkRunEventLines((await readFile(join(at, "pr-plan.events.jsonl"), "utf8")).split(/(?<=\n)/))[0]).toMatchObject({ type: "run-start" });
+
+    await planAndApprove();
+    // What a reader of the URL sees while wave 2 applies: wave 1 settled.
+    let seenMidRun: string[] = [];
+    onRun = (root) => {
+      if (root === "app") seenMidRun = readFileSync(join(at, "pr-apply.events.jsonl"), "utf8").split(/(?<=\n)/);
+    };
+    expect(await runComponentsPrApply(ctx({ pr: 12, reportUrl }))).toBe(0);
+    const mid = seenMidRun.map((l) => JSON.parse(l) as { type: string; wave?: number; status?: string });
+    expect(mid.some((e) => e.type === "wave-settle" && e.wave === 1 && e.status === "ok")).toBe(true);
+    expect(mid.some((e) => e.type === "run-settle")).toBe(false);
+
+    const final = checkRunEventLines((await readFile(join(at, "pr-apply.events.jsonl"), "utf8")).split(/(?<=\n)/));
+    expect(final.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
+    expect(final.map((e) => e.type).join("\n")).toBe(out.map((l) => JSON.parse(l).type).join("\n"));
+    expect(JSON.parse(await readFile(join(at, "pr-apply.json"), "utf8"))).toMatchObject({ stage: "apply", status: "applied" });
+    expect(JSON.parse(await readFile(join(at, "change-set.json"), "utf8"))).toHaveProperty("digest");
+    expect(errors.join("\n")).toContain(`report  : ${reportUrl}/12/${HEAD}/`);
+  });
+
+  test("without --events-json, only the report and the change set are copied", async () => {
+    const { pathToFileURL } = await import("node:url");
+    const { readdir } = await import("node:fs/promises");
+    const reports = join(dir, "reports");
+    await runComponentsPrPlan(ctx({ pr: 12, reportUrl: pathToFileURL(reports).href, eventsJson: false }));
+    expect((await readdir(join(reports, "12", HEAD))).sort()).toEqual(["change-set.json", "pr-plan.json"]);
   });
 });
 

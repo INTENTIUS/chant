@@ -133,6 +133,21 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--pr-loop with --events-json and --report-url asks the generated jobs for both (#4007)", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "stages: []", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const exit = await runBuild({
+      args: makeArgs({ generate: "github", prLoop: true, eventsJson: true, reportUrl: "s3://reports/acme" }),
+      plugins: [],
+      serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock).toHaveBeenCalledWith(".", "github", { env: undefined, prLoop: { events: true, reportUrl: "s3://reports/acme" } }, undefined, []);
+    vi.restoreAllMocks();
+  });
+
   test("chant.config.ts's declared buildParams resolve, log, and are forwarded to generateComponentsPipeline", async () => {
     loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", default: "light" } } },

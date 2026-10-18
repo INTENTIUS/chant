@@ -656,6 +656,46 @@ describe("--events-json (#4041)", () => {
     expect(events.at(-1)).toMatchObject({ type: "run-settle", status: "failed" });
   });
 
+  test("a component behind a failure settles blocked, naming it, after the failing wave and before the next starts (#4007)", async () => {
+    failing = ["cluster-a"];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", eventsJson: true }))).toBe(1);
+    const events = checkRunEventLines(lines());
+    const blocked = events.filter((e) => e.type === "component-settle" && e.status === "blocked");
+    expect(blocked.map((e) => ({ wave: (e as { wave: number }).wave, component: (e as { component: string }).component, blockedBy: (e as { blockedBy?: string }).blockedBy }))).toEqual([
+      { wave: 3, component: "app-one", blockedBy: "cluster-a" },
+      { wave: 3, component: "app-two", blockedBy: "cluster-a" },
+    ]);
+    const wave2Settle = events.findIndex((e) => e.type === "wave-settle" && e.wave === 2);
+    const wave3Start = events.findIndex((e) => e.type === "wave-start" && e.wave === 3);
+    expect(events.indexOf(blocked[0]!)).toBeGreaterThan(wave2Settle);
+    expect(events.indexOf(blocked[1]!)).toBeLessThan(wave3Start);
+    // A blocked component never starts.
+    expect(events.some((e) => e.type === "component-start" && e.component === "app-one")).toBe(false);
+  });
+
+  test("a resumed fan-out settles what the earlier attempt applied as already-applied, in the derivation's waves (#4007)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-"));
+    try {
+      const resume = join(dir, "attempt.json");
+      failing = ["cluster-a"];
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(1);
+      failing = [];
+      stdoutLines = [];
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume, eventsJson: true }))).toBe(0);
+      const events = checkRunEventLines(lines());
+      const firstWave = events.findIndex((e) => e.type === "wave-start");
+      const applied = events.filter((e) => e.type === "component-settle" && e.status === "already-applied");
+      expect(applied.map((e) => [(e as { component: string }).component, (e as { wave: number }).wave])).toEqual([["app-three", 3], ["cluster-b", 2], ["net", 1]]);
+      for (const e of applied) expect(events.indexOf(e)).toBeLessThan(firstWave);
+      // --progress-json never printed them, and still does not.
+      stdoutLines = [];
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume, progressJson: true }))).toBe(0);
+      expect(stdoutLines.filter((l) => l.startsWith('{"type"')).map((l) => JSON.parse(l).type)).toEqual(["run-start", "run-done"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("--progress-json on a set the gate stops now prints run-start and run-done gated (a level-0 change)", async () => {
     expect(await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release", progressJson: true }))).toBe(3);
     const progress = stdoutLines.filter((l) => l.startsWith('{"type"')).map((l) => JSON.parse(l));
