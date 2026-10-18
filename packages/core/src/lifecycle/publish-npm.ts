@@ -24,7 +24,19 @@
  *
  * `--provenance` is passed when the run has an OIDC token (`detectProvenance`
  * in ./release-publish.ts), so a CI publish gets npm provenance, and npm's
- * trusted publishing exchanges that token for its own. Moving a dist-tag over
+ * trusted publishing exchanges that token for its own. With that token, the
+ * reveal then checks what it published (#4049): in an empty directory it
+ * installs every package at its version with `npm install --ignore-scripts`
+ * and runs `npm audit signatures`, which fails on a package whose registry
+ * signature or provenance attestation does not verify. From a workstation
+ * there is no npm provenance, and the release's signature, which
+ * `chant release verify` checks, is the only provenance.
+ *
+ * Each package carries its SBOM (#4049): npm keeps no file beside a package,
+ * so the SBOM is a file at the package's root, the one `sbom` names or the
+ * first of `sbom.spdx.json`, `sbom.cdx.json`, `sbom.cyclonedx.json` it holds,
+ * such as `npm sbom` writes. A package with none is refused
+ * (`publish-sbom-missing`) unless the declaration says `sbom: false`. Moving a dist-tag over
  * OIDC needs "Allow npm dist-tag" on the package's trusted-publisher record.
  * npm makes the first version of a new package `latest` whatever tag it is
  * published under, so a package's first release is visible when it stages.
@@ -37,8 +49,10 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { packageSbom } from "./publish-attachments";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { NPM_STAGE_TAG, PublishTargetError, type PublishContext, type PublishDeps, type PublishItem, type PublishTarget } from "./release-publish";
@@ -49,14 +63,17 @@ interface NpmPackage {
   name: string;
   version: string;
   digest?: string;
+  /** The SBOM file at its root, or undefined under `sbom: false`. */
+  sbom?: string;
 }
 
-/** Read a package's name and version, from its directory or its packed `.tgz`. */
-function readPackage(ctx: PublishContext, path: string): NpmPackage {
+/** Read a package's name and version, from its directory or its packed `.tgz`, and find the SBOM it carries. */
+function readPackage(ctx: PublishContext, path: string, sbom: NpmPublishDeclaration["sbom"]): NpmPackage {
   const abs = memberFile(ctx.cwd, path);
   let text: string;
   let digest: string | undefined;
-  if (isDir(abs)) {
+  const directory = isDir(abs);
+  if (directory) {
     try {
       text = readFileSync(join(abs, "package.json"), "utf-8");
     } catch {
@@ -83,7 +100,8 @@ function readPackage(ctx: PublishContext, path: string): NpmPackage {
   if (pkg.private === true) {
     throw new PublishTargetError("publish-npm-private", `${pkg.name} (${path}) is private, and npm refuses to publish it`, "Remove it from release.publish, or remove private: true.");
   }
-  return { path, abs, name: pkg.name, version: pkg.version, ...(digest ? { digest } : {}) };
+  const carried = packageSbom(abs, directory, path, pkg.name, sbom);
+  return { path, abs, name: pkg.name, version: pkg.version, ...(digest ? { digest } : {}), ...(carried ? { sbom: carried.file } : {}) };
 }
 
 /** The arguments of one `npm publish`, which stages under `tag`. */
@@ -104,9 +122,19 @@ export function npmDistTagArgs(decl: Pick<NpmPublishDeclaration, "registry">, na
   return ["dist-tag", "add", `${name}@${version}`, tag, ...(decl.registry ? ["--registry", decl.registry] : [])];
 }
 
-function run(bin: string, args: string[], ctx: PublishContext): Promise<{ code: number; output: string[] }> {
+/** The arguments of the `npm install` that fetches the published packages into an empty directory for `npm audit signatures`. */
+export function npmAuditInstallArgs(decl: Pick<NpmPublishDeclaration, "registry">): string[] {
+  return ["install", "--ignore-scripts", "--no-audit", "--no-fund", ...(decl.registry ? ["--registry", decl.registry] : [])];
+}
+
+/** The arguments of `npm audit signatures`. */
+export function npmAuditSignaturesArgs(decl: Pick<NpmPublishDeclaration, "registry">): string[] {
+  return ["audit", "signatures", ...(decl.registry ? ["--registry", decl.registry] : [])];
+}
+
+function run(bin: string, args: string[], ctx: PublishContext, cwd: string = ctx.cwd): Promise<{ code: number; output: string[] }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(bin, args, { cwd: ctx.cwd, env: ctx.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, { cwd, env: ctx.env, stdio: ["ignore", "pipe", "pipe"] });
     const output: string[] = [];
     let partial = { out: "", err: "" };
     const take = (key: "out" | "err") => (chunk: Buffer) => {
@@ -130,9 +158,9 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
   const registry = decl.registry ?? "the registry npm's config names";
   const shown = (tag: string) => `${registry}, dist-tag ${tag}`;
   const revealTag = (ctx: PublishContext) => ctx.tag ?? "latest";
-  const npm = async (ctx: PublishContext, args: string[]): Promise<{ code: number; output: string[] }> => {
+  const npm = async (ctx: PublishContext, args: string[], cwd?: string): Promise<{ code: number; output: string[] }> => {
     try {
-      return await run(bin, args, ctx);
+      return await run(bin, args, ctx, cwd);
     } catch (err) {
       throw new PublishTargetError("publish-npm-failed", ctx.redactor.redact(`npm could not be run: ${err instanceof Error ? err.message : String(err)}`), "Install npm, or put it on PATH.");
     }
@@ -142,11 +170,36 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     const r = await npm(ctx, ["view", `${pkg.name}@${pkg.version}`, "version", ...(decl.registry ? ["--registry", decl.registry] : [])]);
     return r.code === 0 && r.output.some((l) => l.trim() === pkg.version || l.trim() === JSON.stringify(pkg.version));
   };
+  const read = (ctx: PublishContext) => decl.packages.map((p) => readPackage(ctx, p, decl.sbom));
+  const extra = (pkg: NpmPackage) => ({ ...(pkg.digest ? { digest: pkg.digest } : {}), ...(pkg.sbom ? { sbom: pkg.sbom } : {}) });
   const plan = async (ctx: PublishContext): Promise<PublishItem[]> =>
-    decl.packages.map((p) => {
-      const pkg = readPackage(ctx, p);
-      return { name: `${pkg.name}@${pkg.version}`, destination: `${shown(NPM_STAGE_TAG)}, then ${revealTag(ctx)}`, ...(pkg.digest ? { digest: pkg.digest } : {}) };
-    });
+    read(ctx).map((pkg) => ({ name: `${pkg.name}@${pkg.version}`, destination: `${shown(NPM_STAGE_TAG)}, then ${revealTag(ctx)}`, ...extra(pkg) }));
+  /**
+   * In CI, install what was published into an empty directory and run
+   * `npm audit signatures` there (#4049), which checks each package's
+   * registry signature and provenance attestation.
+   */
+  const audit = async (ctx: PublishContext, pkgs: NpmPackage[]): Promise<void> => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-npm-audit-"));
+    try {
+      const dependencies = Object.fromEntries(pkgs.map((p) => [p.name, p.version]));
+      writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "chant-publish-audit", version: "0.0.0", private: true, dependencies }, null, 2)}\n`);
+      for (const args of [npmAuditInstallArgs(decl), npmAuditSignaturesArgs(decl)]) {
+        ctx.log(`npm ${args.join(" ")}`);
+        const result = await npm(ctx, args, dir);
+        for (const line of result.output) ctx.log(`  ${line}`);
+        if (result.code !== 0) {
+          throw new PublishTargetError(
+            "publish-npm-audit-failed",
+            `npm ${args.slice(0, 2).join(" ")} exited ${result.code} for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}, after latest moved: ${result.output.at(-1) ?? "npm printed nothing"}`,
+            "Each package was published; check its signature and provenance on the registry. Running the publish again moves no tag that moved and audits again.",
+          );
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
   return {
     kind: "npm",
     name: `npm (${decl.packages.length} package${decl.packages.length === 1 ? "" : "s"})`,
@@ -155,10 +208,10 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     key: publishTargetKey(decl),
     plan,
     async stage(ctx) {
-      const pkgs = decl.packages.map((p) => readPackage(ctx, p));
+      const pkgs = read(ctx);
       const items: PublishItem[] = [];
       for (const pkg of pkgs) {
-        const item: PublishItem = { name: `${pkg.name}@${pkg.version}`, destination: shown(NPM_STAGE_TAG), ...(pkg.digest ? { digest: pkg.digest } : {}) };
+        const item: PublishItem = { name: `${pkg.name}@${pkg.version}`, destination: shown(NPM_STAGE_TAG), ...extra(pkg) };
         if (await onRegistry(ctx, pkg)) {
           ctx.log(`${item.name} is already on the registry; not published again`);
           items.push({ ...item, present: true });
@@ -181,7 +234,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     },
     async reveal(ctx) {
       const tag = revealTag(ctx);
-      const pkgs = decl.packages.map((p) => readPackage(ctx, p));
+      const pkgs = read(ctx);
       const items: PublishItem[] = [];
       // The declared order: the first package is the set's core, and its tag moves first.
       for (const pkg of pkgs) {
@@ -197,8 +250,9 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
             `Moving a dist-tag needs npm credentials that may change dist-tags; over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record.`,
           );
         }
-        items.push({ name: `${pkg.name}@${pkg.version}`, destination: shown(tag), ...(pkg.digest ? { digest: pkg.digest } : {}) });
+        items.push({ name: `${pkg.name}@${pkg.version}`, destination: shown(tag), ...extra(pkg) });
       }
+      if (ctx.provenance.oidc) await audit(ctx, pkgs);
       return { target: this.name, destination: this.destination, items };
     },
   };

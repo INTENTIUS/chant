@@ -20,7 +20,7 @@ import { createPublishTargets } from "./publish-targets";
 import { parseRepository } from "./publish-oci";
 import { PublishTargetError, type PublishContext, type PublishTarget, type PublishedTarget } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
-import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
+import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeForge, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -135,7 +135,11 @@ describe("npm", () => {
       ["dist-tag", "add", "@acme/core@1.4.0", "latest"],
       ["dist-tag", "add", "@acme/cli@1.4.0", "latest"],
       ["dist-tag", "add", "@acme/kit@1.4.0", "latest"],
+      // #4049: with an OIDC token, what was published is installed in an empty directory and its signatures audited.
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+      ["audit", "signatures"],
     ]);
+    expect(done.items.map((i) => i.sbom)).toEqual(Array(3).fill("sbom.spdx.json"));
     expect(latest(log)).toEqual({ "@acme/core": "1.4.0", "@acme/cli": "1.4.0", "@acme/kit": "1.4.0" });
     expect(done.items.map((i) => i.destination)).toEqual(Array(3).fill("the registry npm's config names, dist-tag latest"));
 
@@ -152,7 +156,7 @@ describe("npm", () => {
     const [target] = await createPublishTargets([decl({ type: "npm", packages: ["kit.tgz"], registry: "http://127.0.0.1:4873/" })], { npm });
     const ctx = context(dir, { env: { PATH: process.env.PATH }, tag: "beta" });
     const done = await publish(target!, ctx);
-    expect(done.items).toEqual([{ name: "@acme/kit@1.4.0", destination: "http://127.0.0.1:4873/, dist-tag beta", digest: expect.stringMatching(/^sha256:/) }]);
+    expect(done.items).toEqual([{ name: "@acme/kit@1.4.0", destination: "http://127.0.0.1:4873/, dist-tag beta", digest: expect.stringMatching(/^sha256:/), sbom: "sbom.spdx.json" }]);
     expect(calls(log).map((c) => c.args)).toEqual([
       ["view", "@acme/kit@1.4.0", "version", "--registry", "http://127.0.0.1:4873/"],
       ["publish", join(dir, "kit.tgz"), "--tag", "next", "--registry", "http://127.0.0.1:4873/"],
@@ -203,30 +207,37 @@ describe("oci", () => {
     const reg = await startFakeRegistry({ username: "robot", password: "oci-pass-9876", token: "registry-token-abcdef" });
     try {
       const dir = temp();
+      writeLockfile(dir);
       const { digest, configDigest } = writeOciLayout(join(dir, "dist", "api.oci"));
       const repo = `${reg.host}/acme/api`;
       const [target] = await createPublishTargets([decl({ type: "oci", image: "dist/api.oci", repository: repo, tags: ["{label}", "latest"] })], {});
       const env = { OCI_USERNAME: "robot", OCI_PASSWORD: "oci-pass-9876" };
       const ctx = context(dir, { env, artifacts: [{ component: "api", kind: "image", path: "dist/api.oci", digest: configDigest }] });
 
-      expect(await target!.plan(ctx)).toEqual([{ name: "dist/api.oci (tags v1.4.0, latest)", destination: `${repo}@${digest}`, digest }]);
+      const planned = await target!.plan(ctx);
+      expect(planned[0]).toEqual({ name: "dist/api.oci (tags v1.4.0, latest)", destination: `${repo}@${digest}`, digest });
+      // #4049: the SBOM and the provenance statement go as referrers of the image.
+      expect(planned.slice(1).map((i) => [i.name, i.attachment])).toEqual([["sbom.spdx.json", "sbom"], ["release.intoto.json", "provenance"]]);
       expect(reg.requests).toEqual([]);
 
       const staged = await target!.stage(ctx);
-      expect(staged.items).toEqual([{ name: "dist/api.oci", destination: `${repo}@${digest}`, digest }]);
-      expect(reg.uploads).toBe(2);
-      // Staged: the manifest is there by digest, and no tag names it yet.
-      expect([...reg.manifests.keys()]).toEqual([digest]);
+      expect(staged.items[0]).toEqual({ name: "dist/api.oci", destination: `${repo}@${digest}`, digest });
+      const referrers = staged.items.slice(1).map((i) => i.digest!);
+      expect(referrers).toEqual(planned.slice(1).map((i) => i.digest));
+      // Two image blobs, then the empty config and each attached file.
+      expect(reg.uploads).toBe(5);
+      // Staged: the manifest and its referrers are there by digest, and no tag names them yet.
+      expect([...reg.manifests.keys()]).toEqual([digest, ...referrers]);
       expect(reg.requests.some((r) => r.authorization === "Bearer registry-token-abcdef")).toBe(true);
 
       const again = await target!.stage(ctx);
-      expect(again.items[0]!.present).toBe(true);
-      expect(reg.uploads).toBe(2);
-      expect([...reg.manifests.keys()]).toEqual([digest]);
+      expect(again.items.map((i) => i.present)).toEqual([true, true, true]);
+      expect(reg.uploads).toBe(5);
+      expect([...reg.manifests.keys()]).toEqual([digest, ...referrers]);
 
       const done = await target!.reveal(ctx, staged);
       expect(done.items[0]!.destination).toBe(`${repo}@${digest}`);
-      expect([...reg.manifests.keys()].sort()).toEqual([digest, "latest", "v1.4.0"].sort());
+      expect([...reg.manifests.keys()].sort()).toEqual([digest, ...referrers, "latest", "v1.4.0"].sort());
       expect(reg.manifests.get("v1.4.0")!.type).toBe("application/vnd.oci.image.manifest.v1+json");
       const out = ctx.lines.join("\n");
       expect(out).toContain("with credentials from OCI_PASSWORD");
@@ -240,6 +251,7 @@ describe("oci", () => {
     const reg = await startFakeRegistry({ username: "dh", password: "dockerhub-pat-555", token: "tok-777777" });
     try {
       const dir = temp();
+      writeLockfile(dir);
       const { digest } = writeOciLayout(join(dir, "layout"), "other layer");
       execFileSync("tar", ["-cf", join(dir, "api.tar"), "-C", join(dir, "layout"), "."], { stdio: "ignore" });
       const dockerDir = join(dir, "docker");
@@ -273,10 +285,13 @@ describe("forge release assets", () => {
     const dir = temp();
     writeFileSync(join(dir, "api-linux.tar.gz"), "binary bytes");
     writeFileSync(join(dir, "api-darwin.tar.gz"), "other bytes");
+    writeLockfile(dir);
     return dir;
   }
   const DIGEST = `sha256:${createHash("sha256").update("binary bytes").digest("hex")}`;
   const ASSETS = ["api-linux.tar.gz", "api-darwin.tar.gz"];
+  /** The declared assets, then the SBOM and the provenance statement chant attaches (#4049). */
+  const ATTACHED = [...ASSETS, "sbom.spdx.json", "release.intoto.json"];
 
   test("GitHub: uploads to a draft release at the commit, which no consumer sees until the reveal publishes it; a stage run again uploads only what is missing", async () => {
     const dir = assetDir();
@@ -296,15 +311,16 @@ describe("forge release assets", () => {
     const n = forge.calls.length;
     const staged = await target!.stage(ctx);
     const uploads = forge.calls.slice(n).filter((c) => c.url.startsWith("https://uploads.forge.test"));
-    expect(uploads.map((c) => c.url)).toEqual(["https://uploads.forge.test/repos/acme/api/releases/100/assets?name=api-darwin.tar.gz"]);
+    expect(uploads.map((c) => c.url)).toEqual(ATTACHED.slice(1).map((a) => `https://uploads.forge.test/repos/acme/api/releases/100/assets?name=${a}`));
     expect(uploads[0]!.headers).toMatchObject({ authorization: "Bearer ghs_tokentoken", "content-type": "application/octet-stream" });
-    expect(staged.items.map((i) => i.present ?? false)).toEqual([true, false]);
+    expect(staged.items.map((i) => i.present ?? false)).toEqual([true, false, false, false]);
+    expect(staged.items.map((i) => i.attachment)).toEqual([undefined, undefined, "sbom", "provenance"]);
     expect(staged.state).toEqual({ releaseId: "100" });
     expect(forge.releases).toHaveLength(1);
     expect(forge.visible()).toEqual([]);
 
     await target!.reveal(ctx, staged);
-    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ASSETS }]);
+    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ATTACHED }]);
     expect(forge.calls.at(-1)).toMatchObject({ method: "PATCH", url: `${api}/repos/acme/api/releases/100`, body: JSON.stringify({ draft: false }) });
     expect(ctx.lines.join("\n")).not.toContain("ghs_tokentoken");
 
@@ -337,18 +353,18 @@ describe("forge release assets", () => {
     const [target] = await createPublishTargets([decl({ type: "forge", forge: "gitlab", repo: "acme/api", assets: ASSETS })], { fetch: forge.fetch });
     const ctx = context(dir, { env: { CI_JOB_TOKEN: "glcbt-jobtoken", CI_API_V4_URL: api } });
     const staged = await target!.stage(ctx);
-    expect(staged.items.map((i) => i.destination)).toEqual(ASSETS.map((a) => `${project}/packages/generic/release/v1.4.0/${a}`));
-    expect(forge.calls.map((c) => c.method)).toEqual(["GET", "PUT", "PUT"]);
+    expect(staged.items.map((i) => i.destination)).toEqual(ATTACHED.map((a) => `${project}/packages/generic/release/v1.4.0/${a}`));
+    expect(forge.calls.map((c) => c.method)).toEqual(["GET", "PUT", "PUT", "PUT", "PUT"]);
     expect(forge.calls[1]!.headers).toMatchObject({ "job-token": "glcbt-jobtoken" });
     expect(forge.visible()).toEqual([]);
 
     await target!.reveal(ctx, staged);
-    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ASSETS }]);
+    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ATTACHED }]);
     expect(JSON.parse(forge.calls.at(-1)!.body as string)).toEqual({
       tag_name: "release/v1.4.0",
       ref: ctx.release.commit,
       name: "v1.4.0",
-      assets: { links: ASSETS.map((a) => ({ name: a, url: `${project}/packages/generic/release/v1.4.0/${a}`, link_type: "package" })) },
+      assets: { links: ATTACHED.map((a) => ({ name: a, url: `${project}/packages/generic/release/v1.4.0/${a}`, link_type: "package" })) },
     });
   });
 
@@ -364,14 +380,115 @@ describe("forge release assets", () => {
     const ctx = context(dir, { env: { FORGEJO_TOKEN: "fj-token-1" } });
     const target = await make({ api });
     const staged = await target.stage(ctx);
-    const upload = forge.calls.at(-1)!;
+    const upload = forge.calls.find((c) => c.url.endsWith("?name=api-linux.tar.gz"))!;
     expect(upload.headers["content-type"]).toMatch(/^multipart\/form-data; boundary=chant-/);
     expect(upload.headers.authorization).toBe("token fj-token-1");
     expect(Buffer.from(upload.body as Uint8Array).toString()).toContain('name="attachment"; filename="api-linux.tar.gz"');
-    expect(forge.releases[0]).toMatchObject({ draft: true, assets: [{ name: "api-linux.tar.gz", bytes: "binary bytes" }] });
+    expect(forge.releases[0]).toMatchObject({ draft: true });
+    expect(forge.releases[0]!.assets[0]).toMatchObject({ name: "api-linux.tar.gz", bytes: "binary bytes" });
     expect(forge.visible()).toEqual([]);
     await target.reveal(ctx, staged);
-    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ["api-linux.tar.gz"] }]);
+    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ["api-linux.tar.gz", "sbom.spdx.json", "release.intoto.json"] }]);
     expect(ctx.lines.join("\n")).not.toContain("fj-token-1");
+  });
+});
+
+describe("SBOMs and provenance (#4049)", () => {
+  const CUT = { actor: "alice", label: "v1.4.0", timestamp: "2026-10-17T10:00:00.000Z", runId: "local-1", signature: "-----BEGIN SSH SIGNATURE-----\nU1NIU0lH\n-----END SSH SIGNATURE-----\n" };
+
+  test("npm: a package carries its SBOM, one with none or with one that is not SPDX or CycloneDX is refused, and sbom: false publishes without", async () => {
+    const dir = temp();
+    writePackage(join(dir, "with"), "@acme/with", "1.0.0");
+    writePackage(join(dir, "without"), "@acme/without", "1.0.0", false);
+    writePackage(join(dir, "bad"), "@acme/bad", "1.0.0", false);
+    writeFileSync(join(dir, "bad", "bom.json"), JSON.stringify({ not: "an sbom" }));
+    writePackage(join(dir, "cdx", "package"), "@acme/cdx", "1.0.0", false);
+    writeFileSync(join(dir, "cdx", "package", "bom.json"), JSON.stringify({ bomFormat: "CycloneDX", specVersion: "1.5" }));
+    execFileSync("tar", ["-czf", join(dir, "cdx.tgz"), "-C", join(dir, "cdx"), "package"], { stdio: "ignore" });
+    const npm = writeFakeNpm(join(dir, "bin"), join(dir, "npm.log"));
+    const plan = async (d: Record<string, unknown>) => (await createPublishTargets([decl({ type: "npm", ...d })], { npm }))[0]!.plan(context(dir));
+
+    expect((await plan({ packages: ["with"] }))[0]!.sbom).toBe("sbom.spdx.json");
+    const missing = await refused(plan({ packages: ["without"] }));
+    expect(missing.code).toBe("publish-sbom-missing");
+    expect(missing.message).toBe("@acme/without (without) carries no SBOM: npm keeps no file beside a package, so its SBOM goes in it, and none of sbom.spdx.json, sbom.cdx.json, sbom.cyclonedx.json is at its root");
+    expect(missing.fix).toContain("npm sbom --sbom-format spdx > without/sbom.spdx.json");
+    expect((await refused(plan({ packages: ["bad"], sbom: "bom.json" }))).code).toBe("publish-sbom-invalid");
+    expect((await plan({ packages: ["without"], sbom: false }))[0]!.sbom).toBeUndefined();
+    // In a packed .tgz, the file the declaration names under package/.
+    expect((await plan({ packages: ["cdx.tgz"], sbom: "bom.json" }))[0]!.sbom).toBe("bom.json");
+  });
+
+  test("npm: in CI the reveal audits what it published with npm audit signatures, and a failed audit names the packages", async () => {
+    const dir = temp();
+    writePackage(join(dir, "core"), "@acme/core", "1.0.0");
+    const log = join(dir, "npm.log");
+    const npm = writeFakeNpm(join(dir, "bin"), log);
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["core"] })], { npm });
+    const ctx = context(dir, { env: { PATH: process.env.PATH, FAKE_NPM_AUDIT_FAIL: "1" }, provenance: OIDC });
+    const staged = await target!.stage(ctx);
+    const err = await refused(target!.reveal(ctx, staged));
+    expect(err.code).toBe("publish-npm-audit-failed");
+    expect(err.message).toBe("npm audit signatures exited 1 for @acme/core@1.0.0, after latest moved: 1 packages have invalid attestations");
+    expect(readFileSync(log, "utf-8")).toContain(`"args":["audit","signatures"]`);
+  });
+
+  test("OCI: the provenance statement carries the cut's signature, says a workstation's provenance is the signature, and is the same bytes every run; a declared SBOM is pushed as it is", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-attach", token: "tok-attach" });
+    try {
+      const dir = temp();
+      const { digest } = writeOciLayout(join(dir, "image"));
+      writeFileSync(join(dir, "image.spdx.json"), JSON.stringify({ spdxVersion: "SPDX-2.3", name: "image", packages: [] }));
+      const repo = `${reg.host}/acme/api`;
+      const [target] = await createPublishTargets([decl({ type: "oci", image: "image", repository: repo, sbom: "image.spdx.json" })], {});
+      const ctx = context(dir, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-attach" }, cut: CUT });
+      const planned = await target!.plan(ctx);
+      expect(planned.slice(1).map((i) => i.name)).toEqual(["image.spdx.json", "release.intoto.json"]);
+      expect(await target!.plan(ctx)).toEqual(planned);
+
+      await target!.stage(ctx);
+      const manifests = planned.slice(1).map((i) => JSON.parse(reg.manifests.get(i.digest!)!.bytes.toString("utf-8")) as { artifactType: string; subject: { digest: string }; layers: Array<{ digest: string }> });
+      expect(manifests.map((m) => [m.artifactType, m.subject.digest])).toEqual([
+        ["application/spdx+json", digest],
+        ["application/vnd.in-toto+json", digest],
+      ]);
+      expect(reg.blobs.get(manifests[0]!.layers[0]!.digest)!.toString("utf-8")).toBe(readFileSync(join(dir, "image.spdx.json"), "utf-8"));
+      const statement = JSON.parse(reg.blobs.get(manifests[1]!.layers[0]!.digest)!.toString("utf-8"));
+      expect(statement.predicate).toEqual({
+        releaseDigest: ctx.release.releaseDigest,
+        label: "v1.4.0",
+        member: null,
+        commit: ctx.release.commit,
+        cut: { ...CUT, namespace: "chant-release" },
+        provenance: { kind: "signature", ci: null },
+      });
+
+      // sbom: false pushes the provenance statement alone.
+      const [bare] = await createPublishTargets([decl({ type: "oci", image: "image", repository: repo, sbom: false })], {});
+      expect((await bare!.plan(ctx)).slice(1).map((i) => i.attachment)).toEqual(["provenance"]);
+    } finally {
+      await reg.close();
+    }
+  });
+
+  test("forge: with no declared SBOM and no lockfile the target is refused; a declared SBOM goes on the release by its own name", async () => {
+    const dir = temp();
+    writeFileSync(join(dir, "api.tar.gz"), "bytes");
+    const api = "https://api.github.test";
+    const forge = startFakeForge("github", api, "acme/api");
+    const make = async (over: Record<string, unknown> = {}) => (await createPublishTargets([decl({ type: "forge", forge: "github", repo: "acme/api", api, assets: ["api.tar.gz"], ...over })], { fetch: forge.fetch }))[0]!;
+    const ctx = context(dir, { env: { GITHUB_TOKEN: "ghs_x" }, cut: CUT });
+    const err = await refused((await make()).plan(ctx));
+    expect(err.code).toBe("publish-sbom-missing");
+    expect(err.fix).toContain("sbom: false");
+
+    mkdirSync(join(dir, "dist"));
+    writeFileSync(join(dir, "dist", "api.cdx.json"), JSON.stringify({ bomFormat: "CycloneDX", specVersion: "1.5" }));
+    const target = await make({ sbom: "dist/api.cdx.json" });
+    await target.reveal(ctx, await target.stage(ctx));
+    expect(forge.visible()).toEqual([{ tag: "release/v1.4.0", assets: ["api.tar.gz", "api.cdx.json", "release.intoto.json"] }]);
+    const statement = JSON.parse(forge.releases[0]!.assets.find((a) => a.name === "release.intoto.json")!.bytes);
+    expect(statement.subject).toEqual([{ name: "api.tar.gz", digest: { sha256: createHash("sha256").update("bytes").digest("hex") } }]);
+    expect(statement.predicate.cut.signature).toBe(CUT.signature);
   });
 });

@@ -9,16 +9,23 @@
  * and a checkout that moved past the release's commit is refused. A publish
  * that fails part way is resumed from a fresh clone, as a CI job would, from
  * the record it pushed, and publishes nothing again.
+ *
+ * #4049: the first release is cut signed with a throwaway key the signers
+ * file lists, and published as CI publishes it: each package carries its
+ * SBOM, the image gets its SBOM and the release's provenance statement as
+ * referrers, and the fake npm records `npm audit signatures` run over what
+ * was published. The second is published unsigned under --allow-unsigned.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { REPO } from "../../workspace/__fixtures__/contract-repo";
-import { readFakeNpmRegistry, startFakeRegistry, writeFakeNpm, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
+import { readFakeNpmRegistry, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
+import { hasSshKeygen } from "../../workspace/trust/test-repo";
 
 const CHANT = [process.execPath, "--import", pathToFileURL(join(REPO, "node_modules", "tsx", "dist", "loader.mjs")).href, join(REPO, "packages", "core", "src", "cli", "main.ts")];
 const CI_VARS = [
@@ -80,8 +87,8 @@ afterAll(async () => {
 });
 
 describe("chant release publish with targets", () => {
-  test(
-    "a dry run by default; with --yes publishes two npm packages in order with --provenance and an image by digest, prints no credential, and refuses a moved checkout",
+  test.skipIf(!hasSshKeygen)(
+    "a dry run by default; with --yes publishes a signed release's two npm packages in order with --provenance, audits their signatures, and an image by digest with its SBOM and provenance; prints no credential, and refuses a moved checkout",
     async () => {
       const dir = join(root, "work");
       const remote = join(root, "origin.git");
@@ -101,7 +108,14 @@ describe("chant release publish with targets", () => {
       writeFileSync(join(dir, ".gitignore"), "dist/\n");
       writePackage(join(dir, "packages", "core"), "@acme/core", "1.0.0");
       writePackage(join(dir, "packages", "cli"), "@acme/cli", "1.0.0");
+      writeLockfile(dir);
       const { digest } = writeOciLayout(join(dir, "image"));
+      // #4049: alice's throwaway key, which the signers file lists.
+      const key = join(root, "alice-key");
+      execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "alice", "-f", key]);
+      const alicePub = readFileSync(`${key}.pub`, "utf-8").trim().split(" ").slice(0, 2).join(" ");
+      mkdirSync(join(dir, ".chant"), { recursive: true });
+      writeFileSync(join(dir, ".chant", "allowed_signers"), `alice ${alicePub}\n`);
       git(dir, "add", ".");
       git(dir, "commit", "-q", "-m", "init");
       git(dir, "remote", "add", "origin", remote);
@@ -120,8 +134,9 @@ describe("chant release publish with targets", () => {
       expect(dryCut.code, dryCut.stderr).toBe(0);
       expect(dryCut.stdout).toContain("chant release publish v1: npm (2 packages) to npm the registry npm's config names");
       expect(dryCut.stdout).toContain(`chant release publish v1: oci ${reg.host}/acme/api to ${reg.host}/acme/api`);
-      const cut = await chant(dir, ["release", "cut", "v1", "--build", BUILD, "--yes"], path);
+      const cut = await chant(dir, ["release", "cut", "v1", "--build", BUILD, "--sign", key, "--yes"], path);
       expect(cut.code, cut.stderr).toBe(0);
+      expect(cut.stderr).toContain("signed by alice");
 
       const secrets = { NODE_AUTH_TOKEN: NPM_TOKEN, OCI_USERNAME: "robot", OCI_PASSWORD };
       const oidc = { GITHUB_ACTIONS: "true", ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.example", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "oidc-request-token-0042" };
@@ -129,7 +144,7 @@ describe("chant release publish with targets", () => {
       const dry = await chant(dir, ["release", "publish", "v1"], { ...path, ...secrets, ...oidc });
       expect(dry.code, dry.stderr).toBe(0);
       expect(dry.stdout).toContain("What would be published where:");
-      expect(dry.stdout).toContain("  npm (2 packages), with --provenance:\n    @acme/core@1.0.0 to the registry npm's config names, dist-tag next, then latest\n    @acme/cli@1.0.0 to");
+      expect(dry.stdout).toContain("  npm (2 packages), with --provenance:\n    @acme/core@1.0.0 to the registry npm's config names, dist-tag next, then latest, carrying sbom.spdx.json\n    @acme/cli@1.0.0 to");
       expect(dry.stdout).toContain(`    image (tag v1) to ${reg.host}/acme/api@${digest}`);
       expect(dry.stderr).toContain("Dry run: nothing was published. Run again with --yes to publish: chant release publish v1 --yes");
       expect(calls()).toEqual([]);
@@ -137,6 +152,7 @@ describe("chant release publish with targets", () => {
 
       const pub = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(pub.code, pub.stderr).toBe(0);
+      expect(pub.stderr).toContain("signed by alice");
       expect(calls().map((c) => c.args)).toEqual([
         ["view", "@acme/core@1.0.0", "version"],
         ["publish", join(dir, "packages/core"), "--tag", "next", "--access", "public", "--provenance"],
@@ -144,12 +160,37 @@ describe("chant release publish with targets", () => {
         ["publish", join(dir, "packages/cli"), "--tag", "next", "--access", "public", "--provenance"],
         ["dist-tag", "add", "@acme/core@1.0.0", "latest"],
         ["dist-tag", "add", "@acme/cli@1.0.0", "latest"],
+        // #4049: in CI, what was published is installed in an empty directory and its signatures and attestations audited.
+        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+        ["audit", "signatures"],
       ]);
+      expect(pub.stderr).toContain("2 packages have verified attestations");
       expect(calls().every((c) => c.tokenSet)).toBe(true);
       expect(reg.manifests.has(digest)).toBe(true);
       expect(reg.manifests.has("v1")).toBe(true);
       expect(pub.stderr).toContain(`published: image (tag v1) to ${reg.host}/acme/api@${digest}`);
+      expect(pub.stderr).toContain("published: @acme/core@1.0.0 to the registry npm's config names, dist-tag latest, carrying sbom.spdx.json");
+      expect(pub.stderr).toMatch(/published: sbom\.spdx\.json \(SBOM\) to .*@sha256:[0-9a-f]{64}, a referrer of the image/);
+      expect(pub.stderr).toMatch(/published: release\.intoto\.json \(provenance\) to .*@sha256:[0-9a-f]{64}, a referrer of the image/);
       expect(pub.stderr).toContain("Published v1 to 2 target(s)");
+      // The image's referrers: each names the image as its subject, and the provenance statement carries the cut's signature.
+      const referrers = [...reg.manifests.entries()]
+        .filter(([k]) => k.startsWith("sha256:") && k !== digest)
+        .map(([, m]) => JSON.parse(m.bytes.toString("utf-8")) as { artifactType: string; subject: { digest: string }; layers: Array<{ digest: string }> });
+      expect(referrers.map((m) => m.artifactType).sort()).toEqual(["application/spdx+json", "application/vnd.in-toto+json"]);
+      expect(referrers.every((m) => m.subject.digest === digest)).toBe(true);
+      const statement = JSON.parse(reg.blobs.get(referrers.find((m) => m.artifactType === "application/vnd.in-toto+json")!.layers[0]!.digest)!.toString("utf-8"));
+      expect(statement).toMatchObject({
+        _type: "https://in-toto.io/Statement/v1",
+        subject: [{ digest: { sha256: digest.slice(7) } }],
+        predicateType: "https://intentius.io/chant/release/v1",
+        predicate: { label: "v1", cut: { actor: "alice", namespace: "chant-release", signature: expect.stringMatching(/^-----BEGIN SSH SIGNATURE-----/) }, provenance: { kind: "oidc", ci: "github" } },
+      });
+
+      // The release verifies offline against the signers file at its commit.
+      const verified = await chant(dir, ["release", "verify", "v1", "--json"]);
+      expect(verified.code, verified.stderr).toBe(0);
+      expect(JSON.parse(verified.stdout)).toMatchObject({ label: "v1", status: "verified", verifiedBy: { actor: "alice" } });
 
       // No credential in the output, or anywhere on chant/lifecycle.
       const lifecycle = git(dir, "log", "-p", "--all");
@@ -171,7 +212,7 @@ describe("chant release publish with targets", () => {
       const moved = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(moved.code).toBe(1);
       expect(moved.stderr).toMatch(/\[release-head-mismatch\]/);
-      expect(calls()).toHaveLength(6);
+      expect(calls()).toHaveLength(8);
     },
     240_000,
   );
@@ -196,6 +237,7 @@ describe("chant release publish with targets", () => {
       writeFileSync(join(work, ".gitignore"), "dist/\n");
       writePackage(join(work, "packages", "core"), "@acme/rcore", "3.0.0");
       writePackage(join(work, "packages", "cli"), "@acme/rcli", "3.0.0");
+      writeLockfile(work);
       const { digest } = writeOciLayout(join(work, "image"), "resume layer");
       git(work, "add", ".");
       git(work, "commit", "-q", "-m", "init");
@@ -214,11 +256,11 @@ describe("chant release publish with targets", () => {
 
       // The registry refuses the password: npm staged, the image did not, and no tag moved. These packages
       // are new, and npm makes a new package's first version latest whatever tag it was published under.
-      const failed = await chant(work, ["release", "publish", "r3", "--yes"], { ...path, OCI_USERNAME: "robot", OCI_PASSWORD: "wrong-password-0042" });
+      const failed = await chant(work, ["release", "publish", "r3", "--allow-unsigned", "--yes"], { ...path, OCI_USERNAME: "robot", OCI_PASSWORD: "wrong-password-0042" });
       expect(failed.code).toBe(1);
       expect(failed.stderr).toMatch(/\[publish-oci-failed\]/);
       expect(failed.stderr).toContain("nothing is visible yet; staged: npm (2 packages)");
-      expect(failed.stderr).toContain("Run the same command again to resume; what went out is not published again: chant release publish r3 --yes");
+      expect(failed.stderr).toContain("Run the same command again to resume; what went out is not published again: chant release publish r3 --allow-unsigned --yes");
       expect(failed.stderr).not.toContain("wrong-password-0042");
       expect(readFakeNpmRegistry(log).packages["@acme/rcore"]!.distTags).toEqual({ next: "3.0.0", latest: "3.0.0" });
       expect(calls().filter((a) => a[0] === "dist-tag")).toEqual([]);
@@ -230,10 +272,10 @@ describe("chant release publish with targets", () => {
       git(fresh, "config", "user.email", "ci@chant.dev");
       git(fresh, "config", "user.name", "CI");
       const before = calls().length;
-      const dry = await chant(fresh, ["release", "publish", "r3"], path);
+      const dry = await chant(fresh, ["release", "publish", "r3", "--allow-unsigned"], path);
       expect(dry.code, dry.stderr).toBe(0);
       expect(dry.stdout).toContain("npm (2 packages) (staged by an earlier run; only revealed):");
-      const resumed = await chant(fresh, ["release", "publish", "r3", "--yes", "--json"], { ...path, OCI_USERNAME: "robot", OCI_PASSWORD });
+      const resumed = await chant(fresh, ["release", "publish", "r3", "--allow-unsigned", "--yes", "--json"], { ...path, OCI_USERNAME: "robot", OCI_PASSWORD });
       expect(resumed.code, resumed.stderr).toBe(0);
       expect(calls().slice(before)).toEqual([
         ["dist-tag", "add", "@acme/rcore@3.0.0", "latest"],

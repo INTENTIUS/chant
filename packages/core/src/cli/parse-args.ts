@@ -74,6 +74,8 @@ const BOOLEAN_FLAGS = new Set([
   "--uncommitted",
   "--allow-code",
   "--allow-skip",
+  "--allow-unsigned",
+  "--require-provenance",
   "--root-only",
   "--generated",
   "--decide",
@@ -379,6 +381,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
     } else if (arg === "--require-review") {
       result.requireReview = true;
+    } else if (arg === "--allow-unsigned") {
+      // `chant release publish --allow-unsigned` (#4049).
+      result.allowUnsigned = true;
+    } else if (arg === "--require-provenance") {
+      // `chant release publish --require-provenance` (#4049).
+      result.requireProvenance = true;
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
     } else if (arg === "--before-script") {

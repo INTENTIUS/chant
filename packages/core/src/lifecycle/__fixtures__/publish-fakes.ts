@@ -151,6 +151,10 @@ export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): voi
  * - `view <name>@<version> version` prints the version when it is there.
  * - `dist-tag add <name>@<version> <tag>` points the tag at a version that is
  *   there. It exits 1 when the name contains `$FAKE_NPM_FAIL_TAG`.
+ * - `install` (#4049) checks that every dependency in `./package.json` is in
+ *   its registry at that version, and installs nothing.
+ * - `audit signatures` (#4049) prints what npm prints for verified
+ *   signatures and attestations, and exits 1 when `$FAKE_NPM_AUDIT_FAIL` is set.
  */
 export function writeFakeNpm(binDir: string, log: string): string {
   mkdirSync(binDir, { recursive: true });
@@ -195,6 +199,19 @@ if (args[0] === "publish") {
   p.distTags[args[3]] = version;
   save();
   console.log("+" + args[3] + ": " + args[2]);
+} else if (args[0] === "install") {
+  const deps = JSON.parse(fs.readFileSync("package.json", "utf-8")).dependencies || {};
+  for (const [name, version] of Object.entries(deps)) {
+    const p = reg.packages[name];
+    if (!p || !p.versions.includes(version)) { console.error("npm error 404 " + name + "@" + version + " is not in this registry"); process.exit(1); }
+  }
+  console.log("added " + Object.keys(deps).length + " packages");
+} else if (args[0] === "audit" && args[1] === "signatures") {
+  const n = Object.keys(JSON.parse(fs.readFileSync("package.json", "utf-8")).dependencies || {}).length;
+  if (process.env.FAKE_NPM_AUDIT_FAIL) { console.error(n + " packages have invalid attestations"); process.exit(1); }
+  console.log("audited " + n + " packages");
+  console.log(n + " packages have verified registry signatures");
+  console.log(n + " packages have verified attestations");
 } else {
   console.error("fake npm: unknown command " + args.join(" ")); process.exit(2);
 }
@@ -312,8 +329,23 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
   };
 }
 
-/** Write an npm package directory. */
-export function writePackage(dir: string, name: string, version: string): void {
+/** A small SPDX document, as `npm sbom --sbom-format spdx` writes one. */
+export function spdxDocument(name: string): string {
+  return `${JSON.stringify({ spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", name, documentNamespace: `https://example.test/${name}`, creationInfo: { created: "2026-10-17T00:00:00Z", creators: ["Tool: npm"] }, packages: [] }, null, 2)}\n`;
+}
+
+/** Write an npm package directory, with an `sbom.spdx.json` at its root unless `sbom` is false (#4049). */
+export function writePackage(dir: string, name: string, version: string, sbom = true): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version }, null, 2));
+  if (sbom) writeFileSync(join(dir, "sbom.spdx.json"), spdxDocument(name));
+}
+
+/** Write a `package-lock.json` at `dir`, which the OCI and forge targets write their SBOM from (#4049). */
+export function writeLockfile(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "package-lock.json"),
+    JSON.stringify({ name: "acme", lockfileVersion: 3, packages: { "": { name: "acme" }, "node_modules/left-pad": { version: "1.3.0" } } }, null, 2),
+  );
 }
