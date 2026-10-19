@@ -50,8 +50,8 @@
       "required": ["forge"],
       "properties": {
         "forge": {
-          "enum": ["github", "gitlab", "op", "local"],
-          "description": "github: a GitHub Actions run, also the spelling Forgejo Actions uses. gitlab: a CI pipeline. op: a steward's run, named by its Op run id. local: a run on the machine that started it, outside CI."
+          "enum": ["github", "gitlab", "op", "local", "chant"],
+          "description": "github: a GitHub Actions run, also the spelling Forgejo Actions uses. gitlab: a CI pipeline. op: a steward's run, named by its Op run id. local: a run on the machine that started it, outside CI. chant: a pull-request job the chant runner ran (chant ci run, #4094), named by its Op run id; added within contract version 1 and written by chant 0.124.30 and newer, so a reader that switches on forge keeps a case for a value it does not know."
         },
         "repo": { "type": "string", "description": "The repository or project slug on the forge, when the environment named one." },
         "url": { "type": "string", "description": "A link to the run, when the environment gave enough to build one." }

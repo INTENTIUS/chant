@@ -249,6 +249,20 @@ CI:
                         chant/lifecycle that a runner key signed. Pushes the
                         tags. --key, or the PEM in CHANT_RUNNER_KEY, signs
                         each tag with a runner key.
+  ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
+              [--forge github|gitlab|forgejo] [--gate <name>] [--branch <name>]
+              [--events-json] [--report-url <url>] [--image <image>]
+              [--before-script <line>]... [--pr-build]
+              [--pr-build-command <line>] [--chant <command>]
+              [--pass-env <NAME>]... [--key <runner key.pem>] [-o <dir>]
+                        Run the pull-request pipeline's plan or apply job as
+                        a pipeline Op in a fresh worktree of --commit (default
+                        HEAD) with a clean environment. --base and --pr stand
+                        in for the forge's event values. --pr-build runs
+                        the job's build and lint lines first. Records the run as
+                        pr-plan or pr-apply on chant/lifecycle, signed with
+                        --key or CHANT_RUNNER_KEY, so ci tick from runs counts
+                        it, and copies the report to -o (default .chant/pr).
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -1306,6 +1320,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
+  // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
+  { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
   // #4027: publish a cut release, to the targets #4047 declares.

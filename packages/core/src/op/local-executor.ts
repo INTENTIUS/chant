@@ -56,7 +56,7 @@ import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
 import { runEnvOf } from "../lifecycle/run-ledger";
 import { resolveCommitSha } from "../lifecycle/commit-sha";
 import { resolveCiRun, type RunOrigin } from "../lifecycle/release-ledger";
-import { runEventsOfStepRecord, type RunEventRuntime, type RunEventSkipReason } from "../run-event";
+import { runEventsOfStepRecord, type RunEventKind, type RunEventRuntime, type RunEventSkipReason } from "../run-event";
 import { openRunEventStore, teeLines } from "../run-event-store";
 import { openRunEventStream, runEventRunOf, type RunEventSink, type RunEventStream } from "../run-event-stream";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
@@ -1301,6 +1301,16 @@ export interface RunOpOptions {
    */
   runEvents?: { write: (line: string) => void; runtime?: RunEventRuntime; runOrigin?: RunOrigin };
   /**
+   * What ran the Op, when a runner says so itself (#4094): `chant ci run`
+   * runs a pull-request job as an Op and passes `kind: "pipeline"`,
+   * `runtime: "ci"` and `runOrigin: { forge: "chant" }`. The run's events
+   * carry all three, kept on this host as well as written to
+   * {@link runEvents}, and the run record carries `runOrigin` in place of
+   * the CI run the environment names. Omitted, the run is an `op` run named
+   * as described on {@link runEvents}.
+   */
+  runner?: { kind: RunEventKind; runtime: RunEventRuntime; runOrigin: RunOrigin };
+  /**
    * Append the run's {@link OpRunRecord} to the run ledger
    * (`../lifecycle/run-ledger.ts`) when the run settles (#2118). Opt-in on
    * purpose: the executor is called from unit tests and in-process harnesses
@@ -1464,7 +1474,7 @@ async function runOpInTurn(
   const stream = eventsWrite
     ? openRunEventStream(
         runEventRunOf({
-          kind: "op",
+          kind: options.runner?.kind ?? "op",
           name: config.name,
           runId,
           ...(commit ? { gitSha: commit } : {}),
@@ -1472,6 +1482,7 @@ async function runOpInTurn(
           steward: options.steward !== undefined,
           ...(options.runEvents?.runtime ? { runtime: options.runEvents.runtime } : {}),
           ...(options.runEvents?.runOrigin ? { runOrigin: options.runEvents.runOrigin } : {}),
+          ...(options.runner ? { runtime: options.runner.runtime, runOrigin: options.runner.runOrigin } : {}),
         }),
         eventsWrite,
       )
@@ -1612,7 +1623,7 @@ async function runOpInTurn(
       ...(options.steward ? { steward: options.steward } : {}),
       ...(resumed ? { resumed } : {}),
       ...(commit ? { gitSha: commit } : {}),
-      ...(ciRun ? { runOrigin: ciRun.runOrigin } : {}),
+      ...(options.runner ? { runOrigin: options.runner.runOrigin } : ciRun ? { runOrigin: ciRun.runOrigin } : {}),
       phaseDurations,
     });
     let record: OpRunRecord = { version: 1, ...input, id: runId };

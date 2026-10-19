@@ -458,7 +458,11 @@ export interface ParsedArgs {
   branch?: string;
   /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. */
   ciWorkflows?: string[];
-  /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. */
+  /** `chant ci run plan|apply --commit <sha>` (#4094): the commit the job runs at. Default `HEAD`. */
+  commit?: string;
+  /** `chant ci run --pass-env <NAME>`, repeatable (#4094): a variable of the runner's environment the job gets, beside the few it always gets. */
+  passEnv?: string[];
+  /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. Also `chant ci run --chant` (#4094): what runs chant in the job. */
   ciChant?: string;
   /** `chant ci workflow --install <command>` (#3573): a step before the tick that installs what `--chant` runs. */
   ciInstall?: string;

@@ -449,7 +449,7 @@
                         "required": ["forge"],
                         "description": "Added in contract 1 by #4020, written by chant 0.124.28 and newer. The CI run the Op ran in, the shape a release's runOrigin has: the forge (github for GitHub and Forgejo, gitlab), the repo or project, and a link to the run. Absent outside CI.",
                         "properties": {
-                          "forge": { "enum": ["github", "gitlab", "op", "local"] },
+                          "forge": { "enum": ["github", "gitlab", "op", "local", "chant"], "description": "chant: a pull-request job the chant runner ran (chant ci run, #4094), added within contract 1 and written by chant 0.124.30 and newer." },
                           "repo": { "type": "string" },
                           "url": { "type": "string" }
                         }
