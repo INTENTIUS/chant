@@ -71,6 +71,14 @@ describe("demo-step/v1", () => {
     expect(validateDemoStep(step({ reports: { url: "s3://b/r", plan: "41" } })).ok).toBe(false);
   });
 
+  test("takes a highlight of title and body, or null, and refuses a partial one", () => {
+    const highlight = { title: "Only the dependents stop", body: "cluster-b and its six apps apply while cluster-a's six wait." };
+    expect(validateDemoStep(step({ step: "failed", highlight })).ok).toBe(true);
+    expect(validateDemoStep(step({ highlight: null })).ok).toBe(true);
+    expect(validateDemoStep(step({ highlight: { title: "no body" } })).ok).toBe(false);
+    expect(validateDemoStep(step({ highlight: { title: "", body: "x" } })).ok).toBe(false);
+  });
+
   test("takes an s3:// or https:// report url and refuses any other", () => {
     expect(validateDemoStep(step({ reports: { url: "https://demo.example/reports" } })).ok).toBe(true);
     expect(validateDemoStep(step({ reports: { url: "file:///tmp/reports" } })).ok).toBe(false);
