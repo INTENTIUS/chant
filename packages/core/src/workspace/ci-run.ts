@@ -22,7 +22,10 @@
  * own variables. The forge values a generated job reads from `${{ ... }}`
  * expressions or GitLab's predefined variables come from flags here:
  * `BASE_SHA` from `--base`, `PR_NUMBER` from `--pr`, and the commit from
- * `--commit`.
+ * `--commit`. The values a forge job gets from repository secrets come from
+ * the host's secrets file (`--secrets`, ./ci-secrets.ts, #4096), and every
+ * secret value is redacted from the run's events, record, copied report and
+ * output by the executor's `redact` option.
  *
  * The steps run in a fresh checkout of the commit: a detached `git worktree`
  * in a temporary directory outside the repository, removed when the run
@@ -44,7 +47,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
@@ -61,8 +64,10 @@ import { shellCmd } from "../op/activities/shell";
 import { OpRunFailure, runOpLocally, type OpRunResult, type StepRecord } from "../op/local-executor";
 import type { OpRunFailureReason, OpRunRecord } from "../op/runtime";
 import type { ActivityStep, OpConfig, PhaseDefinition } from "../op/types";
+import { redactText, type Redact } from "../op/redact";
 import { findWorkspaceRoot } from "../project-root";
 import { ciTagSigner, RUNNER_KEY_ENV } from "./ci-green";
+import { ciRedactor, ciSecretsFor, CI_SECRETS_ENV, readCiSecrets, type CiSecrets } from "./ci-secrets";
 import { resolveMemberContext } from "./member-pipeline";
 import { signOpRunRecord } from "./trust/op-run-statement";
 import { gitTop } from "./tree";
@@ -121,21 +126,34 @@ export class CiRunError extends Error {
 
 /**
  * The job's environment: the runner's base variables, the forge variables
- * and `passEnv` names it has, `CHANT_ENV` as a generated workflow sets it,
- * the commit as the forge spells it, and the job's own variables. A job
- * variable the forge fills from an expression comes from a flag, or from
- * the runner's environment for a token such as `GITHUB_TOKEN`; a literal
- * one, such as `CHANT_RUN_EVENTS_DIR`, is kept as it is.
+ * and `passEnv` names it has, the job's secrets from the host's secrets file
+ * (#4096), `CHANT_ENV` as a generated workflow sets it, the commit as the
+ * forge spells it, and the job's own variables. A job variable the forge
+ * fills from an expression comes from a flag, or from a secret or the
+ * runner's environment for a token such as `GITHUB_TOKEN`; a literal one,
+ * such as `CHANT_RUN_EVENTS_DIR`, is kept as it is. A secret replaces the
+ * runner's variable of the same name, and none replaces a variable the
+ * runner sets for the job. `CHANT_RUNNER_KEY` is never in it.
  */
 export function ciJobEnv(
   job: PrLoopJob,
-  input: { forge: ForgeKind; env: string; values: CiRunValues; hostEnv: Record<string, string | undefined>; passEnv?: readonly string[] },
+  input: {
+    forge: ForgeKind;
+    env: string;
+    values: CiRunValues;
+    hostEnv: Record<string, string | undefined>;
+    passEnv?: readonly string[];
+    /** The secrets this job gets, from {@link ciSecretsFor}. */
+    secrets?: Record<string, string>;
+  },
 ): Record<string, string> {
+  if (input.passEnv?.includes(RUNNER_KEY_ENV)) throw new CiRunError(`--pass-env names ${RUNNER_KEY_ENV}, and the runner key is never passed to a job`);
   const out: Record<string, string> = {};
   for (const name of [...CI_RUN_BASE_ENV, ...CI_RUN_FORGE_ENV, ...(input.passEnv ?? [])]) {
     const value = input.hostEnv[name];
     if (value !== undefined) out[name] = value;
   }
+  for (const [name, value] of Object.entries(input.secrets ?? {})) if (name !== RUNNER_KEY_ENV) out[name] = value;
   out.CHANT_ENV = input.env;
   out[input.forge === "gitlab" ? "CI_COMMIT_SHA" : "GITHUB_SHA"] = input.values.commit;
   const flags: Record<string, { value: string | undefined; flag: string }> = {
@@ -149,10 +167,13 @@ export function ciJobEnv(
       out[name] = given.value;
     } else if (!value.includes("$")) {
       out[name] = value;
+    } else if (input.secrets?.[name] !== undefined) {
+      out[name] = input.secrets[name]!;
     } else if (input.hostEnv[name] !== undefined) {
       out[name] = input.hostEnv[name]!;
     }
   }
+  delete out[RUNNER_KEY_ENV];
   return out;
 }
 
@@ -367,6 +388,12 @@ export interface CiRunRequest {
   passEnv?: readonly string[];
   /** The runner's environment. Default `process.env`. */
   hostEnv?: Record<string, string | undefined>;
+  /**
+   * The host's secrets file, read (#4096, `--secrets`): the job gets the
+   * secrets its allowlist names, and every value in it is redacted from the
+   * run's events, record, copied report and output.
+   */
+  secrets?: CiSecrets;
   /** `--output`: where the job's report is copied, from `cwd`. Default `.chant/pr`. */
   output?: string;
   /** A runner key, PEM, that signs the run's record. */
@@ -489,7 +516,31 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const jobs = prLoopJobs(req.forge, req.env, req.loop ?? {}, place.member);
   const job = jobs.find((j) => j.jobName === req.job);
   if (!job) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
-  const jobEnv = ciJobEnv(job, { forge: req.forge, env: req.env, values: { base: req.base, pr: req.pr, commit }, hostEnv, passEnv: req.passEnv });
+  const jobEnv = ciJobEnv(job, {
+    forge: req.forge,
+    env: req.env,
+    values: { base: req.base, pr: req.pr, commit },
+    hostEnv,
+    passEnv: req.passEnv,
+    secrets: ciSecretsFor(req.secrets, req.job),
+  });
+  // #4096: the secrets and the job's secret-looking variables, redacted from everything the run writes and returns.
+  const redact = ciRedactor(jobEnv, req.secrets);
+  try {
+    const result = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
+    return redact ? { ...result, warnings: result.warnings.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result;
+  } catch (err) {
+    if (redact && err instanceof Error) err.message = redact(err.message);
+    throw err;
+  }
+}
+
+/** {@link ciRun} once the job and its environment are known. */
+async function runCiJob(
+  req: CiRunRequest,
+  at: { cwd: string; top: string; commit: string; place: { member?: string; dir: string }; job: PrLoopJob; jobEnv: Record<string, string>; redact?: Redact },
+): Promise<CiRunResult> {
+  const { cwd, top, commit, place, job, jobEnv, redact } = at;
 
   // The record is signed against .chant/trust.json at the commit the job runs, so a key that commit does not list is refused before anything runs.
   let signer: ReturnType<typeof ciTagSigner> | undefined;
@@ -529,7 +580,7 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
     const postStatus = async (state: CommitStatus["state"], description: string): Promise<void> => {
       if (!req.status) return;
       try {
-        await req.status.client.setCommitStatus(commit, { context: statusContext, state, description: cut(description), ...(statusUrl ? { targetUrl: statusUrl } : {}) });
+        await req.status.client.setCommitStatus(commit, { context: statusContext, state, description: cut(redact ? redact(description) : description), ...(statusUrl ? { targetUrl: statusUrl } : {}) });
       } catch (err) {
         warnings.push(`could not set the ${statusContext} status: ${message(err)}`);
       }
@@ -551,6 +602,7 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
         ...(req.stepOutput ? { stepOutput: req.stepOutput } : {}),
         ...(signer ? { signRecord: (record: OpRunRecord) => signOpRunRecord(record, signer!) } : {}),
         onSignError: (err) => warnings.push(`the run was not signed: ${message(err)}`),
+        ...(redact ? { redact } : {}),
         onLedgerError: (err) => {
           ledgerError = `the job ran, and its record could not be written to chant/lifecycle: ${message(err)}`;
         },
@@ -583,6 +635,7 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
     if (existsSync(written)) {
       report = resolve(cwd, req.output ?? PR_LOOP_REPORT_DIR);
       cpSync(written, report, { recursive: true });
+      if (redact) redactTree(report, redact);
     }
     if (ledgerError) throw new CiRunError(ledgerError);
     const pushed: { pushed: boolean; pushWarning?: string } = req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
@@ -604,6 +657,27 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   }
 }
 
+/**
+ * Redact every text file under `dir` in place (#4096): the job's report, its
+ * change set and its component events, as `ci run` copied them out. A
+ * JSON file stays JSON. A file with a NUL byte is taken as binary and left.
+ */
+export function redactTree(dir: string, redact: Redact): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      redactTree(path, redact);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const bytes = readFileSync(path);
+    if (bytes.includes(0)) continue;
+    const text = bytes.toString("utf-8");
+    const clean = redactText(text, redact);
+    if (clean !== text) writeFileSync(path, clean);
+  }
+}
+
 /** The text `chant ci run` prints when the run settles. */
 export function formatCiRun(r: CiRunResult): string {
   const lines = [`${r.op} ${r.status === "ok" ? "passed" : r.status === "fail" ? "failed" : r.status} at ${r.record.gitSha?.slice(0, 12) ?? "an unknown commit"}, run ${r.record.id} in ${r.record.env}`];
@@ -622,9 +696,15 @@ const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--key <runner key.pem>] [-o <dir>]";
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The secrets file `--secrets` names, else the one `CHANT_CI_SECRETS` names, read; undefined when neither names one (#4096). */
+export function ciSecretsOf(flag: string | undefined, env: Record<string, string | undefined> = process.env): CiSecrets | undefined {
+  const file = flag ?? (env[CI_SECRETS_ENV] || undefined);
+  return file === undefined ? undefined : readCiSecrets(resolve(file));
+}
 
 /** `chant ci run plan|apply` (#4094). */
 export async function runCiRun(ctx: CommandContext): Promise<number> {
@@ -642,6 +722,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     const hostEnv = process.env;
     const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
     if (warning) console.error(formatWarning({ message: warning }));
+    const secrets = ciSecretsOf(args.ciSecrets);
     const result = await ciRun({
       cwd: process.cwd(),
       ...(status ? { status } : {}),
@@ -663,6 +744,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       ...(args.ciChant ? { chant: args.ciChant } : {}),
       ...(args.passEnv?.length ? { passEnv: args.passEnv } : {}),
+      ...(secrets ? { secrets } : {}),
       ...(args.output ? { output: args.output } : {}),
       ...(runnerKey !== undefined ? { runnerKey, runnerKeyFromEnv: !fromFlag } : {}),
       ...(args.eventsJson ? { runEvents: (line: string) => void process.stdout.write(line) } : {}),

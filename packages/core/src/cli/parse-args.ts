@@ -543,6 +543,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       const name = args[++i];
       if (!name || name.startsWith("-")) throw new Error("--pass-env needs a variable's name, such as AWS_PROFILE: --pass-env <NAME>");
       (result.passEnv ??= []).push(name);
+    } else if (arg === "--secrets") {
+      // `chant ci run|serve --secrets <file>` (#4096): the host's secrets file, readable only by its owner.
+      result.ciSecrets = args[++i];
+      if (!result.ciSecrets || result.ciSecrets.startsWith("-")) throw new Error("--secrets needs the host's secrets file, a dotenv or JSON file only its owner can read: --secrets <file>");
     } else if (arg === "--repo") {
       // `chant ci serve --repo <owner/repo>` (#4095): the repository whose pull requests and target branch it polls.
       result.ciRepo = args[++i];

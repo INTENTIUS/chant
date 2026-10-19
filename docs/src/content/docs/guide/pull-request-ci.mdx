@@ -179,6 +179,12 @@ Both jobs keep `.chant/pr` as an artifact:
 
 `chant ci serve` runs both jobs from the forge's state, with no workflow file and no forge runner ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). It polls the forge for open pull requests and the target branch's head, plans each new pull request head and applies each new commit on the branch. It runs one apply at a time per environment through a git-ref lease, and keeps each apply's resume record in its state directory in place of the CI cache, so `chant ci serve --once --rerun-failed` re-runs a failed apply and finishes it. Jobs run on its host as its user, so serve only repositories whose pull request authors you trust. [`chant ci serve`](/chant/cli/ci/#ci-serve) lists its flags and what it keeps.
 
+Both commands take the values a forge job reads from repository secrets from a file on the host, `--secrets <file>` or the file `CHANT_CI_SECRETS` names, which must be readable by its owner alone ([#4096](https://github.com/INTENTIUS/chant/issues/4096)). Its values read `***` wherever chant writes about the run, in the events and the signed record as much as in the copied report and the console. See [Secrets](/chant/cli/ci/#secrets) for the format and the allowlist.
+
+<Aside type="caution" title="What redaction does not cover">
+Redaction keeps secrets out of what chant writes about a run. It does not keep them from the job. The plan runs the pull request's code with the secrets its job gets, so that code can read them and send them anywhere the host can reach. Give the plan only what planning needs with the file's `jobs` allowlist, such as read-only credentials, and keep the credentials that change the estate for the apply, which runs only after a reviewer approved the plan. A value under 4 characters is not redacted, and neither is a secret the job transforms before printing it, such as one it encodes in base64.
+</Aside>
+
 ## Follow an apply while it runs
 
 The apply job's log prints a line as each wave starts and as each component settles, so the waves read in order while the job runs. A component held back by a failed dependency reads `blocked by <dependency>, not run`.

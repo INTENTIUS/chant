@@ -41,6 +41,8 @@ interface StepConsole {
 export interface RunConsole {
   write: (line: string) => void;
   heartbeatMs?: number;
+  /** Applied to each line before it is written, and to a step's call before it is cut to a label (#4096). */
+  redact?: (text: string) => string;
 }
 
 const store = new AsyncLocalStorage<StepConsole>();
@@ -60,7 +62,10 @@ function formatArgs(args: Record<string, unknown>): string {
 /** The name a step's lines carry: its id, else `fn(args)` on one line, cut to {@link MAX_LABEL}. */
 export function stepLabel(fn: string, args: Record<string, unknown>, id?: string): string {
   if (id) return id;
-  const call = `${fn}(${formatArgs(args)})`.replace(/\s+/g, " ");
+  // A secret in the call is redacted before the label is cut, so a cut never leaves part of one.
+  const redact = runStore.getStore()?.redact;
+  const raw = `${fn}(${formatArgs(args)})`;
+  const call = (redact ? redact(raw) : raw).replace(/\s+/g, " ");
   return call.length > MAX_LABEL ? `${call.slice(0, MAX_LABEL - 4)}...)` : call;
 }
 
@@ -72,7 +77,7 @@ export function stepLabel(fn: string, args: Record<string, unknown>, id?: string
 export async function withStepConsole<T>(opts: { phase: string; label: string }, fn: () => Promise<T>): Promise<T> {
   const run = runStore.getStore();
   if (!run) return fn();
-  const { write } = run;
+  const write = run.redact ? (line: string) => run.write(run.redact!(line)) : run.write;
   const prefix = `[${opts.phase}] ${opts.label}`;
   const started = Date.now();
   let spoke = false;
