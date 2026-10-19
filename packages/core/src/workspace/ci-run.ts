@@ -53,7 +53,6 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
 import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
-import { reportKey } from "../pr-report-url";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import type { RunOrigin } from "../lifecycle/release-ledger";
