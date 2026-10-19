@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, contract, declaration, git, scratchDir, validSchema, writeFiles } from "./__fixtures__/contract-repo";
 import { ciRun } from "./ci-run";
+import { readCiSecrets } from "./ci-secrets";
 import {
   addRunEntry,
   CI_RUN_INDEX_KEY,
@@ -181,6 +182,34 @@ describe("chant ci run with --report-url keeps the run index (#4098)", () => {
     });
     expect(refused.status).toBe("fail");
     expect(indexOf(dir).runs[0]).toMatchObject({ failure: { code: "not-approved" } });
+  });
+
+  test("a secret the job's report names as its failure never reaches the index (#4096)", async () => {
+    const w = workspace();
+    const dir = reportsDir();
+    const SECRET = "s3cret-pass-1";
+    const secretsFile = join(scratchDir("chant-ci-run-index-secrets-"), "secrets.env");
+    writeFileSync(secretsFile, `DB_PASSWORD=${SECRET}\n`, { mode: 0o600 });
+    const leaky = join(scratchDir("chant-ci-run-index-bin-"), "chant");
+    writeFileSync(
+      leaky,
+      [
+        "#!/bin/sh",
+        "mkdir -p .chant/pr",
+        // The refusal becomes the index's failure code, and the message and output carry the secret too.
+        'printf \'{"stage":"apply","pr":7,"status":"refused","refusal":"denied-%s","message":"failed with %s"}\' "$DB_PASSWORD" "$DB_PASSWORD" > .chant/pr/pr-apply.json',
+        'echo "login refused for $DB_PASSWORD" >&2',
+        "exit 3",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(leaky, 0o755);
+    const r = await job(w, dir, { job: "apply", chant: leaky, runId: "run-leak", secrets: readCiSecrets(secretsFile) });
+    expect(r.status).toBe("fail");
+    const text = readFileSync(join(dir, CI_RUN_INDEX_KEY), "utf-8");
+    expect(text).not.toContain(SECRET);
+    expect(indexOf(dir).runs[0]).toMatchObject({ status: "fail", failure: { code: "denied-***" } });
+    expectValid(indexOf(dir));
   });
 
   test("a corrupt index is replaced with a warning and the job stays ok", async () => {

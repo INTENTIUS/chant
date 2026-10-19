@@ -517,6 +517,8 @@ async function recordInIndex(input: {
   record: OpRunRecord;
   reportDir: string;
   limit?: number;
+  /** The run's redactor (#4096): every string written to the index goes through it, as the copied report does. */
+  redact?: Redact;
   warn: (message: string) => void;
 }): Promise<void> {
   const target = parseReportUrl(input.url);
@@ -532,17 +534,18 @@ async function recordInIndex(input: {
     // The report is not readable; the flag stands.
   }
   const failure = input.record.failure;
+  const clean = (text: string): string => (input.redact ? input.redact(text) : text);
   const entry: CiRunIndexEntry = {
     job: input.job,
     pr,
     commit: input.commit,
     status: input.record.status === "ok" ? "ok" : "fail",
-    ...(input.record.status !== "ok" ? { failure: { code: failure?.code ?? "command-failed" } } : {}),
-    ...(input.member ? { member: input.member } : {}),
+    ...(input.record.status !== "ok" ? { failure: { code: clean(failure?.code ?? "command-failed") } } : {}),
+    ...(input.member ? { member: clean(input.member) } : {}),
     started: input.record.started,
     ended: input.record.ended,
-    runId: input.record.id,
-    key: reportKey(pr, input.commit, input.member),
+    runId: clean(input.record.id),
+    key: clean(reportKey(pr, input.commit, input.member)),
     runOrigin: CHANT_RUNNER_ORIGIN,
   };
   await updateCiRunIndex({ target, entry, ...(input.limit ? { limit: input.limit } : {}), warn: input.warn });
@@ -687,7 +690,7 @@ async function runCiJob(
       if (redact) redactTree(report, redact);
     }
     if (req.loop?.reportUrl) {
-      await recordInIndex({ url: req.loop.reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, reportDir: written, limit: req.runIndexLimit, warn: (w) => warnings.push(w) });
+      await recordInIndex({ url: req.loop.reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
     }
     if (ledgerError) throw new CiRunError(ledgerError);
     const pushed: { pushed: boolean; pushWarning?: string } = req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
