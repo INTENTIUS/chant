@@ -296,6 +296,10 @@
  "docs/src/content/docs/cli/workspace-status.mdx": {
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-trust.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-upgrade.mdx": {
   "claude/colon-reveal": 2
  },

@@ -44,6 +44,7 @@ import { PLANTABLE_REASON_CODES } from "./box-factory";
 import { BOX_FACTORY_ERROR_CODES } from "./box-factory-write";
 import { BOX_LISTING_ERROR_CODES } from "./box-listing";
 import { DECLARATION_WRITE_ERROR_CODES } from "./declaration-write";
+import { TRUST_WRITE_ERROR_CODES } from "./trust/trust-write";
 import { BOX_PUBLISH_ERROR_CODES } from "./box-publish";
 import { WRITE_LOCK_ERROR_CODES } from "./write-lock-cli";
 import { WIP_ERROR_CODES, WIP_WRITE_ERROR_CODES } from "./wip";
@@ -115,6 +116,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   PLANTABLE_REASON_CODES,
   BOX_LISTING_ERROR_CODES,
   DECLARATION_WRITE_ERROR_CODES,
+  TRUST_WRITE_ERROR_CODES,
   BOX_FACTORY_ERROR_CODES,
   BOX_PUBLISH_ERROR_CODES,
   WRITE_LOCK_ERROR_CODES,

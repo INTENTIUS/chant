@@ -163,7 +163,12 @@ The tick refuses a key the file doesn't list, a principal without the role and a
 openssl genpkey -algorithm ed25519 -out runner.pem
 ```
 
-A tick given a key the file doesn't list yet refuses it and prints the key's `ssh-ed25519` line to add under `runners`. Keep `runner.pem` out of the repository.
+A tick given a key the file doesn't list yet refuses it and prints the key's `ssh-ed25519` line to add under `runners`. Keep `runner.pem` out of the repository. [`chant workspace trust runner add`](/chant/cli/workspace-trust/) writes both the entry and the role, from the PEM file or the `ssh-ed25519` line, and leaves the commit to you:
+
+```bash
+chant workspace trust runner add ci:acme/app --key runner.pem --by github:alex
+git commit -S -m "trust the ci:acme/app runner" .chant/trust.json
+```
 
 On GitHub the key lives in a repository secret, and `chant ci workflow --runner-key-secret <NAME>` hands it to the tick as `CHANT_RUNNER_KEY`. Turn signing on in this order: add the key to `runners` and the principal to `roles.runner`, store the secret and regenerate the workflow, then set `signedSince` to the sha of the branch's current tip. A commit can't name its own sha, so the commit that sets `signedSince` comes after it, and its tags and every later commit's must be signed. A chant older than 0.124.28 refuses a declaration with `signedSince`, so set `minReader` to `0.124.28` with it.
 

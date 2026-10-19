@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/trust-write/v1/trust-write.schema.json",
+  "title": "chant workspace trust runner add|remove output",
+  "description": "What `chant workspace trust runner add <principal> --key <key>` and `trust runner remove <principal>` print (#3510): the runner entry before and after the write, the digest of .chant/trust.json after it, or the reason it wrote nothing. Each write edits .chant/trust.json in the working tree in place and never commits. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.31 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "runner": {
+      "type": "object",
+      "required": [
+        "principal",
+        "class",
+        "key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "principal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "class": {
+          "enum": [
+            "runner",
+            "service"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$",
+          "description": "The runner's public key, as an ssh-ed25519 line with no comment."
+        }
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "A SHA-256 of the file's bytes, in lowercase hex. A file that is not there has the digest of empty text."
+    },
+    "result": {
+      "description": "The entry was written, or would be with --dry-run, or the file already held it (changed false). Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "name",
+        "path",
+        "digest",
+        "previousDigest",
+        "paths",
+        "changed",
+        "dryRun",
+        "previous",
+        "entry",
+        "runnerRole"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/trust-write/v1/trust-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote it."
+        },
+        "action": {
+          "enum": [
+            "runner add",
+            "runner remove"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "The runner's principal."
+        },
+        "path": {
+          "const": ".chant/trust.json",
+          "description": "The trust config, relative to the repository root."
+        },
+        "digest": {
+          "$ref": "#/$defs/digest",
+          "description": "The file's digest after the write, or as it would be with --dry-run: what the caller passes as --expect to its next trust write."
+        },
+        "previousDigest": {
+          "$ref": "#/$defs/digest",
+          "description": "The file's digest before the write."
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The trust config when the write changed it or would with --dry-run; empty when it already held what was given."
+        },
+        "changed": {
+          "type": "boolean",
+          "description": "Whether the file changed: paths is not empty."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "True when --dry-run was given: nothing was written, and the document says what would have been."
+        },
+        "previous": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runner"
+            }
+          ],
+          "description": "The principal's runner entry before the write, or null when there was none."
+        },
+        "entry": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runner"
+            }
+          ],
+          "description": "The principal's runner entry after the write, or null after runner remove."
+        },
+        "runnerRole": {
+          "type": "boolean",
+          "description": "Whether the principal holds the runner role after the write. runner add grants it for class runner; runner remove takes it away."
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was written. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "name",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/trust-write/v1/trust-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "runner add",
+            "runner remove"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "write-usage-invalid",
+                "trust-config-invalid",
+                "trust-conflict",
+                "runner-key-invalid",
+                "runner-key-is-signer",
+                "runner-exists",
+                "runner-unknown",
+                "write-scope-member",
+                "write-scope-protected",
+                "write-scope-class-unknown",
+                "agent-unknown",
+                "principal-unidentified",
+                "write-lock-timeout",
+                "write-lock-not-held"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "conflict": {
+          "type": "object",
+          "description": "With trust-conflict: the digest --expect named, the one the file has now, and its last chant write when the write journal knows it.",
+          "required": [
+            "path",
+            "expected",
+            "digest",
+            "lastWrite"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "expected": {
+              "$ref": "#/$defs/digest"
+            },
+            "digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "lastWrite": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "verb",
+                    "by",
+                    "agent",
+                    "at"
+                  ],
+                  "properties": {
+                    "verb": {
+                      "type": "string"
+                    },
+                    "by": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "agent": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "at": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

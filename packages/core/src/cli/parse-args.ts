@@ -592,6 +592,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];
       if (!result.verdict || result.verdict.startsWith("-")) throw new Error("--verdict needs agree, dissent or abstain");
+    } else if (arg === "--class") {
+      // `chant workspace trust runner add <principal> --class runner|service` (#3510).
+      result.runnerClass = args[++i];
+      if (!result.runnerClass || result.runnerClass.startsWith("-")) throw new Error("--class needs runner or service: --class <class>");
     } else if (arg === "--by") {
       // `chant workspace records review <id> --by <principal>` (#2670): whoever the caller says.
       result.by = args[++i];
