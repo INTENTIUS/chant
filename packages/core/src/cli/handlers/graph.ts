@@ -1,4 +1,3 @@
-import { dependenciesNotInstalled } from "../dependencies";
 import { dirname, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
@@ -582,9 +581,6 @@ async function runComponentGraphView(
 ): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
 
-  // #4116: an uninstalled project is not a project with lint errors.
-  if (await dependenciesNotInstalled(projectPath)) return 1;
-
   // #1490 — resolved BEFORE the lint gate, not after. The COMP* checks import
   // every `*.component.ts`, an ES module evaluates once per path, and the
   // values in effect at that first import are the ones the graph below will
@@ -852,9 +848,6 @@ async function runGraphView(
   format: "ir" | "mermaid" | "dot" | "layout",
 ): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
-
-  // #4116: an uninstalled project is not a project with lint errors.
-  if (await dependenciesNotInstalled(projectPath)) return 1;
 
   const level = ctx.args.detail ?? 2;
   if (![0, 1, 2, 3].includes(level)) {
