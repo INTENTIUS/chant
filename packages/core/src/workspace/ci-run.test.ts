@@ -480,16 +480,21 @@ describe("a commit status per job (#4097)", () => {
     expect(ciStatusContext("plan", "prod-approval")).toBe("chant/pr-plan");
   });
 
-  test("target_url is an https --report-url with the key, or the --status-url template for an s3 url", async () => {
+  // One job per test: each runs a whole Op in a worktree, and three in one test went over the unit budget.
+  test("target_url is an https --report-url with the key", async () => {
     const https = fakeForge();
     const { sha } = await job({ loop: { reportUrl: "https://host/reports/" }, status: { client: https.client } });
     const key = `7/${sha}/app`;
     expect(https.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/${key}/`, `https://host/reports/${key}/`]);
+  });
 
+  test("target_url is the --status-url template for an s3 --report-url", async () => {
     const s3 = fakeForge();
     const mapped = await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: s3.client, urlTemplate: "https://host/reports/{key}" } });
     expect(s3.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/7/${mapped.sha}/app`, `https://host/reports/7/${mapped.sha}/app`]);
+  });
 
+  test("an s3 or file --report-url with no --status-url gives no target_url", async () => {
     const bare = fakeForge();
     await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: bare.client } });
     expect(bare.posts.every((p) => p.status.targetUrl === undefined)).toBe(true);
