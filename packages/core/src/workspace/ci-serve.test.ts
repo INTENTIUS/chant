@@ -15,10 +15,11 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { ciServeInterval, ciServeKey, ciServePass, formatCiServeEvent, readCiServeState, type CiServeEvent, type CiServeForge, type CiServeOptions } from "./ci-serve";
+import { ciRun } from "./ci-run";
 import { acquireLease, releaseLease } from "../lifecycle/lease";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
 import { parseArgs } from "../cli/parse-args";
-import type { OpenPullRequest } from "../pr-forge";
+import { forgejoForge, githubForge, type ForgeFetch, type OpenPullRequest } from "../pr-forge";
 
 afterAll(cleanScratch);
 
@@ -86,9 +87,17 @@ function fakeChant(): string {
 }
 
 /** A forge whose open pull requests and branch head the test sets. */
-function fakeForge(head: string): CiServeForge & { head: string; prs: OpenPullRequest[]; polls: number } {
+function fakeForge(head: string): CiServeForge & { head: string; prs: OpenPullRequest[]; polls: number; merges: Map<string, number | "throw">; asked: string[] } {
   const f = {
     head,
+    merges: new Map<string, number | "throw">(),
+    asked: [] as string[],
+    async pullRequestFor(sha: string) {
+      f.asked.push(sha);
+      const n = f.merges.get(sha);
+      if (n === "throw") throw new Error("forge unavailable");
+      return n ?? null;
+    },
     prs: [] as OpenPullRequest[],
     polls: 0,
     async openPullRequests(base: string) {
@@ -183,6 +192,60 @@ describe("chant ci serve (#4095)", () => {
     expect(git(root, "ls-remote", "origin", "chant/lifecycle")).toContain(git(root, "rev-parse", "chant/lifecycle"));
 
     expect((await ciServePass(opts)).jobs).toEqual([]);
+  });
+
+  test("an apply gets the number of the pull request whose merge commit it is (#4112)", async () => {
+    const { root, app, main } = workspace();
+    const forge = fakeForge(main);
+    const seen: Array<number | undefined> = [];
+    const { opts } = serve(app, forge, { run: (req) => (seen.push(req.pr), ciRun(req)) });
+    await ciServePass(opts);
+    const merged = commit(root, "app/merged.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = merged;
+    forge.merges.set(merged, 17);
+
+    const pass = await ciServePass(opts);
+    expect(forge.asked).toEqual([merged]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, pr: 17, status: "ok" })]);
+    expect(seen).toEqual([17]);
+  });
+
+  test("an apply with no pull request found, or a lookup that fails, runs without --pr (#4112)", async () => {
+    const { root, app, main } = workspace();
+    const forge = fakeForge(main);
+    const seen: Array<number | undefined> = [];
+    const { opts } = serve(app, forge, { run: (req) => (seen.push(req.pr), ciRun(req)) });
+    await ciServePass(opts);
+
+    const direct = commit(root, "app/direct.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = direct;
+    const first = await ciServePass(opts);
+    expect(first.jobs).toEqual([expect.objectContaining({ job: "apply", commit: direct, status: "ok" })]);
+    expect(first.jobs[0]!.pr).toBeUndefined();
+
+    const broken = commit(root, "app/broken.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = broken;
+    forge.merges.set(broken, "throw");
+    const second = await ciServePass(opts);
+    expect(second.jobs).toEqual([expect.objectContaining({ job: "apply", commit: broken, status: "ok" })]);
+    expect(seen).toEqual([undefined, undefined]);
+  });
+
+  test("the forge clients look a merge commit up with one GET each (#4112)", async () => {
+    const sha = "c".repeat(40);
+    const calls: string[] = [];
+    const fetch = (body: unknown): ForgeFetch => async (url, init) => {
+      calls.push(`${init.method} ${new URL(url).pathname}`);
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+    };
+    const gh: CiServeForge = githubForge({ apiBase: "https://api.github.com", repo: "demo/estate", token: "t", fetch: fetch([{ number: 5, merged_at: "2026-10-01T00:00:00Z", merge_commit_sha: sha }]) }) as unknown as CiServeForge;
+    expect(await gh.pullRequestFor!(sha)).toBe(5);
+    const fj: CiServeForge = forgejoForge({ apiBase: "http://forgejo.localhost/api/v1", host: "forgejo.localhost", repo: "demo/estate", token: "t", fetch: fetch({ number: 6 }) }) as unknown as CiServeForge;
+    expect(await fj.pullRequestFor!(sha)).toBe(6);
+    expect(calls).toEqual([`GET /repos/demo/estate/commits/${sha}/pulls`, `GET /api/v1/repos/demo/estate/commits/${sha}/pull`]);
   });
 
   test("the group's lease held elsewhere holds the apply until it is released", async () => {

@@ -15,6 +15,10 @@
  *   the one `chant operator` holds) named for `prApplyGroup`, renews it while
  *   it runs and releases it after. An apply that finds it held waits for a
  *   later poll, as a forge's concurrency group queues it.
+ * - Merged pull request. An apply asks the forge for the pull request whose
+ *   merge commit the new head is (`pullRequestFor`, as pr-apply does) and
+ *   passes it as `--pr`, so its commit status link and run index use
+ *   `<pr>/<commit>`. With none found it runs without `--pr`.
  * - Resume records. Each apply gets `<state>/resume/<prApplyRecordKey>.json`
  *   as its `--resume` record, so a re-run of a failed apply at the same
  *   commit finishes under the approval it has. This replaces the forge's CI
@@ -52,6 +56,8 @@ export type CiServeForgeKind = "github" | "forgejo";
 export interface CiServeForge {
   openPullRequests(base: string): Promise<OpenPullRequest[]>;
   branchHead(branch: string): Promise<string | undefined>;
+  /** The merged pull request that produced a commit, as pr-apply finds it (`pullRequestFor`). Without it an apply gets no `--pr`. */
+  pullRequestFor?(sha: string): Promise<number | null>;
 }
 
 /** A job the forge's state calls for: the plan of a pull request's head, or the apply of a target-branch commit. */
@@ -347,17 +353,20 @@ async function runJob(
   t: CiServeTrigger,
   paths: { runId: string; report: string; resume?: string },
   held: { lease: LeaseRecord; holder: string; ttlMs: number; now: () => Date } | undefined,
-): Promise<Pick<CiServeJobState, "status" | "failure" | "report">> {
+): Promise<Pick<CiServeJobState, "status" | "failure" | "report" | "pr">> {
   const renew = held
     ? setInterval(() => {
         void acquireLease(place.group, held.holder, { cwd: opts.cwd, ttlMs: held.ttlMs, mode: "renew", token: held.lease.token, now: held.now }).catch(() => undefined);
       }, Math.max(1000, Math.floor(held.ttlMs / 3)))
     : undefined;
   renew?.unref?.();
+  let merged: number | undefined;
   try {
     // The pull request's head is on the forge's refs/pull/<n>/head, the target's on the branch.
     tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", t.job === "plan" ? `refs/pull/${t.pr}/head` : place.branch]);
     const hostEnv = { ...(opts.job?.hostEnv ?? process.env), GITHUB_REPOSITORY: opts.repo };
+    // An apply is for a merge: pass the pull request whose merge commit it is, so the commit status link and the run index use `<pr>/<commit>`. None found, or a forge that errs, is today's behaviour.
+    if (t.job === "apply" && opts.client.pullRequestFor) merged = (await opts.client.pullRequestFor(t.commit).catch(() => null)) ?? undefined;
     const run = opts.run ?? ciRun;
     const r = await run({
       ...opts.job,
@@ -367,16 +376,16 @@ async function runJob(
       env: opts.env,
       forge: opts.forge,
       base: t.base,
-      ...(t.job === "plan" ? { pr: t.pr } : {}),
+      ...(t.job === "plan" ? { pr: t.pr } : merged !== undefined ? { pr: merged } : {}),
       commit: t.commit,
       output: paths.report,
       runId: paths.runId,
       ...(paths.resume ? { resumeRecord: paths.resume } : {}),
     });
     const why = r.record.failure ? `${r.record.failure.code}: ${r.record.failure.reason}` : r.failure ? `${r.failure.phase}: ${r.failure.error.split("\n")[0]}` : undefined;
-    return { status: r.status === "ok" ? "ok" : "fail", ...(why && r.status !== "ok" ? { failure: why } : {}), ...(r.report ? { report: r.report } : {}) };
+    return { status: r.status === "ok" ? "ok" : "fail", ...(merged !== undefined ? { pr: merged } : {}), ...(why && r.status !== "ok" ? { failure: why } : {}), ...(r.report ? { report: r.report } : {}) };
   } catch (err) {
-    return { status: "fail", failure: message(err) };
+    return { status: "fail", ...(merged !== undefined ? { pr: merged } : {}), failure: message(err) };
   } finally {
     if (renew) clearInterval(renew);
     if (held) await releaseLease(place.group, held.holder, held.lease.token, { cwd: opts.cwd }).catch(() => false);
@@ -478,7 +487,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       forge,
       repo: args.ciRepo,
       env: args.env,
-      client: { openPullRequests: client.openPullRequests.bind(client), branchHead: client.branchHead.bind(client) },
+      client: { openPullRequests: client.openPullRequests.bind(client), branchHead: client.branchHead.bind(client), pullRequestFor: client.pullRequestFor.bind(client) },
       ...(args.statePath ? { stateDir: isAbsolute(args.statePath) ? args.statePath : resolve(args.statePath) } : {}),
       ...(args.maxJobs ? { maxJobs: args.maxJobs } : {}),
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
