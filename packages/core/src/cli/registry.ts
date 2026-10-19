@@ -464,6 +464,14 @@ export interface ParsedArgs {
   passEnv?: string[];
   /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. Also `chant ci run --chant` (#4094): what runs chant in the job. */
   ciChant?: string;
+  /** `chant ci serve --repo <owner/repo>` (#4095): the repository it polls. */
+  ciRepo?: string;
+  /** `chant ci serve --max-jobs <n>` (#4095): how many jobs run at once. Default 1. */
+  maxJobs?: number;
+  /** `chant ci serve --author <login>`, repeatable (#4095): plan only pull requests these logins opened. */
+  ciAuthors?: string[];
+  /** `chant ci serve --rerun-failed` (#4095): run again the failed apply at the target's head and failed plans of open heads. */
+  rerunFailed?: boolean;
   /** `chant ci workflow --install <command>` (#3573): a step before the tick that installs what `--chant` runs. */
   ciInstall?: string;
   /** `chant ci workflow --token-secret <NAME>` (#3573): the repository secret the tick's tag push authenticates with. */

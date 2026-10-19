@@ -65,6 +65,7 @@ const BOOLEAN_FLAGS = new Set([
   "--yes",
   "--confirm-prod",
   "--once",
+  "--rerun-failed",
   "--expire",
   "--check-live",
   "--check-snapshot",
@@ -535,6 +536,23 @@ export function parseArgs(args: string[]): ParsedArgs {
       const name = args[++i];
       if (!name || name.startsWith("-")) throw new Error("--pass-env needs a variable's name, such as AWS_PROFILE: --pass-env <NAME>");
       (result.passEnv ??= []).push(name);
+    } else if (arg === "--repo") {
+      // `chant ci serve --repo <owner/repo>` (#4095): the repository whose pull requests and target branch it polls.
+      result.ciRepo = args[++i];
+      if (!result.ciRepo || !/^[^/\s-][^/\s]*\/[^/\s]+$/.test(result.ciRepo)) throw new Error("--repo needs the repository as owner/name: --repo <owner/repo>");
+    } else if (arg === "--max-jobs") {
+      // `chant ci serve --max-jobs <n>` (#4095): how many jobs run at once.
+      const n = Number(args[++i]);
+      if (!Number.isInteger(n) || n < 1) throw new Error("--max-jobs needs a whole number of jobs, 1 or more: --max-jobs <n>");
+      result.maxJobs = n;
+    } else if (arg === "--author") {
+      // `chant ci serve --author <login>`, repeatable (#4095): plan only pull requests these people opened.
+      const login = args[++i];
+      if (!login || login.startsWith("-")) throw new Error("--author needs a forge login: --author <login>");
+      (result.ciAuthors ??= []).push(login);
+    } else if (arg === "--rerun-failed") {
+      // `chant ci serve --rerun-failed` (#4095): run again the failed apply at the target branch's head, and failed plans of open heads.
+      result.rerunFailed = true;
     } else if (arg === "--install") {
       // `chant ci workflow --install <command>` (#3573): a step before the tick that installs what --chant runs.
       result.ciInstall = args[++i];
