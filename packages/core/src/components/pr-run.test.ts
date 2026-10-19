@@ -60,6 +60,8 @@ function world() {
     planned: [] as Array<{ root: string; vars?: Record<string, unknown> }>,
     outputsRead: [] as string[],
     applied: [] as string[],
+    /** The vars each root applied with, after wiring resolved. */
+    ranWith: {} as Record<string, Record<string, unknown> | undefined>,
     fromPlan: {} as Record<string, boolean>,
     failing: new Set<string>(),
     planFailing: new Set<string>(),
@@ -100,6 +102,7 @@ function world() {
     },
     async run(ctx: DeployContext, input: RootInput) {
       w.fromPlan[input.root] = ctx.plans?.[input.root] !== undefined;
+      w.ranWith[input.root] = input.vars;
       if (w.failing.has(input.root)) throw new Error(`${input.root} failed`);
       w.applied.push(input.root);
       if (input.root === "a") w.state.a = { id: `a-${w.versions.a ?? "v1"}` };
@@ -163,6 +166,130 @@ describe("planPrSet", () => {
     const set = await planPrSet({ components: ESTATE, plan: planFanOut({ components: ESTATE, changed: ["a"] }), registry: w.registry, env: "prod" });
     expect(set.failed).toBe(true);
     expect(set.members.find((m) => m.member === "app")).toMatchObject({ status: "plan-failed", planDigest: null, error: "app: no value for a required variable" });
+  });
+});
+
+describe("a dependency outside the selection (#4104)", () => {
+  /** Two members: `up`, and `down` reading its `id`. The pull request changes `down` alone. */
+  const PAIR: DriverComponent[] = [root("up"), root("down", ["up"], { upstream: { stackOutput: { stack: "up", name: "id" } } })];
+
+  function pairWorld() {
+    const w = world();
+    w.state = { up: { id: "up-live", arn: "arn:up" } };
+    w.versions.down = "v2";
+    return w;
+  }
+
+  test("the dependent's plan resolves the upstream's outputs from its deployed outputs, and the report lists them", async () => {
+    const w = pairWorld();
+    const plan = planFanOut({ components: PAIR, changed: ["down"] });
+    expect(plan.order).toEqual(["down"]);
+    expect(plan.seeds).toEqual(["up"]);
+
+    const set = await planPrSet({ components: PAIR, plan, registry: w.registry, env: "prod" });
+    expect(w.outputsRead).toEqual(["up"]);
+    expect(w.planned).toEqual([{ root: "down", vars: { upstream: "up-live" } }]);
+    expect(set.outputs).toEqual({ up: { id: "up-live", arn: "arn:up" } });
+    expect(set.deployedOutputs).toEqual({ up: ["arn", "id"] });
+
+    const report = prReport({
+      stage: "plan",
+      pr: 12,
+      env: "prod",
+      base: "1".repeat(40),
+      head: "2".repeat(40),
+      op: "pr-12",
+      gate: "pr-apply",
+      plan,
+      signal: { changed: ["down"], indeterminate: [], unclaimed: [] },
+      set,
+      approval: { status: "pending" },
+      status: "planned",
+    });
+    expect(report.deployedOutputs).toEqual({ up: ["arn", "id"] });
+    expect(report.selection).toMatchObject({ changed: ["down"], dependents: [] });
+  });
+
+  test("the apply's plan reads the same outputs, gets the approved digest, and applies against them", async () => {
+    const w = pairWorld();
+    const plan = planFanOut({ components: PAIR, changed: ["down"] });
+    const approved = await planPrSet({ components: PAIR, plan, registry: w.registry, env: "prod" });
+
+    // pr-apply plans the members again before anything applies.
+    w.outputsRead.length = 0;
+    const set = await planPrSet({ components: PAIR, plan, registry: w.registry, env: "prod" });
+    expect(w.outputsRead).toEqual(["up"]);
+    expect(set.doc.digest).toBe(approved.doc.digest);
+    const check = await decidePrGate(memoryGateLedgerPort({ resolutions: [approval(approved.doc.digest)] }), {
+      op: "pr-12",
+      gate: "pr-apply",
+      digest: set.doc.digest,
+      now: NOW,
+    });
+    expect(check.satisfied).toBe(true);
+
+    const { members, status } = await applyPrSet({ components: PAIR, plan, registry: w.registry, env: "prod", set });
+    expect(status).toBe("applied");
+    expect(w.applied).toEqual(["down"]);
+    expect(w.ranWith.down).toEqual({ upstream: "up-live" });
+    expect(members.map((m) => [m.member, m.status, m.inputsMoved])).toEqual([["down", "applied", undefined]]);
+  });
+
+  test("an upstream whose deployed output moved after approval moves the apply's digest", async () => {
+    const w = pairWorld();
+    const plan = planFanOut({ components: PAIR, changed: ["down"] });
+    const approved = await planPrSet({ components: PAIR, plan, registry: w.registry, env: "prod" });
+    w.state.up = { id: "up-moved", arn: "arn:up" };
+    const set = await planPrSet({ components: PAIR, plan, registry: w.registry, env: "prod" });
+    expect(set.doc.digest).not.toBe(approved.doc.digest);
+  });
+
+  test("--seed-outputs wins: a seeded upstream is not read and not listed", async () => {
+    const w = pairWorld();
+    const plan = planFanOut({ components: PAIR, changed: ["down"] });
+    const set = await planPrSet({ components: PAIR, plan, registry: w.registry, env: "prod", seededOutputs: { up: { id: "up-seeded" } } });
+    expect(w.outputsRead).toEqual([]);
+    expect(w.planned).toEqual([{ root: "down", vars: { upstream: "up-seeded" } }]);
+    expect(set.deployedOutputs).toBeUndefined();
+  });
+
+  test("an upstream whose steps cannot say leaves the reference unresolved", async () => {
+    const w = pairWorld();
+    const silent: DriverComponent[] = [
+      { name: "up", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "no-outputs" }] }] },
+      PAIR[1]!,
+    ];
+    w.registry.register({ kind: "no-outputs", async run() { return {}; } } as never);
+    const plan = planFanOut({ components: silent, changed: ["down"] });
+    const set = await planPrSet({ components: silent, plan, registry: w.registry, env: "prod" });
+    expect(w.outputsRead).toEqual([]);
+    expect(set.outputs).toEqual({});
+    expect(set.deployedOutputs).toBeUndefined();
+    expect(w.planned).toHaveLength(1);
+    expect(w.planned[0]!.vars?.upstream).not.toBe("up-live");
+  });
+
+  test("the selection in place of the whole graph is refused, naming the dependency", async () => {
+    const w = pairWorld();
+    const plan = planFanOut({ components: PAIR, changed: ["down"] });
+    await expect(planPrSet({ components: [PAIR[1]!], plan, registry: w.registry, env: "prod" })).rejects.toThrow(/up, a dependency of a planned member/);
+  });
+
+  test("a resume plans against the record's outputs and reads no dependency they cover", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    const plan = planFanOut({ components: ESTATE, changed: ["a"] });
+    const { set, first, record } = await firstAttempt(w, plan, ["app"]);
+    expect(first.run.completed).toEqual(["a"]);
+    expect(set.deployedOutputs).toEqual({ a: ["id"], net: ["cidr"] });
+
+    w.outputsRead.length = 0;
+    w.state.net = { cidr: "10.9.0.0/16" };
+    const resumed = await resumePrSet({ components: ESTATE, plan, registry: w.registry, env: "prod", record, completed: ["a"] });
+    if (!resumed.ok) throw new Error(resumed.reasons.join("; "));
+    expect(w.outputsRead).toEqual([]);
+    expect(resumed.set.doc.digest).toBe(set.doc.digest);
+    expect(resumed.set.outputs).toBe(record.planOutputs);
   });
 });
 

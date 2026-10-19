@@ -112,6 +112,11 @@ interface Prepared {
   head: string;
   gate: string;
   forge?: PrForge;
+  /**
+   * Every component in the project, not the selection (`deriveFanOut`), so
+   * the plan reads the deployed outputs of a dependency the change did not
+   * select (#4104).
+   */
   components: DriverComponent[];
   plan: FanOutPlan;
   signal: ComponentChangeSignal;

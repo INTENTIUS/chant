@@ -46,6 +46,9 @@ export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace
 /** The read-contract version the report follows. */
 export const PR_REPORT_CONTRACT = 1;
 
+/** The first chant whose report can carry `deployedOutputs` (#4104). */
+export const PR_REPORT_DEPLOYED_OUTPUTS_FLOOR = "0.124.30";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -183,6 +186,14 @@ export interface PrReport {
    * the rest under the same approval and did not run them again.
    */
   resumed?: { applied: string[] };
+  /**
+   * Per dependency a member was planned against, the names of the outputs
+   * read from the deployed estate (#4104), sorted. A dependency outside the
+   * change is here too. Seeded outputs (`--seed-outputs`, a resume record)
+   * are not. Absent when nothing was read. Added within contract 1 by chant
+   * {@link PR_REPORT_DEPLOYED_OUTPUTS_FLOOR}.
+   */
+  deployedOutputs?: Record<string, string[]>;
   approval: PrApproval;
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
@@ -323,6 +334,11 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   }
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);
+  }
+  const deployed = Object.entries(report.deployedOutputs ?? {});
+  if (deployed.length > 0) {
+    const each = deployed.map(([dep, names]) => `${code(dep)} (${names.length > 0 ? names.map(code).join(", ") : "none yet"})`);
+    out.push("", `Planned against outputs read from the deployed estate: ${each.join("; ")}.`);
   }
   if (report.status !== "nothing") {
     out.push("", `Plan digest: ${code(report.digest)}`, "", ...approvalLines(report, options.approver ?? "<you>"));

@@ -67,6 +67,8 @@ import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary
 import { approveCommand, gateIsSealed } from "../../op/gate";
 import { getHeadCommit } from "../../lifecycle/git";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
+import { readDeployedOutputs } from "../../components/wave-plan";
+import { deployContext } from "../../components/driver";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
 import { FAN_OUT_GATE_OP } from "../../op/gate-name";
@@ -343,6 +345,36 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   }
 
   const registry = await fanOutRegistry(projectPath, config);
+  const env = args.env ?? "local";
+
+  // A completed component's recorded outputs win over a `--seed-outputs`
+  // entry for the same name, as a fresh apply's outputs merge over a seed in
+  // the driver: the record holds what this fan-out itself applied. A seed
+  // neither gives is read from the deployed estate (#4104), through its
+  // capability's `outputs`, as pr-plan reads a dependency outside the change.
+  // One that cannot be read leaves its dependents' references unresolved.
+  const componentOutputs: Record<string, Record<string, unknown>> = { ...seededOutputs, ...priorOutputs };
+  const seeds = (progress ? remainingFanOut(derived.plan, derived.components, progress) : derived.plan).seeds;
+  let deployedSeeds: Record<string, string[]>;
+  try {
+    deployedSeeds = await readDeployedOutputs(
+      seeds,
+      new Map(derived.components.map((c) => [c.name, c])),
+      registry,
+      (name) => deployContext({ env }, name),
+      componentOutputs,
+    );
+  } catch (err) {
+    console.error(formatError({
+      message: `could not read the deployed outputs of ${seeds.filter((s) => !(s in componentOutputs)).join(", ")}: ${err instanceof Error ? err.message : String(err)}`,
+      hint: "Nothing ran. --seed-outputs <file> gives a component's outputs instead of reading them.",
+    }));
+    return 1;
+  }
+  for (const [name, keys] of Object.entries(deployedSeeds)) {
+    console.error(formatInfo(`${name}: outputs read from the deployed estate (${keys.length > 0 ? keys.join(", ") : "none yet"})`));
+  }
+
   // #3061: the commit this run deploys, for the workloads' vcs.ref.head.revision.
   const revision = await getHeadCommit().catch(() => undefined);
 
@@ -378,12 +410,9 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   let result;
   try {
     result = await runFanOut(derived.plan, derived.components, registry, {
-      env: args.env ?? "local",
+      env,
       releaseIdentity: () => (revision ? { revision } : {}),
-      // A completed component's recorded outputs win over a `--seed-outputs`
-      // entry for the same name, as a fresh apply's outputs merge over a seed in
-      // the driver: the record holds what this fan-out itself applied.
-      componentOutputs: { ...seededOutputs, ...priorOutputs },
+      componentOutputs,
       ...(gate ? { gate } : {}),
       ...(waveGate ? { waveGate } : {}),
       ...(waveGate

@@ -49,6 +49,11 @@
         "applied": { "type": "array", "items": { "type": "string" }, "description": "Components the earlier attempt applied, which this run did not run again." }
       }
     },
+    "deployedOutputs": {
+      "type": "object",
+      "description": "Added within contract version 1 by #4104, written by chant 0.124.30 and newer. Per dependency a member was planned against, the names of the outputs read from the deployed estate through its capability's outputs, sorted. A dependency outside the change is listed here too, and one whose stack is not deployed yet lists []. Outputs given with --seed-outputs, or carried from an earlier attempt's record, are not listed. Absent when no dependency was read, and on a resumed apply.",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
     "approval": {
       "type": "object",
       "required": ["status"],

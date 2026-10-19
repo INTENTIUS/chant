@@ -19,6 +19,16 @@
  * its dependents in one rollout is what gated waves are for (#3049): each
  * wave is planned after the one before it applied.
  *
+ * A dependency the change did not select is read the same way (#4104), so
+ * a change to one cluster plans it against the network it sits on. That is
+ * why `components` is every component in the project and not the selection.
+ * `--seed-outputs` wins over a read, and a dependency whose steps cannot say
+ * leaves its dependents' references unresolved. The apply stage's plan reads
+ * the same dependencies, so on the same estate it gets the digest the plan
+ * stage showed, and it applies against the outputs its plans read
+ * (`set.outputs`). A resume plans against the outputs the approved plans
+ * read, from the record (`planOutputs`), and reads nothing those cover.
+ *
  * ## Finishing an apply that failed partway
  *
  * {@link resumePrSet} (#3464) is fan-out's resume (#2417, #3049) for a pull
@@ -53,10 +63,10 @@ import type { PrApplyRecord } from "./fan-out-record";
 import type { CapabilityRegistry } from "./capability";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
-import { planWaveComponent, readComponentOutputs } from "./wave-plan";
+import { planWaveComponent, readDeployedOutputs } from "./wave-plan";
 
 export interface PrPlanSetOptions {
-  /** Every component in the project. */
+  /** Every component in the project, not the selection: a planned member's dependency outside it is read too (#4104). */
   components: DriverComponent[];
   /** The fan-out the change derives (`planFanOut`). Its `order` is what is planned. */
   plan: FanOutPlan;
@@ -85,6 +95,12 @@ export interface PrPlanSet {
   plans: Record<string, Record<string, unknown>>;
   /** The outputs the plans read: the seeds, and each dependency's outputs as they stood. */
   outputs: Record<string, Record<string, unknown>>;
+  /**
+   * Per dependency read from the deployed estate (#4104), the names of the
+   * outputs the read gave, sorted. The seeds are not here. Absent when
+   * nothing was read. The report's `deployedOutputs`.
+   */
+  deployedOutputs?: Record<string, string[]>;
   /** Whether any component failed to plan. */
   failed: boolean;
 }
@@ -101,12 +117,15 @@ function failedParts(component: DriverComponent, error: string): ChangeSetPart[]
 /**
  * Plan every component in `plan.order`, a wave at a time, each against the
  * outputs its dependencies have now. Never throws for a component that fails
- * to plan: it becomes a failed member, and `failed` is set.
+ * to plan: it becomes a failed member, and `failed` is set. Throws when a
+ * planned member's dependency is not among `components`, which means the
+ * caller passed the selection where the whole graph belongs.
  */
 export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const byName = new Map(options.components.map((c) => [c.name, c]));
   const outputs: Record<string, Record<string, unknown>> = { ...(options.seededOutputs ?? {}) };
   const read = new Set(Object.keys(outputs));
+  const deployed: Record<string, string[]> = {};
   const parts: ChangeSetPart[] = [];
   const componentOf = new Map<string, string>();
   const plans: Record<string, Record<string, unknown>> = {};
@@ -117,15 +136,14 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   for (const wave of options.plan.waves) {
     // The dependencies' outputs first, each read once. A dependency that
     // cannot say leaves its references unresolved, which its dependent's
-    // plan reports if it needs them.
-    for (const name of wave) {
-      for (const dep of byName.get(name)?.dependsOn ?? []) {
-        if (read.has(dep) || !byName.has(dep)) continue;
-        read.add(dep);
-        const found = await readComponentOutputs(byName.get(dep)!, options.registry, deployContext(options, dep), outputs);
-        if (found) outputs[dep] = found;
-      }
+    // plan reports if it needs them. A dependency outside the selection is
+    // read the same way (#4104).
+    const deps = [...new Set(wave.flatMap((name) => byName.get(name)?.dependsOn ?? []))].filter((dep) => !read.has(dep));
+    for (const dep of deps) {
+      read.add(dep);
+      if (!byName.has(dep)) throw new Error(`planPrSet: ${dep}, a dependency of a planned member, is not among the components; pass every component in the project`);
     }
+    Object.assign(deployed, await readDeployedOutputs(deps, byName, options.registry, (dep) => deployContext(options, dep), outputs));
     const planned = await Promise.all(
       wave.map(async (name) => {
         const at = { component: name, phase: PR_PLAN_PHASE, step: "plan" };
@@ -170,7 +188,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     counts: memberCounts(doc, m.member),
     ...(m.error ? { error: m.error } : {}),
   }));
-  return { doc, members, plans, outputs, failed };
+  const deployedOutputs = Object.fromEntries(Object.entries(deployed).sort(([a], [b]) => a.localeCompare(b)));
+  return { doc, members, plans, outputs, failed, ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}) };
 }
 
 /**
@@ -488,6 +507,7 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.refusal ? { refusal: input.refusal } : {}),
     ...(input.message ? { message: input.message } : {}),
     ...(input.resumed ? { resumed: { applied: [...input.resumed].sort() } } : {}),
+    ...(input.set.deployedOutputs ? { deployedOutputs: input.set.deployedOutputs } : {}),
     approval: input.approval,
     selection: {
       changed: input.plan.order.filter((c) => changed.has(c)),

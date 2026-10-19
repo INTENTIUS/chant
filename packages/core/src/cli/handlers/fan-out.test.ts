@@ -84,6 +84,13 @@ let inputs: Record<string, Record<string, unknown>> = {};
 let stepOutputs: Record<string, Record<string, unknown>> = {};
 /** Called as a component's step starts, before it applies. */
 let onStart: (component: string) => void = () => {};
+/**
+ * What each stack exposes in the deployed estate, read through the step's
+ * `outputs` as cfn-deploy's `describeStack` does (#4104). `undefined` leaves
+ * the capability with no `outputs`; an `Error` makes the read fail.
+ */
+let liveOutputs: Record<string, Record<string, unknown> | Error> | undefined;
+let outputsRead: string[] = [];
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -114,6 +121,8 @@ beforeEach(() => {
   inputs = {};
   stepOutputs = {};
   onStart = () => {};
+  liveOutputs = undefined;
+  outputsRead = [];
   gateLedger = memoryGateLedgerPort();
   stderrLines = [];
   stdoutLines = [];
@@ -149,6 +158,16 @@ beforeEach(() => {
         if (failing.includes(runCtx.component)) throw new Error(`${runCtx.component} failed`);
         return { ok: true, ...(stepOutputs[runCtx.component] ? { outputs: stepOutputs[runCtx.component] } : {}) };
       },
+      ...(liveOutputs
+        ? {
+            async outputs(readCtx: { component: string }) {
+              outputsRead.push(readCtx.component);
+              const live = liveOutputs![readCtx.component];
+              if (live instanceof Error) throw live;
+              return { ...(live ?? {}) };
+            },
+          }
+        : {}),
     } as never);
     return Promise.resolve(registry);
   });
@@ -847,5 +866,68 @@ describe("progress carries only for an unchanged input (#4081)", () => {
     expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
     expect(ran).toHaveLength(6);
     expect(stderr()).toContain("does not record what each component applied, so none of its progress carries");
+  });
+});
+
+describe("a seed's outputs, read from the deployed estate (#4104)", () => {
+  /** cluster-a reads net's TopicArn, and the change touches cluster-a alone. */
+  function wireClusterA(): void {
+    const wired: Component = {
+      name: "cluster-a",
+      dependsOn: ["net"],
+      deploy: [
+        {
+          phase: "Apply",
+          steps: [{ kind: "cfn-deploy", stack: "cluster-a-stack", inputs: { topic: { stackOutput: { stack: "net", name: "TopicArn" } } } }],
+        },
+      ],
+    };
+    const estate = ESTATE.map((c) => (c.name === "cluster-a" ? wired : c));
+    discoverComponentsMock.mockResolvedValue({
+      components: new Map(estate.map((c) => [c.name, { component: c, exportName: c.name, filePath: `${c.name}.component.ts` }])),
+      sourceFiles: [],
+      errors: [],
+    });
+    affectedStacksMock.mockResolvedValue({ changed: ["cluster-a-stack"], dependents: [], indeterminate: [] });
+  }
+
+  test("a cluster-a-only change runs cluster-a with net's deployed outputs, and says it read them", async () => {
+    wireClusterA();
+    liveOutputs = { net: { TopicArn: "arn:aws:sns:us-east-1:000000000000:net", QueueUrl: "http://q" } };
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(0);
+    expect(ran).not.toContain("net");
+    expect(outputsRead).toEqual(["net"]);
+    expect(inputs["cluster-a"]).toEqual(expect.objectContaining({ inputs: { topic: "arn:aws:sns:us-east-1:000000000000:net" } }));
+    expect(stderr()).toContain("net: outputs read from the deployed estate (QueueUrl, TopicArn)");
+  });
+
+  test("--seed-outputs wins: a seed it gives is not read", async () => {
+    wireClusterA();
+    liveOutputs = { net: { TopicArn: "arn:deployed" } };
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-"));
+    try {
+      const seed = join(dir, "seed.json");
+      await writeFile(seed, JSON.stringify({ net: { TopicArn: "arn:seeded" } }));
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", seedOutputs: [seed] }))).toBe(0);
+      expect(outputsRead).toEqual([]);
+      expect(inputs["cluster-a"]).toEqual(expect.objectContaining({ inputs: { topic: "arn:seeded" } }));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a read that fails stops the fan-out before anything runs, naming the seed", async () => {
+    wireClusterA();
+    liveOutputs = { net: new Error("ExpiredToken") };
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(1);
+    expect(ran).toEqual([]);
+    expect(stderr()).toContain("could not read the deployed outputs of net: ExpiredToken");
+  });
+
+  test("--dry-run reads nothing", async () => {
+    wireClusterA();
+    liveOutputs = { net: { TopicArn: "arn:deployed" } };
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test", dryRun: true }))).toBe(0);
+    expect(outputsRead).toEqual([]);
   });
 });
