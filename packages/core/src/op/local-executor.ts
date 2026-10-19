@@ -56,6 +56,7 @@ import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
 import { runEnvOf } from "../lifecycle/run-ledger";
 import { resolveCommitSha } from "../lifecycle/commit-sha";
 import { resolveCiRun, type RunOrigin } from "../lifecycle/release-ledger";
+import { redactDeep, redactText, type Redact } from "./redact";
 import { runEventsOfStepRecord, type RunEventKind, type RunEventRuntime, type RunEventSkipReason } from "../run-event";
 import { openRunEventStore, teeLines } from "../run-event-store";
 import { openRunEventStream, runEventRunOf, type RunEventSink, type RunEventStream } from "../run-event-stream";
@@ -1377,6 +1378,17 @@ export interface RunOpOptions {
    * needs one. The local runtime passes the configured lexicons' contracts.
    */
   contracts?: ReadonlyMap<string, ActivityContract>;
+  /**
+   * Redacts secret values (#4096) from what the run writes about itself:
+   * each {@link runEvents} line and each line kept on this host, each
+   * {@link stepOutput} line and step label, and the run record, its step
+   * records and its `failure`, before {@link signRecord} signs it and the
+   * ledger stores it. The step records on the result are redacted too. This
+   * is the one place a run's writes pass through, so a writer added here
+   * later is redacted with the rest. `chant ci run` passes one built from
+   * the host's secrets file (../workspace/ci-secrets.ts).
+   */
+  redact?: Redact;
 }
 
 /**
@@ -1437,7 +1449,11 @@ export async function runOpLocally(
   const events: { stream?: RunEventStream } = {};
   try {
     const stepConsole = options.stepOutput
-      ? { write: options.stepOutput, ...(options.stepHeartbeatMs !== undefined ? { heartbeatMs: options.stepHeartbeatMs } : {}) }
+      ? {
+          write: options.stepOutput,
+          ...(options.stepHeartbeatMs !== undefined ? { heartbeatMs: options.stepHeartbeatMs } : {}),
+          ...(options.redact ? { redact: options.redact } : {}),
+        }
       : undefined;
     return await withLiveRun(live, () =>
       withRunConsole(stepConsole, () =>
@@ -1478,7 +1494,10 @@ async function runOpInTurn(
   const store = options.ledger
     ? await openRunEventStore(options.ledger.cwd ?? options.cwd ?? process.cwd(), runId)
     : undefined;
-  const eventsWrite = teeLines(options.runEvents?.write, store?.write.bind(store));
+  const teed = teeLines(options.runEvents?.write, store?.write.bind(store));
+  // #4096: every event line, to the caller and to this host's store alike, is redacted once, here.
+  const redact = options.redact;
+  const eventsWrite = teed && redact ? (line: string) => teed(redactText(line, redact)) : teed;
   const stream = eventsWrite
     ? openRunEventStream(
         runEventRunOf({
@@ -1620,7 +1639,7 @@ async function runOpInTurn(
     point?: WaitingPoint,
   ): Promise<OpRunRecord> => {
     const ended = options.now ?? new Date().toISOString();
-    const input = buildRunRecord(config, settled, {
+    let input = buildRunRecord(config, settled, {
       started: startedAt,
       ended,
       status,
@@ -1637,6 +1656,15 @@ async function runOpInTurn(
     if (status === "fail" && options.describeFailure) {
       const failure = options.describeFailure(settled);
       if (failure) input.failure = failure;
+    }
+    // #4096: the record is redacted before it is signed, so the stored record is the one the statement covers.
+    // The step records on the result are redacted in place, so a caller printing them prints no secret.
+    if (redact) {
+      input = redactDeep(input, redact);
+      for (const r of settled) {
+        if (r.error !== undefined) r.error = redact(r.error);
+        if (r.args) r.args = redactDeep(r.args, redact);
+      }
     }
     let record: OpRunRecord = { version: 1, ...input, id: runId };
     if (options.signRecord) {

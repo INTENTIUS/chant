@@ -462,6 +462,8 @@ export interface ParsedArgs {
   commit?: string;
   /** `chant ci run --pass-env <NAME>`, repeatable (#4094): a variable of the runner's environment the job gets, beside the few it always gets. */
   passEnv?: string[];
+  /** `chant ci run|serve --secrets <file>` (#4096): the host's secrets file. Default the file `CHANT_CI_SECRETS` names. */
+  ciSecrets?: string;
   /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. Also `chant ci run --chant` (#4094): what runs chant in the job. */
   ciChant?: string;
   /** `chant ci run|serve --no-status` (#4097): post no commit status for the job. */

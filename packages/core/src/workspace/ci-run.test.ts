@@ -12,7 +12,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createPublicKey, generateKeyPairSync } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
@@ -26,6 +26,8 @@ import { verifyOpRunStatement } from "./trust/op-run-statement";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { prLoopJobs, PR_LOOP_SETUP } from "../components/pr-pipeline";
 import { parseArgs } from "../cli/parse-args";
+import { ciSecretsFor, readCiSecrets } from "./ci-secrets";
+import { runEventFileName, runEventsDir } from "../run-event-store";
 
 afterAll(cleanScratch);
 
@@ -228,9 +230,10 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(git(root, "worktree", "list", "--porcelain")).toBe(before.worktrees);
     expect(JSON.parse(readFileSync(join(out, "pr-plan.json"), "utf-8"))).toEqual({ stage: "pr-plan" });
 
-    // The environment is clean: the job's variables and the few the runner hands on.
+    // The environment is clean: the job's variables and the few the runner hands on. The copied
+    // report shows the values of the variables whose names look secret as *** (#4096).
     const env = envFile(out, "pr-plan");
-    expect(env).toMatchObject({ BASE_SHA: base, PR_NUMBER: "7", GITHUB_SHA: sha, CHANT_ENV: "prod", GITHUB_TOKEN: "forge-token", AWS_ACCESS_KEY_ID: "floci" });
+    expect(env).toMatchObject({ BASE_SHA: base, PR_NUMBER: "7", GITHUB_SHA: sha, CHANT_ENV: "prod", GITHUB_TOKEN: "***", AWS_ACCESS_KEY_ID: "***" });
     for (const name of ["NOT_FOR_JOBS", "CHANT_RUNNER_KEY", "GITHUB_RUN_ID"]) expect(env).not.toHaveProperty(name);
 
     // The record: Op pr-plan at the commit, run by chant, with a statement that verifies.
@@ -513,5 +516,150 @@ describe("a commit status per job (#4097)", () => {
     expect(r.record.status).toBe("ok");
     expect(r.warnings).toHaveLength(2);
     expect(r.warnings[0]).toMatch(/could not set the chant\/pr-plan status: POST \/statuses\/[0-9a-f]+ answered 500/);
+  });
+});
+
+/** A secrets file only its owner can read, as `--secrets` takes it. */
+function secretsFile(text: string, name = "secrets.env"): string {
+  const file = join(scratchDir("chant-ci-run-secrets-"), name);
+  writeFileSync(file, text, { mode: 0o600 });
+  chmodSync(file, 0o600);
+  return file;
+}
+
+/** Every file under `dir`, with its text. */
+function filesUnder(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    out[path] = readFileSync(path, "utf-8");
+  }
+  return out;
+}
+
+describe("the job's secrets from the host (#4096)", () => {
+  test("a secret reaches the step, and the file's allowlist keeps one from the plan", async () => {
+    const { root, app } = workspace();
+    const base = git(root, "rev-parse", "HEAD");
+    commitAt(root, 2, "app/a.txt");
+    const secrets = readCiSecrets(
+      secretsFile(JSON.stringify({ secrets: { DB_PASSWORD: "hunter22-db", DEPLOY_KEY: "deploy-key-value" }, jobs: { plan: ["DB_PASSWORD"] } }), "secrets.json"),
+    );
+    const out = join(scratchDir("chant-ci-run-secret-"), "pr");
+    const r = await ciRun({
+      image: JOB_IMAGE,
+      cwd: app,
+      job: "plan",
+      env: "prod",
+      forge: "forgejo",
+      base,
+      pr: 5,
+      chant: fakeChant(),
+      hostEnv: HOST,
+      secrets,
+      // The step checks the value it got, and that the plan got no DEPLOY_KEY.
+      beforeScript: ['test "$DB_PASSWORD" = "hunter22-db" && test -z "${DEPLOY_KEY+set}" && mkdir -p .chant/pr && echo reached > .chant/pr/reached'],
+      push: false,
+      output: out,
+    });
+    expect(r.status).toBe("ok");
+    expect(readFileSync(join(out, "reached"), "utf-8").trim()).toBe("reached");
+    const env = envFile(out, "pr-plan");
+    // The value reached the command too, and the copied report shows it as ***.
+    expect(env.DB_PASSWORD).toBe("***");
+    expect(env).not.toHaveProperty("DEPLOY_KEY");
+    expect(env).not.toHaveProperty("CHANT_RUNNER_KEY");
+
+    // The apply is not in the allowlist, so it gets every secret.
+    const [, apply] = prLoopJobs("forgejo", "prod");
+    const applyEnv = ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, secrets: ciSecretsFor(secrets, "apply") });
+    expect(applyEnv).toMatchObject({ DB_PASSWORD: "hunter22-db", DEPLOY_KEY: "deploy-key-value" });
+    // A secret can replace a forge token, and never the variables the runner sets.
+    const over = ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, secrets: { GITHUB_TOKEN: "from-file", BASE_SHA: "x", CHANT_RUNNER_KEY: "k" } });
+    expect(over).toMatchObject({ GITHUB_TOKEN: "from-file", BASE_SHA: base });
+    expect(over).not.toHaveProperty("CHANT_RUNNER_KEY");
+    expect(() => ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, passEnv: ["CHANT_RUNNER_KEY"] })).toThrow(/never passed to a job/);
+  });
+
+  test("a secret the job prints, writes in its report or fails with is *** in the events, the signed record, the copied report and the output", async () => {
+    const { root, app } = workspace();
+    const base = git(root, "rev-parse", "HEAD");
+    commitAt(root, 2, "app/a.txt");
+    const SECRET = "s3cret pass#1";
+    const TOKEN = "tok-abc123";
+    const secrets = readCiSecrets(secretsFile(`# the host's secrets\nDB_PASSWORD="${SECRET}"\nexport PIN=abc\n`));
+    expect(secrets.values).toEqual({ DB_PASSWORD: SECRET, PIN: "abc" });
+
+    const leaky = join(scratchDir("chant-ci-run-bin-"), "chant");
+    writeFileSync(
+      leaky,
+      [
+        "#!/bin/sh",
+        "mkdir -p .chant/pr",
+        'env | sort > .chant/pr/pr-apply.env',
+        'printf \'{"stage":"apply","status":"refused","refusal":"not-approved","message":"the deploy failed with %s"}\' "$DB_PASSWORD" > .chant/pr/pr-apply.json',
+        'printf \'{\\n  "entries": [\\n    { "password": "%s" }\\n  ]\\n}\\n\' "$DB_PASSWORD" > .chant/pr/change-set.json',
+        'echo "connecting with $DB_PASSWORD and $MY_API_TOKEN, pin $PIN"',
+        'echo "login refused for $DB_PASSWORD" >&2',
+        "exit 3",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(leaky, 0o755);
+
+    const events: string[] = [];
+    const lines: string[] = [];
+    const out = join(scratchDir("chant-ci-run-leak-"), "pr");
+    const r = await ciRun({
+      image: JOB_IMAGE,
+      cwd: app,
+      job: "apply",
+      env: "prod",
+      forge: "forgejo",
+      base,
+      chant: leaky,
+      hostEnv: { ...HOST, MY_API_TOKEN: TOKEN },
+      passEnv: ["MY_API_TOKEN"],
+      secrets,
+      runnerKey: BOT.pem,
+      push: false,
+      output: out,
+      runId: "chant-leak-1",
+      runEvents: (line) => events.push(line),
+      stepOutput: (line) => lines.push(line),
+    });
+    expect(r.status).toBe("fail");
+    const leaks = (text: string): boolean => text.includes(SECRET) || text.includes(TOKEN);
+
+    // The events, as written and as kept on this host, still valid lines.
+    expect(events.some(leaks)).toBe(false);
+    const stream = checkRunEventLines(events);
+    expect(stream.at(-1)).toMatchObject({ type: "run-settle", status: "failed", failure: { code: "not-approved", reason: "the deploy failed with ***" } });
+    const kept = readFileSync(join((await runEventsDir(app))!, runEventFileName("chant-leak-1")), "utf-8");
+    expect(leaks(kept)).toBe(false);
+    expect(kept).toContain("***");
+
+    // The record: the step's error and failure.reason redacted, and the statement still verifies.
+    expect(leaks(JSON.stringify(r.record))).toBe(false);
+    expect(r.record.failure).toMatchObject({ code: "not-approved", reason: "the deploy failed with ***", exitCode: 3 });
+    const stored = (await readRunLedger("prod", "pr-apply", { cwd: app })).records.at(-1)!;
+    expect(leaks(JSON.stringify(stored))).toBe(false);
+    expect(stored.phases.at(-1)!.steps[0]!.error).toContain("login refused for ***");
+    expect(verifyOpRunStatement(stored, RUNNERS, { runner: ["chant-runner"] })).toMatchObject({ status: "signed", signer: "chant-runner" });
+
+    // The copied report and change set: redacted, and still JSON in the layout the job wrote.
+    const files = filesUnder(out);
+    expect(Object.values(files).some(leaks)).toBe(false);
+    expect(JSON.parse(files[join(out, "pr-apply.json")]!)).toMatchObject({ message: "the deploy failed with ***" });
+    expect(files[join(out, "change-set.json")]).toBe('{\n  "entries": [\n    {\n      "password": "***"\n    }\n  ]\n}\n');
+    expect(envFile(out, "pr-apply")).toMatchObject({ DB_PASSWORD: "***", MY_API_TOKEN: "***" });
+
+    // What ci run prints: the step's lines, the result's failure and the summary. A value under 4 characters is kept.
+    expect(lines.some(leaks)).toBe(false);
+    expect(lines.some((l) => l.endsWith("| connecting with *** and ***, pin abc"))).toBe(true);
+    expect(leaks(r.failure!.error)).toBe(false);
+    expect(leaks(formatCiRun(r))).toBe(false);
+    expect(formatCiRun(r)).toContain("not-approved in apply, exit 3: the deploy failed with ***");
   });
 });

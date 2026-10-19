@@ -254,7 +254,8 @@ CI:
               [--events-json] [--report-url <url>] [--image <image>]
               [--before-script <line>]... [--pr-build]
               [--pr-build-command <line>] [--chant <command>]
-              [--pass-env <NAME>]... [--key <runner key.pem>] [-o <dir>]
+              [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]
+              [-o <dir>]
               [--no-status] [--status-url <url template>]
                         Run the pull-request pipeline's plan or apply job as
                         a pipeline Op in a fresh worktree of --commit (default
@@ -267,6 +268,10 @@ CI:
                         token it sets a chant/pr-plan or chant/pr-apply commit
                         status (pending, then success or failure); --no-status
                         turns that off, and --status-url links it.
+                        --secrets (or CHANT_CI_SECRETS) names a dotenv or
+                        JSON file only its owner can read whose values the
+                        job gets, and which are shown as *** in the events,
+                        the record, the report and the output.
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
               [--author <login>]... [--once] [--rerun-failed]

@@ -14,7 +14,7 @@ chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--
                   [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>]
                   [--no-status] [--status-url <url template>]
-                  [--chant <command>] [--pass-env <NAME>]...
+                  [--chant <command>] [--pass-env <NAME>]... [--secrets <file>]
                   [--key <runner key.pem>] [-o <dir>]
 chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [ci run's job flags]
@@ -178,13 +178,14 @@ The Op has a `setup` phase with the setup lines of the default image, a `build` 
 | `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TZ` | this process, when set |
 | `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITLAB_TOKEN`, `CI_API_V4_URL`, `CI_PROJECT_ID`, `CI_SERVER_HOST`, `CI_SERVER_URL` | this process, when set: the forge and token the commands post with |
 | each `--pass-env <NAME>` | this process, such as the cloud credentials a deploy needs |
+| the secrets the job gets | the [secrets file](#secrets) given with `--secrets`, which replace a variable of the same name above |
 | `CHANT_ENV` | `--env`, as the generated workflow sets it |
 | `GITHUB_SHA`, or `CI_COMMIT_SHA` on GitLab | the commit the job runs at |
 | `BASE_SHA` | `--base`, in place of the push's or the pull request's base commit |
 | `PR_NUMBER` | `--pr`, which the plan needs |
 | `CHANT_RUN_EVENTS_DIR` | the job, with `--events-json` |
 
-`CHANT_RUNNER_KEY` is never passed to a step. `--chant <command>` runs chant in the job's command and in its build and lint lines with another command, such as `npx chant`, and `--before-script 'npm ci'` installs what that command needs in the fresh checkout. The forge comes from `--forge`, or from the environment inside a forge's own job.
+`CHANT_RUNNER_KEY` is never passed to a step: `--pass-env CHANT_RUNNER_KEY` and a secrets file that sets it are refused. A secret doesn't replace the variables from `CHANT_ENV` down, which the runner sets for the job. `--chant <command>` runs chant in the job's command and in its build and lint lines with another command, such as `npx chant`, and `--before-script 'npm ci'` installs what that command needs in the fresh checkout. The forge comes from `--forge`, or from the environment inside a forge's own job.
 
 The run is recorded as Op `pr-plan` or `pr-apply` in `<env>/runs__<op>.jsonl` on `chant/lifecycle`, with `gitSha` the commit and `runOrigin` `{ "forge": "chant" }`, and `ci run` then pushes `chant/lifecycle` to the remote. With `--key <file>`, or the PEM in `CHANT_RUNNER_KEY`, the record carries a statement signed by the runner key, so a [tick from runs](#chant-runs-as-the-status-source) counts it. The key follows the rules for `chant run --key`, checked against `.chant/trust.json` at the commit the job runs. A phase pattern such as `"plan": ["pr-plan"]` matches the job. The run's events are kept on this host for [`chant run events`](/chant/cli/run/#run-events-run), with `kind: "pipeline"` and `runtime: "ci"`. With `--events-json` they are printed on stdout as well. Each line the job prints goes to stderr as it arrives, and the summary follows it there. It exits 0 when the job passed and 1 otherwise. A refused apply exits 1, as it fails the generated job.
 
@@ -195,6 +196,47 @@ chant ci run plan --env prod --forge forgejo --base "$(git merge-base origin/mai
 chant ci run apply --env prod --forge forgejo --base "$(git rev-parse HEAD^)" --key runner.pem
 chant ci tick --source runs --key runner.pem
 ```
+
+### Secrets
+
+`--secrets <file>` names a file on this host that holds the values jobs get, such as cloud credentials and the endpoint a deploy uses ([#4096](https://github.com/INTENTIUS/chant/issues/4096)). It stands in for a forge's repository secrets. Without the flag, `ci run` and `ci serve` read the file `CHANT_CI_SECRETS` names, and with neither a job gets no secrets.
+
+It must belong to the user running chant and give its group and other users no permission at all, as ssh asks of a private key. Any other mode is refused before a job runs, with the `chmod 600` that fixes it. Windows is not checked.
+
+Write it as dotenv or as a JSON object. In dotenv, each line is `NAME=value`, and a line may start with `export` or be a `#` comment. A value in single quotes is taken as written. A value in double quotes may span lines and takes the escapes `\n`, `\t`, `\"` and `\\`:
+
+```bash
+# /etc/chant/ci.env, chmod 600
+AWS_ACCESS_KEY_ID=AKIAEXAMPLE
+AWS_SECRET_ACCESS_KEY='wJalrXUtnFEMI/K7MDENG'
+AWS_ENDPOINT_URL=http://floci.localhost:4566
+```
+
+A JSON file is either a map of name to value, or a `secrets` map with a `jobs` allowlist that names, for `plan` or `apply`, the secrets that job gets:
+
+```json
+{
+  "secrets": {
+    "AWS_ACCESS_KEY_ID": "AKIAEXAMPLE",
+    "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG",
+    "READ_ONLY_TOKEN": "ro-0000"
+  },
+  "jobs": { "plan": ["READ_ONLY_TOKEN"] }
+}
+```
+
+A job the allowlist doesn't name gets every secret, so with no `jobs` both jobs get them all. The allowlist lives in the file on the host and not in the repository, so a pull request can't change what its own plan gets. Only the JSON form takes an allowlist.
+
+chant redacts every value in the file from what the run writes, whether the job got it or not. It also redacts the value of each variable in the job's environment whose name looks secret, which is a name with `TOKEN`, `SECRET`, `KEY` or `PASSWORD` in it. `GITHUB_TOKEN` is one, and so is a `--pass-env AWS_SECRET_ACCESS_KEY`. Each one then reads `***` in these places:
+
+| Where | What is redacted |
+|---|---|
+| Run events | Each line on stdout with `--events-json`, and the copy kept on this host. |
+| The run record on `chant/lifecycle` | The whole record, step errors and `failure.reason` included. It is redacted before it is signed, so the statement covers the redacted record and verifies. |
+| The report `ci run` copies out | Every text file in it, the change set and the component events too. A JSON file stays JSON. |
+| The console | Each line a step prints, and what `ci run` and `ci serve` print after. |
+
+A value shorter than 4 characters is not redacted, since it would match too much ordinary text. A value that spans lines is also redacted line by line, as step output arrives a line at a time. What the job itself uploads with `--report-url` is the job's own copy and is not redacted, and neither is the resume record `ci serve` keeps.
 
 `ci run` runs one job when you run it, and a re-run of a failed apply plans every member again, since `ci run` keeps no resume record between runs. [`ci serve`](#ci-serve) watches the forge and keeps one.
 
@@ -215,7 +257,7 @@ A status the forge refuses is a warning, and the job's result and exit code stan
 
 ## ci serve
 
-Watches a forge and runs the pull-request jobs on this host with [`ci run`](#ci-run) ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). Each poll reads the open pull requests into the target branch (`--branch`, default `main`) and the branch's head through the forge's API. It runs the plan for each pull request head it has not planned, with `--base` the pull request's base commit and `--pr` its number. It runs the apply for each new commit on the target branch, with `--base` the head the previous apply was measured to, which is the push's `before` on a forge. The first poll only notes the head: a commit the branch held before the runner watched it is not applied. `--forge` is `forgejo` or `github`. The token and, on Forgejo, `GITHUB_SERVER_URL` and `GITHUB_API_URL` come from the environment as for `pr-plan`, and `--repo` sets `GITHUB_REPOSITORY` for the poll and for every job. Each job it starts gets the job flags `ci serve` was given, which are `ci run`'s, such as `--gate`, `--chant` and `--key`.
+Watches a forge and runs the pull-request jobs on this host with [`ci run`](#ci-run) ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). Each poll reads the open pull requests into the target branch (`--branch`, default `main`) and the branch's head through the forge's API. It runs the plan for each pull request head it has not planned, with `--base` the pull request's base commit and `--pr` its number. It runs the apply for each new commit on the target branch, with `--base` the head the previous apply was measured to, which is the push's `before` on a forge. The first poll only notes the head: a commit the branch held before the runner watched it is not applied. `--forge` is `forgejo` or `github`. The token and, on Forgejo, `GITHUB_SERVER_URL` and `GITHUB_API_URL` come from the environment as for `pr-plan`, and `--repo` sets `GITHUB_REPOSITORY` for the poll and for every job. Each job it starts gets the job flags `ci serve` was given, which are `ci run`'s, such as `--gate`, `--chant`, `--secrets` and `--key`. It reads the [secrets file](#secrets) once when it starts, so a loose or broken file stops it before the first poll, and a changed file is read on the next start.
 
 It runs in host mode. Each job runs in a fresh worktree on this host as the user running `ci serve`, with the clean environment `ci run` gives it, and the plan runs the pull request's code. A pull request from a fork is never planned. `--author <login>` (repeatable) plans only the pull requests those people opened. Run it only for a repository whose authors you trust with the host's credentials; a container per job is [#4015](https://github.com/INTENTIUS/chant/issues/4015).
 
@@ -234,7 +276,7 @@ A failed job stays failed. `--rerun-failed` runs again the failed apply at the t
 ```bash
 GITHUB_SERVER_URL=http://forgejo.localhost GITHUB_API_URL=http://forgejo.localhost/api/v1 CHANT_FORGE_TOKEN=... \
   chant ci serve --forge forgejo --repo demo/estate --env local --author demo-driver \
-    --chant 'npx chant' --before-script 'npm ci' --pass-env AWS_ENDPOINT_URL --key runner.pem
+    --chant 'npx chant' --before-script 'npm ci' --secrets /etc/chant/ci.env --key runner.pem
 ```
 
 `ci serve` takes no webhook yet. It polls, so the host needs no inbound port, and a webhook checked with an HMAC secret is a follow-up.
