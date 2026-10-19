@@ -16,6 +16,9 @@
  * #1108 gap in generate mode.
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ParsedArgs } from "../registry";
 
 const lintCommandMock = vi.fn();
@@ -103,5 +106,44 @@ describe("runLint build-time parameters (#2251)", () => {
 
     expect(exit).toBe(1);
     expect(lintCommandMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("runLint on a project whose dependencies are not installed (#4116)", () => {
+  let project: string;
+  let stderr: string[];
+
+  beforeEach(() => {
+    project = realpathSync(mkdtempSync(join(tmpdir(), "chant-4116-lint-")));
+    stderr = [];
+    loadChantConfigUpwardMock.mockReset().mockResolvedValue({ config: {} });
+    vi.spyOn(console, "error").mockImplementation((s: string) => void stderr.push(s));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(project, { recursive: true, force: true });
+  });
+
+  const failing = (message: string) =>
+    lintCommandMock.mockReset().mockResolvedValue({
+      success: false,
+      errorCount: 1,
+      warningCount: 0,
+      diagnostics: [{ file: join(project, "src/a.ts"), line: 1, column: 1, ruleId: "LEX002", severity: "error", message }],
+    });
+
+  test("an uninstalled import leads with the dependencies message", async () => {
+    failing(`Cannot find package '@intentius/chant-lexicon-aws' imported from ${join(project, "src/a.ts")}`);
+    const exit = await runLint({ args: makeArgs({ path: project }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain(`dependencies not installed: @intentius/chant-lexicon-aws does not resolve from ${project}`);
+  });
+
+  test("a real lint error prints no dependencies message", async () => {
+    failing("Exported declarable 'x' is broken");
+    const exit = await runLint({ args: makeArgs({ path: project }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).not.toContain("dependencies not installed");
   });
 });

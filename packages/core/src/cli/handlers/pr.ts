@@ -91,6 +91,7 @@ import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrFor
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
+import { reportUninstalledDependencies } from "../dependencies";
 import { findWorkspaceRoot } from "../../project-root";
 import { resolveChangedUnits } from "./fan-out";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
@@ -191,9 +192,15 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
       config,
     });
   } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    reportUninstalledDependencies([message], projectPath); // #4116
+    return fail(message);
   }
-  if (!derived.success) return fail(derived.error ?? "Could not discover components");
+  if (!derived.success) {
+    // #4116: component files that import packages the project has not installed.
+    if (derived.error) reportUninstalledDependencies([derived.error], projectPath);
+    return fail(derived.error ?? "Could not discover components");
+  }
 
   const seededOutputs: Record<string, Record<string, unknown>> = {};
   for (const file of args.seedOutputs ?? []) {

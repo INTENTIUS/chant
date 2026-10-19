@@ -19,7 +19,8 @@ import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
 import { toDot } from "../../graph-dot";
 import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
-import { lintCommand } from "../commands/lint";
+import { lintCommand, type LintResult } from "../commands/lint";
+import { reportUninstalledDependencies } from "../dependencies";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
 import { isNoLexiconDetected } from "../../detectLexicon";
 import { readFileSync } from "node:fs";
@@ -556,6 +557,21 @@ async function runComponentGraph(ctx: CommandContext): Promise<number> {
 }
 
 /**
+ * The lint gate's refusal. When the lint errors are imports of packages the
+ * project has not installed (#4116), the dependencies message leads, and it
+ * stands alone when every error is one: the source is not what is wrong.
+ */
+function refuseLintGate(lint: LintResult, projectPath: string): void {
+  const errors = (lint.diagnostics ?? []).filter((d) => d.severity === "error").map((d) => d.message);
+  if (reportUninstalledDependencies(errors, projectPath) === "all") return;
+  console.error(
+    formatError({
+      message: "Refusing to emit graph: source has lint errors. Run `chant lint` and fix them first.",
+    }),
+  );
+}
+
+/**
  * `chant graph --components --format ir|mermaid|dot|layout` — the component DAG
  * projected into the renderable IR (nodes = components, `groups.byWave` = the
  * parallel-safe deploy waves, edges = `dependsOn` consumer → producer). This is
@@ -596,11 +612,7 @@ async function runComponentGraphView(
     buildParams: componentParams,
   });
   if (!lint.success) {
-    console.error(
-      formatError({
-        message: "Refusing to emit graph: source has lint errors. Run `chant lint` and fix them first.",
-      }),
-    );
+    refuseLintGate(lint, projectPath);
     return 1;
   }
 
@@ -869,12 +881,7 @@ async function runGraphView(
     buildParams,
   });
   if (!lint.success) {
-    console.error(
-      formatError({
-        message:
-          "Refusing to emit graph: source has lint errors. Run `chant lint` and fix them first.",
-      }),
-    );
+    refuseLintGate(lint, projectPath);
     return 1;
   }
 
