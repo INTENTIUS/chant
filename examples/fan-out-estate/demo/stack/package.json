@@ -1,0 +1,15 @@
+{
+  "name": "fan-out-estate-demo-stack",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The fan-out demo's stack: Forgejo, forgejo-runner and floci in one compose project, and the image its jobs run in.",
+  "scripts": {
+    "build": "chant build src --lexicon docker -o compose.yaml",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-docker": "*"
+  }
+}
