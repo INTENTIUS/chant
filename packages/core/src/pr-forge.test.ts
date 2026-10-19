@@ -912,3 +912,32 @@ describe("pull requests over REST (#3798)", () => {
     await expect(forgejoForge({ ...fjOpts, fetch }).openPullRequest({ head: "h", title: "t", body: "b" })).rejects.toThrow(/no default branch.*pass base/);
   });
 });
+
+describe("setCommitStatus, a runner job's status (#4097)", () => {
+  const long = "x".repeat(300);
+
+  test("GitHub posts state, context, a description cut to 140 and target_url", async () => {
+    const { fetch, calls } = fakeFetch({ [`POST /repos/acme/infra/statuses/${SHA}`]: {} });
+    const forge = githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", token: "t0k", fetch });
+    await forge.setCommitStatus!(SHA, { context: "chant/pr-plan", state: "failure", description: long, targetUrl: "https://host/reports/7/abc/" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "POST", url: `https://api.github.com/repos/acme/infra/statuses/${SHA}` });
+    expect(calls[0].headers.Authorization).toBe("Bearer t0k");
+    expect(calls[0].body).toEqual({ state: "failure", context: "chant/pr-plan", description: "x".repeat(140), target_url: "https://host/reports/7/abc/" });
+  });
+
+  test("Forgejo posts to /repos/{owner}/{repo}/statuses/{sha} under /api/v1, and omits target_url when there is none", async () => {
+    const { fetch, calls } = fakeFetch({ [`POST /api/v1/repos/acme/infra/statuses/${SHA}`]: {} });
+    const forge = forgejoForge({ apiBase: "https://codeberg.org/api/v1", repo: "acme/infra", token: "t0k", host: "codeberg.org", fetch });
+    await forge.setCommitStatus!(SHA, { context: "chant/pr-apply", state: "pending", description: "pr-apply running" });
+    expect(calls[0]).toMatchObject({ method: "POST", url: `https://codeberg.org/api/v1/repos/acme/infra/statuses/${SHA}` });
+    expect(calls[0].headers.Authorization).toBe("token t0k");
+    expect(calls[0].body).toEqual({ state: "pending", context: "chant/pr-apply", description: "pr-apply running" });
+  });
+
+  test("a refusal throws, and GitLab's client has none", async () => {
+    const { fetch } = fakeFetch({ [`POST /repos/acme/infra/statuses/${SHA}`]: 403 });
+    await expect(githubForge({ apiBase: "https://api.github.com", repo: "acme/infra", token: "t", fetch }).setCommitStatus!(SHA, { context: "c", state: "success", description: "d" })).rejects.toBeInstanceOf(ForgeApiError);
+    expect(gitlabForge({ apiBase: "https://gl/api/v4", project: "42", token: "t", fetch }).setCommitStatus).toBeUndefined();
+  });
+});

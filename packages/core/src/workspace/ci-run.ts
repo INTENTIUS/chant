@@ -37,6 +37,10 @@
  * key is given, so `chant ci tick --source runs` (#4044) judges the commit
  * from it. Its events are `kind: "pipeline"` and `runtime: "ci"`, and the
  * record and the events carry `runOrigin: { forge: "chant" }`.
+ *
+ * With a forge client (#4097) the job also sets a commit status at its
+ * commit: `pending` when it starts, `success` or `failure` when it settles.
+ * A status the forge refuses is a warning and never fails the job.
  */
 
 import { execFileSync } from "node:child_process";
@@ -44,7 +48,9 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
-import { detectForge, FORGE_KINDS, type ForgeKind } from "../pr-forge";
+import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind } from "../pr-forge";
+import { PR_APPLY_GATE } from "../pr-loop";
+import { reportKey } from "../pr-report-url";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import type { RunOrigin } from "../lifecycle/release-ledger";
@@ -266,6 +272,77 @@ export function ciJobFailure(input: { job: CiJobName; op: OpConfig; records: rea
   return { code: "command-failed", reason: firstLine(failed.error ?? "the command failed"), phase: failed.phase, ...exit };
 }
 
+/** What posts a job's commit status (#4097): the `setCommitStatus` of a GitHub or Forgejo client. */
+export interface CiStatusClient {
+  setCommitStatus(sha: string, status: CommitStatus): Promise<void>;
+}
+
+/** Where a job's status goes (#4097). */
+export interface CiStatusConfig {
+  client: CiStatusClient;
+  /** `--status-url`: the link the status carries, `{key}` standing for `<pr>/<commit>[/<member>]`. Otherwise an https `--report-url` is used. */
+  urlTemplate?: string;
+}
+
+/** A status description is cut to what GitHub and Forgejo keep. */
+const STATUS_DESCRIPTION = 140;
+
+const cut = (text: string, max = STATUS_DESCRIPTION): string => (text.length > max ? `${text.slice(0, max - 3)}...` : text);
+
+/**
+ * A job's status context: `chant/pr-plan` for the plan, and for the apply
+ * `chant/<gate>`, which is `chant/pr-apply` unless `--gate` renamed the gate.
+ * pr-plan's own status is `chant/plan` (../pr-loop.ts), a different context.
+ */
+export function ciStatusContext(job: CiJobName, gate?: string): string {
+  return job === "apply" ? `chant/${gate ?? PR_APPLY_GATE}` : `chant/${CI_JOB_OPS.plan}`;
+}
+
+/**
+ * The link a job's status carries: the `--status-url` template with `{key}`
+ * filled, else the https `--report-url` followed by the key and a slash, else
+ * none (an `s3://` or `file://` URL is not one a browser opens).
+ */
+export function ciStatusUrl(input: { urlTemplate?: string; reportUrl?: string; pr?: number; commit: string; member?: string }): string | undefined {
+  const key = reportKey(input.pr ?? null, input.commit, input.member);
+  if (input.urlTemplate) return input.urlTemplate.split("{key}").join(key);
+  const url = input.reportUrl?.trim();
+  if (url && /^https:\/\//.test(url)) return `${url.replace(/\/+$/, "")}/${key}/`;
+  return undefined;
+}
+
+/** What the settled status says: a short summary, or on failure the record's code and reason. */
+export function ciStatusSettled(op: string, result: Pick<CiRunResult, "status" | "record" | "failure">, seconds: number): Pick<CommitStatus, "state" | "description"> {
+  if (result.status === "ok") return { state: "success", description: cut(`${op} passed in ${seconds}s`) };
+  const why = result.record.failure;
+  const text = why ? `${why.code}: ${why.reason}` : result.failure ? `${result.failure.phase}: ${firstLine(result.failure.error)}` : `${op} failed`;
+  return { state: "failure", description: cut(text) };
+}
+
+/**
+ * The status client for `chant ci run` and `chant ci serve` (#4097), or none:
+ * off with `--no-status`, on GitLab (its client has no commit status call
+ * here), and without a forge token. A token with the rest of the forge's
+ * variables missing gives a warning instead.
+ */
+export function ciStatusFromEnv(input: { forge: ForgeKind; hostEnv: Record<string, string | undefined>; noStatus?: boolean; statusUrl?: string }): { status?: CiStatusConfig; warning?: string } {
+  if (input.noStatus || input.forge === "gitlab") return {};
+  if (input.statusUrl !== undefined && !/^https?:\/\/\S+$/.test(input.statusUrl)) {
+    throw new CiRunError(`--status-url takes an http or https URL template such as https://host/reports/{key}, not ${JSON.stringify(input.statusUrl)}`);
+  }
+  const env = input.hostEnv;
+  const hasToken = Boolean(env.CHANT_FORGE_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN);
+  if (!hasToken) return {};
+  try {
+    const client = forgeFromEnv(input.forge, env);
+    if (!client.setCommitStatus) return {};
+    return { status: { client: { setCommitStatus: client.setCommitStatus.bind(client) }, ...(input.statusUrl ? { urlTemplate: input.statusUrl } : {}) } };
+  } catch (err) {
+    if (err instanceof ForgeEnvironmentError) return { warning: `no commit status will be set: ${err.message}` };
+    throw err;
+  }
+}
+
 /** What `chant ci run` runs. */
 export interface CiRunRequest {
   /** Where the command was run: the project, or a workspace member's directory. */
@@ -315,6 +392,8 @@ export interface CiRunRequest {
    * failed. `chant ci serve` names one per `prApplyRecordKey`.
    */
   resumeRecord?: string;
+  /** Set a commit status at the job's commit (#4097). Absent: none is set. `chant ci run` builds it from the environment. */
+  status?: CiStatusConfig;
   signal?: AbortSignal;
 }
 
@@ -443,6 +522,20 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
       mkdirSync(dirname(resume.job), { recursive: true });
       copyFileSync(resume.host, resume.job);
     }
+    const statusContext = ciStatusContext(req.job, req.loop?.gate);
+    const statusUrl = req.status
+      ? ciStatusUrl({ ...(req.status.urlTemplate ? { urlTemplate: req.status.urlTemplate } : {}), ...(req.loop?.reportUrl ? { reportUrl: req.loop.reportUrl } : {}), ...(req.pr !== undefined ? { pr: req.pr } : {}), commit, ...(place.member ? { member: place.member } : {}) })
+      : undefined;
+    const postStatus = async (state: CommitStatus["state"], description: string): Promise<void> => {
+      if (!req.status) return;
+      try {
+        await req.status.client.setCommitStatus(commit, { context: statusContext, state, description: cut(description), ...(statusUrl ? { targetUrl: statusUrl } : {}) });
+      } catch (err) {
+        warnings.push(`could not set the ${statusContext} status: ${message(err)}`);
+      }
+    };
+    const startedAt = Date.now();
+    await postStatus("pending", `${op.name} running`);
     let ledgerError: string | undefined;
     let result: OpRunResult;
     try {
@@ -463,9 +556,19 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
         },
       });
     } catch (err) {
-      if (!(err instanceof OpRunFailure)) throw err;
+      if (!(err instanceof OpRunFailure)) {
+        await postStatus("error", `${op.name} stopped: ${firstLine(message(err))}`);
+        throw err;
+      }
       result = err.result;
     }
+    const failedStep = result.records.find((r) => r.status === "fail");
+    const settled = ciStatusSettled(
+      op.name,
+      { status: result.status, record: result.record, ...(failedStep ? { failure: { phase: failedStep.phase, error: failedStep.error ?? "the step failed" } } : {}) },
+      Math.round((Date.now() - startedAt) / 1000),
+    );
+    await postStatus(settled.state, settled.description);
 
     if (resume && existsSync(resume.job)) {
       try {
@@ -518,7 +621,7 @@ export function formatCiRun(r: CiRunResult): string {
 const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--image <image>] [--before-script <line>]... " +
-  "[--pr-build] [--pr-build-command <line>] " +
+  "[--pr-build] [--pr-build-command <line>] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--key <runner key.pem>] [-o <dir>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -536,8 +639,12 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     for (const name of args.passEnv ?? []) if (!ENV_NAME.test(name)) throw new CiRunError(`--pass-env takes a variable's name, not ${JSON.stringify(name)}`);
     const fromFlag = args.key !== undefined;
     const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
+    const hostEnv = process.env;
+    const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
+    if (warning) console.error(formatWarning({ message: warning }));
     const result = await ciRun({
       cwd: process.cwd(),
+      ...(status ? { status } : {}),
       job,
       env: args.env,
       forge: forge as ForgeKind,

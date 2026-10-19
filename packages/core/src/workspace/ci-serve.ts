@@ -41,7 +41,7 @@ import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type LeaseRecord } from "../lifecycle/lease";
 import { parseDuration } from "../op/duration";
-import { CI_JOB_OPS, ciJobPlace, ciRun, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
+import { CI_JOB_OPS, ciJobPlace, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
 import { RUNNER_KEY_ENV } from "./ci-green";
 import { gitTop } from "./tree";
 
@@ -441,7 +441,7 @@ export function formatCiServeEvent(e: CiServeEvent): string {
 
 const USAGE =
   "chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
-  "[--author <login>]... [--once] [--rerun-failed] [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] " +
+  "[--author <login>]... [--once] [--rerun-failed] [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
   "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--key <runner key.pem>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -468,6 +468,8 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
     const hostEnv = { ...process.env, GITHUB_REPOSITORY: args.ciRepo };
     const client = forgeFromEnv(forge, hostEnv);
+    const { status, warning } = ciStatusFromEnv({ forge, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
+    if (warning) console.error(formatWarning({ message: warning }));
     if (!client.openPullRequests || !client.branchHead) throw new CiRunError(`the ${forge} client cannot list pull requests`);
     const opts: CiServeOptions = {
       cwd: process.cwd(),
@@ -492,6 +494,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
         ...(args.ciChant ? { chant: args.ciChant } : {}),
         ...(args.passEnv?.length ? { passEnv: args.passEnv } : {}),
+        ...(status ? { status } : {}),
         ...(runnerKey !== undefined ? { runnerKey, runnerKeyFromEnv: !fromFlag } : {}),
         ...(args.eventsJson ? { runEvents: (line: string) => void process.stdout.write(line) } : {}),
         hostEnv,

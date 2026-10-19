@@ -388,6 +388,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       const url = args[++i];
       if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix> or file://<directory>");
       result.reportUrl = url;
+    } else if (arg === "--no-status") {
+      // `chant ci run|serve --no-status` (#4097): post no commit status for the job.
+      result.noStatus = true;
+    } else if (arg === "--status-url") {
+      // `chant ci run|serve --status-url <template>` (#4097): the link a job's status carries, in place of an https --report-url.
+      result.statusUrl = args[++i];
+      if (!result.statusUrl || result.statusUrl.startsWith("-")) throw new Error("--status-url needs a URL template: --status-url https://host/reports/{key}");
     } else if (arg === "--allow-unsigned") {
       // `chant release publish --allow-unsigned` (#4049).
       result.allowUnsigned = true;

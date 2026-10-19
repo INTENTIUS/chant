@@ -17,7 +17,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
-import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciRun, CiRunError, formatCiRun } from "./ci-run";
+import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
+import type { CommitStatus } from "../pr-forge";
 import { ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
 import type { StepRecord } from "../op/local-executor";
 import { sshFromEd25519 } from "./trust/dsse";
@@ -412,5 +413,105 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     // A report that says the job did its work leaves the command's failure.
     writeFileSync(join(dir, "pr-apply.json"), JSON.stringify({ status: "applied", members: [] }));
     expect(at([ok("build"), fail("apply", 1)])!.code).toBe("command-failed");
+  });
+});
+
+describe("a commit status per job (#4097)", () => {
+  /** A fake forge client: it records each status, and fails on the states in `refuse`. */
+  function fakeForge(refuse: string[] = []): { client: { setCommitStatus(sha: string, status: CommitStatus): Promise<void> }; posts: { sha: string; status: CommitStatus }[] } {
+    const posts: { sha: string; status: CommitStatus }[] = [];
+    return {
+      posts,
+      client: {
+        async setCommitStatus(sha, status) {
+          if (refuse.includes(status.state)) throw new Error(`POST /statuses/${sha} answered 500`);
+          posts.push({ sha, status });
+        },
+      },
+    };
+  }
+
+  async function job(over: Record<string, unknown>) {
+    const { root, app } = workspace();
+    const base = git(root, "rev-parse", "HEAD");
+    const sha = commitAt(root, 2, "app/a.txt");
+    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: HOST, push: false, output: join(scratchDir("chant-ci-status-"), "pr"), ...over } as Parameters<typeof ciRun>[0]);
+    return { r, sha };
+  }
+
+  test("a good job posts pending, then success, at its commit", async () => {
+    const forge = fakeForge();
+    const { r, sha } = await job({ status: { client: forge.client } });
+    expect(r.status).toBe("ok");
+    expect(r.warnings).toEqual([]);
+    expect(forge.posts.map((p) => [p.sha, p.status.context, p.status.state])).toEqual([[sha, "chant/pr-plan", "pending"], [sha, "chant/pr-plan", "success"]]);
+    expect(forge.posts[0]!.status.description).toBe("pr-plan running");
+    expect(forge.posts[1]!.status.description).toMatch(/^pr-plan passed in \d+s$/);
+    expect(forge.posts[1]!.status).not.toHaveProperty("targetUrl");
+  });
+
+  test("a failed job posts pending, then failure with the run record's code and reason", async () => {
+    const forge = fakeForge();
+    const report = JSON.stringify({ stage: "apply", status: "refused", refusal: "not-approved", message: "no reviewer approved this plan" });
+    const { r } = await job({ job: "apply", pr: undefined, hostEnv: { ...HOST, FAKE_EXIT: "1", FAKE_REPORT: report }, passEnv: ["FAKE_EXIT", "FAKE_REPORT"], status: { client: forge.client } });
+    expect(r.status).toBe("fail");
+    expect(forge.posts.map((p) => [p.status.context, p.status.state])).toEqual([["chant/pr-apply", "pending"], ["chant/pr-apply", "failure"]]);
+    expect(r.record.failure!.code).toBe("not-approved");
+    expect(forge.posts[1]!.status.description).toBe("not-approved: no reviewer approved this plan");
+  });
+
+  test("a long failure reason is cut to the forge's 140 characters", async () => {
+    const forge = fakeForge();
+    const report = JSON.stringify({ stage: "apply", status: "refused", refusal: "plan-changed", message: "y".repeat(400) });
+    await job({ job: "apply", pr: undefined, hostEnv: { ...HOST, FAKE_EXIT: "1", FAKE_REPORT: report }, passEnv: ["FAKE_EXIT", "FAKE_REPORT"], status: { client: forge.client } });
+    const d = forge.posts[1]!.status.description;
+    expect(d).toHaveLength(140);
+    expect(d.startsWith("plan-changed: yyy")).toBe(true);
+    expect(d.endsWith("...")).toBe(true);
+  });
+
+  test("a renamed gate names the apply's context", async () => {
+    const forge = fakeForge();
+    await job({ job: "apply", pr: undefined, loop: { gate: "prod-approval" }, status: { client: forge.client } });
+    expect(forge.posts.map((p) => p.status.context)).toEqual(["chant/prod-approval", "chant/prod-approval"]);
+    expect(ciStatusContext("plan", "prod-approval")).toBe("chant/pr-plan");
+  });
+
+  test("target_url is an https --report-url with the key, or the --status-url template for an s3 url", async () => {
+    const https = fakeForge();
+    const { sha } = await job({ loop: { reportUrl: "https://host/reports/" }, status: { client: https.client } });
+    const key = `7/${sha}/app`;
+    expect(https.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/${key}/`, `https://host/reports/${key}/`]);
+
+    const s3 = fakeForge();
+    const mapped = await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: s3.client, urlTemplate: "https://host/reports/{key}" } });
+    expect(s3.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/7/${mapped.sha}/app`, `https://host/reports/7/${mapped.sha}/app`]);
+
+    const bare = fakeForge();
+    await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: bare.client } });
+    expect(bare.posts.every((p) => p.status.targetUrl === undefined)).toBe(true);
+    expect(ciStatusUrl({ reportUrl: "file:///tmp/r", commit: "abc" })).toBeUndefined();
+  });
+
+  test("--no-status, a missing token and GitLab give no client; a bad --status-url is refused", () => {
+    const env = { GITHUB_TOKEN: "t", GITHUB_REPOSITORY: "acme/estate", GITHUB_SERVER_URL: "http://forgejo.localhost", GITHUB_API_URL: "http://forgejo.localhost/api/v1" };
+    expect(ciStatusFromEnv({ forge: "forgejo", hostEnv: env, noStatus: true })).toEqual({});
+    expect(ciStatusFromEnv({ forge: "forgejo", hostEnv: { GITHUB_REPOSITORY: "acme/estate" } })).toEqual({});
+    expect(ciStatusFromEnv({ forge: "gitlab", hostEnv: { ...env, GITLAB_TOKEN: "t" } })).toEqual({});
+    expect(ciStatusFromEnv({ forge: "forgejo", hostEnv: env }).status?.client.setCommitStatus).toBeTypeOf("function");
+    expect(ciStatusFromEnv({ forge: "forgejo", hostEnv: env, statusUrl: "https://h/{key}" }).status?.urlTemplate).toBe("https://h/{key}");
+    expect(ciStatusFromEnv({ forge: "forgejo", hostEnv: { GITHUB_TOKEN: "t" } }).warning).toMatch(/no commit status/);
+    expect(() => ciStatusFromEnv({ forge: "forgejo", hostEnv: env, statusUrl: "s3://b/{key}" })).toThrow(/--status-url takes an http or https URL/);
+    const flags = parseArgs(["ci", "run", "plan", "--no-status", "--status-url", "https://h/{key}"]);
+    expect(flags).toMatchObject({ noStatus: true, statusUrl: "https://h/{key}" });
+  });
+
+  test("a status the forge refuses is a warning, and the job stays ok", async () => {
+    const forge = fakeForge(["pending", "success"]);
+    const { r } = await job({ status: { client: forge.client } });
+    expect(r.status).toBe("ok");
+    expect(r.record.status).toBe("ok");
+    expect(r.warnings).toHaveLength(2);
+    expect(r.warnings[0]).toMatch(/could not set the chant\/pr-plan status: POST \/statuses\/[0-9a-f]+ answered 500/);
   });
 });
