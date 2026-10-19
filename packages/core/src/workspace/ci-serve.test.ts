@@ -23,9 +23,9 @@ import { forgejoForge, githubForge, type ForgeFetch, type OpenPullRequest } from
 
 afterAll(cleanScratch);
 
-function commit(root: string, file: string): string {
+function commit(root: string, file: string, message = file): string {
   writeFiles(root, { [file]: `${file} ${Math.random()}\n` });
-  for (const args of [["add", "-A"], ["commit", "-q", "-m", file]]) {
+  for (const args of [["add", "-A"], ["commit", "-q", "-m", message]]) {
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { cwd: root, stdio: "ignore" });
   }
   return git(root, "rev-parse", "HEAD");
@@ -444,5 +444,68 @@ describe("ci serve follows the forge's chant/lifecycle (#4121)", () => {
     expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
     expect(results[0]).toMatchObject({ pushed: true });
     expect(isAncestor(origin, ahead, git(origin, "rev-parse", "refs/heads/chant/lifecycle"))).toBe(true);
+  });
+});
+
+describe("ci serve applies fast-forwards only, and honours [skip ci] (#4122)", () => {
+  test("a force push back to an older commit is recorded as seen and not applied, and the next fast-forward applies", async () => {
+    const { root, app, main } = workspace();
+    const later = commit(root, "app/later.txt");
+    git(root, "push", "-q", "origin", "main");
+    const forge = fakeForge(later);
+    const { opts, events, state } = serve(app, forge);
+    await ciServePass(opts);
+    expect(ofType(events, "baseline")).toEqual([{ type: "baseline", commit: later }]);
+
+    git(root, "reset", "-q", "--hard", main);
+    git(root, "push", "-q", "-f", "origin", "main");
+    forge.head = main;
+    const back = await ciServePass(opts);
+    expect(back.jobs).toEqual([]);
+    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "apply", commit: main, reason: "not-fast-forward", branch: "main", from: later }]);
+    expect(formatCiServeEvent(ofType(events, "not-run")[0]!)).toContain("not a fast-forward");
+    const file = join(state, `${prApplyGroup("prod", "app")}.json`);
+    expect(readCiServeState(file, { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" }).target).toBe(main);
+
+    const next = commit(root, "app/next.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = next;
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: next, base: main, status: "ok" })]);
+  });
+
+  test("a target head whose message says [skip ci] is recorded as seen and not applied", async () => {
+    const { root, app, main } = workspace();
+    const forge = fakeForge(main);
+    const { opts, events, state } = serve(app, forge);
+    await ciServePass(opts);
+    const skip = commit(root, "app/tidy.txt", "tidy the app [skip ci]");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = skip;
+
+    expect((await ciServePass(opts)).jobs).toEqual([]);
+    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "apply", commit: skip, reason: "skip-ci" }]);
+    expect(formatCiServeEvent(ofType(events, "not-run")[0]!)).toContain("says [skip ci]");
+    const file = join(state, `${prApplyGroup("prod", "app")}.json`);
+    expect(readCiServeState(file, { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" }).target).toBe(skip);
+  });
+
+  test("a pull request head whose message says [ci skip] is not planned", async () => {
+    const { root, app, main } = workspace();
+    git(root, "checkout", "-q", "-b", "pr-4");
+    const head = commit(root, "app/pr-4.txt", "draft [ci skip]");
+    git(root, "push", "-q", "origin", `${head}:refs/pull/4/head`);
+    git(root, "checkout", "-q", "main");
+    const forge = fakeForge(main);
+    forge.prs = [pr(4, head, main)];
+    const { opts, events, state } = serve(app, forge);
+
+    expect((await ciServePass(opts)).jobs).toEqual([]);
+    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "plan", commit: head, pr: 4, reason: "skip-ci" }]);
+    const file = join(state, `${prApplyGroup("prod", "app")}.json`);
+    expect(readCiServeState(file, { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" }).skipped).toEqual({ [ciServeKey({ job: "plan", pr: 4, commit: head })]: "skip-ci" });
+    // Seen once: the next poll says nothing of it.
+    expect((await ciServePass(opts)).jobs).toEqual([]);
+    expect(ofType(events, "not-run")).toHaveLength(1);
   });
 });
