@@ -1,3 +1,4 @@
+import { dependenciesNotInstalled } from "../dependencies";
 import { resolve } from "node:path";
 import { lintCommand, lintCommandWatch, printLintResult } from "../commands/lint";
 import { formatError, formatInfo } from "../format";
@@ -35,6 +36,9 @@ export async function runLint(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `Invalid format for lint: ${lintFormat}. Expected 'stylish', 'json', or 'sarif'.` }));
     return 1;
   }
+
+  // #4116: an uninstalled project is not a project with lint errors.
+  if (await dependenciesNotInstalled(args.path)) return 1;
 
   const buildParams = await lintBuildParams(args);
   if (buildParams === undefined) return 1;

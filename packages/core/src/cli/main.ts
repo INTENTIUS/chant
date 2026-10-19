@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 
+import { dependenciesNotInstalled } from "./dependencies";
 import { resolve } from "node:path";
 import { isEntryPoint } from "./is-entry-point";
 import { formatSuccess, formatError } from "./format";
@@ -1188,6 +1189,8 @@ async function tryPluginCommand(rawArgv: string[]): Promise<number | undefined> 
  * Load lexicon plugins for the given project path, or exit with an error.
  */
 async function loadPluginsOrExit(path: string, lexicon?: string): Promise<import("../lexicon").LexiconPlugin[]> {
+  // #4116: name an uninstalled project before loading anything from it.
+  if (await dependenciesNotInstalled(resolve(path))) process.exit(1);
   let plugins;
   try {
     // chant #3648 — `--lexicon <name>` loads that lexicon even when the
