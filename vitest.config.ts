@@ -76,6 +76,8 @@ export const UNIT_INCLUDE = [
   "examples/alert-triage/**/*.test.ts",
   // chant #4092 — the fan-out demo's step and cycle schemas. Pure validation.
   "examples/fan-out-estate/demo/schemas/*.test.ts",
+  // chant #4093 - the example's generated pull-request workflow, regenerated and compared.
+  "examples/fan-out-estate/chant-pr-workflow.test.ts",
   // chant #2904 — the agent-observability example's build checks and its demo
   // agent's spans. No Docker, no cluster; the k3d run is in E2E_INCLUDE below.
   "examples/agent-observability/test/*.test.ts",
