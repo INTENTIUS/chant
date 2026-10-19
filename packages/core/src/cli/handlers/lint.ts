@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { lintCommand, lintCommandWatch, printLintResult } from "../commands/lint";
 import { formatError, formatInfo } from "../format";
+import { reportUninstalledDependencies } from "../dependencies";
 import type { CommandContext } from "../registry";
 import { commandBuildParams } from "../build-params-cli";
 import { loadChantConfigUpward, type ChantConfig } from "../../config";
@@ -63,6 +64,11 @@ export async function runLint(ctx: CommandContext): Promise<number> {
     buildParams,
   });
 
+  // #4116: errors that are imports of uninstalled packages are led by the dependencies message.
+  if (!result.success) {
+    const errors = result.diagnostics.filter((d) => d.severity === "error").map((d) => d.message);
+    reportUninstalledDependencies(errors, resolve(args.path));
+  }
   printLintResult(result);
   return result.success ? 0 : 1;
 }

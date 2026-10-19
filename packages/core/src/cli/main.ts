@@ -1217,6 +1217,9 @@ async function loadPluginsOrExit(path: string, lexicon?: string): Promise<import
     plugins = await loadPlugins(lexiconNames);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    // #4116: a lexicon package the project has not installed is named as such first.
+    const { reportUninstalledDependencies } = await import("./dependencies");
+    reportUninstalledDependencies([errorMessage], resolve(path));
     console.error(formatError({ message: errorMessage }));
     process.exit(1);
   }
@@ -1725,6 +1728,13 @@ const isMain = isEntryPoint(process.argv[1], import.meta.url);
 if (isMain) {
   main().catch(async (err) => {
     const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
+    // #4116: a failure to import a package the project has not installed is named as such first.
+    try {
+      const { reportUninstalledDependencies } = await import("./dependencies");
+      reportUninstalledDependencies([err instanceof Error ? err.message : String(err)], process.cwd());
+    } catch {
+      // The original error below is what matters.
+    }
     if (verbose && err instanceof Error && err.stack) {
       console.error(err.stack);
     } else {

@@ -1,4 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
@@ -466,6 +469,79 @@ describe("runGraph", () => {
       expect(stdoutBuf.join("\n")).toBe("");
       expect(stderrBuf.join("\n")).toMatch(/lint errors/i);
       expect(discoverMock).not.toHaveBeenCalled();
+    });
+
+    // #4116: a clone of examples/fan-out-estate with no node_modules. Every
+    // source file fails to import its lexicon, and lint reports each import.
+    describe("lint gate: dependencies not installed (#4116)", () => {
+      let project: string;
+      beforeEach(() => {
+        project = realpathSync(mkdtempSync(join(tmpdir(), "chant-4116-graph-")));
+      });
+      afterEach(() => {
+        rmSync(project, { recursive: true, force: true });
+      });
+      const missing = (pkg: string, file: string) => ({
+        file: join(project, file), line: 1, column: 1, ruleId: "LEX002", severity: "error",
+        message: `Cannot find package '${pkg}' imported from ${join(project, file)}`,
+      });
+
+      test("every lint error an uninstalled import: the dependencies message, not lint errors", async () => {
+        lintMock.mockResolvedValue({
+          success: false,
+          diagnostics: [
+            missing("@intentius/chant-lexicon-aws", "src/network/outputs.ts"),
+            { ...missing("@intentius/chant", "network.component.ts"), ruleId: "COMP000", message: `Component discovery error: ${missing("@intentius/chant", "network.component.ts").message}` },
+            { ...missing("@intentius/chant", "x.ts"), ruleId: "COR004", severity: "warning", message: "a warning" },
+          ],
+        });
+        for (const components of [false, true]) {
+          stderrBuf.length = 0;
+          const exit = await runGraph({ args: makeArgs({ format: "ir", path: project, components }), plugins: [], serializers: [] });
+          expect(exit).toBe(1);
+          const err = stderrBuf.join("\n");
+          expect(err).toContain(`dependencies not installed: @intentius/chant-lexicon-aws does not resolve from ${project}`);
+          expect(err).toContain("run npm install (or the project's package manager)");
+          expect(err).not.toMatch(/lint errors/i);
+        }
+      });
+
+      test("an uninstalled import beside a real lint error: both are said", async () => {
+        lintMock.mockResolvedValue({
+          success: false,
+          diagnostics: [
+            missing("@intentius/chant-lexicon-aws", "src/a.ts"),
+            { file: join(project, "src/b.ts"), line: 3, column: 1, ruleId: "COR001", severity: "error", message: "a real problem" },
+          ],
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", path: project }), plugins: [], serializers: [] });
+        expect(exit).toBe(1);
+        const err = stderrBuf.join("\n");
+        expect(err).toContain("dependencies not installed: @intentius/chant-lexicon-aws");
+        expect(err).toMatch(/source has lint errors/);
+      });
+
+      test("real lint errors still say lint errors, with no dependencies message", async () => {
+        lintMock.mockResolvedValue({
+          success: false,
+          diagnostics: [{ file: join(project, "src/b.ts"), line: 3, column: 1, ruleId: "COR001", severity: "error", message: "a real problem" }],
+        });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", path: project }), plugins: [], serializers: [] });
+        expect(exit).toBe(1);
+        const err = stderrBuf.join("\n");
+        expect(err).toMatch(/source has lint errors/);
+        expect(err).not.toContain("dependencies not installed");
+      });
+
+      test("an import the project has installed is a lint error, not a missing dependency", async () => {
+        mkdirSync(join(project, "node_modules", "@intentius", "chant-lexicon-aws"), { recursive: true });
+        lintMock.mockResolvedValue({ success: false, diagnostics: [missing("@intentius/chant-lexicon-aws", "src/a.ts")] });
+        const exit = await runGraph({ args: makeArgs({ format: "ir", path: project }), plugins: [], serializers: [] });
+        expect(exit).toBe(1);
+        const err = stderrBuf.join("\n");
+        expect(err).toMatch(/source has lint errors/);
+        expect(err).not.toContain("dependencies not installed");
+      });
     });
 
     test("--format mermaid emits a flowchart", async () => {

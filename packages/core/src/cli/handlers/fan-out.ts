@@ -71,6 +71,7 @@ import { readDeployedOutputs } from "../../components/wave-plan";
 import { deployContext } from "../../components/driver";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
+import { reportUninstalledDependencies } from "../dependencies";
 import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { resolveBuildRoot } from "./lifecycle";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
@@ -237,10 +238,14 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   } catch (err) {
     // A cycle or an unknown `dependsOn` refuses here, over the whole graph and
     // before anything is selected (#2417). The message names the members.
-    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    const message = err instanceof Error ? err.message : String(err);
+    reportUninstalledDependencies([message], projectPath); // #4116
+    console.error(formatError({ message }));
     return 1;
   }
   if (!derived.success) {
+    // #4116: component files that import packages the project has not installed.
+    if (derived.error) reportUninstalledDependencies([derived.error], projectPath);
     console.error(formatError({ message: derived.error ?? "Could not discover components" }));
     return 1;
   }

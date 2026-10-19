@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBuildFormat } from "../commands/build";
 import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
+import { reportUninstalledDependencies } from "../dependencies";
 import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
 import { loadChantConfigUpward, type ChantConfig } from "../../config";
@@ -284,6 +285,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
       const own = result.warnings.filter((w) => !w.includes("No serializer found for lexicon") && !seenWarnings.has(w));
       for (const w of own) seenWarnings.add(w);
       printWarnings(own);
+      // #4116: once, before the first failing group's errors.
+      if (!result.success && !failed) reportUninstalledDependencies(result.errors, resolve(args.path));
       printErrors(result.errors);
       if (!result.success) failed = true;
     }
@@ -333,6 +336,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     warnings = warnings.filter((w) => !w.includes('No serializer found for lexicon'));
   }
   printWarnings(warnings);
+  // #4116: errors that are imports of uninstalled packages are led by the dependencies message.
+  if (!result.success) reportUninstalledDependencies(result.errors, resolve(args.path));
   printErrors(result.errors);
 
   return result.success ? 0 : 1;
