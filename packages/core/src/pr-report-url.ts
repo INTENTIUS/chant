@@ -35,7 +35,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -117,6 +117,58 @@ export function reportPut(target: ReportTarget, aws: AwsCli = realAwsCli): Repor
   return (key, body, contentType) => {
     const object = `s3://${target.bucket}/${target.prefix ? `${target.prefix}/` : ""}${key}`;
     return aws(["s3", "cp", "-", object, "--content-type", contentType, "--only-show-errors"], body);
+  };
+}
+
+/** Reads one object: `key` below the URL. Resolves null for an object that is not there, and rejects with a line a person can read for any other failure. */
+export type ReportGet = (key: string) => Promise<string | null>;
+
+/** Runs the AWS CLI with `args` and resolves its stdout, rejecting with its error line on a non-zero exit. */
+export type AwsRead = (args: string[]) => Promise<string>;
+
+/** The AWS CLI on PATH, read for the body `aws s3 cp <s3 url> -` prints. */
+export const realAwsRead: AwsRead = (args) =>
+  new Promise((resolveRead, reject) => {
+    const child = spawn(AWS_BINARY, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderr.length < 4096) stderr += chunk.toString("utf8");
+    });
+    child.on("error", (err: NodeJS.ErrnoException) =>
+      reject(new Error(err.code === "ENOENT" ? "the AWS CLI (aws) is not on PATH; an s3 report URL is read with it" : err.message)),
+    );
+    child.on("close", (code) => {
+      if (code === 0) return resolveRead(Buffer.concat(out).toString("utf8"));
+      const line = stderr.trim().split("\n").filter(Boolean).at(-1) ?? "";
+      reject(new Error(`aws s3 cp exited ${code}${line ? `: ${line.slice(0, 300)}` : ""}`));
+    });
+  });
+
+/** What the AWS CLI says about an object that does not exist. */
+const S3_ABSENT = /\(404\)|Not Found|NoSuchKey|does not exist/i;
+
+/** A get for `target`. `aws` replaces the AWS CLI in a test. */
+export function reportGet(target: ReportTarget, aws: AwsRead = realAwsRead): ReportGet {
+  if (target.scheme === "file") {
+    return async (key) => {
+      try {
+        return readFileSync(join(target.dir, ...key.split("/")), "utf-8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw err;
+      }
+    };
+  }
+  return async (key) => {
+    const object = `s3://${target.bucket}/${target.prefix ? `${target.prefix}/` : ""}${key}`;
+    try {
+      return await aws(["s3", "cp", object, "-", "--only-show-errors"]);
+    } catch (err) {
+      if (S3_ABSENT.test(messageOf(err))) return null;
+      throw err;
+    }
   };
 }
 

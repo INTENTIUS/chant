@@ -470,6 +470,8 @@ export interface ParsedArgs {
   noStatus?: boolean;
   /** `chant ci run|serve --status-url <template>` (#4097): the link a job's status carries. `{key}` is `<pr>/<commit>[/<member>]`, as `--report-url` keys it. */
   statusUrl?: string;
+  /** `chant ci run --run-index-limit <n>` (#4098): how many runs the index at the report URL keeps. Default 200. */
+  runIndexLimit?: number;
   /** `chant ci serve --repo <owner/repo>` (#4095): the repository it polls. */
   ciRepo?: string;
   /** `chant ci serve --max-jobs <n>` (#4095): how many jobs run at once. Default 1. */

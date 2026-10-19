@@ -272,6 +272,12 @@ CI:
                         JSON file only its owner can read whose values the
                         job gets, and which are shown as *** in the events,
                         the record, the report and the output.
+                        With --report-url it also adds the run to
+                        <url>/runs/index.json, newest first, cut to the
+                        newest --run-index-limit entries (default 200).
+  ci runs --report-url <url> [--json]
+                        List the runs in the index at the report URL, newest
+                        first.
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
               [--author <login>]... [--once] [--rerun-failed]
@@ -1344,6 +1350,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
+  // #4098: the run index at the report URL.
+  { name: "ci runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run-index")).runCiRuns(ctx) },
   { name: "ci serve", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-serve")).runCiServe(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },

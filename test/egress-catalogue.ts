@@ -353,11 +353,11 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
   {
     binary: "aws",
     subcommand: "s3",
-    command: "chant components pr-plan --report-url s3://... and chant components pr-apply --report-url s3://...",
+    command: "chant components pr-plan --report-url s3://..., chant components pr-apply --report-url s3://..., chant ci run --report-url s3://... and chant ci runs --report-url s3://...",
     file: "packages/core/src/pr-report-url.ts",
     phase: "ci",
     destination: "the S3 bucket `--report-url` names, at the endpoint and region the AWS CLI reads from the job's environment",
-    why: "`aws s3 cp - s3://<bucket>/<prefix>/<pr>/<commit>/<file>` copies the stage's report, its change set and, with `--events-json`, its run events, the events again as each wave and component settles, so a reader outside CI can fetch them (#4007). Credentials are the CLI's own; chant passes none and prints none. A `file://` URL reaches nothing, and without `--report-url` it never runs.",
+    why: "`aws s3 cp - s3://<bucket>/<prefix>/<pr>/<commit>/<file>` copies the stage's report, its change set and, with `--events-json`, its run events, the events again as each wave and component settles, so a reader outside CI can fetch them (#4007). Credentials are the CLI's own; chant passes none and prints none. `chant ci run` also keeps `<prefix>/runs/index.json`, the index of the runner's jobs (#4098): `aws s3 cp s3://<bucket>/<prefix>/runs/index.json -` reads it and `aws s3 cp -` writes it back after each job, and `chant ci runs` reads it. A `file://` URL reaches nothing, and without `--report-url` it never runs.",
   },
   {
     binary: "docker",
