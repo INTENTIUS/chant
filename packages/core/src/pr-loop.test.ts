@@ -13,6 +13,7 @@ import { composeChangeSet, type ChangeSetPart } from "./change-set";
 import {
   describePlanChanged,
   memberCounts,
+  PR_REPORT_DEPLOYED_OUTPUTS_FLOOR,
   PR_REPORT_SCHEMA_ID,
   prApproveCommand,
   prNoteMarker,
@@ -109,6 +110,9 @@ const resumedReport: PrReport = {
   resumed: { applied: ["a"] },
 };
 
+/** A plan whose members read `net` and `a` from the deployed estate (#4104). */
+const deployedReport: PrReport = { ...planReport, deployedOutputs: { a: ["id"], net: ["cidr"], dns: [] } };
+
 describe("the pr-report schema", () => {
   test("is a valid schema and names this module's id", () => {
     expect(validSchema(schema)).toBe(true);
@@ -116,7 +120,7 @@ describe("the pr-report schema", () => {
   });
 
   test("every stage's report validates, and its change set validates against the change-set schema", () => {
-    for (const report of [planReport, refusedReport, appliedReport, resumedReport]) {
+    for (const report of [planReport, refusedReport, appliedReport, resumedReport, deployedReport]) {
       expectValid(report);
       expectValidChangeSet(report.changeSet);
       expect(report.changeSet.digest).toBe(report.digest);
@@ -156,6 +160,14 @@ describe("the note", () => {
     const note = renderPrNote(resumedReport);
     expect(note).toContain("Resumed under the same approval: `a` applied in an earlier attempt and did not run again.");
     expect(renderPrNote(appliedReport)).not.toContain("Resumed");
+  });
+
+  test("a plan that read dependencies from the deployed estate names each and its outputs (#4104)", () => {
+    const note = renderPrNote(deployedReport);
+    expect(note).toContain("Planned against outputs read from the deployed estate: `a` (`id`); `net` (`cidr`); `dns` (none yet).");
+    expect(renderPrNote(planReport)).not.toContain("deployed estate");
+    expect(PR_REPORT_DEPLOYED_OUTPUTS_FLOOR).toBe("0.124.30");
+    expect(schema.required).not.toContain("deployedOutputs");
   });
 
   test("a small limit leaves the summary out rather than cutting the table", () => {

@@ -207,7 +207,7 @@ Each line answers a question an operator would otherwise have to ask.
 - The waves are the derived order shown as a graph. A flat list could not show that the order came out of each component's `dependsOn` rather than out of somebody's hand.
 - Every component that is not running is named with its reason, one of `unaffected`, `indeterminate`, `already-applied` or `blocked`. A `blocked` row also names the failure it was reached from, as `blocked by "cluster-a"`. Absent from a list and deliberately held back would read identically without this.
 - `indeterminate` has a count on the first line, and components a source diff could not judge that the walk never reached get a line of their own (`a source diff cannot judge these, and the walk did not reach them: ...`). It is the third outcome, and a two-state render would silently fold it into one of the other two.
-- `seeded from an earlier run` lists dependencies of selected components that are not themselves running. Their outputs are taken on trust from a run that happened earlier and somewhere else, which is the price of running a subset instead of the whole graph.
+- `seeded from an earlier run` lists dependencies of selected components that are not themselves running. Their outputs are taken on trust from a run that happened earlier and somewhere else, which is the price of running a subset instead of the whole graph. Before the run starts, each seed that `--seed-outputs` and the `--resume` record leave out is read from the deployed estate through its step's `outputs`, as `cfn-deploy` and `terraform-apply` provide, and a line on stderr names the outputs read ([#4104](https://github.com/INTENTIUS/chant/issues/4104)). A seed whose steps can't report outputs leaves its dependents' references unresolved. A read that fails stops the fan-out before anything runs.
 - `plan:` carries the digest verbatim and unabbreviated (shortened above to fit this page). It is the exact string `chant approve --plan` takes, so truncating it for width would make the line useless for the one job it has.
 - `approve:` appears only when `--gate <name>` was given, and is the whole command to run.
 
@@ -295,7 +295,7 @@ Progress and approval are bound to different things. The gate's approval is boun
 
 #### Seeding and progress
 
-`--seed-outputs <file>` (repeatable) loads component outputs before the run, so a `stackOutput()` or `@<dep>.publish.*` reference into a component the plan lists under `seeds` resolves. `--dump-outputs <file>` writes what the run holds afterwards. `--progress-json` streams one NDJSON progress record per line to stdout as the waves execute, and `--events-json` streams the [run-event stream](/chant/reference/workspace-read-contract/#run-events) instead. These behave as they do on [`chant run --components`](/chant/cli/run/).
+`--seed-outputs <file>` (repeatable) loads component outputs before the run, so a `stackOutput()` or `@<dep>.publish.*` reference into a component the plan lists under `seeds` resolves without reading that component's deployed outputs. `--dump-outputs <file>` writes what the run holds afterwards. `--progress-json` streams one NDJSON progress record per line to stdout as the waves execute, and `--events-json` streams the [run-event stream](/chant/reference/workspace-read-contract/#run-events) instead. These behave as they do on [`chant run --components`](/chant/cli/run/).
 
 | Flag | Meaning |
 |---|---|
@@ -382,7 +382,7 @@ The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) pass
 | `--member <name>` | A workspace member's loop, run in the member's directory. The gate is recorded under `pr-<n>-<member>`, the note and the statuses carry the member's name, and the report gains `member`. The name must be the member that owns the current directory. The member's generated pipeline passes it. |
 | `--resume <file>` | `pr-apply` only. Write the attempt record here, and finish an earlier attempt it records under the same approval. See above. |
 | `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
-| `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
+| `--seed-outputs <file>` | Outputs to use instead of reading them from the deployed estate, as on `fan-out`. Without it, the plan reads the deployed outputs of every dependency a planned member names, selected or not, and the report lists them under `deployedOutputs`. |
 | `--events-json` | Stream the stage's events to stdout, one `run-event.schema.json` line each: a `plan` phase with a step per component, the gate's decision as a `gate` phase, and on `pr-apply` the apply's waves and components, a component it did not start settling `blocked` or `already-applied`. This is the stages' stream; they take no `--progress-json`. Refused beside `--json`, which prints the report to stdout too. See [run events](/chant/reference/workspace-read-contract/#run-events). |
 | `--report-url <url>` | Copy the report, the change set and, with `--events-json`, the events to `<url>/<pr>/<commit>/`, an `s3://` or `file://` URL. See above. |
 | `--json` | Print the report on stdout. |

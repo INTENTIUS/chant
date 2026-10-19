@@ -65,6 +65,8 @@ export const app: Component = {
 
 A root is changed when a changed file sits in its directory, in a local module it calls, or is one of its var files. A pull request that edits `roots/a` plans `a` and `app`. It does not plan `net`.
 
+`a` is still planned against `net`'s outputs. A dependency the change did not select is read like any other: the plan reads its outputs from the deployed estate, through the `outputs` of its `terraform-apply` or `cfn-deploy` step, and the apply plans against the same values. So a pull request that changes one cluster of [`examples/fan-out-estate`](https://github.com/INTENTIUS/chant/tree/main/examples/fan-out-estate) plans and applies it with `network`'s outputs, and the workflow needs no seed step. The report's `deployedOutputs` and a line of the note name each dependency read and the outputs it gave. `--seed-outputs <file>` supplies a component's outputs instead, and wins over a read. A dependency whose steps can't report outputs leaves its dependents' references unresolved, and their plans say so.
+
 ### CloudFormation stacks
 
 A component whose step is `cfn-deploy` is planned with a CloudFormation change set. The plan creates one for the stack's template and resolved parameters, reads the changes it proposes and deletes it without executing it. The member is named after the stack. An `Add` counts as a create, a `Modify` as an update, or as a replace when CloudFormation says `Replacement: True` or `Conditional`, and a `Remove` as a delete. A change set with nothing to apply gives the member no changes. The proposed changes are part of the digest the gate binds, as every planner's are, so a change set that proposes something else at merge moves the digest and the apply refuses.

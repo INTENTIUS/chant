@@ -135,3 +135,33 @@ export async function readComponentOutputs(
   }
   return found;
 }
+
+/**
+ * Read the deployed outputs of each of `names` that `outputs` holds nothing
+ * for yet (#4104), through {@link readComponentOutputs}, and add them to
+ * `outputs`. A name that is not among `components`, or whose steps cannot
+ * say, is left out, so its dependents' references stay unresolved. Returns,
+ * per component read, the names of the outputs the read gave, sorted.
+ *
+ * `components` must be the whole graph, not the selection: the dependency a
+ * selected member reads is often one the change did not select.
+ */
+export async function readDeployedOutputs(
+  names: readonly string[],
+  components: ReadonlyMap<string, DriverComponent>,
+  registry: CapabilityRegistry,
+  ctxOf: (component: string) => DeployContext,
+  outputs: Record<string, Record<string, unknown>>,
+): Promise<Record<string, string[]>> {
+  const read: Record<string, string[]> = {};
+  for (const name of names) {
+    if (name in outputs || name in read) continue;
+    const component = components.get(name);
+    if (!component) continue;
+    const found = await readComponentOutputs(component, registry, ctxOf(name), outputs);
+    if (!found) continue;
+    outputs[name] = found;
+    read[name] = Object.keys(found).sort();
+  }
+  return read;
+}
