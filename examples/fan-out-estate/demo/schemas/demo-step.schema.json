@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/demo/demo-step/v1/demo-step.schema.json",
+  "title": "fan-out demo step",
+  "description": "The step record of the fan-out demo, written to step.json at every step of a cycle. It narrates; the facts a viewer draws come from chant's own reports named under reports. Version 1 of the demo contract. Required fields are kept to a minimum: a new field is optional within contract 1, readers ignore fields they do not know, and a rename or removal is contract 2.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "contract",
+    "demo",
+    "cycle",
+    "step"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://intentius.io/chant/schemas/demo/demo-step/v1/demo-step.schema.json"
+    },
+    "contract": {
+      "const": 1
+    },
+    "demo": {
+      "type": "string",
+      "description": "The demo's name, fan-out-estate."
+    },
+    "repo": {
+      "type": "string",
+      "description": "The forge repository the demo runs on, <org>/<repo>."
+    },
+    "cycle": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The cycle the step belongs to."
+    },
+    "scenario": {
+      "type": "string",
+      "description": "The scenario the cycle plays, fan-out."
+    },
+    "name": {
+      "type": "string",
+      "description": "The scenario's display name, for example fifteen stacks."
+    },
+    "title": {
+      "type": "string",
+      "description": "The story's title, shown on every step."
+    },
+    "step": {
+      "enum": [
+        "pull-request",
+        "planned",
+        "waiting",
+        "approved",
+        "merged",
+        "applying",
+        "failed",
+        "resumed",
+        "applied",
+        "reset",
+        "stalled"
+      ],
+      "description": "Where the cycle stands. The enum lists the steps a writer may write in this version; a step can be added within contract 1, so a reader must not reject a step it does not know and treats it as one it cannot classify."
+    },
+    "label": {
+      "type": "string",
+      "description": "One line narrating the step."
+    },
+    "chapter": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/chapter"
+        }
+      ],
+      "description": "The chapter the step belongs to. null only on the base and on a stall before the first step; a stall otherwise keeps the chapter before it."
+    },
+    "started_at": {
+      "type": "string",
+      "description": "When the cycle started, ISO-8601."
+    },
+    "at": {
+      "type": "string",
+      "description": "When this step was written, ISO-8601."
+    },
+    "next": {
+      "type": "object",
+      "description": "What the driver does after the hold.",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string",
+          "description": "When the hold began, ISO-8601."
+        },
+        "at": {
+          "type": "string",
+          "description": "When the next step is due, ISO-8601."
+        }
+      }
+    },
+    "pull": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "The pull request number the step concerns, null before one exists."
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40,64}$",
+      "description": "The commit the step concerns: the head for a plan, the merge commit for an apply."
+    },
+    "reports": {
+      "$ref": "#/$defs/reports"
+    },
+    "cycle_reports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cycleReport"
+      },
+      "description": "The keys of every stage of this cycle so far, the same shape as demo-cycle's reports, so a reader that starts mid-cycle can find an earlier apply. In the order the stages ran: a writer appends each stage's key when its report is written, so the first apply of a cycle comes before the fix's."
+    },
+    "about": {
+      "type": "object",
+      "description": "The about cards.",
+      "properties": {
+        "changes": {
+          "type": "string"
+        },
+        "watch": {
+          "type": "string"
+        },
+        "shows": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "chapter": {
+      "type": "object",
+      "required": [
+        "n",
+        "of",
+        "headline",
+        "short"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "of": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "headline": {
+          "type": "string"
+        },
+        "short": {
+          "type": "string"
+        }
+      }
+    },
+    "reports": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "description": "Where chant's own reports for the cycle live. plan and apply are keys in reportKey(pr, commit) form, <pr>/<commit>, below url. The report files are pr-plan.json, pr-apply.json and the matching .events.jsonl.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The --report-url the pipeline uploads to, always s3:// or https://.",
+          "pattern": "^(s3|https)://"
+        },
+        "plan": {
+          "type": "string",
+          "pattern": "^[0-9]+/[0-9a-f]{40,64}$"
+        },
+        "apply": {
+          "type": "string",
+          "pattern": "^[0-9]+/[0-9a-f]{40,64}$"
+        }
+      }
+    },
+    "cycleReport": {
+      "type": "object",
+      "required": [
+        "stage",
+        "pr",
+        "commit",
+        "key"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "plan",
+            "apply"
+          ]
+        },
+        "pr": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[0-9]+/[0-9a-f]{40,64}$",
+          "description": "reportKey(pr, commit)."
+        }
+      }
+    }
+  }
+}

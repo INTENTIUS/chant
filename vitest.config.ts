@@ -74,6 +74,8 @@ export const UNIT_INCLUDE = [
   // activities. (examples/ is not globbed wholesale — fargate's docker
   // e2e/volume suites need Docker and aren't CI unit tests.)
   "examples/alert-triage/**/*.test.ts",
+  // chant #4092 — the fan-out demo's step and cycle schemas. Pure validation.
+  "examples/fan-out-estate/demo/schemas/*.test.ts",
   // chant #2904 — the agent-observability example's build checks and its demo
   // agent's spans. No Docker, no cluster; the k3d run is in E2E_INCLUDE below.
   "examples/agent-observability/test/*.test.ts",
