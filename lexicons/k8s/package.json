@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-k8s",
-  "version": "0.124.29",
+  "version": "0.124.30",
   "description": "Kubernetes lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -72,13 +72,13 @@
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete && cp src/generated/index.d.ts dist/generated/index.d.d.ts"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-otel": "^0.124.29",
-    "@intentius/chant-lexicon-prometheus": "^0.124.29",
+    "@intentius/chant-lexicon-otel": "^0.124.30",
+    "@intentius/chant-lexicon-prometheus": "^0.124.30",
     "js-yaml": "^4.3.1",
     "@types/js-yaml": "^4.0.9"
   },
   "optionalDependencies": {
-    "@intentius/chant-k8s-client": "^0.124.29"
+    "@intentius/chant-k8s-client": "^0.124.30"
   },
   "devDependencies": {
     "@intentius/chant": "*",
@@ -86,6 +86,6 @@
   },
   "peerDependencies": {
     "zod": "^4.3.6",
-    "@intentius/chant": "^0.124.29"
+    "@intentius/chant": "^0.124.30"
   }
 }
