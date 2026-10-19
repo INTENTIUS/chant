@@ -2,17 +2,21 @@
  * The demo's stack and its one-time setup: `up` and `down`.
  *
  * up builds stack/ with chant (compose.yaml and Dockerfile.jobImage), builds
- * the job image, starts floci and Forgejo, makes the admin, the author and
- * the reviewer, registers the runner and starts it, makes the org, the repo
- * and the bucket, and pushes the base: the example as it sits in chant, with
- * its generated workflow, plus the reviewer's key in .chant/allowed_signers,
- * pushed with [skip ci]. Then it applies the base with `chant run`.
+ * the job image, writes the runner's secrets file, starts floci and Forgejo,
+ * makes the admin, the author, the reviewer and the chant-runner user, makes
+ * the org, the repo (Forgejo Actions off) and the bucket, and sets up the
+ * runner key with `chant ci serve --setup-key` in the runner's container.
+ * Then it pushes the base: the example as it sits in chant, without its
+ * workflow, plus the reviewer's key in .chant/allowed_signers and the
+ * runner's key in .chant/trust.json, pushed with [skip ci]. Last it starts
+ * chant-runner, which serves the repo with `chant ci serve`. The driver then
+ * applies the base with `chant run`.
  *
- * Everything up learns (passwords, tokens, the runner's credentials, the base
+ * Everything up learns (passwords, tokens, the runner's public key, the base
  * commit) is kept in the state directory, outside the chant checkout.
  */
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { AUTHOR, BUCKET, FORGE_HOST, ORG, REPO, REPO_NAME, REVIEWER } from "../steps.js";
@@ -46,6 +50,24 @@ export const forgeUrl = (c: StackConfig): string => `http://localhost:${c.forgej
 export const flociUrl = (c: StackConfig): string => `http://localhost:${c.flociPort}`;
 export const baseTreeOf = (c: StackConfig): string => join(c.stateDir, "base-tree");
 export const reviewerKeyOf = (c: StackConfig): string => join(c.stateDir, "reviewer.key");
+export const runnerSecretsOf = (c: StackConfig): string => join(c.stateDir, "runner-secrets.env");
+
+/** The compose service of chant's runner, and the names it uses (stack/src/compose.ts). */
+export const RUNNER_SERVICE = "chantRunner";
+export const RUNNER_LOGIN = "chant-runner";
+export const RUNNER_STATE = "/var/lib/chant-runner";
+/** Who .chant/trust.json lists the runner's key for, with the runner role. */
+export const RUNNER_PRINCIPAL = "chant-runner:fan-out-demo";
+
+/** What every job gets from the runner's secrets file: floci's endpoint and test credentials. */
+export const RUNNER_SECRETS_TEXT = [
+  "# The chant fan-out demo's runner secrets, written by up: floci's endpoint and test credentials.",
+  "AWS_ENDPOINT_URL=http://floci:4566",
+  "AWS_ACCESS_KEY_ID=test",
+  "AWS_SECRET_ACCESS_KEY=test",
+  "AWS_REGION=us-east-1",
+  "",
+].join("\n");
 
 /** What up keeps. */
 export interface DemoState {
@@ -54,7 +76,10 @@ export interface DemoState {
   admin?: Person;
   author?: Person;
   reviewer?: Person;
-  runner?: { uuid: string; token: string };
+  /** The Forgejo user chant's runner works as. */
+  runner?: Person;
+  /** The runner's public key, `ssh-ed25519 <base64>`, as .chant/trust.json lists it. */
+  runnerKey?: string;
   baseSha?: string;
 }
 
@@ -78,20 +103,82 @@ export function readyState(c: StackConfig): Required<Pick<DemoState, "admin" | "
   return s as Required<Pick<DemoState, "admin" | "author" | "reviewer" | "baseSha">> & DemoState;
 }
 
-/** docker compose on the built compose.yaml, as project chant-fan-out-demo. */
-export function compose(c: StackConfig, args: string[], runner?: DemoState["runner"]): Promise<{ stdout: string }> {
+/**
+ * docker compose on the built compose.yaml, as project chant-fan-out-demo.
+ * The runner's token and secrets file go in the environment, where the
+ * compose file reads them.
+ */
+export function compose(c: StackConfig, args: string[], runnerToken?: string): Promise<{ stdout: string }> {
   return run("docker", ["compose", "-p", PROJECT, "-f", join(STACK_DIR, "compose.yaml"), ...args], {
     cwd: STACK_DIR,
     env: {
       ...process.env,
       CHANT_FAN_OUT_DEMO_FORGEJO_PORT: String(c.forgejoPort),
       CHANT_FAN_OUT_DEMO_FLOCI_PORT: String(c.flociPort),
-      CHANT_FAN_OUT_DEMO_RUNNER_UUID: runner?.uuid ?? "",
-      CHANT_FAN_OUT_DEMO_RUNNER_TOKEN: runner?.token ?? "",
+      CHANT_FAN_OUT_DEMO_RUNNER_TOKEN: runnerToken ?? "",
+      CHANT_FAN_OUT_DEMO_RUNNER_SECRETS: runnerSecretsOf(c),
     },
     timeoutMs: 600_000,
-    redact: runner ? [runner.token] : [],
+    redact: runnerToken ? [runnerToken] : [],
   });
+}
+
+/** The environment the checkout's chant runs in for up: none of chant's own variables, so it reads the base tree alone. */
+function chantEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  for (const key of Object.keys(env)) if (key.startsWith("CHANT_")) delete env[key];
+  return env;
+}
+
+/** The checkout's chant in `cwd`. */
+export const checkoutChant = (args: string[], cwd: string): Promise<{ stdout: string }> => run(CHANT_BIN, args, { cwd, env: chantEnv(), timeoutMs: 120_000 });
+
+/** Write the runner's secrets file, mode 0600, which compose mounts into chant-runner. */
+export function writeRunnerSecrets(c: StackConfig): string {
+  mkdirSync(c.stateDir, { recursive: true, mode: 0o700 });
+  const path = runnerSecretsOf(c);
+  writeFileSync(path, RUNNER_SECRETS_TEXT, { mode: 0o600 });
+  // writeFileSync keeps the mode of a file that was there already.
+  chmodSync(path, 0o600);
+  return path;
+}
+
+/**
+ * In the runner's container, with its state volume: clear the serve's state
+ * from an earlier up (its clone, job state and resume records, so the first
+ * pass takes the new base as its baseline), keep the key, and run `chant ci
+ * serve --setup-key`, which makes the key when there is none and prints its
+ * public half. setup-key keeps the key in git's directory unless told
+ * otherwise, so it runs in an empty repository with `--state`.
+ */
+export const RUNNER_KEY_SCRIPT = [
+  "set -e",
+  `cd ${RUNNER_STATE}`,
+  "rm -rf repo resume reports",
+  "find . -maxdepth 1 -name '*.json' -delete",
+  "rm -rf /tmp/chant-runner-key",
+  "git init -q /tmp/chant-runner-key",
+  "cd /tmp/chant-runner-key",
+  `chant ci serve --setup-key --state ${RUNNER_STATE} --branch main`,
+].join("; ");
+
+/** The runner key's public half, made in the runner's state volume when there is none. */
+export async function setupRunnerKey(composeRun: (args: string[]) => Promise<{ stdout: string }>): Promise<string> {
+  const out = await composeRun(["run", "--rm", "--no-deps", "-T", RUNNER_SERVICE, "sh", "-c", RUNNER_KEY_SCRIPT]);
+  const key = out.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .reverse()
+    .find((l) => /^ssh-ed25519 [A-Za-z0-9+/]+=*$/.test(l));
+  if (!key) throw new Error("chant ci serve --setup-key printed no ssh-ed25519 key");
+  return key;
+}
+
+/** List the runner's key in the tree's .chant/trust.json, with the runner role, through chant. */
+export async function trustRunner(tree: string, publicKey: string, chant: typeof checkoutChant = checkoutChant): Promise<void> {
+  const out = await chant(["workspace", "trust", "runner", "add", RUNNER_PRINCIPAL, "--key", publicKey], tree);
+  const doc = JSON.parse(out.stdout) as { error?: { code: string; message: string }; changed?: boolean };
+  if (doc.error) throw new Error(`chant workspace trust runner add refused (${doc.error.code}): ${doc.error.message}`);
 }
 
 const secret = (): string => randomBytes(18).toString("base64url");
@@ -137,9 +224,7 @@ export async function up(c: StackConfig, clock: Clock, log: Log): Promise<DemoSt
   await run(CHANT_BIN, ["build", "src", "--lexicon", "docker", "-o", "compose.yaml"], { cwd: STACK_DIR });
   log(`building ${JOB_IMAGE}`);
   await run("docker", ["build", "-q", "-t", JOB_IMAGE, "-f", join(STACK_DIR, "Dockerfile.jobImage"), STACK_DIR], { timeoutMs: 1_200_000 });
-
-  const workflow = readFileSync(join(EXAMPLE_DIR, ".forgejo", "workflows", "chant-pr.yml"), "utf8");
-  if (!workflow.includes(`container: ${JOB_IMAGE}`)) throw new Error(`the example's workflow does not run in ${JOB_IMAGE}, the image up builds`);
+  writeRunnerSecrets(c);
 
   log("starting floci and Forgejo");
   await compose(c, ["up", "-d", "floci", "forgejo"]);
@@ -150,17 +235,9 @@ export async function up(c: StackConfig, clock: Clock, log: Log): Promise<DemoSt
   state.admin = await person(c, ADMIN, state.adminPassword, true);
   state.author = await person(c, AUTHOR, state.peoplePassword, false, state.admin.token);
   state.reviewer = await person(c, REVIEWER, state.peoplePassword, false, state.admin.token);
+  state.runner = await person(c, RUNNER_LOGIN, state.peoplePassword, false, state.admin.token);
   writeState(c, state);
   const admin = state.admin.token;
-
-  log("registering forgejo-runner");
-  const runners = (await forgejoApi<Array<{ id: number; name: string }>>(url, admin, "GET", "/admin/actions/runners")) ?? [];
-  for (const r of runners) if (r.name === PROJECT) await forgejoApi(url, admin, "DELETE", `/admin/actions/runners/${r.id}`, undefined, { missingOk: true });
-  const reg = await forgejoApi<{ uuid?: string; token?: string }>(url, admin, "POST", "/admin/actions/runners", { name: PROJECT, description: "the chant fan-out demo's docker executor" });
-  if (!reg?.uuid || !reg.token) throw new Error("Forgejo returned no runner uuid and token");
-  state.runner = { uuid: reg.uuid, token: reg.token };
-  writeState(c, state);
-  await compose(c, ["up", "-d", "--force-recreate", "runner"], state.runner);
 
   log(`making ${REPO}`);
   if (!(await forgejoApi(url, admin, "GET", `/orgs/${ORG}`, undefined, { missingOk: true }))) {
@@ -169,15 +246,23 @@ export async function up(c: StackConfig, clock: Clock, log: Log): Promise<DemoSt
   if (!(await forgejoApi(url, admin, "GET", `/repos/${REPO}`, undefined, { missingOk: true }))) {
     await forgejoApi(url, admin, "POST", `/orgs/${ORG}/repos`, { name: REPO_NAME, default_branch: "main", auto_init: false, private: false });
   }
-  await forgejoApi(url, admin, "PATCH", `/repos/${REPO}`, { has_actions: true });
-  for (const login of [AUTHOR, REVIEWER]) await forgejoApi(url, admin, "PUT", `/repos/${REPO}/collaborators/${login}`, { permission: "write" });
+  // chant's runner runs the jobs; Forgejo Actions runs nothing here.
+  await forgejoApi(url, admin, "PATCH", `/repos/${REPO}`, { has_actions: false });
+  for (const login of [AUTHOR, REVIEWER, RUNNER_LOGIN]) await forgejoApi(url, admin, "PUT", `/repos/${REPO}/collaborators/${login}`, { permission: "write" });
 
   const { FlociBucket } = await import("./bucket.js");
   await new FlociBucket(flociUrl(c), BUCKET).create();
 
-  log("pushing the base");
-  state.baseSha = await pushBase(c, state.admin);
+  log("setting up the runner key");
+  state.runnerKey = await setupRunnerKey((args) => compose(c, args, state.runner!.token));
   writeState(c, state);
+
+  log("pushing the base");
+  state.baseSha = await pushBase(c, state.admin, state.runnerKey);
+  writeState(c, state);
+
+  log("starting chant-runner");
+  await compose(c, ["up", "-d", "--force-recreate", RUNNER_SERVICE], state.runner.token);
   return state;
 }
 
@@ -188,11 +273,27 @@ async function reviewerKey(c: StackConfig): Promise<string> {
   return readFileSync(`${key}.pub`, "utf8").trim().split(/\s+/).slice(0, 2).join(" ");
 }
 
-/** The paths of the example the base leaves out: the demo itself, build output, and the test that needs the checkout. */
-const BASE_EXCLUDE = new Set(["demo", "node_modules", "dist", ".chant", "chant-pr-workflow.test.ts"]);
+/**
+ * The paths of the example the base leaves out: the demo itself, build
+ * output, the workflow (chant's runner runs the jobs, so the demo repo has no
+ * workflow file) and the test that regenerates it, which needs the checkout.
+ */
+export const BASE_EXCLUDE = new Set(["demo", "node_modules", "dist", ".chant", ".forgejo", "chant-pr-workflow.test.ts"]);
 
-/** The base tree, committed and force-pushed to main. Returns its sha. */
-export async function pushBase(c: StackConfig, admin: Person): Promise<string> {
+/** How pushBase reaches chant and the forge. The tests pass a fake chant and a local remote. */
+export interface PushBaseOptions {
+  chant?: typeof checkoutChant;
+  /** Where main is pushed. Default the demo repo on the demo's Forgejo, as the admin. */
+  remote?: string;
+}
+
+/**
+ * The base tree, committed and force-pushed to main. Returns its sha. The
+ * runner's key is listed in its .chant/trust.json, so `ci serve` signs runs
+ * the base trusts. The demo owns its repo, so the entry goes in with the
+ * base, not through `--setup-key --trust`'s branch for review.
+ */
+export async function pushBase(c: StackConfig, admin: Person, runnerKey: string, opts: PushBaseOptions = {}): Promise<string> {
   const tree = baseTreeOf(c);
   rmSync(tree, { recursive: true, force: true });
   cpSync(EXAMPLE_DIR, tree, {
@@ -208,16 +309,17 @@ export async function pushBase(c: StackConfig, admin: Person): Promise<string> {
   writeFileSync(join(tree, ".chant", "allowed_signers"), `forgejo@${FORGE_HOST}:${REVIEWER} ${pub}\n${REVIEWER} ${pub}\n`);
   writeFileSync(join(tree, ".gitignore"), "node_modules/\ndist/\n.chant/pr/\n.chant/pr-resume/\n");
   await run("git", ["init", "-q", "-b", "main", tree]);
+  await trustRunner(tree, runnerKey, opts.chant);
   await git(tree, ["add", "-A"]);
   await git(tree, [
     "-c", `user.name=${admin.login}`, "-c", `user.email=${admin.login}@chant-demo.local`, "-c", "commit.gpgsign=false",
     "commit", "-q", "-m", "The demo's base: fifteen CloudFormation stacks [skip ci]",
   ]);
-  await git(tree, ["push", "-q", "--force", remoteWith(forgeUrl(c), admin.login, admin.token, REPO), "HEAD:refs/heads/main"], [admin.token]);
+  await git(tree, ["push", "-q", "--force", opts.remote ?? remoteWith(forgeUrl(c), admin.login, admin.token, REPO), "HEAD:refs/heads/main"], [admin.token]);
   return git(tree, ["rev-parse", "HEAD"]);
 }
 
-/** Stop the stack and remove its volumes. The state directory is kept unless `purge`. */
+/** Stop the stack (Forgejo, chant-runner and floci) and remove its volumes, the runner's state and key with them. The state directory is kept unless `purge`. */
 export async function down(c: StackConfig, purge = false): Promise<void> {
   await compose(c, ["down", "-v", "--remove-orphans"]);
   if (purge) rmSync(c.stateDir, { recursive: true, force: true });

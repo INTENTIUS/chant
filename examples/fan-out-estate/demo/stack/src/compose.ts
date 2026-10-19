@@ -1,30 +1,31 @@
 /**
- * The fan-out demo's stack (#4085 sections 2, 4 and 6), one compose project,
- * `chant-fan-out-demo`: Forgejo, the forgejo-runner that runs the example's
- * generated workflow, and floci, the AWS emulator the fifteen stacks apply to.
+ * The fan-out demo's stack (#4085 sections 2, 4 and 6, #4100), one compose
+ * project, `chant-fan-out-demo`: Forgejo, chant's own runner (`chant ci
+ * serve`) and floci, the AWS emulator the fifteen stacks apply to.
  *
- * Every service is on one network, `chant-fan-out-demo`, where jobs reach
- * floci as `floci:4566` (the example's `demo` environment) and Forgejo as
- * `forgejo:3000` (its ROOT_URL, the host chant names reviewers by). The
- * driver reaches them on localhost through the published ports.
+ * Every service is on one network, `chant-fan-out-demo`, where the runner
+ * reaches floci as `floci:4566` (the example's `demo` environment) and
+ * Forgejo as `forgejo:3000` (its ROOT_URL, the host chant names reviewers
+ * by). The driver reaches them on localhost through the published ports.
  *
- * The runner's config is a compose config: its envs give every job floci's
- * endpoint and test credentials, which both cfn-deploy and the
- * `--report-url` upload read, so the workflow names no endpoint. The runner's
- * uuid and token come from Forgejo after it boots, so the driver registers
- * the runner and passes them to `docker compose up` in the environment.
+ * The runner runs each job in process, in a fresh git worktree of its own
+ * clone, so it needs no Docker socket. Its secrets file gives every job
+ * floci's endpoint and test credentials, which both cfn-deploy and the
+ * `--report-url` upload read. `up` writes that file and mints the runner's
+ * forge token, and passes both to `docker compose` in the environment.
+ * Forgejo Actions is off: the demo repo has no workflow file.
  */
-import { DockerConfig, Network, Service, Volume } from "@intentius/chant-lexicon-docker";
+import { Network, Service, Volume } from "@intentius/chant-lexicon-docker";
 
 /** The compose project and the network every service and job is on. */
 export const PROJECT = "chant-fan-out-demo";
-/** The image every job runs in (job-image.ts), as the generated workflow names it. */
+/** The image the runner runs in (job-image.ts), with chant, the aws lexicon, git and the AWS CLI. */
 export const JOB_IMAGE = "chant-fan-out-demo-job:local";
 
-/** One network with a fixed name, so the runner's job containers can join it. */
+/** One network with a fixed name, which the driver's base apply joins too. */
 export const demo = new Network({ name: PROJECT });
 
-/** A service on the network, by its key in the compose file, with the names jobs reach it by. */
+/** A service on the network, by its key in the compose file, with the names others reach it by. */
 const onDemo = (...aliases: string[]) => ({ demo: { aliases } });
 
 // floci from the lex00/floci fork, pinned by the index digest of
@@ -54,7 +55,7 @@ export const forgejo = new Service({
     FORGEJO__server__HTTP_PORT: "3000",
     FORGEJO__server__DISABLE_SSH: "true",
     FORGEJO__service__DISABLE_REGISTRATION: "true",
-    FORGEJO__actions__ENABLED: "true",
+    FORGEJO__actions__ENABLED: "false",
     FORGEJO__repository__DEFAULT_BRANCH: "main",
     FORGEJO__log__LEVEL: "warn",
   },
@@ -70,56 +71,93 @@ export const forgejo = new Service({
   restart: "unless-stopped",
 });
 
-/** The runner's config. Compose fills the uuid and token from the driver's environment. */
-export const runnerConfig = new DockerConfig({
-  name: `${PROJECT}-runner-config`,
-  content: [
-    "log:",
-    "  level: info",
-    "runner:",
-    "  file: /data/.runner",
-    "  capacity: 2",
-    "  timeout: 30m",
-    "  fetch_interval: 1s",
-    "  report_interval: 1s",
-    "  envs:",
-    "    AWS_ENDPOINT_URL: http://floci:4566",
-    "    AWS_ACCESS_KEY_ID: test",
-    "    AWS_SECRET_ACCESS_KEY: test",
-    "    AWS_REGION: us-east-1",
-    "  labels:",
-    `    - "docker:docker://${JOB_IMAGE}"`,
-    "cache:",
-    "  enabled: false",
-    "container:",
-    `  network: ${PROJECT}`,
-    "  privileged: false",
-    '  docker_host: "-"',
-    "  force_pull: false",
-    "server:",
-    "  connections:",
-    "    forgejo:",
-    "      url: http://forgejo:3000/",
-    "      uuid: ${CHANT_FAN_OUT_DEMO_RUNNER_UUID:-}",
-    "      token: ${CHANT_FAN_OUT_DEMO_RUNNER_TOKEN:-}",
-    "",
-  ].join("\n"),
-});
 
-export const runnerData = new Volume({ name: `${PROJECT}-runner-data` });
+/** The demo repo, as the runner serves it. */
+export const RUNNER_REPO = "chant-demo/fan-out-estate";
+/** The runner's state directory: its key, its clone, its job state and its resume records. */
+export const RUNNER_STATE = "/var/lib/chant-runner";
+/** The secrets file `ci serve` reads, mode 0600, copied from the one `up` writes. */
+export const RUNNER_SECRETS = "/run/chant/secrets.env";
+/** Where the file `up` writes is mounted, read-only. */
+export const RUNNER_SECRETS_MOUNT = "/etc/chant-fan-out-demo/runner-secrets.env";
+/** The Forgejo user the runner reads the forge, comments and pushes chant/lifecycle as. */
+export const RUNNER_LOGIN = "chant-runner";
 
-// The docker executor: one job container per job, from JOB_IMAGE, which the
-// driver builds into the local daemon (force_pull: false finds it there).
-// Root, so it can use the socket Docker Desktop mounts as root:root.
-export const runner = new Service({
-  image: "data.forgejo.org/forgejo/runner:13.2.0",
-  container_name: `${PROJECT}-forgejo-runner`,
-  user: "0:0",
-  depends_on: { forgejo: { condition: "service_healthy" } },
-  volumes: ["/var/run/docker.sock:/var/run/docker.sock", "runnerData:/data"],
-  configs: [{ source: "runnerConfig", target: "/etc/forgejo-runner/config.yml" }],
-  working_dir: "/data",
-  command: ["forgejo-runner", "daemon", "-c", "/etc/forgejo-runner/config.yml"],
-  networks: onDemo("forgejo-runner"),
+/**
+ * The serve, one pass at a time (`--once`), every two seconds. The flags are
+ * the generated workflow's (`--env demo --events-json --report-url ...
+ * --pr-build-command`), so the jobs write their reports under the same
+ * `<pr>/<commit>/` keys. `--image` names the job image, so the runner adds
+ * no setup line of its own: the image has everything a job runs.
+ */
+export const RUNNER_SERVE = [
+  "chant", "ci", "serve",
+  "--forge", "forgejo",
+  "--repo", RUNNER_REPO,
+  "--env", "demo",
+  "--branch", "main",
+  "--author", "author",
+  "--events-json",
+  "--report-url", "s3://chant-demo/fan-out-estate/reports",
+  "--pr-build-command", "'npm run build'",
+  "--image", JOB_IMAGE,
+  "--secrets", RUNNER_SECRETS,
+  "--state", RUNNER_STATE,
+  "--once",
+].join(" ");
+
+/**
+ * The runner's script. Compose interpolates `${...}`, so the shell's own
+ * variables are spelled `$$`. It copies the secrets file to a 0600 file this
+ * user owns (ci serve refuses any other), clones the demo repo into the
+ * state volume once, and points its remote at the current token. Between
+ * passes, when the demo repo has no chant/lifecycle (a reset deletes it),
+ * it drops the clone's own copy, so the next cycle's ledger starts from the
+ * forge's and never forks from the last one.
+ */
+export const RUNNER_SCRIPT = [
+  "set -e",
+  "install -d -m 700 /run/chant",
+  `install -m 600 ${RUNNER_SECRETS_MOUNT} ${RUNNER_SECRETS}`,
+  `cd ${RUNNER_STATE}`,
+  `remote="http://${RUNNER_LOGIN}:$$GITHUB_TOKEN@forgejo:3000/${RUNNER_REPO}.git"`,
+  '[ -d repo/.git ] || git clone -q "$$remote" repo',
+  "cd repo",
+  'git remote set-url origin "$$remote"',
+  `git config user.name ${RUNNER_LOGIN}`,
+  `git config user.email ${RUNNER_LOGIN}@chant-demo.local`,
+  "while :; do",
+  "  git fetch -q --prune origin || true",
+  "  rc=0; git ls-remote --exit-code -q origin refs/heads/chant/lifecycle >/dev/null 2>&1 || rc=$$?",
+  '  if [ "$$rc" = 2 ]; then git update-ref -d refs/heads/chant/lifecycle 2>/dev/null || true; fi',
+  `  ${RUNNER_SERVE} || true`,
+  "  sleep 2",
+  "done",
+].join("\n");
+
+export const runnerState = new Volume({ name: `${PROJECT}-runner-state` });
+
+// chant's runner in the job image, which up builds into the local daemon
+// (pull_policy never finds it there). It runs as root, the image's user, and
+// owns the state volume. Its forge token is the chant-runner user's, minted
+// by up; the secrets file is up's too, so compose refuses to start the
+// service without them.
+export const chantRunner = new Service({
+  image: JOB_IMAGE,
+  pull_policy: "never",
+  container_name: `${PROJECT}-chant-runner`,
+  depends_on: { forgejo: { condition: "service_healthy" }, floci: { condition: "service_started" } },
+  environment: {
+    GITHUB_SERVER_URL: "http://forgejo:3000",
+    GITHUB_API_URL: "http://forgejo:3000/api/v1",
+    GITHUB_TOKEN: "${CHANT_FAN_OUT_DEMO_RUNNER_TOKEN:-}",
+  },
+  volumes: [
+    `runnerState:${RUNNER_STATE}`,
+    `\${CHANT_FAN_OUT_DEMO_RUNNER_SECRETS:?run npm run demo -- up}:${RUNNER_SECRETS_MOUNT}:ro`,
+  ],
+  working_dir: RUNNER_STATE,
+  command: ["sh", "-c", RUNNER_SCRIPT],
+  networks: onDemo("chant-runner"),
   restart: "unless-stopped",
 });
