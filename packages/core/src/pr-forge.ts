@@ -61,6 +61,16 @@ export interface ForgeStatus {
   pipelineId?: number;
 }
 
+/** A runner job's commit status (#4097): the states GitHub and Forgejo both keep. */
+export interface CommitStatus {
+  context: string;
+  state: "pending" | "success" | "failure" | "error";
+  /** Cut to 140 characters. */
+  description: string;
+  /** Where the status links to. Omitted from the request when absent. */
+  targetUrl?: string;
+}
+
 /** A commit status's state, as a caller names it. */
 export type ForgeStatusState = "pending" | "running" | "success" | "failed" | "failure" | "canceled" | "error";
 
@@ -309,6 +319,14 @@ export interface PrForge {
    */
   addComment(pr: number, body: string): Promise<AddedComment>;
   setStatus(sha: string, status: ForgeStatus): Promise<void>;
+  /**
+   * GitHub and Forgejo (#4097): set a commit status from a runner's job, one
+   * of `pending`, `success`, `failure` or `error`. The request is the one
+   * {@link setStatus} sends (`POST /repos/{owner}/{repo}/statuses/{sha}`), with
+   * the description cut to 140 characters and `target_url` only when given.
+   * `chant ci run` posts a job's progress through it.
+   */
+  setCommitStatus?(sha: string, status: CommitStatus): Promise<void>;
   /**
    * Keep one OPEN tracking issue for `marker` in line with `finding`: open
    * it, update its title and body, or, when `finding` is `null` and
@@ -614,6 +632,14 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       await api.call("PATCH", `${repo}/issues/${n}`, { state: "closed" });
     },
   };
+  const postStatus = async (sha: string, state: ForgeStatusState, context: string, description: string, url?: string): Promise<void> => {
+    await api.call("POST", `${repo}/statuses/${sha}`, {
+      state: statusStateFor(kind, state),
+      context,
+      description: description.slice(0, GITHUB_DESCRIPTION),
+      ...(url ? { target_url: url } : {}),
+    });
+  };
   return {
     kind,
     host,
@@ -621,12 +647,10 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     principalOf: (login) => forgePrincipalOf(kind, host, login),
     ...threadCalls(t),
     async setStatus(sha, status) {
-      await api.call("POST", `${repo}/statuses/${sha}`, {
-        state: statusStateFor(kind, status.state),
-        context: status.context,
-        description: status.description.slice(0, GITHUB_DESCRIPTION),
-        ...(status.url ? { target_url: status.url } : {}),
-      });
+      await postStatus(sha, status.state, status.context, status.description, status.url);
+    },
+    async setCommitStatus(sha, status) {
+      await postStatus(sha, status.state, status.context, status.description, status.targetUrl);
     },
     async approvers(pr) {
       // A reviewer's newest deciding review is their standing one. A comment

@@ -464,6 +464,10 @@ export interface ParsedArgs {
   passEnv?: string[];
   /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. Also `chant ci run --chant` (#4094): what runs chant in the job. */
   ciChant?: string;
+  /** `chant ci run|serve --no-status` (#4097): post no commit status for the job. */
+  noStatus?: boolean;
+  /** `chant ci run|serve --status-url <template>` (#4097): the link a job's status carries. `{key}` is `<pr>/<commit>[/<member>]`, as `--report-url` keys it. */
+  statusUrl?: string;
   /** `chant ci serve --repo <owner/repo>` (#4095): the repository it polls. */
   ciRepo?: string;
   /** `chant ci serve --max-jobs <n>` (#4095): how many jobs run at once. Default 1. */

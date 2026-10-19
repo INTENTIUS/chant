@@ -13,6 +13,7 @@ chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner
 chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo]
                   [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>]
+                  [--no-status] [--status-url <url template>]
                   [--chant <command>] [--pass-env <NAME>]...
                   [--key <runner key.pem>] [-o <dir>]
 chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
@@ -196,6 +197,21 @@ chant ci tick --source runs --key runner.pem
 ```
 
 `ci run` runs one job when you run it, and a re-run of a failed apply plans every member again, since `ci run` keeps no resume record between runs. [`ci serve`](#ci-serve) watches the forge and keeps one.
+
+### Commit status
+
+When the environment has a forge token (`CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`), `ci run` sets a commit status on the forge at the job's commit, so the pull request shows the job as Actions would ([#4097](https://github.com/INTENTIUS/chant/issues/4097)). The status is `pending` when the job starts and `success` or `failure` when it settles. It is set through the GitHub and Forgejo clients' `setCommitStatus`, which posts to `/repos/{owner}/{repo}/statuses/{sha}`. GitLab jobs set none.
+
+| Job | Context |
+|---|---|
+| plan | `chant/pr-plan` |
+| apply | `chant/pr-apply`, or `chant/<gate>` when `--gate` renamed the gate |
+
+These differ from the `chant/plan` and `chant/apply` statuses and the pull request note that `pr-plan` and `pr-apply` post themselves, which are unchanged. The description of a passed job is `pr-plan passed in 12s`. A failed job's is the run record's `failure.code` and `reason`, such as `not-approved: no reviewer approved this plan`, cut to the 140 characters the forge keeps. A job that stops on an error of its own gets an `error` status.
+
+The status links to the job's report. With an `https://` `--report-url` the link is `<url>/<pr>/<commit>[/<member>]/`, the key `--report-url` uploads under, with `unknown` in place of the pull request when `--pr` is not given. For an `s3://` URL, which a browser can't open, `--status-url <template>` maps it: `--status-url 'https://host/reports/{key}'` fills `{key}` with the same key. `--status-url` also overrides an https `--report-url`. Without either, the status has no link.
+
+A status the forge refuses is a warning, and the job's result and exit code stand. `--no-status` sets none. `ci serve` takes both flags and passes them to every job.
 
 ## ci serve
 

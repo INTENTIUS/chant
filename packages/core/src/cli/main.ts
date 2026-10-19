@@ -255,6 +255,7 @@ CI:
               [--before-script <line>]... [--pr-build]
               [--pr-build-command <line>] [--chant <command>]
               [--pass-env <NAME>]... [--key <runner key.pem>] [-o <dir>]
+              [--no-status] [--status-url <url template>]
                         Run the pull-request pipeline's plan or apply job as
                         a pipeline Op in a fresh worktree of --commit (default
                         HEAD) with a clean environment. --base and --pr stand
@@ -262,7 +263,10 @@ CI:
                         the job's build and lint lines first. Records the run as
                         pr-plan or pr-apply on chant/lifecycle, signed with
                         --key or CHANT_RUNNER_KEY, so ci tick from runs counts
-                        it, and copies the report to -o (default .chant/pr).
+                        it, and copies the report to -o (default .chant/pr). With a forge
+                        token it sets a chant/pr-plan or chant/pr-apply commit
+                        status (pending, then success or failure); --no-status
+                        turns that off, and --status-url links it.
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
               [--author <login>]... [--once] [--rerun-failed]
