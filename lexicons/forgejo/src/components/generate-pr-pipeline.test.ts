@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGithubPipeline } from "@intentius/chant-lexicon-github/components/generate-pipeline";
 import { generateForgejoPipeline } from "./generate-pipeline";
@@ -82,5 +83,36 @@ describe("the Forgejo pull-request workflow", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the forgejo pull-request pipeline with build (#4088)", () => {
+  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { build: true } });
+  const doc = parseYAML(result.yaml) as Record<string, any>;
+  const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-build.forgejo.golden.yml");
+
+  test("matches its golden", () => {
+    if (process.env.UPDATE_GOLDEN) writeFileSync(golden, result.yaml);
+    expect(result.yaml).toBe(readFileSync(golden, "utf-8"));
+  });
+
+  test("builds, then lints, before pr-plan and pr-apply", () => {
+    for (const job of ["plan", "apply"]) {
+      const runs = doc.jobs[job].steps.map((s: { run?: string }) => s.run ?? "").filter(Boolean);
+      const i = runs.findIndex((r: string) => r.startsWith("chant components pr-"));
+      expect(runs.slice(i - 2, i)).toEqual(["chant build --env prod", "chant lint"]);
+    }
+  });
+
+  test("buildCommand replaces the build line and turns the option on", () => {
+    const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { buildCommand: "npm run build" } }).yaml;
+    expect(yaml).toContain("npm run build");
+    expect(yaml).not.toContain("chant build --env");
+    expect(yaml).toContain("chant lint");
+  });
+
+  test("the default output carries neither line", () => {
+    const plain = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    expect(plain).not.toContain("chant lint");
   });
 });

@@ -302,7 +302,7 @@ function prLoopGitlabPipeline(
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), job.command, ...extraScript];
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), ...(job.build ?? []), job.command, ...extraScript];
   const stages = ["plan", "apply"];
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries

@@ -42,6 +42,7 @@ const BOOLEAN_FLAGS = new Set([
   "--composites",
   "--stacks",
   "--components",
+  "--pr-build",
   "--up",
   "--down",
   "--include-dependents",
@@ -394,6 +395,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.requireProvenance = true;
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
+    } else if (arg === "--pr-build") {
+      // `chant build --pr-loop --pr-build` (#4088).
+      result.prBuild = true;
+    } else if (arg === "--pr-build-command") {
+      const line = args[++i];
+      if (line === undefined || line === "") throw new Error("--pr-build-command needs a shell line: --pr-build-command '<line>'");
+      result.prBuildCommand = line;
     } else if (arg === "--before-script") {
       const line = args[++i];
       if (line === undefined || line === "") throw new Error("--before-script needs a shell line: --before-script '<line>'");

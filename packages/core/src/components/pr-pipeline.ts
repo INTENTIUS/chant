@@ -36,6 +36,12 @@
  * the change set and the events where a reader outside CI can fetch them;
  * the job's own environment brings the credentials an `s3://` URL needs.
  *
+ * With `build` (#4088) both jobs run the project's build and `chant lint`
+ * before their command, and fail on an error. A `cfn-deploy` member's plan
+ * and apply read the built template, so a project with one needs it. The
+ * build is `chant build --env <env>`, or `buildCommand` when the templates
+ * come from several builds (`npm run build`).
+ *
  * In a workspace member (#3465) both commands run in the member's directory
  * and pass `--member <name>`, so the member's gate (`pr-<number>-<member>`),
  * note and statuses stay apart from every other member's on the same pull
@@ -106,6 +112,20 @@ export interface PrLoopPipelineOptions {
    */
   reportUrl?: string;
   /**
+   * Build and lint before `pr-plan` and before `pr-apply` (#4088): the build
+   * line, then `chant lint`, each failing the job on an error. A `cfn-deploy`
+   * member reads the built template, so a project with one sets this. The
+   * build line is `chant build --env <env>` unless `buildCommand` names
+   * another. Default false.
+   */
+  build?: boolean;
+  /**
+   * The shell line that builds the project in place of `chant build --env
+   * <env>`, for a project whose templates come from several builds, such as
+   * `npm run build`. Setting it turns `build` on.
+   */
+  buildCommand?: string;
+  /**
    * Which GitHub-shaped forge the workflow is for. Set by the forgejo
    * generator, which reuses the github one; a caller never needs to.
    */
@@ -126,6 +146,14 @@ export interface PrLoopJob {
   env: Record<string, string>;
   /** Shell lines to run before the command, to settle values the forge may leave unusable. */
   setup?: string[];
+  /** With `build` (#4088): the build line and the lint line, run in this order before the command. */
+  build?: string[];
+}
+
+/** The lines `build` (#4088) runs before a job's command: the build, then the lint. Empty without the option. */
+export function prLoopBuildLines(env: string, options: PrLoopPipelineOptions = {}): string[] {
+  if (!options.build && !options.buildCommand) return [];
+  return [options.buildCommand ?? `chant build --env ${env}`, "chant lint"];
 }
 
 /**
@@ -142,6 +170,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
   ];
   const github = forge !== "gitlab";
+  const buildLines = prLoopBuildLines(env, options);
+  const build = buildLines.length > 0 ? { build: buildLines } : {};
   const jobEnv: Record<string, string> = {
     ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}),
     ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
@@ -153,6 +183,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       env: github
         ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
         : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv },
+      ...build,
     },
     {
       jobName: "apply",
@@ -163,6 +194,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       ].join(" "),
       env: github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv },
       ...(github ? {} : { setup: [gitlabBaseFallback(options.branch)] }),
+      ...build,
     },
   ];
 }

@@ -71,7 +71,7 @@ A component whose step is `cfn-deploy` is planned with a CloudFormation change s
 
 A stack that does not exist yet gets a CREATE change set, so every resource counts as a create. CloudFormation holds that change set in an empty stack in `REVIEW_IN_PROGRESS`, and the plan deletes that empty stack too. It never deletes a stack in any other status. The plan reads the stack outputs a dependent's `stackOutput()` names as they stand now. When the upstream stack does not exist yet, the dependent creates no change set: its row says `inputs from network; re-checked on apply`, with `?` for its counts, and the summary lists it under holes.
 
-The plan job needs the same AWS credentials and region as the apply job, with permission to create, describe and delete change sets, and to delete a stack. Build the templates before `pr-plan`, as before the apply.
+The plan job needs the same AWS credentials and region as the apply job, with permission to create, describe and delete change sets, and to delete a stack. Build the templates before `pr-plan`, as before the apply. Generate the pipeline with `--pr-build` and both jobs do it for you, as the next section shows.
 
 ## Generate the pipeline
 
@@ -85,6 +85,16 @@ chant build --components --generate gitlab --pr-loop --env prod --output .gitlab
 ```
 
 `--gate <name>` renames the gate from `pr-apply`. `--branch <name>` names the branch pull requests target, `main` by default on GitHub and Forgejo and the project's default branch on GitLab.
+
+`--pr-build` adds two steps to both jobs, before `pr-plan` and before `pr-apply`: `chant build --env <env>`, then `chant lint`. Either one failing fails the job. A project with a `cfn-deploy` step needs it, because the plan and the apply read the built template and an unbuilt one fails the member. When the templates come from several builds, `--pr-build-command '<line>'` names the line to run in place of `chant build`. The estate in `examples/fan-out-estate` builds one template per stack with `npm run build`:
+
+```bash
+chant build --components --generate forgejo --pr-loop --env local \
+  --pr-build-command 'npm run build' \
+  --output .forgejo/workflows/chant-pr.yml
+```
+
+The jobs need chant and the lexicons installed first, through `--image` or `--before-script` as below. Without `--pr-build` the output is unchanged.
 
 Both commands measure the change with git, so the pipeline checks out the full history. The default image is `node:22`, which has git. The jobs install OpenTofu into it, but not chant. Pick an image that has git, chant and your Terraform binary with `--image`, or install them with `--before-script`, which every job runs before its command. With a `package.json` that pins `@intentius/chant` and the lexicons the project lists:
 

@@ -326,6 +326,10 @@ export interface ParsedArgs {
    * merge bound to the approved digest.
    */
   prLoop?: boolean;
+  /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
+  prBuild?: boolean;
+  /** `chant build --pr-loop --pr-build-command <line>` (#4088) — the build line to run in place of `chant build --env <env>`. */
+  prBuildCommand?: string;
   /**
    * `chant components fan-out --resume <file>` (#2420) — the attempt record
    * this fan-out reads before it starts and writes when it finishes. Repeating
