@@ -11,11 +11,11 @@
  * refusals come before the first poll.
  */
 
-import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
+import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { parseArgs } from "../cli/parse-args";
 import type { CommandContext } from "../cli/registry";
 import { ciServeRunnerKey, ensureHostRunnerKey, hostRunnerKey, RUNNER_KEY_FILE } from "./ci-runner-key";
@@ -31,11 +31,14 @@ afterEach(() => {
   cleanScratch();
 });
 
-/** A clone on main with a bare origin, with commits made by a fixed identity and never signed. */
-function workspace(): { root: string; origin: string; main: string } {
-  const origin = scratchDir("chant-runner-key-origin-");
+/** The repository every test starts from, built once: a checkout on main with a bare origin, with commits made by a fixed identity and never signed. */
+const workspaceTemplate = repoFixture(() => {
+  const top = scratchDir("chant-runner-key-template-");
+  const origin = join(top, "origin");
+  const root = join(top, "root");
+  mkdirSync(origin);
+  mkdirSync(root);
   git(origin, "init", "-q", "--bare");
-  const root = scratchDir("chant-runner-key-");
   git(root, "init", "-q");
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
   for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.com"], ["commit.gpgsign", "false"]]) git(root, "config", k!, v!);
@@ -44,6 +47,15 @@ function workspace(): { root: string; origin: string; main: string } {
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "init");
   git(root, "push", "-q", "origin", "main");
+  return top;
+}, "chant-runner-key-");
+
+/** A copy of the template, its origin pointed at the copy of the bare one. */
+function workspace(): { root: string; origin: string; main: string } {
+  const top = workspaceTemplate();
+  const root = join(top, "root");
+  const origin = join(top, "origin");
+  git(root, "remote", "set-url", "origin", origin);
   return { root, origin, main: git(root, "rev-parse", "HEAD") };
 }
 

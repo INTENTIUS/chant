@@ -10,10 +10,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "vitest";
-import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { ciServeInterval, ciServeKey, ciServePass, formatCiServeEvent, readCiServeState, type CiServeEvent, type CiServeForge, type CiServeOptions } from "./ci-serve";
 import { ciRun } from "./ci-run";
 import { acquireLease, releaseLease } from "../lifecycle/lease";
@@ -31,11 +31,14 @@ function commit(root: string, file: string): string {
   return git(root, "rev-parse", "HEAD");
 }
 
-/** A clone on main with a bare origin and member `app`. */
-function workspace(): { root: string; app: string; main: string } {
-  const origin = scratchDir("chant-ci-serve-origin-");
+/** The repository every test starts from, built once: a checkout on main with a bare origin and member `app`. */
+const workspaceTemplate = repoFixture(() => {
+  const top = scratchDir("chant-ci-serve-template-");
+  const origin = join(top, "origin");
+  const root = join(top, "root");
+  mkdirSync(origin);
+  mkdirSync(root);
   git(origin, "init", "-q", "--bare");
-  const root = scratchDir("chant-ci-serve-");
   git(root, "init", "-q");
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
   writeFiles(root, {
@@ -44,9 +47,17 @@ function workspace(): { root: string; app: string; main: string } {
     "app/a.txt": "a\n",
   });
   git(root, "remote", "add", "origin", origin);
-  const main = commit(root, "app/init.txt");
+  commit(root, "app/init.txt");
   git(root, "push", "-q", "origin", "main");
-  return { root, app: join(root, "app"), main };
+  return top;
+}, "chant-ci-serve-");
+
+/** A copy of the template, its origin pointed at the copy of the bare one. */
+function workspace(): { root: string; app: string; main: string } {
+  const top = workspaceTemplate();
+  const root = join(top, "root");
+  git(root, "remote", "set-url", "origin", join(top, "origin"));
+  return { root, app: join(root, "app"), main: git(root, "rev-parse", "HEAD") };
 }
 
 /** A pull request's head commit, on a branch off main, pushed to the forge's refs/pull/<n>/head. */
@@ -211,27 +222,37 @@ describe("chant ci serve (#4095)", () => {
     expect(seen).toEqual([17]);
   });
 
-  test("an apply with no pull request found, or a lookup that fails, runs without --pr (#4112)", async () => {
+  /** A serve over a repository whose baseline pass is done, with the `pr` each run was asked for in `seen`. */
+  async function mergeWithoutPr() {
     const { root, app, main } = workspace();
     const forge = fakeForge(main);
     const seen: Array<number | undefined> = [];
     const { opts } = serve(app, forge, { run: (req) => (seen.push(req.pr), ciRun(req)) });
     await ciServePass(opts);
+    return { root, forge, seen, opts };
+  }
 
+  test("an apply with no pull request found runs without --pr (#4112)", async () => {
+    const { root, forge, seen, opts } = await mergeWithoutPr();
     const direct = commit(root, "app/direct.txt");
     git(root, "push", "-q", "origin", "main");
     forge.head = direct;
-    const first = await ciServePass(opts);
-    expect(first.jobs).toEqual([expect.objectContaining({ job: "apply", commit: direct, status: "ok" })]);
-    expect(first.jobs[0]!.pr).toBeUndefined();
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: direct, status: "ok" })]);
+    expect(pass.jobs[0]!.pr).toBeUndefined();
+    expect(seen).toEqual([undefined]);
+  });
 
+  test("an apply whose pull request lookup fails runs without --pr (#4112)", async () => {
+    const { root, forge, seen, opts } = await mergeWithoutPr();
     const broken = commit(root, "app/broken.txt");
     git(root, "push", "-q", "origin", "main");
     forge.head = broken;
     forge.merges.set(broken, "throw");
-    const second = await ciServePass(opts);
-    expect(second.jobs).toEqual([expect.objectContaining({ job: "apply", commit: broken, status: "ok" })]);
-    expect(seen).toEqual([undefined, undefined]);
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: broken, status: "ok" })]);
+    expect(pass.jobs[0]!.pr).toBeUndefined();
+    expect(seen).toEqual([undefined]);
   });
 
   test("the forge clients look a merge commit up with one GET each (#4112)", async () => {
@@ -272,33 +293,48 @@ describe("chant ci serve (#4095)", () => {
     expect((await acquireLease(group, "after", { cwd: app, mode: "claim" })).acquired).toBe(true);
   });
 
-  test("a failed apply stays failed, and --rerun-failed runs it again with its resume record", async () => {
-    const { root, app, main } = workspace();
-    const forge = fakeForge(main);
-    const failing = serve(app, forge, { hostEnv: { FAKE_EXIT: "3", FAKE_ATTEMPT: "1" } });
-    await ciServePass(failing.opts);
-    const merged = commit(root, "app/merged.txt");
-    git(root, "push", "-q", "origin", "main");
-    forge.head = merged;
+  describe("a failed apply", () => {
+    // The failing apply runs once in beforeAll, and the two tests read what it left, so no test
+    // runs two jobs. A file's beforeAll is not counted in the unit budget (#2817).
+    let w: ReturnType<typeof workspace>;
+    let forge: ReturnType<typeof fakeForge>;
+    let failing: ReturnType<typeof serve>;
+    let merged: string;
+    let failed: Awaited<ReturnType<typeof ciServePass>>;
+    let record: string;
 
-    const failed = await ciServePass(failing.opts);
-    expect(failed.jobs).toEqual([expect.objectContaining({ job: "apply", status: "fail", attempts: 1, failure: expect.stringContaining("command-failed") })]);
-    const record = join(failing.state, "resume", `${prApplyRecordKey("prod", merged, "app")}.json`);
-    expect(JSON.parse(readFileSync(record, "utf-8"))).toEqual({ attempt: "1" });
-    expect(existsSync(join(failed.jobs[0]!.report!, "resume-in.json"))).toBe(false);
+    beforeAll(async () => {
+      w = workspace();
+      forge = fakeForge(w.main);
+      failing = serve(w.app, forge, { hostEnv: { FAKE_EXIT: "3", FAKE_ATTEMPT: "1" } });
+      await ciServePass(failing.opts);
+      merged = commit(w.root, "app/merged.txt");
+      git(w.root, "push", "-q", "origin", "main");
+      forge.head = merged;
+      failed = await ciServePass(failing.opts);
+      record = join(failing.state, "resume", `${prApplyRecordKey("prod", merged, "app")}.json`);
+    });
 
-    // Without --rerun-failed the failed apply is not run again.
-    expect((await ciServePass(failing.opts)).jobs).toEqual([]);
+    test("stays failed, and keeps its resume record", async () => {
+      expect(failed.jobs).toEqual([expect.objectContaining({ job: "apply", status: "fail", attempts: 1, failure: expect.stringContaining("command-failed") })]);
+      expect(JSON.parse(readFileSync(record, "utf-8"))).toEqual({ attempt: "1" });
+      expect(existsSync(join(failed.jobs[0]!.report!, "resume-in.json"))).toBe(false);
 
-    const retry = serve(app, forge, { stateDir: failing.state, rerunFailed: true, hostEnv: { FAKE_EXIT: "0", FAKE_ATTEMPT: "2" } });
-    const again = await ciServePass(retry.opts);
-    expect(again.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, base: main, status: "ok", attempts: 2 })]);
-    expect(ofType(retry.events, "started")[0]).toMatchObject({ attempt: 2, resume: record });
-    // The job read the first attempt's record, and left its own.
-    expect(JSON.parse(readFileSync(join(again.jobs[0]!.report!, "resume-in.json"), "utf-8"))).toEqual({ attempt: "1" });
-    expect(JSON.parse(readFileSync(record, "utf-8"))).toEqual({ attempt: "2" });
-    // A passed apply is not run again, --rerun-failed or not.
-    expect((await ciServePass(retry.opts)).jobs).toEqual([]);
+      // Without --rerun-failed the failed apply is not run again.
+      expect((await ciServePass(failing.opts)).jobs).toEqual([]);
+    });
+
+    test("--rerun-failed runs it again with its resume record", async () => {
+      const retry = serve(w.app, forge, { stateDir: failing.state, rerunFailed: true, hostEnv: { FAKE_EXIT: "0", FAKE_ATTEMPT: "2" } });
+      const again = await ciServePass(retry.opts);
+      expect(again.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, base: w.main, status: "ok", attempts: 2 })]);
+      expect(ofType(retry.events, "started")[0]).toMatchObject({ attempt: 2, resume: record });
+      // The job read the first attempt's record, and left its own.
+      expect(JSON.parse(readFileSync(join(again.jobs[0]!.report!, "resume-in.json"), "utf-8"))).toEqual({ attempt: "1" });
+      expect(JSON.parse(readFileSync(record, "utf-8"))).toEqual({ attempt: "2" });
+      // A passed apply is not run again, --rerun-failed or not.
+      expect((await ciServePass(retry.opts)).jobs).toEqual([]);
+    });
   });
 
   test("--max-jobs holds the jobs over the limit for the next poll", async () => {
