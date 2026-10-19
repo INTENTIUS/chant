@@ -1311,6 +1311,14 @@ export interface RunOpOptions {
    */
   runner?: { kind: RunEventKind; runtime: RunEventRuntime; runOrigin: RunOrigin };
   /**
+   * Says why a failed run failed (#4094), given the run's step records once
+   * it has settled `fail`. What it returns is stored on the record as
+   * `failure`, before the record is signed, and carried on the `run-settle`
+   * event. `chant ci run` reads the job's pull-request report here, while
+   * the checkout it ran in still exists.
+   */
+  describeFailure?: (records: readonly StepRecord[]) => OpRunRecord["failure"];
+  /**
    * Append the run's {@link OpRunRecord} to the run ledger
    * (`../lifecycle/run-ledger.ts`) when the run settles (#2118). Opt-in on
    * purpose: the executor is called from unit tests and in-process harnesses
@@ -1626,6 +1634,10 @@ async function runOpInTurn(
       ...(options.runner ? { runOrigin: options.runner.runOrigin } : ciRun ? { runOrigin: ciRun.runOrigin } : {}),
       phaseDurations,
     });
+    if (status === "fail" && options.describeFailure) {
+      const failure = options.describeFailure(settled);
+      if (failure) input.failure = failure;
+    }
     let record: OpRunRecord = { version: 1, ...input, id: runId };
     if (options.signRecord) {
       try {
@@ -1638,7 +1650,7 @@ async function runOpInTurn(
     }
     // The stream settles as the run does, with the first failing step's error.
     const firstError = status === "fail" ? settled.find((r) => r.status === "fail")?.error : undefined;
-    stream?.settle(status === "fail" ? "failed" : status, firstError);
+    stream?.settle(status === "fail" ? "failed" : status, firstError, input.failure);
     if (!options.ledger) return record;
     try {
       return (await appendRunRecord(input, options.ledger)).record;

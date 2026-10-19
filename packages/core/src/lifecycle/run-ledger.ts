@@ -38,7 +38,7 @@ import { randomUUID } from "node:crypto";
 import { sortedJsonReplacer } from "../utils";
 import type { OpConfig } from "../op/types";
 import type { StepRecord } from "../op/local-executor";
-import type { OpRunRecord, OpRunRecordInput, OpRunPhaseRecord, OpRunStepRecord } from "../op/runtime";
+import { opRunFailureOf, type OpRunRecord, type OpRunRecordInput, type OpRunPhaseRecord, type OpRunStepRecord } from "../op/runtime";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 /** Prefix folding the per-op run ledgers into one flat name under `<env>/`. See the module doc. */
@@ -214,6 +214,12 @@ export async function readRunLedger(
       ) {
         malformed++;
         continue;
+      }
+      // A `failure` (#4094) that is not one is dropped and the line kept, as a gate line's wrong-typed `gitSha` is.
+      if ("failure" in parsed) {
+        const failure = opRunFailureOf(parsed.failure);
+        if (failure) parsed.failure = failure;
+        else delete parsed.failure;
       }
       records.push(parsed as OpRunRecord);
     } catch {

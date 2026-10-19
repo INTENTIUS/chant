@@ -95,7 +95,18 @@
             "type": { "const": "run-settle" },
             "status": { "$ref": "#/$defs/settleStatus" },
             "durationMs": { "type": ["integer", "null"], "minimum": 0, "description": "From run-start to now, or null when the writer did not time it." },
-            "error": { "type": "string", "description": "With status failed, what failed, when the writer knows." }
+            "error": { "type": "string", "description": "With status failed, what failed, when the writer knows." },
+            "failure": {
+              "type": "object",
+              "required": ["code", "reason"],
+              "description": "Added within contract version 1 by #4094, written by chant 0.124.30 and newer. With status failed: why, as the run record's failure says. code is a pull-request report's refusal or status (not-approved, plan-changed, not-a-reviewer, no-pull-request, plan-failed, failed, refused) or command-failed, setup-failed or build-failed, and a reader keeps a case for a code it does not know. reason is one line for a person, phase the phase that failed, exitCode the failed command's exit code. chant ci run writes it on every failed job.",
+              "properties": {
+                "code": { "type": "string", "minLength": 1 },
+                "reason": { "type": "string" },
+                "phase": { "type": "string" },
+                "exitCode": { "type": "integer" }
+              }
+            }
           }
         }
       ]

@@ -52,8 +52,8 @@ import { pushLifecycleReport } from "../lifecycle/git";
 import { ACTIVITY_PROFILES } from "../op/activity-profiles";
 import type { ActivityFn, ActivityProfile } from "../op/activity-registry";
 import { shellCmd } from "../op/activities/shell";
-import { OpRunFailure, runOpLocally, type OpRunResult } from "../op/local-executor";
-import type { OpRunRecord } from "../op/runtime";
+import { OpRunFailure, runOpLocally, type OpRunResult, type StepRecord } from "../op/local-executor";
+import type { OpRunFailureReason, OpRunRecord } from "../op/runtime";
 import type { ActivityStep, OpConfig, PhaseDefinition } from "../op/types";
 import { findWorkspaceRoot } from "../project-root";
 import { ciTagSigner, RUNNER_KEY_ENV } from "./ci-green";
@@ -201,6 +201,69 @@ export function ciJobOp(input: CiJobOpInput): OpConfig {
     labels: { Env: input.env, Pipeline: "pr", Job: input.job.jobName },
     phases,
   };
+}
+
+/** The pull-request report statuses that mean the job did not do its work, which a failed job's `failure.code` takes. */
+const FAILED_REPORT_STATUSES = new Set(["plan-failed", "failed", "refused"]);
+
+/** The exit code a failed shell step's error names (`command exited <n>`), when it names one. */
+function exitCodeOf(error: string | undefined): number | undefined {
+  const m = /command exited (\d+)/.exec(error ?? "");
+  return m ? Number(m[1]) : undefined;
+}
+
+/** The first line of a step's error, for a reason. */
+const firstLine = (text: string): string => text.split("\n").find((l) => l.trim() !== "")?.trim() ?? text;
+
+/**
+ * Why a failed job failed (#4094), from its step records and, when the
+ * command wrote one, its pull-request report (`pr-plan.json` or
+ * `pr-apply.json` under `reportDir`):
+ *
+ * - a failed setup or build line: `setup-failed` or `build-failed`, the line
+ *   and its exit code as the reason, and the phase;
+ * - a failed command with a report: the report's `refusal`, else its
+ *   `status`, with its `message` as the reason, else the members that failed;
+ * - a failed command with no report: `command-failed` and the step's error.
+ *
+ * Undefined when no step failed, such as a run that stopped on an error of
+ * its own before any step ran.
+ */
+export function ciJobFailure(input: { job: CiJobName; op: OpConfig; records: readonly StepRecord[]; reportDir: string }): OpRunFailureReason | undefined {
+  const failed = input.records.find((r) => r.status === "fail");
+  if (!failed) return undefined;
+  const exitCode = exitCodeOf(failed.error);
+  const exit = exitCode !== undefined ? { exitCode } : {};
+  if (failed.phase === "setup" || failed.phase === "build") {
+    const at = input.records.filter((r) => r.phase === failed.phase).indexOf(failed);
+    const step = input.op.phases.find((p) => p.name === failed.phase)?.steps[at] as ActivityStep | undefined;
+    const line = typeof step?.args?.cmd === "string" ? step.args.cmd : undefined;
+    const reason = line !== undefined
+      ? `${line} ${exitCode !== undefined ? `exited ${exitCode}` : `failed: ${firstLine(failed.error ?? "")}`}`
+      : firstLine(failed.error ?? "the step failed");
+    return { code: `${failed.phase}-failed`, reason, phase: failed.phase, ...exit };
+  }
+  const file = join(input.reportDir, `${CI_JOB_OPS[input.job]}.json`);
+  let report: { status?: unknown; refusal?: unknown; message?: unknown; members?: unknown } | undefined;
+  try {
+    if (existsSync(file)) report = JSON.parse(readFileSync(file, "utf-8"));
+  } catch {
+    report = undefined;
+  }
+  const status = typeof report?.status === "string" ? report.status : undefined;
+  if (report && status && (FAILED_REPORT_STATUSES.has(status) || typeof report.refusal === "string")) {
+    const code = typeof report.refusal === "string" ? report.refusal : status;
+    let reason = typeof report.message === "string" && report.message.trim() !== "" ? firstLine(report.message) : undefined;
+    if (reason === undefined) {
+      const members = Array.isArray(report.members) ? (report.members as { member?: unknown; status?: unknown; error?: unknown }[]) : [];
+      const bad = members.filter((m) => m.status === "failed" || m.status === "plan-failed");
+      reason = bad.length > 0
+        ? `${bad.length === 1 ? "member" : "members"} ${bad.map((m) => `${String(m.member)} ${String(m.status)}${typeof m.error === "string" ? ` (${firstLine(m.error)})` : ""}`).join(", ")}`
+        : `the ${CI_JOB_OPS[input.job]} report says ${status}`;
+    }
+    return { code, reason, phase: failed.phase, ...exit };
+  }
+  return { code: "command-failed", reason: firstLine(failed.error ?? "the command failed"), phase: failed.phase, ...exit };
 }
 
 /** What `chant ci run` runs. */
@@ -378,6 +441,7 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
         commit,
         ledger: { cwd: jobDir },
         runner: { kind: "pipeline", runtime: "ci", runOrigin: CHANT_RUNNER_ORIGIN },
+        describeFailure: (records) => ciJobFailure({ job: req.job, op, records, reportDir: join(jobDir, PR_LOOP_REPORT_DIR) }),
         ...(req.runEvents ? { runEvents: { write: req.runEvents } } : {}),
         ...(req.stepOutput ? { stepOutput: req.stepOutput } : {}),
         ...(signer ? { signRecord: (record: OpRunRecord) => signOpRunRecord(record, signer!) } : {}),
@@ -420,7 +484,9 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
 /** The text `chant ci run` prints when the run settles. */
 export function formatCiRun(r: CiRunResult): string {
   const lines = [`${r.op} ${r.status === "ok" ? "passed" : r.status === "fail" ? "failed" : r.status} at ${r.record.gitSha?.slice(0, 12) ?? "an unknown commit"}, run ${r.record.id} in ${r.record.env}`];
-  if (r.failure) lines.push(`  ${r.failure.phase}: ${r.failure.error}`);
+  const why = r.record.failure;
+  if (why) lines.push(`  failure: ${why.code}${why.phase ? ` in ${why.phase}` : ""}${why.exitCode !== undefined ? `, exit ${why.exitCode}` : ""}: ${why.reason}`);
+  else if (r.failure) lines.push(`  ${r.failure.phase}: ${r.failure.error}`);
   lines.push(`  record: ${r.record.env}/runs__${r.op}.jsonl on chant/lifecycle, ${r.signer ? `signed by ${r.signer}` : "unsigned, so ci tick from runs does not count it"}`);
   if (r.report) lines.push(`  report: ${r.report}`);
   if (!r.pushed) lines.push(`  ${r.pushWarning ?? "chant/lifecycle was not pushed"}`);

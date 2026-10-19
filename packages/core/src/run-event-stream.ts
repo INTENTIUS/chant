@@ -26,6 +26,7 @@ import {
   type RunEventRun,
   type RunEventRuntime,
   type RunEventSettleStatus,
+  type RunEventFailure,
 } from "./run-event";
 
 /** Where an emitter hands a run's events, before the writer stamps them. */
@@ -174,7 +175,7 @@ export interface RunEventStream {
    */
   nested: RunEventSink;
   /** End the stream with `run-settle`, unless it has ended. */
-  settle(status: RunEventSettleStatus, error?: string): void;
+  settle(status: RunEventSettleStatus, error?: string, failure?: RunEventFailure): void;
   /** Whether `run-settle` has been written. */
   readonly settled: boolean;
 }
@@ -219,9 +220,9 @@ export function openRunEventStream(
     nested: (body) => {
       if (body.type !== "run-start" && body.type !== "run-settle") emit(body);
     },
-    settle(status, error) {
+    settle(status, error, failure) {
       if (settled) return;
-      emit({ type: "run-settle", status, durationMs: null, ...(error !== undefined ? { error } : {}) });
+      emit({ type: "run-settle", status, durationMs: null, ...(error !== undefined ? { error } : {}), ...(failure ? { failure } : {}) });
     },
     get settled() {
       return settled;

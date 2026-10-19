@@ -17,8 +17,9 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
-import { ciJobCommand, ciJobEnv, ciJobOp, ciRun, CiRunError, formatCiRun } from "./ci-run";
-import { ciTick } from "./ci-green";
+import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciRun, CiRunError, formatCiRun } from "./ci-run";
+import { ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
+import type { StepRecord } from "../op/local-executor";
 import { sshFromEd25519 } from "./trust/dsse";
 import { verifyOpRunStatement } from "./trust/op-run-statement";
 import { readRunLedger } from "../lifecycle/run-ledger";
@@ -87,7 +88,8 @@ function fakeChant(): string {
       'printf "%s\\n" "$@" > ".chant/pr/$stage.args"',
       'env | sort > ".chant/pr/$stage.env"',
       'pwd -P > ".chant/pr/$stage.pwd"',
-      'echo "{\\"stage\\": \\"$stage\\"}" > ".chant/pr/$stage.json"',
+      // FAKE_REPORT, when the job is given it, is the pr report the command writes.
+      'if [ -n "$FAKE_REPORT" ]; then printf "%s" "$FAKE_REPORT" > ".chant/pr/$stage.json"; else echo "{\\"stage\\": \\"$stage\\"}" > ".chant/pr/$stage.json"; fi',
       'echo "fake $stage ran"',
       'exit "${FAKE_EXIT:-0}"',
       "",
@@ -96,6 +98,10 @@ function fakeChant(): string {
   chmodSync(file, 0o755);
   return file;
 }
+
+// A job image of its own, so the jobs get no setup lines: the default image's
+// OpenTofu install would download from the network on a runner without tofu.
+const JOB_IMAGE = "chant-ci-run-test:local";
 
 const HOST = {
   PATH: process.env.PATH,
@@ -188,7 +194,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     const reports = scratchDir("chant-ci-run-reports-");
 
     const events: string[] = [];
-    const plan = await ciRun({
+    const plan = await ciRun({ image: JOB_IMAGE,
       cwd: app,
       job: "plan",
       env: "prod",
@@ -231,14 +237,14 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     const stored = (await readRunLedger("prod", "pr-plan", { cwd: app })).records.at(-1)!;
     expect(stored.statement).toEqual(plan.record.statement);
     expect(verifyOpRunStatement(stored, RUNNERS, { runner: ["chant-runner"] })).toMatchObject({ status: "signed", signer: "chant-runner" });
-    expect(stored.phases.map((p) => [p.name, p.status])).toEqual([["setup", "ok"], ["plan", "ok"]]);
+    expect(stored.phases.map((p) => [p.name, p.status])).toEqual([["plan", "ok"]]);
 
     // The events: a pipeline run, on the chant runner.
     const stream = checkRunEventLines(events);
     expect(stream[0]).toMatchObject({ kind: "pipeline", runtime: "ci", name: "pr-plan", runId: "chant-plan-1", gitSha: sha, runOrigin: { forge: "chant" } });
     expect(stream.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
 
-    const apply = await ciRun({ cwd: app, job: "apply", env: "prod", forge: "forgejo", base, chant, hostEnv: HOST, runnerKey: BOT.pem, output: join(reports, "apply") });
+    const apply = await ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "forgejo", base, chant, hostEnv: HOST, runnerKey: BOT.pem, output: join(reports, "apply") });
     expect(apply.status).toBe("ok");
     const applyArgs = readFileSync(join(reports, "apply", "pr-apply.args"), "utf-8").trimEnd().split("\n");
     expect(applyArgs).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--require-review", "--resume", ".chant/pr-resume/pr-apply.json"]);
@@ -261,7 +267,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     commitAt(root, 2, "app/a.txt");
     const stranger = runnerKey();
     const lines: string[] = [];
-    const r = await ciRun({
+    const r = await ciRun({ image: JOB_IMAGE,
       cwd: app,
       job: "apply",
       env: "prod",
@@ -282,12 +288,14 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(r.signer).toBeNull();
     expect(r.warnings[0]).toMatch(/CHANT_RUNNER_KEY is set, and the run will not be signed: .*lists no runner with this key/);
     expect(r.failure).toMatchObject({ phase: "apply", error: expect.stringContaining("command exited 3") });
+    // The report says nothing about a failure, so the record names the command.
+    expect(r.record.failure).toMatchObject({ code: "command-failed", phase: "apply", exitCode: 3, reason: expect.stringContaining("command exited 3") });
     expect(lines.some((l) => l.includes("fake pr-apply ran"))).toBe(true);
     expect(r.report).not.toBeNull();
     expect(formatCiRun(r)).toContain("unsigned, so ci tick from runs does not count it");
 
     // The same key given with --key refuses the run before anything runs.
-    await expect(ciRun({ cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: stranger.pem, push: false })).rejects.toThrow(/would not be signed/);
+    await expect(ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: stranger.pem, push: false })).rejects.toThrow(/would not be signed/);
     expect((await readRunLedger("prod", "pr-apply", { cwd: app })).records).toHaveLength(1);
   });
 
@@ -297,7 +305,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     const sha = commitAt(root, 2, "app/a.txt");
     const chant = fakeChant();
     const out = join(scratchDir("chant-ci-run-build-"), "pr");
-    const ok = await ciRun({
+    const ok = await ciRun({ image: JOB_IMAGE,
       cwd: app,
       job: "plan",
       env: "prod",
@@ -313,9 +321,9 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     });
     expect(ok.status).toBe("ok");
     expect(readFileSync(join(out, "order"), "utf-8").trimEnd().split("\n")).toEqual(["before-script", "build", "chant lint", "chant components pr-plan"]);
-    expect(ok.record.phases.map((p) => [p.name, p.status, p.steps.length])).toEqual([["setup", "ok", 1], ["build", "ok", 3], ["plan", "ok", 1]]);
+    expect(ok.record.phases.map((p) => [p.name, p.status, p.steps.length])).toEqual([["build", "ok", 3], ["plan", "ok", 1]]);
 
-    const failed = await ciRun({
+    const failed = await ciRun({ image: JOB_IMAGE,
       cwd: app,
       job: "apply",
       env: "prod",
@@ -331,11 +339,78 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(failed.status).toBe("fail");
     expect(failed.failure).toMatchObject({ phase: "build", error: expect.stringContaining("command exited 4") });
     expect(failed.record).toMatchObject({ op: "pr-apply", status: "fail", gitSha: sha, runOrigin: { forge: "chant" } });
-    expect(failed.record.phases.map((p) => [p.name, p.status])).toEqual([["setup", "ok"], ["build", "fail"]]);
+    expect(failed.record.phases.map((p) => [p.name, p.status])).toEqual([["build", "fail"]]);
     // The command never ran: the report holds the build's line alone.
     expect(readFileSync(join(failed.report!, "order"), "utf-8").trimEnd().split("\n")).toEqual(["build"]);
     const stored = (await readRunLedger("prod", "pr-apply", { cwd: app })).records.at(-1)!;
     expect(stored.status).toBe("fail");
+    expect(stored.failure).toEqual({ code: "build-failed", phase: "build", exitCode: 4, reason: "mkdir -p .chant/pr && echo build >> .chant/pr/order && exit 4 exited 4" });
     expect(verifyOpRunStatement(stored, RUNNERS, { runner: ["chant-runner"] })).toMatchObject({ status: "signed" });
+  });
+
+  test("a failed job's record and settle event say why from its pr report, signed, and a revoke note names the code", async () => {
+    const { root, app } = workspace();
+    const base = git(root, "rev-parse", "HEAD");
+    const sha = commitAt(root, 2, "app/a.txt");
+    const refusedReport = { stage: "apply", status: "refused", refusal: "not-a-reviewer", message: "ana approved the plan, and ana has not approved the pull request on the forge" };
+    const extra = { FAKE_EXIT: "3", FAKE_REPORT: JSON.stringify(refusedReport) };
+    const events: string[] = [];
+    const refused = await ciRun({
+      image: JOB_IMAGE,
+      cwd: app,
+      job: "apply",
+      env: "prod",
+      forge: "forgejo",
+      base,
+      chant: fakeChant(),
+      hostEnv: { ...HOST, ...extra },
+      passEnv: Object.keys(extra),
+      runnerKey: BOT.pem,
+      push: false,
+      output: join(scratchDir("chant-ci-run-why-"), "pr"),
+      runEvents: (line) => events.push(line),
+    });
+    expect(refused.status).toBe("fail");
+    const why = { code: "not-a-reviewer", reason: refusedReport.message, phase: "apply", exitCode: 3 };
+    expect(refused.record.failure).toEqual(why);
+    expect(formatCiRun(refused)).toContain("failure: not-a-reviewer in apply, exit 3: ana approved the plan");
+    const stored = (await readRunLedger("prod", "pr-apply", { cwd: app })).records.at(-1)!;
+    expect(stored.failure).toEqual(why);
+    // The failure is signed with the rest of the record.
+    expect(verifyOpRunStatement(stored, RUNNERS, { runner: ["chant-runner"] })).toMatchObject({ status: "signed" });
+    // The settle event carries it, and validates against run-event.schema.json.
+    expect(checkRunEventLines(events).at(-1)).toMatchObject({ type: "run-settle", status: "failed", kind: "pipeline", failure: why });
+
+    // A tick from runs reads the code, and the revoke note names it.
+    const runs = (await readOpRunSource(app, root, git(root, "rev-parse", "HEAD"))).checkRuns(sha);
+    expect(runs).toEqual([expect.objectContaining({ name: "pr-apply", conclusion: "failure", failureCode: "not-a-reviewer" })]);
+    const green = { branch: "main", window: "7d", phases: [{ name: "apply", runs: ["pr-apply"] }], require: ["apply"], source: "runs" } as unknown as Parameters<typeof evaluateCommit>[0];
+    const verdict = evaluateCommit(green, runs);
+    expect(revokedAnnotation(green, sha, verdict.failure!, NOW).split("\n")[0]).toBe("ci: phase apply failed in pr-apply (failure, not-a-reviewer)");
+  });
+
+  test("the failure code comes from the report's refusal, its status and failed members, or the command", () => {
+    const op = ciJobOp({ job: prLoopJobs("forgejo", "prod")[1]!, env: "prod", cwd: "/w", jobEnv: {}, setup: [], build: ["npm ci"] });
+    const dir = scratchDir("chant-ci-run-report-");
+    const fail = (phase: string, code: number) => ({ phase, fn: "shellCmd", status: "fail", durationMs: 1, error: `command exited ${code} (expected 0): Command failed: x\nnoise` }) as unknown as StepRecord;
+    const ok = (phase: string) => ({ phase, fn: "shellCmd", status: "ok", durationMs: 1 }) as unknown as StepRecord;
+    const at = (records: StepRecord[]) => ciJobFailure({ job: "apply", op, records, reportDir: dir });
+
+    expect(at([ok("build"), ok("apply")])).toBeUndefined();
+    expect(at([fail("build", 2)])).toEqual({ code: "build-failed", reason: "npm ci exited 2", phase: "build", exitCode: 2 });
+    expect(at([ok("build"), fail("apply", 1)])).toEqual({ code: "command-failed", reason: "command exited 1 (expected 0): Command failed: x", phase: "apply", exitCode: 1 });
+
+    writeFileSync(join(dir, "pr-apply.json"), JSON.stringify({ status: "failed", members: [
+      { member: "network", status: "applied" },
+      { member: "cluster-a", status: "failed", error: "stack CREATE_FAILED\nmore" },
+      { member: "cluster-b", status: "failed" },
+      { member: "app-01", status: "blocked" },
+    ] }));
+    expect(at([ok("build"), fail("apply", 1)])).toEqual({ code: "failed", reason: "members cluster-a failed (stack CREATE_FAILED), cluster-b failed", phase: "apply", exitCode: 1 });
+    writeFileSync(join(dir, "pr-apply.json"), JSON.stringify({ status: "refused", refusal: "plan-changed", message: "the plan changed after review\nsecond line" }));
+    expect(at([ok("build"), fail("apply", 3)])).toEqual({ code: "plan-changed", reason: "the plan changed after review", phase: "apply", exitCode: 3 });
+    // A report that says the job did its work leaves the command's failure.
+    writeFileSync(join(dir, "pr-apply.json"), JSON.stringify({ status: "applied", members: [] }));
+    expect(at([ok("build"), fail("apply", 1)])!.code).toBe("command-failed");
   });
 });

@@ -117,6 +117,8 @@ export interface RunVerdict {
   verdict: Verdict;
   /** The Op run this is, when the source is chant runs (#4044). */
   opRun?: OpRunRef;
+  /** Why the Op run failed, its record's `failure.code` (#4094), when it says. */
+  failureCode?: string;
 }
 
 export interface PhaseVerdict {
@@ -144,7 +146,7 @@ export function evaluatePhase(phase: CiPhase, latest: readonly CheckRun[]): Phas
     if (matched.length === 0) unmatched.push(pattern);
     for (const r of matched) {
       if (runs.some((x) => x.name === r.name)) continue;
-      runs.push({ name: r.name, id: r.id, status: r.status, conclusion: r.conclusion, url: r.url, verdict: runVerdict(phase, r), ...(r.opRun ? { opRun: r.opRun } : {}) });
+      runs.push({ name: r.name, id: r.id, status: r.status, conclusion: r.conclusion, url: r.url, verdict: runVerdict(phase, r), ...(r.opRun ? { opRun: r.opRun } : {}), ...(r.failureCode ? { failureCode: r.failureCode } : {}) });
     }
   }
   const verdict: Verdict = runs.some((r) => r.verdict === "fail")
@@ -263,7 +265,8 @@ export function greenAnnotation(green: CiGreen, sha: string, verdict: CommitVerd
 /** The annotation of a revoked tag: the phase and the run that failed, and the time, signed when `signer` is given (#4031). */
 export function revokedAnnotation(green: CiGreen, sha: string, failure: NonNullable<CommitVerdict["failure"]>, at: Date, signer?: CiTagSigner): string {
   const record: CiTagRecord = { schema: 1, tag: "revoked", commit: sha, branch: green.branch, at: iso(at), ...sourceField(green), phase: failure.phase, run: runRecord(failure.run) };
-  return `ci: phase ${failure.phase} failed in ${failure.run.name} (${failure.run.conclusion ?? failure.run.status})\n\n${recordJson(record, signer)}\n`;
+  const code = failure.run.failureCode ? `, ${failure.run.failureCode}` : "";
+  return `ci: phase ${failure.phase} failed in ${failure.run.name} (${failure.run.conclusion ?? failure.run.status}${code})\n\n${recordJson(record, signer)}\n`;
 }
 
 /**
@@ -627,6 +630,7 @@ export function opRunCheckRun(record: OpRunRecord, signer: string): CheckRun {
     completedAt: settled ? record.ended : null,
     url: record.runOrigin?.url ?? null,
     opRun: { id: record.id, env: record.env, signer, statement: record.statement! },
+    ...(record.status === "fail" && record.failure ? { failureCode: record.failure.code } : {}),
   };
 }
 

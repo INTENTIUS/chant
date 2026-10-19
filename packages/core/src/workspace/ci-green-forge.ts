@@ -37,6 +37,8 @@ export interface CheckRun {
    * time in milliseconds, which orders a re-run after the run it replaced.
    */
   opRun?: OpRunRef;
+  /** For a failed Op run, its record's `failure.code` (#4094), which a revoke note names. Absent otherwise. */
+  failureCode?: string;
 }
 
 /** The Op run a {@link CheckRun} stands for (#4044). */

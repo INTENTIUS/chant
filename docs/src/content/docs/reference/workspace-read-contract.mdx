@@ -521,7 +521,7 @@ The `type` field names the event. A stream opens with `run-start` and ends with 
 | `step-start`, `step-settle` | `component`, `phase`, `step`, `index`; on settle `status`, `durationMs`, and `skip`, `error` or `message` when they apply |
 | `gate-waiting` | `component`, `phase`, `step`, `index`, `op` (what `chant approve` takes), `gate` and `point`, the answer record id of an open question |
 | `gate-resolved` | `component`, `phase`, `step`, `index`, `op`, `gate`, `resolvedBy`, `resolvedAt`, `via` and `url` |
-| `run-settle` | `status`, `durationMs`, and `error` on a failed run |
+| `run-settle` | `status`, `durationMs`, and `error` on a failed run. A failed `chant ci run` job adds `failure`, `{ code, reason, phase, exitCode }`, as its run record says, added within contract 1 by chant `0.124.30` |
 
 A run, wave, component or phase settles `ok`, `failed`, `gated` or `waiting`. `gated` stops at a gate nobody has approved, and `waiting` stops at a decision point nobody has answered. Neither is a failure. A component the run does not start settles too, with no `component-start` before it ([#4007](https://github.com/INTENTIUS/chant/issues/4007)):
 
@@ -961,9 +961,11 @@ These fields are optional in their documents. Each schema description names the 
 | `ls` | `ci.green.source` | 0.124.28 | `runs` when the declaration sets `ci.green.source` to `runs`, and absent otherwise, which means check runs ([#4044](https://github.com/INTENTIUS/chant/issues/4044)) |
 | `run-event` | `component-settle` `status` values `blocked` and `already-applied`, and `blockedBy` | 0.124.29 | A component the run did not start: held back by a failed or gated dependency, which `blockedBy` names, or applied by the earlier attempt a resumed run carries on ([#4007](https://github.com/INTENTIUS/chant/issues/4007)). See [Run events](#run-events) |
 | `run-event`, `status` | `runOrigin.forge` value `chant`, and `stewards[].ops[].lastRun.runOrigin.forge` in `status` | 0.124.30 | A job `chant ci run` ran, named by its Op run id ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). A run record in `<env>/runs__<op>.jsonl` carries the same value. A reader that switches on `forge` keeps a case for a value it does not know |
+| `run-event` | `failure` on `run-settle` | 0.124.30 | Why a failed run failed: `code`, `reason`, and `phase` and `exitCode` when known. `chant ci run` writes it on a failed job ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). `code` is a pull-request report's refusal or status, or `command-failed`, `setup-failed` or `build-failed`, and a reader keeps a case for a code it does not know |
+| `status` | `stewards[].ops[].lastRun.failure` | 0.124.30 | The same, from the newest run record of a steward's Op ([#4094](https://github.com/INTENTIUS/chant/issues/4094)) |
 | `ls` | `ci.green.signedSince` | 0.124.28 | The declaration's `ci.green.signedSince`, the full sha of the first commit whose tags must be signed, present only when it is set ([#4031](https://github.com/INTENTIUS/chant/issues/4031)) |
 
-The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and `statement` when a runner key signed it ([#4044](https://github.com/INTENTIUS/chant/issues/4044)), and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.
+The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and `statement` when a runner key signed it ([#4044](https://github.com/INTENTIUS/chant/issues/4044)), and `failure` on a failed `chant ci run` job from chant 0.124.30 ([#4094](https://github.com/INTENTIUS/chant/issues/4094)), and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.
 
 ## Reading older records
 
