@@ -38,7 +38,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
 import { forgeFromEnv, type OpenPullRequest } from "../pr-forge";
 import type { CommandContext } from "../cli/registry";
@@ -48,6 +48,7 @@ import { parseDuration } from "../op/duration";
 import { CI_JOB_OPS, ciJobPlace, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
 import { RUNNER_KEY_ENV } from "./ci-green";
 import { gitTop } from "./tree";
+import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
 
 /** The forges `ci serve` polls. GitLab is later. */
 export type CiServeForgeKind = "github" | "forgejo";
@@ -448,10 +449,37 @@ export function formatCiServeEvent(e: CiServeEvent): string {
 
 // ── The command ──────────────────────────────────────────────────────────────
 
+/**
+ * `chant ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]` (#4099):
+ * make the host's runner key when there is none, print its public half on
+ * stdout, and say whether the target's head lists it. With --trust, commit
+ * the runner entry on a branch of its own and push it for review.
+ */
+export function runnerKeySetupCommand(ctx: CommandContext): number {
+  const { args } = ctx;
+  const cwd = process.cwd();
+  const top = gitTop(cwd);
+  if (!top) throw new CiRunError("the runner key is kept in the repository's git directory, and this directory is not in a git repository");
+  if (args.ciPrincipal !== undefined && !args.trustKey) throw new CiRunError("--principal names who --trust lists the key for; give --trust with it");
+  const branch = args.branch ?? "main";
+  const setup = setupRunnerKey({
+    top,
+    stateDir: args.statePath ? resolve(args.statePath) : defaultCiServeStateDir(cwd),
+    branch,
+    ...(args.ciPrincipal ? { principal: args.ciPrincipal } : {}),
+    ...(args.trustKey ? { trust: true } : {}),
+    ...(args.by ? { by: args.by } : {}),
+  });
+  console.log(setup.key.publicKey);
+  console.error(formatRunnerKeySetup(setup, branch));
+  return 0;
+}
+
 const USAGE =
+  "chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
   "chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
   "[--author <login>]... [--once] [--rerun-failed] [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
-  "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]";
+  "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [--unsigned]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -467,14 +495,23 @@ export function ciServeInterval(value: string | undefined): number {
 export async function runCiServe(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   try {
+    if (args.setupKey) return runnerKeySetupCommand(ctx);
     const forge = args.forge;
     if (forge !== "forgejo" && forge !== "github") throw new CiRunError(`--forge names the forge ci serve polls: --forge forgejo|github${forge ? `, not ${JSON.stringify(forge)}` : ""}`);
     if (!args.ciRepo) throw new CiRunError("--repo names the repository whose pull requests ci serve polls: --repo <owner/repo>");
     if (!args.env) throw new CiRunError("--env names the environment the pipeline is for: --env <env>");
     for (const name of args.passEnv ?? []) if (!ENV_NAME.test(name)) throw new CiRunError(`--pass-env takes a variable's name, not ${JSON.stringify(name)}`);
     const intervalMs = ciServeInterval(args.interval);
-    const fromFlag = args.key !== undefined;
-    const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
+    const cwd = process.cwd();
+    const top = gitTop(cwd);
+    if (!top) throw new CiRunError("ci serve runs in a clone of the repository it serves, and this directory is not in a git repository");
+    const stateDir = args.statePath ? resolve(args.statePath) : defaultCiServeStateDir(cwd);
+    const branch = args.branch ?? "main";
+    // #4099: the host's key, checked against .chant/trust.json at the target's head before the first poll.
+    const keyed = ciServeRunnerKey({ top, stateDir, branch, ...(args.key !== undefined ? { keyFile: resolve(args.key) } : {}), envKey: process.env[RUNNER_KEY_ENV] || undefined, unsigned: args.unsigned });
+    const fromFlag = keyed.fromFlag;
+    const runnerKey = keyed.pem;
+    console.error(`ci serve: ${runnerKey === undefined ? "runs are not signed (--unsigned)" : `signing runs with the runner key from ${keyed.source}`}`);
     // #4096: read once, so a loose or broken secrets file stops the serve before its first poll.
     const secrets = ciSecretsOf(args.ciSecrets);
     const hostEnv = { ...process.env, GITHUB_REPOSITORY: args.ciRepo };
@@ -483,12 +520,12 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     if (warning) console.error(formatWarning({ message: warning }));
     if (!client.openPullRequests || !client.branchHead) throw new CiRunError(`the ${forge} client cannot list pull requests`);
     const opts: CiServeOptions = {
-      cwd: process.cwd(),
+      cwd,
       forge,
       repo: args.ciRepo,
       env: args.env,
       client: { openPullRequests: client.openPullRequests.bind(client), branchHead: client.branchHead.bind(client), pullRequestFor: client.pullRequestFor.bind(client) },
-      ...(args.statePath ? { stateDir: isAbsolute(args.statePath) ? args.statePath : resolve(args.statePath) } : {}),
+      stateDir,
       ...(args.maxJobs ? { maxJobs: args.maxJobs } : {}),
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
       ...(args.rerunFailed ? { rerunFailed: true } : {}),
