@@ -199,6 +199,11 @@ forgejo-runtime-e2e:
     @scripts/human-gate.sh forgejo-runtime-e2e
     bash test/forgejo-runtime-e2e.sh
 
+# The fan-out demo (#4091): one cycle of examples/fan-out-estate/demo on its local Forgejo and floci (on-demand, needs Docker; run `cmd=up` once first). cmd: up, cycle, loop, reset or down
+fan-out-demo cmd="cycle":
+    @scripts/human-gate.sh fan-out-demo
+    cd examples/fan-out-estate && npm run demo -- {{cmd}}
+
 # Per-PR preview loop (#1223) on a real runner: deploy on PR open, teardown on PR close, against mudflaps (on-demand, needs Docker + network)
 forgejo-preview-e2e:
     @scripts/human-gate.sh forgejo-preview-e2e

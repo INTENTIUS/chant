@@ -25,7 +25,11 @@
     "planted. lexicons/sql/src/typed-columns.e2e.test.ts checks it with its own program.",
     "",
     "lexicons/sql/examples/postgres-typed-columns/ is excluded for the same reason (#3788): its sql-types.d.ts",
-    "augments SqlSchema. It has its own tsconfig, and examples/typed-columns-example.e2e.test.ts runs tsc over it."
+    "augments SqlSchema. It has its own tsconfig, and examples/typed-columns-example.e2e.test.ts runs tsc over it.",
+    "",
+    "examples/fan-out-estate/demo/overlays/ is excluded (#4091): each file there is copied over the example's",
+    "src/ by the demo's pull requests, so its relative imports (./params) resolve only in that copy.",
+    "examples/fan-out-estate/demo/driver.test.ts holds each one to the base file it replaces."
   ],
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -48,6 +52,7 @@
     "packages/core/src/cli/commands/__fixtures__/**",
     "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts",
     "lexicons/sql/test-fixtures/**",
-    "lexicons/sql/examples/postgres-typed-columns/**"
+    "lexicons/sql/examples/postgres-typed-columns/**",
+    "examples/fan-out-estate/demo/overlays/**"
   ]
 }

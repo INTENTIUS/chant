@@ -1,0 +1,3 @@
+# Built by `npm run build` in stack/ (the driver's up builds them).
+stack/compose.yaml
+stack/Dockerfile.jobImage
