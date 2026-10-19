@@ -38,7 +38,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, rmSync, statSync, unlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { KEPT_REF_PREFIX } from "../lifecycle/work-lease";
@@ -348,7 +348,16 @@ function worktreeTree(top: string): string {
     const index = join(dir, "index");
     // Start from the checkout's index so git reuses its stat data; the original is never written.
     const own = out(top, ["rev-parse", "--git-path", "index"]);
-    if (own && existsSync(resolve(top, own))) copyFileSync(resolve(top, own), index);
+    if (own && existsSync(resolve(top, own))) {
+      const source = resolve(top, own);
+      copyFileSync(source, index);
+      // Keep the index's own timestamps on the copy. git treats an entry whose
+      // file is as new as the index as racily clean and reads its content; a
+      // copy stamped now would make a same-size edit made in the same second as
+      // the last index write look unchanged, and the snapshot would miss it.
+      const { atime, mtime } = statSync(source);
+      utimesSync(index, atime, mtime);
+    }
     const env = { GIT_INDEX_FILE: index };
     const add = git(top, ["add", "--all", "--", ":/"], { env });
     if (!add.ok) throw new Error(`wip: git add into a temporary index failed: ${add.stderr.trim()}`);
