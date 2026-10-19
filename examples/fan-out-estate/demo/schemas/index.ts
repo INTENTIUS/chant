@@ -40,6 +40,12 @@ export interface DemoReports {
   apply?: string;
 }
 
+/** A call-out a viewer may show as a modal at the step. */
+export interface DemoHighlight {
+  title: string;
+  body: string;
+}
+
 export interface DemoStep {
   $schema: string;
   contract: 1;
@@ -51,6 +57,7 @@ export interface DemoStep {
   name?: string;
   title?: string;
   label?: string;
+  highlight?: DemoHighlight | null;
   chapter?: DemoChapter | null;
   started_at?: string;
   at?: string;

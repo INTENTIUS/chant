@@ -20,6 +20,7 @@ Two JSON Schemas (draft 2020-12) for the fan-out demo's driver (#4091) and its r
 | `step` | yes | One of pull-request, planned, waiting, approved, merged, applying, failed, resumed, applied, reset, stalled. |
 | `repo` | no | Forge repository, `chant-demo/fan-out-estate`. |
 | `scenario`, `name`, `title`, `label` | no | Scenario id, display name, story title, one line narrating the step. |
+| `highlight` | no | `{title, body}` or null: a call-out a viewer may show as a modal at the step that earns one. Cycle step items carry it too. |
 | `chapter` | no | `{n, of, headline, short}` or null. Null only on the base and on a stall before the first step. |
 | `started_at`, `at` | no | When the cycle started and when this step was written. |
 | `next` | no | `{action, from, at}`: what the driver does after the hold. |
