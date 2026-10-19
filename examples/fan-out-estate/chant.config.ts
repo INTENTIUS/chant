@@ -14,6 +14,10 @@ export default {
   // dispatch through.
   lexicons: ["aws"],
 
+  // The live demo of this estate (#4085) lives in demo/: its driver, schemas
+  // and stack are tooling, not declarations, so source discovery skips them.
+  exclude: ["demo"],
+
   // One environment, pointed at a local AWS emulator. `--env local` on any
   // component command resolves to this endpoint; drop it (and the endpoint) to
   // run the same estate against a real account.
