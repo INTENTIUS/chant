@@ -281,7 +281,7 @@ CI:
                         first.
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
-              [--author <login>]... [--once] [--rerun-failed]
+              [--author <login>]... [--once] [--rerun-failed] [--unsigned]
               [ci run's job flags]
                         Poll the forge for open pull requests and the target
                         branch's head, and run ci run plan for each new pull
@@ -291,7 +291,15 @@ CI:
                         each apply's resume record there, and runs at most
                         --max-jobs (default 1) jobs at once. --once runs one
                         poll and waits for its jobs. --rerun-failed runs a
-                        failed apply or plan again.
+                        failed apply or plan again. Refuses to start when its
+                        runner key is not listed in .chant/trust.json at the
+                        target's head, unless --unsigned
+  ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+                        Make the host's runner key (Ed25519, mode 0600) in the
+                        state directory when there is none and print its public
+                        key. --trust commits its runner entry on a branch of its
+                        own and pushes it for review; the target branch is never
+                        written
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]

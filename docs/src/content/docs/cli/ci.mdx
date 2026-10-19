@@ -19,7 +19,9 @@ chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--
                   [--key <runner key.pem>] [-o <dir>]
 chant ci runs --report-url <url> [--json]
 chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
-                  [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [ci run's job flags]
+                  [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [ci run's job flags]
+chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -304,6 +306,22 @@ GITHUB_SERVER_URL=http://forgejo.localhost GITHUB_API_URL=http://forgejo.localho
   chant ci serve --forge forgejo --repo demo/estate --env local --author demo-driver \
     --chant 'npx chant' --before-script 'npm ci' --secrets /etc/chant/ci.env --key runner.pem
 ```
+
+### The host's runner key
+
+`ci serve` signs each run with a runner key, so a [tick from runs](#chant-runs-as-the-status-source) counts it ([#4099](https://github.com/INTENTIUS/chant/issues/4099)). It takes the key from `--key`, then `CHANT_RUNNER_KEY`, then the host's own key, `runner-key.pem` in the state directory. Before its first poll it fetches the target branch and reads `.chant/trust.json` at its head. When that file doesn't list the key under `runners` for a principal holding the `runner` role, `ci serve` refuses to start and prints the command that lists it. Every run it signed would otherwise be ignored. With no key at all it refuses too. `--unsigned` starts it without a key, and its runs are recorded unsigned.
+
+`--setup-key` sets the host's key up, on `ci serve` or `ci run`. When the state directory (`--state`, by default `chant/ci-serve` in the common git directory) holds no key, it makes an Ed25519 key in PEM there, with mode 0600 in a directory of mode 0700. It prints the public key, an `ssh-ed25519` line, on stdout. On stderr it says whether `.chant/trust.json` at the target's head lists the key, and if not, the exact [`chant workspace trust runner add`](/chant/cli/workspace-trust/) command that would. A key file that other users can read is refused.
+
+With `--trust` it makes that change itself, on a branch for review. In a temporary worktree at the target's head it runs `trust runner add` for `--principal`, by default `chant-runner:<host>`, and commits the result on `chant/trust-runner/<principal>`. It then pushes that branch to `origin` and never writes the target branch. Open a pull request from it. Changing the trust config is a protected write, so when the policy has signers, an admin signs the commit before it merges. The commit is made with the host's git identity and signing settings. Once it has merged, `ci serve` starts signed.
+
+```bash
+chant ci serve --setup-key --trust --principal chant-runner:demo-host
+# open a pull request from chant/trust-runner/chant-runner-demo-host, and merge it
+chant ci serve --forge forgejo --repo demo/estate --env local
+```
+
+`ci run` uses the host's key too when it is given no `--key` and no `CHANT_RUNNER_KEY`. As with the variable, a host key the commit's trust config doesn't list prints a warning, and the run is recorded unsigned.
 
 `ci serve` takes no webhook yet. It polls, so the host needs no inbound port, and a webhook checked with an HMAC secret is a follow-up.
 

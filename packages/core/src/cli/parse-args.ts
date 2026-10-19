@@ -66,6 +66,9 @@ const BOOLEAN_FLAGS = new Set([
   "--confirm-prod",
   "--once",
   "--rerun-failed",
+  "--setup-key",
+  "--trust",
+  "--unsigned",
   "--expire",
   "--check-live",
   "--check-snapshot",
@@ -768,6 +771,19 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === "--once") {
       result.once = true;
+    } else if (arg === "--setup-key") {
+      // `chant ci serve|run --setup-key` (#4099): make the host's runner key and print its public half.
+      result.setupKey = true;
+    } else if (arg === "--trust") {
+      // `chant ci serve|run --setup-key --trust` (#4099): list the key in .chant/trust.json on a branch.
+      result.trustKey = true;
+    } else if (arg === "--unsigned") {
+      // `chant ci serve --unsigned` (#4099): serve without a runner key listed at the target's head.
+      result.unsigned = true;
+    } else if (arg === "--principal") {
+      // `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the runner's principal.
+      result.ciPrincipal = args[++i];
+      if (!result.ciPrincipal || result.ciPrincipal.startsWith("-")) throw new Error("--principal needs the runner's principal: --principal <name>");
     } else if (arg === "--work") {
       // `chant run <op> --work <id>` (#2748)
       const value = args[++i];

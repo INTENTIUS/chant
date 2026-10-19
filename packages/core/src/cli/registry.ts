@@ -498,6 +498,14 @@ export interface ParsedArgs {
    * `records-write.ts`.
    */
   by?: string;
+  /** `chant ci serve|run --setup-key` (#4099): make the host's runner key in the state directory and print its public half. */
+  setupKey?: boolean;
+  /** `chant ci serve|run --setup-key --trust` (#4099): list the runner key in .chant/trust.json on a branch pushed for review. */
+  trustKey?: boolean;
+  /** `chant ci serve --unsigned` (#4099): start without a runner key listed in .chant/trust.json at the target's head. */
+  unsigned?: boolean;
+  /** `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the principal the runner key is listed for. */
+  ciPrincipal?: string;
   /** `chant workspace trust runner add <principal> --class runner|service` (#3510): the runner entry's class. */
   runnerClass?: string;
   /**

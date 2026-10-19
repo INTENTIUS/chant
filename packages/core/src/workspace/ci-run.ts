@@ -72,6 +72,7 @@ import { updateCiRunIndex, type CiRunIndexEntry } from "./ci-run-index";
 import { resolveMemberContext } from "./member-pipeline";
 import { signOpRunRecord } from "./trust/op-run-statement";
 import { gitTop } from "./tree";
+import { hostRunnerKey } from "./ci-runner-key";
 
 /** The two jobs a pull-request pipeline has. */
 export type CiJobName = PrLoopJob["jobName"];
@@ -751,9 +752,22 @@ const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>]";
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The host's runner key in `--state`, or in ci serve's default state directory, when `--setup-key` made one there (#4099). */
+function hostRunnerKeyAt(cwd: string, statePath: string | undefined): { pem: string } | undefined {
+  const common = statePath ? null : (() => {
+    try {
+      return execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    } catch {
+      return null;
+    }
+  })();
+  const dir = statePath ? resolve(statePath) : common ? join(common, "chant", "ci-serve") : null;
+  return dir ? hostRunnerKey(dir) : undefined;
+}
 
 /** The secrets file `--secrets` names, else the one `CHANT_CI_SECRETS` names, read; undefined when neither names one (#4096). */
 export function ciSecretsOf(flag: string | undefined, env: Record<string, string | undefined> = process.env): CiSecrets | undefined {
@@ -765,6 +779,7 @@ export function ciSecretsOf(flag: string | undefined, env: Record<string, string
 export async function runCiRun(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   try {
+    if (args.setupKey) return (await import("./ci-serve")).runnerKeySetupCommand(ctx);
     const job = args.extraPositional;
     if (job !== "plan" && job !== "apply") throw new CiRunError(`ci run takes the job to run, plan or apply${job ? `, not ${JSON.stringify(job)}` : ""}`);
     if (!args.env) throw new CiRunError("--env names the environment the pipeline is for, as chant build --components --generate <lexicon> --pr-loop took it: --env <env>");
@@ -773,7 +788,9 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     if (!(FORGE_KINDS as readonly string[]).includes(forge)) throw new CiRunError(`--forge takes github, gitlab or forgejo, not ${JSON.stringify(forge)}`);
     for (const name of args.passEnv ?? []) if (!ENV_NAME.test(name)) throw new CiRunError(`--pass-env takes a variable's name, not ${JSON.stringify(name)}`);
     const fromFlag = args.key !== undefined;
-    const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
+    // #4099: without --key or CHANT_RUNNER_KEY, the host's key that --setup-key made, if there is one. Like the variable, an unlisted one only warns.
+    const hostKey = fromFlag || process.env[RUNNER_KEY_ENV] ? undefined : hostRunnerKeyAt(process.cwd(), args.statePath);
+    const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || hostKey?.pem;
     const hostEnv = process.env;
     const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
     if (warning) console.error(formatWarning({ message: warning }));
