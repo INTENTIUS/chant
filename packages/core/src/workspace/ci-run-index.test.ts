@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
-import { cleanScratch, contract, declaration, git, scratchDir, validSchema, writeFiles } from "./__fixtures__/contract-repo";
+import { cleanScratch, contract, declaration, git, repoFixture, scratchDir, validSchema, writeFiles } from "./__fixtures__/contract-repo";
 import { ciRun } from "./ci-run";
 import { readCiSecrets } from "./ci-secrets";
 import {
@@ -33,9 +33,9 @@ afterAll(cleanScratch);
 const JOB_IMAGE = "chant-ci-run-index-test:local";
 const HOST = { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_TOKEN: "t", GITHUB_REPOSITORY: "acme/estate" };
 
-/** A repository with one member, and a stub chant that writes the report FAKE_REPORT gives it and exits $FAKE_EXIT. */
-function workspace(): { app: string; base: string; sha: string; chant: string } {
-  const root = scratchDir("chant-ci-run-index-");
+/** The repository every test starts from, built once: one member, and two commits. */
+const repoTemplate = repoFixture(() => {
+  const root = scratchDir("chant-ci-run-index-template-");
   git(root, "init", "-q");
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
   git(root, "config", "user.name", "t");
@@ -50,9 +50,17 @@ function workspace(): { app: string; base: string; sha: string; chant: string } 
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-q", "-m", msg], { cwd: root, stdio: "ignore" });
     return git(root, "rev-parse", "HEAD");
   };
-  const base = commit("init");
+  commit("init");
   writeFiles(root, { "app/a.txt": "b\n" });
-  const sha = commit("change");
+  commit("change");
+  return root;
+}, "chant-ci-run-index-");
+
+/** A repository with one member, and a stub chant that writes the report FAKE_REPORT gives it and exits $FAKE_EXIT. */
+function workspace(): { app: string; base: string; sha: string; chant: string } {
+  const root = repoTemplate();
+  const base = git(root, "rev-parse", "HEAD~1");
+  const sha = git(root, "rev-parse", "HEAD");
   const file = join(scratchDir("chant-ci-run-index-bin-"), "chant");
   writeFileSync(
     file,

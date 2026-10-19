@@ -12,10 +12,10 @@
 
 import { execFileSync } from "node:child_process";
 import { createPublicKey, generateKeyPairSync } from "node:crypto";
-import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "vitest";
-import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
 import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
 import type { CommitStatus } from "../pr-forge";
@@ -54,11 +54,17 @@ function commitAt(root: string, hours: number, file: string): string {
   return git(root, "rev-parse", "HEAD");
 }
 
-/** A checkout on main with a bare origin: member `app`, `ci.green` from runs, and BOT as the runner `chant-runner`. */
-function workspace(): { root: string; app: string } {
-  const origin = scratchDir("chant-ci-run-origin-");
+/**
+ * A checkout on main with a bare origin: member `app`, `ci.green` from runs, and BOT as the runner `chant-runner`.
+ * The history is two commits, `base` and then `sha`, which changes app/a.txt, and both are pushed to origin.
+ */
+const workspaceTemplate = repoFixture(() => {
+  const top = scratchDir("chant-ci-run-template-");
+  const origin = join(top, "origin");
+  const root = join(top, "root");
+  mkdirSync(origin);
+  mkdirSync(root);
   git(origin, "init", "-q", "--bare");
-  const root = scratchDir("chant-ci-run-");
   git(root, "init", "-q");
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
   git(root, "config", "user.name", "t");
@@ -71,7 +77,17 @@ function workspace(): { root: string; app: string } {
   });
   git(root, "remote", "add", "origin", origin);
   commitAt(root, 23, "app/init.txt");
-  return { root, app: join(root, "app") };
+  commitAt(root, 2, "app/a.txt");
+  git(root, "push", "-q", "origin", "main");
+  return top;
+}, "chant-ci-run-");
+
+/** A copy of the template repository, its origin pointed at the copy of the bare one. */
+function workspace(): { root: string; app: string; base: string; sha: string } {
+  const top = workspaceTemplate();
+  const root = join(top, "root");
+  git(root, "remote", "set-url", "origin", join(top, "origin"));
+  return { root, app: join(root, "app"), base: git(root, "rev-parse", "HEAD~1"), sha: git(root, "rev-parse", "HEAD") };
 }
 
 /**
@@ -186,23 +202,29 @@ describe("the job as an Op (#4094)", () => {
 });
 
 describe("chant ci run, then ci tick from runs (#4094)", () => {
-  test("plan and apply run in a fresh worktree, are recorded signed, and the tick tags the commit green", async () => {
-    const before = { worktrees: undefined as string | undefined };
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    const sha = commitAt(root, 2, "app/a.txt");
-    git(root, "push", "-q", "origin", "main");
-    before.worktrees = git(root, "worktree", "list", "--porcelain");
-    const chant = fakeChant();
-    const reports = scratchDir("chant-ci-run-reports-");
+  // The plan and the apply run once, in beforeAll, and the tests below read what they left. A job
+  // takes a few hundred milliseconds here and several times that on a loaded runner, so two jobs and
+  // a tick in one test came close to the unit budget (#2817). A file's beforeAll is not counted in it.
+  let w: ReturnType<typeof workspace>;
+  let worktrees: string;
+  let chant: string;
+  let reports: string;
+  let events: string[];
+  let plan: Awaited<ReturnType<typeof ciRun>>;
+  let apply: Awaited<ReturnType<typeof ciRun>>;
 
-    const events: string[] = [];
-    const plan = await ciRun({ image: JOB_IMAGE,
-      cwd: app,
+  beforeAll(async () => {
+    w = workspace();
+    worktrees = git(w.root, "worktree", "list", "--porcelain");
+    chant = fakeChant();
+    reports = scratchDir("chant-ci-run-reports-");
+    events = [];
+    plan = await ciRun({ image: JOB_IMAGE,
+      cwd: w.app,
       job: "plan",
       env: "prod",
       forge: "forgejo",
-      base,
+      base: w.base,
       pr: 7,
       chant,
       hostEnv: HOST,
@@ -212,6 +234,11 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
       runId: "chant-plan-1",
       runEvents: (line) => events.push(line),
     });
+    apply = await ciRun({ image: JOB_IMAGE, cwd: w.app, job: "apply", env: "prod", forge: "forgejo", base: w.base, chant, hostEnv: HOST, runnerKey: BOT.pem, output: join(reports, "apply") });
+  });
+
+  test("the plan runs in a fresh worktree, in the member's directory, with a clean environment", () => {
+    const { root, base, sha } = w;
     expect(plan.status).toBe("ok");
     expect(plan.warnings).toEqual([]);
     expect(plan.signer).toBe("chant-runner");
@@ -227,7 +254,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(pwd).toBe(join(plan.checkout, "app"));
     expect(pwd.startsWith(realpathSync(root))).toBe(false);
     expect(existsSync(plan.checkout)).toBe(false);
-    expect(git(root, "worktree", "list", "--porcelain")).toBe(before.worktrees);
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(worktrees);
     expect(JSON.parse(readFileSync(join(out, "pr-plan.json"), "utf-8"))).toEqual({ stage: "pr-plan" });
 
     // The environment is clean: the job's variables and the few the runner hands on. The copied
@@ -235,7 +262,10 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     const env = envFile(out, "pr-plan");
     expect(env).toMatchObject({ BASE_SHA: base, PR_NUMBER: "7", GITHUB_SHA: sha, CHANT_ENV: "prod", GITHUB_TOKEN: "***", AWS_ACCESS_KEY_ID: "***" });
     for (const name of ["NOT_FOR_JOBS", "CHANT_RUNNER_KEY", "GITHUB_RUN_ID"]) expect(env).not.toHaveProperty(name);
+  });
 
+  test("the plan and the apply are recorded signed, with a pipeline run's events", async () => {
+    const { app, base, sha } = w;
     // The record: Op pr-plan at the commit, run by chant, with a statement that verifies.
     expect(plan.record).toMatchObject({ op: "pr-plan", env: "prod", status: "ok", gitSha: sha, runOrigin: { forge: "chant" }, id: "chant-plan-1" });
     const stored = (await readRunLedger("prod", "pr-plan", { cwd: app })).records.at(-1)!;
@@ -248,13 +278,14 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(stream[0]).toMatchObject({ kind: "pipeline", runtime: "ci", name: "pr-plan", runId: "chant-plan-1", gitSha: sha, runOrigin: { forge: "chant" } });
     expect(stream.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
 
-    const apply = await ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "forgejo", base, chant, hostEnv: HOST, runnerKey: BOT.pem, output: join(reports, "apply") });
     expect(apply.status).toBe("ok");
     const applyArgs = readFileSync(join(reports, "apply", "pr-apply.args"), "utf-8").trimEnd().split("\n");
     expect(applyArgs).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--require-review", "--resume", ".chant/pr-resume/pr-apply.json"]);
     expect(formatCiRun(apply)).toContain("signed by chant-runner");
+  });
 
-    // The records reached origin, and a tick from runs tags the commit green with no forge.
+  test("the records reached origin, and a tick from runs tags the commit green with no forge", async () => {
+    const { root, app, sha } = w;
     expect(git(root, "ls-remote", "origin", "chant/lifecycle")).toContain(git(root, "rev-parse", "chant/lifecycle"));
     const tick = await ciTick({ cwd: app, now: NOW, runnerKey: BOT.pem });
     expect(tick.source).toBe("runs");
@@ -266,9 +297,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
   });
 
   test("a failing job is recorded failed, and a key from the environment that trust.json does not list leaves it unsigned", async () => {
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    commitAt(root, 2, "app/a.txt");
+    const { app, base } = workspace();
     const stranger = runnerKey();
     const lines: string[] = [];
     const r = await ciRun({ image: JOB_IMAGE,
@@ -304,9 +333,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
   });
 
   test("--pr-build runs the job's build and lint lines after --before-script and before the command, and a failing build fails the job", async () => {
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    const sha = commitAt(root, 2, "app/a.txt");
+    const { root, app, base, sha } = workspace();
     const chant = fakeChant();
     const out = join(scratchDir("chant-ci-run-build-"), "pr");
     const ok = await ciRun({ image: JOB_IMAGE,
@@ -353,9 +380,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
   });
 
   test("a failed job's record and settle event say why from its pr report, signed, and a revoke note names the code", async () => {
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    const sha = commitAt(root, 2, "app/a.txt");
+    const { root, app, base, sha } = workspace();
     const refusedReport = { stage: "apply", status: "refused", refusal: "not-a-reviewer", message: "ana approved the plan, and ana has not approved the pull request on the forge" };
     const extra = { FAKE_EXIT: "3", FAKE_REPORT: JSON.stringify(refusedReport) };
     const events: string[] = [];
@@ -435,9 +460,7 @@ describe("a commit status per job (#4097)", () => {
   }
 
   async function job(over: Record<string, unknown>) {
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    const sha = commitAt(root, 2, "app/a.txt");
+    const { root, app, base, sha } = workspace();
     const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: HOST, push: false, output: join(scratchDir("chant-ci-status-"), "pr"), ...over } as Parameters<typeof ciRun>[0]);
     return { r, sha };
   }
@@ -488,15 +511,42 @@ describe("a commit status per job (#4097)", () => {
     expect(https.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/${key}/`, `https://host/reports/${key}/`]);
   });
 
+  /**
+   * An `aws` stand-in first on PATH for the test. The run index of an s3 --report-url is read and
+   * written with the AWS CLI, and the real one reaches for credentials and the network: seconds on a
+   * runner that has it. The stub takes a put and answers a get with a missing object.
+   */
+  function withStubAws(): () => void {
+    const dir = scratchDir("chant-ci-run-aws-");
+    const file = join(dir, "aws");
+    writeFileSync(file, ['#!/bin/sh', 'if [ "$3" = "-" ]; then cat > /dev/null; exit 0; fi', 'echo "An error occurred (404) when calling the HeadObject operation: Key not found" >&2', "exit 1", ""].join("\n"));
+    chmodSync(file, 0o755);
+    const saved = process.env.PATH;
+    process.env.PATH = `${dir}:${saved}`;
+    return () => {
+      process.env.PATH = saved;
+    };
+  }
+
   test("target_url is the --status-url template for an s3 --report-url", async () => {
     const s3 = fakeForge();
-    const mapped = await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: s3.client, urlTemplate: "https://host/reports/{key}" } });
-    expect(s3.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/7/${mapped.sha}/app`, `https://host/reports/7/${mapped.sha}/app`]);
+    const restore = withStubAws();
+    try {
+      const mapped = await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: s3.client, urlTemplate: "https://host/reports/{key}" } });
+      expect(s3.posts.map((p) => p.status.targetUrl)).toEqual([`https://host/reports/7/${mapped.sha}/app`, `https://host/reports/7/${mapped.sha}/app`]);
+    } finally {
+      restore();
+    }
   });
 
   test("an s3 or file --report-url with no --status-url gives no target_url", async () => {
     const bare = fakeForge();
-    await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: bare.client } });
+    const restore = withStubAws();
+    try {
+      await job({ loop: { reportUrl: "s3://bucket/prefix" }, status: { client: bare.client } });
+    } finally {
+      restore();
+    }
     expect(bare.posts.every((p) => p.status.targetUrl === undefined)).toBe(true);
     expect(ciStatusUrl({ reportUrl: "file:///tmp/r", commit: "abc" })).toBeUndefined();
   });
@@ -545,9 +595,7 @@ function filesUnder(dir: string): Record<string, string> {
 
 describe("the job's secrets from the host (#4096)", () => {
   test("a secret reaches the step, and the file's allowlist keeps one from the plan", async () => {
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    commitAt(root, 2, "app/a.txt");
+    const { app, base } = workspace();
     const secrets = readCiSecrets(
       secretsFile(JSON.stringify({ secrets: { DB_PASSWORD: "hunter22-db", DEPLOY_KEY: "deploy-key-value" }, jobs: { plan: ["DB_PASSWORD"] } }), "secrets.json"),
     );
@@ -588,9 +636,7 @@ describe("the job's secrets from the host (#4096)", () => {
   });
 
   test("a secret the job prints, writes in its report or fails with is *** in the events, the signed record, the copied report and the output", async () => {
-    const { root, app } = workspace();
-    const base = git(root, "rev-parse", "HEAD");
-    commitAt(root, 2, "app/a.txt");
+    const { app, base } = workspace();
     const SECRET = "s3cret pass#1";
     const TOKEN = "tok-abc123";
     const secrets = readCiSecrets(secretsFile(`# the host's secrets\nDB_PASSWORD="${SECRET}"\nexport PIN=abc\n`));
