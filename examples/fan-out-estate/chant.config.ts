@@ -17,7 +17,12 @@ export default {
   // One environment, pointed at a local AWS emulator. `--env local` on any
   // component command resolves to this endpoint; drop it (and the endpoint) to
   // run the same estate against a real account.
-  environments: [{ name: "local", endpoint: "http://localhost:4566" }],
+  // `demo` is the same emulator reached by its compose service name, for the
+  // jobs the demo's forgejo-runner starts inside the stack (#4093).
+  environments: [
+    { name: "local", endpoint: "http://localhost:4566" },
+    { name: "demo", endpoint: "http://floci:4566" },
+  ],
 
   // A multi-stack project (#932): one entry per independently-deployed stack,
   // each naming the source directory it is built from. `chant lifecycle

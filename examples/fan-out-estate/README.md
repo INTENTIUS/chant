@@ -46,7 +46,8 @@ starts from.
 ## Layout
 
 - `chant.config.ts` names the fifteen stacks and the source directory each is
-  built from, plus a `local` environment pointing at an emulator endpoint.
+  built from, plus a `local` environment pointing at an emulator endpoint and a `demo`
+  environment pointing at the same emulator by its compose name (`floci`).
 - `src/<stack>/` is one build root per stack. A stack is a build root, so the
   twelve apps get twelve directories even though their components share a file.
 - `network.component.ts`, `clusters.component.ts`, `apps.component.ts` hold the
@@ -60,6 +61,27 @@ Each stack is small and free-tier: an SNS topic and an SQS queue in `network`, a
 DynamoDB table and a CloudWatch log group in each cluster, a log group and a
 queue in each app. Nothing needs a VPC, and every type here is one the emulator
 provisions for real.
+
+## The pull-request workflow is generated
+
+`.forgejo/workflows/chant-pr.yml` is the CI for this example, and chant writes
+it. It is the output of one command, run in this directory:
+
+```
+chant build --components --generate forgejo --pr-loop --env demo --events-json \
+  --report-url s3://chant-demo/fan-out-estate/reports \
+  --image chant-fan-out-demo-job:local \
+  --pr-build-command 'npm run build' \
+  -o .forgejo/workflows/chant-pr.yml
+```
+
+Never edit the file by hand. To change it, change the flags or the components
+and run the command again. `chant-pr-workflow.test.ts` regenerates it in
+process and compares bytes with the committed file, so a hand edit or a stale
+file fails the unit suite. The `plan` job (a pull request) runs `npm run build`,
+`chant lint`, then `chant components pr-plan`; the `apply` job (a push to main)
+runs the same build and lint, then `chant components pr-apply`. Each covers all
+fifteen stacks, because the stacks are the members of one plan and one apply.
 
 ## Run it against a local AWS emulator
 
