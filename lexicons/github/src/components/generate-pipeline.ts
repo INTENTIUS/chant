@@ -210,6 +210,7 @@ function prLoopGithubDoc(
     checkoutStep(true),
     ...runSteps(prLoopSetup(image)),
     ...runSteps(beforeScript),
+    ...(job.build ? [{ name: "Build the templates", run: job.build[0] }, { name: "Lint the project", run: job.build[1] }] : []),
     ...(job.jobName === "apply" ? [restoreRecord] : []),
     { name, env: job.env, run: job.command },
     ...runSteps(extraScript),

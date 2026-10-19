@@ -148,6 +148,21 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--pr-build and --pr-build-command become the prLoop build options (#4088)", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "jobs: {}", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const exit = await runBuild({
+      args: makeArgs({ generate: "github", prLoop: true, prBuild: true, prBuildCommand: "npm run build" }),
+      plugins: [],
+      serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock).toHaveBeenCalledWith(".", "github", { env: undefined, prLoop: { build: true, buildCommand: "npm run build" } }, undefined, []);
+    vi.restoreAllMocks();
+  });
+
   test("chant.config.ts's declared buildParams resolve, log, and are forwarded to generateComponentsPipeline", async () => {
     loadChantConfigUpwardMock.mockResolvedValue({
       config: { buildParams: { tier: { type: "string", default: "light" } } },

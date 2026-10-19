@@ -135,3 +135,35 @@ describe("the merge-request pipeline's branch (#3765)", () => {
     expect(() => generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { branch: "re$lease" } })).toThrow(/filters on branch "re\$lease"/);
   });
 });
+
+describe("the gitlab pull-request pipeline with build (#4088)", () => {
+  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { build: true } });
+  const doc = parseYAML(result.yaml) as Record<string, any>;
+  const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-build.gitlab.golden.yml");
+
+  test("matches its golden", () => {
+    if (process.env.UPDATE_GOLDEN) writeFileSync(golden, result.yaml);
+    expect(result.yaml).toBe(readFileSync(golden, "utf-8"));
+  });
+
+  test("builds, then lints, before pr-plan and pr-apply", () => {
+    const script = (job: string) => (doc[job] as { script: string[] }).script;
+    for (const job of ["plan", "apply"]) {
+      const lines = script(job);
+      const i = lines.findIndex((l) => l.startsWith("chant components pr-"));
+      expect(lines.slice(i - 2, i)).toEqual(["chant build --env prod", "chant lint"]);
+    }
+  });
+
+  test("buildCommand replaces the build line and turns the option on", () => {
+    const yaml = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { buildCommand: "npm run build" } }).yaml;
+    expect(yaml).toContain("npm run build");
+    expect(yaml).not.toContain("chant build --env");
+    expect(yaml).toContain("chant lint");
+  });
+
+  test("the default output carries neither line", () => {
+    const plain = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    expect(plain).not.toContain("chant lint");
+  });
+});

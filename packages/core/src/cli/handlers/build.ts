@@ -13,7 +13,8 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
 /**
  * The `prLoop` generator option from `--pr-loop`'s flags (#3183): the gate
  * and the branch, and with `--events-json` and `--report-url` (#4007) the
- * flags the generated jobs pass to pr-plan and pr-apply.
+ * flags the generated jobs pass to pr-plan and pr-apply. `--pr-build` and
+ * `--pr-build-command` (#4088) add the build and lint steps before both.
  */
 function prLoopOption(args: CommandContext["args"]): PrLoopPipelineOptions {
   return {
@@ -21,6 +22,8 @@ function prLoopOption(args: CommandContext["args"]): PrLoopPipelineOptions {
     ...(args.branch ? { branch: args.branch } : {}),
     ...(args.eventsJson ? { events: true } : {}),
     ...(args.reportUrl ? { reportUrl: args.reportUrl } : {}),
+    ...(args.prBuild ? { build: true } : {}),
+    ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
   };
 }
 

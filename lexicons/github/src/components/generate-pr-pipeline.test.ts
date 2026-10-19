@@ -187,3 +187,34 @@ describe("the GitHub pull-request workflow", () => {
     }
   });
 });
+
+describe("the github pull-request pipeline with build (#4088)", () => {
+  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { build: true } });
+  const doc = parseYAML(result.yaml) as Record<string, any>;
+  const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-build.github.golden.yml");
+
+  test("matches its golden", () => {
+    if (process.env.UPDATE_GOLDEN) writeFileSync(golden, result.yaml);
+    expect(result.yaml).toBe(readFileSync(golden, "utf-8"));
+  });
+
+  test("builds, then lints, before pr-plan and pr-apply", () => {
+    for (const job of ["plan", "apply"]) {
+      const runs = doc.jobs[job].steps.map((s: { run?: string }) => s.run ?? "").filter(Boolean);
+      const i = runs.findIndex((r: string) => r.startsWith("chant components pr-"));
+      expect(runs.slice(i - 2, i)).toEqual(["chant build --env prod", "chant lint"]);
+    }
+  });
+
+  test("buildCommand replaces the build line and turns the option on", () => {
+    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { buildCommand: "npm run build" } }).yaml;
+    expect(yaml).toContain("npm run build");
+    expect(yaml).not.toContain("chant build --env");
+    expect(yaml).toContain("chant lint");
+  });
+
+  test("the default output carries neither line", () => {
+    const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    expect(plain).not.toContain("chant lint");
+  });
+});
