@@ -710,6 +710,13 @@ Workspace (level 1, #2524):
                         threshold of the old one. A commit an agent run made
                         is attested by the run's signed statement; with
                         attested-runs, only those commits must be
+  workspace trust runner add <principal> --key <ssh-ed25519 line or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
+  workspace trust runner remove <principal> [--by <principal>] [--expect <digest>] [--dry-run]
+                        List a runner's key under runners in .chant/trust.json,
+                        granting a runner the runner role, or take both away,
+                        editing the file in place. --expect refuses the write
+                        when the file's digest has changed. Prints the
+                        trust-write document and the new digest; never commits
   workspace signers [--json] [rotate [--threshold <n>] | sign --key <file>]
                         Show the signer history at base, or propose the next
                         signer set and sign it with a current signer's key
@@ -1448,6 +1455,8 @@ export const commandRegistry: CommandDef[] = [
   // #2548 — an agent session's member, write scope and spec, for a session that resumes.
   { name: "workspace agent", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/agent-cli")).runWorkspaceAgent(ctx) },
   { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
+  // #3510 — a runner entry of .chant/trust.json, written through chant so a box repo never edits it by hand (ws-074).
+  { name: "workspace trust", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/trust/trust-write")).runWorkspaceTrust(ctx) },
   { name: "workspace signers", handler: async (ctx) => (await import("../workspace/trust/signers-cli")).runWorkspaceSigners(ctx) },
   { name: "workspace evidence", handler: async (ctx) => (await import("../workspace/trust/evidence-cli")).runWorkspaceEvidence(ctx) },
 

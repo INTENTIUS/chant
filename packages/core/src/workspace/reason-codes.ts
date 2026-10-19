@@ -271,6 +271,11 @@ export const REASONS = {
   // A declaration's members and hosts written through chant (member add|remove, host set, #3596): why the write was refused. Nothing is written.
   "member-exists": "member add names a member the declaration already has, with an entry other than the one given.",
   "member-unknown": "member remove names a member the declaration does not declare.",
+  // A runner entry of .chant/trust.json written through chant (trust runner add|remove, #3510): why the write was refused. Nothing is written.
+  "trust-config-invalid": ".chant/trust.json in the working tree is not JSON or does not match its schema, or the write would make it so.",
+  "trust-conflict": "--expect named a digest .chant/trust.json no longer has: another write changed it after the caller read it. The refusal names the digest it has now.",
+  "runner-exists": "trust runner add names a principal .chant/trust.json already lists with another key or class, or gives a key it lists for another principal.",
+  "runner-unknown": "trust runner remove names a principal .chant/trust.json lists no runner for.",
   // A box's factory written through chant (box factory set, #3600): why the write was refused. Nothing is written.
   "factory-member-unknown": "box factory set names a member the declaration does not declare.",
   "factory-box-missing": "box factory set names a member whose entry declares no box block, so it has no factory.",
@@ -314,8 +319,8 @@ export const REASONS = {
   "evidence-payload-type": "The envelope's payload type is not application/vnd.in-toto+json.",
   "evidence-statement-invalid": "The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define.",
   "evidence-runner-mismatch": "The statement names a runner other than the one whose key signed it.",
-  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM.",
-  "runner-key-is-signer": "The key given to evidence sign or runs sign is a person's key in the signers file. Evidence and run statements are signed by a service or CI identity.",
+  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM, or the key given to trust runner add is not an ssh-ed25519 public key or an Ed25519 key in PEM.",
+  "runner-key-is-signer": "The key given to evidence sign, runs sign or trust runner add is a person's key in the signers file, or trust runner add names a signer. Evidence and run statements are signed by a service or CI identity.",
   "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign or runs sign.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",

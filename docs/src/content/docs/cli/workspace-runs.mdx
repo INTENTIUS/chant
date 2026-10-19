@@ -131,7 +131,7 @@ A run's record is as trustworthy as whatever wrote it: a box that reports its ow
 | `predicate.run` | `{ id, record: { sha256 } }`: the run and the hash of its record, the SHA-256 of the canonical JSON (keys sorted, no whitespace) of `[start line, end line]`. The record holds the cost, tokens and transcript hash, so the hash covers them |
 | `predicate.unit`, `harness`, `model`, `provider`, `by` | the work item, harness, model and provider, and the principal the run worked for, as the record has them, so a policy can read them without the record |
 
-The signing key is a runner key, listed at base under `runners` in `.chant/trust.json` with class `runner` for a CI job or `service` for a hosted signer such as a lobby or a steward. A key the signers file lists is refused: a person's key never signs for a run. Only an ended run can be signed, since the end is part of what the hash covers.
+The signing key is a runner key, listed at base under `runners` in `.chant/trust.json` with class `runner` for a CI job or `service` for a hosted signer such as a lobby or a steward. A key the signers file lists is refused: a person's key never signs for a run. [`chant workspace trust runner add <principal> --key <key> --class service`](/chant/cli/workspace-trust/) lists a lobby's key without editing the file by hand. Only an ended run can be signed, since the end is part of what the hash covers.
 
 | Command | Does |
 |---|---|

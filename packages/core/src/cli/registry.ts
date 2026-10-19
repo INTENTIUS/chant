@@ -496,6 +496,8 @@ export interface ParsedArgs {
    * `records-write.ts`.
    */
   by?: string;
+  /** `chant workspace trust runner add <principal> --class runner|service` (#3510): the runner entry's class. */
+  runnerClass?: string;
   /**
    * `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey.
    * On `records new` and `records amend`, the key that seals the record's author (#2688).

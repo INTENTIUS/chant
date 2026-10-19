@@ -1,0 +1,72 @@
+---
+title: "chant workspace trust"
+description: List a runner's key in .chant/trust.json, or take it away, through chant instead of editing the file by hand
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace trust runner add <principal> --key <ssh-ed25519 line or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
+chant workspace trust runner remove <principal> [--by <principal>] [--expect <digest>] [--dry-run]
+```
+
+## Description
+
+These commands write one runner entry of `.chant/trust.json` ([#3510](https://github.com/INTENTIUS/chant/issues/3510)). A runner key signs what a machine did, such as [agent-run statements](/chant/cli/workspace-runs/#signed-statements) or [Op runs and ci tags](/chant/cli/ci/#the-runner-key). Under [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md) a tool writes the repo only through chant. A box repo that trusts a lobby's key lists it with `trust runner add`, and so does a host that runs [`chant ci serve`](/chant/cli/ci/#ci-serve).
+
+| Command | What it writes |
+|---|---|
+| `runner add <principal>` | Appends `{ "principal", "class", "key" }` to `runners`. With class `runner`, the default, it also adds the principal to `roles.runner`, which `ci tick`, `ci run` and `chant run --key` require. When the principal is already listed with the same key and class, the entry is left as it is and only a missing role is added |
+| `runner remove <principal>` | Removes the principal's entry from `runners`, and the principal from `roles.runner` |
+
+`--key` takes the public key as an `ssh-ed25519` line, or a path to the `.pub` that `ssh-keygen -t ed25519` writes. It also takes a path to an Ed25519 key in PEM, public or private, and uses its public half, so the key a runner signs with can be given as it is. A comment after the key is dropped. Any other key type is refused, since every reader of `runners` verifies Ed25519 signatures. `--class service` lists a hosted signer such as a lobby or a steward. A service signs agent-run statements and needs no role.
+
+The command edits `.chant/trust.json` in place and keeps everything else in it byte for byte. When there is no trust config yet, it writes a new one holding `schema`, `runners` and `roles`. The caller commits the change, as after [`member add`](/chant/cli/workspace-member/), since the command never does. Changing the trust config is a protected write, so when a signers file exists the commit that carries it must be signed by an admin at base, which [`chant workspace verify`](/chant/cli/workspace-verify/) checks. The readers take the runners from the branch tip or the commit they judge, never from the working tree, so a key listed here counts once the commit is on the branch.
+
+Each command holds the working tree's [write lock](/chant/cli/workspace-records/#writers-at-the-same-time) while it reads and writes. The [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) at base judges it like any working-tree write. The write journal notes who wrote (`--by`, or the agent session `CHANT_AGENT` names).
+
+## Digests
+
+The `digest` a write prints is the SHA-256 of the trust config's bytes after the write, and `previousDigest` is the one before it. A missing trust config has the digest of empty text, `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. A caller that shows a person the runners and writes what they chose passes `--expect <digest>`, the digest from its last write or the SHA-256 of what it read. The write goes ahead only when that digest still holds. Otherwise it is refused with `trust-conflict`, and `conflict` names the digest now and its `lastWrite`, the last chant write the journal knows of.
+
+```bash
+chant workspace trust runner add ci:acme/app --key runner.pem --by github:alex
+# prints "digest": "5f0c..."
+chant workspace trust runner remove ci:acme/app --expect 5f0c... --by github:alex
+```
+
+## Output
+
+Each command prints one JSON document following `https://intentius.io/chant/schemas/workspace/trust-write/v1/trust-write.schema.json`, and exits 0 for a result and 1 for a refusal.
+
+| Field | What it holds |
+|---|---|
+| `action` | `runner add` or `runner remove` |
+| `name` | The runner's principal |
+| `path` | `.chant/trust.json` |
+| `digest`, `previousDigest` | The file's SHA-256 after and before the write |
+| `paths` | The file when the write changed it, else empty |
+| `changed`, `dryRun` | Whether the file changed, and whether `--dry-run` kept it from being written |
+| `previous`, `entry` | The principal's runner entry before and after the write, or `null` |
+| `runnerRole` | Whether the principal holds the `runner` role after the write |
+
+## Refusals
+
+Nothing is written when a write is refused, and `error.code` says why.
+
+| Code | When |
+|---|---|
+| `not-a-git-repository` | The directory is not in a git repository |
+| `write-usage-invalid` | No principal, no `--key` for `runner add`, a `--key` or `--class` for `runner remove`, a `--class` other than `runner` or `service`, or an `--expect` that is not a digest |
+| `trust-config-invalid` | `.chant/trust.json` is not JSON or does not match its schema |
+| `trust-conflict` | The file's digest is not the one `--expect` gives |
+| `runner-key-invalid` | `--key` is not an `ssh-ed25519` public key or an Ed25519 key in PEM |
+| `runner-key-is-signer` | The signers file lists the key or the principal: a runner key belongs to a service or CI identity, never to a person |
+| `runner-exists` | `runner add` names a principal listed with another key or class, or gives a key listed for another principal. Remove the entry first to change its key |
+| `runner-unknown` | `runner remove` names a principal with no runner entry |
+| `write-scope-member`, `write-scope-protected`, `write-scope-class-unknown`, `agent-unknown` | The write scope at base keeps the writer off `.chant/trust.json` |
+| `principal-unidentified` | The declaration at base sets `identity.attribution` to `identified`, and `--by` names a person by a bare name |
+| `write-lock-timeout`, `write-lock-not-held` | Another write held the working tree's write lock too long, or a batch's token no longer holds it |
+
+Chant 0.124.31 and newer have these commands.
