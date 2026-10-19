@@ -15,6 +15,8 @@ chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>]
                   [--chant <command>] [--pass-env <NAME>]...
                   [--key <runner key.pem>] [-o <dir>]
+chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
+                  [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [ci run's job flags]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -193,7 +195,33 @@ chant ci run apply --env prod --forge forgejo --base "$(git rev-parse HEAD^)" --
 chant ci tick --source runs --key runner.pem
 ```
 
-`ci run` runs one job when you run it. Nothing watches the forge for pushes yet ([#4095](https://github.com/INTENTIUS/chant/issues/4095)), and a re-run of a failed apply plans every member again, since `ci run` keeps no resume record between runs.
+`ci run` runs one job when you run it, and a re-run of a failed apply plans every member again, since `ci run` keeps no resume record between runs. [`ci serve`](#ci-serve) watches the forge and keeps one.
+
+## ci serve
+
+Watches a forge and runs the pull-request jobs on this host with [`ci run`](#ci-run) ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). Each poll reads the open pull requests into the target branch (`--branch`, default `main`) and the branch's head through the forge's API. It runs the plan for each pull request head it has not planned, with `--base` the pull request's base commit and `--pr` its number. It runs the apply for each new commit on the target branch, with `--base` the head the previous apply was measured to, which is the push's `before` on a forge. The first poll only notes the head: a commit the branch held before the runner watched it is not applied. `--forge` is `forgejo` or `github`. The token and, on Forgejo, `GITHUB_SERVER_URL` and `GITHUB_API_URL` come from the environment as for `pr-plan`, and `--repo` sets `GITHUB_REPOSITORY` for the poll and for every job. Each job it starts gets the job flags `ci serve` was given, which are `ci run`'s, such as `--gate`, `--chant` and `--key`.
+
+It runs in host mode. Each job runs in a fresh worktree on this host as the user running `ci serve`, with the clean environment `ci run` gives it, and the plan runs the pull request's code. A pull request from a fork is never planned. `--author <login>` (repeatable) plans only the pull requests those people opened. Run it only for a repository whose authors you trust with the host's credentials; a container per job is [#4015](https://github.com/INTENTIUS/chant/issues/4015).
+
+The state lives in `--state <dir>`, by default `chant/ci-serve` in the repository's common git directory:
+
+| Path | Holds |
+|---|---|
+| `<group>.json` | Every job started, keyed by job and commit (`plan:<pr>:<sha>`, `apply:<sha>`), with its status, attempts and report, and the target head the last apply was measured to. A job already there is not started again. |
+| `resume/<key>.json` | Each apply's resume record, named by the forge cache key with the commit (`chant-apply-<env>-<commit>`, `chant-apply.<member>.<env>-<commit>` in a member). `ci serve` copies it into the job's checkout at `.chant/pr-resume/pr-apply.json` before `pr-apply --resume` reads it, and back after, so a re-run at the same commit skips the members that applied. |
+| `reports/<group>/<op>-<sha>` | Each job's report directory, as `ci run -o` copies it. |
+
+`<group>` is the apply's concurrency group, `chant-apply-<env>`, or `chant-apply.<member>.<env>` in a workspace member. Before an apply runs, `ci serve` takes a lease on `refs/chant/lease/<group>`, the git-ref lease [`chant operator`](/chant/cli/operator/) uses. It renews the lease while the apply runs and releases it after. It pushes the lease to the remote, so two hosts serving one repository run one apply per group between them. An apply that finds the lease held waits for a later poll. At most `--max-jobs` jobs run at once, 1 by default, and a job over the limit waits for a later poll too.
+
+A failed job stays failed. `--rerun-failed` runs again the failed apply at the target's head and the failed plan of each open pull request head, as a forge's re-run button does: after you approve a plan the apply refused, run `chant ci serve --once --rerun-failed`. `--interval` sets the time between polls, in seconds or as a duration such as `2m`, 30 seconds by default. `--once` runs one poll, waits for the jobs it started and exits 1 when one failed. Without it `ci serve` polls until it is stopped and waits for its running jobs on SIGINT or SIGTERM.
+
+```bash
+GITHUB_SERVER_URL=http://forgejo.localhost GITHUB_API_URL=http://forgejo.localhost/api/v1 CHANT_FORGE_TOKEN=... \
+  chant ci serve --forge forgejo --repo demo/estate --env local --author demo-driver \
+    --chant 'npx chant' --before-script 'npm ci' --pass-env AWS_ENDPOINT_URL --key runner.pem
+```
+
+`ci serve` takes no webhook yet. It polls, so the host needs no inbound port, and a webhook checked with an HMAC secret is a follow-up.
 
 ## ci workflow
 

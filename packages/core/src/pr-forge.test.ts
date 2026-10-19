@@ -782,6 +782,31 @@ describe("pull requests over REST (#3798)", () => {
     expect((calls[1].body as { target_branch: string }).target_branch).toBe("main");
   });
 
+  test("openPullRequests lists the heads into a base and marks forks; branchHead reads a branch's commit (#4095)", async () => {
+    const f = fakeFetch({
+      "GET /api/v1/repos/acme/infra/pulls": [
+        { number: 12, head: { ref: "x", sha: "c".repeat(40), repo: { full_name: "mallory/infra" } }, base: { ref: "main", sha: "b".repeat(40) }, user: { login: "mallory" } },
+        { number: 4, head: { ref: "y", sha: "d".repeat(40), repo: { full_name: "acme/infra" } }, base: { ref: "main", sha: "b".repeat(40) }, user: { login: "driver" } },
+        { number: 5, head: { ref: "z", sha: "e".repeat(40) }, base: { ref: "release" } },
+      ],
+      "GET /api/v1/repos/acme/infra/branches/main": { name: "main", commit: { id: "f".repeat(40) } },
+    });
+    const forge = forgejoForge({ ...fjOpts, fetch: f.fetch });
+    expect(await forge.openPullRequests!("main")).toEqual([
+      { number: 4, head: "y", headSha: "d".repeat(40), base: "main", baseSha: "b".repeat(40), author: "driver", fork: false },
+      { number: 12, head: "x", headSha: "c".repeat(40), base: "main", baseSha: "b".repeat(40), author: "mallory", fork: true },
+    ]);
+    expect(f.calls[0].url).toBe("https://forge.example/api/v1/repos/acme/infra/pulls?state=open&limit=50&page=1");
+    expect(await forge.branchHead!("main")).toBe("f".repeat(40));
+    expect(await forge.branchHead!("gone")).toBeUndefined();
+
+    const g = fakeFetch({ "GET /repos/acme/infra/pulls": [], "GET /repos/acme/infra/branches/main": { commit: { sha: SHA } } });
+    const github = githubForge({ ...gh, fetch: g.fetch });
+    expect(await github.openPullRequests!("main")).toEqual([]);
+    expect(g.calls[0].url).toBe("https://api.github.com/repos/acme/infra/pulls?state=open&base=main&per_page=100&page=1");
+    expect(await github.branchHead!("main")).toBe(SHA);
+  });
+
   test("findPullRequest takes the oldest open one from this repository, not a fork's", async () => {
     const f = fakeFetch({
       "GET /api/v1/repos/acme/infra/pulls": [

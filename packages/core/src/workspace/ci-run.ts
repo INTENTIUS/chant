@@ -40,10 +40,10 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
-import { PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
 import { detectForge, FORGE_KINDS, type ForgeKind } from "../pr-forge";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
@@ -308,6 +308,13 @@ export interface CiRunRequest {
   stepOutput?: (line: string) => void;
   /** Push `chant/lifecycle` once the record is written. Default true. */
   push?: boolean;
+  /**
+   * The apply's resume record on this host (#4095), in place of the forge's
+   * CI cache: copied into the checkout at `PR_APPLY_RECORD` before the job,
+   * when it exists, and the job's record copied back to it after, passed or
+   * failed. `chant ci serve` names one per `prApplyRecordKey`.
+   */
+  resumeRecord?: string;
   signal?: AbortSignal;
 }
 
@@ -357,7 +364,7 @@ function resolveJobCommit(top: string, rev: string): string {
 }
 
 /** The member a job runs for, and its directory from the repository root, as the generator decides it. */
-function jobPlace(cwd: string, top: string): { member?: string; dir: string } {
+export function ciJobPlace(cwd: string, top: string): { member?: string; dir: string } {
   const found = findWorkspaceRoot(cwd);
   const member = found ? resolveMemberContext(cwd, found) : undefined;
   const at = member ? member.memberRoot : cwd;
@@ -399,7 +406,7 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const top = gitTop(cwd);
   if (!top) throw new CiRunError("a job runs in a fresh checkout of a commit, and this directory is not in a git repository");
   const commit = resolveJobCommit(top, req.commit ?? "HEAD");
-  const place = jobPlace(cwd, top);
+  const place = ciJobPlace(cwd, top);
   const jobs = prLoopJobs(req.forge, req.env, req.loop ?? {}, place.member);
   const job = jobs.find((j) => j.jobName === req.job);
   if (!job) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
@@ -431,6 +438,11 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
     });
     const runId = req.runId ?? `chant-${Date.now()}`;
     const warnings: string[] = [...early];
+    const resume = req.job === "apply" && req.resumeRecord ? { host: resolve(req.resumeRecord), job: join(jobDir, PR_APPLY_RECORD) } : undefined;
+    if (resume && existsSync(resume.host)) {
+      mkdirSync(dirname(resume.job), { recursive: true });
+      copyFileSync(resume.host, resume.job);
+    }
     let ledgerError: string | undefined;
     let result: OpRunResult;
     try {
@@ -455,6 +467,14 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
       result = err.result;
     }
 
+    if (resume && existsSync(resume.job)) {
+      try {
+        mkdirSync(dirname(resume.host), { recursive: true });
+        copyFileSync(resume.job, resume.host);
+      } catch (err) {
+        warnings.push(`the resume record could not be kept at ${resume.host}: ${message(err)}`);
+      }
+    }
     const written = join(jobDir, PR_LOOP_REPORT_DIR);
     let report: string | null = null;
     if (existsSync(written)) {

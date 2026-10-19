@@ -212,6 +212,23 @@ export interface PullRequest {
   base?: string;
 }
 
+/** An open pull request as `chant ci serve` polls it (#4095). */
+export interface OpenPullRequest {
+  number: number;
+  /** Its head branch. */
+  head: string;
+  /** The commit its head branch points at. */
+  headSha: string;
+  /** The branch it merges into. */
+  base: string;
+  /** The base branch's commit as the forge last measured the pull request against it. */
+  baseSha?: string;
+  /** Who opened it. */
+  author?: string;
+  /** Its head branch lives in another repository, a fork. */
+  fork: boolean;
+}
+
 /** What {@link PrForge.mergePullRequest} merges, and how. */
 export interface MergeOptions {
   /** The head commit the caller reviewed. The merge happens only while the pull request's head is still this commit. */
@@ -339,6 +356,13 @@ export interface PrForge {
    * still throw.
    */
   mergePullRequest(pr: number, opts: MergeOptions): Promise<MergeResult>;
+  /**
+   * GitHub and Forgejo (#4095): every open pull request into `base`, with
+   * its head commit, oldest first. `chant ci serve` polls it.
+   */
+  openPullRequests?(base: string): Promise<OpenPullRequest[]>;
+  /** GitHub and Forgejo (#4095): the commit `branch` points at, or undefined when there is no such branch. */
+  branchHead?(branch: string): Promise<string | undefined>;
 }
 
 /** A GitHub or Forgejo client. */
@@ -666,6 +690,44 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       }
       const open = listed.filter((p) => fromHere(p, head));
       return open.map(pull).filter((p): p is PullRequest => p !== undefined).sort((a, b) => a.number - b.number)[0];
+    },
+    async openPullRequests(base) {
+      // GitHub filters by base server-side; Forgejo's list is matched here.
+      const query = kind === "github" ? `?state=open&base=${encodeURIComponent(base)}` : "?state=open";
+      let listed: unknown[];
+      try {
+        listed = await api.list(`${repo}/pulls${query}`, pageParams, pageSize);
+      } catch (err) {
+        // Forgejo answers 404 while it counts the repository as empty, as findPullRequest notes.
+        if (kind !== "forgejo" || !(err instanceof ForgeApiError) || err.status !== 404) throw err;
+        await api.call("GET", repo);
+        return [];
+      }
+      const out: OpenPullRequest[] = [];
+      for (const v of listed) {
+        if (!isObject(v) || !isObject(v.head) || !isObject(v.base)) continue;
+        const number = num(v.number);
+        const head = str(v.head.ref);
+        const headSha = str(v.head.sha);
+        const into = str(v.base.ref);
+        if (number === undefined || !head || !headSha || into !== base) continue;
+        const baseSha = str(v.base.sha);
+        const author = isObject(v.user) ? str(v.user.login) : undefined;
+        out.push({ number, head, headSha, base: into, ...(baseSha ? { baseSha } : {}), ...(author ? { author } : {}), fork: !fromHere(v, head) });
+      }
+      return out.sort((a, b) => a.number - b.number);
+    },
+    async branchHead(branch) {
+      let b: unknown;
+      try {
+        b = await api.call("GET", `${repo}/branches/${branch.split("/").map(encodeURIComponent).join("/")}`);
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return undefined;
+        throw err;
+      }
+      // GitHub names the commit `sha`, Forgejo `id`.
+      const commit = isObject(b) && isObject(b.commit) ? b.commit : undefined;
+      return commit ? str(commit.sha) ?? str(commit.id) : undefined;
     },
     async editPullRequest(pr, change) {
       return pull(await api.call("PATCH", `${repo}/pulls/${pr}`, { ...(change.title !== undefined ? { title: change.title } : {}), ...(change.body !== undefined ? { body: change.body } : {}) }));

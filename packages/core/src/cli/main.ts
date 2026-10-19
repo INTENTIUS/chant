@@ -263,6 +263,19 @@ CI:
                         pr-plan or pr-apply on chant/lifecycle, signed with
                         --key or CHANT_RUNNER_KEY, so ci tick from runs counts
                         it, and copies the report to -o (default .chant/pr).
+  ci serve --forge forgejo|github --repo <owner/repo> --env <env>
+              [--interval <s>] [--max-jobs <n>] [--state <dir>]
+              [--author <login>]... [--once] [--rerun-failed]
+              [ci run's job flags]
+                        Poll the forge for open pull requests and the target
+                        branch's head, and run ci run plan for each new pull
+                        request head and ci run apply for each new commit on
+                        the branch. Dedupes on job and commit in a state file
+                        under --state, takes a lease per apply group, keeps
+                        each apply's resume record there, and runs at most
+                        --max-jobs (default 1) jobs at once. --once runs one
+                        poll and waits for its jobs. --rerun-failed runs a
+                        failed apply or plan again.
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -1322,6 +1335,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
+  { name: "ci serve", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-serve")).runCiServe(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.
   { name: "release cut", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCut(ctx) },
   // #4027: publish a cut release, to the targets #4047 declares.
