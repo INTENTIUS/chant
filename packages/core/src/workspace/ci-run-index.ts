@@ -35,7 +35,7 @@ import { readerVersion } from "./declaration";
 export const CI_RUN_INDEX_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json";
 export const CI_RUN_INDEX_CONTRACT = 1;
 /** The first chant that writes the index. */
-export const CI_RUN_INDEX_FLOOR = "0.124.30";
+export const CI_RUN_INDEX_FLOOR = "0.124.31";
 /** Where the index is kept, below the report URL. */
 export const CI_RUN_INDEX_KEY = "runs/index.json";
 /** How many entries the index keeps unless told otherwise. */

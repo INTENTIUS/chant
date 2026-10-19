@@ -47,7 +47,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
 | [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
-| [`chant ci run --report-url`](/chant/cli/ci/#the-run-index), the file it keeps, and [`chant ci runs`](/chant/cli/ci/#ci-runs) with `--json` | `<report-url>/runs/index.json`, floor chant 0.124.30 | `https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json` |
+| [`chant ci run --report-url`](/chant/cli/ci/#the-run-index), the file it keeps, and [`chant ci runs`](/chant/cli/ci/#ci-runs) with `--json` | `<report-url>/runs/index.json`, floor chant 0.124.31 | `https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json` |
 | [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
@@ -576,7 +576,7 @@ A record kind with an `answers` block is an answer kind ([ws-058](https://github
 
 ### The run index
 
-`chant ci run` with `--report-url <url>` ([#4098](https://github.com/INTENTIUS/chant/issues/4098)) adds each job it ran to `<url>/runs/index.json`, so a reader finds the runs without a forge or a workflow file. The document follows `ci-run-index.schema.json`, contract 1, and chant 0.124.30 is the first to write it. Besides the usual `$schema`, `contract` and `chant` it has `updated` and `runs`. `runs` is newest first and cut to the newest 200, a cap `--run-index-limit` changes.
+`chant ci run` with `--report-url <url>` ([#4098](https://github.com/INTENTIUS/chant/issues/4098)) adds each job it ran to `<url>/runs/index.json`, so a reader finds the runs without a forge or a workflow file. The document follows `ci-run-index.schema.json`, contract 1, and chant 0.124.31 is the first to write it. Besides the usual `$schema`, `contract` and `chant` it has `updated` and `runs`. `runs` is newest first and cut to the newest 200, a cap `--run-index-limit` changes.
 
 A run has `job` (`plan` or `apply`), `pr` (a number or `null`), `commit`, `status` (`ok` or `fail`), `failure.code` for a failed one, `member` inside a workspace member, `started`, `ended`, `runId`, `key` and `runOrigin` (`{ "forge": "chant" }`). `key` is `reportKey(pr, commit)`, the folder of the job's report, so `<url>/<key>/pr-<job>.json` is the report.
 
