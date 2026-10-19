@@ -501,6 +501,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
           ...(args.prBuild ? { build: true } : {}),
           ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
         },
+        ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
         ...(args.ciChant ? { chant: args.ciChant } : {}),

@@ -53,7 +53,6 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
 import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
-import { reportKey } from "../pr-report-url";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import type { RunOrigin } from "../lifecycle/release-ledger";
@@ -66,8 +65,10 @@ import type { OpRunFailureReason, OpRunRecord } from "../op/runtime";
 import type { ActivityStep, OpConfig, PhaseDefinition } from "../op/types";
 import { redactText, type Redact } from "../op/redact";
 import { findWorkspaceRoot } from "../project-root";
+import { parseReportUrl, reportKey } from "../pr-report-url";
 import { ciTagSigner, RUNNER_KEY_ENV } from "./ci-green";
 import { ciRedactor, ciSecretsFor, CI_SECRETS_ENV, readCiSecrets, type CiSecrets } from "./ci-secrets";
+import { updateCiRunIndex, type CiRunIndexEntry } from "./ci-run-index";
 import { resolveMemberContext } from "./member-pipeline";
 import { signOpRunRecord } from "./trust/op-run-statement";
 import { gitTop } from "./tree";
@@ -396,6 +397,8 @@ export interface CiRunRequest {
   secrets?: CiSecrets;
   /** `--output`: where the job's report is copied, from `cwd`. Default `.chant/pr`. */
   output?: string;
+  /** `--run-index-limit`: how many runs the index at `loop.reportUrl` keeps (#4098). Default 200. */
+  runIndexLimit?: number;
   /** A runner key, PEM, that signs the run's record. */
   runnerKey?: string;
   /**
@@ -497,6 +500,55 @@ function freshCheckout(top: string, commit: string): { dir: string; remove(): vo
       tryGit(top, ["worktree", "prune"]);
     },
   };
+}
+
+/**
+ * Add the settled job to the run index at its report URL (#4098). The pull
+ * request is the one the job's own report names, since a pr-apply finds it
+ * itself, else `--pr`. A warning, never a failure, when the index can't be
+ * updated.
+ */
+async function recordInIndex(input: {
+  url: string;
+  job: CiJobName;
+  commit: string;
+  member?: string;
+  pr?: number;
+  record: OpRunRecord;
+  reportDir: string;
+  limit?: number;
+  /** The run's redactor (#4096): every string written to the index goes through it, as the copied report does. */
+  redact?: Redact;
+  warn: (message: string) => void;
+}): Promise<void> {
+  const target = parseReportUrl(input.url);
+  if ("error" in target) return input.warn(`the run index is not updated: ${target.error}`);
+  let pr: number | null = input.pr ?? null;
+  try {
+    const file = join(input.reportDir, `${CI_JOB_OPS[input.job]}.json`);
+    if (existsSync(file)) {
+      const said = (JSON.parse(readFileSync(file, "utf-8")) as { pr?: unknown }).pr;
+      if (Number.isInteger(said) && (said as number) > 0) pr = said as number;
+    }
+  } catch {
+    // The report is not readable; the flag stands.
+  }
+  const failure = input.record.failure;
+  const clean = (text: string): string => (input.redact ? input.redact(text) : text);
+  const entry: CiRunIndexEntry = {
+    job: input.job,
+    pr,
+    commit: input.commit,
+    status: input.record.status === "ok" ? "ok" : "fail",
+    ...(input.record.status !== "ok" ? { failure: { code: clean(failure?.code ?? "command-failed") } } : {}),
+    ...(input.member ? { member: clean(input.member) } : {}),
+    started: input.record.started,
+    ended: input.record.ended,
+    runId: clean(input.record.id),
+    key: clean(reportKey(pr, input.commit, input.member)),
+    runOrigin: CHANT_RUNNER_ORIGIN,
+  };
+  await updateCiRunIndex({ target, entry, ...(input.limit ? { limit: input.limit } : {}), warn: input.warn });
 }
 
 const ACTIVITIES = new Map<string, ActivityFn>([["shellCmd", shellCmd as unknown as ActivityFn]]);
@@ -637,6 +689,9 @@ async function runCiJob(
       cpSync(written, report, { recursive: true });
       if (redact) redactTree(report, redact);
     }
+    if (req.loop?.reportUrl) {
+      await recordInIndex({ url: req.loop.reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
+    }
     if (ledgerError) throw new CiRunError(ledgerError);
     const pushed: { pushed: boolean; pushWarning?: string } = req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
     const failed = result.records.find((r) => r.status === "fail");
@@ -694,7 +749,7 @@ export function formatCiRun(r: CiRunResult): string {
 
 const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
-  "[--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--image <image>] [--before-script <line>]... " +
+  "[--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>]";
 
@@ -740,6 +795,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
         ...(args.prBuild ? { build: true } : {}),
         ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
       },
+      ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       ...(args.ciChant ? { chant: args.ciChant } : {}),

@@ -551,6 +551,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant ci serve --repo <owner/repo>` (#4095): the repository whose pull requests and target branch it polls.
       result.ciRepo = args[++i];
       if (!result.ciRepo || !/^[^/\s-][^/\s]*\/[^/\s]+$/.test(result.ciRepo)) throw new Error("--repo needs the repository as owner/name: --repo <owner/repo>");
+    } else if (arg === "--run-index-limit") {
+      // `chant ci run --run-index-limit <n>` (#4098): how many runs the index at the report URL keeps.
+      const n = Number(args[++i]);
+      if (!Number.isInteger(n) || n < 1) throw new Error("--run-index-limit needs a whole number of runs, 1 or more: --run-index-limit <n>");
+      result.runIndexLimit = n;
     } else if (arg === "--max-jobs") {
       // `chant ci serve --max-jobs <n>` (#4095): how many jobs run at once.
       const n = Number(args[++i]);

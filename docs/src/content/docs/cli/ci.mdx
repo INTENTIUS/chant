@@ -11,11 +11,13 @@ chant ci last-green [--json] [--from <rev>]
 chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo]
-                  [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
+                  [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
+                  [--image <image>]
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>]
                   [--no-status] [--status-url <url template>]
                   [--chant <command>] [--pass-env <NAME>]... [--secrets <file>]
                   [--key <runner key.pem>] [-o <dir>]
+chant ci runs --report-url <url> [--json]
 chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [ci run's job flags]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
@@ -254,6 +256,25 @@ These differ from the `chant/plan` and `chant/apply` statuses and the pull reque
 The status links to the job's report. With an `https://` `--report-url` the link is `<url>/<pr>/<commit>[/<member>]/`, the key `--report-url` uploads under, with `unknown` in place of the pull request when `--pr` is not given. For an `s3://` URL, which a browser can't open, `--status-url <template>` maps it: `--status-url 'https://host/reports/{key}'` fills `{key}` with the same key. `--status-url` also overrides an https `--report-url`. Without either, the status has no link.
 
 A status the forge refuses is a warning, and the job's result and exit code stand. `--no-status` sets none. `ci serve` takes both flags and passes them to every job.
+
+### The run index
+
+With `--report-url`, `ci run` also adds the job to `<report-url>/runs/index.json` when it settles ([#4098](https://github.com/INTENTIUS/chant/issues/4098)). A failed job is added too. `ci serve` passes its job flags on, so it keeps the same index. Entries are newest first. The index keeps the newest 200, or as many as `--run-index-limit` says.
+
+| Entry field | Holds |
+|---|---|
+| `job`, `commit`, `runId` | `plan` or `apply`, the full commit, and the Op run id |
+| `pr` | the pull request, or `null` when the job found none |
+| `status`, `failure.code` | `ok` or `fail`, and the run record's failure code for a failed job |
+| `started`, `ended` | the run's instants |
+| `key` | the folder of the job's report below the report URL: `<pr>/<commit>`, `unknown` for no pull request, and `/<member>` after for a member |
+| `runOrigin` | `{ "forge": "chant" }` |
+
+The update uses the upload path `--report-url` already has: `aws s3 cp` for `s3://`, and a temporary file and a rename for `file://`. Two runners writing one index can lose an entry, so keep one host per report URL. A problem with the index is a warning, and the job keeps its own result. The format is the [`ci-run-index` contract](/chant/reference/workspace-read-contract/#the-run-index).
+
+## ci runs
+
+`chant ci runs --report-url <url>` lists the index, one line per run, newest first. With `--json` it prints the index document unchanged. The command exits 1 when the URL has no index or the index can't be read.
 
 ## ci serve
 
