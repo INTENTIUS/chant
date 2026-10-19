@@ -58,6 +58,7 @@ export interface DemoStep {
   pull?: number | null;
   commit?: string;
   reports?: DemoReports;
+  cycle_reports?: DemoCycleReport[];
   about?: { changes?: string; watch?: string; shows?: string };
 }
 

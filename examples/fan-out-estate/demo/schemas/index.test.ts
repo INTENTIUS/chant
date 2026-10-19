@@ -70,6 +70,23 @@ describe("demo-step/v1", () => {
     expect(validateDemoStep(step({ reports: { plan: reportKey(41, head) } })).ok).toBe(false);
     expect(validateDemoStep(step({ reports: { url: "s3://b/r", plan: "41" } })).ok).toBe(false);
   });
+
+  test("takes an s3:// or https:// report url and refuses any other", () => {
+    expect(validateDemoStep(step({ reports: { url: "https://demo.example/reports" } })).ok).toBe(true);
+    expect(validateDemoStep(step({ reports: { url: "file:///tmp/reports" } })).ok).toBe(false);
+    expect(validateDemoStep(step({ reports: { url: "reports/" } })).ok).toBe(false);
+  });
+
+  test("carries the cycle's report keys so far, in run order", () => {
+    const fix = "c".repeat(40);
+    const cycle_reports = [
+      { stage: "plan", pr: 41, commit: head, key: reportKey(41, head) },
+      { stage: "apply", pr: 41, commit: merge, key: reportKey(41, merge) },
+      { stage: "plan", pr: 42, commit: fix, key: reportKey(42, fix) },
+    ];
+    expect(validateDemoStep(step({ step: "applying", pull: 42, cycle_reports })).ok).toBe(true);
+    expect(validateDemoStep(step({ cycle_reports: [{ stage: "deploy", pr: 41, commit: head, key: reportKey(41, head) }] })).ok).toBe(false);
+  });
 });
 
 describe("demo-cycle/v1", () => {

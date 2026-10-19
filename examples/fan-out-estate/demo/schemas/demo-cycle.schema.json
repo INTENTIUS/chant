@@ -74,7 +74,8 @@
             "description": "reportKey(pr, commit)."
           }
         }
-      }
+      },
+      "description": "Every stage of the cycle, as {stage, pr, commit, key}. In the order the stages ran: a writer appends each stage's key when its report is written, so the first apply of a cycle comes before the fix's."
     }
   },
   "$defs": {
@@ -239,7 +240,8 @@
       "properties": {
         "url": {
           "type": "string",
-          "description": "The --report-url the pipeline uploads to."
+          "description": "The --report-url the pipeline uploads to, always s3:// or https://.",
+          "pattern": "^(s3|https)://"
         },
         "plan": {
           "type": "string",

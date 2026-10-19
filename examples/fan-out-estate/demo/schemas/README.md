@@ -38,4 +38,4 @@ Two JSON Schemas (draft 2020-12) for the fan-out demo's driver (#4091) and its r
 
 ## Versioning
 
-The contract is versioned like the workspace read contract. Within `contract: 1` a field is only ever added, and a new field is optional. Readers ignore fields they do not know, and a reader treats a step it does not know as one it cannot classify. A rename or removal is `contract: 2` with a new `$id` path (`v2`).
+The contract is versioned like the workspace read contract. Within `contract: 1` a field is only ever added, and a new field is optional. Readers ignore fields they do not know, and a reader treats a step it does not know as one it cannot classify. The schema's `step` enum lists what a writer may write in this version; a new step is added to it within contract 1, so a reader never rejects a record for its step. A rename or removal is `contract: 2` with a new `$id` path (`v2`).
