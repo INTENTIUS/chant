@@ -54,6 +54,7 @@ export const shellCmdContract = activityContract(
     cmd: z.string(),
     env: z.record(z.string(), z.string()).optional(),
     cwd: z.string().optional(),
+    inheritEnv: z.boolean().optional(),
     okExit: z.array(z.number()).optional(),
     gatedExit: z.number().optional(),
     gate: z.strictObject({ op: z.string(), gate: z.string() }).optional(),

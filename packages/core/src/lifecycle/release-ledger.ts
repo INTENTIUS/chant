@@ -47,15 +47,21 @@ export interface RunOrigin {
    * Which id space minted `runId`: `github` (a GitHub Actions run id — also
    * the spelling Forgejo Actions uses, since it implements the same env
    * contract; `url` disambiguates the actual host), `gitlab` (a CI pipeline
-   * id), `op` (an orchestrator/Op run id), or `local` (minted on the machine
-   * that ran the deploy, resolvable nowhere).
+   * id), `op` (an orchestrator/Op run id), `local` (minted on the machine
+   * that ran the deploy, resolvable nowhere), or `chant` (a job the chant
+   * runner ran, `chant ci run`, #4094, named by its Op run id). `chant` was
+   * added within contract 1 by {@link RUN_ORIGIN_CHANT_FLOOR}, so a reader
+   * that switches on `forge` keeps a case for a value it does not know.
    */
-  forge: "github" | "gitlab" | "op" | "local";
+  forge: "github" | "gitlab" | "op" | "local" | "chant";
   /** Repo/project slug on the forge (`GITHUB_REPOSITORY` / `CI_PROJECT_PATH`), when the environment named one. */
   repo?: string;
   /** Resolved link to the run, when the environment provided enough to build one. */
   url?: string;
 }
+
+/** The first chant that writes `runOrigin.forge: "chant"`, for a job `chant ci run` ran (#4094). */
+export const RUN_ORIGIN_CHANT_FLOOR = "0.124.30";
 
 /**
  * The gate resolution that admitted a deploy (#4020): the gate's address in the

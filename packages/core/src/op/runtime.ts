@@ -183,6 +183,48 @@ export interface OpRunRecord {
    * written before 0.124.28.
    */
   statement?: { payloadType: string; payload: string; signatures: { keyid: string; sig: string }[] };
+  /**
+   * Why a failed run failed (#4094), for a reader that acts on it without
+   * reading the log: a short `code`, a one-line `reason`, the phase that
+   * failed and the exit code of the command that failed. `chant ci run`
+   * writes it on every failed job, from the job's pull-request report when
+   * it wrote one (`not-a-reviewer`, `plan-failed`, `failed` and the other
+   * refusals and statuses), else `command-failed`, `setup-failed` or
+   * `build-failed`. Optional within contract 1, written by chant
+   * {@link OP_RUN_FAILURE_FLOOR} and newer; absent on a run that passed and
+   * on a run nothing explained.
+   */
+  failure?: OpRunFailureReason;
+}
+
+/** Why a run failed, on {@link OpRunRecord.failure} and on the run's `run-settle` event (#4094). */
+export interface OpRunFailureReason {
+  /** A short code: a pull-request report's refusal or status, or `command-failed`, `setup-failed`, `build-failed`. */
+  code: string;
+  /** One line a person reads. */
+  reason: string;
+  /** The phase that failed, when one did. */
+  phase?: string;
+  /** The exit code of the command that failed, when it exited with one. */
+  exitCode?: number;
+}
+
+/** The first chant that writes {@link OpRunRecord.failure} and `failure` on `run-settle` (#4094). */
+export const OP_RUN_FAILURE_FLOOR = "0.124.30";
+
+/** `value` as an {@link OpRunFailureReason}, or undefined when it is not one, so a reader drops a malformed field and keeps the record. */
+export function opRunFailureOf(value: unknown): OpRunFailureReason | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.code !== "string" || v.code === "" || typeof v.reason !== "string") return undefined;
+  if (v.phase !== undefined && typeof v.phase !== "string") return undefined;
+  if (v.exitCode !== undefined && !Number.isInteger(v.exitCode)) return undefined;
+  return {
+    code: v.code,
+    reason: v.reason,
+    ...(typeof v.phase === "string" ? { phase: v.phase } : {}),
+    ...(typeof v.exitCode === "number" ? { exitCode: v.exitCode } : {}),
+  };
 }
 
 /** An {@link OpRunRecord} before the ledger stamps its version and mints an id. */

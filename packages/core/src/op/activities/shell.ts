@@ -14,6 +14,12 @@ export interface ShellCmdArgs {
   /** Working directory. Default: process.cwd(). */
   cwd?: string;
   /**
+   * Whether the command sees this process's environment. Default true. With
+   * false it sees `env` alone, plus the in-flight record's variable, so a job
+   * the chant runner runs (`chant ci run`, #4094) gets a clean environment.
+   */
+  inheritEnv?: boolean;
+  /**
    * Exit codes that count as success. Default `[0]`.
    *
    * Without this, `exitCode` in the result could only ever be `0` (#2413):
@@ -129,7 +135,7 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
       cwd: args.cwd,
       // In a run that keeps an in-flight record, CHANT_RUN_ACTIVITY names the
       // file the command appends activity lines to (../run-live.ts).
-      env: { ...process.env, ...liveRunEnv(), ...args.env },
+      env: { ...(args.inheritEnv === false ? {} : process.env), ...liveRunEnv(), ...args.env },
       maxBuffer: MAX_STDOUT_BYTES,
       signal,
     });

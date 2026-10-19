@@ -105,7 +105,24 @@ export interface RunEventRunSettle {
   status: RunEventSettleStatus;
   durationMs: number | null;
   error?: string;
+  /**
+   * Why a failed run failed, as its run record's `failure` says (#4094):
+   * `chant ci run` writes it on a failed job. Optional, added within
+   * contract 1 by chant {@link RUN_EVENT_FAILURE_FLOOR}.
+   */
+  failure?: RunEventFailure;
 }
+
+/** Why a run failed: a short code, a line for a person, the phase and the exit code when known (#4094). */
+export interface RunEventFailure {
+  code: string;
+  reason: string;
+  phase?: string;
+  exitCode?: number;
+}
+
+/** The first chant that writes `failure` on `run-settle` (#4094). */
+export const RUN_EVENT_FAILURE_FLOOR = "0.124.30";
 
 export interface RunEventWaveStart {
   type: "wave-start";

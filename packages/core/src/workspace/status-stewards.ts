@@ -82,6 +82,8 @@ export interface StatusStewardRun {
   gitSha?: string;
   /** The CI run the Op ran in (#4020), when it ran in CI: the shape a release's `runOrigin` has. */
   runOrigin?: OpRunRecord["runOrigin"];
+  /** Why the run failed (#4094), for a failed run whose record says. Absent otherwise, and on a record written before chant 0.124.30. */
+  failure?: OpRunRecord["failure"];
   /**
    * The gate the run stopped at, for a `gated` run: its name, when the run
    * stopped there, the op it is recorded under (the Op's own, or the
@@ -417,6 +419,7 @@ export async function readMemberStewards(
             ended: newest.ended,
             ...(newest.gitSha ? { gitSha: newest.gitSha } : {}),
             ...(newest.runOrigin ? { runOrigin: newest.runOrigin } : {}),
+            ...(newest.failure ? { failure: newest.failure } : {}),
             gate: newest.gate ? gateOf(newest.gate, op.name) : null,
             point: point?.wait ?? null,
             phases: newest.phases.map((p) => ({

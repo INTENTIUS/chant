@@ -171,6 +171,10 @@ Both jobs keep `.chant/pr` as an artifact:
 | `pr-note.md` | The note as posted. |
 | `run-events/<run id>.jsonl` | With `--events-json`: the stage's run events, the lines it printed on stdout. |
 
+## Run a job without a forge runner
+
+`chant ci run plan` and `chant ci run apply` run the same two jobs on your own machine, each in a fresh worktree of the commit with a clean environment ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). Give them the generation flags and the values the forge would supply: `--base` for the base commit, `--pr` for the pull request and `--commit` for the commit to run. Each run is recorded as Op `pr-plan` or `pr-apply` on `chant/lifecycle`, signed with a runner key when you pass one, so `chant ci tick --source runs` can tag the commit green. [`chant ci run`](/chant/cli/ci/#ci-run) lists the flags and the variables a job gets.
+
 ## Follow an apply while it runs
 
 The apply job's log prints a line as each wave starts and as each component settles, so the waves read in order while the job runs. A component held back by a failed dependency reads `blocked by <dependency>, not run`.

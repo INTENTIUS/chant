@@ -396,7 +396,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
     } else if (arg === "--pr-build") {
-      // `chant build --pr-loop --pr-build` (#4088).
+      // `chant build --pr-loop --pr-build` (#4088), and `chant ci run --pr-build` (#4094).
       result.prBuild = true;
     } else if (arg === "--pr-build-command") {
       const line = args[++i];
@@ -526,6 +526,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant ci workflow --chant <command>` (#3573): what the tick step runs chant with.
       result.ciChant = args[++i];
       if (!result.ciChant || result.ciChant.startsWith("-")) throw new Error("--chant needs the command that runs chant, such as \"npx tsx packages/core/src/cli/main.ts\": --chant <command>");
+    } else if (arg === "--commit") {
+      // `chant ci run plan|apply --commit <sha>` (#4094): the commit the job runs at.
+      result.commit = args[++i];
+      if (!result.commit || result.commit.startsWith("-")) throw new Error("--commit needs the commit the job runs at: --commit <sha>");
+    } else if (arg === "--pass-env") {
+      // `chant ci run --pass-env <NAME>`, repeatable (#4094): a variable of the runner's environment the job gets.
+      const name = args[++i];
+      if (!name || name.startsWith("-")) throw new Error("--pass-env needs a variable's name, such as AWS_PROFILE: --pass-env <NAME>");
+      (result.passEnv ??= []).push(name);
     } else if (arg === "--install") {
       // `chant ci workflow --install <command>` (#3573): a step before the tick that installs what --chant runs.
       result.ciInstall = args[++i];
