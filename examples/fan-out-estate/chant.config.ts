@@ -22,7 +22,7 @@ export default {
   // component command resolves to this endpoint; drop it (and the endpoint) to
   // run the same estate against a real account.
   // `demo` is the same emulator reached by its compose service name, for the
-  // jobs the demo's forgejo-runner starts inside the stack (#4093).
+  // jobs chant's runner runs inside the demo's stack (#4093, #4100).
   environments: [
     { name: "local", endpoint: "http://localhost:4566" },
     { name: "demo", endpoint: "http://floci:4566" },
