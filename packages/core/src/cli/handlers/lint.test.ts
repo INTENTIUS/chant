@@ -18,9 +18,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ParsedArgs } from "../registry";
 
-// #4116: these tests use paths and lexicon names that are not installed; the check has its own tests.
-vi.mock("../dependencies", () => ({ dependenciesNotInstalled: async () => undefined }));
-
 const lintCommandMock = vi.fn();
 const loadChantConfigUpwardMock = vi.fn();
 
