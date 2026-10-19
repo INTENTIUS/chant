@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-fly",
-  "version": "0.124.30",
+  "version": "0.124.31",
   "type": "module",
   "files": [
     "src/",
@@ -58,7 +58,7 @@
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-otel": "^0.124.30",
+    "@intentius/chant-lexicon-otel": "^0.124.31",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -69,7 +69,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.30",
+    "@intentius/chant": "^0.124.31",
     "zod": "^4.3.6"
   },
   "description": "Fly.io Machines lexicon for chant — declarative IaC in TypeScript",

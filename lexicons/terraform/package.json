@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-terraform",
-  "version": "0.124.30",
+  "version": "0.124.31",
   "type": "module",
   "files": [
     "src/",
@@ -67,7 +67,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.30",
+    "@intentius/chant": "^0.124.31",
     "zod": "^4.3.6"
   },
   "description": "terraform lexicon for chant, existing Terraform root modules as declarable entities",
