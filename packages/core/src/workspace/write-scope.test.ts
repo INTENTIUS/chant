@@ -28,7 +28,7 @@ import { parseDeclaration, WorkspaceReadError } from "./declaration";
 import { parseFrontMatter } from "./records";
 import { amendRecord, newRecord, renderRecord, reviewRecord } from "./records-write";
 import { emptyPolicy } from "./trust/policy";
-import { judgePath, judgeRecord, onlyKeysChanged, principalClass, resolveWriter, WriteScopeError } from "./write-scope";
+import { FACTORY_CHECK_LOG, judgePath, judgeRecord, onlyKeysChanged, principalClass, resolveWriter, WriteScopeError } from "./write-scope";
 import { createWorkspaceTools } from "../cli/mcp/workspace-tools";
 
 const DECISIONS = join(REPO, "docs", "design", "decisions");
@@ -224,6 +224,34 @@ describe("judging a write", () => {
     expect(judgeRecord(d, factory, screen, "new")).toEqual({ ok: true });
     expect(judgeRecord(d, factory, ws, "new")).toEqual({ ok: true });
     expect(judgeRecord(d, factory, screen, "amend")).toMatchObject({ ok: false, code: "write-scope-kind" });
+  });
+
+  test("the factory Op's own check log is in no member and is not judged by member scope (#3512)", () => {
+    const d = parseDeclaration(declaration(SCOPE, [...AGENTS, { name: "factory", members: ["app", "design"] }]), "chant.workspace.json");
+    const factory = resolveWriter(d, policy, { agent: "factory" });
+    expect(judgePath(d, factory, ".chant/factory/W-007/check.log")).toEqual({ ok: true });
+    const app = resolveWriter(d, policy, { agent: "app-agent" });
+    expect(judgePath(d, app, ".chant/factory/W-007/check.log")).toEqual({ ok: true });
+    // Only that file: the rest of .chant/ stays outside an agent's members.
+    expect(judgePath(d, factory, ".chant/factory/W-007/notes.md")).toMatchObject({ ok: false, code: "write-scope-member" });
+    expect(judgePath(d, factory, ".chant/factory/check.log")).toMatchObject({ ok: false, code: "write-scope-member" });
+    expect(judgePath(d, factory, ".chant/factory/W-007/sub/check.log")).toMatchObject({ ok: false, code: "write-scope-member" });
+  });
+
+  test("a protected entry still covers the factory check log (#3512)", () => {
+    const d = parseDeclaration(
+      declaration({ agent: { protected: [".chant/**"] } }, [{ name: "factory", members: ["app", "design"] }]),
+      "chant.workspace.json",
+    );
+    const factory = resolveWriter(d, policy, { agent: "factory" });
+    expect(judgePath(d, factory, ".chant/factory/W-007/check.log")).toMatchObject({ ok: false, code: "write-scope-protected" });
+  });
+
+  test("the pattern matches the path factoryCheck writes", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../op/activities/factory.ts", import.meta.url), "utf-8");
+    expect(src).toContain("const log = `.chant/factory/${lease.item}/check.log`;");
+    expect(FACTORY_CHECK_LOG.test(".chant/factory/W-007/check.log")).toBe(true);
   });
 
   test("the declared name of a kind is a key for its records rule too", () => {
