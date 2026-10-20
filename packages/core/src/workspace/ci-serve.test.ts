@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { ciServeInterval, ciServeKey, ciServePass, formatCiServeEvent, readCiServeState, type CiServeEvent, type CiServeForge, type CiServeOptions } from "./ci-serve";
-import { ciRun } from "./ci-run";
+import { ciRun, type CiRunResult } from "./ci-run";
 import { acquireLease, releaseLease } from "../lifecycle/lease";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
 import { parseArgs } from "../cli/parse-args";
@@ -53,11 +53,12 @@ const workspaceTemplate = repoFixture(() => {
 }, "chant-ci-serve-");
 
 /** A copy of the template, its origin pointed at the copy of the bare one. */
-function workspace(): { root: string; app: string; main: string } {
+function workspace(): { root: string; app: string; main: string; origin: string } {
   const top = workspaceTemplate();
   const root = join(top, "root");
-  git(root, "remote", "set-url", "origin", join(top, "origin"));
-  return { root, app: join(root, "app"), main: git(root, "rev-parse", "HEAD") };
+  const origin = join(top, "origin");
+  git(root, "remote", "set-url", "origin", origin);
+  return { root, app: join(root, "app"), main: git(root, "rev-parse", "HEAD"), origin };
 }
 
 /** A pull request's head commit, on a branch off main, pushed to the forge's refs/pull/<n>/head. */
@@ -149,6 +150,29 @@ function serve(app: string, client: CiServeForge, extra: Partial<CiServeOptions>
     },
   };
 }
+
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/** A commit on no branch, with `parent` when given, as a ledger commit stands in. */
+const ledgerCommit = (root: string, message: string, parent?: string): string => git(root, "commit-tree", EMPTY_TREE, ...(parent ? ["-p", parent] : []), "-m", message);
+
+/** Seed `chant/lifecycle` in the clone and on the forge, as an earlier apply left it. */
+function seedLedger(root: string): string {
+  const seed = ledgerCommit(root, "seed");
+  git(root, "update-ref", "refs/heads/chant/lifecycle", seed);
+  git(root, "push", "-q", "origin", "chant/lifecycle");
+  expect(git(root, "rev-parse", "refs/remotes/origin/chant/lifecycle")).toBe(seed);
+  return seed;
+}
+
+const isAncestor = (cwd: string, a: string, b: string): boolean => {
+  try {
+    git(cwd, "merge-base", "--is-ancestor", a, b);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const argsOf = (report: string, stage: string): string[] => readFileSync(join(report, `${stage}.args`), "utf-8").trimEnd().split("\n");
 const ofType = <T extends CiServeEvent["type"]>(events: CiServeEvent[], type: T) => events.filter((e): e is Extract<CiServeEvent, { type: T }> => e.type === type);
@@ -363,5 +387,62 @@ describe("chant ci serve (#4095)", () => {
     expect(ciServeInterval("45")).toBe(45_000);
     expect(ciServeInterval("2m")).toBe(120_000);
     expect(() => ciServeInterval("0")).toThrow(/a second or more/);
+  });
+});
+
+describe("ci serve follows the forge's chant/lifecycle (#4121)", () => {
+  /** A serve past its baseline pass, with one merge waiting to apply, and each run's result in `results`. */
+  async function mergeWaiting() {
+    const w = workspace();
+    const seed = seedLedger(w.root);
+    const forge = fakeForge(w.main);
+    const results: CiRunResult[] = [];
+    const { opts, events } = serve(w.app, forge, { run: async (req) => { const r = await ciRun(req); results.push(r); return r; } });
+    await ciServePass(opts);
+    const merged = commit(w.root, "app/merged.txt");
+    git(w.root, "push", "-q", "origin", "main");
+    forge.head = merged;
+    return { ...w, seed, opts, events, results };
+  }
+
+  test("a ledger the forge deleted is deleted here, and the next apply runs clean", async () => {
+    const { root, origin, seed, opts, events, results } = await mergeWaiting();
+    git(origin, "update-ref", "-d", "refs/heads/chant/lifecycle");
+
+    const pass = await ciServePass(opts);
+    expect(ofType(events, "ledger")).toEqual([{ type: "ledger", action: "deleted", local: seed }]);
+    expect(formatCiServeEvent(ofType(events, "ledger")[0]!)).toContain("was deleted");
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
+    expect(results[0]).toMatchObject({ pushed: true });
+    const tip = git(origin, "rev-parse", "refs/heads/chant/lifecycle");
+    expect(git(root, "rev-parse", "chant/lifecycle")).toBe(tip);
+    expect(isAncestor(origin, seed, tip)).toBe(false);
+  });
+
+  test("a ledger the forge rewrote is reset to the forge's and not pushed back", async () => {
+    const { root, origin, seed, opts, events, results } = await mergeWaiting();
+    const rewritten = ledgerCommit(root, "rewritten");
+    git(root, "push", "-q", "origin", `${rewritten}:refs/scratch/rewritten`);
+    git(origin, "update-ref", "refs/heads/chant/lifecycle", rewritten);
+
+    const pass = await ciServePass(opts);
+    expect(ofType(events, "ledger")).toEqual([{ type: "ledger", action: "reset", local: seed, forge: rewritten }]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
+    expect(results[0]).toMatchObject({ pushed: true });
+    const tip = git(origin, "rev-parse", "refs/heads/chant/lifecycle");
+    expect(isAncestor(origin, rewritten, tip)).toBe(true);
+    expect(isAncestor(root, seed, tip)).toBe(false);
+  });
+
+  test("a ledger ahead of the forge's keeps its facts, and the apply pushes them", async () => {
+    const { root, origin, seed, opts, events, results } = await mergeWaiting();
+    const ahead = ledgerCommit(root, "unpushed fact", seed);
+    git(root, "update-ref", "refs/heads/chant/lifecycle", ahead);
+
+    const pass = await ciServePass(opts);
+    expect(ofType(events, "ledger")).toEqual([]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
+    expect(results[0]).toMatchObject({ pushed: true });
+    expect(isAncestor(origin, ahead, git(origin, "rev-parse", "refs/heads/chant/lifecycle"))).toBe(true);
   });
 });

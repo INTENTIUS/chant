@@ -25,6 +25,12 @@
  *   cache.
  * - Capacity. At most `maxJobs` jobs run at once. A job over the limit is not
  *   recorded, so a later poll starts it.
+ * - The forge's ledger (#4121). Before each job, when no other job of this
+ *   serve runs, the clone's `chant/lifecycle` follows the forge's: it is
+ *   deleted when the forge has none, and reset to the forge's when neither
+ *   contains the other. Each is a warning. A local branch ahead of the
+ *   forge's keeps its facts, and the job's push sends them. Nothing here
+ *   pushes the ledger.
  *
  * Host mode only: each job runs in a fresh worktree on this host as this
  * user, with the clean environment `ciRun` gives it. A pull request from a
@@ -36,7 +42,7 @@
  * turn a checked payload into the same triggers and schedule them.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
@@ -105,6 +111,7 @@ export type CiServeEvent =
   | { type: "held"; job: CiJobName; commit: string; pr?: number; reason: "capacity" | "lease"; heldBy?: string }
   | { type: "started"; job: CiJobName; commit: string; pr?: number; base: string; runId: string; attempt: number; resume?: string }
   | { type: "settled"; job: CiJobName; commit: string; pr?: number; status: "ok" | "fail"; failure?: string; report?: string }
+  | { type: "ledger"; action: "deleted" | "reset"; local: string; forge?: string }
   | { type: "error"; message: string };
 
 /** The `ciRun` request fields `ci serve` passes through to every job: the generator's options and the runner's. */
@@ -156,6 +163,57 @@ function tryGit(cwd: string, args: string[]): string | undefined {
     return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch {
     return undefined;
+  }
+}
+
+const LEDGER = "chant/lifecycle";
+/** Where the forge's ledger tip is fetched to, a ref only this module writes. */
+const FORGE_LEDGER = "refs/chant/ci-serve/forge-ledger";
+
+/** `git` with its exit status, for the calls whose answer is the status. */
+function gitStatus(cwd: string, args: string[]): { code: number; out: string } {
+  const r = spawnSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LC_ALL: "C" } });
+  return { code: r.status ?? -1, out: (r.stdout ?? "").trim() };
+}
+
+/**
+ * Make the clone's `chant/lifecycle` follow the forge's (#4121). The clone's
+ * branch outlives the forge's, so a ledger the forge deleted or rewrote would
+ * make the next pr-apply find the two diverged and stall.
+ *
+ * - The forge has none: the local branch and its remote-tracking ref go.
+ * - Neither contains the other: the local branch and its remote-tracking ref
+ *   are reset to the forge's tip.
+ * - The local branch is ahead of the forge's, or behind it, or the same: it
+ *   is left, and an apply's push sends what it holds that the forge lacks.
+ *
+ * Nothing is pushed, so a rewritten ledger never goes back to the forge. A
+ * forge that can't be reached leaves everything as it is; the job's own
+ * fetch says why.
+ */
+export function reconcileCiServeLedger(top: string): CiServeEvent | undefined {
+  const local = tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${LEDGER}^{commit}`]);
+  const listed = gitStatus(top, ["ls-remote", "--exit-code", "origin", `refs/heads/${LEDGER}`]);
+  if (listed.code === 2) {
+    // A remote-tracking ref left from a deleted branch would be the next push's lease, and refuse it.
+    tryGit(top, ["update-ref", "-d", `refs/remotes/origin/${LEDGER}`]);
+    if (!local) return undefined;
+    tryGit(top, ["update-ref", "-d", `refs/heads/${LEDGER}`, local]);
+    return { type: "ledger", action: "deleted", local };
+  }
+  if (listed.code !== 0 || !local) return undefined;
+  const forge = listed.out.split(/\s+/)[0];
+  if (!forge || forge === local) return undefined;
+  if (gitStatus(top, ["fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${LEDGER}:${FORGE_LEDGER}`]).code !== 0) return undefined;
+  try {
+    const ahead = gitStatus(top, ["merge-base", "--is-ancestor", forge, local]).code === 0;
+    const behind = gitStatus(top, ["merge-base", "--is-ancestor", local, forge]).code === 0;
+    if (ahead || behind) return undefined;
+    tryGit(top, ["update-ref", `refs/heads/${LEDGER}`, forge, local]);
+    tryGit(top, ["update-ref", `refs/remotes/origin/${LEDGER}`, forge]);
+    return { type: "ledger", action: "reset", local, forge };
+  } finally {
+    tryGit(top, ["update-ref", "-d", FORGE_LEDGER]);
   }
 }
 
@@ -316,6 +374,12 @@ export async function ciServeSchedule(opts: CiServeOptions, triggers: readonly C
       lease = got.lease;
     }
 
+    // #4121: with no other job of this serve writing it, the clone's ledger follows the forge's.
+    if (rt.inflight.size === 0) {
+      const ledger = reconcileCiServeLedger(place.top);
+      if (ledger) emit(ledger);
+    }
+
     const previous = readCiServeState(place.stateFile, fresh).jobs[key];
     const attempt = (previous?.attempts ?? 0) + 1;
     const runId = `chant-serve-${now().getTime()}-${t.job}-${t.commit.slice(0, 8)}`;
@@ -442,6 +506,10 @@ export function formatCiServeEvent(e: CiServeEvent): string {
       return `${at(e.job, e.commit, e.pr)} started, run ${e.runId}, attempt ${e.attempt}${e.resume ? ", resuming" : ""}`;
     case "settled":
       return `${at(e.job, e.commit, e.pr)} ${e.status === "ok" ? "passed" : `failed${e.failure ? `: ${e.failure}` : ""}`}${e.report ? `; report ${e.report}` : ""}`;
+    case "ledger":
+      return e.action === "deleted"
+        ? `the forge has no ${LEDGER}, so this clone's, at ${e.local.slice(0, 12)}, was deleted`
+        : `the forge's ${LEDGER} at ${e.forge!.slice(0, 12)} does not contain this clone's at ${e.local.slice(0, 12)}, so this clone's was reset to the forge's and not pushed`;
     case "error":
       return `error: ${e.message}`;
   }
@@ -550,7 +618,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
         hostEnv,
         stepOutput: (line) => void process.stderr.write(`${line}\n`),
       },
-      log: (e) => console.error(e.type === "error" ? formatWarning({ message: formatCiServeEvent(e) }) : `ci serve: ${formatCiServeEvent(e)}`),
+      log: (e) => console.error(e.type === "error" || e.type === "ledger" ? formatWarning({ message: formatCiServeEvent(e) }) : `ci serve: ${formatCiServeEvent(e)}`),
     };
     if (args.once) {
       const pass = await ciServePass(opts);
