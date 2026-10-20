@@ -75,6 +75,8 @@ An output the plan cannot say is known only after apply. A root whose output rea
 
 The apply runs each approved plan in order, but before a member starts it resolves the member's references against the outputs standing then. When one differs from the value the plan read, because it was unknown or because the upstream applied as another value than its plan said, the member does not apply its approved plan. It is held back with its dependents. Once the rest settled, the apply plans the held members again against the outputs it left and decides that set's digest at a gate of its own, `pr-apply-round-2`, as [gated waves](/chant/cli/components/#one-gate-per-wave) gate each wave. The `identity.gates` entry for `pr-apply` and `--require-review` apply to it too. Approved, the round applies. Without an approval the apply ends `waiting` with exit code 3, and the report's `rounds` and the note give the round's digest and its approve command. Once that approval is recorded, the next run of the apply job restores its `--resume` record and applies only the round.
 
+An artifact a build in the same pull request publishes is the exception. A deploy that reads `@web-image.publish.digest`, or a `stackOutput()` under `publish`, from a component the change also builds plans with the digest unknown. The member lists it under `buildInputs`, and the note says the image digest comes from this pull request's build. The apply runs that deploy once the build ran, with the digest it produced, and asks for no second approval: the build's provenance and attestation bind the digest. A deploy that also reads another output known only after apply is still held back for it.
+
 For `cfn-deploy`, a stack keeps an output when its template `Value` reads only resources the change set modifies in place. An output is known only after apply when it reads a resource the change set adds or replaces, or a parameter, an import or a condition. A `kubectl-apply` step has outputs only when it names them, each a field of an object its manifest declares: `outputs: { host: { object: "Service/prod/web", field: "status.loadBalancer.ingress.0.hostname" } }`. Such a field is known before apply when the manifest sets it, or when the dry run leaves its object unchanged.
 
 ### CloudFormation stacks
@@ -296,6 +298,8 @@ The apply job becomes one job per wave of the component graph, `apply-wave-1` to
 ```bash
 chant approve pr-12 release-wave-2 --plan jcs1-sha256:9b1f... --approver github:alice --sign
 ```
+
+With `--wave-gate`, a wave's gate takes the place of a round. An output that was unknown when the pull request planned has a value by the time the wave that reads it plans, so nothing in a wave is held back. A member the pull request planned with such an output is covered only when its new plan makes the changes the approved one did; otherwise its wave waits at `<gate>-wave-<k>`. A member that waited only on an artifact a build in the change publishes is covered, as it is without `--wave-gate`. The apply never asks for `pr-apply-round-<n>` and `<gate>-wave-<k>` on the same change.
 
 `--require-review` holds a wave's approval to the same rules as the pull request's: the approver needs an approving review on the pull request, and whoever wrote the change never counts. The note and each wave job's report (`pr-apply.json`, kept as `chant-pr-apply-wave-<k>` on GitHub and Forgejo) carry a row per wave. Each row names the gate the wave applied or waits under and who approved it. The report's `waves` holds the same.
 

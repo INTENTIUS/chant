@@ -63,6 +63,12 @@ vi.mock("../../op/gate", async () => {
 const deployed: Record<string, Record<string, unknown>> = {};
 /** The roots that applied, in order. */
 let ran: string[] = [];
+/**
+ * Whether a root's plan says the `cidr` it will expose (#3999), as
+ * terraform's `planned_values` does. Off, every output of a root the change
+ * plans is known only after apply.
+ */
+let predicts = true;
 vi.mock("../../components/fan-out-support", async () => {
   const { CapabilityRegistry } = await import("../../components/capability");
   const { planFanOut } = await import("../../components/fan-out");
@@ -78,6 +84,7 @@ vi.mock("../../components/fan-out-support", async () => {
         member: input.root,
         planDigest,
         artifact: { planDigest, cidr },
+        ...(predicts ? { outputs: { known: { cidr }, unknown: [] } } : {}),
         changeSet: {
           member: { member: input.root, lexicon: "terraform", planner: "tofu", status: "planned", planDigest, holes: [] },
           entries: [
@@ -164,6 +171,7 @@ beforeEach(async () => {
   record = join(dir, "resume", "pr-apply.json");
   errors = [];
   ran = [];
+  predicts = true;
   for (const k of Object.keys(deployed)) delete deployed[k];
   deployed.net = { cidr: "10.0.0.0/16" };
   deployed.app = { cidr: "10.0.0.0/16" };
@@ -219,8 +227,12 @@ describe("pr-apply --wave-gate: wave 2's plan matches the pull request's", () =>
 });
 
 describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", () => {
-  /** The change moves net's cidr, which app reads: the pull request planned app against the old value. */
+  /**
+   * The change moves net's cidr, which app reads, and net's plan cannot say
+   * it (#3999): the pull request planned app without it.
+   */
   async function movedChange(): Promise<string> {
+    predicts = false;
     netStep.cidr = "10.1.0.0/16";
     const digest = await planAndApprove();
     expect(await runComponentsPrApply(wave(1))).toBe(0);
@@ -238,6 +250,7 @@ describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", 
     expect(w2).toMatchObject({ status: "waiting", approval: "wave", gate: "release-wave-2", components: ["app"] });
     expect(w2.digest).not.toBe(digest);
     expect(w2.moved).toEqual(["app now writes app.main.cidr to a different value than the approved plan"]);
+    expect(r.members.find((m) => m.member === "app")?.unknownInputs).toEqual(["net.cidr"]);
     // The wave's own gate is pending under the pull request's op, bound to its new plan.
     expect(gateLedger.appended).toEqual([expect.objectContaining({ kind: "pending", op: "pr-12", gate: "release-wave-2", planDigest: w2.digest })]);
     expect(existsSync(join(dir, "change-set-wave-2.json"))).toBe(true);
@@ -298,6 +311,7 @@ describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", 
   });
 
   test("without --wave the waves run in order in one job, which stops at wave 2's gate and finishes once it is approved", async () => {
+    predicts = false;
     netStep.cidr = "10.1.0.0/16";
     const digest = await planAndApprove();
     expect(await runComponentsPrApply(wave())).toBe(3);
@@ -309,12 +323,43 @@ describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", 
     expect((await report()).status).toBe("applied");
   });
 
-  test("without --wave-gate the same change applies wave 2 the approved plan, with the old input: inputsMoved", async () => {
+  test("without --wave-gate the same change holds app back and plans it again at pr-apply-round-2 once net applied (#3999)", async () => {
+    predicts = false;
+    netStep.cidr = "10.1.0.0/16";
+    await planAndApprove();
+    expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(3);
+    expect(ran).toEqual(["net"]);
+    expect(deployed.app).toEqual({ cidr: "10.0.0.0/16" });
+    const r = await report();
+    expect(r.status).toBe("waiting");
+    expect(r.rounds?.map((x) => [x.gate, x.components, x.status])).toEqual([["pr-apply-round-2", ["app"], "waiting"]]);
+    expect(r.members.find((m) => m.member === "app")).toMatchObject({ status: "waiting", round: 2 });
+  });
+});
+
+describe("a moved output a plan can say (#3999)", () => {
+  test("pr-plan plans app against the cidr net's plan says, so wave 2 applies under the pull request's approval", async () => {
+    netStep.cidr = "10.1.0.0/16";
+    const digest = await planAndApprove();
+    const plan = JSON.parse(await readFile(join(dir, "pr-plan.json"), "utf8")) as PrReport;
+    expect(plan.plannedOutputs).toEqual({ net: ["cidr"] });
+    expect(await runComponentsPrApply(wave(1))).toBe(0);
+    expect(await runComponentsPrApply(wave(2))).toBe(0);
+    expect(deployed.app).toEqual({ cidr: "10.1.0.0/16" });
+    const r = await report();
+    expect(r.waves!.map((w) => [w.wave, w.approval, w.digest])).toEqual([
+      [1, "pull-request", digest],
+      [2, "pull-request", digest],
+    ]);
+    expect(gateLedger.appended.filter((x) => x.gate.startsWith("release-wave"))).toEqual([]);
+  });
+
+  test("without --wave-gate the same change applies app against the new cidr under the one approval", async () => {
     netStep.cidr = "10.1.0.0/16";
     await planAndApprove();
     expect(await runComponentsPrApply(ctx({ pr: 12 }))).toBe(0);
-    expect(deployed.app).toEqual({ cidr: "10.0.0.0/16" });
-    expect((await report()).members.find((m) => m.member === "app")).toMatchObject({ status: "applied", inputsMoved: ["net"] });
+    expect(deployed.app).toEqual({ cidr: "10.1.0.0/16" });
+    expect((await report()).rounds).toBeUndefined();
   });
 });
 
@@ -385,6 +430,7 @@ describe("pr-apply --wave-gate refuses", () => {
     });
 
     test("the author approves wave 2's moved plan: refused as author-approved, and wave 2 still waits", async () => {
+      predicts = false;
       netStep.cidr = "10.1.0.0/16";
       const digest = await planAndApprove();
       const review = { forge: "github", requireReview: true };

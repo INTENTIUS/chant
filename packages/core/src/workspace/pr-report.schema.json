@@ -162,6 +162,11 @@
             "items": { "type": "string" },
             "description": "#3999: the upstream outputs its plan read that the change's plans could not say, as <component>.<output>, sorted. Known only after that upstream applies; the approval does not cover what this member does with them."
           },
+          "buildInputs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "#3999: the published artifact identities its plan read from a build in the same change, as <component>.publish.<field>, sorted. Known only after the build runs and never approved again: the build's provenance binds them, so the member applies without a later round."
+          },
           "round": { "type": "integer", "minimum": 2, "description": "Apply stage (#3999): the round whose plan it applied or waits on, when not the first. planDigest and counts are that round's." },
           "held": { "type": "string", "description": "Apply stage (#3999): why the first round's plan did not apply." }
         }

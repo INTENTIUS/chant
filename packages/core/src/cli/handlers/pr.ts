@@ -1198,7 +1198,7 @@ async function prApplyWaves(
         setWave({ wave: k, components: wavePlan.order, status: "plan-failed", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest });
         return stop(report({ status: "plan-failed", message: `A member of wave ${k} failed to plan, so nothing in wave ${k} was applied.` }), 1);
       }
-      const moved = waveNotCovered(approvedSet.doc, fresh.doc);
+      const moved = waveNotCovered(approvedSet.doc, fresh.doc, approvedSet.members);
       set = fresh;
       if (moved.length === 0) {
         console.error(formatInfo(`wave ${k}: the approved plan covers what it plans now, so it applies under the pull request's approval`));

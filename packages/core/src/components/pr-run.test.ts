@@ -30,6 +30,7 @@ import {
 } from "./pr-run";
 import { changeSetDigest, changeSetDocumentDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import type { PrApplyRecord } from "./fan-out-record";
+import { renderPrNote } from "../pr-loop";
 import type { FanOutPlan } from "./fan-out";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { DriverComponent } from "./driver";
@@ -515,6 +516,91 @@ describe("a dependent planned on its upstream's planned outputs (#3999)", () => 
     expect(second.rounds?.[0]?.digest).toBe(roundDigest);
     expect(w.applied).toEqual(["a", "app"]);
     expect(w.ranWith.app).toEqual({ subnet: "a-v2" });
+  });
+});
+
+describe("a digest a build in the same pull request publishes (#3999)", () => {
+  /** `web-image` builds and publishes an image; `web` deploys it, and with `withSubnet` also reads `a.id`. */
+  const estate = (withSubnet = false): DriverComponent[] => [
+    root("a"),
+    { name: "web-image", dependsOn: [], deploy: [{ phase: "Publish", steps: [{ kind: "fake-build" }] }] },
+    root("web", withSubnet ? ["web-image", "a"] : ["web-image"], {
+      image: "@web-image.publish.digest",
+      ...(withSubnet ? { subnet: { stackOutput: { stack: "a", name: "id" } } } : {}),
+    }),
+  ];
+  function buildWorld() {
+    const w = world();
+    let n = 0;
+    w.registry.register({
+      kind: "fake-build",
+      async run() {
+        n++;
+        return { uri: "registry.example/web", digest: `sha256:built-${n}` };
+      },
+    } as never);
+    return w;
+  }
+  const neverApproved = async () => ({ satisfied: false, approval: { status: "pending" as const } });
+
+  test("image plus deploy in one pull request: the deploy plans with the digest unknown, lists it as the build's, and applies in one round", async () => {
+    const w = buildWorld();
+    const components = estate();
+    const plan = planFanOut({ components, changed: ["web-image", "web"] });
+    const set = await planPrSet({ components, plan, registry: w.registry, env: "prod" });
+    expect(set.failed).toBe(false);
+    const web = set.members.find((m) => m.member === "web")!;
+    expect(web.buildInputs).toEqual(["web-image.publish.digest"]);
+    expect(web.unknownInputs).toBeUndefined();
+
+    let asked = 0;
+    const applied = await applyPrSet({ components, plan, registry: w.registry, env: "prod", set, decideRound: async () => (asked++, neverApproved()) });
+    expect(applied.status).toBe("applied");
+    expect(asked).toBe(0);
+    expect(applied.rounds).toBeUndefined();
+    expect(w.ranWith.web).toEqual({ image: "sha256:built-1" });
+    expect(applied.members.find((m) => m.member === "web")).toMatchObject({ status: "applied" });
+
+    const note = renderPrNote(prReport({ stage: "plan", pr: 12, env: "prod", base: "1".repeat(40), head: "2".repeat(40), op: "pr-12", gate: "pr-apply", plan, signal: { changed: ["web-image", "web"], indeterminate: [], unclaimed: [] }, set, approval: { status: "pending" }, status: "planned" }));
+    expect(note).toContain("From this pull request's build: `web` reads `web-image.publish.digest`. The image digest comes from this pull request's build");
+    expect(note).not.toContain("Known only after apply");
+  });
+
+  test("a deploy that also reads an output known only after apply still goes to round 2", async () => {
+    const w = buildWorld();
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    const components = estate(true);
+    const plan = planFanOut({ components, changed: ["a", "web-image", "web"] });
+    const set = await planPrSet({ components, plan, registry: w.registry, env: "prod" });
+    const web = set.members.find((m) => m.member === "web")!;
+    expect(web.buildInputs).toEqual(["web-image.publish.digest"]);
+    expect(web.unknownInputs).toEqual(["a.id"]);
+
+    const applied = await applyPrSet({ components, plan, registry: w.registry, env: "prod", set, decideRound: neverApproved });
+    expect(applied.status).toBe("waiting");
+    expect(w.ranWith.web).toBeUndefined();
+    // Held for a.id alone: the image digest is not a reason.
+    expect(applied.members.find((m) => m.member === "web")).toMatchObject({ status: "waiting", round: 2, held: "its plan read a.id before that output applied as another value" });
+    expect(applied.rounds?.map((r) => [r.gate, r.components])).toEqual([["pr-apply-round-2", ["web"]]]);
+  });
+
+  test("under --wave-gate, the approved set covers a wave whose member waited only on the build's digest", () => {
+    const hole = (member: string, digest: string): ChangeSetPart => ({
+      member: { member, lexicon: "aws", planner: "chant", status: "planned", planDigest: `jcs1-sha256:${digest.repeat(64)}`, holes: [{ address: member, reason: "inputs from web-image; re-checked on apply" }] },
+      entries: [],
+    });
+    const approvedDoc = composeChangeSet([hole("web", "1")]);
+    const fresh = composeChangeSet([
+      {
+        member: { member: "web", lexicon: "aws", planner: "chant", status: "planned", planDigest: `jcs1-sha256:${"2".repeat(64)}`, holes: [] },
+        entries: [{ member: "web", lexicon: "aws", planner: "chant", address: "Service", type: "AWS::ECS::Service", action: "update", attributes: [{ path: "Image", after: "sha256:built-1" }] }],
+      },
+    ]);
+    const member = (extra: Record<string, unknown>) => [{ member: "web", component: "web", planDigest: null, status: "planned" as const, counts: { create: 0, update: 0, replace: 0, delete: 0 }, ...extra }];
+    expect(waveNotCovered(approvedDoc, fresh, member({ buildInputs: ["web-image.publish.digest"] }))).toEqual([]);
+    expect(waveNotCovered(approvedDoc, fresh, member({ buildInputs: ["web-image.publish.digest"], unknownInputs: ["a.id"] }))).toHaveLength(1);
+    expect(waveNotCovered(approvedDoc, fresh)).toHaveLength(1);
   });
 });
 

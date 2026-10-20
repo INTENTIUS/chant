@@ -63,7 +63,7 @@ export const PR_REPORT_DEPLOYED_OUTPUTS_FLOOR = "0.124.30";
 export const PR_REPORT_WAVES_FLOOR = "0.124.32";
 /**
  * The first chant whose report can carry `plannedOutputs`, `rounds`, a
- * member's `unknownInputs`, `round` and `held`, and the `waiting` statuses
+ * member's `unknownInputs`, `buildInputs`, `round` and `held`, and the `waiting` statuses
  * (#3999).
  */
 export const PR_REPORT_PLANNED_OUTPUTS_FLOOR = "0.124.32";
@@ -156,6 +156,14 @@ export interface PrMember {
    * with them; the apply plans it again once they are known.
    */
   unknownInputs?: string[];
+  /**
+   * The published artifact identities its plan read from a build in the
+   * same change (#3999), as `<component>.publish.<field>`, sorted: an image
+   * digest, say. Known only after the build runs, but never approved again:
+   * the build's provenance and attestation bind the digest, so the member
+   * applies without a later round.
+   */
+  buildInputs?: string[];
   /** Apply stage (#3999): the round whose plan it applied or waits on, when not the first. */
   round?: number;
   /** Apply stage (#3999): why the first round's plan did not apply. */
@@ -532,6 +540,14 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       "",
       `Known only after apply: ${unknown.join("; ")}. This approval does not cover what those members do with them. ` +
         "The apply plans them again once their upstream applied and asks for an approval of that plan.",
+    );
+  }
+  const fromBuild = [...new Set(report.members.flatMap((m) => (m.buildInputs ?? []).map((ref) => `${code(m.component)} reads ${code(ref)}`)))];
+  if (fromBuild.length > 0) {
+    out.push(
+      "",
+      `From this pull request's build: ${fromBuild.join("; ")}. The image digest comes from this pull request's build, whose provenance binds it, ` +
+        "so those members apply with it once the build ran, without a second approval.",
     );
   }
   for (const r of report.rounds ?? []) {

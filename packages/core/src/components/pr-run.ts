@@ -174,7 +174,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const planned: Record<string, string[]> = {};
   const parts: ChangeSetPart[] = [];
   const componentOf = new Map<string, string>();
-  const unknownOf = new Map<string, string[]>();
+  const unknownOf = new Map<string, { unknown: string[]; build: string[] }>();
   const plans: Record<string, Record<string, unknown>> = {};
   let failed = false;
   const emit = options.onRunEvent;
@@ -219,7 +219,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     for (const p of results) {
       const component = byName.get(p.component)!;
       const unknown = unknownInputsOf(component, outputs, inChange);
-      if (unknown.length > 0) unknownOf.set(p.component, unknown);
+      if (unknown.unknown.length > 0 || unknown.build.length > 0) unknownOf.set(p.component, unknown);
       if ("error" in p) {
         failed = true;
         plannedBy.set(p.component, undefined);
@@ -250,7 +250,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       status: m.status === "failed" ? "plan-failed" : "planned",
       counts: memberCounts(doc, m.member),
       ...(m.error ? { error: m.error } : {}),
-      ...(unknown ? { unknownInputs: unknown } : {}),
+      ...(unknown?.unknown.length ? { unknownInputs: unknown.unknown } : {}),
+      ...(unknown?.build.length ? { buildInputs: unknown.build } : {}),
     };
   });
   const sorted = (r: Record<string, string[]>) => Object.fromEntries(Object.entries(r).sort(([a], [b]) => a.localeCompare(b)));
@@ -269,32 +270,45 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
 
 /**
  * The references `component`'s steps make to an output of a component in
- * the change that `outputs` holds no value for (#3999): ones its upstream's
- * plan could not say, known only after that upstream applies. Sorted.
+ * the change that `outputs` holds no value for (#3999), known only after
+ * that upstream applies, each sorted. `build` are the published artifact
+ * identities a build in the change produces (`WiringReference.publish`):
+ * the build's provenance binds those, so they are never approved again.
+ * `unknown` are the rest.
  */
-function unknownInputsOf(component: DriverComponent, outputs: Record<string, Record<string, unknown>>, inChange: ReadonlySet<string>): string[] {
-  const refs = new Set<string>();
+function unknownInputsOf(
+  component: DriverComponent,
+  outputs: Record<string, Record<string, unknown>>,
+  inChange: ReadonlySet<string>,
+): { unknown: string[]; build: string[] } {
+  const unknown = new Set<string>();
+  const build = new Set<string>();
   for (const step of capabilitySteps(component.deploy)) {
     const { kind: _kind, ...rest } = step;
-    for (const r of unresolvedWiringReferences(rest, outputs)) if (inChange.has(r.source)) refs.add(r.ref);
+    for (const r of unresolvedWiringReferences(rest, outputs)) {
+      if (inChange.has(r.source)) (r.publish ? build : unknown).add(r.ref);
+    }
   }
-  return [...refs].sort();
+  return { unknown: [...unknown].sort(), build: [...build].sort() };
 }
 
 /**
  * Why `component` cannot apply the plan that read `read` now that `now`
  * stands (#3999): each reference its steps make that resolves to another
- * value, said once. `undefined` when every one resolves as it did.
+ * value, said once. `undefined` when every one resolves as it did. A
+ * published artifact's identity from a build in `inChange` never holds a
+ * member back: the build's provenance binds it, not this approval.
  */
 export function heldReason(
   component: DriverComponent,
   read: Record<string, Record<string, unknown>>,
   now: Record<string, Record<string, unknown>>,
+  inChange: ReadonlySet<string> = new Set(),
 ): string | undefined {
   const refs = new Set<string>();
   for (const step of capabilitySteps(component.deploy)) {
     const { kind: _kind, ...rest } = step;
-    for (const r of movedWiringReferences(rest, read, now)) refs.add(r.ref);
+    for (const r of movedWiringReferences(rest, read, now)) if (!(r.publish && inChange.has(r.source))) refs.add(r.ref);
   }
   if (refs.size === 0) return undefined;
   return `its plan read ${[...refs].sort().join(", ")} before ${refs.size === 1 ? "that output" : "those outputs"} applied as another value`;
@@ -438,7 +452,8 @@ function joinRuns(a: FanOutRunResult, b: FanOutRunResult): FanOutRunResult {
 export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult> {
   const byName = new Map(options.components.map((c) => [c.name, c]));
   const priorCompleted = new Set(options.resumed?.completed ?? []);
-  const toApply = new Set([...options.set.members.map((m) => m.component), ...options.plan.order].filter((name) => !priorCompleted.has(name)));
+  const inChange = new Set([...options.set.members.map((m) => m.component), ...options.plan.order]);
+  const toApply = new Set([...inChange].filter((name) => !priorCompleted.has(name)));
   // The outputs standing as the apply starts: what the plans read of
   // components outside the change, and what an earlier attempt's components
   // left (the values the plans read, where its record kept none). A planned
@@ -453,7 +468,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       ...(options.vars ? { vars: options.vars } : {}),
       plans,
       componentOutputs: outputs,
-      hold: (name, now) => heldReason(byName.get(name)!, read, now),
+      hold: (name, now) => heldReason(byName.get(name)!, read, now, inChange),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
       ...(options.onComponentSettled ? { onComponentSettled: options.onComponentSettled } : {}),
@@ -703,9 +718,14 @@ export function prWavePlan(plan: FanOutPlan, components: DriverComponent[], wave
  * returns no change set) is covered only by the digest it was approved
  * with, since with no entries there is nothing to compare a moved plan by.
  */
-export function waveNotCovered(approved: ChangeSetDocument, fresh: ChangeSetDocument): string[] {
+export function waveNotCovered(approved: ChangeSetDocument, fresh: ChangeSetDocument, approvedMembers: readonly PrMember[] = []): string[] {
+  // #3999: a member whose approved plan waited only on an artifact a build in
+  // the change publishes is covered by that build's provenance, as it is
+  // without --wave-gate.
+  const byBuild = new Set(approvedMembers.filter((m) => m.buildInputs?.length && !m.unknownInputs?.length).map((m) => m.member));
   return fresh.members
     .map((m) => {
+      if (byBuild.has(m.member)) return undefined;
       const was = approved.members.find((a) => a.member === m.member);
       const opaque = m.planner === "chant" && m.lexicon === "chant" && m.status === "planned";
       if (opaque && was && was.planDigest !== m.planDigest) {

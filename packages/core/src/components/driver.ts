@@ -368,6 +368,13 @@ export interface WiringReference {
   source: string;
   /** `<stack>.<name>` for `stackOutput()`, `<component>.publish.<field>` for an artifact. */
   ref: string;
+  /**
+   * Whether it reads a published artifact's identity (#3999): an
+   * `@<component>.publish.*` reference, or a `stackOutput()` whose name is
+   * under `publish`. The driver namespaces every publish-family output there
+   * (`collectComponentOutputs`), whatever capability wrote it.
+   */
+  publish: boolean;
 }
 
 /**
@@ -380,7 +387,7 @@ export function unresolvedWiringReferences(
   input: Record<string, unknown>,
   componentOutputs: Record<string, Record<string, unknown>>,
 ): WiringReference[] {
-  return wiringReferences(input).filter((r) => r.value(componentOutputs) === undefined).map(({ source, ref }) => ({ source, ref }));
+  return wiringReferences(input).filter((r) => r.value(componentOutputs) === undefined).map(({ source, ref, publish }) => ({ source, ref, publish }));
 }
 
 /**
@@ -395,7 +402,7 @@ function wiringReferences(input: Record<string, unknown>): Array<WiringReference
       const ref = value.match(COMPONENT_ARTIFACT_REF);
       if (ref) {
         const [, source, field] = ref;
-        found.set(`${source}.publish.${field}`, { source, ref: `${source}.publish.${field}`, value: (o) => resolvePath(o[source]?.publish, field) });
+        found.set(`${source}.publish.${field}`, { source, ref: `${source}.publish.${field}`, publish: true, value: (o) => resolvePath(o[source]?.publish, field) });
       }
       return;
     }
@@ -406,7 +413,7 @@ function wiringReferences(input: Record<string, unknown>): Array<WiringReference
     if (value && typeof value === "object") {
       if ("stackOutput" in value) {
         const { stack, name } = (value as { stackOutput: { stack: string; name: string } }).stackOutput;
-        found.set(`${stack}.${name}`, { source: stack, ref: `${stack}.${name}`, value: (o) => resolvePath(o[stack], name) });
+        found.set(`${stack}.${name}`, { source: stack, ref: `${stack}.${name}`, publish: name === "publish" || name.startsWith("publish."), value: (o) => resolvePath(o[stack], name) });
         return;
       }
       Object.values(value as Record<string, unknown>).forEach(walk);
@@ -428,7 +435,7 @@ export function movedWiringReferences(
   now: Record<string, Record<string, unknown>>,
 ): WiringReference[] {
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  return wiringReferences(input).filter((r) => !same(r.value(read), r.value(now))).map(({ source, ref }) => ({ source, ref }));
+  return wiringReferences(input).filter((r) => !same(r.value(read), r.value(now))).map(({ source, ref, publish }) => ({ source, ref, publish }));
 }
 
 // ── Step + phase execution ───────────────────────────────────────────────

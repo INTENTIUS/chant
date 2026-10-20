@@ -121,7 +121,7 @@ const unknownReport: PrReport = {
   ...planReport,
   deployedOutputs: { net: ["cidr"] },
   plannedOutputs: { a: ["arn"] },
-  members: [planReport.members[0]!, { ...planReport.members[1]!, unknownInputs: ["a.id"] }],
+  members: [planReport.members[0]!, { ...planReport.members[1]!, unknownInputs: ["a.id"], buildInputs: ["img.publish.digest"] }],
 };
 
 const roundDoc = composeChangeSet([part("app", 3, [{ address: "terraform_data.app", action: "update" }])]);
@@ -206,6 +206,8 @@ describe("the note", () => {
     expect(note).toContain("Planned against the outputs this change's plans say its upstreams will have: `a` (`arn`).");
     expect(note).toContain("Known only after apply: `app` reads `a.id`. This approval does not cover what those members do with them.");
     expect(renderPrNote(planReport)).not.toContain("Known only after apply");
+    expect(note).toContain("From this pull request's build: `app` reads `img.publish.digest`. The image digest comes from this pull request's build");
+    expect(renderPrNote(planReport)).not.toContain("From this pull request's build");
     expect(PR_REPORT_PLANNED_OUTPUTS_FLOOR).toBe("0.124.32");
     expect(schema.required).not.toContain("plannedOutputs");
   });
