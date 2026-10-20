@@ -520,6 +520,43 @@ async function parseWithEmbedded(
   return { irs: parses.map((parse) => parse({ embedded })), embedded };
 }
 
+/**
+ * Build the source import wrote and name each error-severity post-synth
+ * finding that would stop `chant build` (#3605). The findings go through the
+ * same `lint.presets` and `lint.rules` filtering build applies, against the
+ * project config above `outputDir`, so a check the project turns off is not
+ * named. When the source does not build here (the lexicon is not installed
+ * beside it, or embedded content needs another lexicon's serializer), nothing
+ * is said: import reports what build would refuse, not why it cannot run.
+ */
+export async function buildErrorWarnings(plugin: LexiconPlugin, outputDir: string): Promise<string[]> {
+  try {
+    const checks = plugin.postSynthChecks?.() ?? [];
+    if (checks.length === 0) return [];
+    const [{ build }, { runPostSynthChecks }, { applyConfiguredPreset, applyConfiguredSeverity, resolvePresetIds }, { loadChantConfigUpward }] =
+      await Promise.all([import("../../build"), import("../../lint/post-synth"), import("../../lint/config"), import("../../config")]);
+    const result = await build(outputDir, [plugin.serializer]);
+    if (result.errors.length > 0) return [];
+    const { config } = await loadChantConfigUpward(outputDir);
+    const rules = config.lint?.rules;
+    // As build.ts runLexiconPostSynthChecks does: the plugin sees its own output only.
+    const output = result.outputs.get(plugin.serializer.name);
+    const outputs = new Map(output === undefined ? [] : [[plugin.serializer.name, output]]);
+    const diagnostics = runPostSynthChecks(checks, { ...result, outputs });
+    const presetIds = resolvePresetIds(plugin.lintPresets?.(), config.lint?.presets?.[plugin.name] ?? "recommended");
+    const afterPreset = applyConfiguredPreset(diagnostics, presetIds, rules).diagnostics;
+    return applyConfiguredSeverity(afterPreset, rules)
+      .diagnostics.filter((diag) => diag.severity === "error")
+      .map(
+        (diag) =>
+          `${diag.checkId}: ${diag.message.replace(/\.$/, "")}. chant build stops on this error; ` +
+          `change the generated source, or set lint.rules.${diag.checkId} to "off" in chant.config.ts.`,
+      );
+  } catch {
+    return [];
+  }
+}
+
 /** The shared tail of every template import: parse → generate → write. */
 async function parseAndWrite(
   plugin: LexiconPlugin,
@@ -614,6 +651,9 @@ async function parseAndWrite(
     writeFileSync(filePath, file.content);
     generatedFiles.push(file.path);
   }
+
+  // What `chant build` will refuse, said now rather than at the first build (#3605).
+  warnings.push(...(await buildErrorWarnings(plugin, outputDir)));
 
   return {
     success: true,
