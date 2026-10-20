@@ -13,7 +13,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanScratch, contract, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { parseArgs } from "../cli/parse-args";
 import type { CommandContext } from "../cli/registry";
@@ -133,23 +133,36 @@ describe("chant workspace ls --json carries ci.reportUrl", () => {
 });
 
 describe("chant ci run", () => {
-  test("without --report-url the job's run index goes to the declared URL", async () => {
-    const declared = reportsDir();
-    const w = workspace({ reportUrl: urlOf(declared) });
-    const r = await runPlan(w);
+  // The two whole jobs run once, in beforeAll, and the tests below read what
+  // they left, as ci-run.test.ts does (#4115, #4124). The first job of a file
+  // pays for loading the job's modules, which on a loaded CI shard came to
+  // over the unit budget (#2817); a file's beforeAll is not counted in it.
+  const ran: Record<"declared" | "flag", { code: number; err: string; declared: CiRunIndex | null; flag: CiRunIndex | null }> = {} as never;
+  beforeAll(async () => {
+    const read = (dir: string) => (existsSync(join(dir, CI_RUN_INDEX_KEY)) ? indexOf(dir) : null);
+    for (const kind of ["declared", "flag"] as const) {
+      const declared = reportsDir();
+      const flag = reportsDir();
+      const w = workspace({ reportUrl: urlOf(declared) });
+      const r = await runPlan(w, kind === "flag" ? ["--report-url", urlOf(flag)] : []);
+      ran[kind] = { code: r.code, err: r.err, declared: read(declared), flag: read(flag) };
+      process.chdir(home);
+      vi.restoreAllMocks();
+    }
+  }, 60_000);
+
+  test("without --report-url the job's run index goes to the declared URL", () => {
+    const r = ran.declared;
     expect(r.code, r.err).toBe(0);
-    expect(indexOf(declared).runs).toHaveLength(1);
-    expect(indexOf(declared).runs[0]).toMatchObject({ job: "plan", pr: 7 });
+    expect(r.declared?.runs).toHaveLength(1);
+    expect(r.declared?.runs[0]).toMatchObject({ job: "plan", pr: 7 });
   });
 
-  test("--report-url wins over the declared URL", async () => {
-    const declared = reportsDir();
-    const flag = reportsDir();
-    const w = workspace({ reportUrl: urlOf(declared) });
-    const r = await runPlan(w, ["--report-url", urlOf(flag)]);
+  test("--report-url wins over the declared URL", () => {
+    const r = ran.flag;
     expect(r.code, r.err).toBe(0);
-    expect(indexOf(flag).runs).toHaveLength(1);
-    expect(existsSync(join(declared, "runs"))).toBe(false);
+    expect(r.flag?.runs).toHaveLength(1);
+    expect(r.declared).toBeNull();
   });
 
   test("an invalid declared URL stops the job before it runs", async () => {
