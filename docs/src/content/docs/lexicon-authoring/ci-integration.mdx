@@ -31,7 +31,7 @@ This patches up to six files (`packages/core/src/cli/commands/onboard.ts`):
 | File | What it adds |
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
-| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths, written `./lexicons/<name>/...` like the existing entries (chant #1614, #3227). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it. With no `baseUrl`, a path without the leading `./` makes tsx's tsconfig loader throw |
+| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths, written `./lexicons/<name>/...` like the existing entries (chant #1614, #3227). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it. With no `baseUrl`, a path without the leading `./` makes tsx's tsconfig loader throw. `scripts/tsconfig-lexicon-paths.test.ts` fails when a lexicon directory has no entry or an entry names a removed one, and `npm run generate:tsconfig-paths` rewrites the block (chant #2376) |
 | `.github/workflows/chant.yml` | Prepack lines in any check/test `run:` block that lists them, and a validate step |
 | `test/Dockerfile.smoke` | `<name>` in the `for lex in ...` lexicon list of the workspace smoke test |
 | `test/smoke-npm-lexicons.txt` | `<name>` on its own line. The npm tarball smoke (`test/Dockerfile.smoke-npm`) and `smoke.sh` both read this list |
