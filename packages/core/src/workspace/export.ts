@@ -44,6 +44,7 @@ import { parseJsonText } from "./jsonc";
 import { fileHash, LOCK_FILE, LockError, parseLock, renderLock, type Lineage, type LineageLock } from "./lineage-lock";
 import { loadRecordKind } from "./records";
 import { workingTree } from "./tree";
+import { isWorkDir } from "../lifecycle/work-dir";
 
 /** The role that marks the member an export is written into. */
 export const EXPORT_ROLE = "export";
@@ -142,7 +143,7 @@ export function gitTopOf(dir: string): string | undefined {
 /**
  * The files under `dir` (absolute) that git tracks or would track, relative
  * to `dir`, that exist in the working tree. Outside git, every file, leaving
- * out `.git` and `node_modules`.
+ * out `.git`, `node_modules` and `.chant/work`.
  */
 export function listFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -167,8 +168,10 @@ export function listFiles(dir: string): string[] {
     for (const d of readdirSync(join(dir, rel), { withFileTypes: true })) {
       if (d.name === ".git" || d.name === "node_modules") continue;
       const p = rel ? `${rel}/${d.name}` : d.name;
-      if (d.isDirectory()) walk(p);
-      else if (d.isFile()) out.push(p);
+      // `.chant/work` holds work worktrees, each a copy of the checkout (#2893).
+      if (d.isDirectory()) {
+        if (!isWorkDir(p)) walk(p);
+      } else if (d.isFile()) out.push(p);
     }
   };
   walk("");

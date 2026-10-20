@@ -22,6 +22,7 @@ import {
   terragruntModuleDirs,
   type TerragruntExec,
 } from "./index";
+import { findTerragruntStackFiles } from "./affected";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../__fixtures__/terragrunt");
 const discovered = parseTerragruntFind(readFileSync(join(fixtures, "recorded/affected-find.json"), "utf8"));
@@ -131,6 +132,16 @@ describe("stack files", () => {
       { type: "unit", name: "remote", generated: "live/stg/.terragrunt-stack/remote" },
       { type: "stack", name: "svc", template: "catalog/stacks/svc", generated: "live/stg/.terragrunt-stack/svc" },
     ]);
+  });
+
+  it("a work worktree under .chant/work is not searched for stack files (chant#2893)", () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "chant-tg-stacks-")), "repo");
+    tmps.push(dirname(dir));
+    for (const p of ["live/terragrunt.stack.hcl", ".chant/work/W-1/live/terragrunt.stack.hcl"]) {
+      mkdirSync(dirname(join(dir, p)), { recursive: true });
+      writeFileSync(join(dir, p), "");
+    }
+    expect(findTerragruntStackFiles(dir)).toEqual(["live/terragrunt.stack.hcl"]);
   });
 });
 

@@ -51,6 +51,11 @@ describe("integrityOf", () => {
     expect(integrityOf(join(dir({ "d/a": "1", "d/b": "2", "d/e": "" }), "d")).integrity).not.toBe(base);
   });
 
+  test("a work worktree under .chant/work is left out, and the rest of .chant is hashed (#2893)", () => {
+    const root = dir({ "d/a": "1", "d/.chant/work/W-1/a": "copy", "d/.chant/work/m/W-2/a": "copy", "d/.chant/notes": "n" });
+    expect(pinnedFiles(join(root, "d"))).toEqual([".chant/notes", "a"]);
+  });
+
   test("node_modules and .git are left out, and a symbolic link is refused", () => {
     const root = dir({ "d/a": "1", "d/node_modules/x/index.js": "x", "d/.git/HEAD": "ref" });
     expect(pinnedFiles(join(root, "d"))).toEqual(["a"]);

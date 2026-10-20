@@ -292,7 +292,7 @@ describe("the forward coverage check (#2773)", () => {
   });
 
   test("on a work branch, the range and the item come from the branch (an Op under changesCheckout)", async () => {
-    const tree = join(root, ".git", "chant-work", "W-001");
+    const tree = join(root, ".chant", "work", "W-001");
     git(root, "worktree", "add", "-q", "-b", "chant/work/W-001", tree, "HEAD");
     writeFiles(tree, { "app/lib/a.mjs": "export const a = 2;\n", "docs/readme.md": "# Docs, again\n" });
     git(tree, "add", "-A");

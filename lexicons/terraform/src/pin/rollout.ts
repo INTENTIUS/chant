@@ -140,7 +140,8 @@ export interface PinRolloutResult extends PinRequest {
 const defaultRun: CommandRunner = async (bin, args, cwd) =>
   (await execFileAsync(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024, ...(bin === "gh" ? { env: await ghHostEnv(process.env, cwd) } : {}) })).stdout;
 
-const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules"]);
+// `.chant` holds work worktrees in `.chant/work`, each a copy of the checkout (chant#2893).
+const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".chant"]);
 
 const NO_FORGE: PinForge = {
   findPullRequest: async () => null,

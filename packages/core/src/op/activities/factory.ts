@@ -357,7 +357,7 @@ function inWorktree(kindFile: string, checkout: string, worktree: string): strin
     }
   };
   const [file, top, tree] = [real(kindFile), real(checkout), real(worktree)];
-  // Read from the worktree already (it sits under the checkout's .git), or outside the checkout: as it is.
+  // Read from the worktree already (it sits in the checkout's .chant/work, #2893), or outside the checkout: as it is.
   if (file.startsWith(`${tree}/`) || !file.startsWith(`${top}/`)) return file;
   return join(tree, file.slice(top.length + 1));
 }

@@ -342,9 +342,10 @@ describe("an Op that changes the checkout", () => {
       expect(result.workLease).toMatchObject({ item: "W-7", branch: "chant/work/W-7", released: true, outcome: "done" });
       expect(result.workLease?.holder).toBe(stewardWorkHolder("box", "dispatch", "h1"));
 
-      // The worktree sat under the git directory and is gone; the branch keeps the build.
-      expect(worktree.startsWith(join(dir, ".git"))).toBe(true);
+      // The worktree sat at .chant/work/<item> in the checkout and is gone, with the directories it left empty; the branch keeps the build.
+      expect(worktree).toBe(join(dir, ".chant", "work", "W-7"));
       expect(existsSync(worktree)).toBe(false);
+      expect(existsSync(join(dir, ".chant"))).toBe(false);
       expect(git(["show", "chant/work/W-7:app/feature.ts"], dir).stdout).toBe("export const feature = true;\n");
 
       // The coding agent's checkout: its edit, its lock, HEAD and the index, as they were.
@@ -400,6 +401,91 @@ describe("an Op that changes the checkout", () => {
       const last = (await readLeaseHistory("W-9", { cwd: dir })).records.at(-1);
       expect(last).toMatchObject({ event: "release", outcome: "not_done" });
       expect(last?.note).toMatch(/"skipped" is not a work lease outcome/);
+    });
+  });
+});
+
+describe("where the worktree is (#2893)", () => {
+  const record = (seen: { worktree?: string; status?: string }) =>
+    new Map<string, ActivityFn>([
+      [
+        "build",
+        async (args) => {
+          seen.worktree = String(args.worktree);
+          writeFileSync(join(seen.worktree, "app", "feature.ts"), "export const feature = true;\n");
+          seen.status = git(["status", "--porcelain", "--untracked-files=all"], dir()).stdout;
+          return {};
+        },
+      ],
+    ]);
+  let current = "";
+  const dir = () => current;
+  const op = (item: string) => dispatchOp({ workLease: { item }, changesCheckout: true }, [step("build", { worktree: workLeaseOutput("worktree") })]);
+
+  test("it is .chant/work/<item> in the checkout, info/exclude gets /.chant/work/ once, and git status stays clean while it is there", async () => {
+    await withTestDir(async (d) => {
+      current = d;
+      await initRepo(d);
+      const seen: { worktree?: string; status?: string } = {};
+      const first = await run(op("W-20"), record(seen), d);
+      expect(first.workLease).toMatchObject({ released: true, outcome: "done" });
+      expect(seen.worktree).toBe(join(d, ".chant", "work", "W-20"));
+      expect(seen.status).toBe("");
+      const exclude = () => readFileSync(join(d, ".git", "info", "exclude"), "utf-8").split("\n").filter((l) => l === "/.chant/work/");
+      expect(exclude()).toHaveLength(1);
+      await run(op("W-21"), record(seen), d);
+      expect(exclude()).toHaveLength(1);
+      expect(git(["status", "--porcelain", "--untracked-files=all"], d).stdout).toBe("");
+      expect(git(["worktree", "list", "--porcelain"], d).stdout).not.toContain(".chant/work");
+    });
+  });
+
+  test("info/exclude is left alone when the project already ignores .chant/work", async () => {
+    await withTestDir(async (d) => {
+      current = d;
+      await initRepo(d);
+      writeFileSync(join(d, ".gitignore"), ".chant/\n");
+      git(["add", ".gitignore"], d);
+      git(["commit", "-q", "-m", "ignore"], d);
+      const before = existsSync(join(d, ".git", "info", "exclude")) ? readFileSync(join(d, ".git", "info", "exclude"), "utf-8") : "";
+      const seen: { worktree?: string; status?: string } = {};
+      await run(op("W-22"), record(seen), d);
+      expect(seen.status).toBe("");
+      const after = existsSync(join(d, ".git", "info", "exclude")) ? readFileSync(join(d, ".git", "info", "exclude"), "utf-8") : "";
+      expect(after).toBe(before);
+    });
+  });
+
+  test("a worktree a crashed run left under .git/chant-work with the branch checked out is removed, and the run goes on from the branch", async () => {
+    await withTestDir(async (d) => {
+      current = d;
+      await initRepo(d);
+      const old = join(d, ".git", "chant-work", "W-23");
+      expect(git(["worktree", "add", "-q", "-b", "chant/work/W-23", old, "HEAD"], d).status).toBe(0);
+      writeFileSync(join(old, "app", "earlier.ts"), "export const earlier = 1;\n");
+      git(["add", "-A"], old);
+      git(["commit", "-q", "-m", "an earlier run"], old);
+      const seen: { worktree?: string; status?: string } = {};
+      const result = await run(op("W-23"), record(seen), d);
+      expect(result.workLease).toMatchObject({ released: true, outcome: "done" });
+      expect(seen.worktree).toBe(join(d, ".chant", "work", "W-23"));
+      expect(existsSync(old)).toBe(false);
+      expect(git(["worktree", "list", "--porcelain"], d).stdout).not.toContain("chant-work");
+      expect(git(["show", "chant/work/W-23:app/earlier.ts"], d).stdout).toBe("export const earlier = 1;\n");
+    });
+  });
+
+  test("a worktree a crashed run left at .chant/work with the branch checked out is replaced", async () => {
+    await withTestDir(async (d) => {
+      current = d;
+      await initRepo(d);
+      const left = join(d, ".chant", "work", "W-24");
+      expect(git(["worktree", "add", "-q", "-b", "chant/work/W-24", left, "HEAD"], d).status).toBe(0);
+      writeFileSync(join(left, "app", "stray.ts"), "stray\n");
+      const seen: { worktree?: string; status?: string } = {};
+      const result = await run(op("W-24"), record(seen), d);
+      expect(result.workLease).toMatchObject({ released: true, outcome: "done" });
+      expect(existsSync(left)).toBe(false);
     });
   });
 });
