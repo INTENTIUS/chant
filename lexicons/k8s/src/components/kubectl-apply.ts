@@ -110,10 +110,12 @@ function isPlanArtifact(value: unknown): value is KubectlApplyPlanArtifact {
 /**
  * `run` was handed an approved plan and a fresh dry run of the same
  * documents gives a different digest: the cluster moved since the plan, or
- * the plan was made against another one. Nothing is applied. `exitCode` is
- * 3, the code chant gives a moved plan elsewhere.
+ * the plan was made against another one. Nothing is applied. `planMoved` is
+ * core's mark for a moved plan (`isPlanMovedError`), so the command that
+ * applied it exits 3. `exitCode` 3 says the same to a core that reads it.
  */
 export class KubectlApplyPlanMovedError extends Error {
+  readonly planMoved = true;
   readonly exitCode = 3;
   constructor(
     public readonly member: string,

@@ -8,6 +8,7 @@ export { terraformPlugin } from "./plugin";
 export {
   terraformCapabilityPlugin,
   terraformApplyCapability,
+  TerraformPlanMovedError,
   TERRAFORM_VERB_FAMILIES,
   type TerraformApplyStepInput,
   type TerraformApplyStepOutput,

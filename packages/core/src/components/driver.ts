@@ -54,7 +54,7 @@ import { GateNotRecordableError } from "../lifecycle/no-record";
 import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
-import { isPlanMovedError } from "./capability";
+import { isPlanMovedError, PLAN_MOVED_EXIT_CODE } from "./capability";
 import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent } from "./run-progress";
@@ -1002,6 +1002,15 @@ function findStackOutputs(
 /** Whether a step in `results` refused a plan that moved since it was approved (#3997). */
 export function planMovedIn(results: readonly DriverComponentResult[]): boolean {
   return results.some((r) => r.records.some((s) => s.planMoved === true));
+}
+
+/**
+ * The exit code of a run that failed: {@link PLAN_MOVED_EXIT_CODE} when a
+ * step refused a plan that moved since it was approved, 1 otherwise. Every
+ * command that runs capability steps ends a failed run with it.
+ */
+export function failedRunExitCode(results: readonly DriverComponentResult[]): number {
+  return planMovedIn(results) ? PLAN_MOVED_EXIT_CODE : 1;
 }
 
 function errMessage(err: unknown): string {

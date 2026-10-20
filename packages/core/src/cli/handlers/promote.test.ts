@@ -24,6 +24,8 @@ const writtenTemplates: unknown[] = [];
 let configEnvironments: unknown[] | undefined;
 let publishedDigest = "sha256:api";
 let failApplyFor: string | undefined;
+/** What `failApplyFor`'s apply throws; a plain error when unset. */
+let applyError: Error | undefined;
 
 vi.mock("../../lifecycle/git", () => ({
   getHeadCommit: async () => "abc123",
@@ -58,7 +60,7 @@ vi.mock("../../components/fan-out-support", () => ({
     step("docker-build", () => ({ digest: "sha256:rebuilt" }));
     step("publish-image", () => ({ digest: publishedDigest, uri: `reg/api@${publishedDigest}` }));
     step("apply", (ctx) => {
-      if (ctx.component === failApplyFor) throw new Error("apply failed");
+      if (ctx.component === failApplyFor) throw applyError ?? new Error("apply failed");
       return {};
     });
     // #4045: a planner whose member is provisional.
@@ -221,6 +223,7 @@ beforeEach(() => {
   configEnvironments = undefined;
   publishedDigest = "sha256:api";
   failApplyFor = undefined;
+  applyError = undefined;
   errors = [];
   logs = [];
   vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.join(" ")); });
@@ -356,6 +359,21 @@ describe("chant components promote", () => {
     expect(await runComponentsPromote(ctx({}))).toBe(1);
     expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
     expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ component: "api", env: "prod" });
+  });
+
+  test.each([
+    ["marked planMoved", 3, { planMoved: true }],
+    ["with exitCode 3", 3, { exitCode: 3 }],
+    ["with exitCode 7", 1, { exitCode: 7 }],
+  ])("an apply that refuses its plan %s exits %i, and what deployed is still recorded (#3997)", async (_label, code, mark) => {
+    const web: DriverComponent = { ...api, name: "web" };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [api, web] });
+    readReleaseLedgerMock.mockResolvedValue({ records: [staging, { ...staging, component: "web" }], malformed: 0 });
+    failApplyFor = "web";
+    applyError = Object.assign(new Error("web: refusing to apply, the plan moved"), mark);
+    expect(await runComponentsPromote(ctx({}))).toBe(code);
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toMatch(/promote failed at "web"/);
   });
 
   test("--digest <component>=<digest> promotes the pinned release, not the latest one (#2602)", async () => {
@@ -794,6 +812,13 @@ describe("chant components redeploy", () => {
       expect.objectContaining({ env: "prod", verb: "redeploy", status: "fail", components: [{ component: "api", outcome: "failed", digest: "sha256:new", releaseDigest: null }] }),
     ]);
     expect(errors.join("\n")).toMatch(/redeploy failed at "api"/);
+  });
+
+  test("a redeploy whose apply refuses a moved plan exits 3 (#3997)", async () => {
+    failApplyFor = "api";
+    applyError = Object.assign(new Error("api: refusing to apply, the plan moved"), { planMoved: true });
+    expect(await runComponentsRedeploy(rd({}))).toBe(3);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
   });
 });
 

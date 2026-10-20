@@ -60,6 +60,8 @@ vi.mock("../../op/gate", async () => {
 });
 
 const failing = new Set<string>();
+/** The error a root's apply throws, in place of applying (#3997). */
+const refusal = new Map<string, Error>();
 /** Called as a component's apply starts, before it can fail. */
 let onRun: (root: string) => void = () => {};
 vi.mock("../../components/fan-out-support", async () => {
@@ -83,6 +85,7 @@ vi.mock("../../components/fan-out-support", async () => {
     },
     async run(_ctx: DeployContext, input: { root: string }) {
       onRun(input.root);
+      if (refusal.has(input.root)) throw refusal.get(input.root);
       if (failing.has(input.root)) throw new Error(`${input.root} failed`);
       return { outputs: {} };
     },
@@ -121,6 +124,7 @@ beforeEach(async () => {
   out = [];
   errors = [];
   failing.clear();
+  refusal.clear();
   onRun = () => {};
   gateLedger = memoryGateLedgerPort();
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
@@ -443,4 +447,18 @@ describe("--require-review: whoever wrote the change never counts (#4000)", () =
       });
     });
   }
+});
+
+describe("pr-apply: a step that refuses its plan because the plan moved (#3997)", () => {
+  test.each([
+    ["marked planMoved", 3, { planMoved: true }],
+    ["with exitCode 3", 3, { exitCode: 3 }],
+    ["with exitCode 7", 1, { exitCode: 7 }],
+    ["unmarked", 1, {}],
+  ])("an error %s exits %i, after the gate passed", async (_label, code, mark) => {
+    await planAndApprove();
+    refusal.set("app", Object.assign(new Error("app: refusing to apply, the plan moved"), mark));
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(code);
+    expect(logLines()).toEqual(["wave 1/2: net", "  net: applied", "wave 2/2: app", "  app: failed"]);
+  });
 });

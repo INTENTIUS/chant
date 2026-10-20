@@ -444,9 +444,9 @@ A run without `--release` writes records with no `releaseDigest`, even when `HEA
 |------|---------|
 | 0 | Success (the run completed, or the command succeeded) |
 | 1 | Error (the run failed, the Op was not found, the runtime was unreachable) |
-| 3 | Gated: the run stopped at an unapproved gate and recorded the pending fact. For `run wave`, the wave waits for an approval of its set digest |
+| 3 | Gated: the run stopped at an unapproved gate and recorded the pending fact. For `run wave`, the wave waits for an approval of its set digest. For `--components`, also a step that refused a plan that moved since it was approved ([#3997](https://github.com/INTENTIUS/chant/issues/3997)) |
 | 4 | `run wave --share`: a run's plan moved since its wave was decided, so it was not applied |
-| `--gated-exit <code>` | The gated outcome only, remapped to `<code>`. 0 and 1 keep their meanings above for every other outcome |
+| `--gated-exit <code>` | The gated outcome only, remapped to `<code>`. 0 and 1 keep their meanings above for every other outcome, and a moved plan still exits 3 |
 
 ## See Also
 

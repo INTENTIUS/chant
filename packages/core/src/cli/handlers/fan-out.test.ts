@@ -78,6 +78,18 @@ const ESTATE = [
 
 let ran: string[] = [];
 let failing: string[] = [];
+/** The error a component's step throws, in place of applying (#3997). */
+let refusal: Record<string, Error> = {};
+
+/** A step's refusal of a plan that moved since it was approved, marked `planMoved` as cfn-deploy marks it. */
+function planMovedError(component: string): Error {
+  return Object.assign(new Error(`${component}: refusing to apply, the plan moved`), { planMoved: true });
+}
+
+/** A step error carrying an `exitCode`, as kubectl-apply's carried one before #3997's follow-up. */
+function exitCodeError(component: string, exitCode: number): Error {
+  return Object.assign(new Error(`${component}: refused`), { exitCode });
+}
 /** What each component's step was handed, after wiring resolved. */
 let inputs: Record<string, Record<string, unknown>> = {};
 /** Stack outputs a component's step returns, as cfn-deploy's `outputs` does. */
@@ -118,6 +130,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   ran = [];
   failing = [];
+  refusal = {};
   inputs = {};
   stepOutputs = {};
   onStart = () => {};
@@ -155,6 +168,7 @@ beforeEach(() => {
         onStart(runCtx.component);
         ran.push(runCtx.component);
         inputs[runCtx.component] = input;
+        if (refusal[runCtx.component]) throw refusal[runCtx.component];
         if (failing.includes(runCtx.component)) throw new Error(`${runCtx.component} failed`);
         return { ok: true, ...(stepOutputs[runCtx.component] ? { outputs: stepOutputs[runCtx.component] } : {}) };
       },
@@ -307,6 +321,31 @@ describe("proof: a mid-run failure blocks its subtree and leaves the independent
     expect(out).toContain('app-one: blocked by "cluster-a", so it never ran');
     expect(out).toContain("failed: cluster-a");
     expect(out).toContain("fan-out failed: 3 applied, 1 failed, 2 blocked");
+  });
+});
+
+describe("a step that refuses its plan because the plan moved exits 3 (#3997)", () => {
+  test("marked planMoved: exit 3, and its subtree is blocked as for any failure", async () => {
+    refusal = { "cluster-a": planMovedError("cluster-a") };
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(3);
+    expect(ran).not.toContain("app-one");
+    expect(ran).toContain("app-three");
+  });
+
+  test("an exitCode of 3 on the step's error is the same mark", async () => {
+    refusal = { "cluster-a": exitCodeError("cluster-a", 3) };
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(3);
+  });
+
+  test("any other exitCode is ignored, and the failure exits 1", async () => {
+    refusal = { "cluster-a": exitCodeError("cluster-a", 7) };
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(1);
+  });
+
+  test("one moved plan beside another failure still exits 3", async () => {
+    refusal = { "cluster-a": planMovedError("cluster-a") };
+    failing = ["cluster-b"];
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "test" }))).toBe(3);
   });
 });
 
@@ -523,11 +562,45 @@ describe("gated waves (#3049): one gate per wave, bound to the wave's set digest
         },
         async run(runCtx: { component: string }) {
           ran.push(runCtx.component);
+          if (refusal[runCtx.component]) throw refusal[runCtx.component];
           return { ok: true };
         },
       } as never);
       return Promise.resolve(registry);
     });
+  });
+
+  /** Run the gated fan-out once to record wave 1's pending fact, then approve that digest. */
+  async function approveWave1(run: () => Promise<number>): Promise<void> {
+    await run();
+    const first = gateLedger.appended[0];
+    gateLedger = memoryGateLedgerPort({
+      pending: [first],
+      resolutions: [
+        {
+          version: 1,
+          kind: "resolution",
+          op: "fan-out",
+          gate: "release-wave-1",
+          resolvedBy: "operator",
+          timestamp: new Date(Date.parse(first.timestamp) + 1000).toISOString(),
+          planDigest: first.planDigest,
+        },
+      ],
+    });
+  }
+
+  test.each([
+    ["marked planMoved", 3, () => planMovedError("net")],
+    ["with exitCode 3", 3, () => exitCodeError("net", 3)],
+    ["with exitCode 7", 1, () => exitCodeError("net", 7)],
+    ["unmarked", 1, () => new Error("net failed")],
+  ])("an approved wave whose step fails with an error %s exits %i (#3997)", async (_label, code, error) => {
+    const run = () => runComponentsFanOut(ctx({ base: "main", env: "test", waveGate: "release" }));
+    await approveWave1(run);
+    refusal = { net: error() };
+    expect(await run()).toBe(code);
+    expect(ran).toEqual(["net"]);
   });
 
   test("wave 1 stops at its own gate, and the record names its digest", async () => {

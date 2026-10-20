@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CapabilityRegistry, type DeployContext } from "./capability";
+import { CapabilityRegistry, isPlanMovedError, type DeployContext } from "./capability";
 import { stubCapability } from "./verbs/stub";
 import { describeGateMismatch, memoryGateLedgerPort } from "../op/gate";
 import { componentPlanDigest } from "./gate-plan";
@@ -22,6 +22,7 @@ import {
   UnknownDependencyError,
   accumulateComponentOutputs,
   collectComponentOutputs,
+  failedRunExitCode,
   resolveComponentGraph,
   resolveWiring,
   runComponentDeploy,
@@ -1171,5 +1172,39 @@ describe("unresolvedWiringSources (#4084)", () => {
         "api-image": { publish: { digest: "sha256:1" } },
       }),
     ).toEqual([]);
+  });
+});
+
+describe("a step that refuses a moved plan (#3997)", () => {
+  it.each([
+    ["planMoved: true", { planMoved: true }, true],
+    ["exitCode 3", { exitCode: 3 }, true],
+    ["exitCode 7", { exitCode: 7 }, false],
+    ['exitCode "3"', { exitCode: "3" }, false],
+    ["planMoved: \"yes\"", { planMoved: "yes" }, false],
+    ["no mark", {}, false],
+  ])("isPlanMovedError reads an error with %s", (_label, mark, moved) => {
+    expect(isPlanMovedError(Object.assign(new Error("refused"), mark))).toBe(moved);
+  });
+
+  it("is not fooled by a non-object", () => {
+    expect(isPlanMovedError(null)).toBe(false);
+    expect(isPlanMovedError("planMoved")).toBe(false);
+  });
+
+  it("marks the failed step's record, and failedRunExitCode answers 3 for it and 1 for any other failure", async () => {
+    const run = async (mark: object) => {
+      const registry = new CapabilityRegistry();
+      registry.register(fakeCapability("apply", { run: () => { throw Object.assign(new Error("refused"), mark); } }).capability);
+      const component: DriverComponent = { name: "c", deploy: [{ phase: "Apply", steps: [{ kind: "apply" }] }] };
+      return runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
+    };
+    const moved = await run({ exitCode: 3 });
+    expect(moved.records[0]).toMatchObject({ status: "fail", planMoved: true });
+    expect(failedRunExitCode([moved])).toBe(3);
+    const other = await run({ exitCode: 7 });
+    expect(other.records[0]).not.toHaveProperty("planMoved");
+    expect(failedRunExitCode([other])).toBe(1);
+    expect(failedRunExitCode([other, moved])).toBe(3);
   });
 });
