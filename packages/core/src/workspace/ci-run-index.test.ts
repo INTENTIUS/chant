@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, contract, declaration, git, repoFixture, scratchDir, validSchema, writeFiles } from "./__fixtures__/contract-repo";
-import { ciRun } from "./ci-run";
+import { ciJobExitCode, ciRun } from "./ci-run";
 import { readCiSecrets } from "./ci-secrets";
 import {
   addRunEntry,
@@ -123,6 +123,13 @@ describe("the ci-run-index schema (#4098)", () => {
     expect(contract(schema).validate(doc)).toBe(false);
     expectValid({ ...doc, runs: [{ ...ENTRY, status: "fail", failure: { code: "command-failed" } }] });
   });
+
+  test("exitCode is an integer from 0 to 255, and an index whose older entries lack it validates (#4165)", () => {
+    const doc = { $schema: CI_RUN_INDEX_SCHEMA_ID, contract: 1, chant: "0.124.32", updated: "2026-10-18T12:00:00.000Z" };
+    // A newer entry beside two from chant 0.124.31, which wrote neither signer nor exitCode.
+    expectValid({ ...doc, runs: [{ ...ENTRY, runId: "r2", signer: null, exitCode: 0 }, { ...ENTRY, runId: "r1" }, { ...ENTRY, status: "fail", failure: { code: "command-failed" } }] });
+    for (const exitCode of [-1, 256, 1.5, "3"]) expect(contract(schema).validate({ ...doc, runs: [{ ...ENTRY, exitCode }] })).toBe(false);
+  });
 });
 
 describe("chant ci run with --report-url keeps the run index (#4098)", () => {
@@ -151,6 +158,8 @@ describe("chant ci run with --report-url keeps the run index (#4098)", () => {
       runOrigin: { forge: "chant" },
       // #4156: no key, and the run is listed all the same, with no signer.
       signer: null,
+      // #4165: the code ci run exited with.
+      exitCode: 0,
     });
     // The apply found its pull request in its own report.
     expect(index.runs[0]).toMatchObject({ job: "apply", pr: 7, key: `7/${w.sha}/app` });
@@ -181,7 +190,7 @@ describe("chant ci run with --report-url keeps the run index (#4098)", () => {
     const failed = await job(w, dir, { runId: "run-fail", hostEnv: { ...HOST, FAKE_EXIT: "3" }, passEnv: ["FAKE_EXIT"] });
     expect(failed.status).toBe("fail");
     const [run] = indexOf(dir).runs;
-    expect(run).toMatchObject({ status: "fail", failure: { code: "command-failed" }, runId: "run-fail" });
+    expect(run).toMatchObject({ status: "fail", failure: { code: "command-failed" }, runId: "run-fail", exitCode: 3 });
     expectValid(indexOf(dir));
 
     const refused = await job(w, dir, {
@@ -191,7 +200,35 @@ describe("chant ci run with --report-url keeps the run index (#4098)", () => {
       passEnv: ["FAKE_EXIT", "FAKE_REPORT"],
     });
     expect(refused.status).toBe("fail");
-    expect(indexOf(dir).runs[0]).toMatchObject({ failure: { code: "not-approved" } });
+    expect(indexOf(dir).runs[0]).toMatchObject({ failure: { code: "not-approved" }, exitCode: 1 });
+  });
+
+  test("each entry records the code ci run exited with: 0, 1, and 3 for a moved plan or a waiting wave (#4165)", async () => {
+    const w = workspace();
+    const dir = reportsDir();
+    const run = (runId: string, exit: string, report: object) =>
+      job(w, dir, { job: "apply", runId, hostEnv: { ...HOST, FAKE_EXIT: exit, FAKE_REPORT: JSON.stringify({ pr: 7, ...report }) }, passEnv: ["FAKE_EXIT", "FAKE_REPORT"] });
+    const passed = await run("run-ok", "0", { status: "applied" });
+    const failed = await run("run-failed", "1", { status: "failed" });
+    const moved = await run("run-moved", "3", { status: "refused", refusal: "plan-changed", message: "the plan changed after review" });
+    const waiting = await run("run-waiting", "3", { status: "waiting", waves: [{ wave: 2, status: "waiting" }] });
+    expect([passed, failed, moved, waiting].map((r) => ciJobExitCode(r))).toEqual([0, 1, 3, 3]);
+    const index = indexOf(dir);
+    expectValid(index);
+    expect(index.runs.map((r) => [r.runId, r.status, r.exitCode])).toEqual([
+      ["run-waiting", "fail", 3],
+      ["run-moved", "fail", 3],
+      ["run-failed", "fail", 1],
+      ["run-ok", "ok", 0],
+    ]);
+    expect(index.runs[1]!.failure).toEqual({ code: "plan-changed" });
+  });
+
+  test("a fail with no code from its command, or one outside 1 to 255, is 1, and a pass is 0 (#4165)", () => {
+    expect(ciJobExitCode({ status: "fail" })).toBe(1);
+    expect(ciJobExitCode({ status: "fail", exitCode: 0 })).toBe(1);
+    expect(ciJobExitCode({ status: "fail", exitCode: 300 })).toBe(1);
+    expect(ciJobExitCode({ status: "ok", exitCode: 3 })).toBe(0);
   });
 
   test("a secret the job's report names as its failure never reaches the index (#4096)", async () => {
