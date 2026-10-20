@@ -32,13 +32,14 @@ function findRepoRoot(): string {
 }
 
 /**
- * A real prepack invocation line: a Dockerfile `RUN`, a workflow `- run:`,
- * or a bare line inside a `run: |` block. Comments, `echo` messages and
+ * A real prepack invocation line: a Dockerfile `RUN`, a workflow `- run:` or
+ * `run:` step key (a named step puts `run:` on its own line, #2877), or a bare
+ * line inside a `run: |` block. Comments, `echo` messages and
  * `$lex` / `<lex>` placeholders do not match. Matching those placeholder
  * substrings was how onboard appended duplicates to Dockerfile.smoke on
  * every run (#1678).
  */
-const PREPACK_LINE = /^\s*(?:RUN\s+|-\s*run:\s*)?npm run --prefix lexicons\/[a-z0-9-]+ prepack\s*$/i;
+const PREPACK_LINE = /^\s*(?:RUN\s+|(?:-\s*)?run:\s*)?npm run --prefix lexicons\/[a-z0-9-]+ prepack\s*$/i;
 
 function isPrepackLine(line: string): boolean {
   return PREPACK_LINE.test(line);
@@ -256,7 +257,10 @@ function patchCiWorkflow(root: string, name: string): PatchResult {
   const displayName = name.charAt(0).toUpperCase() + name.slice(1);
   const validateStepName = `Generate and validate ${displayName} lexicon`;
 
-  if (!lines.some((l) => l.includes(validateStepName))) {
+  // Case-insensitive: the name is built from the directory ("Github"), and an
+  // existing step may spell the product its own way ("GitHub", #2877).
+  const stepNameLower = validateStepName.toLowerCase();
+  if (!lines.some((l) => l.toLowerCase().includes(stepNameLower))) {
     let lastValidateRunIdx = -1;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].includes("Generate and validate")) {

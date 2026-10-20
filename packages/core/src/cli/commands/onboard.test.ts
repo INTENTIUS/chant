@@ -305,6 +305,51 @@ describe("onboardCommand", () => {
   });
 });
 
+describe("chant.yml validate step for a lexicon it already has (#2877)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = makeTempDir();
+    writeFixtureRepo(root);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const withGithubStep = (run: string) =>
+    ciContent.replace(
+      "      - name: Generate and validate K8s lexicon",
+      `      - name: Generate and validate GitHub lexicon\n        ${run}\n\n      - name: Generate and validate K8s lexicon`,
+    );
+
+  const githubSteps = (ci: string) => ci.match(/Generate and validate github lexicon/gi)?.length;
+
+  test("a named step's bare run: line counts as the lexicon's prepack line", () => {
+    const before = withGithubStep("run: npm run --prefix lexicons/github prepack");
+    expect(before).not.toBe(ciContent);
+    writeFileSync(join(root, ".github/workflows/chant.yml"), before);
+
+    const result = onboardCommand({ name: "github", root });
+    expect(result.patched).not.toContain("chant.yml (prepack + validate)");
+    expect(result.skipped).toContain("chant.yml: github already in chant.yml");
+    expect(readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8")).toBe(before);
+  });
+
+  test("the step-name check ignores case (Github vs GitHub)", () => {
+    // A step whose run line is not a plain prepack call, so only the name can
+    // tell onboard the validate step already exists.
+    writeFileSync(
+      join(root, ".github/workflows/chant.yml"),
+      withGithubStep("run: npm run --prefix lexicons/github prepack -- --strict"),
+    );
+
+    onboardCommand({ name: "github", root });
+    const ci = readFileSync(join(root, ".github/workflows/chant.yml"), "utf-8");
+    expect(githubSteps(ci)).toBe(1);
+  });
+});
+
 describe("root tsconfig.json paths (#1614)", () => {
   let root: string;
 
