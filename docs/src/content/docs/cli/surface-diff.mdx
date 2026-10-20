@@ -49,6 +49,12 @@ A rename is still breaking: the old import no longer resolves, for a resource an
 
 The update run is therefore exempt from that one check (#1825). It runs validate with `CHANT_SNAPSHOT_UPDATE=1`, which skips `surface-matches-snapshot` and nothing else. A failure in generate, build, lint or any other validate check still refuses the write, so a broken surface cannot become the baseline. The write itself repairs the staleness the skipped check would have reported, and the next plain run is green.
 
+## On pull requests
+
+A lexicon whose validate config sets `checkSurfaceSnapshot` is compared with its snapshot by the `validate` job on every pull request. For any other lexicon with a `surface.snapshot.json`, the `surfaces` job runs `scripts/check-changed-surfaces.ts` when a pull request changes files under `lexicons/<name>/src/` or the snapshot itself (#2814).
+
+The script generates each changed lexicon and diffs the result against its snapshot. When they differ, it generates the lexicon again at the merge base from the same fetched spec. The job fails only when the two drifts differ, so drift that main already has (an upstream spec that moved under fly or github) is printed and passes. To fix a failure, run `chant dev surface-diff lexicons/<name> --update-snapshot` and commit the snapshot.
+
 ## Options
 
 | Flag | Description |

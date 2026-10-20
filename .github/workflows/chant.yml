@@ -434,6 +434,42 @@ jobs:
         # --head is the pull request's own tip, not the merge commit GitHub makes for the run.
         run: npx tsx packages/core/src/cli/main.ts workspace verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
 
+  # #2814: the surface snapshot of each lexicon a pull request changes, for
+  # the lexicons validate does not already gate (those that set
+  # checkSurfaceSnapshot: aws, azure, k8s, sql). Before, docker, fly, fountain,
+  # gcp, github and gitlab were compared only by the weekly lexicon-upgrade
+  # run. The script generates the changed lexicons at the head and, when the
+  # head drifts, at the merge base from the same fetched spec, and fails only
+  # on drift the base does not have, so upstream moving under fly or github
+  # does not fail an unrelated change. A PR that changes no such lexicon stops
+  # after the checkout.
+  surfaces:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Whole history, so origin/<base> and the merge base are there.
+          fetch-depth: 0
+      - name: Find changed lexicon sources
+        id: changed
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq '^lexicons/[^/]+/(src/|surface\.snapshot\.json$)'; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v6
+        if: steps.changed.outputs.any == 'true'
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install dependencies
+        if: steps.changed.outputs.any == 'true'
+        run: npm install --ignore-scripts
+      - name: Compare each changed lexicon's surface with its snapshot
+        if: steps.changed.outputs.any == 'true'
+        run: npx tsx scripts/check-changed-surfaces.ts --base "origin/${{ github.base_ref }}"
+
   # The rest of every lexicon's prepack (validate, build) on the artifacts
   # lexicon-artifacts built, then the completeness contract (#1067), which
   # reads the builds. One job, beside the shards (#3793); before, this job ran
