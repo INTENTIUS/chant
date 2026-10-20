@@ -11,7 +11,7 @@
  *
  * 1. Find the steward's sandbox by its `chant/steward` metadata, or make it.
  *    A sandbox already running an op is busy, and the run is refused rather
- *    than queued, as fountain refuses a busy teammate.
+ *    than queued, as fountain refuses a busy steward conversation.
  * 2. Bring the clone to the commit this checkout is at (fetched from the
  *    repository, so the commit must be pushed) and install the project's
  *    dependencies when its lockfile changed.

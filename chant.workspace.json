@@ -208,7 +208,18 @@
       "name": "lexicon-e2b",
       "dir": "lexicons/e2b",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx src/codegen/generate-cli.ts",
+          "sources": [
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/e2b/src/codegen/generate.ts",
+            "lexicons/e2b/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-fly",

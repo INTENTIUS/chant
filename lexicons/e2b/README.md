@@ -54,6 +54,38 @@ With no profile, the runtime reads `E2B_API_KEY`, `E2B_DOMAIN` and
 The project must depend on `@intentius/chant`: the steward runs the chant the
 project installs.
 
+## The steward's template
+
+A steward's sandbox is made from the profile's `template`, which is E2B's
+`base` when the profile names none. Declare a `Template` and name it in the
+profile when the project's Ops need tools that `base` lacks:
+
+```ts
+// src/steward.ts
+import { Template } from "@intentius/chant-lexicon-e2b";
+
+const steward = new Template({
+  name: "chant-steward",
+  fromImage: "node:22-bookworm",
+  run: ["apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*"],
+  cpuCount: 2,
+  memoryMB: 2048,
+});
+
+export { steward };
+```
+
+`chant build` writes it as `e2b.chant-steward.Dockerfile` and
+`e2b.chant-steward.toml`; build those once with
+`e2b template build --config e2b.chant-steward.toml`. A steward that already
+exists keeps its sandbox until it is deleted.
+
+Two lint rules check a template's sizes and that its base image is pinned
+(E2B001, E2B002). Three post-synth checks catch an Alpine base image, a name
+E2B refuses or two templates sharing one, and a template with no visible git
+or Node (E2B010 to E2B012). The [docs](https://intentius.io/chant/lexicons/e2b/)
+cover each property and rule.
+
 ## What a run does
 
 1. Finds the steward's sandbox, or makes it. A steward already running an Op is

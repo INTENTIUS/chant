@@ -1,0 +1,60 @@
+---
+title: "Template"
+description: "The Template kind: its properties, the Dockerfile and e2b.toml it builds into, and the rules that check it."
+diataxis: reference
+order: 1
+---
+
+A `Template` declares the image a steward's sandbox is made from. A profile's `template` names it by its `name`. Without one the steward starts from E2B's `base` template, so a project declares its own when its Ops need tools that `base` lacks, or to pin the Node the steward runs.
+
+```ts
+import { Template } from "@intentius/chant-lexicon-e2b";
+
+const steward = new Template({
+  name: "chant-steward",
+  fromImage: "node:22-bookworm",
+  run: ["apt-get update && apt-get install -y --no-install-recommends jq gh && rm -rf /var/lib/apt/lists/*"],
+  cpuCount: 2,
+  memoryMB: 2048,
+});
+
+export { steward };
+```
+
+## Properties
+
+| Property | Type | Meaning |
+|---|---|---|
+| `name` | `string`, required | The template's name on E2B: lowercase letters, digits, dashes and underscores. A profile's `template` names it. |
+| `fromImage` | `string`, required | The Debian-based image the template starts from. Pin a tag. |
+| `run` | `string[]` | Shell commands run in order while the template builds, one `RUN` line each. |
+| `env` | `Record<string, string>` | Environment variables set in every sandbox made from the template. |
+| `workdir` | `string` | The working directory for the `run` steps and the start command. |
+| `startCmd` | `string` | A command E2B runs when the template is snapshotted, so a sandbox starts with it running. |
+| `readyCmd` | `string` | A command E2B polls until it exits 0 before it snapshots the template. |
+| `cpuCount` | `number` | vCPUs per sandbox. E2B's default is 2. |
+| `memoryMB` | `number` | Memory per sandbox in MiB, an even number. E2B's default is 512. |
+| `teamId` | `string` | The E2B team that owns the template, when the API key can act for more than one. |
+
+## Building it
+
+`chant build` writes each template as `e2b.<name>.Dockerfile` and `e2b.<name>.toml` beside its output, and chant does not build them itself. Build the template with the E2B CLI, once, and again when the declaration changes:
+
+```bash
+chant build src --lexicon e2b -o dist/e2b.json
+cd dist && e2b template build --config e2b.chant-steward.toml
+```
+
+A steward that already exists keeps the sandbox it was made with. To move it onto a rebuilt template, delete its sandbox; the next run makes a new one and clones the repository again.
+
+## Checks
+
+| Id | Severity | When | What it catches |
+|---|---|---|---|
+| E2B001 | error | lint | A `cpuCount` that is not a whole number of at least 1, or a `memoryMB` that is not a positive even number. `e2b template build` refuses an odd memory size. |
+| E2B002 | warning | lint | A `fromImage` with no tag, or on `latest`. Two builds of the same declaration could then carry different Node or git versions. |
+| E2B010 | error | build | An Alpine `fromImage`. E2B boots Debian-based images only. |
+| E2B011 | error | build | A `name` E2B refuses, or two templates with the same name, whose files would overwrite each other. |
+| E2B012 | warning | build | No sign of git or Node: the image is not a full `node` image and no `run` step installs them. The runtime stops a run at once on a sandbox without either. |
+
+E2B012 only sees the declaration. A template from an image that already has both tools can say so with a step such as `git --version && node --version`.
