@@ -2,9 +2,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
-import { isJavaScriptModule, isTypeScriptModule, moduleSourceDir, moduleSourceUrl } from "./module-source";
+import { isJavaScriptModule, isTypeScriptModule, moduleSourceDir, moduleSourceUrl, SOURCE_EXPORT_CONDITIONS } from "./module-source";
 
 describe("module-source (#3981)", () => {
+  test("from source, chant's own resolution adds the development condition", () => {
+    expect(SOURCE_EXPORT_CONDITIONS).toEqual(["development"]);
+  });
+
   const pkg = join(sep, "x", "node_modules", "@intentius", "chant-lexicon-aws");
 
   test("moduleSourceDir maps a compiled module's directory to the source directory", () => {

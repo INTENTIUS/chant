@@ -24,6 +24,7 @@
 import * as ts from "typescript";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { SOURCE_EXPORT_CONDITIONS } from "../module-source";
 
 /** True when `path` is an existing regular file. */
 export function isFile(path: string): boolean {
@@ -89,8 +90,13 @@ export function splitBareSpecifier(specifier: string): { name: string; subpath: 
   return { name, subpath: rest === "" ? "." : `./${rest}` };
 }
 
-/** The conditions an ESM import in Node matches, which is what the run path does. */
-const EXPORT_CONDITIONS: ReadonlySet<string> = new Set(["import", "node", "default"]);
+/**
+ * The conditions an ESM import in Node matches, which is what the run path
+ * does. From source, `development` too (#3981): the run path there resolves a
+ * chant package to its `src/*.ts`, not to the compiled `dist/*.js` its
+ * `default` names.
+ */
+const EXPORT_CONDITIONS: ReadonlySet<string> = new Set(["import", "node", "default", ...SOURCE_EXPORT_CONDITIONS]);
 
 /**
  * The target an `exports` value selects, with `star` substituted for each `*`

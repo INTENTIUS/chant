@@ -31,6 +31,18 @@ function sourcePathOf(path: string): string {
 }
 
 /**
+ * #3981 — the source file a compiled module was built from:
+ * `<package>/dist/x/y.js` is `<package>/src/x/y.ts` (`.mjs` from `.mts`, `.cjs`
+ * from `.cts`). `undefined` for a path that is not a compiled module under a
+ * `dist/`. The file is not checked for.
+ */
+export function compiledModuleSource(path: string): string | undefined {
+  const ext = /\.([cm]?)js$/.exec(path);
+  if (!ext || path.lastIndexOf(DIST) < 0) return undefined;
+  return sourcePathOf(path).slice(0, -ext[0].length) + `.${ext[1]}ts`;
+}
+
+/**
  * The directory a module's source sits in: `dirname` of `moduleUrl` when it
  * runs from source, and the matching directory under `<package>/src` when it
  * runs compiled from `<package>/dist`.
@@ -67,3 +79,34 @@ export function isTypeScriptModule(pathOrUrl: string): boolean {
 export function isJavaScriptModule(pathOrUrl: string): boolean {
   return /\.(?:[cm]?js|json)$/.test(pathOrUrl.replace(/[?#].*$/, ""));
 }
+
+/**
+ * #3981 — whether this process resolves chant's packages through their
+ * `development` export condition: always when chant runs from source (the
+ * CLI's `main()` installs a resolve hook that does so, and vitest's resolver
+ * adds the condition outside production mode), and otherwise when node runs
+ * with `--conditions=development` (or `-C development`, on the command line
+ * or in `NODE_OPTIONS`). Not from the environment: a compiled CLI that a test
+ * spawns inherits vitest's variables.
+ */
+function resolvesDevelopment(): boolean {
+  if (isTypeScriptModule(import.meta.url)) return true;
+  if (typeof process === "undefined") return false;
+  const flags = [...process.execArgv, ...(process.env.NODE_OPTIONS ?? "").split(/\s+/)];
+  return flags.some(
+    (flag, i) =>
+      flag === "--conditions=development" ||
+      flag === "-C=development" ||
+      ((flag === "--conditions" || flag === "-C") && flags[i + 1] === "development"),
+  );
+}
+
+/**
+ * #3981 — the package export conditions chant adds to `import`, `node` and
+ * `default` when it resolves a package itself (fold's import resolution, the
+ * sandbox bundle), so it lands on the module this process's `import()` would.
+ * Each chant package maps `development` to `src/*.ts` and `default` to the
+ * compiled `dist/*.js` it publishes. `["development"]` when the process
+ * resolves with it ({@link resolvesDevelopment}), else empty.
+ */
+export const SOURCE_EXPORT_CONDITIONS: readonly string[] = resolvesDevelopment() ? ["development"] : [];

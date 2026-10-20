@@ -140,10 +140,12 @@ sidebar is grouped from, is in [Docs Site](/chant/lexicon-authoring/docs-site/).
 Once the bundle is built:
 
 1. Run `chant dev check-lexicon <dir>` and confirm tier 1 is clean
-2. Set `files` to `["src/", "dist/"]`. Consumers import TypeScript source through `exports["."].default`, so shipping only `dist/` breaks them
-3. Route `exports["."].default` at `./src/index.ts`, and have the `build` script delete emitted `.js` from `dist/`. Both are tier-1 checks
-4. Chain the bundle step into `prepack`, so `dist/` is rebuilt from the pinned spec at publish time rather than from whatever is on disk
+2. Set `files` to `["src/", "dist/"]`. tsc compiles modules only, so a compiled module reads the generated files beside its source from `src/` (`moduleSourceDir` in `@intentius/chant/module-source`). Fold reads a composite's source there too. Shipping only `dist/` breaks both
+3. Give every module export two conditions: `development` on `./src/*.ts` and `default` on the compiled `./dist/*.js`. The `build` script runs tsc on `tsconfig.build.json` and keeps the `.js` it emits. Both are tier-1 checks, and `scripts/lexicon-exports.test.ts` checks every export of every lexicon in this repository
+4. Chain the bundle step and the build into `prepack`, so `dist/` is rebuilt from the pinned spec at publish time rather than from whatever is on disk
 5. Publish with `npm pack` (for testing) or `npm publish`
+
+An installed chant runs plain node and loads a lexicon's `dist/*.js` with no TypeScript loader ([#3981](https://github.com/INTENTIUS/chant/issues/3981)). In this repository the tools resolve the `development` export instead. tsc reads it through `customConditions` and tsx through the root tsconfig `paths`. vitest adds the condition itself, and `bin/chant` passes `--conditions=development`. A lexicon runs from its source there whether or not `dist/` has been built. A compiled lexicon that imports another lexicon needs that one compiled too, so every lexicon ships the same way.
 
 `lexicons/k3s/package.json` is the shape to copy, including its
 `"prepack": "npm run generate && npm run bundle && npm run validate && npm run build"`.

@@ -34,27 +34,27 @@
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
-      "default": "./src/*.ts"
+      "default": "./dist/*.js"
     },
     "./op/activities": {
       "development": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
-      "default": "./src/op/activities/index.ts"
+      "default": "./dist/op/activities/index.js"
     },
     "./op/activity-contracts": {
       "development": "./src/op/activity-contracts.ts",
       "types": "./dist/op/activity-contracts.d.ts",
-      "default": "./src/op/activity-contracts.ts"
+      "default": "./dist/op/activity-contracts.js"
     },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
-      "default": "./src/lint/post-synth/index.ts"
+      "default": "./dist/lint/post-synth/index.js"
     },
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
@@ -66,7 +66,7 @@
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json"
   },
   "dependencies": {
     "js-yaml": "^4.3.1",

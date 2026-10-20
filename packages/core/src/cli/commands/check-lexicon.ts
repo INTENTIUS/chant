@@ -310,27 +310,32 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     detail: chantVersionDetail,
   });
 
-  // chant #1067 — packaging shape ("all 11 lexicons route exports['.'].default
-  // at ./src/index.ts and delete emitted JS in build") was real but
-  // unenforced; a lexicon shipping differently would break consumers
-  // silently. Cheap structural check on package.json, not a build execution.
+  // chant #1067 — packaging shape, real but unenforced before: a lexicon
+  // shipping differently would break consumers silently. Cheap structural
+  // check on package.json, not a build execution. #3981 — lexicons ship
+  // compiled JS: `default` is ./dist/index.js, `development` stays on
+  // ./src/index.ts for the repository's tools, and the build keeps the JS tsc
+  // emits (it used to delete it).
   const packageJsonRaw = readOr(join(dir, "package.json"));
   let packagingOk = false;
   let packagingDetail: string | undefined;
   if (packageJsonRaw) {
     try {
       const pkg = JSON.parse(packageJsonRaw) as {
-        exports?: { "."?: { default?: string } };
+        exports?: { "."?: { development?: string; default?: string } };
         scripts?: { build?: string };
       };
+      const developmentExport = pkg.exports?.["."]?.development;
       const defaultExport = pkg.exports?.["."]?.default;
       const buildScript = pkg.scripts?.build ?? "";
-      const exportOk = defaultExport === "./src/index.ts";
-      const deletesEmittedJs = /-delete/.test(buildScript) && /\.js/.test(buildScript);
-      packagingOk = exportOk && deletesEmittedJs;
+      const developmentOk = developmentExport === "./src/index.ts";
+      const defaultOk = defaultExport === "./dist/index.js";
+      const keepsEmittedJs = /tsconfig\.build\.json/.test(buildScript) && !/-delete/.test(buildScript);
+      packagingOk = developmentOk && defaultOk && keepsEmittedJs;
       const problems: string[] = [];
-      if (!exportOk) problems.push(`exports["."].default is ${JSON.stringify(defaultExport)}, expected "./src/index.ts"`);
-      if (!deletesEmittedJs) problems.push(`build script doesn't delete emitted .js from dist/: ${JSON.stringify(buildScript)}`);
+      if (!developmentOk) problems.push(`exports["."].development is ${JSON.stringify(developmentExport)}, expected "./src/index.ts"`);
+      if (!defaultOk) problems.push(`exports["."].default is ${JSON.stringify(defaultExport)}, expected "./dist/index.js"`);
+      if (!keepsEmittedJs) problems.push(`build script must compile tsconfig.build.json and keep the emitted .js in dist/: ${JSON.stringify(buildScript)}`);
       packagingDetail = problems.length > 0 ? problems.join("; ") : undefined;
     } catch {
       packagingDetail = "package.json is not valid JSON";
@@ -339,7 +344,7 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
     packagingDetail = "package.json missing or unreadable";
   }
   items.push({
-    name: 'package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build',
+    name: 'package.json routes exports["."] development at ./src/index.ts and default at ./dist/index.js, and build keeps emitted JS',
     tier: 1,
     pass: packagingOk,
     detail: packagingDetail,

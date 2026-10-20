@@ -22,6 +22,11 @@ if [ -f "$MAIN_JS" ] && [ ! -f "$SCRIPT_DIR/../tsconfig.build.json" ]; then
   exec node "$MAIN_JS" "$@"
 fi
 
+# From source, every chant package resolves through its `development` export
+# condition to src/*.ts (#3981). A lexicon's `default` is the dist/*.js it
+# publishes, which a checkout may not have built or may have built from older
+# source. Child processes that reuse process.execArgv inherit the flag.
+#
 # tsx is our own dependency, so register its hooks in this node process rather
 # than shelling `npx tsx`, which resolves a bin and then spawns a second node.
 # Worth ~30% of startup (#2481). Nested install first, then hoisted; npx stays
@@ -31,8 +36,8 @@ for CANDIDATE in \
   "$SCRIPT_DIR/../../../tsx/dist/loader.mjs"
 do
   if [ -f "$CANDIDATE" ]; then
-    exec node --import "file://$CANDIDATE" "$MAIN_TS" "$@"
+    exec node --conditions=development --import "file://$CANDIDATE" "$MAIN_TS" "$@"
   fi
 done
 
-exec npx tsx "$MAIN_TS" "$@"
+exec npx tsx --conditions=development "$MAIN_TS" "$@"

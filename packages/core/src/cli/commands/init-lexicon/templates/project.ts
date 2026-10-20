@@ -13,12 +13,12 @@ export function generatePackageJson(name: string, names: { packageName: string }
       ".": {
         development: "./src/index.ts",
         types: "./dist/index.d.ts",
-        default: "./src/index.ts",
+        default: "./dist/index.js",
       },
       "./*": {
         development: "./src/*.ts",
         types: "./dist/*.d.ts",
-        default: "./src/*.ts",
+        default: "./dist/*.js",
       },
       "./manifest": "./dist/manifest.json",
       "./meta": "./dist/meta.json",
@@ -28,7 +28,8 @@ export function generatePackageJson(name: string, names: { packageName: string }
       generate: "npx tsx src/codegen/generate-cli.ts",
       validate: "npx tsx src/validate-cli.ts",
       docs: "npx tsx src/codegen/docs-cli.ts",
-      build: 'tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name "*.js" -o -name "*.js.map" \\) -delete',
+      // #3981 — the package ships the compiled dist/*.js its exports' `default` names.
+      build: "tsc -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json",
       prepack: "npm run generate && npm run bundle && npm run validate && npm run build",
       bundle: "tsx src/package-cli.ts",
     },
