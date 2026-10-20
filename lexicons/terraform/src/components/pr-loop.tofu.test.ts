@@ -103,6 +103,9 @@ class FakeGithub {
       return ok({});
     }
     if ((m = path.match(/^\/pulls\/(\d+)\/reviews$/))) return ok(this.reviews[Number(m[1])] ?? []);
+    // #4000: the author and committers, whose own approval never counts.
+    if ((m = path.match(/^\/pulls\/(\d+)$/))) return ok({ number: Number(m[1]), user: { login: "ci" } });
+    if ((m = path.match(/^\/pulls\/(\d+)\/commits$/))) return ok([{ author: { login: "ci" }, committer: { login: "ci" } }]);
     if ((m = path.match(/^\/commits\/([0-9a-f]+)\/pulls$/))) {
       const pr = this.mergedBy[m[1]];
       return ok(pr ? [{ number: pr, merged_at: "2026-10-03T00:00:00Z", merge_commit_sha: m[1] }] : []);

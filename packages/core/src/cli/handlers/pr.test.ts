@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DriverComponent } from "../../components/driver";
 import type { DeployContext } from "../../components/capability";
 import type { ParsedArgs } from "../registry";
+import { forgePrincipalOf } from "../../pr-forge";
 
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
@@ -338,4 +339,108 @@ describe("--events-json beside --json", () => {
     expect(errors.filter((e) => /--events-json and --json both stream to stdout/.test(e))).toHaveLength(2);
     expect(out).toEqual([]);
   });
+});
+
+describe("--require-review: whoever wrote the change never counts (#4000)", () => {
+  type Kind = "github" | "forgejo" | "gitlab";
+  const ENV: Record<Kind, Record<string, string>> = {
+    github: { GITHUB_REPOSITORY: "acme/infra", GITHUB_TOKEN: "t0k", GITHUB_API_URL: "https://api.github.test", GITHUB_SERVER_URL: "https://github.com" },
+    forgejo: { GITHUB_REPOSITORY: "acme/infra", GITHUB_TOKEN: "t0k", GITHUB_API_URL: "https://code.example.test/api/v1", GITHUB_SERVER_URL: "https://code.example.test" },
+    gitlab: { CI_API_V4_URL: "https://gitlab.example.test/api/v4", CI_PROJECT_ID: "42", CHANT_FORGE_TOKEN: "t0k", CI_SERVER_HOST: "gitlab.example.test" },
+  };
+  const HOST: Record<Kind, string> = { github: "github.com", forgejo: "code.example.test", gitlab: "gitlab.example.test" };
+
+  /**
+   * Pull request 12 as each forge serves it: carol opened it, dave pushed a
+   * commit to it, and `approver` approved it. GitLab names a commit's people
+   * by email, which the users search maps to an account.
+   */
+  function serve(kind: Kind, approver: string): string[] {
+    const asked: string[] = [];
+    const ok = (value: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify(value) });
+    vi.stubGlobal("fetch", async (url: string, init: { method: string }) => {
+      const { pathname, searchParams } = new URL(url);
+      asked.push(`${init.method} ${pathname}`);
+      if (init.method !== "GET") return ok({ id: 1 });
+      if (kind === "gitlab") {
+        const mr = "/api/v4/projects/42/merge_requests/12";
+        if (pathname === `${mr}/approvals`) return ok({ approved_by: [{ user: { username: approver } }] });
+        if (pathname === mr) return ok({ iid: 12, author: { username: "carol" } });
+        if (pathname === `${mr}/commits`)
+          return ok([
+            { author_email: "carol@example.test", committer_email: "carol@example.test" },
+            { author_email: "Dave@example.test", committer_email: "dave@example.test" },
+          ]);
+        if (pathname === "/api/v4/users") return ok({ "carol@example.test": [{ username: "carol" }], "dave@example.test": [{ username: "dave" }] }[searchParams.get("search")!] ?? []);
+        return ok([]);
+      }
+      const pull = `${kind === "github" ? "" : "/api/v1"}/repos/acme/infra/pulls/12`;
+      if (pathname === `${pull}/reviews`) return ok([{ user: { login: approver }, state: "APPROVED" }]);
+      if (pathname === pull) return ok({ number: 12, user: { login: "carol" } });
+      if (pathname === `${pull}/commits`)
+        return ok([
+          { author: { login: "carol" }, committer: { login: "carol" } },
+          { author: null, committer: { login: "dave" } },
+        ]);
+      return ok([]);
+    });
+    return asked;
+  }
+
+  async function approveAs(kind: Kind, login: string): Promise<void> {
+    await runComponentsPrPlan(ctx({ pr: 12 }));
+    const digest = await plannedDigest();
+    gateLedger = memoryGateLedgerPort({
+      resolutions: [{ version: 1, kind: "resolution", op: "pr-12", gate: "pr-apply", resolvedBy: forgePrincipalOf(kind, HOST[kind], login), timestamp: new Date().toISOString(), planDigest: digest }],
+    });
+    out = [];
+    errors = [];
+  }
+
+  const applyReport = async () => {
+    const { readFile } = await import("node:fs/promises");
+    return JSON.parse(await readFile(join(dir, "pr-apply.json"), "utf8")) as { status: string; refusal?: string; message?: string };
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  for (const kind of ["github", "forgejo", "gitlab"] as const) {
+    describe(kind, () => {
+      beforeEach(() => {
+        for (const [k, v] of Object.entries(ENV[kind])) vi.stubEnv(k, v);
+      });
+
+      test("the author approves: refused as author-approved, naming them, and nothing applies", async () => {
+        serve(kind, "carol");
+        await approveAs(kind, "carol");
+        let ran = false;
+        onRun = () => { ran = true; };
+        expect(await runComponentsPrApply(ctx({ pr: 12, forge: kind, requireReview: true, eventsJson: false }))).toBe(3);
+        const report = await applyReport();
+        expect(report).toMatchObject({ status: "refused", refusal: "author-approved" });
+        expect(report.message).toContain(`approved by ${forgePrincipalOf(kind, HOST[kind], "carol")}, who wrote #12`);
+        expect(report.message).toContain("never counts");
+        expect(ran).toBe(false);
+      });
+
+      test("a co-author who pushed a commit approves: refused as author-approved", async () => {
+        serve(kind, "dave");
+        await approveAs(kind, "dave");
+        expect(await runComponentsPrApply(ctx({ pr: 12, forge: kind, requireReview: true, eventsJson: false }))).toBe(3);
+        const report = await applyReport();
+        expect(report).toMatchObject({ status: "refused", refusal: "author-approved" });
+        expect(report.message).toContain(`approved by ${forgePrincipalOf(kind, HOST[kind], "dave")}, who wrote #12`);
+      });
+
+      test("an outside reviewer approves: the plan applies", async () => {
+        serve(kind, "erin");
+        await approveAs(kind, "erin");
+        expect(await runComponentsPrApply(ctx({ pr: 12, forge: kind, requireReview: true, eventsJson: false }))).toBe(0);
+        expect(await applyReport()).toMatchObject({ status: "applied" });
+      });
+    });
+  }
 });

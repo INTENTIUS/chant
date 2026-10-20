@@ -37,8 +37,8 @@
       "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. refused: nothing applied, see refusal."
     },
     "refusal": {
-      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "no-pull-request"],
-      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review."
+      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request"],
+      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits."
     },
     "message": { "type": "string", "description": "The refusal or failure as printed." },
     "resumed": {

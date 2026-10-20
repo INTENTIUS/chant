@@ -41,6 +41,7 @@ describe("the pull-request loop bundle", () => {
       "packages/core/src/pr-forge.ts",
       "packages/core/src/pr-loop.ts",
     ]);
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(64 * 1024);
+    // About 65 KB today, after the pull request authors (#4000).
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(72 * 1024);
   });
 });
