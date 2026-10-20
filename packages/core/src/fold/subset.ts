@@ -464,7 +464,7 @@ export function unsupportedExpressionMessage(node: ts.Node): string {
 /**
  * chant#4011 — S-CallMethod's closed table of HOST methods, by receiver type.
  * PROVISIONAL until typescript-as-data narrows F-Eval-CallMethod to the same
- * table (see the module doc's provisional path).
+ * table (INTENTIUS/typescript-as-data#264; see the module doc's provisional path).
  *
  * Since #1966 `fold()` called any function-valued property on a real
  * receiver, so `[].constructor.constructor("return Date.now()")` reached
