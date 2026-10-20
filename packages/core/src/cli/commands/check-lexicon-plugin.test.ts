@@ -55,6 +55,15 @@ describe("pluginEntryFor", () => {
     expect(pluginEntryFor(dir)).toBe(join(dir, "src/plugin.ts"));
   });
 
+  test("prefers the development source over the compiled default (#3981)", () => {
+    const dir = lexiconDir({
+      "package.json": JSON.stringify({ exports: { ".": { development: "./src/index.ts", default: "./dist/index.js" } } }),
+      "src/index.ts": "",
+      "dist/index.js": "",
+    });
+    expect(pluginEntryFor(dir)).toBe(join(dir, "src/index.ts"));
+  });
+
   test("skips a declared entry that does not exist", () => {
     const dir = lexiconDir({
       "package.json": JSON.stringify({ exports: { ".": { default: "./dist/index.js" } } }),

@@ -25,7 +25,7 @@ describe("checkLexicon", () => {
     expect(names).toContain("Registered intrinsics are exported by the package");
     expect(names).toContain("Registered intrinsics' isTag matches how they're authored");
     expect(names).toContain("dist/manifest.json declares a chantVersion");
-    expect(names).toContain('package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build');
+    expect(names).toContain('package.json routes exports["."] development at ./src/index.ts and default at ./dist/index.js, and build keeps emitted JS');
   });
 
   test("gitlab's own reference() intrinsic passes both the export and isTag audits", async () => {

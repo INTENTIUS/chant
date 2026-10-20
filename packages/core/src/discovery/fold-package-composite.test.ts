@@ -238,6 +238,33 @@ describe("lexicon-package and re-exported composites are interpreted (chant#3247
     expect(foldExecutionCounts().factoryInterpretations).toBe(0);
   });
 
+  test("a package whose exports name compiled JavaScript is interpreted from the src/ it ships beside dist/ (#3981)", async () => {
+    // As a chant lexicon publishes: exports on dist/*.js, the source under src/.
+    await installFakeLexicon(
+      "fakedist3981",
+      {
+        "dist/index.js": `export * from "./composites/index.js";\n`,
+        "dist/composites/index.js": `export * from "./web.js";\n`,
+        "dist/composites/web.js": `throw new Error("the compiled module is not read");\n`,
+        "src/index.ts": `export * from "./composites/index";\n`,
+        "src/composites/index.ts": `export * from "./web";\n`,
+        "src/composites/web.ts": WEBAPP_DEFINITION,
+      },
+      "./dist/index.js",
+    );
+    await writeFile(
+      join(srcDir, "main.ts"),
+      `import { WebApp } from "@intentius/chant-lexicon-fakedist3981";\nexport const web = WebApp({ name: "data" });\n`,
+    );
+
+    const result = await discover(srcDir, { fold: true, lexicons: ["aws", "fakedist3981"] });
+
+    expect(result.errors).toEqual([]);
+    expect(moduleRan(), "the defining module was read, never imported").toBeUndefined();
+    expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 1, factoryInvocations: 0 });
+    expect([...result.entities.keys()]).toEqual(["webBucket"]);
+  });
+
   test("a package re-export that leaves the package's directory is not followed", async () => {
     await mkdir(join(testDir, "shared"), { recursive: true });
     await writeFile(join(testDir, "shared", "web.ts"), WEBAPP_DEFINITION);

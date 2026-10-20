@@ -88,7 +88,8 @@ describe.skipIf(!ready)("sql lint rules in a TypeScript 7 project (#3864)", () =
 
   test("no rule throws, and the lexicon really sees TypeScript 7", () => {
     for (const dir of examples) expect(readdirSync(dir).length).toBeGreaterThan(0);
-    const out = execFileSync(process.execPath, ["--import", `file://${tsxLoader}`, join(project, "run.mts"), JSON.stringify(examples), lexiconPackageJson], {
+    // The copy carries src/ only, so the lexicon resolves through its `development` export (#3981).
+    const out = execFileSync(process.execPath, ["--conditions=development", "--import", `file://${tsxLoader}`, join(project, "run.mts"), JSON.stringify(examples), lexiconPackageJson], {
       cwd: project,
       encoding: "utf-8",
       env: { ...process.env, TSX_DISABLE_CACHE: "1" },

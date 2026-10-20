@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, 
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
+import { SOURCE_EXPORT_CONDITIONS } from "../../module-source";
 
 /**
  * chant #1045 Phase 2 — bundles the generated sandbox driver (`./driver.ts`)
@@ -219,6 +220,11 @@ export async function bundleDriver(driverSource: string): Promise<BundleResult> 
       format: "esm",
       absWorkingDir: bundleDir,
       logLevel: "silent",
+      // #3981 — from source, a lexicon bundles from its src/*.ts, as the
+      // unsandboxed build imports it; compiled, from the dist/*.js it ships.
+      // Setting `conditions` replaces esbuild's default ["module"], so it is
+      // kept, and compiled the option is left out as before.
+      ...(SOURCE_EXPORT_CONDITIONS.length > 0 ? { conditions: ["module", ...SOURCE_EXPORT_CONDITIONS] } : {}),
       plugins: [plugin],
     });
   } catch (err) {

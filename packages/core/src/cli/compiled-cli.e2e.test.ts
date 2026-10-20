@@ -7,14 +7,19 @@
  * Each run is traced through a load hook that NODE_OPTIONS hands to the CLI's
  * node, so the test can say what loaded: none of chant's TypeScript source,
  * ever, and tsx only for a command that imports TypeScript (here the
- * lexicon and the project source). tsx's ESM hooks run on a thread of their
- * own, about 200 MB of the process (#3276), so a workspace read must not
- * register it either.
+ * project source). tsx's ESM hooks run on a thread of their own, about 200 MB
+ * of the process (#3276), so a workspace read must not register it either.
+ *
+ * The lexicon ships compiled JS (#3981): its exports' `default` is
+ * `dist/*.js`. No command loads a module of the lexicon's TypeScript, and
+ * `serve mcp` on a project whose config is JSON loads no tsx at all, with the
+ * same lint rules and post-synth checks as the lexicon loaded from source.
  *
  * End to end because it packs, installs from the registry and spawns the CLI.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { loadPlugin } from "./plugins";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -33,14 +38,20 @@ let waves: string;
 let workspace: string;
 let chant: string;
 let tracer: string;
+let mcpProject: string;
 
 const TRACER = `
 import { registerHooks } from "node:module";
 import { appendFileSync } from "node:fs";
 const out = process.env.CHANT_TRACE_OUT;
-const seen = { chantSrc: 0, chantDist: 0, tsx: 0, typescript: 0, dist: [] };
+const seen = { chantSrc: 0, chantDist: 0, tsx: 0, typescript: 0, dist: [], lexiconTs: 0, lexiconJs: 0 };
 registerHooks({
   load(url, context, next) {
+    if (url.includes("/@intentius/chant-lexicon-")) {
+      const path = url.replace(/[?#].*$/, "");
+      if (/\\.[cm]?tsx?$/.test(path) && !/\\.d\\.[cm]?ts$/.test(path)) seen.lexiconTs++;
+      else if (path.includes("/dist/") && path.endsWith(".js")) seen.lexiconJs++;
+    }
     if (url.includes("/@intentius/chant/src/")) seen.chantSrc++;
     else if (url.includes("/@intentius/chant/dist/")) { seen.chantDist++; seen.dist.push(url.slice(url.indexOf("/@intentius/chant/dist/") + 23)); }
     else if (url.includes("/node_modules/tsx/")) seen.tsx++;
@@ -61,15 +72,15 @@ interface Run {
   status: number | null;
   stdout: string;
   stderr: string;
-  /** Counts of what loaded, plus each compiled module's path under `dist/`. */
-  loaded: { chantSrc: number; chantDist: number; tsx: number; typescript: number; dist: string[] };
+  /** Counts of what loaded, plus each compiled module's path under `dist/`. `lexiconTs` and `lexiconJs` count the lexicon's TypeScript and compiled modules. */
+  loaded: { chantSrc: number; chantDist: number; tsx: number; typescript: number; dist: string[]; lexiconTs: number; lexiconJs: number };
 }
 
-function run(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}, command = chant): Run {
+function run(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}, command = chant, input?: string): Run {
   const traceOut = join(scratch, `trace-${Math.random().toString(36).slice(2)}.jsonl`);
   const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv, NODE_OPTIONS: `--import ${tracer}`, CHANT_TRACE_OUT: traceOut };
   delete env.CHANT_ENV;
-  const result = spawnSync(command, args, { cwd, env, encoding: "utf-8" });
+  const result = spawnSync(command, args, { cwd, env, encoding: "utf-8", input, timeout: 120_000 });
   const lines = readFileSync(traceOut, "utf-8").trim().split("\n");
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, loaded: JSON.parse(lines[0]!) as Run["loaded"] };
 }
@@ -80,7 +91,9 @@ beforeAll(() => {
   writeFileSync(tracer, TRACER);
   const core = pack(coreRoot);
   // The lexicon's prepack regenerates it from upstream specs; the checkout's
-  // generated source and dist are what this test needs, so pack them as they are.
+  // generated source and bundle are what this test needs, so pack them as they
+  // are, after the prepack's last step, the build that writes dist/*.js.
+  execFileSync("npm", ["run", "build"], { cwd: renderRoot, stdio: ["ignore", "pipe", "pipe"] });
   const render = pack(renderRoot, true);
 
   project = join(scratch, "project");
@@ -94,6 +107,13 @@ beforeAll(() => {
       `export const db = new Postgres({ name: "e2e-db", plan: "free", version: "16", region: Render.Region });\n`,
   );
   chant = join(project, "node_modules", ".bin", "chant");
+
+  // The same lexicon, from a config that is JSON, with no source: nothing for tsx to load.
+  mcpProject = join(scratch, "mcp-project");
+  mkdirSync(mcpProject);
+  writeFileSync(join(mcpProject, "package.json"), JSON.stringify({ name: "compiled-cli-mcp-e2e", private: true, type: "module" }));
+  writeFileSync(join(mcpProject, "chant.config.json"), JSON.stringify({ lexicons: ["render"] }));
+  symlinkSync(join(project, "node_modules"), join(mcpProject, "node_modules"), "dir");
 
   // The same project with no package.json at all, so nothing above the config
   // says "type": "module" and tsx compiles chant.config.ts as CommonJS (#3897).
@@ -217,19 +237,64 @@ describe("the installed chant CLI (#3878)", () => {
     expect(heavy).toEqual([]);
   });
 
-  test("build loads the TypeScript lexicon and project through tsx, against the one compiled core", () => {
+  test("build loads the project through tsx and the lexicon as compiled JS, against the one compiled core", () => {
     const r = run(project, ["build", "src", "-o", "out/render.json"]);
     expect(r.status, r.stderr).toBe(0);
     const built = JSON.parse(readFileSync(join(project, "out", "render.json"), "utf-8")) as Record<string, { body?: { name?: string } }>;
     expect(built.db?.body?.name).toBe("e2e-db");
     expect(r.loaded.tsx).toBeGreaterThan(0);
     expect(r.loaded.chantSrc).toBe(0);
+    expect(r.loaded.lexiconJs).toBeGreaterThan(0);
+    expect(r.loaded.lexiconTs).toBe(0);
   });
 
-  test("lint passes on the project", () => {
+  test("lint passes on the project and loads none of the lexicon's TypeScript", () => {
     const r = run(project, ["lint", "src"]);
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.loaded.chantSrc).toBe(0);
+    expect(r.loaded.lexiconTs).toBe(0);
+  });
+
+  test("serve mcp loads the packed lexicon's plugin with no tsx (#3981)", () => {
+    const input =
+      [
+        { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", clientInfo: { name: "e2e" } } },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+        { jsonrpc: "2.0", id: 3, method: "resources/list", params: {} },
+      ]
+        .map((m) => JSON.stringify(m))
+        .join("\n") + "\n";
+    const r = run(mcpProject, ["serve", "mcp"], {}, chant, input);
+    expect(r.status, r.stderr).toBe(0);
+    const responses = r.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { id?: number; result?: Record<string, unknown> });
+    const result = (id: number) => responses.find((m) => m.id === id)?.result;
+    expect((result(1)?.serverInfo as { name?: string } | undefined)?.name).toBe("chant");
+    const tools = ((result(2)?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
+    for (const name of ["build", "lint", "explain"]) expect(tools).toContain(name);
+    expect(r.loaded.lexiconJs).toBeGreaterThan(0);
+    expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0, lexiconTs: 0 });
+  });
+
+  test("the packed lexicon's plugin has the lint rules and post-synth checks of its source (#3981)", async () => {
+    // The plugin as the installed CLI loads it: compiled core, plain node, the lexicon's dist/*.js.
+    const script =
+      `const core = ${JSON.stringify(pathToFileURL(join(project, "node_modules", "@intentius", "chant", "dist")).href)};\n` +
+      `const { installCompiledCli } = await import(core + "/ts-loader.js");\n` +
+      `installCompiledCli();\n` +
+      `const { loadPlugin } = await import(core + "/cli/plugins.js");\n` +
+      `const plugin = await loadPlugin("render");\n` +
+      `process.stdout.write(JSON.stringify({ lintRules: plugin.lintRules().map((r) => r.id).sort(), postSynthChecks: (plugin.postSynthChecks?.() ?? []).map((c) => c.id).sort() }));\n`;
+    const r = run(mcpProject, ["--input-type=module", "-e", script], {}, process.execPath);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.loaded).toMatchObject({ chantSrc: 0, tsx: 0, lexiconTs: 0 });
+    const packed = JSON.parse(r.stdout) as { lintRules: string[]; postSynthChecks: string[] };
+
+    // The same plugin from the repository's source, in this (vitest) process.
+    const source = await loadPlugin("render");
+    expect(packed.lintRules).toEqual((source.lintRules?.() ?? []).map((rule) => rule.id).sort());
+    expect(packed.postSynthChecks).toEqual((source.postSynthChecks?.() ?? []).map((check) => check.id).sort());
+    expect(packed.lintRules.length).toBeGreaterThan(0);
   });
 
   test("build --sandbox bundles chant's source for the sandboxed child", () => {

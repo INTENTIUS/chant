@@ -274,13 +274,16 @@ describe("scaffold content validation", () => {
   });
 
   // #2090, the scaffolded package.json failed tier 1 as generated: a bare
-  // string exports["."], a build script that never deletes emitted .js, and
-  // a prepack that never bundled, so dist/manifest.json never existed.
-  test("package.json exports[\".\"].default is ./src/index.ts, build deletes emitted JS, prepack bundles (#2090)", () => {
+  // string exports["."] and a prepack that never bundled, so
+  // dist/manifest.json never existed. #3981 — the package ships compiled JS.
+  test("package.json exports[\".\"] is development src, default dist JS, build keeps JS, prepack bundles (#2090, #3981)", () => {
     const pkg = JSON.parse(readFileSync(join(targetDir, "package.json"), "utf-8"));
-    expect(pkg.exports["."].default).toBe("./src/index.ts");
-    expect(pkg.scripts.build).toContain("-delete");
+    expect(pkg.exports["."].development).toBe("./src/index.ts");
+    expect(pkg.exports["."].default).toBe("./dist/index.js");
+    expect(pkg.exports["./*"].default).toBe("./dist/*.js");
+    expect(pkg.scripts.build).not.toContain("-delete");
     expect(pkg.scripts.prepack).toContain("bundle");
+    expect(pkg.scripts.prepack).toContain("npm run build");
   });
 
   test("tsconfig.build.json uses bundler resolution + the development condition (#749)", () => {

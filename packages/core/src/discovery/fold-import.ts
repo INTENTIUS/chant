@@ -28,6 +28,7 @@ import {
 } from "../fold/fold";
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
 import { lexiconModulePath, lexiconModuleRoot } from "../lexicon-module";
+import { compiledModuleSource } from "../module-source";
 import {
   isFile,
   packageExportsTarget,
@@ -2050,10 +2051,11 @@ function isUnfoldableSameFileCall(name: string, ctx: ResolveCtx): boolean {
 //     specifier, or its package root for a subpath, against
 //     {@link FoldSession.lexiconPackages}, exactly as
 //     {@link isTrustedExecutableBinding}'s arm 1 matches it — and only then
-//     resolved; a module that resolves to compiled JavaScript or a declaration
-//     file is not interpreted, so a package that ships only `dist` keeps
-//     invoking. Every chant lexicon routes its exports at `./src/*.ts`
-//     (check-lexicon tier 1), so in practice the source is always there.
+//     resolved; a module that resolves to a declaration file, or to compiled
+//     JavaScript with no `src/` source beside its `dist/`, is not interpreted,
+//     so a package that ships only `dist` keeps invoking. Every chant lexicon
+//     publishes `src/` beside the `dist/*.js` its exports name (#3981), and
+//     a compiled module is read from that source.
 //     Interpreting buys provenance: the run path cannot say which parameter
 //     fed a field, and interpretation can (#2161, #3246).
 //
@@ -2478,7 +2480,15 @@ function factoryOrigin(specifier: string, fromFile: string, ctx: ResolveCtx): Fa
   } catch {
     return undefined;
   }
-  if (!isTypeScriptSource(modulePath)) return undefined;
+  if (!isTypeScriptSource(modulePath)) {
+    // #3981 — a lexicon's exports resolve to the compiled dist/*.js it
+    // publishes, beside the src/ it was built from. The source is what is
+    // read; an import the body makes still loads the compiled module, since
+    // the compiled CLI points a lexicon's src/*.ts at its dist/*.js.
+    const source = compiledModuleSource(modulePath);
+    if (source === undefined || !isFile(source)) return undefined;
+    modulePath = source;
+  }
   const packageRoot = lexiconPackageDirectory(modulePath, packageName);
   return packageRoot === undefined ? undefined : { modulePath, packageRoot };
 }

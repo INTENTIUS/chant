@@ -1,11 +1,11 @@
 /**
  * #3981 — lexicons loaded from compiled JS, with plain node.
  *
- * Lexicon packages publish `src/*.ts` today, so every command that loads a
- * lexicon registers tsx. This compiles core and a set of real lexicons (aws
- * and helm, which find their lint rules by directory scan, and the lexicons
- * they import) with tsc into a scratch `node_modules`, each lexicon's
- * package exports pointed at its `dist/*.js`. A plain node process with no
+ * Lexicon packages publish compiled `dist/*.js` as each export's `default`.
+ * This compiles core and a set of real lexicons (aws and helm, which find
+ * their lint rules by directory scan, and the lexicons they import) with tsc
+ * into a scratch `node_modules`, with each lexicon's own package.json. A
+ * plain node process with no
  * loader then loads each plugin through the compiled core, and must find the
  * same lint rules, post-synth checks, skills and generated data as the same
  * plugins loaded from source, without loading tsx or any TypeScript module.
@@ -98,20 +98,6 @@ function tsc(project: string, outDir: string): void {
   });
 }
 
-/** A lexicon's package.json with every export's `default` on `dist/*.js`, as a package that ships compiled JS would have it. */
-function distExports(pkg: { exports: Record<string, unknown> }): typeof pkg {
-  const exports: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(pkg.exports)) {
-    if (value && typeof value === "object" && typeof (value as { default?: unknown }).default === "string") {
-      const entry = value as { default: string };
-      exports[key] = { ...entry, default: entry.default.replace(/^\.\/src\//, "./dist/").replace(/\.ts$/, ".js") };
-    } else {
-      exports[key] = value;
-    }
-  }
-  return { ...pkg, exports };
-}
-
 function count(script: string, args: object, nodeArgs: string[] = []): Counted {
   const r = spawnSync(process.execPath, [...nodeArgs, script, JSON.stringify(args)], { cwd: scratch, encoding: "utf-8", maxBuffer: 16 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`count script failed (${r.status}):\n${r.stderr}`);
@@ -143,8 +129,7 @@ beforeAll(() => {
     const root = join(repo, "lexicons", name);
     const pkg = join(modules, "@intentius", `chant-lexicon-${name}`);
     mkdirSync(pkg);
-    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as { exports: Record<string, unknown> };
-    writeFileSync(join(pkg, "package.json"), JSON.stringify(distExports(manifest), null, 2));
+    cpSync(join(root, "package.json"), join(pkg, "package.json"));
     // src/ is published beside dist/, and holds what a module reads beside itself.
     symlinkSync(join(root, "src"), join(pkg, "src"));
     if (existsSync(join(root, "node_modules"))) symlinkSync(join(root, "node_modules"), join(pkg, "node_modules"));
@@ -184,7 +169,8 @@ describe("lexicons loaded from compiled JS (#3981)", () => {
         names: LEXICONS,
         taggable: pathToFileURL(join(repo, "lexicons", "aws", "src", "taggable.ts")).href,
       },
-      ["--import", tsxLoader],
+      // The repository's lexicons through their `development` export, src/*.ts, as bin/chant runs from source.
+      ["--conditions=development", "--import", tsxLoader],
     );
     fromDist = count(join(scratch, "count.mjs"), {
       core: pathToFileURL(coreDist).href,
@@ -198,6 +184,8 @@ describe("lexicons loaded from compiled JS (#3981)", () => {
     expect(fromDist.tsxRegistered).toBe(false);
     expect(fromDist.seen.tsx).toBe(0);
     expect(fromDist.seen.typeScript).toEqual([]);
+    // The comparison run really loads the lexicons' source.
+    expect(fromSource.seen.typeScript.some((path) => path.includes("/lexicons/aws/src/"))).toBe(true);
   });
 
   test("the compiled plugins find the same lint rules as the source", () => {

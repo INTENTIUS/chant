@@ -18,10 +18,11 @@
  *
  * Run from source (the repository's `bin/chant` through tsx, vitest), this
  * module is itself TypeScript, the TypeScript loader is already there, and
- * both functions do nothing.
+ * both functions do nothing, except that {@link installCompiledCli} resolves
+ * chant's packages to their source (#3981, {@link installSourceResolution}).
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import * as nodeModule from "node:module";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -58,11 +59,15 @@ function runsCompiled(): boolean {
 
 /**
  * Called once by the CLI's `main()`. Compiled, it records that TypeScript
- * loads lazily and installs the `src/*.ts` to `dist/*.js` redirect; from
- * source it does nothing.
+ * loads lazily and installs the `src/*.ts` to `dist/*.js` redirect. From
+ * source it installs {@link installSourceResolution}.
  */
 export function installCompiledCli(): void {
-  if (!runsCompiled() || compiledState()) return;
+  if (!runsCompiled()) {
+    installSourceResolution();
+    return;
+  }
+  if (compiledState()) return;
   (globalThis as { [STATE]?: CompiledCliState })[STATE] = { tsx: false };
 
   const distDir = dirname(fileURLToPath(import.meta.url));
@@ -73,7 +78,10 @@ export function installCompiledCli(): void {
   registerHooks({
     resolve(specifier, context, nextResolve) {
       const result = nextResolve(specifier, context);
-      if (!result.url.startsWith(srcUrl)) return result;
+      if (!result.url.startsWith(srcUrl)) {
+        const twin = lexiconCompiledTwin(result.url);
+        return twin === undefined ? result : { ...result, url: twin, format: "module" };
+      }
       const path = result.url.slice(srcUrl.length).replace(/[?#].*$/, "");
       if (!path.endsWith(".ts") || path.endsWith(".d.ts")) return result;
       let target = compiled.get(path);
@@ -83,6 +91,144 @@ export function installCompiledCli(): void {
         compiled.set(path, target);
       }
       return target === null ? result : { ...result, url: target, format: "module" };
+    },
+  });
+}
+
+/** Package directories by the directory a module sits in: a lexicon package's root, or null for any other package. */
+const lexiconRoots = new Map<string, string | null>();
+
+/** The lexicon package `dir` belongs to: the nearest directory up with a package.json, when it names a chant lexicon. */
+function lexiconRootOf(dir: string): string | undefined {
+  const seen: string[] = [];
+  let root: string | null = null;
+  for (let at = dir; ; ) {
+    const cached = lexiconRoots.get(at);
+    if (cached !== undefined) {
+      root = cached;
+      break;
+    }
+    seen.push(at);
+    const manifest = join(at, "package.json");
+    if (existsSync(manifest)) {
+      try {
+        const name = (JSON.parse(readFileSync(manifest, "utf-8")) as { name?: unknown }).name;
+        root = typeof name === "string" && name.startsWith("@intentius/chant-lexicon-") ? at : null;
+      } catch {
+        root = null;
+      }
+      break;
+    }
+    const parent = dirname(at);
+    if (parent === at) break;
+    at = parent;
+  }
+  for (const at of seen) lexiconRoots.set(at, root);
+  return root ?? undefined;
+}
+
+/**
+ * #3981 — the compiled module for a lexicon's `src/*.ts`: `<lexicon>/dist/*.js`
+ * when it exists, as a URL, else `undefined`. A lexicon ships both, and its
+ * exports name the compiled one; fold reads a composite from the source, and
+ * an import that source makes must land on the module the plugin and the
+ * project already loaded, with no TypeScript loader.
+ */
+export function lexiconCompiledTwin(url: string): string | undefined {
+  if (!url.startsWith("file:")) return undefined;
+  const path = fileURLToPath(url.replace(/[?#].*$/, ""));
+  if (!/\.[cm]?ts$/.test(path) || /\.d\.[cm]?ts$/.test(path) || !path.includes(`${sep}src${sep}`)) return undefined;
+  const root = lexiconRootOf(dirname(path));
+  if (root === undefined) return undefined;
+  const srcDir = join(root, "src") + sep;
+  if (!path.startsWith(srcDir)) return undefined;
+  const js = join(root, "dist", path.slice(srcDir.length)).replace(/\.([cm]?)ts$/, ".$1js");
+  return existsSync(js) ? pathToFileURL(js).href : undefined;
+}
+
+const SOURCE_RESOLUTION = Symbol.for("chant.sourceResolution");
+
+/**
+ * #3981 — the `development` target a chant package's `exports` give
+ * `specifier`, found from `parentPath`'s directory up through each
+ * `node_modules`, or `undefined` when there is none or its file does not
+ * exist. Reads exact keys and single-`*` patterns, the shapes chant's
+ * packages use; anything else is left to Node.
+ */
+export function chantPackageSourceTarget(specifier: string, parentPath: string): string | undefined {
+  const match = /^(@intentius\/chant(?:-[a-z0-9-]+)?)(\/.*)?$/.exec(specifier);
+  if (!match) return undefined;
+  const subpath = match[2] ? `.${match[2]}` : ".";
+  let dir = dirname(parentPath);
+  for (;;) {
+    const pkgDir = join(dir, "node_modules", match[1]!);
+    const manifest = join(pkgDir, "package.json");
+    if (existsSync(manifest)) {
+      let exportsField: unknown;
+      try {
+        exportsField = (JSON.parse(readFileSync(manifest, "utf-8")) as { exports?: unknown }).exports;
+      } catch {
+        return undefined;
+      }
+      if (!exportsField || typeof exportsField !== "object") return undefined;
+      const map = exportsField as Record<string, unknown>;
+      let entry: unknown = map[subpath];
+      let star: string | undefined;
+      if (entry === undefined) {
+        let best = "";
+        for (const key of Object.keys(map)) {
+          const at = key.indexOf("*");
+          if (at < 0 || key.indexOf("*", at + 1) >= 0) continue;
+          const prefix = key.slice(0, at);
+          const suffix = key.slice(at + 1);
+          if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix) || subpath.length < key.length || prefix.length <= best.length) continue;
+          best = prefix;
+          entry = map[key];
+          star = subpath.slice(prefix.length, subpath.length - suffix.length);
+        }
+      }
+      const development = entry && typeof entry === "object" ? (entry as { development?: unknown }).development : undefined;
+      if (typeof development !== "string") return undefined;
+      const target = join(pkgDir, star === undefined ? development : development.split("*").join(star));
+      // Node keys a module by its real path, so a symlinked package must too.
+      return existsSync(target) ? realpathSync(target) : undefined;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * #3981 — from source, resolve chant's own packages through their
+ * `development` export condition, as `node --conditions=development` (which
+ * the repository's `bin/chant` passes) would. A lexicon's `default` export is
+ * its compiled `dist/*.js`, which a checkout may not have built, or built from
+ * older source; `development` is its `src/*.ts`, which vitest, a project's
+ * tsconfig `paths` and fold's own resolution (`SOURCE_EXPORT_CONDITIONS`)
+ * pick. Without this, a CLI run from source by `node --import tsx` would load
+ * a plugin from `dist/` and fold the project against `src/`: two copies of the
+ * lexicon with their own classes.
+ *
+ * The hook resolves the specifier itself and short-circuits: conditions added
+ * to the context here do not reach tsx's resolver. Nothing is installed under
+ * vitest, whose resolver already adds the condition, or on a node without
+ * `module.registerHooks`.
+ */
+function installSourceResolution(): void {
+  // In a vitest worker (not a CLI it spawns, which inherits its environment), vite resolves.
+  if ("__vitest_worker__" in globalThis || typeof registerHooks !== "function") return;
+  const flags = globalThis as { [SOURCE_RESOLUTION]?: boolean };
+  if (flags[SOURCE_RESOLUTION]) return;
+  flags[SOURCE_RESOLUTION] = true;
+  registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const parentURL = (context as { parentURL?: string } | undefined)?.parentURL;
+      if (specifier.startsWith("@intentius/chant") && parentURL?.startsWith("file:")) {
+        const target = chantPackageSourceTarget(specifier, fileURLToPath(parentURL));
+        if (target !== undefined) return { url: pathToFileURL(target).href, shortCircuit: true };
+      }
+      return nextResolve(specifier, context);
     },
   });
 }

@@ -36,20 +36,23 @@ export interface LoadedLexicon {
 }
 
 /**
- * The module a lexicon package presents to consumers.
+ * The module a lexicon package presents to consumers, as its source.
  *
- * Tier 1 requires `exports["."].default` to be `./src/index.ts`, so that is the
- * first choice — it is the module core itself imports. The fallbacks keep this
- * usable on a lexicon that has not reached that check yet.
+ * Tier 1 requires `exports["."].development` to be `./src/index.ts` and
+ * `default` to be its compiled `./dist/index.js` (#3981). The check reads the
+ * lexicon's source, so `development` is the first choice: a `dist/` may be
+ * missing or older than the source. `default` and `main` come next, and the
+ * conventional paths keep this usable on a lexicon that has not reached that
+ * check yet.
  */
 export function pluginEntryFor(dir: string): string | undefined {
   const candidates: string[] = [];
   try {
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as {
-      exports?: { "."?: { default?: string } };
+      exports?: { "."?: { development?: string; default?: string } };
       main?: string;
     };
-    for (const declared of [pkg.exports?.["."]?.default, pkg.main]) {
+    for (const declared of [pkg.exports?.["."]?.development, pkg.exports?.["."]?.default, pkg.main]) {
       if (typeof declared === "string") candidates.push(declared);
     }
   } catch {

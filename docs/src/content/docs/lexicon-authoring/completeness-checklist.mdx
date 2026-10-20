@@ -28,7 +28,7 @@ These must all pass for the command to exit 0. `just check-lexicons` runs them a
 | `The plugin registers docs()` | `chant dev generate` reaches the docs generator through the plugin, not through a package script |
 | `dist/manifest.json exists` | The lexicon bundle was built |
 | `dist/manifest.json declares a chantVersion` | Present and shaped like a version — see [below](#chantversion) |
-| `package.json routes exports["."].default at ./src/index.ts and deletes emitted JS in build` | The packaging shape every consumer depends on |
+| `package.json routes exports["."] development at ./src/index.ts and default at ./dist/index.js, and build keeps emitted JS` | The packaging shape every consumer depends on |
 | `At least 1 example in examples/` | A non-empty subdirectory |
 | `Every shipped example builds and passes its own post-synth checks` | Discovers and serializes each `examples/*/src/` rather than counting directories (chant #1067), then runs the lexicon's own post-synth checks against the output and fails on any error-severity finding (chant #1400) |
 | `Registered intrinsics are exported by the package` | Every `intrinsics()` entry's `name` resolves to a real export of `src/index.ts` (chant #1067) |
