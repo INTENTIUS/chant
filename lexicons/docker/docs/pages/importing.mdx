@@ -47,6 +47,14 @@ export const api = new Service({
 export const pgdata = new Volume({});
 ```
 
+Import keeps every field the Compose spec defines for a service, volume, network, config or secret, and `x-` extension fields. A field the spec does not define is dropped, and the import names it in a warning. A top-level key other than `services`, `volumes`, `networks`, `configs` and `secrets` (such as `name` or `include`) is not imported and is also named in a warning.
+
+An export name is the compose key in camelCase. When the key is not a TypeScript identifier (`db-password`, `nginx.conf`), or two kinds share it, the import wraps the entity in `composeKey`, so the build writes the original key and references to it by name still match:
+
+```typescript
+export const dbPassword = composeKey("db-password", new DockerSecret({ environment: "DB_PASSWORD" }));
+```
+
 ## Import a Dockerfile
 
 ```bash

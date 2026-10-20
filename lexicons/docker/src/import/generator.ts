@@ -19,33 +19,26 @@ export class DockerGenerator {
     const warnings: string[] = [];
     const imports = new Set<string>();
     const lines: string[] = [];
+    const names = new ExportNames();
 
     for (const entity of entities) {
-      switch (entity.kind) {
-        case "service":
-          imports.add("Service");
-          lines.push(generateService(entity));
-          break;
-        case "volume":
-          imports.add("Volume");
-          lines.push(generateVolume(entity));
-          break;
-        case "network":
-          imports.add("Network");
-          lines.push(generateNetwork(entity));
-          break;
-        case "config":
-          imports.add("DockerConfig");
-          lines.push(generateConfig(entity));
-          break;
-        case "secret":
-          imports.add("DockerSecret");
-          lines.push(generateSecret(entity));
-          break;
-        case "dockerfile":
-          imports.add("Dockerfile");
-          lines.push(generateDockerfile(entity, warnings));
-          break;
+      if (entity.kind === "dockerfile") {
+        imports.add("Dockerfile");
+        lines.push(generateDockerfile(entity, warnings));
+        continue;
+      }
+      const ctor = CONSTRUCTORS[entity.kind];
+      imports.add(ctor);
+      const exportName = names.take(entity.name, entity.kind);
+      const expr = `new ${ctor}(${propsLiteral(entity)})`;
+      // An export name that differs from the compose key would rename the
+      // key on build, and every reference to it by name would dangle, so
+      // the key is set explicitly (#3937).
+      if (exportName === entity.name) {
+        lines.push(`export const ${exportName} = ${expr};`);
+      } else {
+        imports.add("composeKey");
+        lines.push(`export const ${exportName} = composeKey(${JSON.stringify(entity.name)}, ${expr});`);
       }
     }
 
@@ -56,30 +49,56 @@ export class DockerGenerator {
   }
 }
 
-function generateService(svc: ServiceIR): string {
-  const propsStr = JSON.stringify(svc.props, null, 2)
-    .replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
-  return `export const ${sanitizeName(svc.name)} = new Service(${propsStr});`;
+const CONSTRUCTORS = {
+  service: "Service",
+  volume: "Volume",
+  network: "Network",
+  config: "DockerConfig",
+  secret: "DockerSecret",
+} as const;
+
+function propsLiteral(entity: ServiceIR | VolumeIR | NetworkIR | ConfigIR | SecretIR): string {
+  if (entity.kind === "service") {
+    return JSON.stringify(entity.props, null, 2).replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
+  }
+  return Object.keys(entity.props).length > 0 ? JSON.stringify(entity.props) : "{}";
 }
 
-function generateVolume(vol: VolumeIR): string {
-  const hasProps = Object.keys(vol.props).length > 0;
-  return `export const ${sanitizeName(vol.name)} = new Volume(${hasProps ? JSON.stringify(vol.props) : "{}"});`;
-}
+/** Words an export cannot be named, and the names the generated file imports. */
+const RESERVED = new Set([
+  "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do",
+  "else", "enum", "export", "extends", "false", "finally", "for", "function", "if", "import", "in",
+  "instanceof", "new", "null", "return", "super", "switch", "this", "throw", "true", "try", "typeof",
+  "var", "void", "while", "with", "yield", "let", "static", "implements", "interface", "package",
+  "private", "protected", "public", "await", "arguments", "eval", "undefined", "NaN", "Infinity",
+  "Service", "Volume", "Network", "DockerConfig", "DockerSecret", "Dockerfile", "composeKey",
+]);
 
-function generateNetwork(net: NetworkIR): string {
-  const hasProps = Object.keys(net.props).length > 0;
-  return `export const ${sanitizeName(net.name)} = new Network(${hasProps ? JSON.stringify(net.props) : "{}"});`;
-}
+/**
+ * Export names for compose keys: identifiers, unique within the file. A key
+ * shared by two kinds (a service and a volume both named `db`) gives the
+ * second one a kind suffix (`dbVolume`).
+ */
+class ExportNames {
+  private readonly used = new Set<string>();
 
-function generateConfig(cfg: ConfigIR): string {
-  const hasProps = Object.keys(cfg.props).length > 0;
-  return `export const ${sanitizeName(cfg.name)} = new DockerConfig(${hasProps ? JSON.stringify(cfg.props) : "{}"});`;
-}
-
-function generateSecret(sec: SecretIR): string {
-  const hasProps = Object.keys(sec.props).length > 0;
-  return `export const ${sanitizeName(sec.name)} = new DockerSecret(${hasProps ? JSON.stringify(sec.props) : "{}"});`;
+  take(key: string, kind: string): string {
+    const base = sanitizeName(key);
+    const suffixed = `${base}${kind[0]!.toUpperCase()}${kind.slice(1)}`;
+    for (const c of [base, suffixed]) {
+      if (!RESERVED.has(c) && !this.used.has(c)) {
+        this.used.add(c);
+        return c;
+      }
+    }
+    for (let i = 2; ; i++) {
+      const c = `${suffixed}${i}`;
+      if (!this.used.has(c)) {
+        this.used.add(c);
+        return c;
+      }
+    }
+  }
 }
 
 /** The instructions a step can name; anything else (MAINTAINER) is left as a comment. */
@@ -137,7 +156,15 @@ function quote(value: string): string {
   return JSON.stringify(value);
 }
 
+/**
+ * A TypeScript identifier for a compose key: kebab, snake and dotted keys
+ * become camelCase, other characters are dropped, and a leading digit gets
+ * an underscore.
+ */
 function sanitizeName(name: string): string {
-  // Convert kebab/snake to camelCase
-  return name.replace(/[-_]([a-z])/g, (_, c) => c.toUpperCase());
+  let id = name.replace(/[^A-Za-z0-9$]+([A-Za-z0-9])/g, (_, c: string) => c.toUpperCase());
+  id = id.replace(/[^A-Za-z0-9_$]/g, "");
+  if (id === "") id = "entity";
+  if (/^[0-9]/.test(id)) id = `_${id}`;
+  return id;
 }

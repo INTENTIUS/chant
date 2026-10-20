@@ -142,6 +142,23 @@ export const api = new Service({
 });
 ```
 
+## Keys that are not identifiers
+
+The export name is the key in `docker-compose.yml`. For a key that cannot be an export name, such as `db-password`, set it with `composeKey`. A reference to the entity writes the key:
+
+```typescript
+import { DockerSecret, Service, composeKey } from "@intentius/chant-lexicon-docker";
+
+export const dbPassword = composeKey("db-password", new DockerSecret({ file: "./secrets/db_password.txt" }));
+
+export const api = new Service({
+  image: "myapp:1.0",
+  secrets: [dbPassword], // written as db-password
+});
+```
+
+Two entities of the same kind cannot take one key; the build stops with an error that names both.
+
 ## Telemetry attribution
 
 Inside a workspace, the docker lexicon adds two variables to every service's environment so that its spans name the declaration that produced them ([#2558](https://github.com/INTENTIUS/chant/issues/2558), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)).
