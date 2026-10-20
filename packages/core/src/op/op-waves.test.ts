@@ -17,6 +17,8 @@ import {
 } from "./op-waves-run";
 import { memoryGateLedgerPort } from "./gate";
 import { waveSetDigest } from "../gated-waves";
+import type { AppliedGateRecord } from "../lifecycle/gate-applied";
+import { LIFECYCLE_LOCAL_NOTE } from "../lifecycle/local-note";
 
 const spec: OpWavesSpec = {
   name: "migrations",
@@ -475,6 +477,39 @@ describe("spent approvals (#3784)", () => {
     h.done();
   });
 
+  test("a spend whose record does not reach the remote applies nothing, and the approval stays unspent (#3985)", async () => {
+    const h = harness(spending);
+    const memory = memoryGateLedgerPort({ resolutions: [approval] });
+    const gates = {
+      ...memory,
+      async appendApplied(record: AppliedGateRecord) {
+        await memory.appendApplied!(record);
+        return { pushed: false, pushWarning: 'the push of chant/lifecycle to "origin" failed' };
+      },
+    };
+    const result = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00Z" });
+    expect(result).toMatchObject({ exitCode: 1, applied: [] });
+    expect(result.decision?.spentAt).toBeUndefined();
+    expect(h.applies()).toBe(0);
+    h.done();
+  });
+
+  test("with no remote the local ledger is the whole ledger, so a spend recorded there applies (#3985)", async () => {
+    const h = harness(spending);
+    const memory = memoryGateLedgerPort({ resolutions: [approval] });
+    const gates = {
+      ...memory,
+      async appendApplied(record: AppliedGateRecord) {
+        await memory.appendApplied!(record);
+        return { pushed: false, pushWarning: LIFECYCLE_LOCAL_NOTE };
+      },
+    };
+    const result = await runOpWave({ spec: spending, specFile: "waves.json", wave: 2, cwd: h.cwd, exec: h.exec, show: h.show, gates, now: "2026-10-11T00:00:00Z" });
+    expect(result).toMatchObject({ exitCode: 0, decision: { status: "approved", spentAt: "2026-10-11T00:00:00Z" } });
+    expect(memory.applied).toHaveLength(1);
+    h.done();
+  });
+
   test("a wave that cannot record the approval applies nothing", async () => {
     const h = harness(spending);
     const gates = { ...memoryGateLedgerPort({ resolutions: [approval] }), appendApplied: undefined };
@@ -876,6 +911,20 @@ describe("gates and holds a product's wave needs (#3821)", () => {
     const other = harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2") } }, { extra: { overriders: ["github:dave"] } });
     expect((await run(other, memoryGateLedgerPort({ resolutions: [{ version: 1, op: "policy-override", gate: "vpc", resolvedBy: "github:carol", timestamp: "2026-10-10T00:00:00Z", planDigest: od, note: "ok" }] }))).exitCode).toBe(7);
     other.done();
+  });
+
+  test("an override spend whose record does not reach the remote applies nothing (#3985)", async () => {
+    const { overrideDigest } = await import("../override-gate");
+    const od = overrideDigest("vpc", digest("1"), ["no-public-s3"]);
+    const h = harness({ vpc: { planDigest: digest("1"), denied: { rules: ["no-public-s3"] } }, dns: { planDigest: digest("2"), empty: true } }, { extra: { overriders: ["github:carol"] }, atBase: { ...tg, waves: [{ ...tg.waves[0]!, gate: "never" }] } });
+    const memory = memoryGateLedgerPort({
+      resolutions: [{ version: 1, op: "policy-override", gate: "vpc", resolvedBy: "github:carol", timestamp: "2026-10-10T00:00:00Z", planDigest: od, note: "the bucket is the public docs site" }],
+    });
+    const gates = { ...memory, appendApplied: async () => ({ pushed: false, pushWarning: 'the push of chant/lifecycle to "origin" failed' }) };
+    const result = await run(h, gates);
+    expect(result).toMatchObject({ exitCode: 1, applied: [] });
+    expect(h.calls.some((c) => c.startsWith("tg apply"))).toBe(false);
+    h.done();
   });
 
   test("a plans file's overridersSource names the list in the refusal and the decision record (#3848)", async () => {
