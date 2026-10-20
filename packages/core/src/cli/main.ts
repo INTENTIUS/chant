@@ -258,7 +258,7 @@ CI:
               [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]
               [-o <dir>] [--wave <k>] [--no-require-review]
               [--no-status] [--status-url <url template>]
-              [--in-place] [--no-push] [--verbose]
+              [--in-place | --local] [--no-push] [--verbose]
                         Run the pull-request pipeline's plan or apply job as
                         a pipeline Op in a fresh worktree of --commit (default
                         HEAD) with a clean environment. --base and --pr stand
@@ -281,6 +281,10 @@ CI:
                         With --report-url it also adds the run to
                         <url>/runs/index.json, newest first, cut to the
                         newest --run-index-limit entries (default 200).
+                        --local runs the job on this machine: the record is
+                        kept on the local chant/lifecycle with runOrigin
+                        local and is never pushed, no status is set, nothing
+                        goes under a report URL, and ci tick does not count it.
   ci runs --report-url <url> [--json]
                         List the runs in the index at the report URL, newest
                         first.

@@ -23,7 +23,7 @@ export interface ParsedArgs {
   /** `--version` / `-V` (#2701): print the installed chant's version. */
   version?: boolean;
   report?: boolean;
-  /** `chant run` — force the local in-process executor (the default). */
+  /** `chant run` — force the local in-process executor (the default). `chant ci run --local` (#4161): run the job on this machine with no push, status or report upload. */
   local?: boolean;
   /**
    * `chant run <op> --on <lexicon>` (#2121) — which runtime hosts the run.
@@ -467,7 +467,7 @@ export interface ParsedArgs {
   ciSecrets?: string;
   /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. Also `chant ci run --chant` (#4094): what runs chant in the job. */
   ciChant?: string;
-  /** `chant ci run|serve --no-status` (#4097): post no commit status for the job. */
+  /** `chant ci run|serve --no-status` (#4097): post no commit status for the job. `chant components pr-plan|pr-apply --no-status` (#4161): post neither the status nor the note. */
   noStatus?: boolean;
   /** `chant ci run|serve --status-url <template>` (#4097): the link a job's status carries. `{key}` is `<pr>/<commit>[/<member>]`, as `--report-url` keys it. */
   statusUrl?: string;

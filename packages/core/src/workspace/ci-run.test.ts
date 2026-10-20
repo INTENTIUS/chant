@@ -827,3 +827,68 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
     await expect(ciRun({ cwd: app, job: "apply", env: "prod", forge: "github", base, commit: base, chant: fakeChant(), hostEnv: HOST, inPlace: true, push: false })).rejects.toThrow(/--in-place runs the checkout's HEAD/);
   });
 });
+
+describe("ci run --local (#4161)", () => {
+  test("the job runs on this machine: no push, no status, no report upload or run index, a local record ci tick ignores, and events that say local", async () => {
+    const { root, app, base, sha } = workspace();
+    const reports = scratchDir("chant-ci-run-local-");
+    const remoteBefore = git(root, "ls-remote", "origin");
+    const posts: CommitStatus[] = [];
+    const events: string[] = [];
+    const r = await ciRun({
+      image: JOB_IMAGE,
+      cwd: app,
+      job: "plan",
+      env: "prod",
+      forge: "forgejo",
+      base,
+      pr: 7,
+      chant: fakeChant(),
+      hostEnv: HOST,
+      runnerKey: BOT.pem,
+      runnerKeyFromEnv: true,
+      local: true,
+      runId: "local-plan-1",
+      output: join(scratchDir("chant-ci-run-local-out-"), "pr"),
+      loop: { reportUrl: `file://${reports}`, events: true },
+      status: { client: { async setCommitStatus(_sha, status) { posts.push(status); } } },
+      runEvents: (line) => events.push(line),
+    });
+    expect(r.status).toBe("ok");
+    expect(r.warnings).toEqual([]);
+    expect(r.local).toBe(true);
+
+    // Nothing left this machine: origin is as it was, the fake forge saw no status, and the report URL holds nothing.
+    expect(r.pushed).toBe(false);
+    expect(git(root, "ls-remote", "origin")).toBe(remoteBefore);
+    expect(posts).toEqual([]);
+    expect(readdirSync(reports)).toEqual([]);
+    // The command got --no-status and no --report-url, so pr-plan posts and uploads nothing either.
+    const argv = readFileSync(join(r.report!, "pr-plan.args"), "utf-8").trimEnd().split("\n");
+    expect(argv).toContain("--no-status");
+    expect(argv).not.toContain("--report-url");
+    expect(argv).toContain("--events-json");
+
+    // The record is on this checkout's chant/lifecycle, and says local.
+    expect(r.record).toMatchObject({ op: "pr-plan", gitSha: sha, id: "local-plan-1", runOrigin: { forge: "local" } });
+    const stored = (await readRunLedger("prod", "pr-plan", { cwd: app })).records.at(-1)!;
+    expect(stored).toMatchObject({ id: "local-plan-1", runOrigin: { forge: "local" } });
+    expect(formatCiRun(r)).toContain("local run: the record stays on this machine");
+
+    // The events stream as the job runs, and say where it ran.
+    const stream = checkRunEventLines(events);
+    expect(stream[0]).toMatchObject({ type: "run-start", kind: "pipeline", runtime: "local", runId: "local-plan-1", gitSha: sha, runOrigin: { forge: "local" } });
+    expect(stream.at(-1)).toMatchObject({ type: "run-settle", status: "ok" });
+
+    // A local run is never CI's verdict, signed or not.
+    const runs = await readOpRunSource(app, root, git(root, "rev-parse", "HEAD"));
+    expect(runs.checkRuns(sha)).toEqual([]);
+    expect(runs.ignored.get(sha)).toBeUndefined();
+  });
+
+  test("--local with --in-place is refused before anything runs, and the flag parses", async () => {
+    const { app, base } = workspace();
+    await expect(ciRun({ cwd: app, job: "plan", env: "prod", forge: "github", base, pr: 1, chant: fakeChant(), hostEnv: HOST, inPlace: true, local: true })).rejects.toThrow(/--in-place .* --local/);
+    expect(parseArgs(["ci", "run", "plan", "--local"]).local).toBe(true);
+  });
+});
