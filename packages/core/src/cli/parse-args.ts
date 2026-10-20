@@ -69,6 +69,9 @@ const BOOLEAN_FLAGS = new Set([
   "--setup-key",
   "--trust",
   "--unsigned",
+  "--in-place",
+  "--no-push",
+  "--no-require-review",
   "--expire",
   "--check-live",
   "--check-snapshot",
@@ -777,6 +780,15 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--trust") {
       // `chant ci serve|run --setup-key --trust` (#4099): list the key in .chant/trust.json on a branch.
       result.trustKey = true;
+    } else if (arg === "--in-place") {
+      // `chant ci run --in-place` (#4156): run the job in this checkout, as a generated forge job does.
+      result.ciInPlace = true;
+    } else if (arg === "--no-push") {
+      // `chant ci run --no-push` (#4156): keep the run record on the local chant/lifecycle.
+      result.noPush = true;
+    } else if (arg === "--no-require-review") {
+      // `chant ci run apply --no-require-review` (#4156): the apply without pr-apply's --require-review.
+      result.requireReview = false;
     } else if (arg === "--unsigned") {
       // `chant ci serve --unsigned` (#4099): serve without a runner key listed at the target's head.
       result.unsigned = true;

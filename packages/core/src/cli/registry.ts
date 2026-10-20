@@ -311,7 +311,8 @@ export interface ParsedArgs {
   /**
    * `chant components pr-apply --require-review` (#3183) — count an approval
    * only when its approver has a standing approving review on the pull
-   * request. Needs `--forge`.
+   * request. Needs `--forge`. `chant ci run apply --no-require-review`
+   * (#4156) sets it false, for a pipeline generated with `requireReview: false`.
    */
   requireReview?: boolean;
   /**
@@ -502,8 +503,16 @@ export interface ParsedArgs {
   setupKey?: boolean;
   /** `chant ci serve|run --setup-key --trust` (#4099): list the runner key in .chant/trust.json on a branch pushed for review. */
   trustKey?: boolean;
-  /** `chant ci serve --unsigned` (#4099): start without a runner key listed in .chant/trust.json at the target's head. */
+  /**
+   * `chant ci serve --unsigned` (#4099): serve without signing. Since #4156
+   * that is the default without a trusted key, so it only skips the key, and
+   * is ignored when ci.green.signedSince requires signed runs.
+   */
   unsigned?: boolean;
+  /** `chant ci run --in-place` (#4156): run the job in this checkout at HEAD, as a generated forge job does. */
+  ciInPlace?: boolean;
+  /** `chant ci run --no-push` (#4156): write the run record on the local chant/lifecycle and push nothing. */
+  noPush?: boolean;
   /** `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the principal the runner key is listed for. */
   ciPrincipal?: string;
   /** `chant workspace trust runner add <principal> --class runner|service` (#3510): the runner entry's class. */

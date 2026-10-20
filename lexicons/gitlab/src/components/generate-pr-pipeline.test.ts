@@ -12,7 +12,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGitlabPipeline } from "./generate-pipeline";
-import { PR_LOOP_SETUP } from "@intentius/chant/components/pr-pipeline";
+import { PR_LOOP_SETUP, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 
 const ESTATE: DriverComponent[] = [
   { name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: "net" }] }] },
@@ -54,10 +54,12 @@ describe("the GitLab merge-request pipeline", () => {
     expect(doc.plan.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
     expect(doc.plan.variables).toEqual({ BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" });
     expect(doc.plan.script).toEqual([
-      ...PR_LOOP_SETUP,'chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab']);
+      ...PR_LOOP_SETUP,'chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge gitlab']);
     expect(doc.apply.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
     expect(doc.apply.variables).toEqual({ BASE_SHA: "$CI_COMMIT_BEFORE_SHA" });
-    expect(doc.apply.script.at(-1)).toContain("--require-review");
+    // #4156: ci run builds pr-apply with --require-review, and GitLab hands CHANT_RUNNER_KEY to the job as a CI/CD variable when it has one.
+    expect(doc.apply.script.at(-1)).toBe('chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab');
+    expect(result.yaml).not.toContain("CHANT_RUNNER_KEY");
     expect(doc.apply.resource_group).toBe("chant-apply-prod");
     expect(doc.variables.GIT_DEPTH).toBe("0");
     expect(doc.apply.artifacts).toEqual({ when: "always", paths: [".chant/pr"] });
@@ -95,7 +97,8 @@ describe("the GitLab merge-request pipeline", () => {
   });
 
   test("the apply resumes from a record the job cache keeps for the pushed commit, failed or not (#3543)", () => {
-    expect(doc.apply.script.at(-1)).toContain("--resume .chant/pr-resume/pr-apply.json");
+    expect(doc.apply.script.at(-1)).toContain("--in-place");
+    expect(prLoopJobs("gitlab", "prod")[1]!.command).toContain("--resume .chant/pr-resume/pr-apply.json");
     expect(doc.apply.cache).toEqual({ key: "chant-apply-prod-$CI_COMMIT_SHA", paths: [".chant/pr-resume/pr-apply.json"], when: "always" });
     // The plan runs the merge request's code: no cache, no record.
     expect(doc.plan.cache).toBeUndefined();
@@ -119,9 +122,10 @@ describe("the GitLab merge-request pipeline", () => {
     const plan = mdoc["network-plan"] as Job;
     const apply = mdoc["network-apply"] as Job;
     expect(plan.script).toContain("cd infra/network");
-    expect(plan.script.indexOf("cd infra/network")).toBeLessThan(plan.script.findIndex((l) => l.includes("pr-plan")));
-    expect(plan.script.find((l) => l.includes("pr-plan"))).toContain("--member network");
-    expect(apply.script.find((l) => l.includes("pr-apply"))).toContain("--member network");
+    // ci run, started in the member's directory, finds the member and passes --member to pr-plan and pr-apply.
+    expect(plan.script.indexOf("cd infra/network")).toBeLessThan(plan.script.findIndex((l) => l.includes("ci run plan")));
+    expect(apply.script.indexOf("cd infra/network")).toBeLessThan(apply.script.findIndex((l) => l.includes("ci run apply")));
+    expect(prLoopJobs("gitlab", "prod", {}, "network")[0]!.command).toContain("--member network");
     // A change outside the member can reach it, so the jobs keep only their pipeline-source rules.
     expect(plan.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
     expect(apply.resource_group).toBe("chant-apply.network.prod");

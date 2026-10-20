@@ -41,12 +41,16 @@
  * pipelines run as chant Ops, such as one on GitLab or Forgejo, gets green
  * and revoked tags with no forge check runs. A phase's patterns then match
  * Op names, a run counts for the commit its record names as `gitSha`, and
- * the latest run of each Op decides, by its end time. A run counts only when
- * its record carries a statement signed by a runner key whose principal
- * holds the `runner` role at base (`./trust/op-run-statement.ts`); the tick
- * ignores and reports any other, so it neither greens nor revokes a commit.
- * A tick from runs signs every tag it makes, and each run in the tag's
- * record names the Op run's id and carries its statement.
+ * the latest run of each Op decides, by its end time. Signing is opt-in
+ * (#4156): an unsigned run counts, with no signer, and a run whose statement
+ * a runner key holding the `runner` role at base signed counts with that
+ * signer (`./trust/op-run-statement.ts`). A run whose statement is there and
+ * does not verify is ignored and reported, so it neither greens nor revokes
+ * a commit. With `ci.green.signedSince`, an unsigned run counts only on a
+ * strict first-parent ancestor of that commit, as an unsigned tag does. A
+ * tick given a runner key signs the tags it makes, and each run in the
+ * tag's record names the Op run's id and carries its statement when it has
+ * one.
  */
 
 import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./commit-links";
@@ -237,7 +241,7 @@ export function windowMs(window: string): number {
  */
 const runRecord = (r: RunVerdict) =>
   r.opRun
-    ? { name: r.name, id: null, conclusion: r.conclusion, url: r.url, opRun: { id: r.opRun.id, env: r.opRun.env, signer: r.opRun.signer, statement: r.opRun.statement } }
+    ? { name: r.name, id: null, conclusion: r.conclusion, url: r.url, opRun: { id: r.opRun.id, env: r.opRun.env, signer: r.opRun.signer, ...(r.opRun.statement ? { statement: r.opRun.statement } : {}) } }
     : { name: r.name, id: r.id, conclusion: r.conclusion, url: r.url };
 
 /** `source: "runs"` on a record made from chant runs (#4044); nothing for check runs, so their records read as before. */
@@ -443,6 +447,21 @@ export function readCiTags(top: string, green: CiGreen | null = null, base: stri
   return out;
 }
 
+/**
+ * Whether the workspace at `cwd` requires signed runs (#4156): its
+ * `ci.green.signedSince`, or null when it sets none, declares no
+ * `ci.green`, or has no declaration chant can read. Signing is opt-in, so
+ * only this makes `ci serve` refuse to start without a trusted runner key
+ * and `ci run` and `chant run` warn about a run they leave unsigned.
+ */
+export function signedRunsRequired(cwd: string): string | null {
+  try {
+    return readDeclaration(locateWorkspace(cwd).tree).ci?.green?.signedSince ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** The declaration's `ci.green`, read where `cwd` is, and the git top. */
 function readGreen(cwd: string): { green: CiGreen; top: string; workspace: { name: string; root: string; file: string } } {
   const located = locateWorkspace(cwd);
@@ -553,9 +572,6 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       `ci.green.signedSince is ${green.signedSince}, so every tag the tick makes needs a statement signed by a runner key, and none was given: pass --key <runner key.pem> or set CHANT_RUNNER_KEY`,
     );
   }
-  if (green.source === "runs" && req.runnerKey === undefined && !req.dryRun) {
-    throw new Error("the tick reads chant runs (source runs), and every tag it makes from them is signed by a runner key, and none was given: pass --key <runner key.pem> or set CHANT_RUNNER_KEY");
-  }
   const signer = req.runnerKey !== undefined ? ciTagSigner(top, base, req.runnerKey) : undefined;
   const links = await commitLinks(req.cwd, top, tracking, commits.map((c) => c.sha));
   const tags = readCiTags(top, green, base);
@@ -566,7 +582,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     if (fetched.status === "diverged" || fetched.status === "unreachable") {
       throw new Error(`could not fetch chant/lifecycle, where the Op runs are recorded, from ${fetched.remote}: ${fetched.status === "diverged" ? "the local branch and the remote's have diverged" : fetched.stderr}`);
     }
-    runs = await readOpRunSource(req.cwd, top, base);
+    runs = await readOpRunSource(req.cwd, top, base, green.signedSince);
   }
   const planned = await planTick({
     green,
@@ -605,7 +621,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
 
 /** The Op runs on the ledger, judged, as check runs by commit. */
 export interface OpRunSource {
-  /** The signed runs on `sha`, each as a check run named for its Op. */
+  /** The runs on `sha` that count, each as a check run named for its Op. */
   checkRuns(sha: string): CheckRun[];
   /** The runs on each commit that do not count, by commit. */
   ignored: Map<string, IgnoredOpRun[]>;
@@ -619,7 +635,7 @@ const RUN_LEDGER_FILE = /^runs__(.+)\.jsonl$/;
  * going. The id is the run's end time in milliseconds, so the latest run of
  * an Op is its latest attempt.
  */
-export function opRunCheckRun(record: OpRunRecord, signer: string): CheckRun {
+export function opRunCheckRun(record: OpRunRecord, signer: string | null): CheckRun {
   const settled = record.status === "ok" || record.status === "fail";
   const ended = Date.parse(record.ended);
   return {
@@ -629,7 +645,7 @@ export function opRunCheckRun(record: OpRunRecord, signer: string): CheckRun {
     conclusion: settled ? (record.status === "ok" ? "success" : "failure") : null,
     completedAt: settled ? record.ended : null,
     url: record.runOrigin?.url ?? null,
-    opRun: { id: record.id, env: record.env, signer, statement: record.statement! },
+    opRun: { id: record.id, env: record.env, signer, ...(signer !== null && record.statement ? { statement: record.statement } : {}) },
     ...(record.status === "fail" && record.failure ? { failureCode: record.failure.code } : {}),
   };
 }
@@ -637,11 +653,16 @@ export function opRunCheckRun(record: OpRunRecord, signer: string): CheckRun {
 /**
  * Judge every Op run record that names a commit against `.chant/trust.json`
  * at `base` (#4044), from the run ledger the project at `cwd` writes to. A
- * record with a valid statement becomes a check run on its `gitSha`; any
- * other is kept as an ignored run. Reads local refs only.
+ * record with a valid statement becomes a check run on its `gitSha` with
+ * its signer, and an unsigned one becomes a check run with signer null
+ * (#4156). A record whose statement does not verify is kept as an ignored
+ * run. With `signedSince` (`ci.green.signedSince`) an unsigned record counts
+ * only on a strict first-parent ancestor of that commit, and is ignored
+ * elsewhere. Reads local refs only.
  */
-export async function readOpRunSource(cwd: string, top: string, base: string): Promise<OpRunSource> {
+export async function readOpRunSource(cwd: string, top: string, base: string, signedSince: string | null = null): Promise<OpRunSource> {
   const policy = readTrustPolicy(gitRevisionSource(top, base), base);
+  const before = signedSince ? unsignedHistory(top, signedSince) : null;
   const byCommit = new Map<string, CheckRun[]>();
   const ignored = new Map<string, IgnoredOpRun[]>();
   for (const env of await listLedgerTrees({ cwd })) {
@@ -652,8 +673,12 @@ export async function readOpRunSource(cwd: string, top: string, base: string): P
       for (const record of records) {
         if (!record.gitSha) continue;
         const v = verifyOpRunStatement(record, policy.runners, policy.roles);
-        if (v.status === "signed") byCommit.set(record.gitSha, [...(byCommit.get(record.gitSha) ?? []), opRunCheckRun(record, v.signer)]);
-        else ignored.set(record.gitSha, [...(ignored.get(record.gitSha) ?? []), { run: record.id, op: record.op, env: record.env, status: v.status, reason: v.reason }]);
+        const counts = v.status === "signed" || (v.status === "unsigned" && (before === null || before.has(record.gitSha)));
+        if (counts) byCommit.set(record.gitSha, [...(byCommit.get(record.gitSha) ?? []), opRunCheckRun(record, v.status === "signed" ? v.signer : null)]);
+        else {
+          const reason = v.status === "unsigned" ? `${v.reason}; ci.green.signedSince is ${signedSince}, so a run on a commit that is not a strict first-parent ancestor of it needs one` : v.reason;
+          ignored.set(record.gitSha, [...(ignored.get(record.gitSha) ?? []), { run: record.id, op: record.op, env: record.env, status: v.status, reason }]);
+        }
       }
     }
   }
@@ -836,7 +861,7 @@ export interface CiListRun {
   conclusion: string | null;
   url: string | null;
   /** The Op run, when the run is a chant run (#4044): its id, env and the runner whose statement it carries. Absent for a check run. */
-  opRun?: { id: string; env: string; signer: string };
+  opRun?: { id: string; env: string; signer: string | null };
 }
 
 export interface CiListPhase {
@@ -895,7 +920,8 @@ const asRun = (r: unknown): CiListRun | null => {
   const o = r as Record<string, unknown>;
   if (typeof o.name !== "string") return null;
   const op = o.opRun as Record<string, unknown> | undefined;
-  const opRun = op && typeof op === "object" && typeof op.id === "string" && typeof op.env === "string" && typeof op.signer === "string" ? { opRun: { id: op.id, env: op.env, signer: op.signer } } : {};
+  const signer = op && typeof op === "object" ? (typeof op.signer === "string" ? op.signer : op.signer === null ? null : undefined) : undefined;
+  const opRun = op && typeof op === "object" && typeof op.id === "string" && typeof op.env === "string" && signer !== undefined ? { opRun: { id: op.id, env: op.env, signer } } : {};
   return { name: o.name, id: typeof o.id === "number" ? o.id : null, conclusion: typeof o.conclusion === "string" ? o.conclusion : null, url: typeof o.url === "string" ? o.url : null, ...opRun };
 };
 
@@ -973,7 +999,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
     const tags = readCiTags(top, green, base);
     const source = req.source ?? green.source;
     if (source === "runs" && req.forge) throw new Error("--forge reads check runs, and the source is chant runs (ci.green.source or --source runs); drop one");
-    const runs = source === "runs" ? await readOpRunSource(req.cwd, top, base) : undefined;
+    const runs = source === "runs" ? await readOpRunSource(req.cwd, top, base, green.signedSince) : undefined;
     const out: CiListCommit[] = [];
     for (const c of commits) {
       const g = tags.green.get(c.sha);

@@ -19,7 +19,7 @@ import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } f
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
 import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciLoopOptions, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
 import type { CommitStatus } from "../pr-forge";
-import { ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
+import { ciList, ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
 import type { StepRecord } from "../op/local-executor";
 import { sshFromEd25519 } from "./trust/dsse";
 import { verifyOpRunStatement } from "./trust/op-run-statement";
@@ -310,8 +310,8 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(record.phases.apply![0]).toMatchObject({ name: "pr-apply", opRun: { id: apply.record.id, signer: "chant-runner" } });
   });
 
-  test("a failing job is recorded failed, and a key from the environment that trust.json does not list leaves it unsigned", async () => {
-    const { app, base } = workspace();
+  test("a failing job is recorded failed, and a key from the environment that trust.json does not list leaves it unsigned, quietly", async () => {
+    const { root, app, base } = workspace();
     const stranger = runnerKey();
     const lines: string[] = [];
     const r = await ciRun({ image: JOB_IMAGE,
@@ -333,17 +333,30 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(r.record.status).toBe("fail");
     expect(r.record.statement).toBeUndefined();
     expect(r.signer).toBeNull();
-    expect(r.warnings[0]).toMatch(/CHANT_RUNNER_KEY is set, and the run will not be signed: .*lists no runner with this key/);
+    // #4156: signing is opt-in, so an unlisted key is a note for --verbose, not a warning.
+    expect(r.warnings).toEqual([]);
+    expect(r.notes[0]).toMatch(/CHANT_RUNNER_KEY is set, and the run will not be signed: .*lists no runner with this key/);
+    // The command's exit code is the job's, as a forge job's was before it ran through ci run.
+    expect(r.exitCode).toBe(3);
     expect(r.failure).toMatchObject({ phase: "apply", error: expect.stringContaining("command exited 3") });
     // The report says nothing about a failure, so the record names the command.
     expect(r.record.failure).toMatchObject({ code: "command-failed", phase: "apply", exitCode: 3, reason: expect.stringContaining("command exited 3") });
     expect(lines.some((l) => l.includes("fake pr-apply ran"))).toBe(true);
     expect(r.report).not.toBeNull();
-    expect(formatCiRun(r)).toContain("unsigned, so ci tick from runs does not count it");
+    expect(formatCiRun(r)).toContain("on chant/lifecycle, unsigned");
 
-    // The same key given with --key refuses the run before anything runs.
+    // The same key given with --key refuses the run before anything runs, and so does a key that is not one.
     await expect(ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: stranger.pem, push: false })).rejects.toThrow(/would not be signed/);
+    await expect(ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: "not a key", runnerKeyFromEnv: true, push: false })).rejects.toThrow(/in CHANT_RUNNER_KEY is not an Ed25519 private key in PEM/);
     expect((await readRunLedger("prod", "pr-apply", { cwd: app })).records).toHaveLength(1);
+
+    // With ci.green.signedSince the same run warns, and so does one with no key.
+    writeFiles(root, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green: { ...GREEN, signedSince: base } } }) });
+    const opted = { image: JOB_IMAGE, cwd: app, job: "apply" as const, env: "prod", forge: "github" as const, base, chant: fakeChant(), hostEnv: HOST, push: false, output: join(scratchDir("chant-ci-run-out-"), "pr") };
+    const warned = await ciRun({ ...opted, runnerKey: stranger.pem, runnerKeyFromEnv: true });
+    expect(warned.warnings[0]).toMatch(/CHANT_RUNNER_KEY is set, and the run will not be signed: [\s\S]*, and ci.green.signedSince is [0-9a-f]{40}, so it will not count/);
+    const keyless = await ciRun(opted);
+    expect(keyless.warnings).toEqual([expect.stringMatching(/^there is no runner key, so the run's record is unsigned, and ci.green.signedSince is/)]);
   });
 
   test("--pr-build runs the job's build and lint lines after --before-script and before the command, and a failing build fails the job", async () => {
@@ -726,5 +739,91 @@ describe("the job's secrets from the host (#4096)", () => {
     expect(leaks(r.failure!.error)).toBe(false);
     expect(leaks(formatCiRun(r))).toBe(false);
     expect(formatCiRun(r)).toContain("not-approved in apply, exit 3: the deploy failed with ***");
+  });
+});
+
+describe("a generated forge job runs ci run --in-place (#4156)", () => {
+  // What a GitHub or Forgejo job has in its environment: the forge's run, job and attempt, and the secret.
+  const FORGE = { GITHUB_RUN_ID: "4242", GITHUB_RUN_ATTEMPT: "2", GITHUB_JOB: "apply", GITHUB_REPOSITORY: "acme/estate", GITHUB_SERVER_URL: "http://forgejo.localhost" };
+
+  test("the generated job's line parses to the same job, and --in-place, --no-push, --no-require-review and --wave reach it", () => {
+    const [plan, apply] = prLoopJobs("forgejo", "prod", { events: true, reportUrl: "s3://b/p", requireReview: false, waveGate: "release", branch: "trunk" });
+    expect(plan!.run.command).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge forgejo --wave-gate release --events-json --report-url "s3://b/p"');
+    const args = parseArgs(apply!.run.command.replace(/"\$BASE_SHA"/, "b".repeat(40)).replace(/"/g, "").split(" ").slice(1).concat(["--wave", "2"]));
+    expect(args).toMatchObject({ ciInPlace: true, requireReview: false, wave: 2, waveGate: "release", branch: "trunk", eventsJson: true, reportUrl: "s3://b/p" });
+    expect(ciLoopOptions(args)).toEqual({ gate: "pr-apply", branch: "trunk", events: true, reportUrl: "s3://b/p", waveGate: "release", requireReview: false });
+    expect(parseArgs(["ci", "run", "plan", "--no-push"]).noPush).toBe(true);
+    // ci run rebuilds pr-apply from those options: the very command the job ran before #4156.
+    expect(prLoopJobs("forgejo", "prod", ciLoopOptions(args))[1]!.command).toBe(apply!.command);
+    expect(apply!.run.env.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
+  });
+
+  test("in the job's own checkout, with its environment less the key, a signed record names the forge's run and verifies, and ci list sees it", async () => {
+    const { root, app, base, sha } = workspace();
+    const chant = fakeChant();
+    const before = git(root, "worktree", "list", "--porcelain");
+    const r = await ciRun({ cwd: app, job: "apply", env: "prod", forge: "forgejo", base, chant, hostEnv: { ...HOST, ...FORGE }, runnerKey: BOT.pem, runnerKeyFromEnv: true, inPlace: true, runId: "forge-apply-1" });
+    expect(r.status).toBe("ok");
+    expect(r.warnings).toEqual([]);
+    expect(r.signer).toBe("chant-runner");
+    expect(r.pushed).toBe(true);
+
+    // In place: no worktree, the report where the forge keeps it, and no setup phase.
+    expect(git(root, "worktree", "list", "--porcelain")).toBe(before);
+    expect(readFileSync(join(app, ".chant/pr/pr-apply.pwd"), "utf-8").trim()).toBe(realpathSync(app));
+    expect(r.report).toBe(join(realpathSync(app), ".chant/pr"));
+    expect(r.record.phases.map((p) => p.name)).toEqual(["apply"]);
+    const argv = readFileSync(join(app, ".chant/pr/pr-apply.args"), "utf-8").trimEnd().split("\n");
+    expect(argv).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--require-review", "--resume", ".chant/pr-resume/pr-apply.json"]);
+    // The forge job's whole environment reaches the step, but never the runner key.
+    const env = envFile(join(app, ".chant/pr"), "pr-apply");
+    expect(env).toMatchObject({ NOT_FOR_JOBS: "leak", GITHUB_RUN_ID: "4242", BASE_SHA: base, GITHUB_SHA: sha });
+    expect(env).not.toHaveProperty("CHANT_RUNNER_KEY");
+
+    // The record: the forge's run, job and attempt as runOrigin, signed, and it verifies against trust.json.
+    const origin = { forge: "github", repo: "acme/estate", url: "http://forgejo.localhost/acme/estate/actions/runs/4242", jobId: "apply", attempt: 2 };
+    expect(r.record).toMatchObject({ op: "pr-apply", gitSha: sha, id: "forge-apply-1", runOrigin: origin });
+    const stored = (await readRunLedger("prod", "pr-apply", { cwd: app })).records.at(-1)!;
+    expect(verifyOpRunStatement(stored, RUNNERS, { runner: ["chant-runner"] })).toMatchObject({ status: "signed", signer: "chant-runner" });
+    expect(git(root, "ls-remote", "origin", "chant/lifecycle")).toContain(git(root, "rev-parse", "chant/lifecycle"));
+
+    const list = (await ciList({ cwd: app, now: NOW })) as Extract<Awaited<ReturnType<typeof ciList>>, { commits: unknown }>;
+    const listed = list.commits.find((c) => c.sha === sha)!;
+    expect(listed.phases.find((p) => p.phase === "apply")!.runs).toEqual([expect.objectContaining({ name: "pr-apply", opRun: { id: "forge-apply-1", env: "prod", signer: "chant-runner" } })]);
+  });
+
+  test("with no key the job runs, warns of nothing, and its unsigned record counts in ci list and the run index", async () => {
+    const { app, base, sha } = workspace();
+    const reports = scratchDir("chant-ci-run-index-");
+    const { CHANT_RUNNER_KEY: _key, ...keyless } = HOST;
+    const r = await ciRun({ cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...keyless, ...FORGE, GITHUB_JOB: "plan" }, inPlace: true, push: false, runId: "forge-plan-1", loop: { reportUrl: `file://${reports}` } });
+    expect(r.status).toBe("ok");
+    expect(r.warnings).toEqual([]);
+    expect(r.notes).toEqual(["there is no runner key, so the run's record is unsigned"]);
+    expect(r.signer).toBeNull();
+    expect(r.record.statement).toBeUndefined();
+    expect(r.record.runOrigin).toMatchObject({ forge: "github", jobId: "plan", attempt: 2 });
+    // --no-push: the plan's record stays on this checkout's chant/lifecycle.
+    expect(r.pushed).toBe(false);
+
+    const list = (await ciList({ cwd: app, now: NOW })) as Extract<Awaited<ReturnType<typeof ciList>>, { commits: unknown }>;
+    const plan = list.commits.find((c) => c.sha === sha)!.phases.find((p) => p.phase === "plan")!;
+    expect(plan.result).toBe("pass");
+    expect(plan.runs[0]).toMatchObject({ name: "pr-plan", opRun: { id: "forge-plan-1", signer: null } });
+
+    const index = JSON.parse(readFileSync(join(reports, "runs", "index.json"), "utf-8")) as { runs: Record<string, unknown>[] };
+    expect(index.runs[0]).toMatchObject({ job: "plan", runId: "forge-plan-1", signer: null, runOrigin: { forge: "github", jobId: "plan", attempt: 2 } });
+  });
+
+  test("a failed command's exit code is the job's, and --wave reaches pr-apply", async () => {
+    const { app, base } = workspace();
+    const r = await ciRun({ cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: { ...HOST, ...FORGE, FAKE_EXIT: "3" }, inPlace: true, push: false, loop: { waveGate: "release" }, wave: 2 });
+    expect(r.status).toBe("fail");
+    expect(r.exitCode).toBe(3);
+    const argv = readFileSync(join(app, ".chant/pr/pr-apply.args"), "utf-8").trimEnd().split("\n");
+    expect(argv.slice(-4)).toEqual(["--resume", ".chant/pr-resume/pr-apply.json", "--wave", "2"]);
+    await expect(ciRun({ cwd: app, job: "plan", env: "prod", forge: "github", base, pr: 1, chant: fakeChant(), hostEnv: HOST, inPlace: true, push: false, wave: 2 })).rejects.toThrow(/--wave names the one wave an apply runs/);
+    // In place runs HEAD only.
+    await expect(ciRun({ cwd: app, job: "apply", env: "prod", forge: "github", base, commit: base, chant: fakeChant(), hostEnv: HOST, inPlace: true, push: false })).rejects.toThrow(/--in-place runs the checkout's HEAD/);
   });
 });

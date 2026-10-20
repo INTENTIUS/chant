@@ -233,7 +233,8 @@ function prLoopGithubDoc(
     ...(job.build ? [{ name: "Build the templates", run: job.build[0] }, { name: "Lint the project", run: job.build[1] }] : []),
     ...(job.jobName === "apply" ? [restoreRecord(job.wave)] : []),
     // The job's setup lines (#4004) run in the command's shell, so a value they settle reaches it.
-    { name, env: job.env, run: [...(job.setup ?? []), job.command].join("\n") },
+    // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY secret is set.
+    { name, env: job.run.env, run: [...(job.setup ?? []), job.run.command].join("\n") },
     ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord(job.wave)] : []),
     {

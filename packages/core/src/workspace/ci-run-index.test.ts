@@ -149,6 +149,8 @@ describe("chant ci run with --report-url keeps the run index (#4098)", () => {
       key: `7/${w.sha}/app`,
       member: "app",
       runOrigin: { forge: "chant" },
+      // #4156: no key, and the run is listed all the same, with no signer.
+      signer: null,
     });
     // The apply found its pull request in its own report.
     expect(index.runs[0]).toMatchObject({ job: "apply", pr: 7, key: `7/${w.sha}/app` });

@@ -2,9 +2,10 @@
  * #4099: the runner key on a `chant ci serve` or `chant ci run` host. The
  * key is made in the state directory with mode 0600, `--setup-key --trust`
  * proposes its runner entry on a branch through `trust runner add` (#3510)
- * and never writes the target branch, and `ci serve` refuses to start when
- * `.chant/trust.json` at the target's head does not list its key, unless
- * `--unsigned`.
+ * and never writes the target branch. Signing is opt-in (#4156): `ci serve`
+ * starts with no key and says nothing about it, and serves unsigned with one
+ * warning when `.chant/trust.json` at the target's head does not list its
+ * key. With `ci.green.signedSince` it refuses to start in either case.
  *
  * Every test works in its own temp repository with a bare origin and its own
  * state directory. The jobs' `chant` is a stub script, and no job runs: the
@@ -126,9 +127,12 @@ describe("the host's runner key (#4099)", () => {
     expect(trust.roles.runner).toEqual(["chant-runner:demo"]);
     expect(git(origin, "rev-parse", `${branch}^`)).toBe(main);
 
-    // Until it merges, ci serve refuses the key; once it has, the key signs as the principal.
+    // Until it merges, ci serve serves unsigned with a warning (refuses with the opt-in); once it has, the key signs as the principal.
     const key = hostRunnerKey(state)!;
-    expect(() => ciServeRunnerKey({ top: root, stateDir: state, branch: "main" })).toThrow(/not trusted at main/);
+    const pending = ciServeRunnerKey({ top: root, stateDir: state, branch: "main" });
+    expect(pending.pem).toBeUndefined();
+    expect(pending.warning).toMatch(/not trusted at main/);
+    expect(() => ciServeRunnerKey({ top: root, stateDir: state, branch: "main", required: main })).toThrow(/not trusted at main/);
     git(root, "push", "-q", "origin", `refs/remotes/origin/${branch}:refs/heads/main`);
     expect(ciServeRunnerKey({ top: root, stateDir: state, branch: "main" })).toMatchObject({ pem: key.pem, source: join(state, RUNNER_KEY_FILE) });
     expect(ciTagSigner(root, git(root, "rev-parse", "refs/remotes/origin/main"), key.pem).principal).toBe("chant-runner:demo");
@@ -138,29 +142,63 @@ describe("the host's runner key (#4099)", () => {
     expect(listed.err).toContain("lists it for chant-runner:demo, with the runner role");
   });
 
-  test("ci serve refuses to start with a key trust.json does not list at the target's head, and --unsigned starts without one", async () => {
+  test("ci serve starts with no key and says nothing, and serves unsigned with one warning for a key trust.json does not list (#4156)", async () => {
     const { root } = workspace();
     const state = scratchDir("chant-runner-key-state-");
 
+    // No key: nothing about keys is printed. The serve goes on to the forge, which this test has no token for.
+    const none = await cli(root, SERVE(state));
+    expect(none.err.split("\n")).toHaveLength(2);
+    expect(none.err.split("\n")[0]).toContain("chant ci serve: --forge forgejo needs GITHUB_TOKEN");
+    const keyless = ciServeRunnerKey({ top: root, stateDir: state, branch: "main" });
+    expect(keyless.pem).toBeUndefined();
+    expect(keyless.warning).toBeUndefined();
+    expect(keyless.note).toContain("not signed");
+    // --verbose prints that one line.
+    const verbose = await cli(root, [...SERVE(state), "--verbose"]);
+    expect(verbose.err).toContain("ci serve: runs are not signed: there is no runner key");
+
+    // A key the head does not list: one warning at startup, and no key goes to the jobs.
+    ensureHostRunnerKey(state);
+    const unlisted = await cli(root, SERVE(state));
+    expect(unlisted.err.match(/not trusted at main [0-9a-f]{12}/g)).toHaveLength(1);
+    expect(unlisted.err).toContain("Runs are not signed until it is");
+    expect(unlisted.err).toContain("chant ci serve --setup-key --trust");
+    expect(unlisted.err).not.toContain("signing runs with");
+
+    // A key listed only in the working tree, not at the head, is not trusted either.
+    const other = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    writeFileSync(join(state, "other.pem"), other, { mode: 0o600 });
+    expect(trustWrite({ cwd: root, action: "runner add", name: "ci-bot", key: join(state, "other.pem") })).toMatchObject({ changed: true });
+    const flagged = ciServeRunnerKey({ top: root, stateDir: state, branch: "main", keyFile: join(state, "other.pem") });
+    expect(flagged.pem).toBeUndefined();
+    expect(flagged.warning).toContain("lists no runner with this key");
+
+    // A key file that is not a key is an error either way.
+    writeFileSync(join(state, "bad.pem"), "not a key", { mode: 0o600 });
+    expect(() => ciServeRunnerKey({ top: root, stateDir: state, branch: "main", keyFile: join(state, "bad.pem") })).toThrow(/not an Ed25519 private key in PEM/);
+
+    // --unsigned is accepted and serves unsigned.
+    expect(ciServeRunnerKey({ top: root, stateDir: state, branch: "main", unsigned: true })).toMatchObject({ fromFlag: false, source: "none (--unsigned)" });
+  });
+
+  test("with ci.green.signedSince, ci serve refuses to start without a trusted key, --unsigned or not (#4156)", async () => {
+    const { root, main } = workspace();
+    const state = scratchDir("chant-runner-key-state-");
+    const green = { branch: "main", phases: { plan: ["pr-plan"] }, require: ["plan"], source: "runs", signedSince: main };
+    writeFiles(root, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green } }) });
+
     const none = await cli(root, SERVE(state));
     expect(none.code).toBe(1);
-    expect(none.err).toContain("there is no runner key");
+    expect(none.err).toContain(`ci.green.signedSince is ${main}, so every run must be signed, and there is no runner key`);
+    const unsigned = await cli(root, [...SERVE(state), "--unsigned"]);
+    expect(unsigned.code).toBe(1);
+    expect(unsigned.err).toContain("there is no runner key");
 
     ensureHostRunnerKey(state);
     const unlisted = await cli(root, SERVE(state));
     expect(unlisted.code).toBe(1);
     expect(unlisted.err).toMatch(/not trusted at main [0-9a-f]{12}/);
-    expect(unlisted.err).toContain("chant ci serve --setup-key --trust");
     expect(unlisted.err).toContain("chant workspace trust runner add");
-
-    // A key listed only in the working tree, not at the head, is still refused.
-    const other = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-    writeFileSync(join(state, "other.pem"), other, { mode: 0o600 });
-    expect(trustWrite({ cwd: root, action: "runner add", name: "ci-bot", key: join(state, "other.pem") })).toMatchObject({ changed: true });
-    const flagged = await cli(root, [...SERVE(state), "--key", join(state, "other.pem")]);
-    expect(flagged.code).toBe(1);
-    expect(flagged.err).toContain("lists no runner with this key");
-
-    expect(ciServeRunnerKey({ top: root, stateDir: state, branch: "main", unsigned: true })).toEqual({ fromFlag: false, source: "none (--unsigned)" });
   });
 });

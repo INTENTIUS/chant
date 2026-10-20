@@ -323,7 +323,8 @@ function prLoopGitlabPipeline(
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), ...(job.build ?? []), job.command, ...extraScript];
+  // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY variable is set.
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
   const stages = ["plan", ...applies.map((a) => a.stage)];
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
@@ -335,7 +336,7 @@ function prLoopGitlabPipeline(
       stage: "plan",
       image,
       rules: [{ if: onMergeRequest }],
-      variables: plan.env,
+      variables: plan.run.env,
       script: script(plan),
       artifacts: { when: "always", paths: [reportPath] },
     },
@@ -348,7 +349,7 @@ function prLoopGitlabPipeline(
           ...(i > 0 ? { needs: [applies[i - 1]!.name] } : {}),
           resource_group: prApplyGroup(env, member?.name),
           rules: [{ if: onMerge }],
-          variables: job.env,
+          variables: job.run.env,
           script: script(job),
           // The attempt record (#3543), kept under the pushed commit even when
           // the job fails, so a retry finishes the apply under the same approval.

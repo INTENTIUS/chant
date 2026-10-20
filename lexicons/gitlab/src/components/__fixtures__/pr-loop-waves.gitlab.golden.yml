@@ -24,7 +24,7 @@ plan:
     PR_NUMBER: '$CI_MERGE_REQUEST_IID'
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
-    - chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab --wave-gate release
+    - chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge gitlab --wave-gate release
   artifacts:
     when: always
     paths:
@@ -41,7 +41,7 @@ apply-wave-1:
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
     - if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; if [ -z "$BASE_SHA" ]; then git fetch origin $CI_DEFAULT_BRANCH && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$CI_COMMIT_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; fi; export BASE_SHA
-    - chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge gitlab --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave 1
+    - chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 1
   cache:
     key: chant-apply-prod-$CI_COMMIT_SHA
     paths:
@@ -65,7 +65,7 @@ apply-wave-2:
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
     - if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; if [ -z "$BASE_SHA" ]; then git fetch origin $CI_DEFAULT_BRANCH && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$CI_COMMIT_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; fi; export BASE_SHA
-    - chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge gitlab --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave 2
+    - chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 2
   cache:
     key: chant-apply-prod-$CI_COMMIT_SHA
     paths:
@@ -89,7 +89,7 @@ apply-wave-3:
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
     - if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; if [ -z "$BASE_SHA" ]; then git fetch origin $CI_DEFAULT_BRANCH && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$CI_COMMIT_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; fi; export BASE_SHA
-    - chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge gitlab --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave 3
+    - chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 3
   cache:
     key: chant-apply-prod-$CI_COMMIT_SHA
     paths:

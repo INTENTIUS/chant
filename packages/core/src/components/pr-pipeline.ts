@@ -53,6 +53,14 @@
  * carries on. `chant ci serve` runs the one apply job, which runs the waves
  * in order until one stops.
  *
+ * Each generated job runs its command through `chant ci run plan|apply
+ * --in-place` (#4156, `PrLoopJob.run`), so a forge job writes the same run
+ * record the chant runner does: Op `pr-plan` or `pr-apply`, signed with
+ * the runner key a forge secret puts in `CHANT_RUNNER_KEY`, and naming the
+ * forge's run as its `runOrigin`. `ci run` runs `command` in the job's own
+ * checkout with the job's environment, less the key. The plan passes
+ * `--no-push`, so it still writes nothing to the remote `chant/lifecycle`.
+ *
  * In a workspace member (#3465) both commands run in the member's directory
  * and pass `--member <name>`, so the member's gate (`pr-<number>-<member>`),
  * note and statuses stay apart from every other member's on the same pull
@@ -67,6 +75,9 @@ import { EMPTY_TREE_SHA } from "./changed-files";
 import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
+
+/** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
+const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
 
 /** Where both jobs write their reports, kept as a CI artifact. */
 export const PR_LOOP_REPORT_DIR = ".chant/pr";
@@ -171,6 +182,15 @@ export interface PrLoopJob {
   build?: string[];
   /** With `waveGate` (#4003): the wave a generated apply job runs, 1-based. */
   wave?: number;
+  /**
+   * What the generated job runs in place of `command` (#4156): `chant ci run
+   * <job> --in-place` with the same environment, gate, forge, events and
+   * report URL, which runs `command` and records the run. `env` is the
+   * job's `env` and, on GitHub and Forgejo, `CHANT_RUNNER_KEY` from the
+   * repository secret of that name. GitLab hands its CI/CD variables to a
+   * job itself.
+   */
+  run: { command: string; env: Record<string, string> };
 }
 
 /** The lines `build` (#4088) runs before a job's command: the build, then the lint. Empty without the option. */
@@ -199,15 +219,30 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}),
     ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
   };
+  // #4156: the flags `chant ci run` rebuilds `command` from. It finds the member from the directory it runs in.
+  const ciRun = (job: "plan" | "apply"): string[] => [
+    "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
+    "--base", '"$BASE_SHA"', ...(job === "plan" ? ["--pr", '"$PR_NUMBER"'] : []),
+    "--env", env, "--gate", gate, "--forge", forge,
+    ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
+    ...(job === "apply" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
+    ...(job === "apply" && options.requireReview === false ? ["--no-require-review"] : []),
+    ...(options.events ? ["--events-json"] : []),
+    ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
+  ];
+  const runEnv = (env: Record<string, string>): Record<string, string> => (github ? { ...env, [RUNNER_KEY_ENV]: `\${{ secrets.${RUNNER_KEY_ENV} }}` } : env);
+  const planEnv = github
+    ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
+    : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv };
+  const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
   return [
     {
       jobName: "plan",
       // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
       command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : [])].join(" "),
-      env: github
-        ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
-        : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv },
+      env: planEnv,
       ...build,
+      run: { command: ciRun("plan").join(" "), env: runEnv(planEnv) },
     },
     {
       jobName: "apply",
@@ -217,9 +252,10 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
         ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
         "--resume", PR_APPLY_RECORD,
       ].join(" "),
-      env: github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv },
+      env: applyEnv,
       setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
       ...build,
+      run: { command: ciRun("apply").join(" "), env: runEnv(applyEnv) },
     },
   ];
 }
@@ -250,7 +286,13 @@ export function prApplyWaveJobName(wave: number): string {
  */
 export function prLoopWaveJobs(components: DriverComponent[], apply: PrLoopJob): PrLoopJob[] {
   const count = Math.max(1, layerWaves(components.map((c) => ({ name: c.name, dependsOn: c.dependsOn ?? [] }))).length);
-  return Array.from({ length: count }, (_, i) => ({ ...apply, command: `${apply.command} --wave ${i + 1}`, wave: i + 1 }));
+  return Array.from({ length: count }, (_, i) => ({
+    ...apply,
+    command: `${apply.command} --wave ${i + 1}`,
+    wave: i + 1,
+    // #4156: the job runs it through chant ci run, which appends the same --wave to pr-apply.
+    run: { ...apply.run, command: `${apply.run.command} --wave ${i + 1}` },
+  }));
 }
 
 /**

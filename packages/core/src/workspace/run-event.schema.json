@@ -54,7 +54,9 @@
           "description": "github: a GitHub Actions run, also the spelling Forgejo Actions uses. gitlab: a CI pipeline. op: a steward's run, named by its Op run id. local: a run on the machine that started it, outside CI. chant: a pull-request job the chant runner ran (chant ci run, #4094), named by its Op run id; added within contract version 1 and written by chant 0.124.30 and newer, so a reader that switches on forge keeps a case for a value it does not know."
         },
         "repo": { "type": "string", "description": "The repository or project slug on the forge, when the environment named one." },
-        "url": { "type": "string", "description": "A link to the run, when the environment gave enough to build one." }
+        "url": { "type": "string", "description": "A link to the run, when the environment gave enough to build one." },
+        "jobId": { "type": "string", "description": "The forge's id for the job within the run: GITHUB_JOB on GitHub and Forgejo, CI_JOB_ID on GitLab. Added within contract 1 by #4156 and written by chant 0.124.32 and newer, only by chant ci run in a forge job." },
+        "attempt": { "type": "integer", "minimum": 1, "description": "The run's attempt, GITHUB_RUN_ATTEMPT on GitHub and Forgejo. Added within contract 1 by #4156 and written by chant 0.124.32 and newer, only by chant ci run in a forge job." }
       }
     },
     "settleStatus": {

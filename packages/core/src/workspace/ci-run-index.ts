@@ -57,6 +57,12 @@ export interface CiRunIndexEntry {
   /** The folder the job's report is under, below the report URL: `<pr>/<commit>[/<member>]`. */
   key: string;
   runOrigin: RunOrigin;
+  /**
+   * The runner whose key signed the run's record, or null for an unsigned
+   * run (#4156). Written by chant 0.124.32 and newer; an entry from an older
+   * chant lacks it.
+   */
+  signer?: string | null;
 }
 
 export interface CiRunIndex {
@@ -167,7 +173,7 @@ export function formatCiRunIndex(index: CiRunIndex): string {
     .map((r) => {
       const pr = r.pr === null ? "no PR" : `PR ${r.pr}`;
       const why = r.status === "fail" ? ` (${r.failure?.code ?? "failed"})` : "";
-      return `${r.ended}  ${r.job.padEnd(5)}  ${r.status}${why}  ${pr}  ${r.commit.slice(0, 12)}  ${r.runId}  ${r.key}`;
+      return `${r.ended}  ${r.job.padEnd(5)}  ${r.status}${why}  ${pr}  ${r.commit.slice(0, 12)}  ${r.runId}  ${r.key}${r.signer ? `  signed by ${r.signer}` : ""}`;
     })
     .join("\n");
 }

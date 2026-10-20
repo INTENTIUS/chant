@@ -30,6 +30,7 @@ interface Step {
   if?: string;
   uses?: string;
   run?: string;
+  env?: Record<string, string>;
   with?: Record<string, unknown>;
 }
 interface Job {
@@ -67,7 +68,7 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
       ["apply-wave-3", ["apply-wave-2"]],
     ]);
     expect(doc.jobs["apply-wave-2"]!.needs).toEqual(["apply-wave-1"]);
-    const plan = doc.jobs.plan!.steps.find((s) => s.run?.includes("pr-plan"))!;
+    const plan = doc.jobs.plan!.steps.find((s) => s.run?.includes("ci run plan"))!;
     // The plan passes the wave gate for its note (#4003), and runs no wave.
     expect(plan.run).toContain("--forge github --wave-gate release");
     expect(plan.run).not.toContain("--wave ");
@@ -76,8 +77,10 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
       expect(job.if).toBe("github.event_name == 'push'");
       expect(job.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
       expect(job.permissions.contents).toBe("write");
-      const run = job.steps.find((s) => s.run?.includes("pr-apply"))!.run!;
-      expect(run).toContain(`--require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave ${k}`);
+      const run = job.steps.find((s) => s.run?.includes("ci run apply"))!.run!;
+      // #4156: through chant ci run, which runs pr-apply --require-review --wave-gate release --resume ... --wave <k>.
+      expect(run).toContain(`chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github --wave-gate release --wave ${k}`);
+      expect(job.steps.find((s) => s.run?.includes("ci run apply"))!.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
     }
   });
 

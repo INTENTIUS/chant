@@ -1,11 +1,13 @@
 /**
  * #4044: chant run results as a status source for `ci tick`. With
  * `ci.green.source: "runs"` (or `--source runs`) the tick reads Op runs from
- * the run ledger on `chant/lifecycle` instead of a forge's check runs. A run
- * counts only when its record carries a statement signed by a runner key
- * `.chant/trust.json` lists for a principal holding the `runner` role; the
- * tick ignores and reports any other. Every tag it makes is signed, and names
- * the runs behind it.
+ * the run ledger on `chant/lifecycle` instead of a forge's check runs.
+ * Signing is opt-in (#4156): an unsigned run counts with no signer, and a run
+ * whose statement a runner key `.chant/trust.json` lists for a principal
+ * holding the `runner` role signed counts with that signer. A statement that
+ * does not verify is ignored and reported. With `ci.green.signedSince` an
+ * unsigned run on that commit or after it is ignored too. A tick given a
+ * runner key signs its tags, and every tag names the runs behind it.
  *
  * Each test works in its own temp repository with a bare origin, and every
  * key is a throwaway one. Nothing is written in process.cwd().
@@ -149,19 +151,61 @@ describe("chant runs as the ci tick's status source (#4044)", () => {
     expect((await ciTick({ cwd: root, now: NOW, runnerKey: BOT.pem })).made).toEqual([]);
   });
 
-  test("an unsigned run is refused: it neither greens nor revokes a commit, and is reported", async () => {
+  test("an unsigned run counts with no signer: with no key anywhere the tick tags the commit and ci list shows it (#4156)", async () => {
     const { root } = workspace();
     const a = commitAt(root, 3, "app/a.txt");
+    const lint = await runOp(root, "lint");
+    await runOp(root, "test");
+    expect(lint.statement).toBeUndefined();
+    push(root);
+
+    const list = (await ciList({ cwd: root, now: NOW })) as Extract<Awaited<ReturnType<typeof ciList>>, { commits: unknown }>;
+    readList.expectValid(list);
+    const listed = list.commits.find((c) => c.sha === a)!;
+    expect(listed.phases.map((p) => [p.phase, p.result])).toEqual([
+      ["lint", "pass"],
+      ["test", "pass"],
+    ]);
+    expect(listed.phases[0]!.runs[0]).toMatchObject({ name: "lint", id: null, opRun: { id: lint.id, env: "ci", signer: null } });
+    expect(listed.ignoredRuns).toEqual([]);
+
+    // No runner key: the tick still tags, unsigned, and the tag names the unsigned runs.
+    const tick = await ciTick({ cwd: root, now: NOW });
+    expect(tick.made).toEqual([`ci/green/${a}`]);
+    expect(tick.signer).toBeNull();
+    const record = recordOf(root, `ci/green/${a}`) as { statement?: unknown; phases: Record<string, { opRun: Record<string, unknown> }[]> };
+    expect(record.statement).toBeUndefined();
+    expect(record.phases.lint![0]!.opRun).toEqual({ id: lint.id, env: "ci", signer: null });
+
+    // A signed run beside them shows its signer.
+    const signed = await runOp(root, "lint", { pem: BOT.pem });
+    const source = await readOpRunSource(root, root, git(root, "rev-parse", "HEAD"));
+    expect(source.checkRuns(a).map((r) => [r.opRun!.id, r.opRun!.signer])).toEqual([
+      [lint.id, null],
+      [signed.id, "ci-bot"],
+      [expect.any(String), null],
+    ]);
+    expect(source.ignored.size).toBe(0);
+  });
+
+  test("with ci.green.signedSince an unsigned run neither greens nor revokes a commit from that one on, and is reported", async () => {
+    const { root } = workspace();
+    const a = commitAt(root, 3, "app/a.txt");
+    git(root, "push", "-q", "origin", "main");
+    // The opt-in: every run on a, and after it, must be signed.
+    writeFiles(root, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green: { ...GREEN, signedSince: a } } }) });
     await runOp(root, "lint", { pem: BOT.pem });
     const unsigned = await runOp(root, "test");
     expect(unsigned.statement).toBeUndefined();
     push(root);
 
+    // The opt-in also asks for signed tags, so the tick needs the key.
+    await expect(ciTick({ cwd: root, now: NOW })).rejects.toThrow(/needs a statement signed by a runner key, and none was given/);
     const tick = await ciTick({ cwd: root, now: NOW, runnerKey: BOT.pem });
     expect(tick.made).toEqual([]);
     const at = tick.commits.find((c) => c.sha === a)!;
     expect(at.verdict?.verdict).toBe("pending");
-    expect(at.ignoredRuns).toEqual([{ run: unsigned.id, op: "test", env: "ci", status: "unsigned", reason: expect.stringContaining("carries no statement signed by a runner key") }]);
+    expect(at.ignoredRuns).toEqual([{ run: unsigned.id, op: "test", env: "ci", status: "unsigned", reason: expect.stringContaining("ci.green.signedSince is") }]);
     expect(formatTick(tick)).toContain(`ignored run ${unsigned.id} of test in ci (unsigned)`);
     expect(git(root, "tag", "-l")).toBe("");
 
@@ -173,7 +217,6 @@ describe("chant runs as the ci tick's status source (#4044)", () => {
       ["test", "pending"],
     ]);
     expect(listed.ignoredRuns?.map((r) => r.status)).toEqual(["unsigned"]);
-    expect(formatList(list)).toContain(`ignored run ${unsigned.id} of test in ci (unsigned)`);
 
     // Signed now, the commit goes green; a later unsigned failure does not revoke it.
     await runOp(root, "test", { pem: BOT.pem });
@@ -186,7 +229,7 @@ describe("chant runs as the ci tick's status source (#4044)", () => {
     expect(after.commits.find((c) => c.sha === a)!.ignoredRuns?.map((r) => r.status)).toEqual(["unsigned", "unsigned"]);
   });
 
-  test("a run signed by an unlisted key, or whose record changed after signing, does not count", async () => {
+  test("a run signed by an unlisted key, or whose record changed after signing, does not count, with or without the opt-in", async () => {
     const { root } = workspace();
     const a = commitAt(root, 3, "app/a.txt");
     // A key trust.json does not list can't sign a run here at all.
@@ -219,13 +262,12 @@ describe("chant runs as the ci tick's status source (#4044)", () => {
     expect(record).toMatchObject({ source: "runs", phase: "test", run: { name: "test", id: null, conclusion: "failure", opRun: { id: red.id, signer: "ci-bot" } } });
   });
 
-  test("a tick from runs needs a runner key unless it is a dry run, --source overrides the declaration, and ci list refuses --forge", async () => {
+  test("a tick from runs without a runner key makes unsigned tags, --source overrides the declaration, and ci list refuses --forge", async () => {
     const { root } = workspace({ ...GREEN, source: "checks" });
     const a = commitAt(root, 3, "app/a.txt");
     await runOp(root, "lint", { pem: BOT.pem });
     await runOp(root, "test", { pem: BOT.pem });
     push(root);
-    await expect(ciTick({ cwd: root, now: NOW, source: "runs" })).rejects.toThrow(/every tag it makes from them is signed by a runner key, and none was given/);
     expect((await ciTick({ cwd: root, now: NOW, source: "runs", dryRun: true })).made).toEqual([`ci/green/${a}`]);
     expect(git(root, "tag", "-l")).toBe("");
     // The declaration says checks, so without --source the tick wants a forge.

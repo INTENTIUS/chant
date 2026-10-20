@@ -44,6 +44,18 @@
  * With a forge client (#4097) the job also sets a commit status at its
  * commit: `pending` when it starts, `success` or `failure` when it settles.
  * A status the forge refuses is a warning and never fails the job.
+ *
+ * Signing is opt-in (#4156). With no runner key the record is unsigned, and
+ * a reader counts it with no signer. A key `.chant/trust.json` does not list
+ * leaves it unsigned with a note `--verbose` prints, unless the declaration
+ * sets `ci.green.signedSince`; then a run left unsigned is a warning.
+ *
+ * In place (`--in-place`, #4156) the job runs in the checkout it is started
+ * in, as a generated forge job does: no worktree, no setup phase and no
+ * commit status of its own (the forge shows the job). The steps get the
+ * job's whole environment less `CHANT_RUNNER_KEY`, since the forge job is
+ * already the boundary, and the record's `runOrigin` names the forge's run,
+ * job and attempt (`resolveCiJob`).
  */
 
 import { execFileSync } from "node:child_process";
@@ -55,8 +67,8 @@ import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type Com
 import { PR_APPLY_GATE } from "../pr-loop";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
-import type { RunOrigin } from "../lifecycle/release-ledger";
-import { pushLifecycleReport } from "../lifecycle/git";
+import { resolveCiJob, type RunOrigin } from "../lifecycle/release-ledger";
+import { fetchLifecycleStatus, pushLifecycleReport } from "../lifecycle/git";
 import { ACTIVITY_PROFILES } from "../op/activity-profiles";
 import type { ActivityFn, ActivityProfile } from "../op/activity-registry";
 import { shellCmd } from "../op/activities/shell";
@@ -66,7 +78,8 @@ import type { ActivityStep, OpConfig, PhaseDefinition } from "../op/types";
 import { redactText, type Redact } from "../op/redact";
 import { findWorkspaceRoot } from "../project-root";
 import { parseReportUrl, reportKey } from "../pr-report-url";
-import { ciTagSigner, RUNNER_KEY_ENV } from "./ci-green";
+import { ciTagSigner, RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
+import { loadRunnerKey } from "./trust/dsse";
 import { ciRedactor, ciSecretsFor, CI_SECRETS_ENV, readCiSecrets, type CiSecrets } from "./ci-secrets";
 import { updateCiRunIndex, type CiRunIndexEntry } from "./ci-run-index";
 import { resolveMemberContext } from "./member-pipeline";
@@ -430,6 +443,17 @@ export interface CiRunRequest {
   resumeRecord?: string;
   /** Set a commit status at the job's commit (#4097). Absent: none is set. `chant ci run` builds it from the environment. */
   status?: CiStatusConfig;
+  /**
+   * `--in-place` (#4156): run in the checkout `cwd` is in, at its `HEAD`, as
+   * a generated forge job does, with the runner's whole environment less
+   * `CHANT_RUNNER_KEY`, no setup phase, and the forge's run as `runOrigin`.
+   */
+  inPlace?: boolean;
+  /**
+   * `--wave <k>` (#4003, #4156): the one wave a generated apply job runs, as
+   * `pr-apply --wave <k>`. Needs `--wave-gate`.
+   */
+  wave?: number;
   signal?: AbortSignal;
 }
 
@@ -448,6 +472,10 @@ export interface CiRunResult {
   pushWarning?: string;
   /** What went wrong beside the job, such as a record the key could not sign. */
   warnings: string[];
+  /** What `--verbose` prints: such as a run left unsigned when nothing asks for a signature (#4156). */
+  notes: string[];
+  /** The exit code of the job's command when it failed with one, such as pr-apply's 3 for a moved plan. */
+  exitCode?: number;
   /** The checkout the job ran in, removed by now. */
   checkout: string;
 }
@@ -521,6 +549,9 @@ async function recordInIndex(input: {
   member?: string;
   pr?: number;
   record: OpRunRecord;
+  runOrigin: RunOrigin;
+  /** The runner that signed the record, or null (#4156). */
+  signer: string | null;
   reportDir: string;
   limit?: number;
   /** The run's redactor (#4096): every string written to the index goes through it, as the copied report does. */
@@ -552,7 +583,8 @@ async function recordInIndex(input: {
     ended: input.record.ended,
     runId: clean(input.record.id),
     key: clean(reportKey(pr, input.commit, input.member)),
-    runOrigin: CHANT_RUNNER_ORIGIN,
+    runOrigin: input.runOrigin,
+    signer: input.signer,
   };
   await updateCiRunIndex({ target, entry, ...(input.limit ? { limit: input.limit } : {}), warn: input.warn });
 }
@@ -570,11 +602,15 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const top = gitTop(cwd);
   if (!top) throw new CiRunError("a job runs in a fresh checkout of a commit, and this directory is not in a git repository");
   const commit = resolveJobCommit(top, req.commit ?? "HEAD");
+  if (req.inPlace && commit !== resolveJobCommit(top, "HEAD")) throw new CiRunError(`--in-place runs the checkout's HEAD, and --commit names ${commit.slice(0, 12)}`);
   const place = ciJobPlace(cwd, top);
   const jobs = prLoopJobs(req.forge, req.env, req.loop ?? {}, place.member);
-  const job = jobs.find((j) => j.jobName === req.job);
-  if (!job) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
-  const jobEnv = ciJobEnv(job, {
+  const found = jobs.find((j) => j.jobName === req.job);
+  if (!found) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
+  if (req.wave !== undefined && (req.job !== "apply" || !req.loop?.waveGate)) throw new CiRunError("--wave names the one wave an apply runs, and takes --wave-gate: ci run apply --wave-gate <gate> --wave <k>");
+  // A generated wave job's command, as prLoopWaveJobs writes it.
+  const job = req.wave !== undefined ? { ...found, command: `${found.command} --wave ${req.wave}`, wave: req.wave } : found;
+  const own = ciJobEnv(job, {
     forge: req.forge,
     env: req.env,
     values: { base: req.base, pr: req.pr, commit },
@@ -582,15 +618,61 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
     passEnv: req.passEnv,
     secrets: ciSecretsFor(req.secrets, req.job),
   });
+  // #4156: in place, the forge job's environment is the job's, less the runner key.
+  const jobEnv = req.inPlace ? { ...definedEnv(hostEnv), ...own } : own;
+  delete jobEnv[RUNNER_KEY_ENV];
   // #4096: the secrets and the job's secret-looking variables, redacted from everything the run writes and returns.
-  const redact = ciRedactor(jobEnv, req.secrets);
+  // In place the forge's own variables come too; one whose value is short, such as a flag, is left out, so it can't blank common words.
+  const redact = ciRedactor(req.inPlace ? { ...longValues(jobEnv), ...own } : jobEnv, req.secrets);
   try {
     const result = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
-    return redact ? { ...result, warnings: result.warnings.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result;
+    return redact ? { ...result, warnings: result.warnings.map(redact), notes: result.notes.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result;
   } catch (err) {
     if (redact && err instanceof Error) err.message = redact(err.message);
     throw err;
   }
+}
+
+/** The variables of `env` whose value is long enough to be a credential, 8 characters or more. */
+function longValues(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([, value]) => value.length >= 8));
+}
+
+/** The variables of `env` that have a value. */
+function definedEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) if (value !== undefined) out[name] = value;
+  return out;
+}
+
+/**
+ * Who signs the run (#4156): the runner key, checked against
+ * `.chant/trust.json` at the commit. A key that isn't an Ed25519 PEM is an
+ * error, and so is a `--key` the file does not list. A key from the
+ * environment that it does not list, and no key at all, leave the run
+ * unsigned: a warning when the declaration's `ci.green.signedSince` asks
+ * for signed runs, a note for `--verbose` otherwise.
+ */
+function ciRunSigner(req: CiRunRequest, at: { cwd: string; top: string; commit: string }): { signer?: ReturnType<typeof ciTagSigner>; warnings: string[]; notes: string[] } {
+  const required = signedRunsRequired(at.cwd);
+  const say = (text: string) => (required ? { warnings: [`${text}, and ci.green.signedSince is ${required}, so it will not count`], notes: [] } : { warnings: [], notes: [text] });
+  if (req.runnerKey === undefined) return say("there is no runner key, so the run's record is unsigned");
+  try {
+    loadRunnerKey(req.runnerKey);
+  } catch (err) {
+    throw new CiRunError(`the runner key${req.runnerKeyFromEnv ? ` in ${RUNNER_KEY_ENV}` : ""} is not an Ed25519 private key in PEM: ${message(err)}`);
+  }
+  try {
+    return { signer: ciTagSigner(at.top, at.commit, req.runnerKey, "the runs it signed"), warnings: [], notes: [] };
+  } catch (err) {
+    if (!req.runnerKeyFromEnv) throw new CiRunError(`the run would not be signed: ${message(err)}`);
+    return say(`${RUNNER_KEY_ENV} is set, and the run will not be signed: ${message(err)}`);
+  }
+}
+
+/** Where the job runs: a fresh worktree of the commit, or with `inPlace` the checkout itself, which is left as it is. */
+function jobCheckout(top: string, commit: string, inPlace?: boolean): { dir: string; remove(): void } {
+  return inPlace ? { dir: top, remove() {} } : freshCheckout(top, commit);
 }
 
 /** {@link ciRun} once the job and its environment are known. */
@@ -600,19 +682,16 @@ async function runCiJob(
 ): Promise<CiRunResult> {
   const { cwd, top, commit, place, job, jobEnv, redact } = at;
 
-  // The record is signed against .chant/trust.json at the commit the job runs, so a key that commit does not list is refused before anything runs.
-  let signer: ReturnType<typeof ciTagSigner> | undefined;
-  const early: string[] = [];
-  if (req.runnerKey !== undefined) {
-    try {
-      signer = ciTagSigner(top, commit, req.runnerKey, "the runs it signed");
-    } catch (err) {
-      if (!req.runnerKeyFromEnv) throw new CiRunError(`the run would not be signed: ${message(err)}`);
-      early.push(`${RUNNER_KEY_ENV} is set, and the run will not be signed: ${message(err)}`);
-    }
-  }
+  // The record is signed against .chant/trust.json at the commit the job runs, so a --key that commit does not list is refused before anything runs.
+  const signing = ciRunSigner(req, { cwd, top, commit });
+  const signer = signing.signer;
+  const early = signing.warnings;
+  const notes = signing.notes;
+  const origin: RunOrigin = req.inPlace ? (resolveCiJob(req.hostEnv ?? process.env)?.runOrigin ?? CHANT_RUNNER_ORIGIN) : CHANT_RUNNER_ORIGIN;
+  // In place, the job writes its record on the checkout's chant/lifecycle, which a forge checkout may not have fetched.
+  if (req.inPlace && req.push !== false) await fetchLifecycleStatus({ cwd: top }).catch(() => undefined);
 
-  const checkout = freshCheckout(top, commit);
+  const checkout = jobCheckout(top, commit, req.inPlace);
   try {
     const jobDir = place.dir === "." ? checkout.dir : join(checkout.dir, place.dir);
     const op = ciJobOp({
@@ -620,7 +699,7 @@ async function runCiJob(
       env: req.env,
       cwd: jobDir,
       jobEnv,
-      setup: prLoopSetup(req.image ?? PR_LOOP_IMAGE),
+      setup: req.inPlace ? [] : prLoopSetup(req.image ?? PR_LOOP_IMAGE),
       build: [...(req.beforeScript ?? []), ...(job.build ?? [])],
       ...(req.chant ? { chant: req.chant } : {}),
     });
@@ -654,7 +733,7 @@ async function runCiJob(
         cwd: jobDir,
         commit,
         ledger: { cwd: jobDir },
-        runner: { kind: "pipeline", runtime: "ci", runOrigin: CHANT_RUNNER_ORIGIN },
+        runner: { kind: "pipeline", runtime: "ci", runOrigin: origin },
         describeFailure: (records) => ciJobFailure({ job: req.job, op, records, reportDir: join(jobDir, PR_LOOP_REPORT_DIR) }),
         ...(req.runEvents ? { runEvents: { write: req.runEvents } } : {}),
         ...(req.stepOutput ? { stepOutput: req.stepOutput } : {}),
@@ -692,25 +771,33 @@ async function runCiJob(
     let report: string | null = null;
     if (existsSync(written)) {
       report = resolve(cwd, req.output ?? PR_LOOP_REPORT_DIR);
-      cpSync(written, report, { recursive: true });
-      if (redact) redactTree(report, redact);
+      // In place the report is already where the forge keeps it, and stays as the command wrote it.
+      if (!(existsSync(report) && realpathSync(report) === realpathSync(written))) {
+        cpSync(written, report, { recursive: true });
+        if (redact) redactTree(report, redact);
+      }
     }
     if (req.loop?.reportUrl) {
-      await recordInIndex({ url: req.loop.reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
+      await recordInIndex({ url: req.loop.reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, runOrigin: origin, signer: result.record.statement && signer ? signer.principal : null, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
     }
-    if (ledgerError) throw new CiRunError(ledgerError);
+    // In place the forge job's outcome is the command's, so a record that could not be written is a warning there.
+    if (ledgerError && req.inPlace) warnings.push(ledgerError);
+    else if (ledgerError) throw new CiRunError(ledgerError);
     const pushed: { pushed: boolean; pushWarning?: string } = req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
     const failed = result.records.find((r) => r.status === "fail");
+    const exitCode = failed?.phase === req.job ? exitCodeOf(failed.error) : undefined;
     return {
       op: op.name,
       status: result.status,
       record: result.record,
       ...(failed ? { failure: { phase: failed.phase, error: failed.error ?? "the step failed" } } : {}),
+      ...(exitCode !== undefined ? { exitCode } : {}),
       report,
-      signer: signer?.principal ?? null,
+      signer: result.record.statement && signer ? signer.principal : null,
       pushed: pushed.pushed,
       ...(pushed.pushWarning ? { pushWarning: pushed.pushWarning } : {}),
       warnings,
+      notes,
       checkout: checkout.dir,
     };
   } finally {
@@ -745,7 +832,7 @@ export function formatCiRun(r: CiRunResult): string {
   const why = r.record.failure;
   if (why) lines.push(`  failure: ${why.code}${why.phase ? ` in ${why.phase}` : ""}${why.exitCode !== undefined ? `, exit ${why.exitCode}` : ""}: ${why.reason}`);
   else if (r.failure) lines.push(`  ${r.failure.phase}: ${r.failure.error}`);
-  lines.push(`  record: ${r.record.env}/runs__${r.op}.jsonl on chant/lifecycle, ${r.signer ? `signed by ${r.signer}` : "unsigned, so ci tick from runs does not count it"}`);
+  lines.push(`  record: ${r.record.env}/runs__${r.op}.jsonl on chant/lifecycle, ${r.signer ? `signed by ${r.signer}` : "unsigned"}`);
   if (r.report) lines.push(`  report: ${r.report}`);
   if (!r.pushed) lines.push(`  ${r.pushWarning ?? "chant/lifecycle was not pushed"}`);
   return lines.join("\n");
@@ -757,7 +844,8 @@ export function formatCiRun(r: CiRunResult): string {
  * The generator's options from `ci run`'s and `ci serve`'s flags, as `chant
  * build --components --generate <lexicon> --pr-loop` takes them: `--gate`,
  * `--branch`, `--events-json`, `--report-url`, `--pr-build`,
- * `--pr-build-command` and `--wave-gate` (#4003).
+ * `--pr-build-command`, `--wave-gate` (#4003) and `--no-require-review`
+ * (#4156).
  */
 export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptions {
   return {
@@ -768,14 +856,15 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
     ...(args.prBuild ? { build: true } : {}),
     ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
     ...(args.waveGate ? { waveGate: args.waveGate } : {}),
+    ...(args.requireReview === false ? { requireReview: false } : {}),
   };
 }
 
 const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
-  "[--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
-  "[--pr-build] [--pr-build-command <line>] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
+  "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
+  "[--pr-build] [--pr-build-command <line>] [--no-require-review] [--no-status] [--status-url <url template>] " +
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place] [--no-push] [--verbose] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -815,7 +904,8 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     const hostKey = fromFlag || process.env[RUNNER_KEY_ENV] ? undefined : hostRunnerKeyAt(process.cwd(), args.statePath);
     const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || hostKey?.pem;
     const hostEnv = process.env;
-    const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
+    // #4156: in place the forge shows the job, so ci run sets no status of its own.
+    const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus || args.ciInPlace, statusUrl: args.statusUrl });
     if (warning) console.error(formatWarning({ message: warning }));
     const secrets = ciSecretsOf(args.ciSecrets);
     const result = await ciRun({
@@ -828,6 +918,9 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       ...(args.pr !== undefined ? { pr: args.pr } : {}),
       ...(args.commit ? { commit: args.commit } : {}),
       loop: ciLoopOptions(args),
+      ...(args.ciInPlace ? { inPlace: true } : {}),
+      ...(args.noPush ? { push: false } : {}),
+      ...(args.wave !== undefined ? { wave: args.wave } : {}),
       ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
@@ -840,8 +933,10 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       stepOutput: (line) => void process.stderr.write(`${line}\n`),
     });
     for (const w of result.warnings) console.error(formatWarning({ message: w }));
+    if (args.verbose) for (const n of result.notes) console.error(`ci run: ${n}`);
     console.error(formatCiRun(result));
-    return result.status === "ok" ? 0 : 1;
+    // #4156: a failed command's own exit code, such as 3 for a moved plan, is the job's, as it was before the job ran through ci run.
+    return result.status === "ok" ? 0 : result.exitCode && result.exitCode > 0 && result.exitCode < 256 ? result.exitCode : 1;
   } catch (err) {
     console.error(formatError({ message: `chant ci run: ${message(err)}`, hint: USAGE }));
     return 1;

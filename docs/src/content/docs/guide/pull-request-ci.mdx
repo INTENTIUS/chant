@@ -19,7 +19,7 @@ chant can generate a pull-request pipeline for a project whose components deploy
 - A reviewer approves the plan's digest.
 - On merge, it plans the same components again and applies them only if the digest is the one the reviewer approved. If the plan moved, it refuses with both digests named and applies nothing.
 
-The pipeline runs two commands, [`chant components pr-plan` and `pr-apply`](/chant/cli/components/#components-pr-plan-and-components-pr-apply). This page sets it up on each forge.
+The pipeline runs two commands, [`chant components pr-plan` and `pr-apply`](/chant/cli/components/#components-pr-plan-and-components-pr-apply). Each job runs its command through [`chant ci run plan` or `chant ci run apply`](/chant/cli/ci/#ci-run) in the job's own checkout, which records the run ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). This page sets it up on each forge.
 
 ## A project to run it on
 
@@ -199,9 +199,30 @@ Both jobs keep `.chant/pr` as an artifact:
 | `pr-note.md` | The note as posted. |
 | `run-events/<run id>.jsonl` | With `--events-json`: the stage's run events, the lines it printed on stdout. |
 
+Each job also records its run as Op `pr-plan` or `pr-apply` in `<env>/runs__<op>.jsonl` on `chant/lifecycle`. The record's `runOrigin` names the forge's run, job and attempt. The apply pushes it with its pending facts. The plan runs the pull request's code, so it passes `--no-push` and its record stays in the job. [`chant ci list --source runs`](/chant/cli/ci/#chant-runs-as-the-status-source) and `chant ci tick --source runs` read the records, and with `--report-url` each job is added to the [run index](/chant/cli/ci/#the-run-index) as well.
+
+## Who ran a job
+
+A run record is unsigned by default, and an unsigned record counts. To verify who ran a job, add a runner key. Each record is then signed with it, and `ci list` shows the signer.
+
+1. Make an Ed25519 key, and list its public half under `runners` in `.chant/trust.json` with the `runner` role:
+
+   ```bash
+   openssl genpkey -algorithm ed25519 -out runner.pem
+   chant workspace trust runner add ci:acme/estate --key runner.pem --by github:alex
+   git commit -am "trust: the CI runner key"
+   ```
+
+   Merge that commit through review. A record is checked against `.chant/trust.json` at the commit the job runs.
+2. Store the contents of `runner.pem` on the forge as `CHANT_RUNNER_KEY`, then delete the file. On GitHub and Forgejo it is a repository secret, which the generated jobs pass to `chant ci run`. On GitLab it is a CI/CD variable, which GitLab gives every job. Mark it protected, so only the apply on the target branch gets it. GitLab can't mask a value that spans lines.
+
+Without the secret, or with a key `.chant/trust.json` does not list, the job runs as before and its record is unsigned, with no warning. `chant ci run` withholds the key from the command's environment. The plan job still runs the pull request's code with the key in its own job, so on GitHub a pull request from a fork gets no secret, and a signed plan record says only that a job holding the key ran.
+
+To require signatures, set [`ci.green.signedSince`](/chant/cli/ci/#signed-tags). An unsigned run on that commit or after it then doesn't count, and `chant ci run` warns when it leaves a run unsigned.
+
 ## Run a job without a forge runner
 
-`chant ci run plan` and `chant ci run apply` run the same two jobs on your own machine, each in a fresh worktree of the commit with a clean environment ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). Give them the generation flags and the values the forge would supply: `--base` for the base commit, `--pr` for the pull request and `--commit` for the commit to run. Each run is recorded as Op `pr-plan` or `pr-apply` on `chant/lifecycle`, signed with a runner key when you pass one, so `chant ci tick --source runs` can tag the commit green. [`chant ci run`](/chant/cli/ci/#ci-run) lists the flags and the variables a job gets.
+`chant ci run plan` and `chant ci run apply` run the same two jobs on your own machine, each in a fresh worktree of the commit with a clean environment ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). Give them the generation flags and the values the forge would supply: `--base` for the base commit, `--pr` for the pull request and `--commit` for the commit to run. Each run is recorded as Op `pr-plan` or `pr-apply` on `chant/lifecycle`, as a forge job's is, and signed when you pass a runner key, so `chant ci tick --source runs` can tag the commit green. [`chant ci run`](/chant/cli/ci/#ci-run) lists the flags and the variables a job gets.
 
 `chant ci serve` runs both jobs from the forge's state, with no workflow file and no forge runner ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). It polls the forge for open pull requests and the target branch's head, plans each new pull request head and applies each new commit on the branch. It runs one apply at a time per environment through a git-ref lease, and keeps each apply's resume record in its state directory in place of the CI cache, so `chant ci serve --once --rerun-failed` re-runs a failed apply and finishes it. Jobs run on its host as its user, so serve only repositories whose pull request authors you trust. [`chant ci serve`](/chant/cli/ci/#ci-serve) lists its flags and what it keeps.
 
@@ -254,7 +275,7 @@ chant build --components --generate github --pr-loop --wave-gate release --env p
   --output .github/workflows/chant-pr.yml
 ```
 
-The apply job becomes one job per wave of the component graph, `apply-wave-1` to `apply-wave-<n>`, each after the one before it. Job `apply-wave-<k>` runs `pr-apply --wave-gate release --wave <k>`:
+The apply job becomes one job per wave of the component graph, `apply-wave-1` to `apply-wave-<n>`, each after the one before it. Job `apply-wave-<k>` runs `pr-apply --wave-gate release --wave <k>`, through `chant ci run apply --wave-gate release --wave <k>`:
 
 - Wave 1 plans every member, as the single apply does, and decides the pull request's gate against that digest. Approved, it applies wave 1. A moved plan refuses with both digests named, as before.
 - Each later wave is planned again against the outputs the waves before it left. When the pull request's approved change set covers what it plans now, the wave applies under the pull request's approval. Coverage is the test a [resumed apply](/chant/cli/components/#finishing-an-apply-that-failed-partway) uses: each change the wave makes is one the approved plan made, and a value the approved plan knew only after apply may be any value now.
@@ -282,7 +303,7 @@ The jobs run in the member's directory, so `.chant/pr` and every path in `chant.
 
 A member's apply is serialized per environment by the concurrency group (GitLab: resource group) `chant-apply.<member>.<env>`. A member name has no `.`, so no two members' groups meet: member `a` in environment `b-c` and member `a-b` in environment `c` apply side by side.
 
-The jobs pass `--member <name>` to `pr-plan` and `pr-apply`. The member's gate is recorded under `pr-<number>-<member>`, its note carries the member's name, and its statuses are `chant/plan/<member>` and `chant/apply/<member>`. A reviewer approves each member's plan on its own:
+`chant ci run` finds the member from the directory it runs in and passes `--member <name>` to `pr-plan` and `pr-apply`. The member's gate is recorded under `pr-<number>-<member>`, its note carries the member's name, and its statuses are `chant/plan/<member>` and `chant/apply/<member>`. A reviewer approves each member's plan on its own:
 
 ```bash
 chant approve pr-42-network pr-apply --plan <digest> --approver github:<login> --sign
