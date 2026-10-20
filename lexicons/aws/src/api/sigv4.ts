@@ -70,10 +70,10 @@ export type AwsCredentialSource = AwsCredentials | AwsCredentialResolver;
  * environment — a key id with no secret — is absent rather than a signature
  * that cannot verify.
  *
- * Deliberately not implemented: the profile file, IMDS, and the container
- * credential endpoints. Each is a separate transport with its own failure and
- * caching story; a caller that has those can resolve them itself and pass the
- * result in, which is what the resolver seam is for.
+ * The shared profile files are resolved asynchronously by
+ * `./credential-chain.ts`, and the read transport passes its answer in as
+ * literal credentials (#3958), so this function stays synchronous. Not
+ * implemented anywhere: IMDS and the container credential endpoints.
  */
 export function resolveCredentials(
   source?: AwsCredentialSource,

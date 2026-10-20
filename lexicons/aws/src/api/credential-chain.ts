@@ -8,7 +8,9 @@
  * than keys: `AWS_PROFILE=dev` with an SSO session came back as "no identity
  * is configured" while `aws sts get-caller-identity` answered. This module is
  * the asynchronous half: it resolves what the CLI would sign with and hands
- * back literal credentials plus a label for where they came from.
+ * back literal credentials plus a label for where they came from. The read
+ * transport uses the same walk through {@link transportCredentials} (#3958),
+ * so whoami and `describeResources` sign as the same principal.
  *
  * There is still no `@aws-sdk/*` here, for the reason the read transport gives:
  * a lexicon keeps that tree out. The chain is small enough to state.
@@ -16,8 +18,7 @@
  * ## Order
  *
  *  1. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN`).
- *     They win over `AWS_PROFILE`, as they do in the AWS CLI, and as they do
- *     in chant's own read transport, which signs with nothing else. (The JS
+ *     They win over `AWS_PROFILE`, as they do in the AWS CLI. (The JS
  *     SDK v3 skips the environment when `AWS_PROFILE` is set; the CLI does
  *     not, and the CLI is what an operator checks whoami against.) When both
  *     are set, the label says the profile was not used.
@@ -90,6 +91,8 @@ export interface ResolvedChainCredentials {
   source: string;
   /** The profile that resolved them, when one did. */
   profile?: string;
+  /** When the credentials stop working, for role, SSO and `credential_process` credentials that say so. */
+  expiration?: Date;
 }
 
 export interface UnresolvedChainCredentials {
@@ -102,6 +105,20 @@ export type CredentialChainResult =
   | { unresolved: UnresolvedChainCredentials };
 
 type Section = Record<string, string>;
+
+/** One link of the chain's answer, before the profile name is attached. */
+interface Resolved {
+  credentials: AwsCredentials;
+  source: string;
+  expiration?: Date;
+}
+
+/** A timestamp as a Date, or undefined when it is absent or does not parse. */
+function expiryOf(value: string | number | undefined): Date | undefined {
+  if (value === undefined || value === "") return undefined;
+  const ms = typeof value === "number" ? value : Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms) : undefined;
+}
 
 /**
  * The INI dialect of the AWS shared files: `[section]`, `key = value`, `#` and
@@ -263,7 +280,7 @@ async function resolveProfile(
   ctx: Context,
   name: string,
   visited: string[],
-): Promise<{ credentials: AwsCredentials; source: string }> {
+): Promise<Resolved> {
   if (visited.includes(name)) {
     throw new ChainRefusal("no-credentials", `profile ${name}: source_profile loops (${[...visited, name].join(" -> ")})`);
   }
@@ -303,16 +320,26 @@ async function resolveProfile(
   );
 }
 
+function withExpiry(expiration: Date | undefined): { expiration?: Date } {
+  return expiration ? { expiration } : {};
+}
+
+function earliest(a: Date | undefined, b: Date | undefined): Date | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a.getTime() <= b.getTime() ? a : b;
+}
+
 async function resolveRoleProfile(
   ctx: Context,
   name: string,
   p: Section,
   visited: string[],
-): Promise<{ credentials: AwsCredentials; source: string }> {
+): Promise<Resolved> {
   if (p.mfa_serial) {
     throw new ChainRefusal("no-credentials", `profile ${name} sets mfa_serial; chant cannot prompt for an MFA code`);
   }
-  let base: { credentials: AwsCredentials; source: string };
+  let base: Resolved;
   if (p.source_profile) {
     base = await resolveProfile(ctx, p.source_profile, [...visited, name]);
   } else if (p.credential_source === "Environment") {
@@ -351,6 +378,7 @@ async function resolveRoleProfile(
         sessionToken: assumed.sessionToken,
       },
       source: `profile ${name} (role ${p.role_arn} via ${base.source})`,
+      ...withExpiry(earliest(expiryOf(assumed.expiration), base.expiration)),
     };
   } catch (err) {
     const what = err instanceof AwsReadError ? `${err.code ? `${err.code}: ` : ""}${err.message}` : String(err);
@@ -376,7 +404,7 @@ async function resolveSsoProfile(
   ctx: Context,
   name: string,
   p: Section,
-): Promise<{ credentials: AwsCredentials; source: string }> {
+): Promise<Resolved> {
   let startUrl = p.sso_start_url;
   let ssoRegion = p.sso_region;
   let cacheKey = startUrl;
@@ -446,7 +474,7 @@ async function resolveSsoProfile(
   if (res.status >= 400) {
     throw new ChainRefusal("read-failed", `profile ${name}: sso:GetRoleCredentials for ${roleName} in ${accountId} failed with HTTP ${res.status}`);
   }
-  let role: { accessKeyId?: string; secretAccessKey?: string; sessionToken?: string } | undefined;
+  let role: { accessKeyId?: string; secretAccessKey?: string; sessionToken?: string; expiration?: number } | undefined;
   try {
     role = (JSON.parse(res.text) as { roleCredentials?: typeof role }).roleCredentials;
   } catch {
@@ -462,6 +490,7 @@ async function resolveSsoProfile(
       ...(role.sessionToken ? { sessionToken: role.sessionToken } : {}),
     },
     source: `${label}, role ${roleName} in ${accountId}`,
+    ...withExpiry(expiryOf(role.expiration)),
   };
 }
 
@@ -501,7 +530,7 @@ async function resolveProcessProfile(
   ctx: Context,
   name: string,
   command: string,
-): Promise<{ credentials: AwsCredentials; source: string }> {
+): Promise<Resolved> {
   const out = await ctx.runProcess(command);
   if (out.exitCode !== 0) {
     const firstLine = out.stderr.trim().split(/\r?\n/)[0] ?? "";
@@ -532,5 +561,86 @@ async function resolveProcessProfile(
       ...(parsed.SessionToken ? { sessionToken: parsed.SessionToken } : {}),
     },
     source: `profile ${name} (credential_process)`,
+    ...withExpiry(expiryOf(parsed.Expiration)),
   };
+}
+
+/* ── Credentials for the read transport (#3958) ─────────────────────────── */
+
+/** Cached credentials are re-resolved this long before they expire. */
+export const TRANSPORT_REFRESH_MARGIN_MS = 5 * 60_000;
+
+/**
+ * How long "nothing resolves" is kept before the chain is walked again, so a
+ * long-running process picks up an `aws sso login` done after it started.
+ */
+export const TRANSPORT_UNRESOLVED_TTL_MS = 5 * 60_000;
+
+interface TransportEntry {
+  credentials?: AwsCredentials;
+  /** Epoch ms after which the entry is walked again. */
+  refreshAt: number;
+}
+
+/**
+ * One walk per environment and shared-file location, shared by every read in
+ * the process. Concurrent first reads await the same promise, so an SSO
+ * portal call or a `credential_process` runs once rather than once per read.
+ */
+const transportCache = new Map<string, Promise<TransportEntry>>();
+
+/** Forget every cached walk. For tests, and for a process that changed its profile. */
+export function resetTransportCredentials(): void {
+  transportCache.clear();
+}
+
+async function walkForTransport(options: CredentialChainOptions, now: () => Date): Promise<TransportEntry> {
+  let result: CredentialChainResult | undefined;
+  try {
+    result = await resolveCredentialChain(options);
+  } catch {
+    result = undefined;
+  }
+  const t = now().getTime();
+  if (!result || "unresolved" in result) return { refreshAt: t + TRANSPORT_UNRESOLVED_TTL_MS };
+  const expires = result.resolved.expiration?.getTime();
+  if (expires === undefined) return { credentials: result.resolved.credentials, refreshAt: Infinity };
+  const early = expires - TRANSPORT_REFRESH_MARGIN_MS;
+  return { credentials: result.resolved.credentials, refreshAt: early > t ? early : expires };
+}
+
+/**
+ * What the native read transport signs with when the caller injected nothing:
+ * the same chain whoami walks, so `lifecycle diff --live` signs as the
+ * principal whoami reports. The signing seam (`AwsCredentialResolver` in
+ * ./sigv4.ts) is synchronous and the chain is not, so the transport awaits
+ * this once before a request and passes the literal credentials in.
+ *
+ * Environment keys answer directly, as in the chain. Otherwise the walk is
+ * cached per process, keyed by the profile and the shared-file locations, and
+ * walked again within {@link TRANSPORT_REFRESH_MARGIN_MS} of the expiry the
+ * role, SSO or `credential_process` answer carried. A refusal or a failure is
+ * `undefined`, which leaves the request unsigned exactly as before; it is kept
+ * for {@link TRANSPORT_UNRESOLVED_TTL_MS}.
+ */
+export async function transportCredentials(options: CredentialChainOptions = {}): Promise<AwsCredentials | undefined> {
+  const env = options.env ?? process.env;
+  const fromEnv = envCredentials(env);
+  if (fromEnv) return fromEnv;
+  const now = options.now ?? (() => new Date());
+  const home = options.home ?? (env.HOME || env.USERPROFILE || homedir());
+  const key = JSON.stringify([env.AWS_PROFILE ?? "", env.AWS_CONFIG_FILE ?? "", env.AWS_SHARED_CREDENTIALS_FILE ?? "", home]);
+
+  const cached = transportCache.get(key);
+  if (cached) {
+    const entry = await cached;
+    if (now().getTime() < entry.refreshAt) return entry.credentials;
+    if (transportCache.get(key) === cached) transportCache.delete(key);
+  }
+  let pending = transportCache.get(key);
+  if (!pending) {
+    pending = walkForTransport({ ...options, env, home }, now);
+    transportCache.set(key, pending);
+  }
+  return (await pending).credentials;
 }

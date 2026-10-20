@@ -21,8 +21,11 @@
  *
  * Requests are signed with SigV4 (#1686) when credentials resolve — see
  * `./sigv4.ts`, which holds the implementation so that cedar's AVP client can
- * adopt the same one rather than growing a second. Two cases stay unsigned, and
- * both are deliberate:
+ * adopt the same one rather than growing a second. With none injected, they
+ * resolve through the AWS CLI's chain (`./credential-chain.ts`, the one
+ * `chant lifecycle whoami` walks) once per process, by
+ * {@link withChainCredentials} (#3958). Two cases stay unsigned, and both are
+ * deliberate:
  *
  *   - **No credentials.** The caller's existing no-credentials path is
  *     untouched: the request still goes out carrying only the credential scope
@@ -41,6 +44,8 @@
  * a lexicon build compiles against the published core, so a helper hoisted
  * into core would not be visible to either until the next core release.
  */
+import { homedir } from "node:os";
+import { transportCredentials } from "./credential-chain";
 import { resolveCredentials, signRequest, type AwsCredentialSource } from "./sigv4";
 
 export type { AwsCredentials, AwsCredentialResolver, AwsCredentialSource } from "./sigv4";
@@ -219,6 +224,37 @@ export function requestHeaders(
   });
 }
 
+/**
+ * `options` with literal credentials from the AWS CLI's credential chain
+ * (#3958), when the caller injected none and the request will be signed.
+ *
+ * Every request function awaits this after {@link withEndpointOverride} and
+ * before {@link requestHeaders}, whose seam is synchronous. The chain is not
+ * walked against an endpoint override that is not signed: an emulator read
+ * should not start an SSO refresh or a `credential_process`, the same rule
+ * whoami follows. When nothing resolves the options come back unchanged and
+ * the request goes out unsigned, as it did before.
+ *
+ * An injected `env` without `HOME`, `USERPROFILE`, `AWS_CONFIG_FILE` or
+ * `AWS_SHARED_CREDENTIALS_FILE` names no shared files, so only its keys are
+ * read; the process's own `~/.aws` is not consulted behind it.
+ */
+export async function withChainCredentials(options: AwsReadClientOptions): Promise<AwsReadClientOptions> {
+  if (options.credentials) return options;
+  if (options.endpoint && options.signEndpointOverride !== true) return options;
+  const env = options.env ?? process.env;
+  const home = env.HOME || env.USERPROFILE;
+  if (options.env && options.env !== process.env && !home && !env.AWS_CONFIG_FILE && !env.AWS_SHARED_CREDENTIALS_FILE) {
+    return options;
+  }
+  const credentials = await transportCredentials({
+    env,
+    home: home || homedir(),
+    sts: { ...(options.http ? { http: options.http } : {}), env },
+  });
+  return credentials ? { ...options, credentials } : options;
+}
+
 /* ── CloudFormation Query ─────────────────────────────────────────────────── */
 
 /**
@@ -275,7 +311,7 @@ export async function cfnQuery(
   params: Record<string, string>,
   options: AwsReadClientOptions = {},
 ): Promise<string> {
-  options = withEndpointOverride("cloudformation", options);
+  options = await withChainCredentials(withEndpointOverride("cloudformation", options));
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("cloudformation", options.endpoint, options.region);
   const body = new URLSearchParams({ Action: action, Version: CFN_API_VERSION, ...params }).toString();
@@ -388,7 +424,7 @@ export interface CallerIdentity {
  * and the narrower the surface, the fewer ways a credential reaches a report.
  */
 export async function getCallerIdentity(options: AwsReadClientOptions = {}): Promise<CallerIdentity> {
-  options = withEndpointOverride("sts", options);
+  options = await withChainCredentials(withEndpointOverride("sts", options));
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("sts", options.endpoint, options.region);
   const body = new URLSearchParams({ Action: "GetCallerIdentity", Version: STS_API_VERSION }).toString();
@@ -431,7 +467,7 @@ export async function assumeRole(
   params: { roleArn: string; sessionName: string; externalId?: string; durationSeconds?: number },
   options: AwsReadClientOptions = {},
 ): Promise<AssumedRoleCredentials> {
-  options = withEndpointOverride("sts", options);
+  options = await withChainCredentials(withEndpointOverride("sts", options));
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("sts", options.endpoint, options.region);
   const body = new URLSearchParams({
@@ -484,7 +520,7 @@ async function cloudControl(
   payload: Record<string, unknown>,
   options: AwsReadClientOptions = {},
 ): Promise<Record<string, unknown>> {
-  options = withEndpointOverride("cloudcontrolapi", options);
+  options = await withChainCredentials(withEndpointOverride("cloudcontrolapi", options));
   const http = options.http ?? defaultHttp;
   const url = serviceUrl("cloudcontrolapi", options.endpoint, options.region);
   const payloadJson = JSON.stringify(payload);
