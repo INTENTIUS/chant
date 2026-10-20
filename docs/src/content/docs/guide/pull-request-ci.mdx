@@ -12,7 +12,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-chant can generate a pull-request pipeline for a project whose components deploy Terraform roots, or anything else a capability can plan. It does four things:
+chant can generate a pull-request pipeline for a project whose components deploy Terraform roots, CloudFormation stacks or Kubernetes manifests, the three capabilities that can plan. A component built from other capabilities goes through the same pipeline, but its plan describes no changes. It does four things:
 
 - On a pull request, it plans the components the change touches and the components that depend on them, and nothing else.
 - It posts that plan on the pull request as one note, with a commit status.
@@ -92,6 +92,10 @@ The apply never deletes and recreates an object. A change to an immutable field,
 The gate's digest binds the documents sent. For each object it also binds the action and the new value of every changed field. A `kubectl-apply` step that receives the approved plan dry-runs those documents again before it applies them. If the digest moved, the step fails before the cluster changes, and its message names the approved digest beside the new one. `pr-apply` exits 3 for it, as for a `cfn-deploy` change set that moved. A live value that moved under a field the apply sets to the same value does not move the digest.
 
 The plan job needs credentials that can read, list and dry-run apply the manifest's kinds in the cluster, and resolves the context the same way the apply does: the step's `context`, or `k8s.profiles.<env>.context`.
+
+### Other capabilities
+
+`cfn-deploy`, `kubectl-apply` and `terraform-apply` are the capabilities with `plan`. A component whose steps include none of them, such as one that runs `helm-upgrade`, is a member under its own name with a count of 0 in every column. Its digest covers the component's declaration and not the content of the files its steps deploy, so the reviewer reads that content in the diff. [Plan previews](/chant/components/plan-previews/) lists every capability and what the note shows for each, and says what to check for a component that cannot plan.
 
 ## Generate the pipeline
 

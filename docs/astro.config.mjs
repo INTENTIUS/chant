@@ -419,6 +419,7 @@ export default defineConfig({
 							items: [
 								{ label: 'Component Contract', slug: 'components/component-contract' },
 								{ label: 'Capabilities', slug: 'components/capabilities' },
+								{ label: 'Plan Previews', slug: 'components/plan-previews' },
 								{ label: 'Composition & Wiring', slug: 'components/composition-and-wiring' },
 								{ label: 'Build Archive', slug: 'components/build-archive' },
 								{ label: 'Attestation Reference', slug: 'components/attestation-reference' },

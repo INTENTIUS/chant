@@ -393,6 +393,9 @@
   "dead-metaphor/rare-lemma": 1,
   "tricolon/comma-series": 2
  },
+ "docs/src/content/docs/components/plan-previews.mdx": {
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/components/supply-chain.mdx": {
   "formatting/em-dash-density": 20,
   "discourse/punchy-fragments": 1,
