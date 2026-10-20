@@ -25,6 +25,12 @@
  *   cache.
  * - Capacity. At most `maxJobs` jobs run at once. A job over the limit is not
  *   recorded, so a later poll starts it.
+ * - Fast-forwards only (#4122). An apply runs only when the target's new head
+ *   descends from the head seen before it. Any other move, such as a force
+ *   push back to an older commit, is recorded as seen and not applied.
+ * - `[skip ci]` (#4122). A target head or pull request head whose commit
+ *   message says `[skip ci]` or `[ci skip]` is recorded as seen and not run,
+ *   as Actions does.
  * - The forge's ledger (#4121). Before each job, when no other job of this
  *   serve runs, the clone's `chant/lifecycle` follows the forge's: it is
  *   deleted when the forge has none, and reset to the forge's when neither
@@ -98,9 +104,11 @@ export interface CiServeState {
   env: string;
   branch: string;
   member?: string;
-  /** The target branch's head the last apply was measured to, or the head the first poll found. */
+  /** The target branch's head the last apply was measured to, or the last head seen and not applied. */
   target?: string;
   jobs: Record<string, CiServeJobState>;
+  /** Plans seen and not run, by state key, with why (#4122). */
+  skipped?: Record<string, "skip-ci">;
 }
 
 /** What a pass did, in order, for the log. */
@@ -111,6 +119,7 @@ export type CiServeEvent =
   | { type: "held"; job: CiJobName; commit: string; pr?: number; reason: "capacity" | "lease"; heldBy?: string }
   | { type: "started"; job: CiJobName; commit: string; pr?: number; base: string; runId: string; attempt: number; resume?: string }
   | { type: "settled"; job: CiJobName; commit: string; pr?: number; status: "ok" | "fail"; failure?: string; report?: string }
+  | { type: "not-run"; job: CiJobName; commit: string; pr?: number; reason: "not-fast-forward" | "skip-ci"; branch?: string; from?: string }
   | { type: "ledger"; action: "deleted" | "reset"; local: string; forge?: string }
   | { type: "error"; message: string };
 
@@ -217,6 +226,27 @@ export function reconcileCiServeLedger(top: string): CiServeEvent | undefined {
   }
 }
 
+/** A commit message that asks for no CI run, as Actions and GitLab read it. */
+const SKIP_CI = /\[(?:skip ci|ci skip)\]/i;
+
+/** Whether `commit`'s message asks for no CI run. A commit this clone can't read is not skipped. */
+function skipsCi(top: string, commit: string): boolean {
+  const body = tryGit(top, ["log", "-1", "--format=%B", commit]);
+  return body !== undefined && SKIP_CI.test(body);
+}
+
+/**
+ * How the target branch moved from `from` to `head` (#4122): `fast-forward`
+ * when `head` descends from `from`, `other` when it does not, and `unknown`
+ * when `head` could not be fetched. Once `head` is here its history is too,
+ * so a `from` this clone lacks is not in that history.
+ */
+function targetMove(top: string, branch: string, from: string, head: string): "fast-forward" | "other" | "unknown" {
+  tryGit(top, ["fetch", "--quiet", "--no-tags", "origin", branch]);
+  if (gitStatus(top, ["cat-file", "-e", `${head}^{commit}`]).code !== 0) return "unknown";
+  return gitStatus(top, ["merge-base", "--is-ancestor", from, head]).code === 0 ? "fast-forward" : "other";
+}
+
 /** Where a serve keeps its state when `--state` names nowhere: beside the run events, in the repository's common git directory. */
 export function defaultCiServeStateDir(cwd: string): string {
   const common = tryGit(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
@@ -267,15 +297,23 @@ const failedEntry = (entry: CiServeJobState | undefined, key: string, rt: CiServ
 
 /**
  * One poll of the forge, as triggers: an apply when the target's head moved
- * since the last apply (none on the first poll, which only notes the head),
+ * since the last apply by a fast-forward (none on the first poll, which only
+ * notes the head, and none for a head whose message says `[skip ci]`),
  * then a plan for each open pull request head not yet planned, oldest pull
  * request first. A job already in the state file is left out unless it
- * failed and `rerunFailed` is set. The first poll's head is written to the
- * state file.
+ * failed and `rerunFailed` is set. The first poll's head, and a head seen
+ * and not applied, are written to the state file.
  */
 export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = newCiServeRuntime()): Promise<{ triggers: CiServeTrigger[]; events: CiServeEvent[] }> {
   const place = servePlace(opts);
-  const state = readCiServeState(place.stateFile, { forge: opts.forge, repo: opts.repo, env: opts.env, branch: place.branch, ...(place.member ? { member: place.member } : {}) });
+  const fresh = { forge: opts.forge, repo: opts.repo, env: opts.env, branch: place.branch, ...(place.member ? { member: place.member } : {}) };
+  const state = readCiServeState(place.stateFile, fresh);
+  // Read again at the write: a job of this serve may have settled while the forge answered.
+  const update = (fn: (s: CiServeState) => void): void => {
+    const s = readCiServeState(place.stateFile, fresh);
+    fn(s);
+    writeState(place.stateFile, s);
+  };
   const triggers: CiServeTrigger[] = [];
   const events: CiServeEvent[] = [];
   const [head, prs] = await Promise.all([opts.client.branchHead(place.branch), opts.client.openPullRequests(place.branch)]);
@@ -284,12 +322,23 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
     events.push({ type: "no-branch", branch: place.branch });
   } else if (state.target === undefined) {
     // What the branch held before this runner watched it was applied by whatever ran then.
-    state.target = head;
-    writeState(place.stateFile, state);
+    update((s) => {
+      s.target = head;
+    });
     events.push({ type: "baseline", commit: head });
   } else if (head !== state.target) {
+    const from = state.target;
+    const move = targetMove(place.top, place.branch, from, head);
     const entry = state.jobs[ciServeKey({ job: "apply", commit: head })];
-    if (!entry) triggers.push({ job: "apply", commit: head, base: state.target });
+    if (move === "unknown") {
+      events.push({ type: "error", message: `${place.branch} is at ${head.slice(0, 12)} on the forge, and that commit could not be fetched; the next poll tries again` });
+    } else if (move === "other" || (!entry && skipsCi(place.top, head))) {
+      // #4122: a move that is not a fast-forward, or a head that asks for no run, is seen and not applied.
+      update((s) => {
+        s.target = head;
+      });
+      events.push({ type: "not-run", job: "apply", commit: head, reason: move === "other" ? "not-fast-forward" : "skip-ci", ...(move === "other" ? { branch: place.branch, from } : {}) });
+    } else if (!entry) triggers.push({ job: "apply", commit: head, base: from });
     else if (opts.rerunFailed && failedEntry(entry, ciServeKey(entry), rt)) triggers.push({ job: "apply", commit: head, base: entry.base, rerun: true });
   } else {
     const key = ciServeKey({ job: "apply", commit: head });
@@ -310,8 +359,17 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
     const key = ciServeKey({ job: "plan", commit: pr.headSha, pr: pr.number });
     const entry = state.jobs[key];
     const base = pr.baseSha ?? head;
-    if (!base) continue;
-    if (!entry) triggers.push({ job: "plan", commit: pr.headSha, base, pr: pr.number });
+    if (!base || state.skipped?.[key]) continue;
+    if (!entry) {
+      // #4122: a head whose message asks for no run is seen and not planned.
+      if (gitStatus(place.top, ["cat-file", "-e", `${pr.headSha}^{commit}`]).code !== 0) tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", `refs/pull/${pr.number}/head`]);
+      if (skipsCi(place.top, pr.headSha)) {
+        update((s) => {
+          s.skipped = { ...s.skipped, [key]: "skip-ci" };
+        });
+        events.push({ type: "not-run", job: "plan", commit: pr.headSha, pr: pr.number, reason: "skip-ci" });
+      } else triggers.push({ job: "plan", commit: pr.headSha, base, pr: pr.number });
+    }
     else if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "plan", commit: pr.headSha, base: entry.base, pr: pr.number, rerun: true });
   }
   return { triggers, events };
@@ -506,6 +564,10 @@ export function formatCiServeEvent(e: CiServeEvent): string {
       return `${at(e.job, e.commit, e.pr)} started, run ${e.runId}, attempt ${e.attempt}${e.resume ? ", resuming" : ""}`;
     case "settled":
       return `${at(e.job, e.commit, e.pr)} ${e.status === "ok" ? "passed" : `failed${e.failure ? `: ${e.failure}` : ""}`}${e.report ? `; report ${e.report}` : ""}`;
+    case "not-run":
+      return e.reason === "skip-ci"
+        ? `${at(e.job, e.commit, e.pr)} is not run: its commit message says [skip ci]`
+        : `${e.branch ?? "the target branch"} moved from ${e.from?.slice(0, 12) ?? "a commit"} to ${e.commit.slice(0, 12)}, which is not a fast-forward, so ${e.commit.slice(0, 12)} is recorded as seen and not applied`;
     case "ledger":
       return e.action === "deleted"
         ? `the forge has no ${LEDGER}, so this clone's, at ${e.local.slice(0, 12)}, was deleted`
