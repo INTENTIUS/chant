@@ -58,6 +58,7 @@ import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import {
   applyPrSet,
   approvalOf,
+  approversWhoAuthored,
   approversWithoutReview,
   decidePrGate,
   planPrSet,
@@ -591,10 +592,23 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
 
   if (args.requireReview && p.forge) {
     let reviewers: string[];
+    let authors: string[];
     try {
       reviewers = (await p.forge.approvers(pr)).map((login) => p.forge!.principalOf(login));
+      authors = (await p.forge.authors(pr)).map((login) => p.forge!.principalOf(login));
     } catch (err) {
-      return fail(`could not read the reviews of #${pr}: ${err instanceof Error ? err.message : String(err)}`);
+      return fail(`could not read the reviews and authors of #${pr}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // #4000: whoever wrote the change never counts toward its gate, through a forge review or a ledger line.
+    const writers = approversWhoAuthored(approval.approvedBy ?? [], authors);
+    if (writers.length > 0) {
+      const message =
+        `The plan is approved by ${writers.join(", ")}, who wrote #${pr} ` +
+        `(its author and the authors and committers of its commits: ${authors.join(", ")}). ` +
+        `An approval from someone who wrote the change never counts, so nothing was applied. ` +
+        `Have someone else approve the pull request and the plan, then run the apply again.`;
+      emitReviewStop(events, message);
+      return stop(prReport({ ...base, approval, status: "refused", refusal: "author-approved", message }), GATED_EXIT_CODE);
     }
     const strangers = approversWithoutReview(approval.approvedBy ?? [], reviewers);
     if (strangers.length > 0) {

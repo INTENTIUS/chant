@@ -181,6 +181,7 @@ describe("the status", () => {
   test("describes each stage in at most 140 characters", () => {
     expect(prStatusDescription(planReport)).toMatch(/^2 members: 1 to change, 0 to destroy or replace; plan [0-9a-f]{12}$/);
     expect(prStatusDescription(refusedReport)).toBe("refused: the plan changed after review");
+    expect(prStatusDescription({ ...refusedReport, refusal: "author-approved" })).toBe("refused: the approver wrote the change");
     expect(prStatusDescription(appliedReport)).toMatch(/^applied 2 members/);
     for (const r of [planReport, refusedReport, appliedReport]) expect(prStatusDescription(r).length).toBeLessThanOrEqual(140);
   });

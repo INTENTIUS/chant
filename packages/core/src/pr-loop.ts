@@ -152,6 +152,8 @@ export type PrRefusal =
   | "plan-changed"
   /** The approval names someone who has not approved the pull request on the forge. */
   | "not-a-reviewer"
+  /** The approval names the pull request's author, or an author or committer of one of its commits (#4000). */
+  | "author-approved"
   /** No pull request merged this commit, so there is no approval to read. */
   | "no-pull-request";
 
@@ -378,7 +380,7 @@ export function prStatusDescription(report: PrReport): string {
       text = `apply failed for ${report.members.filter((m) => m.status === "failed").map((m) => m.member).join(", ")}`;
       break;
     case "refused":
-      text = `refused: ${report.refusal === "plan-changed" ? "the plan changed after review" : report.refusal === "not-a-reviewer" ? "the approver has not approved the pull request" : report.refusal === "no-pull-request" ? "no pull request merged this commit" : "the plan is not approved"}`;
+      text = `refused: ${report.refusal === "plan-changed" ? "the plan changed after review" : report.refusal === "not-a-reviewer" ? "the approver has not approved the pull request" : report.refusal === "author-approved" ? "the approver wrote the change" : report.refusal === "no-pull-request" ? "no pull request merged this commit" : "the plan is not approved"}`;
       break;
   }
   return text.length > 140 ? text.slice(0, 137) + "..." : text;

@@ -140,6 +140,8 @@ chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver github:alice 
 
 By default the apply also asks the forge who approved the pull request. It counts a ledger record only when the person it names has a standing approving review there, named the way the [workspace names a forge identity](/chant/reference/workspace-declaration/#identity): `github:<login>`, `gitlab:<login>`, or `forgejo@<host>:<login>`. The generator option `requireReview: false` drops the check.
 
+Under the same check, a person who wrote the change never counts. That is the pull request's author and the author and committer of each of its commits. When the ledger record names one of them, the apply refuses with `author-approved` and applies nothing. The note names the person. Their review on the forge does not help either. GitHub and Forgejo link each commit to the account its email belongs to. GitLab gives commits by email only, so chant looks each email up among the GitLab users, which finds an account by its public email. A committer whose email no GitLab account shows publicly is not found, so on GitLab also turn on "Prevent approvals by users who add commits" in the project's merge request approval settings.
+
 To count only signed approvals, list the gate in the workspace declaration. An approval then has to be sealed with `--sign` by a key the signers file at base lists for its approver:
 
 ```json

@@ -349,6 +349,16 @@ export interface PrForge {
   upsertIssue(marker: string, title: string, body: string): Promise<string | undefined>;
   /** Logins whose standing review approves `pr`. */
   approvers(pr: number): Promise<string[]>;
+  /**
+   * Logins of the people who wrote `pr` (#4000): its author, and the author
+   * and committer of each of its commits. GitHub and Forgejo name a commit's
+   * people by the account its email belongs to; a commit whose email is on no
+   * account adds nobody. GitLab names them by email only, so each email is
+   * looked up among the users (`GET /users?search=`), which matches an
+   * account's public email; an email no account shows publicly adds nobody.
+   * Sorted, without repeats.
+   */
+  authors(pr: number): Promise<string[]>;
   /** The merged pull request that produced `sha`, or null. */
   pullRequestFor(sha: string): Promise<number | null>;
   /**
@@ -667,6 +677,20 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       }
       return [...standing].filter(([, state]) => state === "APPROVED").map(([login]) => login).sort();
     },
+    async authors(pr) {
+      const logins = new Set<string>();
+      const add = (v: unknown) => {
+        if (isObject(v) && typeof v.login === "string" && v.login !== "") logins.add(v.login);
+      };
+      const opened = await api.call("GET", `${repo}/pulls/${pr}`);
+      if (isObject(opened)) add(opened.user);
+      for (const c of await api.list(`${repo}/pulls/${pr}/commits`, pageParams, pageSize)) {
+        if (!isObject(c)) continue;
+        add(c.author);
+        add(c.committer);
+      }
+      return [...logins].sort();
+    },
     async pullRequestFor(sha) {
       if (kind === "forgejo") {
         try {
@@ -921,6 +945,22 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         .map((a) => (isObject(a) && isObject(a.user) && typeof a.user.username === "string" ? a.user.username : undefined))
         .filter((l): l is string => l !== undefined);
       return [...new Set(logins)].sort();
+    },
+    async authors(mr) {
+      const logins = new Set<string>();
+      const merge = await api.call("GET", `${notes}/${mr}`);
+      const author = isObject(merge) ? authorOf(merge) : undefined;
+      if (author) logins.add(author);
+      const emails = new Set<string>();
+      for (const c of await api.list(`${notes}/${mr}/commits`, pageParams, 100)) {
+        if (!isObject(c)) continue;
+        for (const email of [str(c.author_email), str(c.committer_email)]) if (email) emails.add(email.toLowerCase());
+      }
+      for (const email of [...emails].sort()) {
+        const users = await api.call("GET", `/users?search=${encodeURIComponent(email)}`);
+        for (const u of Array.isArray(users) ? users : []) if (isObject(u) && typeof u.username === "string") logins.add(u.username);
+      }
+      return [...logins].sort();
     },
     async pullRequestFor(sha) {
       const mrs = await api.call("GET", `${project}/repository/commits/${sha}/merge_requests`);

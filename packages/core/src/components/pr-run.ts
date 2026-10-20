@@ -242,6 +242,18 @@ export function approversWithoutReview(approvedBy: readonly string[], reviewers:
   return approvedBy.filter((by) => !allowed.has(norm(by)));
 }
 
+/**
+ * Who approved the gate but wrote the change (#4000): each approval's
+ * `resolvedBy` that names one of `authors`, the forge's naming of the pull
+ * request's author and of its commits' authors and committers. Their own
+ * approval never counts, whether a forge review or a ledger line backs it.
+ */
+export function approversWhoAuthored(approvedBy: readonly string[], authors: readonly string[]): string[] {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const wrote = new Set(authors.map(norm));
+  return approvedBy.filter((by) => wrote.has(norm(by)));
+}
+
 export interface PrApplyOptions {
   components: DriverComponent[];
   plan: FanOutPlan;

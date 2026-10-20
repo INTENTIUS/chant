@@ -15,6 +15,7 @@ import { planFanOut } from "./fan-out";
 import {
   applyPrSet,
   approvalOf,
+  approversWhoAuthored,
   approversWithoutReview,
   decidePrGate,
   planCoveredBy,
@@ -317,6 +318,11 @@ describe("the gate", () => {
   test("an approver needs a standing approving review, named the forge's way", () => {
     expect(approversWithoutReview(["github:alice", "GitHub:Bob"], ["github:alice", "github:bob"])).toEqual([]);
     expect(approversWithoutReview(["github:mallory"], ["github:alice"])).toEqual(["github:mallory"]);
+  });
+
+  test("an approver who wrote the change is named, the forge's naming compared without case (#4000)", () => {
+    expect(approversWhoAuthored(["github:alice", "GitHub:Carol"], ["github:carol", "github:dave"])).toEqual(["GitHub:Carol"]);
+    expect(approversWhoAuthored(["github:alice"], ["github:carol"])).toEqual([]);
   });
 });
 

@@ -85,6 +85,21 @@ describe("github", () => {
     expect(calls[0].body).toEqual({ state: "success", context: "chant/plan", description: "2 members", target_url: "https://ci/run/1" });
   });
 
+  test("the authors of a pull request are its opener and every commit's author and committer, every page read (#4000)", async () => {
+    const page1 = Array.from({ length: 100 }, () => ({ author: { login: "carol" }, committer: { login: "carol" } }));
+    const { fetch, calls } = fakeFetch({
+      "GET /repos/acme/infra/pulls/12": { number: 12, user: { login: "carol" } },
+      "GET /repos/acme/infra/pulls/12/commits?page=1": page1,
+      "GET /repos/acme/infra/pulls/12/commits?page=2": [{ author: null, committer: { login: "dave" } }, { author: { login: "erin" }, committer: { login: "web-flow" } }],
+    });
+    expect(await githubForge({ ...opts, fetch }).authors(12)).toEqual(["carol", "dave", "erin", "web-flow"]);
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.github.com/repos/acme/infra/pulls/12",
+      "https://api.github.com/repos/acme/infra/pulls/12/commits?per_page=100&page=1",
+      "https://api.github.com/repos/acme/infra/pulls/12/commits?per_page=100&page=2",
+    ]);
+  });
+
   test("an approver is someone whose newest deciding review approves", async () => {
     const { fetch } = fakeFetch({
       "GET /repos/acme/infra/pulls/12/reviews": [
@@ -195,6 +210,15 @@ describe("forgejo", () => {
     expect(calls[0].headers.Authorization).toBe("token t0k");
   });
 
+  test("the authors of a pull request come from the same endpoints, paged by limit (#4000)", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v1/repos/acme/infra/pulls/4": { number: 4, user: { login: "ana" } },
+      "GET /api/v1/repos/acme/infra/pulls/4/commits": [{ author: { login: "ana" }, committer: { login: "ben" } }],
+    });
+    expect(await forgejoForge({ ...opts, fetch }).authors(4)).toEqual(["ana", "ben"]);
+    expect(calls.map((c) => c.url)).toContain("https://codeberg.org/api/v1/repos/acme/infra/pulls/4/commits?limit=50&page=1");
+  });
+
   test("a dismissed approval no longer counts, and a comment review decides nothing", async () => {
     const { fetch } = fakeFetch({
       "GET /api/v1/repos/acme/infra/pulls/4/reviews": [
@@ -238,6 +262,24 @@ describe("gitlab", () => {
     const { fetch, calls } = fakeFetch({ [`POST /api/v4/projects/42/statuses/${SHA}`]: {} });
     await gitlabForge({ ...opts, fetch }).setStatus(SHA, { context: "chant/apply", state: "failure", description: "refused" });
     expect(calls[0].body).toEqual({ state: "failed", name: "chant/apply", description: "refused" });
+  });
+
+  test("the authors of a merge request: its author, and each commit email's account by the users search (#4000)", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/42/merge_requests/5": { iid: 5, author: { username: "ana" } },
+      "GET /api/v4/projects/42/merge_requests/5/commits": [
+        { author_email: "ana@example.com", committer_email: "Ben@Example.com" },
+        { author_email: "ghost@example.com", committer_email: "ana@example.com" },
+      ],
+      "GET /api/v4/users": (c: Call) =>
+        ({ "ana@example.com": [{ username: "ana" }], "ben@example.com": [{ username: "ben" }] })[new URL(c.url).searchParams.get("search")!] ?? [],
+    });
+    expect(await gitlabForge({ ...opts, fetch }).authors(5)).toEqual(["ana", "ben"]);
+    expect(calls.filter((c) => new URL(c.url).pathname === "/api/v4/users").map((c) => new URL(c.url).searchParams.get("search"))).toEqual([
+      "ana@example.com",
+      "ben@example.com",
+      "ghost@example.com",
+    ]);
   });
 
   test("approvers come from the approvals endpoint, merged requests from the commit", async () => {
