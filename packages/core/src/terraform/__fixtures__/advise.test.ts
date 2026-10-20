@@ -1,5 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { join } from "path";
+import { cpSync, mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import {
   carveAdvise,
   carveJson,
@@ -50,9 +52,26 @@ describe("carve advise against the sample estate", () => {
     expect(byAddr["random_pet.suffix"].score).toBe(0);
     expect(byAddr["random_pet.suffix"].band).toBe("leave in Terraform");
 
-    // The report never proposes a mutation.
-    const text = formatCarveReport(r);
+    // The report never proposes a mutation. The estate path is the caller's,
+    // so it is masked before the check (#3169).
+    const text = formatCarveReport(r).split(r.from!).join("<estate>");
     expect(text).not.toMatch(/state rm|apply|destroy/i);
+  });
+
+  test("the no-mutation check holds in a checkout whose path says apply or destroy (#3169)", async () => {
+    if (!parserAvailable) return;
+    const parent = mkdtempSync(join(tmpdir(), "carve-native-apply-destroy-"));
+    try {
+      const estate = join(parent, "sample-estate");
+      cpSync(ESTATE, estate, { recursive: true });
+      const r = await carveAdvise({ from: estate });
+      expect(r.ok).toBe(true);
+      const text = formatCarveReport(r);
+      expect(text).toContain(estate);
+      expect(text.split(r.from!).join("<estate>")).not.toMatch(/state rm|apply|destroy/i);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });
 
