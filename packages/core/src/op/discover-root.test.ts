@@ -15,13 +15,15 @@ import { discoverOps } from "./discover";
  * with whatever the current test set (`realpath`ed, since macOS's tmpdir is a
  * symlink and the walk compares resolved paths).
  */
-let fakeGitRoot = "";
+let fakeGitRoot: string | undefined = "";
 vi.mock("../runtime-adapter", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../runtime-adapter")>()),
   getRuntime: () => ({
     spawn: async (cmd: string[]) =>
       cmd[0] === "git" && cmd[1] === "rev-parse"
-        ? { stdout: fakeGitRoot, stderr: "", exitCode: 0 }
+        ? fakeGitRoot === undefined
+          ? { stdout: "", stderr: "fatal: not a git repository", exitCode: 128 }
+          : { stdout: fakeGitRoot, stderr: "", exitCode: 0 }
         : { stdout: "", stderr: "", exitCode: 0 },
   }),
 }));
@@ -65,6 +67,33 @@ describe("discoverOps — the scan root is the project, not the checkout (#2058)
     rmSync(join(checkout, "sibling", "chant.config.json"));
     const { ops } = await discoverOps({ cwd: join(checkout, "app") });
     expect([...ops.keys()].sort()).toEqual(["mine", "root", "theirs"]);
+  });
+});
+
+describe("discoverOps outside a git repository (#2504)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-op-nogit-")));
+    fakeGitRoot = undefined;
+    mkdirSync(join(dir, "demo", "ops"), { recursive: true });
+    writeFileSync(join(dir, "demo", "ops", "apply.op.ts"), OP_FILE("k3d-apply"));
+  });
+  afterEach(() => {
+    fakeGitRoot = "";
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a chant.config names the project root, so no git root is needed", async () => {
+    writeFileSync(join(dir, "demo", "chant.config.json"), JSON.stringify({ lexicons: ["k8s"] }));
+    const { ops, errors } = await discoverOps({ cwd: join(dir, "demo", "ops") });
+    expect(errors).toEqual([]);
+    expect([...ops.keys()]).toEqual(["k3d-apply"]);
+  });
+
+  test("with neither a config nor a git root, discovery says both are missing", async () => {
+    await expect(discoverOps({ cwd: join(dir, "demo") })).rejects.toThrow(
+      /Not in a git repository, and no chant\.config/,
+    );
   });
 });
 
