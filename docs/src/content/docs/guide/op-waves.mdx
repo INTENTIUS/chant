@@ -564,6 +564,8 @@ Before a wave applies under an approval, it appends one line to `_gates/<name>/a
 {"version":1,"kind":"applied","op":"migrations","gate":"migrations-wave-3","planDigest":"jcs1-sha256:...","approvedAt":"2026-10-10T09:00:00.000Z","approvedBy":"github:alice","timestamp":"2026-10-11T12:00:00.000Z","wave":{"number":3,"name":"prod"}}
 ```
 
+chant fetches the remote's `chant/lifecycle` first and writes the line on top of it. The push happens before anything applies. If the push does not land, the wave fails and applies nothing ([#3985](https://github.com/INTENTIUS/chant/issues/3985)). The next run reads the remote, where the approval would still look unspent. A checkout with no remote is the whole ledger, so there the local line is enough. An override's spend works the same way.
+
 From then on every approval of that gate and digest made at or before `approvedAt` is spent:
 
 | The approval | Without `spend` | With `spend` |

@@ -613,6 +613,36 @@ describe("op/gate — a rejected ledger push is reported, not swallowed (#2310)"
   });
 });
 
+describe("op/gate — an applied record is written on the remote's ledger (#3985)", () => {
+  test("appendApplied fetches first, so a remote another writer moved still takes the push", async () => {
+    const { remote, author } = await clonePair();
+    const other = tmp("other");
+    git(["clone", "-q", remote, other], tmpdir());
+    git(["config", "user.email", "other@chant.dev"], other);
+    git(["config", "user.name", "Other"], other);
+
+    const port = gitGateLedgerPort({ cwd: author });
+    const pending = { op: "migrations", gate: "migrations-wave-1", timestamp: "2026-10-10T00:00:00.000Z", expiresAt: "2026-10-11T00:00:00.000Z" };
+    expect((await port.appendPending(pending)).pushed).toBe(true);
+
+    // Another writer moves the remote past what `author` holds.
+    git(["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], other);
+    expect((await gitGateLedgerPort({ cwd: other }).appendPending({ ...pending, gate: "migrations-wave-2" })).pushed).toBe(true);
+
+    const line = {
+      version: 1 as const, kind: "applied" as const, op: "migrations", gate: "migrations-wave-1", planDigest: "sha256:aa",
+      approvedAt: "2026-10-10T01:00:00.000Z", approvedBy: "alice", timestamp: "2026-10-10T02:00:00.000Z",
+    };
+    expect(await port.appendApplied!(line)).toEqual({ pushed: true });
+
+    // The remote holds the applied line and the other writer's pending fact.
+    const reader = ciCheckout(remote);
+    const readerPort = gitGateLedgerPort({ cwd: reader });
+    expect(await readerPort.readApplied!("migrations")).toEqual([line]);
+    expect((await readerPort.read("migrations")).pending.map((p) => p.gate)).toEqual(["migrations-wave-1", "migrations-wave-2"]);
+  });
+});
+
 describe("op/gate — the approve hint on a sealed gate (#3521)", () => {
   test("approveCommand adds --sign last, only when sealed", () => {
     expect(approveCommand("app", "ship")).toBe("chant approve app ship");

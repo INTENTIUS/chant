@@ -176,6 +176,9 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
     async appendApplied(record) {
       const { dir, file } = appliedGatePath(record.op);
       const line = JSON.stringify(record, sortedJsonReplacer);
+      // #3985: write on top of the remote's ledger, not a local copy another
+      // writer has since moved past, so the push that follows can land.
+      await requireLifecycleLedger(opts);
       let lastErr: unknown;
       // The same append-and-retry as a ledger line: another writer to the branch is the ordinary case.
       for (let attempt = 1; attempt <= 5; attempt++) {

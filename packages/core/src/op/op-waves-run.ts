@@ -68,6 +68,7 @@ import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger"
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
+import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../workspace/trust/gate-seal";
@@ -1722,10 +1723,21 @@ async function settleDenials(ctx: WaveContext, decision: OpWaveDecision, listed:
 }
 
 /**
+ * Throws unless a spend's record reached the remote the next run reads
+ * (#3985). Without that, the next run reads the approval or override as
+ * unspent. A ledger with no remote is the whole ledger, so a line recorded
+ * there is spent.
+ */
+function requireSpendPushed(result: { pushed: boolean; pushWarning?: string }): void {
+  if (result.pushed || isLifecycleLocalNote(result.pushWarning)) return;
+  throw new Error(`the record did not reach the remote the next run reads: ${result.pushWarning ?? "the push did not land"}`);
+}
+
+/**
  * Record each override the wave is about to apply under (#3821), in
  * `_gates/policy-override/applied.jsonl`, which spends it: written before
- * anything applies, once. False when the lines could not be written: the
- * wave then fails and applies nothing.
+ * anything applies, once. False when the lines could not be written or did
+ * not reach the remote (#3985): the wave then fails and applies nothing.
  */
 async function spendOverrides(ctx: WaveContext, decision: OpWaveDecision): Promise<boolean> {
   const used = decision.members.filter((m) => m.override);
@@ -1738,7 +1750,7 @@ async function spendOverrides(ctx: WaveContext, decision: OpWaveDecision): Promi
     if (!port.appendApplied) throw new Error("this gate ledger cannot record an applied override");
     for (const m of used) {
       const record = og.appliedOverride({ subject: m.member, digest: m.override!.digest, at: m.override!.at, by: m.override!.by }, { timestamp: now });
-      await port.appendApplied(record as unknown as AppliedGateRecord);
+      requireSpendPushed(await port.appendApplied(record as unknown as AppliedGateRecord));
     }
   } catch (err) {
     failed(ctx, `wave ${k} (${wave.name}) could not record the overrides it applies under, so nothing applied: ${err instanceof Error ? err.message : String(err)}`);
@@ -2153,9 +2165,11 @@ async function applyStage(
  * Record that the wave applies under its approval (#3784), which spends it:
  * one line in `_gates/<name>/applied.jsonl`, before anything applies, as
  * terragucci's wave gate writes it. Only an approved wave under the spend
- * rule records, and only once. False when the line could not be written: the
+ * rule records, and only once. False when the line could not be written, or
+ * was written but did not reach the remote the next run reads (#3985): the
  * wave then fails and applies nothing, since an apply the record misses
- * would leave its approval standing.
+ * would leave its approval standing. A ledger with no remote is the whole
+ * ledger, so a line recorded there is spent.
  */
 async function spendApproval(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<boolean> {
   if (!decision.spend || decision.status !== "approved" || decision.spentAt || !decision.approvedAt) return true;
@@ -2177,6 +2191,7 @@ async function spendApproval(options: RunOpWaveOptions, ctx: WaveContext, decisi
   try {
     if (!port.appendApplied) throw new Error("this gate ledger cannot record an applied approval");
     const pushed = await port.appendApplied(record);
+    requireSpendPushed(pushed);
     if (!pushed.pushed && pushed.pushWarning) log(`wave ${k} (${wave.name}): ${pushed.pushWarning}`);
   } catch (err) {
     failed(ctx, `wave ${k} (${wave.name}) could not record that it applies under the approval by ${record.approvedBy}, so nothing applied: ${err instanceof Error ? err.message : String(err)}`);
