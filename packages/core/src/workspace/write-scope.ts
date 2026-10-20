@@ -309,6 +309,16 @@ export interface PathChange {
 }
 
 /**
+ * The factory Op's check log, `.chant/factory/<item>/check.log` (#3512). The
+ * Check step writes it in the worktree (`../op/activities/factory.ts`,
+ * `factoryCheck`), attaches it as each criterion's evidence, and Record
+ * commits it with the build under the builder's Chant-Agent. It is chant's own
+ * output and in no member, so an agent's member scope would flag every build
+ * commit. The member check passes over it; a protected entry still covers it.
+ */
+export const FACTORY_CHECK_LOG = /^\.chant\/factory\/[^/]+\/check\.log$/;
+
+/**
  * Whether `writer` may write the file at `path`, from the workspace root:
  * the path is in a member the writer may write, and no protected entry of
  * its scope covers it, unless the entry's `except` allows the change (#3146).
@@ -319,7 +329,8 @@ export function judgePath(declaration: Declaration | null, writer: Writer, path:
   const scope = scopeOf(declaration, writer);
   if (scope === null) return OK;
   const member = memberHolding(path, declaration?.members ?? []);
-  if (!memberAllowed(writer, scope, member)) {
+  const chantOutput = member === null && FACTORY_CHECK_LOG.test(path);
+  if (!chantOutput && !memberAllowed(writer, scope, member)) {
     const where = member === null ? "is in no member" : `is in member ${member}`;
     return {
       ok: false,
