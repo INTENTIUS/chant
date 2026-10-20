@@ -102,8 +102,9 @@ describe("the GitLab merge-request pipeline", () => {
     expect(doc.plan.script.at(-1)).not.toContain("--resume");
   });
 
-  test("refuses a wave or promote job beside it", () => {
-    expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g" } })).toThrow(/pull-request pipeline has no wave or promote jobs/);
+  test("refuses a promote job beside it, and a canary beside --wave-gate (#4003)", () => {
+    expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no promote job/);
+    expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g", canary: ["net"] } })).toThrow(/takes no --canary/);
   });
 
   test("inside a workspace member: member-named jobs that cd into the member, with no changes rule (#3465)", () => {

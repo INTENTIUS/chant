@@ -41,6 +41,15 @@
  * the rest applies. Planning everything again would give the applied members
  * empty plans and the set a new digest, and so ask for a second approval of
  * work already approved.
+ *
+ * ## A gate per wave on merge
+ *
+ * `pr-apply --wave-gate` (#4003) applies the approved set a wave at a time.
+ * {@link prWavePlan} narrows the derivation to one wave, which is planned
+ * against the outputs the waves before it left, and {@link waveNotCovered}
+ * says whether the approved change set covers what it planned, by the same
+ * test a resume uses ({@link planCoveredBy}). Covered, the wave applies under
+ * the pull request's approval; not covered, it needs its own.
  */
 
 import { composeChangeSet, verifyChangeSetDigest, type ChangeSetDocument, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
@@ -54,6 +63,7 @@ import {
   type PrRefusal,
   type PrReport,
   type PrStatus,
+  type PrWave,
 } from "../pr-loop";
 import { deployContext, type DriverComponent, type DriverComponentResult } from "./driver";
 import { deployUnits } from "./deploy-units";
@@ -478,6 +488,44 @@ export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
   };
 }
 
+/**
+ * The fan-out narrowed to wave `wave` of `plan` (1-based), less the
+ * components in `completed` (#4003). Its one wave is what is left of that
+ * wave; a dependency outside it, an earlier wave's component among them, is
+ * a seed. The digest is the derivation's, as {@link remainingFanOut} keeps it.
+ */
+export function prWavePlan(plan: FanOutPlan, components: DriverComponent[], wave: number, completed: readonly string[] = []): FanOutPlan {
+  const done = new Set(completed);
+  const order = (plan.waves[wave - 1] ?? []).filter((name) => !done.has(name));
+  const inWave = new Set(order);
+  const byName = new Map(components.map((c) => [c.name, c]));
+  const seeds = [
+    ...new Set([...plan.seeds, ...order.flatMap((name) => (byName.get(name)?.dependsOn ?? []).filter((dep) => !inWave.has(dep)))]),
+  ].sort();
+  return { order, waves: order.length > 0 ? [order] : [], skipped: [], seeds, indeterminate: plan.indeterminate, digest: plan.digest };
+}
+
+/**
+ * Why the approved change set does not cover a wave's new plan, one line per
+ * member, or `[]` when it covers every member (#4003). A member is covered
+ * as {@link planCoveredBy} says, with one rule more: a member whose planner
+ * describes no changes (chant's own empty part, for a capability that
+ * returns no change set) is covered only by the digest it was approved
+ * with, since with no entries there is nothing to compare a moved plan by.
+ */
+export function waveNotCovered(approved: ChangeSetDocument, fresh: ChangeSetDocument): string[] {
+  return fresh.members
+    .map((m) => {
+      const was = approved.members.find((a) => a.member === m.member);
+      const opaque = m.planner === "chant" && m.lexicon === "chant" && m.status === "planned";
+      if (opaque && was && was.planDigest !== m.planDigest) {
+        return `${m.member} now plans to ${m.planDigest}, not the approved ${was.planDigest ?? "(none)"}, and its planner describes no changes to compare`;
+      }
+      return planCoveredBy(approved, fresh, m.member);
+    })
+    .filter((r): r is string => r !== undefined);
+}
+
 export interface PrReportInput {
   stage: "plan" | "apply";
   pr: number | null;
@@ -498,6 +546,9 @@ export interface PrReportInput {
   message?: string;
   /** Components an earlier attempt at the approved set applied (#3464). */
   resumed?: string[];
+  /** `--wave-gate` (#4003): the wave gate's base name, and each wave reached so far. */
+  waveGate?: string;
+  waves?: PrWave[];
 }
 
 /** The report a stage writes. */
@@ -521,6 +572,8 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.resumed ? { resumed: { applied: [...input.resumed].sort() } } : {}),
     ...(input.set.deployedOutputs ? { deployedOutputs: input.set.deployedOutputs } : {}),
     approval: input.approval,
+    ...(input.waveGate ? { waveGate: input.waveGate } : {}),
+    ...(input.waveGate && input.waves?.length ? { waves: [...input.waves].sort((a, b) => a.wave - b.wave) } : {}),
     selection: {
       changed: input.plan.order.filter((c) => changed.has(c)),
       dependents: input.plan.order.filter((c) => !changed.has(c)),

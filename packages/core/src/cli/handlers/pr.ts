@@ -6,6 +6,7 @@
  * chant components pr-plan  --base <ref> --pr <n> --env <env> [--forge github|gitlab|forgejo]
  * chant approve pr-<n> pr-apply --plan <digest> --approver github:<login> --sign
  * chant components pr-apply --base <ref> --env <env> [--pr <n>] [--forge <kind>] [--require-review] [--resume <file>]
+ *                           [--wave-gate <gate> [--wave <k>]]
  * ```
  *
  * Both measure the change from the merge base of `--base` and `HEAD`, select
@@ -26,6 +27,13 @@
  * against the approved set (`resumePrSet`) and, when all are covered and the
  * approval still stands, applies the rest without a fresh approval. When
  * they are not covered it says why and runs as it would without a record.
+ *
+ * `--wave-gate <gate>` (#4003) applies the approved set a wave at a time,
+ * each wave planned after the one before it applied (`prApplyWaves`). A
+ * wave whose plan the approved change set covers applies under the pull
+ * request's approval; one whose plan moved waits at `<gate>-wave-<k>` under
+ * the pull request's op (exit 3). `--wave <k>` runs one wave, reading the
+ * approved set and the waves that applied from the `--resume` record.
  *
  * Every run writes `pr-plan.json` or `pr-apply.json` (`pr-report.schema.json`),
  * `change-set.json` and `pr-note.md` under `--output` (default `.chant/pr`). *
@@ -64,9 +72,13 @@ import {
   planPrSet,
   prReport,
   readOnlyLedger,
+  prWavePlan,
   resumePrSet,
+  waveNotCovered,
   type PrPlanSet,
 } from "../../components/pr-run";
+import { composeChangeSet, verifyChangeSetDigest } from "../../change-set";
+import { waveGateName } from "../../gated-waves";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
@@ -86,7 +98,9 @@ import {
   prStatusState,
   renderPrNote,
   type PrApproval,
+  type PrMember,
   type PrReport,
+  type PrWave,
 } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
@@ -440,6 +454,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     set,
     approval,
     status,
+    ...(ctx.args.waveGate ? { waveGate: ctx.args.waveGate } : {}),
   });
   await finish(ctx, p, report, upload);
   // The plan stage settles on its planning: an approval still to come is what it reports, not a stop.
@@ -463,6 +478,8 @@ export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
 async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number> {
   const { args } = ctx;
   if (args.requireReview && !args.forge) return fail("--require-review reads the pull request's reviews, so it needs --forge <kind>");
+  if (args.wave !== undefined && !args.waveGate) return fail("--wave runs one wave of a --wave-gate apply, so it needs --wave-gate <name>");
+  if (args.wave !== undefined && args.wave < 1) return fail(`--wave counts from 1, not ${args.wave}`);
   const p = await prepare(ctx, "apply");
   if (typeof p === "number") return p;
 
@@ -482,6 +499,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const events = await openCliRunEvents(args, { kind: "component", name: `pr-apply ${op}`, runId: release.runId, cwd: resolve(".") }, upload?.line);
   stage.stream = events;
   events?.emit({ type: "run-start", waves: p.plan.waves });
+  if (args.waveGate) return prApplyWaves(ctx, p, { pr, op, release, upload, events });
 
   // `--resume` (#3464): an earlier attempt at this change on this commit
   // applied part of an approved set. When the members left are covered by
@@ -514,14 +532,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const set = resumed?.set ?? (await planAll(p, events?.emit));
   const base = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set };
 
-  const stop = async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
-    events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-apply ${report.status}` : undefined);
-    await finish(ctx, p, report, upload);
-    console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-apply: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
-    if (report.message) console.error(report.message);
-    printMembers(report);
-    return code;
-  };
+  const stop = stopper(ctx, p, events, upload);
 
   if (p.plan.order.length === 0) {
     return stop(prReport({ ...base, approval: { status: "pending" }, status: "nothing" }), 0);
@@ -590,35 +601,11 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     }
   }
 
-  if (args.requireReview && p.forge) {
-    let reviewers: string[];
-    let authors: string[];
-    try {
-      reviewers = (await p.forge.approvers(pr)).map((login) => p.forge!.principalOf(login));
-      authors = (await p.forge.authors(pr)).map((login) => p.forge!.principalOf(login));
-    } catch (err) {
-      return fail(`could not read the reviews and authors of #${pr}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    // #4000: whoever wrote the change never counts toward its gate, through a forge review or a ledger line.
-    const writers = approversWhoAuthored(approval.approvedBy ?? [], authors);
-    if (writers.length > 0) {
-      const message =
-        `The plan is approved by ${writers.join(", ")}, who wrote #${pr} ` +
-        `(its author and the authors and committers of its commits: ${authors.join(", ")}). ` +
-        `An approval from someone who wrote the change never counts, so nothing was applied. ` +
-        `Have someone else approve the pull request and the plan, then run the apply again.`;
-      emitReviewStop(events, message);
-      return stop(prReport({ ...base, approval, status: "refused", refusal: "author-approved", message }), GATED_EXIT_CODE);
-    }
-    const strangers = approversWithoutReview(approval.approvedBy ?? [], reviewers);
-    if (strangers.length > 0) {
-      const message =
-        `The plan is approved by ${strangers.join(", ")}, who ${strangers.length === 1 ? "has" : "have"} no approving review on #${pr}` +
-        ` (approving reviews: ${reviewers.join(", ") || "none"}). Nothing was applied. ` +
-        `An approval counts when it names the reviewer the way the forge does: ${p.forge.principalOf("<login>")}.`;
-      emitReviewStop(events, message);
-      return stop(prReport({ ...base, approval, status: "refused", refusal: "not-a-reviewer", message }), GATED_EXIT_CODE);
-    }
+  const review = await reviewCheck(args, p, pr)(approval.approvedBy ?? [], "The plan");
+  if (review && "error" in review) return fail(review.error);
+  if (review) {
+    emitReviewStop(events, review.message);
+    return stop(prReport({ ...base, approval, status: "refused", refusal: review.refusal, message: review.message }), GATED_EXIT_CODE);
   }
 
   // The record is written before the first component runs and again as each
@@ -697,6 +684,69 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
+}
+
+/** How a stage stops: settle its events, write and publish the report, say how it ended, and return `code`. */
+function stopper(ctx: CommandContext, p: Prepared, events: RunEventStream | undefined, upload: PrReportUpload | undefined) {
+  return async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
+    events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-apply ${report.status}` : undefined);
+    await finish(ctx, p, report, upload);
+    console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-apply: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
+    if (report.message) console.error(report.message);
+    printMembers(report);
+    return code;
+  };
+}
+
+/** Why `--require-review` does not count an approval, or why the reviews could not be read. */
+type ReviewStop = { refusal: "author-approved" | "not-a-reviewer"; message: string } | { error: string } | undefined;
+
+/**
+ * The `--require-review` check (#3183, #4000) of an approval's approvers,
+ * `what` naming the plan they approved. The pull request's reviews and
+ * authors are read once, at the first call. Without `--require-review` every
+ * approval counts.
+ */
+function reviewCheck(args: CommandContext["args"], p: Prepared, pr: number): (approvedBy: readonly string[], what: string) => Promise<ReviewStop> {
+  let read: Promise<{ reviewers: string[]; authors: string[] }> | undefined;
+  return async (approvedBy, what) => {
+    const forge = p.forge;
+    if (!args.requireReview || !forge) return undefined;
+    read ??= (async () => ({
+      reviewers: (await forge.approvers(pr)).map((login) => forge.principalOf(login)),
+      authors: (await forge.authors(pr)).map((login) => forge.principalOf(login)),
+    }))();
+    let reviewers: string[];
+    let authors: string[];
+    try {
+      ({ reviewers, authors } = await read);
+    } catch (err) {
+      return { error: `could not read the reviews and authors of #${pr}: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    // #4000: whoever wrote the change never counts toward its gate, through a forge review or a ledger line.
+    const writers = approversWhoAuthored(approvedBy, authors);
+    if (writers.length > 0) {
+      return {
+        refusal: "author-approved",
+        message:
+          `${what} is approved by ${writers.join(", ")}, who wrote #${pr} ` +
+          `(its author and the authors and committers of its commits: ${authors.join(", ")}). ` +
+          `An approval from someone who wrote the change never counts, so nothing was applied. ` +
+          `Have someone else approve the pull request and the plan, then run the apply again.`,
+      };
+    }
+    const strangers = approversWithoutReview(approvedBy, reviewers);
+    if (strangers.length > 0) {
+      return {
+        refusal: "not-a-reviewer",
+        message:
+          `${what} is approved by ${strangers.join(", ")}, who ${strangers.length === 1 ? "has" : "have"} no approving review on #${pr}` +
+          ` (approving reviews: ${reviewers.join(", ") || "none"}). Nothing was applied. ` +
+          `An approval counts when it names the reviewer the way the forge does: ${forge.principalOf("<login>")}.`,
+      };
+    }
+    return undefined;
+  };
 }
 
 /** What a component's settle says in the job log. */
@@ -832,4 +882,374 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
   if (!resumed.ok) return skip(`what is left is not what was approved. ${resumed.reasons.join("; ")}`);
   console.error(formatInfo(`resume  : ${completed.join(", ")} applied in an earlier attempt; applying ${resumed.plan.order.join(", ") || "nothing more"} under the approval of ${record.digest}`));
   return { plan: resumed.plan, set: resumed.set, check, approval: approvalOf(check), completed, outputs };
+}
+
+// ── A gate per wave on merge (#4003) ─────────────────────────────────────────
+
+/** What an earlier wave's job left for this one (#4003): the approved set, the pull request's gate decided against it, and the progress that carries. */
+interface WaveCarry {
+  record: PrApplyRecord;
+  check: GateCheck;
+  approval: PrApproval;
+  completed: string[];
+  outputs: Record<string, Record<string, unknown>>;
+}
+
+/**
+ * Whether `attempt` carries into this wave's job. It does when it was made
+ * by an apply of this pull request's gate, on this commit, for this
+ * derivation; when its change set is the one its digest names; and when the
+ * pull request's approval still stands for that digest. Of the components it
+ * applied, those whose input is the same now carry (#4081). Otherwise it says
+ * why on stderr, and the job runs as it would with no record.
+ */
+async function carryWaves(p: Prepared, attempt: FanOutAttempt, file: string, op: string, inputsNow: Record<string, string>): Promise<WaveCarry | undefined> {
+  const skip = (why: string): undefined => {
+    console.error(formatWarning({
+      message: `--resume: "${file}" does not carry: ${why}`,
+      hint: "Wave 1 plans every member again and needs the pull request's approval of that plan; a later wave refuses until wave 1 applied.",
+    }));
+    return undefined;
+  };
+  const record = attempt.prApply;
+  if (!record) return skip("it was not written by pr-apply");
+  if (record.op !== op || record.gate !== p.gate) return skip(`it records ${record.op} ${record.gate}, not ${op} ${p.gate}`);
+  if (record.head !== p.head) return skip(`it records an apply of ${record.head.slice(0, 12)}, not ${p.head.slice(0, 12)}`);
+  if (!samePlanDigest(attempt.digest, p.plan.digest)) return skip("the change selects other components than it did");
+  if (record.changeSet.digest !== record.digest || !verifyChangeSetDigest(record.changeSet)) return skip(`its change set is not the one its digest ${record.digest} names`);
+  const split = progressThatCarries(attempt, inputsNow);
+  if (split.unrecorded && attempt.completed.length > 0) return skip("it does not record what each component applied, since it was written before chant recorded component inputs");
+  for (const name of split.changed) console.error(formatInfo(`${name}: changed since the earlier attempt, so it runs again`));
+  let check: GateCheck;
+  try {
+    check = await decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: record.digest });
+  } catch (err) {
+    return skip(`could not read the gate ledger: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!check.satisfied) return skip(`no approval stands for the plan it applied (${record.digest}) any more`);
+  const completed = split.carried;
+  const outputs = Object.fromEntries(Object.entries(attempt.outputs).filter(([name]) => completed.includes(name)));
+  return { record, check, approval: approvalOf(check), completed, outputs };
+}
+
+/** A run event with its wave renumbered to `wave`: the fan-out that applies one wave numbers it 1. */
+function inWave(body: RunEventBody, wave: number): RunEventBody {
+  return "wave" in body && typeof (body as { wave?: unknown }).wave === "number" ? ({ ...body, wave } as RunEventBody) : body;
+}
+
+/**
+ * `pr-apply --wave-gate <gate>` (#4003): apply the pull request's approved
+ * set a wave at a time, each wave planned after the one before it applied.
+ *
+ * The first job plans every member, as pr-apply does, and decides the pull
+ * request's gate against that digest. Approved, wave 1 applies with those
+ * plans. Each later wave is planned again against the outputs the waves
+ * before it left. When the approved change set covers its plan
+ * (`planCoveredBy`, as on a resume) it applies under the pull request's
+ * approval; when it does not, it waits at `<gate>-wave-<k>` under the pull
+ * request's op for an approval of its new plan, and exits 3.
+ *
+ * With `--wave <k>` the job runs wave k and no other, reading the approved
+ * set and the progress from the `--resume` record the job before it left.
+ * Without it the waves run in order until one stops.
+ */
+async function prApplyWaves(
+  ctx: CommandContext,
+  p: Prepared,
+  at: { pr: number | null; op: string; release: ReturnType<typeof autoReleaseRun>; upload?: PrReportUpload; events?: RunEventStream },
+): Promise<number> {
+  const { args } = ctx;
+  const { pr, op, events, upload } = at;
+  const waveGate = args.waveGate!;
+  const only = args.wave;
+  const total = p.plan.waves.length;
+  const stop = stopper(ctx, p, events, upload);
+  const log = applyLog();
+  log({ type: "run-start", waves: p.plan.waves });
+  const reportBase = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, waveGate };
+
+  if (p.plan.order.length === 0 || pr === null) {
+    const set = await planAll(p, events?.emit);
+    if (p.plan.order.length === 0) return stop(prReport({ ...reportBase, set, approval: { status: "pending" }, status: "nothing" }), 0);
+    return stop(
+      prReport({
+        ...reportBase,
+        set,
+        approval: { status: "pending" },
+        status: "refused",
+        refusal: "no-pull-request",
+        message: `No pull request merged ${p.head}, so no approval answers for this change. Nothing was applied. Pass --pr <n>, or land the change through a pull request.`,
+      }),
+      GATED_EXIT_CODE,
+    );
+  }
+
+  const resumePath = args.resume ? resolve(args.resume) : undefined;
+  let attempt: FanOutAttempt | undefined;
+  if (resumePath) {
+    try {
+      attempt = readFanOutAttempt(resumePath);
+    } catch (err) {
+      return fail(`--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const inputsNow = resumePath ? componentInputDigests(p.components, { projectRoot: resolve("."), env: p.env }) : {};
+  const carry = attempt ? await carryWaves(p, attempt, args.resume!, op, inputsNow) : undefined;
+
+  const completed = new Set(carry?.completed ?? []);
+  const outputsSoFar: Record<string, Record<string, unknown>> = { ...(carry?.outputs ?? {}) };
+  const inputsSoFar: Record<string, string> = Object.fromEntries([...completed].filter((n) => inputsNow[n] !== undefined).map((n) => [n, inputsNow[n]!]));
+  const failedSoFar = new Set<string>();
+  let waves: PrWave[] = carry?.record.waves ?? [];
+  const after = new Map<string, PrMember>();
+  const leftIn = (k: number): string[] => (p.plan.waves[k - 1] ?? []).filter((name) => !completed.has(name));
+  const firstLeft = (): number => p.plan.waves.findIndex((_, i) => leftIn(i + 1).length > 0) + 1;
+
+  // The approved set: carried from the record, or planned here and decided against the pull request's gate.
+  let approved: PrPlanSet | undefined = carry
+    ? { doc: carry.record.changeSet, members: carry.record.members, plans: {}, outputs: carry.record.planOutputs, failed: false }
+    : undefined;
+  let approval: PrApproval = carry?.approval ?? { status: "pending" };
+  const report = (input: { status: PrReport["status"]; refusal?: PrReport["refusal"]; message?: string }) => {
+    const set = approved ?? { doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: false };
+    const members = set.members.map((m): PrMember => {
+      const now = after.get(m.member);
+      if (now) return { ...m, status: now.status, ...(now.error ? { error: now.error } : {}) };
+      return completed.has(m.component) ? { ...m, status: "applied" } : m;
+    });
+    return prReport({ ...reportBase, set, approval, members, waves, ...input });
+  };
+
+  // `--wave <k>` reached before an earlier wave applied: nothing runs, as `fan-out --wave` refuses.
+  const left = firstLeft();
+  if (only !== undefined && left > 0 && left < only) {
+    return stop(
+      report({
+        status: "refused",
+        refusal: "earlier-wave",
+        message:
+          `Wave ${only} cannot run yet: wave ${left} has not applied (${leftIn(left).join(", ")})${carry ? "" : ", and no --resume record of this apply says otherwise"}. ` +
+          `Nothing was applied. Run wave ${left}'s job first, with the same --resume record.`,
+      }),
+      1,
+    );
+  }
+
+  let planned: PrPlanSet | undefined;
+  if (carry) {
+    // What the earlier waves applied settles first (#4007), each in its own wave, as a resumed apply's does.
+    p.plan.waves.forEach((names, i) => {
+      for (const component of names.filter((name) => completed.has(name))) {
+        const body: RunEventComponentSettle = { type: "component-settle", wave: i + 1, component, status: "already-applied" };
+        events?.emit(body);
+        log(body);
+      }
+    });
+    emitResumedGate(events, op, p.gate, carry.check);
+  } else {
+    const set = await planAll(p, events?.emit);
+    approved = set;
+    if (set.failed) {
+      return stop(report({ status: "plan-failed", message: "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied." }), 1);
+    }
+    await storeChangeSetForGate(ctx, p, set.doc);
+    const check = await emitGateStep(
+      events?.emit,
+      { op, gate: p.gate },
+      () => decidePrGate(gitGateLedgerPort(), { op, gate: p.gate, digest: set.doc.digest, description: `pull request #${pr}: ${p.plan.order.join(", ")}` }),
+      (unapproved) => {
+        const a = approvalOf(unapproved);
+        return a.status === "changed"
+          ? describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval: a })
+          : `No approval stands for this plan. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}`;
+      },
+    );
+    approval = approvalOf(check);
+    if (!check.satisfied) {
+      return stop(
+        approval.status === "changed"
+          ? report({ status: "refused", refusal: "plan-changed", message: describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval }) })
+          : report({
+              status: "refused",
+              refusal: "not-approved",
+              message: `No approval stands for this plan, so nothing was applied. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}; then run the apply again.`,
+            }),
+        GATED_EXIT_CODE,
+      );
+    }
+    planned = set;
+  }
+  const approvedSet = approved!;
+
+  const review = reviewCheck(args, p, pr);
+  const prReview = await review(approval.approvedBy ?? [], "The plan");
+  if (prReview && "error" in prReview) return fail(prReview.error);
+  if (prReview) {
+    emitReviewStop(events, prReview.message);
+    return stop(report({ status: "refused", refusal: prReview.refusal, message: prReview.message }), GATED_EXIT_CODE);
+  }
+
+  const recordAttempt = (): void => {
+    if (!resumePath) return;
+    writeFanOutAttempt(resumePath, {
+      digest: p.plan.digest,
+      completed: [...completed].sort(),
+      failed: [...failedSoFar].sort(),
+      outputs: outputsSoFar,
+      inputs: Object.fromEntries(Object.entries(inputsSoFar).sort(([a], [b]) => a.localeCompare(b))),
+      prApply: {
+        op,
+        gate: p.gate,
+        head: p.head,
+        digest: approvedSet.doc.digest,
+        approvedBy: approval.approvedBy ?? [],
+        members: approvedSet.members,
+        changeSet: approvedSet.doc,
+        planOutputs: approvedSet.outputs,
+        ...(waves.length > 0 ? { waves } : {}),
+      },
+    });
+  };
+  const setWave = (wave: PrWave): void => {
+    waves = [...waves.filter((w) => w.wave !== wave.wave), wave].sort((a, b) => a.wave - b.wave);
+    recordAttempt();
+  };
+  recordAttempt();
+
+  const from = only ?? (left || total + 1);
+  const to = only ?? total;
+  for (let k = from; k <= to; k++) {
+    const wavePlan = prWavePlan(p.plan, p.components, k, [...completed]);
+    if (wavePlan.order.length === 0) continue;
+    const inThisWave = new Set(wavePlan.order);
+
+    // Wave 1 of the apply that just planned every member applies those plans:
+    // they are the approved set's. Every other wave is planned again, against
+    // the outputs the waves before it left.
+    let set: PrPlanSet;
+    let entry: PrWave;
+    if (planned && k === 1) {
+      set = {
+        ...planned,
+        members: planned.members.filter((m) => inThisWave.has(m.component)),
+        plans: Object.fromEntries(Object.entries(planned.plans).filter(([name]) => inThisWave.has(name))),
+      };
+      entry = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
+    } else {
+      const notApplied = Object.fromEntries(Object.entries(approvedSet.outputs).filter(([name]) => !completed.has(name)));
+      const fresh = await planPrSet({
+        components: p.components,
+        plan: wavePlan,
+        registry: p.registry,
+        env: p.env,
+        seededOutputs: { ...p.seededOutputs, ...notApplied, ...outputsSoFar },
+        ...(events ? { onRunEvent: (body: RunEventBody) => events.emit(body) } : {}),
+      });
+      if (fresh.failed) {
+        for (const m of fresh.members) after.set(m.member, m);
+        setWave({ wave: k, components: wavePlan.order, status: "plan-failed", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest });
+        return stop(report({ status: "plan-failed", message: `A member of wave ${k} failed to plan, so nothing in wave ${k} was applied.` }), 1);
+      }
+      const moved = waveNotCovered(approvedSet.doc, fresh.doc);
+      set = fresh;
+      if (moved.length === 0) {
+        console.error(formatInfo(`wave ${k}: the approved plan covers what it plans now, so it applies under the pull request's approval`));
+        entry = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
+      } else {
+        const gate = waveGateName(waveGate, k);
+        const digest = fresh.doc.digest;
+        console.error(formatInfo(`wave ${k}: its plan moved since the pull request's (${moved.join("; ")}), so it needs an approval of ${gate}`));
+        await storeChangeSetForGate(ctx, p, fresh.doc);
+        writeWaveChangeSet(ctx, k, fresh.doc, upload);
+        const approveLine = prApproveCommand({ op, gate, digest });
+        const check = await emitGateStep(
+          events?.emit,
+          { op, gate },
+          () => decidePrGate(gitGateLedgerPort(), { op, gate, digest, description: `pull request #${pr}, wave ${k} of ${total}: ${wavePlan.order.join(", ")}` }),
+          (unapproved) =>
+            unapproved.mismatch
+              ? `wave ${k}'s plan changed after its approval. Approve the plan now: ${approveLine}`
+              : `wave ${k}'s plan is not the one the pull request approved. Approve it: ${approveLine}`,
+        );
+        const waveApproval = approvalOf(check);
+        const waiting: PrWave = {
+          wave: k,
+          components: wavePlan.order,
+          status: "waiting",
+          approval: "wave",
+          gate,
+          digest,
+          moved,
+          ...(waveApproval.approved ? { approved: waveApproval.approved } : {}),
+        };
+        if (!check.satisfied) {
+          setWave(waiting);
+          const message =
+            waveApproval.status === "changed"
+              ? `Wave ${k}'s plan changed after its approval, so nothing in it was applied. approved: ${waveApproval.approved ?? "(none)"}; planned now: ${digest}. ` +
+                `Read the new plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`
+              : `Wave ${k} was planned after the waves before it applied, and the pull request's approved plan does not cover it: ${moved.join("; ")}. ` +
+                `Nothing in wave ${k} was applied. Read its plan, and if it is right, approve it: ${approveLine}; then run the wave's apply again.`;
+          return stop(report({ status: "refused", refusal: waveApproval.status === "changed" ? "wave-plan-changed" : "wave-not-approved", message }), GATED_EXIT_CODE);
+        }
+        const waveReview = await review(waveApproval.approvedBy ?? [], `Wave ${k}'s plan`);
+        if (waveReview && "error" in waveReview) return fail(waveReview.error);
+        if (waveReview) {
+          setWave(waiting);
+          emitReviewStop(events, waveReview.message);
+          return stop(report({ status: "refused", refusal: waveReview.refusal, message: waveReview.message }), GATED_EXIT_CODE);
+        }
+        entry = { wave: k, components: wavePlan.order, status: "applied", approval: "wave", gate, digest, moved, ...(waveApproval.approvedBy ? { approvedBy: waveApproval.approvedBy } : {}) };
+      }
+    }
+
+    const applied = await applyPrSet({
+      components: p.components,
+      plan: wavePlan,
+      registry: p.registry,
+      env: p.env,
+      set,
+      // One wave's fan-out numbers its wave 1; the events and the log carry the derivation's number.
+      onRunEvent: (body: RunEventBody) => {
+        const numbered = inWave(body, k);
+        events?.nested(numbered);
+        if (numbered.type !== "run-start") log(numbered);
+      },
+      onComponentSettled: (settled, outputs) => {
+        if (settled.status === "ok") {
+          completed.add(settled.component);
+          if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
+          if (outputs) outputsSoFar[settled.component] = outputs;
+        } else if (settled.status === "fail") {
+          failedSoFar.add(settled.component);
+        }
+        recordAttempt();
+      },
+    });
+    for (const m of applied.members) after.set(m.member, m);
+    for (const name of applied.run.completed) {
+      completed.add(name);
+      const outputs = applied.run.componentOutputs[name];
+      if (outputs) outputsSoFar[name] = outputs;
+    }
+    setWave({ ...entry, status: applied.status === "applied" ? "applied" : "failed" });
+    await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin);
+    if (applied.status !== "applied") {
+      return stop(report({ status: "failed" }), failedRunExitCode(applied.run.results), applied.run.status === "gated" ? "gated" : undefined);
+    }
+    console.error(formatSuccess(`applied wave ${k} of ${total} under ${entry.approval === "pull-request" ? `the pull request's approval of ${approvedSet.doc.digest}` : `${entry.gate}, approved for ${entry.digest}`} by ${(entry.approvedBy ?? []).join(", ")}`));
+  }
+
+  const done = p.plan.order.every((name) => completed.has(name));
+  return stop(report({ status: done ? "applied" : "wave-applied" }), 0);
+}
+
+/** A wave's new plan (#4003), beside the report as `change-set-wave-<k>.json`, for whoever approves its gate. */
+function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["doc"], upload?: PrReportUpload): void {
+  const dir = resolve(ctx.args.output ?? PR_REPORT_DIR);
+  mkdirSync(dir, { recursive: true });
+  const name = `change-set-wave-${wave}.json`;
+  const body = JSON.stringify(doc, null, 2) + "\n";
+  writeFileSync(join(dir, name), body);
+  upload?.file(name, body);
 }

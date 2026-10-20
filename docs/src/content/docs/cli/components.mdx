@@ -25,6 +25,7 @@ chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
                                 [--events-json] [--report-url <url>]
+                                [--wave-gate <name> [--wave <k>]]
 chant components promote --to <env> [--from <env>] [--allow-skip]
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
@@ -251,6 +252,8 @@ Wave numbers come from the derivation, so on a resumed attempt wave 3 is still w
 
 `--wave <n>` runs wave `n` and no other, which is the shape for CI with one job per wave. It refuses while an earlier wave has work left, and a wave past the last one the change has exits 0. `chant build --components --generate gitlab|github|forgejo --wave-gate <name>` writes that pipeline. Job `wave-k` runs `--wave k` and needs `wave-(k-1)`. It hands the `--resume` record on as an artifact, even when it stops at a gate. Approve, then re-run the job that stopped. The pipeline measures the change from `HEAD~1`. Pass `--base <ref>` to the build command to measure it from somewhere else; every job must use the same ref, so it is a fixed one.
 
+A gated-wave fan-out has no plan on a pull request. To review the whole plan on the pull request and still gate each wave on merge, use [`pr-apply --wave-gate`](#a-gate-per-wave-on-merge), which `--pr-loop --wave-gate <name>` generates. There a wave whose plan the pull request's approval covers needs no approval of its own.
+
 `--gate` and `--wave-gate` are refused together. Use `--gate` when one person reads the whole change once, the fan-out is small, and its components do not read each other's fresh outputs at plan time. Use `--wave-gate` when the change should apply in stages, when a later root's plan depends on what an earlier one writes, or when the set is too large to review as one.
 
 #### Failure semantics
@@ -369,6 +372,21 @@ Progress carries the same way it does for `fan-out --resume`: a component the ea
 
 The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when it keeps no input digests, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own. A record whose change set does not hash to the digest it names carries nothing either.
 
+#### A gate per wave on merge
+
+`pr-apply --wave-gate <name>` applies the approved set a wave at a time ([#4003](https://github.com/INTENTIUS/chant/issues/4003)). The first wave's apply plans every member and decides the pull request's gate against that digest, as `pr-apply` does without the flag. Approved, it applies wave 1 with those plans. Each later wave is planned against the outputs the waves before it left, and its plan is checked against the approved change set the way a resume checks a member left over.
+
+When the approved set covers every member of the wave, the wave applies under the pull request's approval. When it does not, the wave's gate is `<name>-wave-<k>` under the op `pr-<n>`, bound to the change-set digest of the wave's new plan. Nothing in the wave applies until someone approves that digest, and the apply exits 3 with each reason. A member whose capability returns no change set is covered only by the digest it was approved with, since there is nothing else to compare.
+
+```bash
+chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --wave-gate release --wave 1 --resume .chant/pr-resume/pr-apply.json
+chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --wave-gate release --wave 2 --resume .chant/pr-resume/pr-apply.json
+chant approve pr-12 release-wave-2 --plan jcs1-sha256:9b1f... --approver github:alice --sign
+chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --wave-gate release --wave 2 --resume .chant/pr-resume/pr-apply.json
+```
+
+`--wave <k>` runs one wave, for a CI job per wave. It reads the approved set and the waves that applied from the `--resume` record, which carries only while the pull request's approval stands. It refuses with exit 1 while an earlier wave has work left or no record says the earlier waves applied. A wave past the change's last exits 0. Without `--wave` the waves run in order until one stops. The report's status is `wave-applied` when a wave applied and a later one is still to run. Its `waveGate` and `waves` say which wave applied under which approval. A wave that waits refuses as `wave-not-approved`, or as `wave-plan-changed` when an approval of its gate stands for another digest.
+
 The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) passes `--resume .chant/pr-resume/pr-apply.json` and keeps the file in the CI cache under the pushed commit, so re-running a failed apply job finishes it.
 
 | Flag | Meaning |
@@ -381,6 +399,8 @@ The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) pass
 | `--require-review` | `pr-apply` only. Count an approval only from someone with a standing approving review on the pull request, named the way the forge names them (`github:<login>`, `gitlab:<login>`, `forgejo@<host>:<login>`). Needs `--forge`. |
 | `--member <name>` | A workspace member's loop, run in the member's directory. The gate is recorded under `pr-<n>-<member>`, the note and the statuses carry the member's name, and the report gains `member`. The name must be the member that owns the current directory. The member's generated pipeline passes it. |
 | `--resume <file>` | `pr-apply` only. Write the attempt record here, and finish an earlier attempt it records under the same approval. See above. |
+| `--wave-gate <name>` | `pr-apply` only. Apply a wave at a time, each planned after the one before it applied. A wave whose plan the approved change set covers applies under the pull request's approval, and one whose plan moved waits at `<name>-wave-<k>`. See [a gate per wave on merge](#a-gate-per-wave-on-merge). |
+| `--wave <k>` | `pr-apply --wave-gate` only. Run wave `k` and no other, reading the approved set and the waves that applied from `--resume`. |
 | `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
 | `--seed-outputs <file>` | Outputs to use instead of reading them from the deployed estate, as on `fan-out`. Without it, the plan reads the deployed outputs of every dependency a planned member names, selected or not, and the report lists them under `deployedOutputs`. |
 | `--events-json` | Stream the stage's events to stdout, one `run-event.schema.json` line each: a `plan` phase with a step per component, the gate's decision as a `gate` phase, and on `pr-apply` the apply's waves and components, a component it did not start settling `blocked` or `already-applied`. This is the stages' stream; they take no `--progress-json`. Refused beside `--json`, which prints the report to stdout too. See [run events](/chant/reference/workspace-read-contract/#run-events). |

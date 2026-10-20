@@ -229,7 +229,7 @@ The AWS CLI uploads to an `s3://` URL with the credentials in the job's environm
 
 ## Limits
 
-A dependent is planned against the outputs its upstream has now. When the change moves an output a dependent reads, the dependent applies the plan it was approved with, which carries the old value. The apply marks it `inputsMoved`, and the next run plans it against the new value. To carry a moved output through every dependent in one rollout, use [gated waves](/chant/cli/components/#one-gate-per-wave), which plan each wave after the one before it applied.
+A dependent is planned against the outputs its upstream has now. When the change moves an output a dependent reads, the dependent applies the plan it was approved with, which carries the old value. The apply marks it `inputsMoved`, and the next run plans it against the new value. To carry a moved output through every dependent in one rollout, add a [gate per wave on merge](#a-gate-per-wave-on-merge).
 
 An apply that fails partway leaves the members it applied in place. The generated apply job runs `pr-apply` with [`--resume .chant/pr-resume/pr-apply.json`](/chant/cli/components/#finishing-an-apply-that-failed-partway) and keeps that record in the CI cache, saved even when the job fails. Re-run the failed apply job and it restores the record, skips the members that applied and applies the rest under the approval it already has. The record is not part of the report artifact, since it holds the outputs the members read.
 
@@ -244,6 +244,29 @@ The record survives a re-run when the cache does:
 - On Forgejo, the cache server runs with each runner unless the runners share one, with the same consequence. Run the apply on a runner the pull requests' jobs do not use, so no other job writes into the cache it reads.
 
 A record that comes back from an older attempt of the same run still resumes correctly: what it lists as applied did apply, and a member that applied since plans no change, which the approved plan covers.
+
+## A gate per wave on merge
+
+Generate the pipeline with `--wave-gate <name>` beside `--pr-loop` when a later member reads an output an earlier one moves ([#4003](https://github.com/INTENTIUS/chant/issues/4003)). The pull request is planned and approved as before. On merge the apply runs a wave at a time, and plans each wave after the one before it applied.
+
+```bash
+chant build --components --generate github --pr-loop --wave-gate release --env prod \
+  --output .github/workflows/chant-pr.yml
+```
+
+The apply job becomes one job per wave of the component graph, `apply-wave-1` to `apply-wave-<n>`, each after the one before it. Job `apply-wave-<k>` runs `pr-apply --wave-gate release --wave <k>`:
+
+- Wave 1 plans every member, as the single apply does, and decides the pull request's gate against that digest. Approved, it applies wave 1. A moved plan refuses with both digests named, as before.
+- Each later wave is planned again against the outputs the waves before it left. When the pull request's approved change set covers what it plans now, the wave applies under the pull request's approval. Coverage is the test a [resumed apply](/chant/cli/components/#finishing-an-apply-that-failed-partway) uses: each change the wave makes is one the approved plan made, and a value the approved plan knew only after apply may be any value now.
+- A wave whose plan moved waits at `release-wave-<k>`, under the pull request's op, for an approval of its new plan. Nothing in that wave applies, and the job exits 3. Its new plan is kept as `change-set-wave-<k>.json` beside the report, and the note gives the approve command. Once it is approved, re-run the job; the waves after it follow.
+
+```bash
+chant approve pr-12 release-wave-2 --plan jcs1-sha256:9b1f... --approver github:alice --sign
+```
+
+`--require-review` holds a wave's approval to the same rules as the pull request's: the approver needs an approving review on the pull request, and whoever wrote the change never counts. The note and each wave job's report (`pr-apply.json`, kept as `chant-pr-apply-wave-<k>` on GitHub and Forgejo) carry a row per wave. Each row names the gate the wave applied or waits under and who approved it. The report's `waves` holds the same.
+
+The waves hand the approved change set and what applied to each other through the apply's resume record. On GitHub and Forgejo each wave saves it under its own cache key and restores the newest one for the pushed commit. On GitLab every wave shares the commit's key. A wave job with no record of the waves before it refuses with exit 1 and applies nothing. So does a record whose pull-request approval no longer stands. `chant ci serve --wave-gate <name>` runs the one apply job with `--wave-gate` and no `--wave`. That job applies the waves in order and stops at the first that waits, and `--rerun-failed` carries on once the wave is approved.
 
 ## Inside a workspace member
 

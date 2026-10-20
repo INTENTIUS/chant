@@ -33,12 +33,12 @@
       "description": "The change-set digest of what this stage planned: computePlanDigest(\"change-set\", ...) over every member's { member, planDigest }. What the gate binds."
     },
     "status": {
-      "enum": ["planned", "plan-failed", "nothing", "applied", "failed", "refused"],
-      "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. refused: nothing applied, see refusal."
+      "enum": ["planned", "plan-failed", "nothing", "applied", "failed", "wave-applied", "refused"],
+      "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. wave-applied (#4003, chant 0.124.32 and newer): with --wave-gate and --wave, the wave applied and a later wave is still to run. refused: nothing applied, see refusal."
     },
     "refusal": {
-      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request"],
-      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits."
+      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request", "wave-not-approved", "wave-plan-changed", "earlier-wave"],
+      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits. With --wave-gate (#4003, chant 0.124.32 and newer): wave-not-approved, a wave's new plan is not covered by the approved one and no approval of its gate stands for it; wave-plan-changed, an approval of its gate stands for another digest; earlier-wave, an earlier wave has work left or no record says it applied. The waves that applied before a wave refused stay applied; waves says which."
     },
     "message": { "type": "string", "description": "The refusal or failure as printed." },
     "resumed": {
@@ -53,6 +53,29 @@
       "type": "object",
       "description": "Added within contract version 1 by #4104, written by chant 0.124.30 and newer. Per dependency a member was planned against, the names of the outputs read from the deployed estate through its capability's outputs, sorted. A dependency outside the change is listed here too, and one whose stack is not deployed yet lists []. Outputs given with --seed-outputs, or carried from an earlier attempt's record, are not listed. Absent when no dependency was read, and on a resumed apply.",
       "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "waveGate": {
+      "type": "string",
+      "description": "Added within contract version 1 by #4003, written by chant 0.124.32 and newer. pr-apply --wave-gate <name>: the apply runs a wave at a time, each planned after the one before it applied, and wave k waits on <name>-wave-<k> under op when its plan moved. Absent without it."
+    },
+    "waves": {
+      "type": "array",
+      "description": "With waveGate: each wave reached so far, in order, with the approval it applied or waits under.",
+      "items": {
+        "type": "object",
+        "required": ["wave", "components", "status", "approval", "gate", "digest"],
+        "properties": {
+          "wave": { "type": "integer", "minimum": 1, "description": "1-based, from selection.waves." },
+          "components": { "type": "array", "items": { "type": "string" }, "description": "The components planned in it on the run that reached it." },
+          "status": { "enum": ["applied", "failed", "plan-failed", "waiting"] },
+          "approval": { "enum": ["pull-request", "wave"], "description": "pull-request: the approved change set covers the wave's plan, and it applies under the pull request's approval (gate and digest are the report's). wave: its plan moved, and it needs an approval of its own gate for its new plan." },
+          "gate": { "type": "string", "description": "The gate it applied or waits under: the report's gate, or <waveGate>-wave-<k>." },
+          "digest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "The digest that gate binds: the report's digest, or the change-set digest of the wave's new plan." },
+          "approvedBy": { "type": "array", "items": { "type": "string" } },
+          "approved": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "Waiting: an approval of the wave's gate stands for this other digest." },
+          "moved": { "type": "array", "items": { "type": "string" }, "description": "Why the approved change set does not cover the wave's plan, one line per member." }
+        }
+      }
     },
     "approval": {
       "type": "object",

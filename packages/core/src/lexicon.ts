@@ -554,6 +554,8 @@ export interface ComponentPipelineOptions {
    * `wave-<k>` runs `chant components fan-out --wave-gate <gate> --wave <k>`
    * and hands the attempt record to the next job. See
    * `components/gated-wave-pipeline.ts`. Unset, the pipeline is unchanged.
+   * Beside `prLoop` (#4003) it gives the pull request's apply a gate per
+   * wave instead: one apply job per wave (`prLoopWithWaves`).
    */
   gatedWaves?: GatedWavePipelineOptions;
   /**

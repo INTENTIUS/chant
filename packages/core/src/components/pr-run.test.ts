@@ -21,8 +21,10 @@ import {
   planCoveredBy,
   planPrSet,
   prReport,
+  prWavePlan,
   readOnlyLedger,
   resumePrSet,
+  waveNotCovered,
   type PrPlanSet,
 } from "./pr-run";
 import { changeSetDigest, changeSetDocumentDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
@@ -641,5 +643,59 @@ describe("planCoveredBy", () => {
       { member: { member: "edge", lexicon: "terraform", planner: "tofu", status: "planned", planDigest: `jcs1-sha256:${"3".repeat(64)}`, holes: [] }, entries: [] },
     ]);
     expect(planCoveredBy(approved, other, "edge")).toBe("edge was not in the approved plan");
+  });
+});
+
+describe("a gate per wave on merge (#4003)", () => {
+  const estate = [root("net"), root("a", ["net"]), root("b", ["net"]), root("app", ["a"])];
+  const plan = planFanOut({ components: estate, changed: ["net"] });
+
+  test("prWavePlan narrows the derivation to one wave, less what applied, with the earlier waves as seeds and the same digest", () => {
+    expect(plan.waves).toEqual([["net"], ["a", "b"], ["app"]]);
+    const two = prWavePlan(plan, estate, 2);
+    expect(two).toMatchObject({ order: ["a", "b"], waves: [["a", "b"]], seeds: ["net"], digest: plan.digest });
+    expect(prWavePlan(plan, estate, 2, ["a"])).toMatchObject({ order: ["b"], waves: [["b"]] });
+    expect(prWavePlan(plan, estate, 2, ["a", "b"])).toMatchObject({ order: [], waves: [] });
+    expect(prWavePlan(plan, estate, 4)).toMatchObject({ order: [], waves: [] });
+  });
+
+  const member = (name: string, digest: string, planner: "tofu" | "chant" = "tofu") => ({
+    member: name,
+    lexicon: planner === "tofu" ? "terraform" : "chant",
+    planner,
+    status: "planned" as const,
+    planDigest: `jcs1-sha256:${digest.repeat(64)}`,
+    holes: [],
+  });
+  const write = (name: string, cidr: unknown): ChangeSetEntry => ({
+    member: name,
+    lexicon: "terraform",
+    planner: "tofu",
+    address: `${name}.main`,
+    type: "aws_subnet",
+    action: "update",
+    attributes: cidr === undefined ? [{ path: "cidr", unknown: true }] : [{ path: "cidr", after: cidr }],
+  });
+
+  test("waveNotCovered: the same plan, or one the approved plan knew only after apply, is covered; a moved value is not", () => {
+    const approved = composeChangeSet([
+      { member: member("a", "1"), entries: [write("a", "10.0.0.0/16")] },
+      { member: member("b", "2"), entries: [write("b", undefined)] },
+    ]);
+    const same = composeChangeSet([{ member: member("a", "1"), entries: [write("a", "10.0.0.0/16")] }]);
+    expect(waveNotCovered(approved, same)).toEqual([]);
+    // b's cidr was known only after net applied: the value it has now is covered.
+    const known = composeChangeSet([{ member: member("b", "3"), entries: [write("b", "10.1.0.0/16")] }]);
+    expect(waveNotCovered(approved, known)).toEqual([]);
+    const moved = composeChangeSet([{ member: member("a", "4"), entries: [write("a", "10.1.0.0/16")] }]);
+    expect(waveNotCovered(approved, moved)).toEqual(["a now writes a.main.cidr to a different value than the approved plan"]);
+  });
+
+  test("waveNotCovered: a member whose planner describes no changes is covered only by the digest it was approved with", () => {
+    const approved = composeChangeSet([{ member: member("job", "1", "chant"), entries: [] }]);
+    expect(waveNotCovered(approved, composeChangeSet([{ member: member("job", "1", "chant"), entries: [] }]))).toEqual([]);
+    const moved = waveNotCovered(approved, composeChangeSet([{ member: member("job", "2", "chant"), entries: [] }]));
+    expect(moved).toHaveLength(1);
+    expect(moved[0]).toMatch(/^job now plans to jcs1-sha256:2+, not the approved jcs1-sha256:1+, and its planner describes no changes to compare$/);
   });
 });

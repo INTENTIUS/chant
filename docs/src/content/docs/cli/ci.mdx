@@ -11,7 +11,7 @@ chant ci last-green [--json] [--from <rev>]
 chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo]
-                  [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
+                  [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
                   [--image <image>]
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>]
                   [--no-status] [--status-url <url template>]
@@ -176,7 +176,7 @@ On GitHub the key lives in a repository secret, and `chant ci workflow --runner-
 
 ## ci run
 
-Runs one job of the [pull-request pipeline](/chant/guide/pull-request-ci/) as a pipeline Op on this machine, with no forge runner ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). `plan` runs `chant components pr-plan` and `apply` runs `chant components pr-apply`, with the same flags and variables the job in a generated workflow has: chant builds the job from the same typed value the github, gitlab and forgejo generators use, and reads no YAML. Pass the flags you generated the pipeline with (`--env`, `--gate`, `--branch`, `--events-json`, `--report-url`, `--image`, `--before-script`, `--pr-build`, `--pr-build-command`) so the two run the same command.
+Runs one job of the [pull-request pipeline](/chant/guide/pull-request-ci/) as a pipeline Op on this machine, with no forge runner ([#4094](https://github.com/INTENTIUS/chant/issues/4094)). `plan` runs `chant components pr-plan` and `apply` runs `chant components pr-apply`, with the same flags and variables the job in a generated workflow has: chant builds the job from the same typed value the github, gitlab and forgejo generators use, and reads no YAML. Pass the flags you generated the pipeline with (`--env`, `--gate`, `--branch`, `--events-json`, `--report-url`, `--image`, `--before-script`, `--pr-build`, `--pr-build-command`, `--wave-gate`) so the two run the same command. With `--wave-gate <name>` the apply runs `pr-apply --wave-gate <name>` with no `--wave`, so it applies the waves in order and stops at the first whose moved plan waits on its own gate ([#4003](https://github.com/INTENTIUS/chant/issues/4003)).
 
 The job runs in a fresh checkout of `--commit`, `HEAD` by default: a detached git worktree in a new temporary directory outside the repository, removed when the job ends. The worktree shares the repository's refs, so what `pr-apply` records on `chant/lifecycle` and the remote it pushes to are the repository's own. `ci run` copies the job's report directory to `-o <dir>`, by default `.chant/pr` in the directory it was run from. A forge keeps the same directory as an artifact. Inside a workspace member the job runs in the member's directory and passes `--member`, as the member's generated pipeline does.
 
@@ -303,7 +303,7 @@ The state lives in `--state <dir>`, by default `chant/ci-serve` in the repositor
 
 Before each job, `ci serve` makes its clone's `chant/lifecycle` follow the forge's ([#4121](https://github.com/INTENTIUS/chant/issues/4121)). The clone's branch is deleted if the forge has none, and reset to the forge's if neither contains the other, as after a rewrite. Either way `ci serve` warns on stderr and never pushes the old ledger back. A clone's branch ahead of the forge's keeps its facts for the next apply to push.
 
-A failed job stays failed. `--rerun-failed` runs again the failed apply at the target's head and the failed plan of each open pull request head, as a forge's re-run button does: after you approve a plan the apply refused, run `chant ci serve --once --rerun-failed`. `--interval` sets the time between polls, in seconds or as a duration such as `2m`, 30 seconds by default. `--once` runs one poll, waits for the jobs it started and exits 1 when one failed. Without it `ci serve` polls until it is stopped and waits for its running jobs on SIGINT or SIGTERM.
+A failed job stays failed. `--rerun-failed` runs again the failed apply at the target's head and the failed plan of each open pull request head, as a forge's re-run button does: after you approve a plan the apply refused, run `chant ci serve --once --rerun-failed`. With `--wave-gate`, the same re-run carries on from a wave that waited on its own gate, once that wave's plan is approved, since the resume record keeps the waves that applied. `--interval` sets the time between polls, in seconds or as a duration such as `2m`, 30 seconds by default. `--once` runs one poll, waits for the jobs it started and exits 1 when one failed. Without it `ci serve` polls until it is stopped and waits for its running jobs on SIGINT or SIGTERM.
 
 ```bash
 GITHUB_SERVER_URL=http://forgejo.localhost GITHUB_API_URL=http://forgejo.localhost/api/v1 CHANT_FORGE_TOKEN=... \
