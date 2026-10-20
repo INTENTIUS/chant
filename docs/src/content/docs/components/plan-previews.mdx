@@ -1,0 +1,144 @@
+---
+title: Plan Previews
+description: What a pull request's plan note shows for each capability, and what holds the apply to the approved plan when the capability can plan and when it cannot.
+diataxis: reference
+---
+
+A pull request's plan ([`chant components pr-plan`](/chant/cli/components/#components-pr-plan-and-components-pr-apply)) and a [gated wave](/chant/cli/components/#one-gate-per-wave) ask each step of each component what it would change. Only a capability with `plan` can answer. This page lists every capability chant registers, says which of them plan, and says what the note shows for a component in each case.
+
+## Every capability
+
+The table is generated from the capability plugins that core and the lexicons register. `plan` says the capability can describe what its `run` would change. `outputs` says it can read the outputs it left when it last ran, which a dependent's `stackOutput()` resolves to when the dependency is not applied in the same run.
+
+{/* BEGIN GENERATED plan-previews */}
+
+| Capability | Lexicon | `plan` | `outputs` | The plan reads | The note shows |
+|---|---|---|---|---|---|
+| `attest-provenance` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `docker-build` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `ensure-secret` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `generate-sbom` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `health-gate` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `jvm-build` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `r2-sync` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `scan-vulnerabilities` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `shell` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `sign` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `verify` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `vuln-gate` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-cluster-healthy` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-endpoint` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wrangler-deploy` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wrangler-versions-promote` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `zip-package` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `cdn-invalidate` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `cfn-deploy` | aws | yes | yes | a CloudFormation change set for the template and parameters, deleted without executing it | a create, update, replace or delete per logical id, and the names of the properties a change touches, without values. See [cfn-deploy](#cfn-deploy) |
+| `code-deploy` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `copy-to-host` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `ecs-update-service` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `emr-start-job-run` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `emr-submit-step` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `extract-config-bom` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `lambda-deploy` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `load-image-on-host` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `publish-artifact` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `publish-image` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `remote-exec` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `rollback-previous` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `run-migration` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `s3-sync` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `snapshot-before` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-for-stack` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-job` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-steady-state` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `fly-release` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `fly-rollback` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `run-agent` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `helm-upgrade` | helm | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `argo-app` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `flux-reconcile` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `kubectl-apply` | k8s | yes | no | a server-side dry run (`dryRun=All`) of the manifest, compared with each live object | a create, update, no-op or delete per object, and each changed field path with its value before and after. See [kubectl-apply](#kubectl-apply) |
+| `kustomize-apply` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `terraform-apply` | terraform | yes | yes | `terraform plan` (or tofu or choudoufu) in the root, against its state | every resource change with its action, and each changed top-level attribute with its value before and after. See [terraform-apply](#terraform-apply) |
+
+{/* END GENERATED plan-previews */}
+
+## What every note has
+
+The note has a row per member with its status and its counts of creates, updates, replaces and deletes. Below the rows come the plan digest and the approve command. The grouped plan summary comes last and lists destroys, failures and holes before its groups. Entries with the action `no-op` or `read` are kept in the change set and left out of the counts.
+
+The digest a reviewer approves is the [change-set](/chant/reference/change-set/) document's digest. It covers each member's plan digest, status and holes. It also covers every entry with its attributes and every side effect. On merge, `pr-apply` plans every member again before it applies any. When the digest it gets is not the approved one, it applies nothing and exits 3.
+
+A step whose `plan` throws makes its component's members `plan failed`, with the error in the summary's failed list. A plan with a failed member applies nothing.
+
+A component's members come from its steps that have `plan`, one member per such step. Its other steps are not members. A component that builds an image with `docker-build` and deploys it with `cfn-deploy` has one member, the stack. The note says nothing about the image. [A capability without `plan`](#a-capability-without-plan) covers the component none of whose steps can plan.
+
+## Capabilities with plan
+
+Three capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
+
+### `cfn-deploy`
+
+The plan is `planCfnDeploy` in `lexicons/aws/src/components/apply.ts`.
+
+The plan creates a change set for the stack's template and resolved parameters, reads the changes it proposes and deletes it without executing it. The member is the stack's name, taken from `stack` or else from the component. A stack that does not exist yet gets a CREATE change set, and the plan deletes the empty `REVIEW_IN_PROGRESS` stack CloudFormation made to hold it.
+
+Each resource change is one entry, addressed by its logical id, or `<nested stack>/<logical id>` inside a nested stack. `Add` is a create, `Modify` an update, or a replace when CloudFormation marks it `Replacement: True` or `Conditional`, and `Remove` a delete. An entry's attributes are the property names from the change's details, with no values before or after, since a change set gives none. A change set with nothing to apply gives a member with no entries.
+
+A change CloudFormation marks `Replacement: True` fails the member's plan when `onReplace` is `"block"`, which is the default. The error names the resources.
+
+When a parameter reads another component's output that has no value yet, such as an output of a stack that does not exist, the plan creates no change set. The member gets a hole saying `inputs from <component>; re-checked on apply`, and the note shows `?` for its counts. A parameter that reads an earlier step of the same component has no value at plan time either, and its hole says `inputs <names> are known only at apply`.
+
+The plan's digest covers the environment and the stack. It also covers the template's path and bytes, the resolved parameters and the components whose outputs were missing. The plan also hands `run` a digest of the changes it read. On apply, `run` creates a new change set and executes it only when its changes have that digest. Otherwise it deletes the change set and fails with `refusing to apply`. A member with a hole hands `run` nothing to compare, so its change set is executed as created.
+
+`outputs` reads the stack's outputs with `describe-stacks`, and gives none for a stack that does not exist.
+
+### `kubectl-apply`
+
+The plan and its entries are in `lexicons/k8s/src/components/kubectl-apply.ts`, in `plan` and `changeSetPartOf`.
+
+Each document of the manifest goes to the API server as a server-side apply with `dryRun=All`, under the field manager `chant:<stack>` and with the release attributes the apply would set. It compares what the dry run returns with each live object. The member is named after the step's `stack`, and after the component when the step has none.
+
+An object with no live counterpart is a create, with every field the manifest declares. One whose dry run equals the live object is a `no-op`. One that differs is an update, with each changed field path and its value before and after. Server bookkeeping such as `managedFields`, `resourceVersion` and `status` is dropped before the comparison. A Secret's `data` and `stringData` are marked sensitive and carry no values. An update under `spec.template` of a workload whose pods roll on such a change has the disruption `rolling`.
+
+With `delete: "owned-only"` the plan adds a delete for each object carrying chant's marker and the stack's label that the manifest no longer declares. With the default `delete: "never"` there are no deletes.
+
+When the API server refuses a change in the dry run, as it does for a Deployment's `spec.selector`, the object is an update with unknown disruption. Its hole carries the server's message, and the apply would fail the same way.
+
+The digest covers the documents sent, the target they are sent to and the delete mode. For each object it also covers the action and the new value of every changed field. On apply, `run` dry-runs the approved documents again. It applies them only when that dry run gives the approved digest. Otherwise it fails before the cluster changes and names both digests.
+
+`kubectl-apply` has no `outputs`.
+
+### `terraform-apply`
+
+The capability is in `lexicons/terraform/src/components/capability-plugin.ts`, and its entries come from `lexicons/terraform/src/change-set.ts`.
+
+The plan runs `init`, then `plan -input=false -detailed-exitcode -out=<plan file>` in the root with its var files and the step's `vars`, then `show -json` over the plan file. The binary is the one `terraform.binary` names: terraform, tofu or choudoufu. The member is the root's name.
+
+Every `resource_changes` entry is an entry with its address and action. `create`, `update` and `delete` keep their names, and a delete with a create in either order is a replace. Attributes are the top-level attributes the change writes, each with its value before and after. A value terraform knows only after apply shows as `<known after apply>`. A sensitive attribute carries no value. An attribute that forces the replacement is marked. Imports, forgets, deposed objects and, from Terraform 1.14, action invocations as side effects are kept too.
+
+The plan never has holes. A `var` whose upstream output has no value yet is left off the command line, so the root plans with that variable's default, or fails to plan when it has none.
+
+The digest covers the plan's resource changes, output changes and action invocations. Timestamps, versions and prior state are left out. `run` applies the plan file the plan wrote with `apply <plan file>`. When choudoufu refuses that plan file, the step fails as a moved plan and the command exits 3. Plain terraform and tofu refuse a stale plan file too, and the command exits 1, because chant does not tell that error from others.
+
+A live choudoufu root that `live-plan-set` can plan as chant would, one with no var files, no `vars` and no backend config, is planned as a one-root set instead. `run` hands choudoufu that set and its digest with `live-wave-apply`, and choudoufu's refusal of a moved set exits 3.
+
+Its `outputs` runs `output -json` in the root after an `init`.
+
+## A capability without `plan`
+
+A component with no step that has `plan` is one member under the component's name. Its row reads `planned` with a count of 0 in every column, and its group in the plan summary says `no changes`. That row says nothing about what the component will change, since the plan had nothing to ask.
+
+The member's plan digest is the component's composition digest, the one its own gates bind. It is computed over the component's declaration and the environment with its vars. Every step's input goes in as written. When a step input names a file, the digest holds the name and leaves the content out. A commit pushed after review can change what the file holds without moving the digest, and so can a merge to the target branch. `pr-apply` then applies the new content under the old approval. Nothing compares what the step deploys with what the reviewer saw.
+
+A reviewer of such a member has to read the change itself.
+
+- Read the files the component's steps deploy in the pull request's diff: the chart and values for `helm-upgrade`, the kustomization for `kustomize-apply`, the bundle for `lambda-deploy`, the directory for `s3-sync`.
+- Approve the pull request only once its head is the commit you read, since the approval does not bind what the files hold.
+- Turn on the forge's setting that drops approvals when commits are pushed: "Dismiss stale pull request approvals when new commits are pushed" on GitHub, "Dismiss stale approvals" on Forgejo, "Remove all approvals when commits are added to the source branch" on GitLab. With the default `requireReview`, `pr-apply` counts only an approving review that still stands on the forge, so a push after your review needs a new one.
+
+A gated wave treats such a component the same way: one member, the composition digest, and no entries.
+
+## Outputs
+
+`cfn-deploy` and `terraform-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member, so a `stackOutput()` reference resolves to the value deployed now. A dependency whose steps have no `outputs` gives its dependents nothing, so their references stay unresolved. Then `cfn-deploy` reports a hole and `terraform-apply` plans without the variable. `--seed-outputs <file>` supplies the values instead. Planning a dependent against the outputs its upstream will have once this change applies is tracked in [#3999](https://github.com/INTENTIUS/chant/issues/3999).
