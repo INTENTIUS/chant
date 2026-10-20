@@ -8,7 +8,7 @@ A pull request's plan ([`chant components pr-plan`](/chant/cli/components/#compo
 
 ## Every capability
 
-The table is generated from the capability plugins that core and the lexicons register. `plan` says the capability can describe what its `run` would change. `outputs` says it can read the outputs it left when it last ran, which a dependent's `stackOutput()` resolves to when the dependency is not applied in the same run.
+The table is generated from the capability plugins that core and the lexicons register. `plan` says the capability can describe what its `run` would change. `outputs` says it can read the outputs it left when it last ran, which a dependent's `stackOutput()` resolves to when the change does not plan the dependency. When it does, the dependent reads what the dependency's plan says it will expose instead ([Outputs](#outputs)).
 
 {/* BEGIN GENERATED plan-previews */}
 
@@ -57,7 +57,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `helm-upgrade` | helm | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `argo-app` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `flux-reconcile` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
-| `kubectl-apply` | k8s | yes | no | a server-side dry run (`dryRun=All`) of the manifest, compared with each live object | a create, update, no-op or delete per object, and each changed field path with its value before and after. See [kubectl-apply](#kubectl-apply) |
+| `kubectl-apply` | k8s | yes | yes | a server-side dry run (`dryRun=All`) of the manifest, compared with each live object | a create, update, no-op or delete per object, and each changed field path with its value before and after. See [kubectl-apply](#kubectl-apply) |
 | `kustomize-apply` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `terraform-apply` | terraform | yes | yes | `terraform plan` (or tofu or choudoufu) in the root, against its state | every resource change with its action, and each changed top-level attribute with its value before and after. See [terraform-apply](#terraform-apply) |
 
@@ -87,11 +87,11 @@ Each resource change is one entry, addressed by its logical id, or `<nested stac
 
 A change CloudFormation marks `Replacement: True` fails the member's plan when `onReplace` is `"block"`, which is the default. The error names the resources.
 
-When a parameter reads another component's output that has no value yet, such as an output of a stack that does not exist, the plan creates no change set. The member gets a hole saying `inputs from <component>; re-checked on apply`, and the note shows `?` for its counts. A parameter that reads an earlier step of the same component has no value at plan time either, and its hole says `inputs <names> are known only at apply`.
+When a parameter reads another component's output that has no value yet, such as an output of a stack that does not exist or one its upstream's plan knows only after apply, the plan creates no change set. The member gets a hole saying `inputs from <component>; re-checked on apply`, and the note shows `?` for its counts. A parameter that reads an earlier step of the same component has no value at plan time either, and its hole says `inputs <names> are known only at apply`.
 
 The plan's digest covers the environment and the stack. It also covers the template's path and bytes, the resolved parameters and the components whose outputs were missing. The plan also hands `run` a digest of the changes it read. On apply, `run` creates a new change set and executes it only when its changes have that digest. Otherwise it deletes the change set and fails with `refusing to apply`. A member with a hole hands `run` nothing to compare, so its change set is executed as created.
 
-`outputs` reads the stack's outputs with `describe-stacks`, and gives none for a stack that does not exist.
+`outputs` reads the stack's outputs with `describe-stacks`, and gives none for a stack that does not exist. The plan also says which outputs the stack keeps: all of them when the change set has nothing to apply, and otherwise each output whose template `Value` reads only resources the change set modifies in place. Every other output is known only after apply.
 
 ### `kubectl-apply`
 
@@ -107,7 +107,7 @@ When the API server refuses a change in the dry run, as it does for a Deployment
 
 The digest covers the documents sent, the target they are sent to and the delete mode. For each object it also covers the action and the new value of every changed field. On apply, `run` dry-runs the approved documents again. It applies them only when that dry run gives the approved digest. Otherwise it fails before the cluster changes and names both digests.
 
-`kubectl-apply` has no `outputs`.
+`kubectl-apply` has outputs only when the step names them: `outputs: { host: { object: "Service/prod/web", field: "status.loadBalancer.ingress.0.hostname" } }`, each a field of an object the manifest declares. `outputs` reads those fields from the cluster, and `run` returns them once it applied. The plan knows a field the manifest sets, and any field of an object the dry run leaves unchanged.
 
 ### `terraform-apply`
 
@@ -117,13 +117,13 @@ The plan runs `init`, then `plan -input=false -detailed-exitcode -out=<plan file
 
 Every `resource_changes` entry is an entry with its address and action. `create`, `update` and `delete` keep their names, and a delete with a create in either order is a replace. Attributes are the top-level attributes the change writes, each with its value before and after. A value terraform knows only after apply shows as `<known after apply>`. A sensitive attribute carries no value. An attribute that forces the replacement is marked. Imports, forgets, deposed objects and, from Terraform 1.14, action invocations as side effects are kept too.
 
-The plan never has holes. A `var` whose upstream output has no value yet is left off the command line, so the root plans with that variable's default, or fails to plan when it has none.
+A root whose `vars` read an upstream output with no value yet is not planned, since terraform takes no unknown variable. Its member gets a hole saying `inputs from <component>; planned again once they apply`, with no plan file. Otherwise the plan has no holes.
 
 The digest covers the plan's resource changes, output changes and action invocations. Timestamps, versions and prior state are left out. `run` applies the plan file the plan wrote with `apply <plan file>`. When choudoufu refuses that plan file, the step fails as a moved plan and the command exits 3. Plain terraform and tofu refuse a stale plan file too, and the command exits 1, because chant does not tell that error from others.
 
 A live choudoufu root that `live-plan-set` can plan as chant would, one with no var files, no `vars` and no backend config, is planned as a one-root set instead. `run` hands choudoufu that set and its digest with `live-wave-apply`, and choudoufu's refusal of a moved set exits 3.
 
-Its `outputs` runs `output -json` in the root after an `init`.
+Its `outputs` runs `output -json` in the root after an `init`. The plan says the outputs the root will have: `planned_values.outputs` from `show -json`, less each output whose `output_changes` entry is unknown after apply.
 
 ## A capability without `plan`
 
@@ -141,4 +141,6 @@ A gated wave treats such a component the same way: one member, the composition d
 
 ## Outputs
 
-`cfn-deploy` and `terraform-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member, so a `stackOutput()` reference resolves to the value deployed now. A dependency whose steps have no `outputs` gives its dependents nothing, so their references stay unresolved. Then `cfn-deploy` reports a hole and `terraform-apply` plans without the variable. `--seed-outputs <file>` supplies the values instead. Planning a dependent against the outputs its upstream will have once this change applies is tracked in [#3999](https://github.com/INTENTIUS/chant/issues/3999).
+`cfn-deploy`, `terraform-apply` and `kubectl-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member that the change does not plan, so a `stackOutput()` reference resolves to the value deployed now (`deployedOutputs` in the report). For a dependency the change plans too, it reads what that dependency's plan says it will expose (`plannedOutputs`, [#3999](https://github.com/INTENTIUS/chant/issues/3999)).
+
+A reference neither can answer stays unresolved, and `cfn-deploy` and `terraform-apply` report a hole for it. When the upstream is in the change, the member lists the reference under `unknownInputs`. The apply holds that member back until its upstream applied, plans it again, and asks for an approval of that plan at `pr-apply-round-<n>`. An artifact a build in the same change publishes, read as `@<component>.publish.*`, is listed under `buildInputs` instead. The build's provenance binds it, so the member applies with it without a second approval. `--seed-outputs <file>` supplies values instead of either read.
