@@ -295,6 +295,7 @@ With `--report-url`, `ci run` also adds the job to `<report-url>/runs/index.json
 | `key` | the folder of the job's report below the report URL: `<pr>/<commit>`, `unknown` for no pull request, and `/<member>` after for a member |
 | `runOrigin` | `{ "forge": "chant" }`, or [the forge's run](#in-a-forge-job) for a forge job |
 | `signer` | the runner that signed the record, or `null` for an unsigned run. Chant 0.124.32 and newer write it |
+| `exitCode` | the code `ci run` exited with: 0 for a pass, the command's own code such as 3 for a moved plan or a waiting wave, and 1 otherwise ([#4165](https://github.com/INTENTIUS/chant/issues/4165)). Chant 0.124.32 and newer write it, and older entries lack it |
 
 The update uses the upload path `--report-url` already has: `aws s3 cp` for `s3://`, and a temporary file and a rename for `file://`. Two runners writing one index can lose an entry, so keep one host per report URL. A problem with the index is a warning, and the job keeps its own result. The format is the [`ci-run-index` contract](/chant/reference/workspace-read-contract/#the-run-index).
 

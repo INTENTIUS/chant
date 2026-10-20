@@ -270,6 +270,17 @@ function exitCodeOf(error: string | undefined): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
+/**
+ * The code `chant ci run` exits with for a settled job: 0 when it passed,
+ * else its command's own code when that is 1 to 255, such as 3 for a moved
+ * plan or a waiting wave (#4156), else 1. The run index records the same
+ * code (#4165).
+ */
+export function ciJobExitCode(result: { status: OpRunResult["status"]; exitCode?: number }): number {
+  if (result.status === "ok") return 0;
+  return result.exitCode && result.exitCode > 0 && result.exitCode < 256 ? result.exitCode : 1;
+}
+
 /** The first line of a step's error, for a reason. */
 const firstLine = (text: string): string => text.split("\n").find((l) => l.trim() !== "")?.trim() ?? text;
 
@@ -577,6 +588,8 @@ async function recordInIndex(input: {
   runOrigin: RunOrigin;
   /** The runner that signed the record, or null (#4156). */
   signer: string | null;
+  /** The code `chant ci run` exits with for the job (#4165). */
+  exitCode: number;
   reportDir: string;
   limit?: number;
   /** The run's redactor (#4096): every string written to the index goes through it, as the copied report does. */
@@ -610,6 +623,7 @@ async function recordInIndex(input: {
     key: clean(reportKey(pr, input.commit, input.member)),
     runOrigin: input.runOrigin,
     signer: input.signer,
+    exitCode: input.exitCode,
   };
   await updateCiRunIndex({ target, entry, ...(input.limit ? { limit: input.limit } : {}), warn: input.warn });
 }
@@ -814,8 +828,10 @@ async function runCiJob(
         if (redact) redactTree(report, redact);
       }
     }
+    const failed = result.records.find((r) => r.status === "fail");
+    const exitCode = failed?.phase === req.job ? exitCodeOf(failed.error) : undefined;
     if (reportUrl) {
-      await recordInIndex({ url: reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, runOrigin: origin, signer: result.record.statement && signer ? signer.principal : null, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
+      await recordInIndex({ url: reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, runOrigin: origin, signer: result.record.statement && signer ? signer.principal : null, exitCode: ciJobExitCode({ status: result.status, ...(exitCode !== undefined ? { exitCode } : {}) }), reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
     }
     // In place the forge job's outcome is the command's, so a record that could not be written is a warning there.
     if (ledgerError && req.inPlace) warnings.push(ledgerError);
@@ -823,8 +839,6 @@ async function runCiJob(
     const pushed: { pushed: boolean; pushWarning?: string } = local
       ? { pushed: false }
       : req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
-    const failed = result.records.find((r) => r.status === "fail");
-    const exitCode = failed?.phase === req.job ? exitCodeOf(failed.error) : undefined;
     return {
       op: op.name,
       status: result.status,
@@ -981,7 +995,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     if (args.verbose) for (const n of result.notes) console.error(`ci run: ${n}`);
     console.error(formatCiRun(result));
     // #4156: a failed command's own exit code, such as 3 for a moved plan, is the job's, as it was before the job ran through ci run.
-    return result.status === "ok" ? 0 : result.exitCode && result.exitCode > 0 && result.exitCode < 256 ? result.exitCode : 1;
+    return ciJobExitCode(result);
   } catch (err) {
     console.error(formatError({ message: `chant ci run: ${message(err)}`, hint: USAGE }));
     return 1;
