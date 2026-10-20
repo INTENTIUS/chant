@@ -757,8 +757,12 @@ export interface ResolvedCommand {
  * Supports compound commands like "dev generate" where args.command="dev"
  * and args.path="generate". Falls back to simple command matching.
  */
-/** Short command aliases. `chant lc …` is sugar for `chant lifecycle …`. */
-const COMMAND_ALIASES: Record<string, string> = { lc: "lifecycle" };
+/**
+ * Command aliases. `chant lc …` is sugar for `chant lifecycle …`, and
+ * `chant sync` for `chant update`, the command that syncs lexicon types
+ * (chant #3988).
+ */
+const COMMAND_ALIASES: Record<string, string> = { lc: "lifecycle", sync: "update" };
 
 export function resolveCommand(args: ParsedArgs, registry: CommandDef[]): ResolvedCommand | null {
   const command = COMMAND_ALIASES[args.command] ?? args.command;

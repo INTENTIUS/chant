@@ -8,11 +8,16 @@ diataxis: reference
 
 ```
 chant update [path]
+chant sync [path]
 ```
 
 ## Description
 
-`chant update` syncs lexicon type definitions into `.chant/types/` for the project. It also refreshes lexicon skill files in `skills/`.
+`chant update` syncs lexicon type definitions into `.chant/types/` for the project. It also refreshes lexicon skill files in `skills/`. `chant sync` is an alias.
+
+Each lexicon in `chant.config.ts` is read from `node_modules`, and nothing is installed. A configured lexicon that is not installed is skipped with a warning naming the `npm install --save-dev` command to run.
+
+Run it after adding a lexicon, after `npm install` or `npm update` changes a lexicon's version, and in CI before a step that reads `.chant/types/`.
 
 ## Usage
 

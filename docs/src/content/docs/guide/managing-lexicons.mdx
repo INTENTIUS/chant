@@ -30,6 +30,14 @@ export default {
 } satisfies ChantConfig;
 ```
 
+Then sync its types into `.chant/types/`:
+
+```bash
+npx chant update
+```
+
+`chant update` (alias `chant sync`) copies each configured lexicon's types from `node_modules`. It does not install a lexicon. Listing one in `chant.config.ts` without the `npm install` leaves it out of the sync, with a warning that names the package to install.
+
 ## A lexicon in your own project
 
 A lexicon you write for one project can live in that project's source. Name it with the module that exports it instead of a package name:
@@ -80,7 +88,10 @@ Update the lexicon package version:
 
 ```bash
 npm update @intentius/chant-lexicon-<name>
+npx chant update
 ```
+
+Run `chant update` after each version change so `.chant/types/` matches the installed package. In CI, run it after `npm ci` and before any step that reads `.chant/types/`.
 
 ## Independent Versioning
 
@@ -89,6 +100,15 @@ Each lexicon is versioned independently of core and of other lexicons. A spec up
 All lexicons declare `@intentius/chant` as a peer dependency with a `^` range pinned to the minimum compatible core version (e.g. `"^0.13.1"`). A lexicon can ship a minor or major version without a core release, and a core minor release leaves lexicon versions where they are.
 
 When installing a lexicon, npm resolves the peer against whichever core version is already in the tree, as long as it satisfies the `^` lower bound.
+
+### Installing beside an older core
+
+A tool that depends on `@intentius/chant` and lists lexicons as optional peers can pin a core older than a lexicon's peer range allows. Installing the lexicon into that tool's tree then fails or installs nothing: npm 10 has been seen to stop with `Cannot read properties of null (reading 'edgesOut')`, and npm 11 to exit 0 without installing the package. Two ways round it:
+
+- Raise the tool's `@intentius/chant` to a version inside the lexicon's peer range, or install a lexicon release whose peer range includes the tool's core.
+- Install the lexicon in an empty directory of its own and copy `node_modules/@intentius/chant-lexicon-<name>` into the tool's `node_modules`.
+
+Check the lexicon's peer range with `npm view @intentius/chant-lexicon-<name> peerDependencies`.
 
 ## How Lexicons Work
 
