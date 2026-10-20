@@ -28,6 +28,16 @@
  * and decides the gate against the new digest. The same plan applies; a moved
  * plan stops with both digests named and nothing applied.
  *
+ * ## A gate per wave on merge
+ *
+ * With `--wave-gate <gate>` (#4003) the apply runs a wave at a time, and
+ * plans each wave after the one before it applied. Wave 1 applies under the
+ * pull request's approval. A later wave whose new plan the approved change
+ * set covers (`planCoveredBy`) applies under that approval too; one whose
+ * plan moved waits at `<gate>-wave-<k>`, under the same op, for an approval
+ * of its new plan. The report's `waves` says which wave applied under which
+ * approval.
+ *
  * ## Inside a workspace member
  *
  * Each workspace member that generates the pipeline (#3465) runs its own
@@ -48,6 +58,9 @@ export const PR_REPORT_CONTRACT = 1;
 
 /** The first chant whose report can carry `deployedOutputs` (#4104). */
 export const PR_REPORT_DEPLOYED_OUTPUTS_FLOOR = "0.124.30";
+
+/** The first chant whose report can carry `waveGate` and `waves` (#4003). */
+export const PR_REPORT_WAVES_FLOOR = "0.124.32";
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -141,6 +154,11 @@ export type PrStatus =
   | "applied"
   /** Apply stage: a member failed to apply. Its dependents did not run. */
   | "failed"
+  /**
+   * Apply stage with `--wave-gate` and `--wave` (#4003): this wave applied,
+   * and a later wave of the change is still to run.
+   */
+  | "wave-applied"
   /** Apply stage: nothing applied, see `refusal`. */
   | "refused";
 
@@ -155,7 +173,42 @@ export type PrRefusal =
   /** The approval names the pull request's author, or an author or committer of one of its commits (#4000). */
   | "author-approved"
   /** No pull request merged this commit, so there is no approval to read. */
-  | "no-pull-request";
+  | "no-pull-request"
+  /** `--wave-gate` (#4003): the wave's new plan is not one the pull request approved, and no approval stands for it. */
+  | "wave-not-approved"
+  /** `--wave-gate`: an approval of the wave's gate stands for another digest, so its plan moved since. */
+  | "wave-plan-changed"
+  /** `--wave-gate` with `--wave <k>`: an earlier wave has work left, or no record says it applied. */
+  | "earlier-wave";
+
+/**
+ * One wave of an apply with `--wave-gate` (#4003): what it planned, where it
+ * got to, and which approval it applied or waits under.
+ */
+export interface PrWave {
+  /** 1-based, from the derivation (`selection.waves`). */
+  wave: number;
+  /** The components planned in it on the run that reached it. */
+  components: string[];
+  /** `applied`; `failed` or `plan-failed`; or `waiting` at its gate. */
+  status: "applied" | "failed" | "plan-failed" | "waiting";
+  /**
+   * `pull-request`: the approved change set covers the wave's plan, so it
+   * applies under the pull request's approval. `wave`: its plan moved, so it
+   * needs an approval of its own gate.
+   */
+  approval: "pull-request" | "wave";
+  /** The gate it applied or waits under: the pull request's, or `<wave gate>-wave-<k>`. */
+  gate: string;
+  /** The digest that gate binds: the pull request's change set, or the wave's new plan. */
+  digest: string;
+  /** Who approved that digest. */
+  approvedBy?: string[];
+  /** Waiting: an approval of the wave's gate stands for this other digest. */
+  approved?: string;
+  /** Why the approved change set does not cover the wave's plan, one line per member. */
+  moved?: string[];
+}
 
 /**
  * The document `pr-plan` and `pr-apply` write (`pr-report.schema.json`).
@@ -197,6 +250,14 @@ export interface PrReport {
    */
   deployedOutputs?: Record<string, string[]>;
   approval: PrApproval;
+  /**
+   * The wave gate's base name with `--wave-gate` (#4003): wave k waits on
+   * `<waveGate>-wave-<k>` when its plan moved. Added within contract 1 by
+   * chant {@link PR_REPORT_WAVES_FLOOR}.
+   */
+  waveGate?: string;
+  /** With `waveGate`: each wave reached so far, in order. */
+  waves?: PrWave[];
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
     changed: string[];
@@ -270,9 +331,51 @@ function headline(report: PrReport): string {
       return `Applied ${members}.`;
     case "failed":
       return `The apply failed: ${report.members.filter((m) => m.status === "failed").length} failed, ${report.members.filter((m) => m.status === "applied").length} applied.`;
-    case "refused":
-      return "The apply refused.";
+    case "wave-applied": {
+      const applied = (report.waves ?? []).filter((w) => w.status === "applied").map((w) => w.wave);
+      const total = report.selection.waves.length;
+      return `Applied wave ${applied.at(-1) ?? "?"} of ${total}. The next wave runs in its own job.`;
+    }
+    case "refused": {
+      const waiting = report.waves?.find((w) => w.status === "waiting");
+      return waiting ? `Wave ${waiting.wave} waits at its gate ${code(waiting.gate)}; nothing in it applied.` : "The apply refused.";
+    }
   }
+}
+
+/** Who a wave applied or waits under, as a table cell. */
+function waveApproval(w: PrWave): string {
+  const whose = w.approval === "pull-request" ? "the pull request's" : "its own";
+  const by = w.approvedBy?.length ? ` by ${w.approvedBy.map(code).join(", ")}` : w.status === "waiting" ? ", not approved yet" : "";
+  return `${whose} ${code(w.gate)}${by}`;
+}
+
+/**
+ * The waves of an apply with `--wave-gate` (#4003): a row per wave reached,
+ * saying which approval it applied under, then for a wave that waits the
+ * reason its plan moved and the approve command for its new plan.
+ */
+function waveLines(report: PrReport, approver: string): string[] {
+  const waves = report.waves ?? [];
+  if (waves.length === 0) return [];
+  const out = ["", "| Wave | Components | Status | Approval |", "|---:|---|---|---|"];
+  for (const w of waves) out.push(`| ${w.wave} | ${w.components.map(code).join(", ")} | ${w.status} | ${waveApproval(w)} |`);
+  for (const w of waves.filter((x) => x.status === "waiting")) {
+    out.push("", `Wave ${w.wave} was planned after the waves before it applied, and the approved plan does not cover it:`, "");
+    for (const why of w.moved ?? []) out.push(`- ${why}`);
+    if (w.approved) out.push("", `An approval of ${code(w.gate)} stands for ${code(w.approved)}, not for the plan now.`);
+    out.push(
+      "",
+      `Read wave ${w.wave}'s plan, ${code(w.digest)}, and approve it with:`,
+      "",
+      "```",
+      prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest }, approver),
+      "```",
+      "",
+      "Then run the wave's apply job again.",
+    );
+  }
+  return out;
 }
 
 function approvalLines(report: PrReport, approver: string): string[] {
@@ -334,6 +437,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       out.push("", "A member whose inputs moved applied the plan it was approved with. The next run plans it against the new values.");
     }
   }
+  out.push(...waveLines(report, options.approver ?? "<you>"));
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);
   }
@@ -376,19 +480,34 @@ export function prStatusDescription(report: PrReport): string {
     case "applied":
       text = `applied ${n} member${n === 1 ? "" : "s"}${digest}`;
       break;
+    case "wave-applied": {
+      const last = (report.waves ?? []).filter((w) => w.status === "applied").at(-1);
+      text = `applied wave ${last?.wave ?? "?"} of ${report.selection.waves.length}${last ? ` under ${last.approval === "pull-request" ? "the pull request's approval" : `${last.gate}`}` : ""}`;
+      break;
+    }
     case "failed":
       text = `apply failed for ${report.members.filter((m) => m.status === "failed").map((m) => m.member).join(", ")}`;
       break;
-    case "refused":
+    case "refused": {
+      const waiting = report.waves?.find((w) => w.status === "waiting");
+      if (waiting && (report.refusal === "wave-not-approved" || report.refusal === "wave-plan-changed")) {
+        text = `wave ${waiting.wave} waits at ${waiting.gate}: ${report.refusal === "wave-plan-changed" ? "its plan changed after its approval" : "its plan moved, approve it"}`;
+        break;
+      }
+      if (report.refusal === "earlier-wave") {
+        text = "refused: an earlier wave has not applied";
+        break;
+      }
       text = `refused: ${report.refusal === "plan-changed" ? "the plan changed after review" : report.refusal === "not-a-reviewer" ? "the approver has not approved the pull request" : report.refusal === "author-approved" ? "the approver wrote the change" : report.refusal === "no-pull-request" ? "no pull request merged this commit" : "the plan is not approved"}`;
       break;
+    }
   }
   return text.length > 140 ? text.slice(0, 137) + "..." : text;
 }
 
 /** The commit status state for a report: success, failure, or pending while it waits on approval. */
 export function prStatusState(report: PrReport): "success" | "failure" | "pending" {
-  if (report.status === "planned" || report.status === "applied" || report.status === "nothing") return "success";
-  if (report.status === "refused" && report.refusal === "not-approved") return "pending";
+  if (report.status === "planned" || report.status === "applied" || report.status === "wave-applied" || report.status === "nothing") return "success";
+  if (report.status === "refused" && (report.refusal === "not-approved" || report.refusal === "wave-not-approved")) return "pending";
   return "failure";
 }

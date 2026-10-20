@@ -163,7 +163,7 @@ chant build --components --generate github --env staging --promote-to prod --out
 chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
 ```
 
-`--pr-loop` is refused beside `--wave-gate` or `--promote-to`. Inside a workspace member it generates that member's loop, written to `chant-pr.<member>.<env>` in the forge's directory; see [inside a workspace member](/chant/guide/pull-request-ci/#inside-a-workspace-member).
+With `--wave-gate <name>` beside it, the apply gets a gate per wave ([#4003](https://github.com/INTENTIUS/chant/issues/4003)). The single `apply` job becomes `apply-wave-1` to `apply-wave-<n>`, one per wave of the component graph, each after the one before it. Each runs `pr-apply --wave-gate <name> --wave <k>`, which plans its wave after the earlier waves applied. A wave whose plan the pull request's approved plan covers applies under that approval, and one whose plan moved waits at `<name>-wave-<k>`; see [a gate per wave on merge](/chant/guide/pull-request-ci/#a-gate-per-wave-on-merge). `--canary` and `--base` are refused beside `--pr-loop`, and so is `--promote-to`. Inside a workspace member it generates that member's loop, written to `chant-pr.<member>.<env>` in the forge's directory; see [inside a workspace member](/chant/guide/pull-request-ci/#inside-a-workspace-member).
 
 ### The job image
 

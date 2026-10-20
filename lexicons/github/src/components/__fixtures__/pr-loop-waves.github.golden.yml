@@ -1,0 +1,174 @@
+name: chant-pr-prod
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  CHANT_ENV: prod
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container: node:22
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Plan the members this pull request reaches
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge github
+      - name: Keep the plan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-plan
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true
+  apply-wave-1:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container: node:22
+    concurrency:
+      group: chant-apply-prod
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Restore the newest record of this commit's apply
+        uses: actions/cache/restore@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-1
+          restore-keys: chant-apply-prod-${{ github.sha }}-
+      - name: Apply wave 1, under the approval its plan has
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
+          chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge github --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave 1
+      - name: Keep the record for the next wave and a re-run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-1
+      - name: Keep the wave 1 apply report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-apply-wave-1
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true
+  apply-wave-2:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs:
+      - apply-wave-1
+    container: node:22
+    concurrency:
+      group: chant-apply-prod
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Restore the newest record of this commit's apply
+        uses: actions/cache/restore@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-2
+          restore-keys: chant-apply-prod-${{ github.sha }}-
+      - name: Apply wave 2, under the approval its plan has
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
+          chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge github --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave 2
+      - name: Keep the record for the next wave and a re-run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-2
+      - name: Keep the wave 2 apply report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-apply-wave-2
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true
+  apply-wave-3:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs:
+      - apply-wave-2
+    container: node:22
+    concurrency:
+      group: chant-apply-prod
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Restore the newest record of this commit's apply
+        uses: actions/cache/restore@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-3
+          restore-keys: chant-apply-prod-${{ github.sha }}-
+      - name: Apply wave 3, under the approval its plan has
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
+          chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge github --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave 3
+      - name: Keep the record for the next wave and a re-run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-3
+      - name: Keep the wave 3 apply report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-apply-wave-3
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true

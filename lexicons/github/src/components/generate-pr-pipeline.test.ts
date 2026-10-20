@@ -126,9 +126,10 @@ describe("the GitHub pull-request workflow", () => {
     expect(yaml).not.toContain("--require-review");
   });
 
-  test("refuses a wave or promote job beside it", () => {
-    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g" } })).toThrow(/pull-request pipeline has no wave or promote jobs/);
-    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no wave or promote jobs/);
+  test("refuses a promote job beside it, and a canary or a fixed base beside --wave-gate (#4003)", () => {
+    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no promote job/);
+    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g", canary: ["net"] } })).toThrow(/takes no --canary/);
+    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g", base: "HEAD~1" } })).toThrow(/takes no --base/);
   });
 
   test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {

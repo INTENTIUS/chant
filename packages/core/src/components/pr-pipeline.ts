@@ -42,6 +42,17 @@
  * build is `chant build --env <env>`, or `buildCommand` when the templates
  * come from several builds (`npm run build`).
  *
+ * With `waveGate` (#4003) the apply runs a wave at a time: `pr-apply
+ * --wave-gate <gate>`, each wave planned after the one before it applied. A
+ * generator writes one apply job per wave of the component graph
+ * (`prLoopWaveJobs`), job `apply-wave-<k>` passing `--wave <k>` and needing
+ * the job before it, and the attempt record carries the approved set from
+ * one job to the next. A wave whose plan the approved change set covers
+ * applies under the pull request's approval; one whose plan moved stops at
+ * `<gate>-wave-<k>` (exit 3), and re-running its job after the approval
+ * carries on. `chant ci serve` runs the one apply job, which runs the waves
+ * in order until one stops.
+ *
  * In a workspace member (#3465) both commands run in the member's directory
  * and pass `--member <name>`, so the member's gate (`pr-<number>-<member>`),
  * note and statuses stay apart from every other member's on the same pull
@@ -53,6 +64,9 @@ import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
 import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
 import { EMPTY_TREE_SHA } from "./changed-files";
+import { layerWaves } from "../gated-waves";
+import type { DriverComponent } from "./driver";
+import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
 
 /** Where both jobs write their reports, kept as a CI artifact. */
 export const PR_LOOP_REPORT_DIR = ".chant/pr";
@@ -127,6 +141,12 @@ export interface PrLoopPipelineOptions {
    */
   buildCommand?: string;
   /**
+   * A gate per wave on merge (#4003): the apply runs `pr-apply --wave-gate
+   * <waveGate>`, a wave at a time, and a generator writes one apply job per
+   * wave. Set from `--wave-gate` beside `--pr-loop` ({@link prLoopWithWaves}).
+   */
+  waveGate?: string;
+  /**
    * Which GitHub-shaped forge the workflow is for. Set by the forgejo
    * generator, which reuses the github one; a caller never needs to.
    */
@@ -149,6 +169,8 @@ export interface PrLoopJob {
   setup?: string[];
   /** With `build` (#4088): the build line and the lint line, run in this order before the command. */
   build?: string[];
+  /** With `waveGate` (#4003): the wave a generated apply job runs, 1-based. */
+  wave?: number;
 }
 
 /** The lines `build` (#4088) runs before a job's command: the build, then the lint. Empty without the option. */
@@ -191,6 +213,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       command: [
         "chant", "components", "pr-apply", "--base", '"$BASE_SHA"', ...common,
         ...(options.requireReview === false ? [] : ["--require-review"]),
+        ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
         "--resume", PR_APPLY_RECORD,
       ].join(" "),
       env: github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv },
@@ -198,6 +221,35 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       ...build,
     },
   ];
+}
+
+/**
+ * The pull-request options with `--wave-gate` beside `--pr-loop` (#4003):
+ * the apply gets a gate per wave. A canary or a fixed base is refused, since
+ * the pull request's waves are its derivation's and each push is measured
+ * from the commit before it.
+ */
+export function prLoopWithWaves(prLoop: PrLoopPipelineOptions, gatedWaves?: GatedWavePipelineOptions): PrLoopPipelineOptions {
+  if (!gatedWaves) return prLoop;
+  if (gatedWaves.canary?.length) throw new Error("a pull-request pipeline's waves are the change's derivation, so it takes no --canary; drop --canary");
+  if (gatedWaves.base !== undefined) throw new Error("a pull-request pipeline measures each push from the commit before it, so it takes no --base; drop --base");
+  return { ...prLoop, waveGate: gatedWaves.gate };
+}
+
+/** The name of the apply job for wave `wave` (#4003). */
+export function prApplyWaveJobName(wave: number): string {
+  return `apply-wave-${wave}`;
+}
+
+/**
+ * One apply job per wave of the component graph (#4003), each `apply`'s
+ * command with `--wave <k>`. A change selects a subset, which never layers
+ * deeper than the graph, so a job past the change's last wave finds nothing
+ * left and exits 0.
+ */
+export function prLoopWaveJobs(components: DriverComponent[], apply: PrLoopJob): PrLoopJob[] {
+  const count = Math.max(1, layerWaves(components.map((c) => ({ name: c.name, dependsOn: c.dependsOn ?? [] }))).length);
+  return Array.from({ length: count }, (_, i) => ({ ...apply, command: `${apply.command} --wave ${i + 1}`, wave: i + 1 }));
 }
 
 /**

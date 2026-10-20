@@ -60,7 +60,17 @@ import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/co
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
 import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
-import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import {
+  PR_APPLY_RECORD,
+  PR_LOOP_REPORT_DIR,
+  prApplyGroup,
+  prApplyRecordKey,
+  prApplyWaveJobName,
+  prLoopJobs,
+  prLoopSetup,
+  prLoopWaveJobs,
+  prLoopWithWaves,
+} from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -175,8 +185,17 @@ function gatedWaveGithubDoc(
  * path filter, since a change outside the member can reach it; the plan
  * selects from the whole change and passes `--member`, which keeps the
  * member's gate, note and statuses apart from the other members'.
+ *
+ * With a gate per wave (`waveGate`, #4003) the one apply job becomes
+ * `apply-wave-1` to `apply-wave-<n>`, one per wave of the component graph,
+ * each needing the one before. Each saves the record under its own cache key
+ * (the run, the attempt and the wave), and each restores the newest record
+ * for the pushed commit, so wave k reads what wave k-1 left, and a re-run of
+ * a wave that stopped at its gate reads what it left itself. Each keeps its
+ * report as `chant-pr-apply-wave-<k>`.
  */
 function prLoopGithubDoc(
+  components: DriverComponent[],
   env: string,
   image: string,
   beforeScript: string[],
@@ -194,35 +213,52 @@ function prLoopGithubDoc(
   // its run and attempt, and a re-run restores the newest for the commit.
   const recordPath = member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD;
   const recordPrefix = `${prApplyRecordKey(env, "${{ github.sha }}", member?.name)}-`;
-  const recordKey = `${recordPrefix}\${{ github.run_id }}-\${{ github.run_attempt }}`;
-  const restoreRecord = {
-    name: "Restore the record of an earlier attempt at this commit",
+  const recordKey = (wave?: number) => `${recordPrefix}\${{ github.run_id }}-\${{ github.run_attempt }}${wave ? `-wave-${wave}` : ""}`;
+  const restoreRecord = (wave?: number) => ({
+    name: wave ? "Restore the newest record of this commit's apply" : "Restore the record of an earlier attempt at this commit",
     uses: "actions/cache/restore@v4",
-    with: { path: recordPath, key: recordKey, "restore-keys": recordPrefix },
-  };
-  const saveRecord = {
-    name: "Keep the record for a re-run",
+    with: { path: recordPath, key: recordKey(wave), "restore-keys": recordPrefix },
+  });
+  const saveRecord = (wave?: number) => ({
+    name: wave ? "Keep the record for the next wave and a re-run" : "Keep the record for a re-run",
     if: "always()",
     uses: "actions/cache/save@v4",
-    with: { path: recordPath, key: recordKey },
-  };
+    with: { path: recordPath, key: recordKey(wave) },
+  });
+  const reportName = (job: typeof plan) => `chant-pr-${job.wave ? prApplyWaveJobName(job.wave) : job.jobName}`;
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     checkoutStep(true),
     ...runSteps(prLoopSetup(image)),
     ...runSteps(beforeScript),
     ...(job.build ? [{ name: "Build the templates", run: job.build[0] }, { name: "Lint the project", run: job.build[1] }] : []),
-    ...(job.jobName === "apply" ? [restoreRecord] : []),
+    ...(job.jobName === "apply" ? [restoreRecord(job.wave)] : []),
     // The job's setup lines (#4004) run in the command's shell, so a value they settle reaches it.
     { name, env: job.env, run: [...(job.setup ?? []), job.command].join("\n") },
     ...runSteps(extraScript),
-    ...(job.jobName === "apply" ? [saveRecord] : []),
+    ...(job.jobName === "apply" ? [saveRecord(job.wave)] : []),
     {
-      name: `Keep the ${job.jobName} report`,
+      name: `Keep the ${job.wave ? `wave ${job.wave} ` : ""}${job.jobName} report`,
       if: "always()",
       uses: UPLOAD_ARTIFACT,
-      with: { name: `chant-pr-${job.jobName}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true },
+      with: { name: reportName(job), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true },
     },
   ];
+  const applyJob = (job: typeof plan, needs: string[], name: string) => ({
+    if: "github.event_name == 'push'",
+    "runs-on": GITHUB_RUNNER,
+    ...(needs.length > 0 ? { needs } : {}),
+    container: image,
+    concurrency: concurrency(prApplyGroup(env, member?.name)),
+    permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
+    steps: steps(job, name),
+  });
+  const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
+  const applyJobs: Array<[string, Record<string, unknown>]> = loop.waveGate
+    ? waveJobs.map((job) => [
+        prApplyWaveJobName(job.wave!),
+        applyJob(job, job.wave! > 1 ? [prApplyWaveJobName(job.wave! - 1)] : [], `Apply wave ${job.wave}, under the approval its plan has`),
+      ])
+    : [["apply", applyJob(apply, [], "Apply the plan a reviewer approved")]];
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: "github.event_name == 'pull_request'",
@@ -231,15 +267,9 @@ function prLoopGithubDoc(
       permissions: { contents: "read", "pull-requests": "write", statuses: "write" },
       steps: steps(plan, "Plan the members this pull request reaches"),
     },
-    apply: {
-      if: "github.event_name == 'push'",
-      "runs-on": GITHUB_RUNNER,
-      container: image,
-      concurrency: concurrency(prApplyGroup(env, member?.name)),
-      permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
-      steps: steps(apply, "Apply the plan a reviewer approved"),
-    },
+    ...Object.fromEntries(applyJobs),
   };
+  const applyNames = applyJobs.map(([name]) => name);
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
@@ -247,10 +277,15 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", "apply"],
+    stages: ["plan", ...applyNames],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
-      { jobName: "apply", component: "pull request apply", stage: "apply", needs: [] },
+      ...applyNames.map((name, i) => ({
+        jobName: name,
+        component: loop.waveGate ? `pull request apply, wave ${i + 1}` : "pull request apply",
+        stage: name,
+        needs: i > 0 ? [applyNames[i - 1]] : [],
+      })),
     ],
   };
 }
@@ -316,10 +351,10 @@ export function buildGithubPipelineDoc(
   const byName = new Map(components.map((c) => [c.name, c]));
 
   if (options.prLoop) {
-    if (options.gatedWaves || options.promoteTo !== undefined) {
-      throw new Error("a pull-request pipeline has no wave or promote jobs; drop --wave-gate and --promote-to, or --pr-loop");
-    }
-    return prLoopGithubDoc(env, image, beforeScript, extraScript, options);
+    if (options.promoteTo !== undefined) throw new Error("a pull-request pipeline has no promote job; drop --promote-to or --pr-loop");
+    // #4003: --wave-gate beside --pr-loop gives the apply a gate per wave.
+    const prLoop = prLoopWithWaves(options.prLoop, options.gatedWaves);
+    return prLoopGithubDoc(components, env, image, beforeScript, extraScript, { ...options, prLoop });
   }
 
   if (options.gatedWaves) {

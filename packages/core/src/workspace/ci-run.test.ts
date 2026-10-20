@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
-import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
+import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciLoopOptions, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
 import type { CommitStatus } from "../pr-forge";
 import { ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
 import type { StepRecord } from "../op/local-executor";
@@ -198,6 +198,19 @@ describe("the job as an Op (#4094)", () => {
     expect(args).toMatchObject({ prBuild: true, prBuildCommand: "npm run build" });
     expect(args).toMatchObject({ command: "ci", path: "run", extraPositional: "apply", env: "prod", base: "abc", commit: "def", passEnv: ["AWS_PROFILE", "AWS_REGION"], ciChant: "npx chant", key: "k.pem" });
     expect(() => parseArgs(["ci", "run", "plan", "--commit"])).toThrow(/--commit needs/);
+  });
+
+  test("--wave-gate (#4003): the apply job runs pr-apply --wave-gate, the waves in order with no --wave, and the plan job is unchanged", () => {
+    for (const path of ["run", "serve"]) {
+      const args = parseArgs(["ci", path, ...(path === "run" ? ["apply"] : []), "--env", "prod", "--gate", "infra", "--wave-gate", "release"]);
+      expect(ciLoopOptions(args)).toEqual({ gate: "infra", waveGate: "release" });
+    }
+    const [plan, apply] = prLoopJobs("forgejo", "prod", ciLoopOptions(parseArgs(["ci", "run", "apply", "--env", "prod", "--wave-gate", "release"])));
+    expect(apply!.command).toContain("--require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json");
+    expect(apply!.command).not.toContain("--wave ");
+    expect(plan!.command).not.toContain("--wave");
+    const op = ciJobOp({ job: apply!, env: "prod", cwd: "/w", jobEnv: {}, setup: [], build: [] });
+    expect(op.phases.map((p) => p.name)).toEqual(["apply"]);
   });
 });
 

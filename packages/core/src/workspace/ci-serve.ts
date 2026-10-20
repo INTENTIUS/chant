@@ -23,6 +23,12 @@
  *   as its `--resume` record, so a re-run of a failed apply at the same
  *   commit finishes under the approval it has. This replaces the forge's CI
  *   cache.
+ * - A gate per wave (#4003). With `--wave-gate` the apply job runs
+ *   `pr-apply --wave-gate`, which applies the waves in order and stops at
+ *   the first whose moved plan waits on its own gate. The job fails, and the
+ *   resume record keeps the waves that applied; once the wave's plan is
+ *   approved, `rerunFailed` runs the apply again and it carries on from
+ *   that wave.
  * - Capacity. At most `maxJobs` jobs run at once. A job over the limit is not
  *   recorded, so a later poll starts it.
  * - Fast-forwards only (#4122). An apply runs only when the target's new head
@@ -57,7 +63,7 @@ import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type LeaseRecord } from "../lifecycle/lease";
 import { parseDuration } from "../op/duration";
-import { CI_JOB_OPS, ciJobPlace, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
+import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
 import { RUNNER_KEY_ENV } from "./ci-green";
 import { gitTop } from "./tree";
 import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
@@ -608,7 +614,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
 const USAGE =
   "chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
   "chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
-  "[--author <login>]... [--once] [--rerun-failed] [--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
+  "[--author <login>]... [--once] [--rerun-failed] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
   "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [--unsigned]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -660,14 +666,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
       ...(args.rerunFailed ? { rerunFailed: true } : {}),
       job: {
-        loop: {
-          ...(args.gate ? { gate: args.gate } : {}),
-          ...(args.branch ? { branch: args.branch } : {}),
-          ...(args.eventsJson ? { events: true } : {}),
-          ...(args.reportUrl ? { reportUrl: args.reportUrl } : {}),
-          ...(args.prBuild ? { build: true } : {}),
-          ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
-        },
+        loop: ciLoopOptions(args),
         ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

@@ -38,7 +38,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readWaveRecords, writeWaveRecordFile, type WaveRecord } from "../wave-engine";
 import type { ChangeSetDocument } from "../change-set";
-import type { PrMember } from "../pr-loop";
+import type { PrMember, PrWave } from "../pr-loop";
 
 /** What a pull request's apply approved, kept so a re-run can finish it (#3464). */
 export interface PrApplyRecord {
@@ -59,6 +59,11 @@ export interface PrApplyRecord {
    * against them again, so an unchanged member plans to the same digest.
    */
   planOutputs: Record<string, Record<string, unknown>>;
+  /**
+   * With `--wave-gate` (#4003): each wave reached so far and the approval it
+   * applied or waits under, so the next wave's job reports every wave.
+   */
+  waves?: PrWave[];
 }
 
 export interface FanOutAttempt {
@@ -100,6 +105,7 @@ function readPrApplyRecord(value: unknown): PrApplyRecord | undefined {
   if (isRecord(planOutputs)) {
     for (const [name, v] of Object.entries(planOutputs)) if (isRecord(v)) outputs[name] = v;
   }
+  const waves = Array.isArray(value.waves) ? value.waves.map(readPrWave).filter((w): w is PrWave => w !== undefined) : [];
   return {
     op,
     gate,
@@ -109,6 +115,28 @@ function readPrApplyRecord(value: unknown): PrApplyRecord | undefined {
     members: members as unknown as PrMember[],
     changeSet: changeSet as unknown as ChangeSetDocument,
     planOutputs: outputs,
+    ...(waves.length > 0 ? { waves } : {}),
+  };
+}
+
+const WAVE_STATUSES: ReadonlySet<string> = new Set(["applied", "failed", "plan-failed", "waiting"]);
+
+/** One `prApply.waves` entry, or `undefined` when it is malformed. */
+function readPrWave(value: unknown): PrWave | undefined {
+  if (!isRecord(value)) return undefined;
+  const { wave, components, status, approval, gate, digest } = value;
+  if (typeof wave !== "number" || !isStringArray(components) || typeof status !== "string" || !WAVE_STATUSES.has(status)) return undefined;
+  if ((approval !== "pull-request" && approval !== "wave") || typeof gate !== "string" || typeof digest !== "string") return undefined;
+  return {
+    wave,
+    components,
+    status: status as PrWave["status"],
+    approval,
+    gate,
+    digest,
+    ...(isStringArray(value.approvedBy) ? { approvedBy: value.approvedBy } : {}),
+    ...(typeof value.approved === "string" ? { approved: value.approved } : {}),
+    ...(isStringArray(value.moved) ? { moved: value.moved } : {}),
   };
 }
 

@@ -15,6 +15,7 @@ import {
   memberCounts,
   PR_REPORT_DEPLOYED_OUTPUTS_FLOOR,
   PR_REPORT_SCHEMA_ID,
+  PR_REPORT_WAVES_FLOOR,
   prApproveCommand,
   prNoteMarker,
   PR_GATE_OP,
@@ -220,5 +221,58 @@ describe("a workspace member's loop (#3465)", () => {
     expect(note.startsWith("<!-- chant-pr:" + memberReport.env + ":network -->")).toBe(true);
     expect(note).toContain("in member `network`");
     expect(note).toContain("chant approve pr-12-network pr-apply");
+  });
+});
+
+describe("a gate per wave on merge (#4003)", () => {
+  const waveDigest = `jcs1-sha256:${hex(7)}`;
+  const wave1 = { wave: 1, components: ["a"], status: "applied" as const, approval: "pull-request" as const, gate: "pr-apply", digest: doc.digest, approvedBy: ["github:alice"] };
+  const waveApplied: PrReport = {
+    ...appliedReport,
+    status: "wave-applied",
+    waveGate: "release",
+    waves: [wave1],
+    members: [{ ...planReport.members[0], status: "applied" }, planReport.members[1]],
+  };
+  const waiting: PrReport = {
+    ...waveApplied,
+    status: "refused",
+    refusal: "wave-not-approved",
+    message: "Wave 2 was planned after the waves before it applied, and the pull request's approved plan does not cover it.",
+    waves: [
+      wave1,
+      { wave: 2, components: ["app"], status: "waiting", approval: "wave", gate: "release-wave-2", digest: waveDigest, moved: ["app now writes app.main.cidr to a different value than the approved plan"] },
+    ],
+  };
+
+  test("the reports validate, waveGate and waves are optional, and both came with the same chant", () => {
+    for (const r of [waveApplied, waiting]) expectValid(r);
+    expect(schema.required).not.toContain("waves");
+    expect(schema.required).not.toContain("waveGate");
+    expect(PR_REPORT_WAVES_FLOOR).toBe("0.124.32");
+  });
+
+  test("the note has a row per wave saying whose approval it applied under", () => {
+    const note = renderPrNote(waveApplied);
+    expect(note).toContain("Applied wave 1 of 2. The next wave runs in its own job.");
+    expect(note).toContain("| 1 | `a` | applied | the pull request's `pr-apply` by `github:alice` |");
+  });
+
+  test("a wave that waits names why its plan moved and the approve command for its own gate", () => {
+    const note = renderPrNote(waiting, { approver: "github:<your-login>" });
+    expect(note).toContain("Wave 2 waits at its gate `release-wave-2`; nothing in it applied.");
+    expect(note).toContain("| 2 | `app` | waiting | its own `release-wave-2`, not approved yet |");
+    expect(note).toContain("- app now writes app.main.cidr to a different value than the approved plan");
+    expect(note).toContain(`chant approve pr-12 release-wave-2 --plan ${waveDigest} --approver github:<your-login> --sign`);
+    golden("pr-apply-wave-waiting.note.golden.md", note);
+  });
+
+  test("the status: a wave applied succeeds, a wave waiting on its approval is pending, a moved approval fails", () => {
+    expect(prStatusDescription(waveApplied)).toBe("applied wave 1 of 2 under the pull request's approval");
+    expect(prStatusState(waveApplied)).toBe("success");
+    expect(prStatusDescription(waiting)).toBe("wave 2 waits at release-wave-2: its plan moved, approve it");
+    expect(prStatusState(waiting)).toBe("pending");
+    expect(prStatusState({ ...waiting, refusal: "wave-plan-changed" })).toBe("failure");
+    expect(prStatusDescription({ ...waiting, waves: [wave1], refusal: "earlier-wave" })).toBe("refused: an earlier wave has not applied");
   });
 });

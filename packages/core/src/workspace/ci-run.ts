@@ -378,7 +378,12 @@ export interface CiRunRequest {
   base?: string;
   pr?: number;
   commit?: string;
-  /** The generator's options: `--gate`, `--branch`, `--events-json`, `--report-url`, `--pr-build` and `--pr-build-command`. */
+  /**
+   * The generator's options: `--gate`, `--branch`, `--events-json`,
+   * `--report-url`, `--pr-build` and `--pr-build-command`, and `--wave-gate`
+   * (#4003), with which the apply job runs the waves in order and stops at
+   * the first whose moved plan waits on its own gate.
+   */
   loop?: PrLoopPipelineOptions;
   /** `--image`: the image a generated pipeline names. Only the default gets setup lines. */
   image?: string;
@@ -748,9 +753,27 @@ export function formatCiRun(r: CiRunResult): string {
 
 // ── The command ──────────────────────────────────────────────────────────────
 
+/**
+ * The generator's options from `ci run`'s and `ci serve`'s flags, as `chant
+ * build --components --generate <lexicon> --pr-loop` takes them: `--gate`,
+ * `--branch`, `--events-json`, `--report-url`, `--pr-build`,
+ * `--pr-build-command` and `--wave-gate` (#4003).
+ */
+export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptions {
+  return {
+    ...(args.gate ? { gate: args.gate } : {}),
+    ...(args.branch ? { branch: args.branch } : {}),
+    ...(args.eventsJson ? { events: true } : {}),
+    ...(args.reportUrl ? { reportUrl: args.reportUrl } : {}),
+    ...(args.prBuild ? { build: true } : {}),
+    ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
+    ...(args.waveGate ? { waveGate: args.waveGate } : {}),
+  };
+}
+
 const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
-  "[--gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
+  "[--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
@@ -804,14 +827,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       ...(args.base ? { base: args.base } : {}),
       ...(args.pr !== undefined ? { pr: args.pr } : {}),
       ...(args.commit ? { commit: args.commit } : {}),
-      loop: {
-        ...(args.gate ? { gate: args.gate } : {}),
-        ...(args.branch ? { branch: args.branch } : {}),
-        ...(args.eventsJson ? { events: true } : {}),
-        ...(args.reportUrl ? { reportUrl: args.reportUrl } : {}),
-        ...(args.prBuild ? { build: true } : {}),
-        ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
-      },
+      loop: ciLoopOptions(args),
       ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

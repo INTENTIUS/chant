@@ -44,7 +44,17 @@ import {
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import {
+  PR_APPLY_RECORD,
+  PR_LOOP_REPORT_DIR,
+  prApplyGroup,
+  prApplyRecordKey,
+  prApplyWaveJobName,
+  prLoopJobs,
+  prLoopSetup,
+  prLoopWaveJobs,
+  prLoopWithWaves,
+} from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -79,10 +89,10 @@ export function generateGitlabPipeline(
   const byName = new Map(components.map((c) => [c.name, c]));
 
   if (options.prLoop) {
-    if (options.gatedWaves || options.promoteTo !== undefined) {
-      throw new Error("a pull-request pipeline has no wave or promote jobs; drop --wave-gate and --promote-to, or --pr-loop");
-    }
-    return prLoopGitlabPipeline(env, image, beforeScript, extraScript, options);
+    if (options.promoteTo !== undefined) throw new Error("a pull-request pipeline has no promote job; drop --promote-to or --pr-loop");
+    // #4003: --wave-gate beside --pr-loop gives the apply a gate per wave.
+    const prLoop = prLoopWithWaves(options.prLoop, options.gatedWaves);
+    return prLoopGitlabPipeline(components, env, image, beforeScript, extraScript, { ...options, prLoop });
   }
 
   if (options.gatedWaves) {
@@ -282,8 +292,15 @@ function gatedWaveGitlabPipeline(
  * apply passes it to `pr-apply --resume` (#3543). GitLab keeps protected
  * branches' caches apart from other branches' by default, so a merge request
  * pipeline cannot write the record the target branch's apply reads.
+ *
+ * With a gate per wave (`waveGate`, #4003) the apply job becomes
+ * `apply-wave-1` to `apply-wave-<n>`, one stage each, each needing the one
+ * before. They share the commit's cache key, so wave k pulls the record wave
+ * k-1 pushed, and a retry of a wave that stopped at its gate pulls the one it
+ * pushed itself.
  */
 function prLoopGitlabPipeline(
+  components: DriverComponent[],
   env: string,
   image: string,
   beforeScript: string[],
@@ -296,14 +313,18 @@ function prLoopGitlabPipeline(
   const [plan, apply] = prLoopJobs("gitlab", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
   const planJob = member ? `${member.name}-plan` : "plan";
-  const applyJob = member ? `${member.name}-apply` : "apply";
+  const named = (job: string) => (member ? `${member.name}-${job}` : job);
+  const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
+  const applies = loop.waveGate
+    ? waveJobs.map((job) => ({ job, name: named(prApplyWaveJobName(job.wave!)), stage: prApplyWaveJobName(job.wave!) }))
+    : [{ job: apply, name: named("apply"), stage: "apply" }];
   const onMergeRequest = GITLAB_MERGE_REQUEST_SOURCE;
   if (loop.branch !== undefined) assertGitlabBranch("The merge-request pipeline", loop.branch);
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
   const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), ...(job.build ?? []), job.command, ...extraScript];
-  const stages = ["plan", "apply"];
+  const stages = ["plan", ...applies.map((a) => a.stage)];
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
@@ -318,28 +339,39 @@ function prLoopGitlabPipeline(
       script: script(plan),
       artifacts: { when: "always", paths: [reportPath] },
     },
-    [applyJob]: {
-      stage: "apply",
-      image,
-      resource_group: prApplyGroup(env, member?.name),
-      rules: [{ if: onMerge }],
-      variables: apply.env,
-      script: script(apply),
-      // The attempt record (#3543), kept under the pushed commit even when
-      // the job fails, so a retry finishes the apply under the same approval.
-      cache: {
-        key: prApplyRecordKey(env, "$CI_COMMIT_SHA", member?.name),
-        paths: [member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD],
-        when: "always",
-      },
-      artifacts: { when: "always", paths: [reportPath] },
-    },
+    ...Object.fromEntries(
+      applies.map(({ job, name, stage }, i) => [
+        name,
+        {
+          stage,
+          image,
+          ...(i > 0 ? { needs: [applies[i - 1]!.name] } : {}),
+          resource_group: prApplyGroup(env, member?.name),
+          rules: [{ if: onMerge }],
+          variables: job.env,
+          script: script(job),
+          // The attempt record (#3543), kept under the pushed commit even when
+          // the job fails, so a retry finishes the apply under the same approval.
+          cache: {
+            key: prApplyRecordKey(env, "$CI_COMMIT_SHA", member?.name),
+            paths: [member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD],
+            when: "always",
+          },
+          artifacts: { when: "always", paths: [reportPath] },
+        },
+      ]),
+    ),
   };
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
-    { jobName: applyJob, component: "merge request apply", stage: "apply", needs: [] },
+    ...applies.map(({ job, name, stage }, i) => ({
+      jobName: name,
+      component: job.wave ? `merge request apply, wave ${job.wave}` : "merge request apply",
+      stage,
+      needs: i > 0 ? [applies[i - 1]!.name] : [],
+    })),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, applyJob].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, ...applies.map((a) => a.name)].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

@@ -250,8 +250,8 @@ CI:
                         tags. --key, or the PEM in CHANT_RUNNER_KEY, signs
                         each tag with a runner key.
   ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
-              [--forge github|gitlab|forgejo] [--gate <name>] [--branch <name>]
-              [--events-json] [--report-url <url>] [--image <image>]
+              [--forge github|gitlab|forgejo] [--gate <name>] [--wave-gate <name>]
+              [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
               [--before-script <line>]... [--pr-build]
               [--pr-build-command <line>] [--chant <command>]
               [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]
@@ -929,6 +929,10 @@ Component release ledger + status:
                             member's loop, gate op pr-<n>-<member>;
                             --resume <file> finishes an apply that failed
                             partway under the same approval;
+                            --wave-gate <name>: apply a wave at a time, each
+                            planned after the one before applied, a moved
+                            wave waiting at <name>-wave-<k>, with --wave <k>
+                            for one wave per CI job;
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set
