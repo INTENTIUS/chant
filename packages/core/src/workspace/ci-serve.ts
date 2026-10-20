@@ -64,7 +64,7 @@ import { formatError, formatWarning } from "../cli/format";
 import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type LeaseRecord } from "../lifecycle/lease";
 import { parseDuration } from "../op/duration";
 import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
-import { RUNNER_KEY_ENV } from "./ci-green";
+import { RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
 import { gitTop } from "./tree";
 import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
 
@@ -644,10 +644,21 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     const stateDir = args.statePath ? resolve(args.statePath) : defaultCiServeStateDir(cwd);
     const branch = args.branch ?? "main";
     // #4099: the host's key, checked against .chant/trust.json at the target's head before the first poll.
-    const keyed = ciServeRunnerKey({ top, stateDir, branch, ...(args.key !== undefined ? { keyFile: resolve(args.key) } : {}), envKey: process.env[RUNNER_KEY_ENV] || undefined, unsigned: args.unsigned });
+    // #4156: signing is opt-in. Without ci.green.signedSince no key is quiet, and an untrusted one warns once and serves unsigned.
+    const keyed = ciServeRunnerKey({
+      top,
+      stateDir,
+      branch,
+      ...(args.key !== undefined ? { keyFile: resolve(args.key) } : {}),
+      envKey: process.env[RUNNER_KEY_ENV] || undefined,
+      unsigned: args.unsigned,
+      required: signedRunsRequired(cwd),
+    });
     const fromFlag = keyed.fromFlag;
     const runnerKey = keyed.pem;
-    console.error(`ci serve: ${runnerKey === undefined ? "runs are not signed (--unsigned)" : `signing runs with the runner key from ${keyed.source}`}`);
+    if (keyed.warning) console.error(formatWarning({ message: keyed.warning }));
+    if (runnerKey !== undefined) console.error(`ci serve: signing runs with the runner key from ${keyed.source}`);
+    else if (keyed.note && args.verbose) console.error(`ci serve: ${keyed.note}`);
     // #4096: read once, so a loose or broken secrets file stops the serve before its first poll.
     const secrets = ciSecretsOf(args.ciSecrets);
     const hostEnv = { ...process.env, GITHUB_REPOSITORY: args.ciRepo };

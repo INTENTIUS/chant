@@ -41,6 +41,12 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
+  test("both jobs run chant ci run with the runner key secret, as on GitHub (#4156)", () => {
+    expect(result.yaml).toContain("chant ci run plan --in-place --no-push");
+    expect(result.yaml.match(/CHANT_RUNNER_KEY: '\$\{\{ secrets\.CHANT_RUNNER_KEY \}\}'/g)).toHaveLength(2);
+    expect(result.yaml).not.toContain("chant components pr-");
+  });
+
   test("its commands talk to Forgejo, on Forgejo's runner, with the job permissions dropped", () => {
     expect(result.yaml).toContain("--forge forgejo");
     expect(result.yaml).not.toContain("--forge github");
@@ -50,11 +56,11 @@ describe("the Forgejo pull-request workflow", () => {
 
   test("a first push's all-zero github.event.before is settled before pr-apply reads it, as on GitHub (#4004)", () => {
     const doc = parseYAML(result.yaml) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
-    const apply = doc.jobs.apply!.steps.find((s) => s.run?.includes("pr-apply"))!.run!.trimEnd().split("\n");
+    const apply = doc.jobs.apply!.steps.find((s) => s.run?.includes("ci run apply"))!.run!.trimEnd().split("\n");
     expect(apply[0]).toBe(githubBaseFallback());
     expect(apply[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
-    expect(apply[1]).toMatch(/^chant components pr-apply --base "\$BASE_SHA"/);
-    expect(doc.jobs.plan!.steps.find((s) => s.run?.includes("pr-plan"))!.run).not.toContain("0000000000000000000000000000000000000000");
+    expect(apply[1]).toMatch(/^chant ci run apply --in-place --base "\$BASE_SHA"/);
+    expect(doc.jobs.plan!.steps.find((s) => s.run?.includes("ci run plan"))!.run).not.toContain("0000000000000000000000000000000000000000");
   });
 
   test("events and reportUrl reach Forgejo's jobs as they reach GitHub's (#4007)", () => {
@@ -66,7 +72,8 @@ describe("the Forgejo pull-request workflow", () => {
   test("the apply keeps its resume record in the runner's cache, through the Forgejo mirror of actions/cache (#3543)", () => {
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/restore@v4");
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/save@v4");
-    expect(result.yaml).toContain("--forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json");
+    // ci run's inner pr-apply resumes from it (#4156): the job runs in place, where the cache restored it.
+    expect(result.yaml).toContain("chant ci run apply --in-place --base");
   });
 
   test("keeps its reports with upload-artifact v3, the version a Forgejo runner runs, while GitHub keeps v4 (#4008)", () => {

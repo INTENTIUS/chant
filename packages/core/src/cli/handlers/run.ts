@@ -1362,9 +1362,10 @@ async function runOpOnResolvedRuntime(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  // #4044: a runner key signs the run's record as it settles, so `ci tick`
-  // can count the run. `--key` must be a runner key; the PEM in
-  // CHANT_RUNNER_KEY that is not one leaves the run unsigned, with a warning.
+  // #4044: a runner key signs the run's record as it settles, so a reader
+  // can see who ran it. `--key` must be a runner key; the PEM in
+  // CHANT_RUNNER_KEY that trust.json does not list leaves the run unsigned,
+  // with a warning only when ci.green.signedSince asks for signed runs (#4156).
   const signRecord = await runSignerFor(ctx);
   if (signRecord === null) {
     await stewardGate?.release?.();
@@ -1567,10 +1568,13 @@ const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
  * What signs the run's record (#4044): the runner key `--key` names, or the
  * PEM in `CHANT_RUNNER_KEY`, checked against `.chant/trust.json` at `HEAD`.
  * Undefined when neither is given. Null, after printing why, when `--key`
- * is not a runner key; an unusable `CHANT_RUNNER_KEY` only warns, since the
- * variable may be set for `ci tick` in a job that also runs Ops.
+ * is not a runner key, or either is not an Ed25519 PEM. A `CHANT_RUNNER_KEY`
+ * that trust.json does not list leaves the run unsigned (#4156): quietly,
+ * with a line under `--verbose`, unless `ci.green.signedSince` asks for
+ * signed runs, which warns. The variable may be set for `ci tick` in a job
+ * that also runs Ops.
  */
-async function runSignerFor(ctx: CommandContext): Promise<((record: OpRunRecord) => NonNullable<OpRunRecord["statement"]>) | undefined | null> {
+export async function runSignerFor(ctx: CommandContext): Promise<((record: OpRunRecord) => NonNullable<OpRunRecord["statement"]>) | undefined | null> {
   const fromFlag = ctx.args.key !== undefined;
   let pem: string | undefined;
   try {
@@ -1580,9 +1584,17 @@ async function runSignerFor(ctx: CommandContext): Promise<((record: OpRunRecord)
     return null;
   }
   if (pem === undefined) return undefined;
+  // Loaded only when a key is given, so a run without one loads no workspace code (level 0, #2525).
+  const { opRunSigner, signedRunsRequired } = await import("../../workspace/ci-green");
+  const { loadRunnerKey } = await import("../../workspace/trust/dsse");
   try {
-    // Loaded only when a key is given, so a run without one loads no workspace code (level 0, #2525).
-    const { opRunSigner } = await import("../../workspace/ci-green");
+    loadRunnerKey(pem);
+  } catch (err) {
+    // A key that is there and is not one is an error either way: the caller asked to sign (#4156).
+    console.error(formatError({ message: `${fromFlag ? `--key ${ctx.args.key}` : RUNNER_KEY_ENV} is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}` }));
+    return null;
+  }
+  try {
     return opRunSigner(process.cwd(), pem);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1590,7 +1602,10 @@ async function runSignerFor(ctx: CommandContext): Promise<((record: OpRunRecord)
       console.error(formatError({ message: `the run would not be signed: ${message}` }));
       return null;
     }
-    console.error(formatWarning({ message: `${RUNNER_KEY_ENV} is set, and the run will not be signed: ${message}` }));
+    // #4156: signing is opt-in, so a key trust.json does not list warns only when ci.green.signedSince asks for signed runs.
+    const required = signedRunsRequired(process.cwd());
+    if (required) console.error(formatWarning({ message: `${RUNNER_KEY_ENV} is set, and the run will not be signed, so ci.green.signedSince (${required}) will not count it: ${message}` }));
+    else if (ctx.args.verbose) console.error(`${RUNNER_KEY_ENV} is set, and the run is not signed: ${message}`);
     return undefined;
   }
 }

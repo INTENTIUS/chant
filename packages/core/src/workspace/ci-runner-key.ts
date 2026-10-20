@@ -217,17 +217,38 @@ export function formatRunnerKeySetup(s: RunnerKeySetup, branch: string): string 
 /**
  * The key `ci serve` signs with, checked before its first poll (#4099): the
  * `--key` file, else `CHANT_RUNNER_KEY`, else the host's key in the state
- * directory. Throws, with the command that lists it, when there is none or
- * `.chant/trust.json` at the target's head does not list it with the runner
- * role. With `unsigned` there is no key and nothing is checked.
+ * directory. Signing is opt-in (#4156):
+ *
+ * - With no key, `ci serve` serves unsigned and says so only in `note`.
+ * - A key `.chant/trust.json` at the target's head does not list with the
+ *   runner role, or a target branch it can't find to check against, leaves
+ *   it serving unsigned, with one `warning`.
+ * - With `required` (the declaration's `ci.green.signedSince`) each of
+ *   those refuses to start, as before #4156.
+ *
+ * A key that is not an Ed25519 private key in PEM, or a `--key` file that
+ * can't be read, refuses either way. `unsigned` (`--unsigned`) skips the
+ * key without `required` and is ignored with it.
  */
-export function ciServeRunnerKey(req: { top: string; stateDir: string; branch: string; keyFile?: string; envKey?: string; unsigned?: boolean }): { pem?: string; fromFlag: boolean; source: string } {
-  if (req.unsigned) return { fromFlag: false, source: "none (--unsigned)" };
+export function ciServeRunnerKey(req: {
+  top: string;
+  stateDir: string;
+  branch: string;
+  keyFile?: string;
+  envKey?: string;
+  unsigned?: boolean;
+  /** The declaration's `ci.green.signedSince`, when it sets one: every run must then be signed. */
+  required?: string | null;
+}): { pem?: string; fromFlag: boolean; source: string; warning?: string; note?: string } {
+  const required = req.required ?? null;
+  const optIn = `ci.green.signedSince is ${required}, so every run must be signed`;
+  if (req.unsigned && !required) return { fromFlag: false, source: "none (--unsigned)", note: "runs are not signed (--unsigned)" };
   const host = req.keyFile === undefined && !req.envKey ? hostRunnerKey(req.stateDir) : undefined;
   const pem = req.keyFile !== undefined ? readFileSync(req.keyFile, "utf-8") : req.envKey || host?.pem;
   const source = req.keyFile !== undefined ? req.keyFile : req.envKey ? "CHANT_RUNNER_KEY" : (host?.path ?? join(req.stateDir, RUNNER_KEY_FILE));
   if (pem === undefined) {
-    throw new CiRunError(`there is no runner key: no --key, no CHANT_RUNNER_KEY and no ${source}. Make one with chant ci serve --setup-key, list it with --trust, or start with --unsigned`);
+    if (!required) return { fromFlag: false, source: "none", note: "runs are not signed: there is no runner key. To verify who ran a job, add one with chant ci serve --setup-key --trust" };
+    throw new CiRunError(`${optIn}, and there is no runner key: no --key, no CHANT_RUNNER_KEY and no ${source}. Make one with chant ci serve --setup-key and list it with --trust`);
   }
   let publicKey: string;
   try {
@@ -236,13 +257,17 @@ export function ciServeRunnerKey(req: { top: string; stateDir: string; branch: s
     throw new CiRunError(`the runner key from ${source} is not an Ed25519 private key in PEM: ${message(err)}`);
   }
   const head = targetHead(req.top, req.branch);
-  if (!head) throw new CiRunError(`there is no branch ${req.branch} here or on origin, so the runner key can't be checked against its .chant/trust.json; fetch it, or start with --unsigned`);
+  if (!head) {
+    const why = `there is no branch ${req.branch} here or on origin, so the runner key can't be checked against its .chant/trust.json`;
+    if (required) throw new CiRunError(`${optIn}, and ${why}; fetch it`);
+    return { fromFlag: false, source, warning: `${why}, so runs are not signed; fetch it to sign them` };
+  }
   const listed = runnerKeyListed(req.top, head.commit, pem);
   if (!listed.ok) {
-    throw new CiRunError(
-      `the runner key from ${source} is not trusted at ${branchAt(req.branch, head.commit)}: ${listed.reason}\n` +
-        `  List it on a branch for review with chant ci serve --setup-key --trust, or run ${trustCommand(defaultRunnerPrincipal(), publicKey)} in a checkout of ${req.branch} and merge the change. Start with --unsigned to serve without signing.`,
-    );
+    const why = `the runner key from ${source} is not trusted at ${branchAt(req.branch, head.commit)}: ${listed.reason}`;
+    const fix = `List it on a branch for review with chant ci serve --setup-key --trust, or run ${trustCommand(defaultRunnerPrincipal(), publicKey)} in a checkout of ${req.branch} and merge the change.`;
+    if (required) throw new CiRunError(`${optIn}, and ${why}\n  ${fix}`);
+    return { fromFlag: false, source, warning: `${why}. Runs are not signed until it is. ${fix}` };
   }
   return { pem, fromFlag: req.keyFile !== undefined, source };
 }

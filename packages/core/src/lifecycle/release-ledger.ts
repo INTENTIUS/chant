@@ -58,10 +58,22 @@ export interface RunOrigin {
   repo?: string;
   /** Resolved link to the run, when the environment provided enough to build one. */
   url?: string;
+  /**
+   * The forge's id for the job within the run (#4156): `GITHUB_JOB` on GitHub
+   * and Forgejo, the job's key in the workflow, and `CI_JOB_ID` on GitLab.
+   * Only `chant ci run` in a forge job writes it ({@link resolveCiJob}),
+   * from {@link RUN_ORIGIN_JOB_FLOOR}.
+   */
+  jobId?: string;
+  /** The run's attempt, `GITHUB_RUN_ATTEMPT` on GitHub and Forgejo (#4156). GitLab gives a retried job a new `jobId` instead. */
+  attempt?: number;
 }
 
 /** The first chant that writes `runOrigin.forge: "chant"`, for a job `chant ci run` ran (#4094). */
 export const RUN_ORIGIN_CHANT_FLOOR = "0.124.30";
+
+/** The first chant that writes `runOrigin.jobId` and `runOrigin.attempt`, for a forge job that ran `chant ci run` (#4156). */
+export const RUN_ORIGIN_JOB_FLOOR = "0.124.32";
 
 /**
  * The gate resolution that admitted a deploy (#4020): the gate's address in the
@@ -308,6 +320,28 @@ export function resolveCiRun(env: NodeJS.ProcessEnv = process.env): { runId: str
     };
   }
   return undefined;
+}
+
+/**
+ * The CI run the environment names, as {@link resolveCiRun} has it, with the
+ * job within the run and the run's attempt when the forge gives them
+ * (#4156). `chant ci run` in a forge job records this as its run's origin;
+ * a release record keeps {@link resolveCiRun}'s shape.
+ */
+export function resolveCiJob(env: NodeJS.ProcessEnv = process.env): { runId: string; runOrigin: RunOrigin } | undefined {
+  const ci = resolveCiRun(env);
+  if (!ci) return undefined;
+  const github = ci.runOrigin.forge === "github";
+  const jobId = github ? env.GITHUB_JOB : env.CI_JOB_ID;
+  const attempt = github ? Number(env.GITHUB_RUN_ATTEMPT) : NaN;
+  return {
+    runId: ci.runId,
+    runOrigin: {
+      ...ci.runOrigin,
+      ...(jobId ? { jobId } : {}),
+      ...(Number.isInteger(attempt) && attempt > 0 ? { attempt } : {}),
+    },
+  };
 }
 
 /**

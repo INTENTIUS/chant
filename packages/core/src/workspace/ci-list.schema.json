@@ -240,8 +240,11 @@
                                     "description": "The env the run is recorded under."
                                   },
                                   "signer": {
-                                    "type": "string",
-                                    "description": "The runner principal whose statement the run carries."
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ],
+                                    "description": "The runner principal whose statement the run carries. null for an unsigned run, which counts unless ci.green.signedSince asks for a statement (#4156, chant 0.124.32 and newer)."
                                   }
                                 },
                                 "description": "Added within contract version 1 by #4044, written by chant 0.124.28 and newer. Present only when the run is a chant Op run (ci.green.source runs): name is then the Op's name and id is null. Absent for a check run."
@@ -334,8 +337,11 @@
                                 "description": "The env the run is recorded under."
                               },
                               "signer": {
-                                "type": "string",
-                                "description": "The runner principal whose statement the run carries."
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "description": "The runner principal whose statement the run carries. null for an unsigned run, which counts unless ci.green.signedSince asks for a statement (#4156, chant 0.124.32 and newer)."
                               }
                             },
                             "description": "Added within contract version 1 by #4044, written by chant 0.124.28 and newer. Present only when the run is a chant Op run (ci.green.source runs): name is then the Op's name and id is null. Absent for a check run."
@@ -432,7 +438,7 @@
               },
               "ignoredRuns": {
                 "type": "array",
-                "description": "Added within contract version 1 by #4044, written by chant 0.124.28 and newer. Present only when the source is chant runs (ci.green.source or --source runs): the Op runs on the commit that do not count for want of a valid statement signed by a runner key whose principal holds the runner role. They neither green nor revoke the commit.",
+                "description": "Added within contract version 1 by #4044, written by chant 0.124.28 and newer. Present only when the source is chant runs (ci.green.source or --source runs): the Op runs on the commit that do not count: a statement that does not verify (invalid, untrusted or mismatch), or, under ci.green.signedSince, no statement on a commit that needs one (#4156). They neither green nor revoke the commit.",
                 "items": {
                   "type": "object",
                   "required": [
@@ -460,7 +466,7 @@
                         "untrusted",
                         "mismatch"
                       ],
-                      "description": "unsigned: the record carries no statement. invalid: the statement is not an op-run statement, or names another signer than the key's. untrusted: no runner key .chant/trust.json lists at base signed it, or its principal holds no runner role. mismatch: it signs another run, commit or record than the ledger holds."
+                      "description": "unsigned: the record carries no statement, on a commit ci.green.signedSince asks one for (#4156: without signedSince an unsigned run counts). invalid: the statement is not an op-run statement, or names another signer than the key's. untrusted: no runner key .chant/trust.json lists at base signed it, or its principal holds no runner role. mismatch: it signs another run, commit or record than the ledger holds."
                     },
                     "reason": {
                       "type": "string"

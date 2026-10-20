@@ -238,15 +238,16 @@ CI:
                         its window, newest first, each green, revoked or
                         undecided with its required phases' results. Reads
                         local tags; --forge reads check runs for undecided
-                        commits, and source runs reads the signed Op runs on
-                        the local chant/lifecycle. --since replaces the window.
+                        commits, and source runs reads the Op runs on the
+                        local chant/lifecycle, signed or not. --since replaces the window.
   ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
                         Tag each commit within ci.green's window whose
                         required phases all passed ci/green/<sha>, and revoke
                         a green one that now fails ci/revoked/<sha>. Reads
                         check runs from the forge, or with source runs
                         (ci.green.source or --source) the Op runs on
-                        chant/lifecycle that a runner key signed. Pushes the
+                        chant/lifecycle; with ci.green.signedSince, the ones a
+                        runner key signed. Pushes the
                         tags. --key, or the PEM in CHANT_RUNNER_KEY, signs
                         each tag with a runner key.
   ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
@@ -255,16 +256,21 @@ CI:
               [--before-script <line>]... [--pr-build]
               [--pr-build-command <line>] [--chant <command>]
               [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]
-              [-o <dir>]
+              [-o <dir>] [--wave <k>] [--no-require-review]
               [--no-status] [--status-url <url template>]
+              [--in-place] [--no-push] [--verbose]
                         Run the pull-request pipeline's plan or apply job as
                         a pipeline Op in a fresh worktree of --commit (default
                         HEAD) with a clean environment. --base and --pr stand
                         in for the forge's event values. --pr-build runs
                         the job's build and lint lines first. Records the run as
-                        pr-plan or pr-apply on chant/lifecycle, signed with
-                        --key or CHANT_RUNNER_KEY, so ci tick from runs counts
-                        it, and copies the report to -o (default .chant/pr). With a forge
+                        pr-plan or pr-apply on chant/lifecycle, which ci tick
+                        from runs counts, signed when --key or CHANT_RUNNER_KEY
+                        gives a runner key, and copies the report to -o
+                        (default .chant/pr). --in-place runs in this checkout
+                        at HEAD, as a generated forge job does, and names the
+                        forge's run in the record; --no-push keeps the record
+                        local. Exits with the command's code. With a forge
                         token it sets a chant/pr-plan or chant/pr-apply commit
                         status (pending, then success or failure); --no-status
                         turns that off, and --status-url links it.
@@ -290,9 +296,10 @@ CI:
                         each apply's resume record there, and runs at most
                         --max-jobs (default 1) jobs at once. --once runs one
                         poll and waits for its jobs. --rerun-failed runs a
-                        failed apply or plan again. Refuses to start when its
-                        runner key is not listed in .chant/trust.json at the
-                        target's head, unless --unsigned
+                        failed apply or plan again. Signs runs with a runner
+                        key when .chant/trust.json at the target's head lists
+                        it, and serves unsigned otherwise; with
+                        ci.green.signedSince it refuses to start without one
   ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
                         Make the host's runner key (Ed25519, mode 0600) in the
                         state directory when there is none and print its public

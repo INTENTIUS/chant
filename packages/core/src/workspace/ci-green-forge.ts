@@ -32,8 +32,8 @@ export interface CheckRun {
   url: string | null;
   /**
    * Set when the "check run" is a chant Op run (#4044, `ci.green.source:
-   * "runs"`): the run's id and env, the runner whose statement it carries,
-   * and that statement. `name` is then the Op's name and `id` the run's end
+   * "runs"`): the run's id and env, and the runner whose statement it
+   * carries with that statement, or a null signer for an unsigned run. `name` is then the Op's name and `id` the run's end
    * time in milliseconds, which orders a re-run after the run it replaced.
    */
   opRun?: OpRunRef;
@@ -45,8 +45,10 @@ export interface CheckRun {
 export interface OpRunRef {
   id: string;
   env: string;
-  signer: string;
-  statement: NonNullable<OpRunRecord["statement"]>;
+  /** The runner whose statement the run carries, or null for an unsigned run, which counts unless `ci.green.signedSince` asks for one (#4156). */
+  signer: string | null;
+  /** The run's statement, when it has one. */
+  statement?: NonNullable<OpRunRecord["statement"]>;
 }
 
 export interface CiForge {

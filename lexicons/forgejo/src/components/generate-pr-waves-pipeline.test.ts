@@ -35,7 +35,7 @@ describe("the Forgejo pull-request workflow with a gate per wave (#4003)", () =>
     for (const k of [1, 2]) {
       const job = doc.jobs[`apply-wave-${k}`]!;
       expect(job["runs-on"]).toBe("docker");
-      expect(job.steps.find((s) => s.run?.includes("pr-apply"))!.run).toContain(`--forge forgejo --require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json --wave ${k}`);
+      expect(job.steps.find((s) => s.run?.includes("ci run apply"))!.run).toContain(`--forge forgejo --wave-gate release --wave ${k}`);
       expect(job.steps.some((s) => s.uses === "https://code.forgejo.org/actions/cache/restore@v4")).toBe(true);
     }
   });

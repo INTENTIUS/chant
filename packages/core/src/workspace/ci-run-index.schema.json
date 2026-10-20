@@ -38,11 +38,12 @@
         "ended": { "type": "string", "description": "ISO-8601 instant the job settled." },
         "runId": { "type": "string", "description": "The Op run id, as in the run ledger on chant/lifecycle." },
         "key": { "type": "string", "description": "reportKey(pr, commit): <pr>/<commit>, with /<member> after for a member, and unknown for a missing pr. The job's report is <report-url>/<key>/pr-<job>.json." },
+        "signer": { "type": ["string", "null"], "description": "Added within contract 1 by #4156, written by chant 0.124.32 and newer. The runner whose key signed the run's record, or null for an unsigned run. Signing is optional, and an unsigned run is listed like any other." },
         "runOrigin": {
           "type": "object",
           "required": ["forge"],
-          "description": "Where the run says it ran. { forge: \"chant\" } for a job the chant runner ran.",
-          "properties": { "forge": { "type": "string" } }
+          "description": "Where the run says it ran. { forge: \"chant\" } for a job the chant runner ran. From chant 0.124.32 a forge job that runs chant ci run names the forge's run (#4156): forge github (GitHub and Forgejo) or gitlab, with repo, url, jobId and attempt when the forge gives them.",
+          "properties": { "forge": { "type": "string" }, "repo": { "type": "string" }, "url": { "type": "string" }, "jobId": { "type": "string" }, "attempt": { "type": "integer", "minimum": 1 } }
         }
       }
     }

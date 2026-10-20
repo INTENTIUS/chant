@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
-import { githubBaseFallback, prApplyGroup, prApplyRecordKey } from "@intentius/chant/components/pr-pipeline";
+import { githubBaseFallback, prApplyGroup, prApplyRecordKey, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 import { generateGithubPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -63,42 +63,49 @@ describe("the GitHub pull-request workflow", () => {
   });
 
   test("the plan job measures from the pull request's base and cannot push; the apply job can, one at a time", () => {
-    const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!;
-    expect(plan.run).toBe('chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge github');
+    const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
+    // #4156: the job runs pr-plan through chant ci run, in its own checkout, and pushes no record from the pull request's code.
+    expect(plan.run).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
     expect(plan.env).toMatchObject({ BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}" });
+    // The runner key is an optional secret: unset, the expression is empty and the record is unsigned.
+    expect(plan.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
     expect(doc.jobs.plan.permissions).toEqual({ contents: "read", "pull-requests": "write", statuses: "write" });
 
-    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
-    expect(apply.run).toContain("--require-review");
-    expect(apply.env).toMatchObject({ BASE_SHA: "${{ github.event.before }}" });
+    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
+    // ci run builds pr-apply with --require-review unless told --no-require-review.
+    expect(apply.run).not.toContain("--no-require-review");
+    expect(apply.run).not.toContain("--no-push");
+    expect(apply.env).toMatchObject({ BASE_SHA: "${{ github.event.before }}", CHANT_RUNNER_KEY: "${{ secrets.CHANT_RUNNER_KEY }}" });
     expect(doc.jobs.apply.permissions.contents).toBe("write");
     expect(doc.jobs.apply.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
     for (const job of Object.values(doc.jobs)) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
   });
 
   test("a first push's all-zero github.event.before is settled in the apply's own shell, before pr-apply reads it (#4004)", () => {
-    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
+    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
     const lines = apply.run!.trimEnd().split("\n");
     expect(lines).toHaveLength(2);
     expect(lines[0]).toBe(githubBaseFallback());
     expect(lines[0]).toContain('[ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]');
     expect(lines[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
-    expect(lines[1]).toMatch(/^chant components pr-apply --base "\$BASE_SHA"/);
+    expect(lines[1]).toMatch(/^chant ci run apply --in-place --base "\$BASE_SHA"/);
     const trunk = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { branch: "trunk" } }).yaml) as { jobs: Record<string, Job> };
-    expect(trunk.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!.run).toContain('git fetch origin "trunk"');
-    const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!;
+    expect(trunk.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!.run).toContain('git fetch origin "trunk"');
+    const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
     expect(plan.run).not.toContain("0000000000000000000000000000000000000000");
   });
 
   test("the apply resumes from a record the cache keeps for the pushed commit across a re-run (#3543)", () => {
     const steps = doc.jobs.apply.steps;
     const restore = steps.findIndex((s) => s.uses === "actions/cache/restore@v4");
-    const run = steps.findIndex((s) => s.run?.includes("pr-apply"));
+    const run = steps.findIndex((s) => s.run?.includes("ci run apply"));
     const save = steps.findIndex((s) => s.uses === "actions/cache/save@v4");
     expect(restore).toBeGreaterThan(-1);
     expect(restore).toBeLessThan(run);
     expect(save).toBeGreaterThan(run);
-    expect(steps[run].run).toContain("--resume .chant/pr-resume/pr-apply.json");
+    // ci run runs the inner pr-apply in the checkout, where the cache restored the record.
+    expect(steps[run].run).toContain("--in-place");
+    expect(prLoopJobs("github", "prod")[1]!.command).toContain("--resume .chant/pr-resume/pr-apply.json");
     const key = "chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}";
     expect(steps[restore].with).toEqual({ path: ".chant/pr-resume/pr-apply.json", key, "restore-keys": "chant-apply-prod-${{ github.sha }}-" });
     // Saved even when the apply failed, which is when a re-run needs it.
@@ -106,7 +113,7 @@ describe("the GitHub pull-request workflow", () => {
     expect(steps[save].with).toEqual({ path: ".chant/pr-resume/pr-apply.json", key });
     // The plan job runs the pull request's code: it neither reads nor writes the record.
     expect(doc.jobs.plan.steps.some((s) => s.uses?.startsWith("actions/cache"))).toBe(false);
-    expect(doc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!.run).not.toContain("--resume");
+    expect(doc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!.run).not.toContain("--resume");
     // The report artifact does not carry the record, which holds the members' outputs.
     const keep = steps.find((s) => s.uses?.startsWith("actions/upload-artifact"))!;
     expect(keep.with?.path).toBe(".chant/pr");
@@ -123,7 +130,8 @@ describe("the GitHub pull-request workflow", () => {
     const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { gate: "infra-apply", branch: "trunk", requireReview: false } }).yaml;
     expect(yaml).toContain("--gate infra-apply");
     expect(yaml).toContain("- trunk");
-    expect(yaml).not.toContain("--require-review");
+    expect(yaml).toContain("--no-require-review");
+    expect(yaml).toContain('--branch "trunk"');
   });
 
   test("refuses a promote job beside it, and a canary or a fixed base beside --wave-gate (#4003)", () => {
@@ -135,7 +143,7 @@ describe("the GitHub pull-request workflow", () => {
   test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {
     const loud = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "s3://chant-reports/acme" } }).yaml) as { jobs: Record<string, Job> };
     for (const job of ["plan", "apply"]) {
-      const run = loud.jobs[job].steps.find((s) => s.run?.includes("chant components"))!;
+      const run = loud.jobs[job].steps.find((s) => s.run?.includes("chant ci run"))!;
       expect(run.run).toContain('--events-json --report-url "s3://chant-reports/acme"');
       expect(run.env?.CHANT_RUN_EVENTS_DIR).toBe(".chant/pr/run-events");
     }
@@ -157,13 +165,14 @@ describe("the GitHub pull-request workflow", () => {
     // No path filter: a change outside the member can reach it.
     expect(mdoc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] } });
     expect(mdoc.defaults).toEqual({ run: { "working-directory": "infra/network" } });
-    const plan = mdoc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!;
-    expect(plan.run).toBe('chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge github --member network');
-    const apply = mdoc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
-    expect(apply.run).toContain("--member network");
+    const plan = mdoc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
+    // ci run finds the member from the directory it runs in and passes --member to pr-plan and pr-apply.
+    expect(plan.run).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
+    expect(prLoopJobs("github", "prod", {}, "network")[0]!.command).toContain("--member network");
+    const apply = mdoc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
     expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply.network.prod", "cancel-in-progress": false });
     // The record path is relative to the member for --resume and to the repository for the cache.
-    expect(apply.run).toContain("--resume .chant/pr-resume/pr-apply.json");
+    expect(apply.run).toContain("--in-place");
     const restore = mdoc.jobs.apply.steps.find((s) => s.uses === "actions/cache/restore@v4")!;
     expect(restore.with).toMatchObject({ path: "infra/network/.chant/pr-resume/pr-apply.json", "restore-keys": "chant-apply.network.prod-${{ github.sha }}-" });
     for (const job of Object.values(mdoc.jobs)) {
@@ -187,7 +196,7 @@ describe("the GitHub pull-request workflow", () => {
     const mdoc = parseYAML(yaml) as { name: string; defaults?: unknown; jobs: Record<string, Job> };
     expect(mdoc.name).toBe("chant-pr.root.prod");
     expect(mdoc.defaults).toBeUndefined();
-    expect(yaml).toContain("--member root");
+    expect(yaml).toContain("chant ci run plan --in-place");
     expect(yaml).toContain("path: .chant/pr");
   });
 
