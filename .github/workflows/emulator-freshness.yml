@@ -1,10 +1,12 @@
 name: emulator-freshness
 
-# Weekly advisory check: are the pinned Fly emulator images (mudflaps / spritzer)
-# behind their latest upstream release? Surfaces a single tracking issue when so —
-# never an auto-bump. The tag lives in one place
-# (lexicons/fly/src/op/activities/emulator-images.ts) and moves only when a
-# consuming test needs the newer emulator (#808 T2 policy).
+# Weekly advisory check: is any lexicon's pinned emulator image behind its
+# latest upstream release? scripts/check-emulator-freshness.ts enumerates every
+# lexicon's EmulatorSpec that declares an `upstream` (#1345): fly's mudflaps and
+# spritzer, Floci for aws, floci-az, floci-gcp and the sql pins.
+# Surfaces a single tracking issue when a pin is behind, never an auto-bump. Each
+# tag lives on its lexicon's EmulatorSpec and moves only when a consuming test
+# needs the newer emulator (#808 T2 policy).
 run-name: emulator-freshness — ${{ github.event_name }}
 
 on:
@@ -49,7 +51,9 @@ jobs:
         if: ${{ steps.freshness.outputs.behind == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: 'chore: Fly emulator image pin(s) behind latest release'
+          # Every word here is in the earlier Fly-only title, so the
+          # `in:title` search below still finds an issue opened under it.
+          TITLE: 'chore: emulator image pin(s) behind latest release'
           BODY: ${{ steps.freshness.outputs.body }}
         run: |
           # The repo has no `chore` label by default, and `gh issue create
