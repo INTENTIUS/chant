@@ -36,8 +36,9 @@ describe("DockerGenerator", () => {
       { kind: "config", name: "app-config", props: { file: "./config/app.conf" } },
     ];
     const { source } = new DockerGenerator().generate(entities);
-    expect(source).toContain("import { DockerConfig }");
-    expect(source).toContain("new DockerConfig(");
+    expect(source).toContain("import { DockerConfig, composeKey }");
+    // app-config is not an identifier, so the key is set explicitly (#3937).
+    expect(source).toContain('export const appConfig = composeKey("app-config", new DockerConfig(');
     expect(source).toContain("app.conf");
   });
 
@@ -46,8 +47,8 @@ describe("DockerGenerator", () => {
       { kind: "secret", name: "db-password", props: { file: "./secrets/db.txt" } },
     ];
     const { source } = new DockerGenerator().generate(entities);
-    expect(source).toContain("import { DockerSecret }");
-    expect(source).toContain("new DockerSecret(");
+    expect(source).toContain("import { DockerSecret, composeKey }");
+    expect(source).toContain('export const dbPassword = composeKey("db-password", new DockerSecret(');
   });
 
   test("single-stage Dockerfile generates flat props (existing behaviour)", () => {

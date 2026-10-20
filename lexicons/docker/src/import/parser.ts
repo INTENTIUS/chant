@@ -3,6 +3,9 @@
  * to an intermediate representation (IR) for TypeScript code generation.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseYAML } from "@intentius/chant/yaml";
 
 export interface ServiceIR {
@@ -61,26 +64,58 @@ export interface ParseResult {
   warnings: string[];
 }
 
-const SERVICE_PROPS = [
-  "image", "ports", "environment", "volumes", "depends_on",
-  "restart", "healthcheck", "labels", "command", "entrypoint",
-  "networks", "build", "deploy", "secrets", "configs",
+/** The compose sections import reads, with the kind each holds and its entry in the lexicon. */
+const SECTIONS = [
+  { section: "services", kind: "service", entry: "Service" },
+  { section: "volumes", kind: "volume", entry: "Volume" },
+  { section: "networks", kind: "network", entry: "Network" },
+  { section: "configs", kind: "config", entry: "DockerConfig" },
+  { section: "secrets", kind: "secret", entry: "DockerSecret" },
 ] as const;
 
-const VOLUME_PROPS = ["driver", "driver_opts", "external", "labels"] as const;
-const NETWORK_PROPS = ["driver", "external", "attachable", "labels"] as const;
-const CONFIG_PROPS = ["file", "external"] as const;
-const SECRET_PROPS = ["file", "external"] as const;
+type ComposeKind = (typeof SECTIONS)[number]["kind"];
 
+let fieldsCache: Map<ComposeKind, Set<string>> | undefined;
+
+/**
+ * The fields the Compose spec defines for each kind, read from the generated
+ * lexicon (`lexicon-docker.json`, or `dist/meta.json` in a package built
+ * without it). The props types come from the same spec (#3934), so import
+ * keeps exactly what the types accept (#3937).
+ */
+export function composeFields(): Map<ComposeKind, Set<string>> {
+  if (fieldsCache) return fieldsCache;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [join(here, "..", "generated", "lexicon-docker.json"), join(here, "..", "..", "dist", "meta.json")];
+  const path = candidates.find((c) => existsSync(c));
+  if (!path) {
+    throw new Error(`docker import: the generated lexicon is missing (tried ${candidates.join(", ")}); run npm run generate in lexicons/docker`);
+  }
+  const lexicon = JSON.parse(readFileSync(path, "utf-8")) as Record<string, { properties?: Record<string, unknown> }>;
+  const fields = new Map<ComposeKind, Set<string>>();
+  for (const { kind, entry } of SECTIONS) {
+    fields.set(kind, new Set(Object.keys(lexicon[entry]?.properties ?? {})));
+  }
+  fieldsCache = fields;
+  return fields;
+}
+
+/**
+ * Keep every field the Compose spec defines for the kind, and `x-`
+ * extension fields. Anything else is dropped and named in `warnings`.
+ */
 function extractProps(
   raw: unknown,
-  allowed: readonly string[],
+  allowed: Set<string>,
+  where: string,
+  kind: string,
+  warnings: string[],
 ): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const obj = raw as Record<string, unknown>;
   const props: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (key in obj) props[key] = obj[key];
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (allowed.has(key) || key.startsWith("x-")) props[key] = value;
+    else warnings.push(`${where}: "${key}" is not a Compose ${kind} field and was dropped`);
   }
   return props;
 }
@@ -96,64 +131,22 @@ export class DockerParser {
     const entities: DockerIR[] = [];
     const warnings: string[] = [];
     const doc = parseYAML(content) as Record<string, unknown>;
+    const fields = composeFields();
 
-    // services
-    const services = doc["services"];
-    if (services && typeof services === "object" && !Array.isArray(services)) {
-      for (const [name, raw] of Object.entries(services as Record<string, unknown>)) {
-        entities.push({
-          kind: "service",
-          name,
-          props: extractProps(raw, SERVICE_PROPS),
-        });
-      }
+    const known = new Set<string>(SECTIONS.map((s) => s.section));
+    for (const key of Object.keys(doc ?? {})) {
+      if (!known.has(key)) warnings.push(`"${key}" at the top level is not imported`);
     }
 
-    // volumes
-    const volumes = doc["volumes"];
-    if (volumes && typeof volumes === "object" && !Array.isArray(volumes)) {
-      for (const [name, raw] of Object.entries(volumes as Record<string, unknown>)) {
+    for (const { section, kind } of SECTIONS) {
+      const entries = doc?.[section];
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) continue;
+      for (const [name, raw] of Object.entries(entries as Record<string, unknown>)) {
         entities.push({
-          kind: "volume",
+          kind,
           name,
-          props: extractProps(raw, VOLUME_PROPS),
-        });
-      }
-    }
-
-    // networks
-    const networks = doc["networks"];
-    if (networks && typeof networks === "object" && !Array.isArray(networks)) {
-      for (const [name, raw] of Object.entries(networks as Record<string, unknown>)) {
-        entities.push({
-          kind: "network",
-          name,
-          props: extractProps(raw, NETWORK_PROPS),
-        });
-      }
-    }
-
-    // configs
-    const configs = doc["configs"];
-    if (configs && typeof configs === "object" && !Array.isArray(configs)) {
-      for (const [name, raw] of Object.entries(configs as Record<string, unknown>)) {
-        entities.push({
-          kind: "config",
-          name,
-          props: extractProps(raw, CONFIG_PROPS),
-        });
-      }
-    }
-
-    // secrets
-    const secrets = doc["secrets"];
-    if (secrets && typeof secrets === "object" && !Array.isArray(secrets)) {
-      for (const [name, raw] of Object.entries(secrets as Record<string, unknown>)) {
-        entities.push({
-          kind: "secret",
-          name,
-          props: extractProps(raw, SECRET_PROPS),
-        });
+          props: extractProps(raw, fields.get(kind)!, `${section}.${name}`, kind, warnings),
+        } as DockerIR);
       }
     }
 

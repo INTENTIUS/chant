@@ -178,8 +178,6 @@ function buildImport(source: string): string {
 
 describe("roundtrip: compose → TypeScript → compose", () => {
   test("configs and secrets import as DockerConfig and DockerSecret and build the same file", () => {
-    // Names without hyphens: the generator camel-cases export names, which renames a
-    // hyphenated key (db-password becomes dbPassword, #3937).
     const content = testdata("configs-secrets.yaml");
     const { entities } = new DockerParser().parse(content);
     const { source } = new DockerGenerator().generate(entities);
@@ -187,6 +185,50 @@ describe("roundtrip: compose → TypeScript → compose", () => {
     expect(source).toContain("new DockerConfig(");
     expect(source).toContain("new DockerSecret(");
     expect(parseYAML(buildImport(source))).toEqual(parseYAML(content));
+  });
+
+  test("full.yaml builds the same file: every field kept, hyphenated keys kept (#3937)", () => {
+    const content = testdata("full.yaml");
+    const { entities, warnings } = new DockerParser().parse(content);
+    expect(warnings).toEqual([]);
+    const { source } = new DockerGenerator().generate(entities);
+    expect(parseYAML(buildImport(source))).toEqual(parseYAML(content));
+  });
+
+  test("fields outside the old fixed list, x- extensions, and keys that are not identifiers survive (#3937)", () => {
+    const content = testdata("names-and-fields.yaml");
+    const { entities, warnings } = new DockerParser().parse(content);
+    expect(warnings).toEqual([]);
+    const { source } = new DockerGenerator().generate(entities);
+    expect(parseYAML(buildImport(source))).toEqual(parseYAML(content));
+  });
+
+  test("through the chant import adapter", () => {
+    const content = testdata("names-and-fields.yaml");
+    const [file] = new DockerTemplateGenerator().generate(new DockerTemplateParser().parse(content));
+    expect(parseYAML(buildImport(file!.content))).toEqual(parseYAML(content));
+  });
+});
+
+describe("compose import warns on what it cannot keep (#3937)", () => {
+  test("a field the Compose spec does not define is dropped with a warning", () => {
+    const content = "services:\n  api:\n    image: nginx\n    not_a_field: 1\nnetworks:\n  n:\n    bogus: true\n";
+    const { entities, warnings } = new DockerParser().parse(content);
+    expect(entities.find((e) => e.name === "api")).toMatchObject({ props: { image: "nginx" } });
+    expect(warnings).toEqual([
+      'services.api: "not_a_field" is not a Compose service field and was dropped',
+      'networks.n: "bogus" is not a Compose network field and was dropped',
+    ]);
+  });
+
+  test("a top-level section import does not carry is named", () => {
+    const { warnings } = new DockerParser().parse("name: proj\nservices:\n  a:\n    image: x\n");
+    expect(warnings).toEqual(['"name" at the top level is not imported']);
+  });
+
+  test("the adapter hands parser warnings to chant import", () => {
+    const ir = new DockerTemplateParser().parse("services:\n  api:\n    image: nginx\n    not_a_field: 1\n");
+    expect(ir.warnings).toEqual(['services.api: "not_a_field" is not a Compose service field and was dropped']);
   });
 });
 
@@ -198,7 +240,8 @@ describe("every name the importers emit is exported by the lexicon", () => {
     ];
     expect(new Set(entities.map((e) => e.kind))).toEqual(new Set(["service", "volume", "network", "config", "secret", "dockerfile"]));
     const names = importedNames(new DockerGenerator().generate(entities).source);
-    expect(names.length).toBe(6);
+    // The six constructors, and composeKey for full.yaml's hyphenated keys.
+    expect(names.length).toBe(7);
     for (const name of names) {
       expect(typeof (lexicon as Record<string, unknown>)[name], name).toBe("function");
     }

@@ -17,6 +17,9 @@ export { defaultLabels, defaultAnnotations, isDefaultLabels, isDefaultAnnotation
 export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-labels";
 export type { DefaultLabels, DefaultAnnotations } from "./default-labels";
 
+// Compose keys that are not identifiers (#3937)
+export { composeKey, getComposeKey, COMPOSE_KEY } from "./compose-key";
+
 // Generated entities — populated by `npm run generate`
 export * from "./generated/index";
 

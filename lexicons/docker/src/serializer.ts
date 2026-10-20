@@ -17,6 +17,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { emitYAMLEntry } from "@intentius/chant/yaml";
+import { getComposeKey } from "./compose-key";
 import { EXEC_FORM_STEPS, PER_KIND_ORDER, STEP_INSTRUCTIONS } from "./dockerfile-order";
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -368,9 +369,20 @@ export const dockerSerializer: Serializer = {
     _outputs?: LexiconOutput[],
     context?: SerializeContext,
   ): string | SerializerResult {
+    // A compose entity's key is its export name unless composeKey set one
+    // (#3937); references to it serialize as the same key. Two entities of
+    // one kind cannot share a key.
     const entityNames = new Map<Declarable, string>();
+    const taken = new Map<string, { name: string; entity: Declarable }>();
     for (const [name, entity] of entities) {
-      entityNames.set(entity, name);
+      const key = getComposeKey(entity) ?? name;
+      entityNames.set(entity, key);
+      const slot = `${(entity as unknown as Record<string, unknown>).entityType}\0${key}`;
+      const other = taken.get(slot);
+      if (other !== undefined && other.entity !== entity) {
+        throw new Error(`docker: ${other.name} and ${name} both take the compose key "${key}"`);
+      }
+      taken.set(slot, { name, entity });
     }
 
     const services = new Map<string, Declarable>();
@@ -381,7 +393,8 @@ export const dockerSerializer: Serializer = {
     const dockerfiles = new Map<string, Declarable>();
     let defaultLabels: Record<string, string> = {};
 
-    for (const [name, entity] of entities) {
+    for (const [exportName, entity] of entities) {
+      const name = entityNames.get(entity) ?? exportName;
       // Skip property-kind entities
       if (isPropertyDeclarable(entity)) continue;
 

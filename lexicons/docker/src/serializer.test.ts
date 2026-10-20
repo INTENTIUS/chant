@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { dockerSerializer } from "./serializer";
+import { composeKey } from "./compose-key";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 
@@ -487,5 +488,35 @@ describe("telemetry attribution", () => {
     expect(run({ image: "x", environment: ["OTEL_RESOURCE_ATTRIBUTES=team=pay"] }, { workspace: "acme" })).toContain(
       "- OTEL_RESOURCE_ATTRIBUTES=team=pay,chant.workspace=acme,chant.decl=api${CHANT_RELEASE_ATTRIBUTES:-}",
     );
+  });
+});
+
+describe("composeKey (#3937)", () => {
+  test("the entity takes the key, and a reference to it serializes as the key", () => {
+    const data = composeKey("app-data", new MockVolume({ driver: "local" }));
+    const out = dockerSerializer.serialize(new Map<string, Declarable>([
+      ["web", composeKey("web-app", new MockService({ image: "nginx", volumes: [data] }))],
+      ["appData", data],
+    ])) as string;
+    expect(out).toContain("  web-app:\n");
+    expect(out).toContain("  app-data:\n");
+    expect(out).toContain("      - app-data\n");
+    expect(out).not.toContain("appData");
+  });
+
+  test("two entities of one kind with the same key is an error", () => {
+    expect(() => dockerSerializer.serialize(new Map<string, Declarable>([
+      ["db", new MockService({ image: "postgres" })],
+      ["primary", composeKey("db", new MockService({ image: "postgres" }))],
+    ]))).toThrow('docker: db and primary both take the compose key "db"');
+  });
+
+  test("a service and a volume may share a key", () => {
+    const out = dockerSerializer.serialize(new Map<string, Declarable>([
+      ["db", new MockService({ image: "postgres" })],
+      ["dbVolume", composeKey("db", new MockVolume({}))],
+    ])) as string;
+    expect(out).toContain("services:\n  db:\n");
+    expect(out).toContain("volumes:\n  db:");
   });
 });

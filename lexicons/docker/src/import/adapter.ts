@@ -72,10 +72,11 @@ export class DockerTemplateParser implements TemplateParser {
     if (looksLikeDockerfile(content)) {
       return { resources: [dockerIrToResource(new DockerfileParser().parse("app", content))], parameters: [] };
     }
-    const { entities } = new DockerParser().parse(content);
+    const { entities, warnings } = new DockerParser().parse(content);
     return {
       resources: entities.map(dockerIrToResource),
       parameters: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 }

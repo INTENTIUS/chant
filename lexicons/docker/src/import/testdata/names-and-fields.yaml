@@ -1,0 +1,44 @@
+services:
+  web-app:
+    image: myapp:latest
+    working_dir: /srv
+    user: "1000:1000"
+    env_file:
+      - .env
+    stop_grace_period: 30s
+    x-team: platform
+    depends_on:
+      - db_primary
+    volumes:
+      - "app-data:/data"
+    networks:
+      - back-tier
+    secrets:
+      - db-password
+    configs:
+      - nginx.conf
+  db_primary:
+    image: postgres:16
+  db:
+    image: postgres:16
+    volumes:
+      - "db:/var/lib/postgresql/data"
+volumes:
+  app-data:
+    name: shared-app-data
+  db:
+networks:
+  back-tier:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: br-back
+configs:
+  nginx.conf:
+    content: |
+      server {}
+    name: nginx-conf
+    labels:
+      tier: edge
+secrets:
+  db-password:
+    environment: DB_PASSWORD
