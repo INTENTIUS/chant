@@ -92,6 +92,27 @@ export interface CapabilityPlan {
    * still counts toward the digest, with no entries.
    */
   changeSet?: ChangeSetPart;
+  /**
+   * The outputs `run` will expose once it applies this plan (#3999), as far
+   * as the plan can tell. A pull request's plan reads a dependent's
+   * `stackOutput()` references into this member from here when both are in
+   * the change, instead of from the outputs standing now. Absent when the
+   * plan cannot say: every output of the step is then known only after it
+   * applies.
+   */
+  outputs?: PlannedOutputs;
+}
+
+/**
+ * What a plan says about the outputs its apply will leave (#3999). An
+ * output named in neither field is known only after apply, the same as one
+ * in `unknown`.
+ */
+export interface PlannedOutputs {
+  /** Each output whose value the plan knows, by name: what `run` will expose. */
+  known: Record<string, unknown>;
+  /** Outputs the plan names whose value is known only after apply, sorted. */
+  unknown: string[];
 }
 
 /**
@@ -138,8 +159,11 @@ export interface Capability<In = unknown, Out = unknown> {
   /**
    * Optional: the outputs `run` exposed when it last ran, read without
    * changing anything (#3183). A pull request's plan reads them for each
-   * component a planned one depends on, so a `stackOutput()` wiring resolves
-   * to the value standing now. The shape is `run`'s `outputs` field.
+   * component a planned one depends on that the change does not plan
+   * (#4104), so a `stackOutput()` wiring resolves to the value standing now.
+   * A dependency the change plans is read from its plan's
+   * {@link CapabilityPlan.outputs} instead (#3999). The shape is `run`'s
+   * `outputs` field.
    */
   outputs?(ctx: DeployContext, input: In): Promise<Record<string, unknown>>;
   /**

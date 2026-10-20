@@ -29,6 +29,19 @@
  * wave gate), `run` plans and applies in one go, which is what `terraform
  * apply` with no plan file does too.
  *
+ * ## What the plan says about the root's outputs (#3999)
+ *
+ * `plan` answers the outputs the root will have once that plan applies
+ * (`terraformPlannedOutputs`): `show -json`'s `planned_values.outputs`, less
+ * each output whose `output_changes` entry is unknown after apply. A pull
+ * request's plan reads a dependent's `stackOutput()` references from there
+ * when both roots are in the change.
+ *
+ * A root whose `vars` read an output not known yet (`DeployContext.unresolvedInputs`)
+ * is not planned: terraform takes no unknown variable. Its member gets a hole
+ * naming the roots it waits on and no artifact, and the run that applies it
+ * plans it once their outputs are known.
+ *
  * ## choudoufu roots in a gated wave (#3459)
  *
  * A live choudoufu root that `live-plan-set` can plan as chant would (no
@@ -52,8 +65,9 @@
  * choudoufu's wave over it is always wave 1.
  */
 
-import type { Capability, DeployContext, CapabilityPlan } from "@intentius/chant/components/capability";
+import type { Capability, DeployContext, CapabilityPlan, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
+import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import {
   choudoufuPlanSet,
@@ -99,7 +113,7 @@ function requireRoot(input: TerraformApplyStepInput): void {
   }
 }
 
-async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot & { changeSet?: ChangeSetPart }> {
+async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
   requireRoot(input);
   await terraformInit(rootArgs(input));
   const planned = await terraformPlan({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
@@ -107,7 +121,64 @@ async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot & {
     planFile: planned.planFile,
     planDigest: planned.planDigest,
     ...(planned.changeSet ? { changeSet: planned.changeSet } : {}),
+    json: planned.json,
   };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Whether an `after_unknown` value marks anything unknown: `true`, or `true` anywhere inside. */
+function anyUnknown(value: unknown): boolean {
+  if (value === true) return true;
+  if (Array.isArray(value)) return value.some(anyUnknown);
+  if (isRecord(value)) return Object.values(value).some(anyUnknown);
+  return false;
+}
+
+/**
+ * The outputs a root will have once the plan `json` (`show -json`) applies
+ * (#3999). An output is known when `planned_values.outputs` gives its value
+ * and its `output_changes` entry marks no part of it unknown after apply.
+ * Every other output the plan names is unknown, the whole output even when
+ * only a part of it is.
+ */
+export function terraformPlannedOutputs(json: unknown): PlannedOutputs {
+  const doc = isRecord(json) ? json : {};
+  const values = isRecord(doc.planned_values) && isRecord(doc.planned_values.outputs) ? doc.planned_values.outputs : {};
+  const changes = isRecord(doc.output_changes) ? doc.output_changes : {};
+  const known: Record<string, unknown> = {};
+  const unknown: string[] = [];
+  for (const name of [...new Set([...Object.keys(values), ...Object.keys(changes)])].sort()) {
+    const change = changes[name];
+    const planned = values[name];
+    if (isRecord(change) && anyUnknown(change.after_unknown)) unknown.push(name);
+    else if (isRecord(planned) && "value" in planned) known[name] = planned.value;
+    else if (isRecord(change) && "after" in change) known[name] = change.after;
+    else unknown.push(name);
+  }
+  return { known, unknown };
+}
+
+/**
+ * The member of a root whose `vars` read outputs not known yet (#3999): no
+ * plan, a hole naming whose outputs it waits on, and a digest over the root,
+ * the vars as resolved and those names.
+ */
+function waitingRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresolved: string[]): CapabilityPlan {
+  const vars = Object.fromEntries(Object.entries(input.vars ?? {}).map(([k, v]) => [k, v === undefined ? null : v]));
+  const planDigest = computePlanDigest("terraform-apply-unresolved", { env: ctx.env, root: input.root, vars, unresolved });
+  const changeSet: ChangeSetPart = {
+    member: {
+      member: input.root,
+      lexicon: "terraform",
+      planner: "chant",
+      status: "planned",
+      planDigest,
+      holes: [{ address: input.root, type: "terraform_root", reason: `inputs from ${unresolved.join(", ")}; planned again once they apply` }],
+    },
+    entries: [],
+  };
+  return { member: input.root, planDigest, changeSet };
 }
 
 /**
@@ -175,8 +246,10 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   // A root's apply has no undo short of applying the previous configuration,
   // which is a change of its own. COMP003 asks the component to say so.
   rollbackPolicy: "needs-opt-out",
-  async plan(_ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
+  async plan(ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
     requireRoot(input);
+    const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
+    if (unresolved.length > 0) return waitingRoot(ctx, input, unresolved);
     const wave = await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
     if (wave.wave) {
       const set = await choudoufuPlanSet(rootArgs(input));
@@ -184,10 +257,16 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
         planDigest: set.planDigest,
         choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
       };
-      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet };
+      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json) };
     }
-    const { changeSet, ...planned } = await planRoot(input);
-    return { member: input.root, planDigest: planned.planDigest, artifact: planned, ...(changeSet ? { changeSet } : {}) };
+    const { changeSet, json, ...planned } = await planRoot(input);
+    return {
+      member: input.root,
+      planDigest: planned.planDigest,
+      artifact: planned,
+      ...(changeSet ? { changeSet } : {}),
+      outputs: terraformPlannedOutputs(json),
+    };
   },
   // The root's outputs as its state holds them now (#3183): what a dependent
   // planned before this root applies reads through `stackOutput()`.
@@ -199,7 +278,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
     if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
-    const planned: PlannedRoot = isPlannedRoot(fromWave) ? fromWave : await planRoot(input);
+    const planned: PlannedRoot = isPlannedRoot(fromWave) ? fromWave : await planRoot(input).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
     const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile });
     if (!applied.applied) {
       const message =

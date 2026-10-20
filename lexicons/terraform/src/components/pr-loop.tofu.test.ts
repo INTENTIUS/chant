@@ -197,12 +197,16 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     return report("plan");
   }
 
+  /** The commit before the last merge, which a re-run of its apply measures from. */
+  let mergedFrom = "";
+  const RESUME = ".chant/pr-resume/pr-apply.json";
+
   async function merge(pr: number): Promise<number> {
     git("checkout", "-q", "main");
-    const before = git("rev-parse", "HEAD");
+    mergedFrom = git("rev-parse", "HEAD");
     git("merge", "-q", "--no-ff", `pr-${pr}`, "-m", `Merge pull request #${pr}`);
     github.mergedBy[git("rev-parse", "HEAD")] = pr;
-    return handlers.runComponentsPrApply(ctx({ base: before, forge: "github", requireReview: true }) as never);
+    return handlers.runComponentsPrApply(ctx({ base: mergedFrom, forge: "github", requireReview: true, resume: RESUME }) as never);
   }
 
   test("a change to one root plans that root and its dependent, and nothing else", async () => {
@@ -210,34 +214,67 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
 
     expect(plan.status).toBe("planned");
     expect(plan.selection).toMatchObject({ changed: ["a"], dependents: ["app"], waves: [["a"], ["app"]] });
-    expect(plan.members.map((m) => [m.member, m.counts.update])).toEqual([
-      ["a", 1],
-      ["app", 0],
+    // a's id is terraform_data's output, which tofu knows only after apply,
+    // so app is not planned against the id a has now (#3999): the note says
+    // the approval does not cover what app does with it.
+    expect(plan.members.map((m) => [m.member, m.counts.update, m.unknownInputs])).toEqual([
+      ["a", 1, undefined],
+      ["app", 0, ["a.id"]],
     ]);
+    expect(plan.changeSet.members.find((m) => m.member === "app")?.holes).toEqual([
+      { address: "app", type: "terraform_root", reason: "inputs from a; planned again once they apply" },
+    ]);
+    expect(plan.plannedOutputs).toEqual({ a: [] });
+    expect(plan.deployedOutputs).toEqual({ net: ["cidr"] });
     expect(plan.changeSet.digest).toBe(plan.digest);
     expect(plan.approval).toEqual({ status: "pending" });
 
     const note = github.comments.find((c) => c.pr === 1)!;
     expect(note.body.startsWith("<!-- chant-pr:local -->")).toBe(true);
     expect(note.body).toContain(`chant approve pr-1 pr-apply --plan ${plan.digest} --approver github:<your-login> --sign`);
+    expect(note.body).toContain("Known only after apply: `app` reads `a.id`.");
     expect(github.statuses.at(-1)).toMatchObject({ context: "chant/plan", state: "success", sha: plan.head });
   }, 240_000);
 
-  test("on merge it applies the plan the reviewer approved", async () => {
+  test("on merge it applies the plan the reviewer approved, and plans the dependent again once its upstream applied (#3999)", async () => {
     const plan = report("plan");
     github.reviews[1] = [{ user: { login: "alice" }, state: "APPROVED" }];
     expect((await recordGateApproval("pr-1", "pr-apply", { actor: "github:alice", plan: plan.digest })).ok).toBe(true);
 
-    expect(await merge(1)).toBe(0);
+    // a applies; app, planned now against the id a applied as, waits on its own gate.
+    expect(await merge(1)).toBe(3);
+    const waiting = report("apply");
+    expect(waiting.digest).toBe(plan.digest);
+    expect(waiting.status).toBe("waiting");
+    expect(waiting.members.map((m) => [m.member, m.status, m.round])).toEqual([
+      ["a", "applied", undefined],
+      ["app", "waiting", 2],
+    ]);
+    const round = waiting.rounds![0]!;
+    expect(round).toMatchObject({ round: 2, gate: "pr-apply-round-2", components: ["app"], status: "waiting", approval: { status: "pending" } });
+    expect(round.changeSet.entries.map((e) => [e.member, e.address, e.action])).toEqual([["app", "terraform_data.app", "update"]]);
+    expect(state("a")).toContain("10.0.0.0/16/a-v2");
+    expect(state("app")).not.toContain("a-v2");
+    expect(github.statuses.at(-1)).toMatchObject({ context: "chant/apply", state: "pending" });
+    expect(github.comments.find((c) => c.pr === 1)!.body).toContain(`chant approve pr-1 pr-apply-round-2 --plan ${round.digest}`);
+  }, 240_000);
+
+  test("once the reviewer approves the round's plan, the same apply carries on from its record and applies the dependent (#3999)", async () => {
+    const plan = report("plan");
+    const round = report("apply").rounds![0]!;
+    expect((await recordGateApproval("pr-1", "pr-apply-round-2", { actor: "github:alice", plan: round.digest })).ok).toBe(true);
+    expect(await handlers.runComponentsPrApply(ctx({ base: mergedFrom, forge: "github", requireReview: true, resume: RESUME }) as never)).toBe(0);
     const applied = report("apply");
     expect(applied.digest).toBe(plan.digest);
     expect(applied.status).toBe("applied");
     expect(applied.approval).toEqual({ status: "approved", approvedBy: ["github:alice"] });
-    expect(applied.members.map((m) => [m.member, m.status, m.inputsMoved])).toEqual([
+    expect(applied.resumed).toEqual({ applied: ["a"] });
+    expect(applied.members.map((m) => [m.member, m.status, m.round])).toEqual([
       ["a", "applied", undefined],
-      ["app", "applied", ["a"]],
+      ["app", "applied", 2],
     ]);
-    expect(state("a")).toContain("10.0.0.0/16/a-v2");
+    expect(applied.rounds?.map((r) => [r.digest, r.status, r.approval.approvedBy])).toEqual([[round.digest, "applied", ["github:alice"]]]);
+    expect(state("app")).toContain("app on 10.0.0.0/16/a-v2");
     // The same note, now with the apply's outcome.
     expect(github.comments.filter((c) => c.pr === 1)).toHaveLength(1);
     expect(github.comments.find((c) => c.pr === 1)!.body).toContain("### chant apply for `local`");
@@ -254,9 +291,9 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     expect(stored.digest).toBe(applied.digest);
     expect(stored.graph).toEqual({ member: null, at: applied.head });
     // The plan's addresses, each on the block the terraform lexicon's graph names `<root>/<address>`.
+    // app's plan had a hole for a's id, and no entries.
     expect(stored.entries.map((e) => [e.member, e.address, e.action, e.node])).toEqual([
       ["a", "terraform_data.subnet", "update", "a/terraform_data.subnet"],
-      ["app", "terraform_data.app", "no-op", "app/terraform_data.app"],
     ]);
     // And those are ids the estate's graph has.
     const graph = await estateGraphIds(dir);

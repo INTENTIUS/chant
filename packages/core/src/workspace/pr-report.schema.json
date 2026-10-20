@@ -33,8 +33,8 @@
       "description": "The change-set digest of what this stage planned: computePlanDigest(\"change-set\", ...) over every member's { member, planDigest }. What the gate binds."
     },
     "status": {
-      "enum": ["planned", "plan-failed", "nothing", "applied", "failed", "wave-applied", "refused"],
-      "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. wave-applied (#4003, chant 0.124.32 and newer): with --wave-gate and --wave, the wave applied and a later wave is still to run. refused: nothing applied, see refusal."
+      "enum": ["planned", "plan-failed", "nothing", "applied", "failed", "wave-applied", "refused", "waiting"],
+      "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. wave-applied (#4003, chant 0.124.32 and newer): with --wave-gate and --wave, the wave applied and a later wave is still to run. refused: nothing applied, see refusal. waiting (#3999): the approved plans applied except members held back after an upstream applied, which wait on an approval of the plan the last of rounds made."
     },
     "refusal": {
       "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request", "wave-not-approved", "wave-plan-changed", "earlier-wave"],
@@ -77,6 +77,38 @@
         }
       }
     },
+    "plannedOutputs": {
+      "type": "object",
+      "description": "Added within contract version 1 by #3999, written by chant 0.124.32 and newer. Per dependency in the change that a member was planned against, the names of the outputs its plan knows, sorted. An output a member reads that is not listed is known only after apply, and the member lists it under unknownInputs. Absent when no member read one.",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "rounds": {
+      "type": "array",
+      "description": "Added within contract version 1 by #3999. Apply stage: the rounds planned after an upstream applied, in order. A member whose plan read an upstream output that applied as another value, or was known only after apply, is held back and planned again against the outputs the apply left; each round has its own gate and digest. Absent when nothing was held.",
+      "items": {
+        "type": "object",
+        "required": ["round", "gate", "digest", "components", "approval", "status", "changeSet"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 2 },
+          "gate": { "type": "string", "description": "The gate the round waits on: <gate>-round-<round>." },
+          "digest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "The change-set digest of what the round planned. What its gate binds." },
+          "components": { "type": "array", "items": { "type": "string" }, "description": "The components planned again, in apply order." },
+          "approval": {
+            "type": "object",
+            "required": ["status"],
+            "description": "Where the approval stands for digest, as the top-level approval.",
+            "properties": {
+              "status": { "enum": ["approved", "changed", "pending"] },
+              "approvedBy": { "type": "array", "items": { "type": "string" } },
+              "approved": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$" }
+            }
+          },
+          "status": { "enum": ["applied", "failed", "waiting", "plan-failed"] },
+          "message": { "type": "string", "description": "With waiting: why an approval that stands does not count under --require-review." },
+          "changeSet": { "type": "object", "description": "The change-set document the round planned. Its digest equals digest." }
+        }
+      }
+    },
     "approval": {
       "type": "object",
       "required": ["status"],
@@ -108,7 +140,7 @@
           "member": { "type": "string", "description": "The member's name in the change set: the root, for a terraform-family step." },
           "component": { "type": "string" },
           "planDigest": { "type": ["string", "null"], "description": "What a gate on this member alone binds. null when it failed to plan." },
-          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked"] },
+          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked", "waiting"], "description": "waiting (#3999): held back because its plan read an upstream output that applied as another value, or was known only after apply; it waits on an approval of its plan in rounds." },
           "counts": {
             "type": "object",
             "required": ["create", "update", "replace", "delete"],
@@ -123,8 +155,20 @@
           "inputsMoved": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Apply stage: components this one depends on whose outputs changed when they applied. It applied the plan it was approved with; the next run plans it against the new values."
-          }
+            "description": "Apply stage: components this one depends on whose outputs changed when they applied. It applied the plan it was approved with; the next run plans it against the new values. Not written by chant 0.124.32 and newer, which holds such a member back instead (held, round)."
+          },
+          "unknownInputs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "#3999: the upstream outputs its plan read that the change's plans could not say, as <component>.<output>, sorted. Known only after that upstream applies; the approval does not cover what this member does with them."
+          },
+          "buildInputs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "#3999: the published artifact identities its plan read from a build in the same change, as <component>.publish.<field>, sorted. Known only after the build runs and never approved again: the build's provenance binds them, so the member applies without a later round."
+          },
+          "round": { "type": "integer", "minimum": 2, "description": "Apply stage (#3999): the round whose plan it applied or waits on, when not the first. planDigest and counts are that round's." },
+          "held": { "type": "string", "description": "Apply stage (#3999): why the first round's plan did not apply." }
         }
       }
     },

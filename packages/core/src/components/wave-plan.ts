@@ -21,7 +21,7 @@
 
 import { resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
-import type { CapabilityRegistry, DeployContext } from "./capability";
+import type { CapabilityRegistry, DeployContext, PlannedOutputs } from "./capability";
 import type { WaveMember } from "../gated-waves";
 import type { ChangeSetPart } from "../change-set";
 
@@ -29,10 +29,12 @@ import type { ChangeSetPart } from "../change-set";
  * What planning one component produced: its members, what its steps hand to
  * `run`, and each member's change-set part (#3183), or why it could not plan.
  * A member whose capability returns no part gets one with no entries, so the
- * parts always cover the members.
+ * parts always cover the members. `outputs` is what its steps' plans say the
+ * component will expose once applied (#3999), merged the way the driver
+ * merges a run's outputs; absent when no step's plan says.
  */
 export type WaveComponentPlan =
-  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[] }
+  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs }
   | { component: string; error: string };
 
 /** A part with no entries, for a member whose planner describes no changes. */
@@ -84,6 +86,7 @@ export async function planWaveComponent(
     const members: WaveMember[] = [];
     const plans: Record<string, unknown> = {};
     const parts: ChangeSetPart[] = [];
+    let outputs: PlannedOutputs | undefined;
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
       if (!capability.plan) continue;
@@ -94,6 +97,7 @@ export async function planWaveComponent(
       members.push(member);
       parts.push(planned.changeSet ?? emptyPart(member));
       if (planned.artifact !== undefined) plans[planned.member] = planned.artifact;
+      if (planned.outputs) outputs = mergePlannedOutputs(outputs, planned.outputs);
     }
     if (members.length === 0) {
       const member = {
@@ -107,10 +111,18 @@ export async function planWaveComponent(
       members.push(member);
       parts.push(emptyPart(member));
     }
-    return { component: component.name, members, plans, parts };
+    return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}) };
   } catch (err) {
     return { component: component.name, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** `next` over `prior`, as a later step's outputs win over an earlier one's in a run. */
+function mergePlannedOutputs(prior: PlannedOutputs | undefined, next: PlannedOutputs): PlannedOutputs {
+  const known = { ...(prior?.known ?? {}), ...next.known };
+  const unknown = new Set([...(prior?.unknown ?? []).filter((n) => !(n in next.known)), ...next.unknown]);
+  for (const n of unknown) delete known[n];
+  return { known, unknown: [...unknown].sort() };
 }
 
 /**

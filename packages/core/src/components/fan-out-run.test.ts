@@ -209,3 +209,38 @@ describe("one approval over the whole set", () => {
     expect(ran.sort()).toEqual(["app-one", "app-three", "app-two", "cluster-b"]);
   });
 });
+
+describe("holding a component back (#3999)", () => {
+  test("a held component and what is downstream of it do not run and settle waiting; independent branches run", async () => {
+    const plan = planFanOut({ components: ESTATE, changed: ["net"] });
+    const { registry, ran } = registryWith();
+    const events: Array<{ type: string; component?: string; status?: string }> = [];
+    const asked: Array<[string, string[]]> = [];
+    const result = await runFanOut(plan, ESTATE, registry, {
+      ...opts(),
+      onRunEvent: (e) => events.push(e as never),
+      hold: (name, outputs) => {
+        asked.push([name, Object.keys(outputs).sort()]);
+        return name === "cluster-a" ? "its plan read net.id before that output applied as another value" : undefined;
+      },
+    });
+    expect(result.status).toBe("ok");
+    expect(ran).not.toContain("cluster-a");
+    expect(ran).not.toContain("app-one");
+    expect(ran).toContain("app-three");
+    expect(result.held).toEqual([
+      { component: "cluster-a", reason: "its plan read net.id before that output applied as another value" },
+      { component: "app-one", reason: "its plan read net.id before that output applied as another value", heldBy: "cluster-a" },
+      { component: "app-two", reason: "its plan read net.id before that output applied as another value", heldBy: "cluster-a" },
+    ].sort((a, b) => plan.order.indexOf(a.component) - plan.order.indexOf(b.component)));
+    // Asked once per component as its wave starts, never for one already held.
+    expect(asked.map(([name]) => name).sort()).toEqual(["app-three", "cluster-a", "cluster-b", "net"]);
+    expect(events.filter((e) => e.type === "component-settle" && e.status === "waiting").map((e) => e.component).sort()).toEqual(["app-one", "app-two", "cluster-a"]);
+  });
+
+  test("with no hook, or a hook that holds nothing, the result has no held list", async () => {
+    const plan = planFanOut({ components: ESTATE, changed: ["net"] });
+    expect((await runFanOut(plan, ESTATE, registryWith().registry, opts())).held).toBeUndefined();
+    expect((await runFanOut(plan, ESTATE, registryWith().registry, { ...opts(), hold: () => undefined })).held).toBeUndefined();
+  });
+});

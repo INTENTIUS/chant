@@ -496,6 +496,35 @@ export async function planManifest(
   return { fieldManager, ...(stack !== undefined ? { stack } : {}), objects, deletes: candidates, retained };
 }
 
+/** Where {@link readLiveObjects} reads, and which objects. */
+export interface ReadLiveObjectsArgs {
+  refs: AppliedRef[];
+  environment?: string;
+  context?: string;
+  cwd?: string;
+}
+
+/**
+ * Read each of `refs` as the cluster holds it now, `undefined` for one that
+ * does not exist (#3999). `kubectl-apply` reads the fields its step names as
+ * outputs from these.
+ */
+export async function readLiveObjects(
+  args: ReadLiveObjectsArgs,
+  signal?: AbortSignal,
+  connect: K8sConnector = defaultK8sConnector,
+): Promise<Array<Record<string, unknown> | undefined>> {
+  if (args.refs.length === 0) return [];
+  const { client } = await connect({
+    ...(args.environment !== undefined ? { environment: args.environment } : {}),
+    ...(args.context !== undefined ? { context: args.context } : {}),
+    ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+  });
+  const out: Array<Record<string, unknown> | undefined> = [];
+  for (const ref of args.refs) out.push((await client.readIfPresent(ref, signal ? { signal } : {})) as Record<string, unknown> | undefined);
+  return out;
+}
+
 /** The ref an applied or dry-run object answers with, as {@link applyManifest} records it. */
 function refOf(result: K8sObject, document: Record<string, unknown>): AppliedRef {
   return {

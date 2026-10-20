@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const calls: string[] = [];
 let applyResult: Record<string, unknown> = { applied: true };
 let changeSet: Record<string, unknown> | undefined;
+let planJson: unknown;
 // #3459: whether the root goes through choudoufu's set commands, and what they answer.
 let waveRoot: { wave: true; root: string } | { wave: false; reason: string } = { wave: false, reason: "the root runs terraform" };
 let waveApply: Record<string, unknown> = { exitCode: 0, landed: true, message: "landed" };
@@ -39,7 +40,7 @@ vi.mock("../op/activities/terraform", () => ({
   }),
   terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown> }) => {
     calls.push(`plan ${args.root} ${JSON.stringify(args.vars ?? {})}`);
-    return { planFile: "chant.tfplan", planDigest: `jcs1-sha256:${args.root}`, ...(changeSet ? { changeSet } : {}) };
+    return { planFile: "chant.tfplan", planDigest: `jcs1-sha256:${args.root}`, json: planJson, ...(changeSet ? { changeSet } : {}) };
   }),
   terraformApply: vi.fn(async (args: { root: string; planFile: string }) => {
     calls.push(`apply ${args.root} ${args.planFile}`);
@@ -51,13 +52,14 @@ vi.mock("../op/activities/terraform", () => ({
   }),
 }));
 
-const { terraformApplyCapability, terraformCapabilityPlugin, TerraformPlanMovedError } = await import("./capability-plugin");
+const { terraformApplyCapability, terraformCapabilityPlugin, terraformPlannedOutputs, TerraformPlanMovedError } = await import("./capability-plugin");
 const { isPlanMovedError } = await import("@intentius/chant/components/capability");
 
 beforeEach(() => {
   calls.length = 0;
   applyResult = { applied: true };
   changeSet = undefined;
+  planJson = undefined;
   waveRoot = { wave: false, reason: "the root runs terraform" };
   waveApply = { exitCode: 0, landed: true, message: "landed" };
   waveApplyArgs.length = 0;
@@ -156,9 +158,64 @@ describe("terraform-apply", () => {
       member: "app",
       planDigest: "jcs1-sha256:app",
       artifact: { planFile: "chant.tfplan", planDigest: "jcs1-sha256:app" },
+      outputs: { known: {}, unknown: [] },
     });
     expect(calls).toEqual(["init app", 'plan app {"vpc":"v-1"}']);
   });
+
+  test("plan answers the outputs the root will have, from the plan's planned values (#3999)", async () => {
+    planJson = {
+      planned_values: { outputs: { cidr: { sensitive: false, value: "10.1.0.0/16" }, id: { sensitive: false } } },
+      output_changes: {
+        cidr: { actions: ["update"], before: "10.0.0.0/16", after: "10.1.0.0/16", after_unknown: false },
+        id: { actions: ["create"], before: null, after_unknown: true },
+      },
+    };
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "net" }, { root: "net" });
+    expect(planned.outputs).toEqual({ known: { cidr: "10.1.0.0/16" }, unknown: ["id"] });
+    // The artifact `run` gets is still the plan file alone.
+    expect(planned.artifact).toEqual({ planFile: "chant.tfplan", planDigest: "jcs1-sha256:net" });
+  });
+
+  test("a root whose vars read outputs not known yet is not planned: a hole names whose (#3999)", async () => {
+    const ctx = { env: "test", component: "app", unresolvedInputs: ["net"] };
+    const planned = await terraformApplyCapability.plan!(ctx, { root: "app", vars: { vpc: undefined, name: "app" } });
+    expect(calls).toEqual([]);
+    expect(planned.artifact).toBeUndefined();
+    expect(planned.outputs).toBeUndefined();
+    expect(planned.changeSet?.entries).toEqual([]);
+    expect(planned.changeSet?.member.holes).toEqual([{ address: "app", type: "terraform_root", reason: "inputs from net; planned again once they apply" }]);
+    expect(planned.planDigest).toBe(planned.changeSet?.member.planDigest);
+    const again = await terraformApplyCapability.plan!(ctx, { root: "app", vars: { vpc: undefined, name: "app" } });
+    expect(again.planDigest).toBe(planned.planDigest);
+    const other = await terraformApplyCapability.plan!(ctx, { root: "app", vars: { vpc: undefined, name: "web" } });
+    expect(other.planDigest).not.toBe(planned.planDigest);
+  });
+});
+
+describe("terraformPlannedOutputs (#3999)", () => {
+  test("an output is known when its planned value is there and nothing in it is unknown after apply", () => {
+    expect(
+      terraformPlannedOutputs({
+        planned_values: { outputs: { a: { value: "x" }, b: { value: { k: 1 } }, c: {}, d: { value: null } } },
+        output_changes: {
+          a: { after: "x", after_unknown: false },
+          b: { after: { k: 1 }, after_unknown: { k: false, j: true } },
+          c: { after_unknown: true },
+          d: { after: null, after_unknown: false },
+        },
+      }),
+    ).toEqual({ known: { a: "x", d: null }, unknown: ["b", "c"] });
+  });
+
+  test("an output with no planned value and no change is unknown; a plan with no outputs has none", () => {
+    expect(terraformPlannedOutputs({ planned_values: { outputs: { a: { sensitive: true } } } })).toEqual({ known: {}, unknown: ["a"] });
+    expect(terraformPlannedOutputs({})).toEqual({ known: {}, unknown: [] });
+    expect(terraformPlannedOutputs(undefined)).toEqual({ known: {}, unknown: [] });
+  });
+});
+
+describe("terraform-apply, continued", () => {
 
   test("plan hands on the root's change-set part, outside the artifact run receives (#3183)", async () => {
     changeSet = { member: { member: "app" }, entries: [] };

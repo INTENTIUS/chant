@@ -4,12 +4,13 @@
  * real `tofu` roots is `lexicons/terraform/src/components/pr-loop.tofu.test.ts`.
  *
  * The capability stands in for `terraform-apply`: `plan` returns the root, a
- * digest over what it would write (its `version` and every input) and a
- * change-set part; `outputs` reads what it exposes now; `run` applies.
+ * digest over what it would write (its `version` and every input), a
+ * change-set part and, where `predict` says, the outputs it will expose
+ * (#3999); `outputs` reads what it exposes now; `run` applies.
  */
 
 import { describe, expect, test } from "vitest";
-import { CapabilityRegistry, type DeployContext } from "./capability";
+import { CapabilityRegistry, type DeployContext, type PlannedOutputs } from "./capability";
 import { memoryGateLedgerPort } from "../op/gate";
 import { planFanOut } from "./fan-out";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./pr-run";
 import { changeSetDigest, changeSetDocumentDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import type { PrApplyRecord } from "./fan-out-record";
+import { renderPrNote } from "../pr-loop";
 import type { FanOutPlan } from "./fan-out";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { DriverComponent } from "./driver";
@@ -68,7 +70,17 @@ function world() {
     fromPlan: {} as Record<string, boolean>,
     failing: new Set<string>(),
     planFailing: new Set<string>(),
+    /**
+     * What each root's plan says it will expose (#3999). By default `net`
+     * keeps the cidr it has, and `a` will expose the id its version gives,
+     * as a terraform plan's `planned_values` would say.
+     */
+    predict: {} as Record<string, (() => PlannedOutputs | undefined) | undefined>,
+    /** What `a` writes when it applies, when not what its version gives. */
+    appliesAs: undefined as string | undefined,
   };
+  w.predict.net = () => ({ known: { ...(w.state.net ?? {}) }, unknown: [] });
+  w.predict.a = () => ({ known: { id: `a-${w.versions.a ?? "v1"}` }, unknown: [] });
   const digestOf = (input: RootInput) => computePlanDigest("fake-root", { root: input.root, version: w.versions[input.root] ?? "v1", vars: input.vars ?? null });
   w.registry.register({
     kind: "fake-root",
@@ -77,10 +89,12 @@ function world() {
       if (w.planFailing.has(input.root)) throw new Error(`${input.root}: no value for a required variable`);
       const planDigest = digestOf(input);
       const changes = (w.versions[input.root] ?? "v1") !== "v1";
+      const outputs = w.predict[input.root]?.();
       return {
         member: input.root,
         planDigest,
         artifact: { planDigest },
+        ...(outputs ? { outputs } : {}),
         changeSet: {
           member: { member: input.root, lexicon: "terraform", planner: "tofu", status: "planned", planDigest, holes: [] },
           entries: changes
@@ -108,7 +122,7 @@ function world() {
       w.ranWith[input.root] = input.vars;
       if (w.failing.has(input.root)) throw new Error(`${input.root} failed`);
       w.applied.push(input.root);
-      if (input.root === "a") w.state.a = { id: `a-${w.versions.a ?? "v1"}` };
+      if (input.root === "a") w.state.a = { id: w.appliesAs ?? `a-${w.versions.a ?? "v1"}` };
       return { outputs: { ...(w.state[input.root] ?? {}) } };
     },
   } as never);
@@ -129,19 +143,23 @@ const approval = (planDigest: string, resolvedBy = "github:alice") => ({
 });
 
 describe("planPrSet", () => {
-  test("plans the changed root and its dependents, each against the outputs its dependency has now", async () => {
+  test("plans the changed root and its dependents: a dependency outside the change as deployed, one in it as its plan says (#3999)", async () => {
     const w = world();
     w.versions.a = "v2";
     const plan = planFanOut({ components: ESTATE, changed: ["a"] });
     const set = await planPrSet({ components: ESTATE, plan, registry: w.registry, env: "prod" });
 
     expect(plan.order).toEqual(["a", "app"]);
+    // app reads the id a's plan says a will have, not the one a has now.
     expect(w.planned).toEqual([
       { root: "a", vars: { cidr: "10.0.0.0/16" } },
-      { root: "app", vars: { subnet: "a-v1" } },
+      { root: "app", vars: { subnet: "a-v2" } },
     ]);
-    // net is read for a, and a for app, before anything applies.
-    expect(w.outputsRead).toEqual(["net", "a"]);
+    // net is read from the estate; a is not read at all.
+    expect(w.outputsRead).toEqual(["net"]);
+    expect(set.deployedOutputs).toEqual({ net: ["cidr"] });
+    expect(set.plannedOutputs).toEqual({ a: ["id"] });
+    expect(set.members.every((m) => m.unknownInputs === undefined)).toBe(true);
     expect(set.members.map((m) => [m.member, m.status, m.counts.update])).toEqual([
       ["a", "planned", 1],
       ["app", "planned", 0],
@@ -284,7 +302,8 @@ describe("a dependency outside the selection (#4104)", () => {
     const plan = planFanOut({ components: ESTATE, changed: ["a"] });
     const { set, first, record } = await firstAttempt(w, plan, ["app"]);
     expect(first.run.completed).toEqual(["a"]);
-    expect(set.deployedOutputs).toEqual({ a: ["id"], net: ["cidr"] });
+    expect(set.deployedOutputs).toEqual({ net: ["cidr"] });
+    expect(set.plannedOutputs).toEqual({ a: ["id"] });
 
     w.outputsRead.length = 0;
     w.state.net = { cidr: "10.9.0.0/16" };
@@ -329,19 +348,21 @@ describe("the gate", () => {
 });
 
 describe("applyPrSet", () => {
-  test("applies each member's approved plan in order and marks a dependent whose inputs moved", async () => {
+  test("applies each member's approved plan in order; a dependent planned on the output its upstream applied as applies as approved (#3999)", async () => {
     const w = world();
     w.versions.a = "v2";
     const plan = planFanOut({ components: ESTATE, changed: ["a"] });
     const set = await planPrSet({ components: ESTATE, plan, registry: w.registry, env: "prod" });
-    const { members, status } = await applyPrSet({ components: ESTATE, plan, registry: w.registry, env: "prod", set });
+    const { members, status, rounds } = await applyPrSet({ components: ESTATE, plan, registry: w.registry, env: "prod", set });
 
     expect(status).toBe("applied");
     expect(w.applied).toEqual(["a", "app"]);
     expect(w.fromPlan).toEqual({ a: true, app: true });
-    expect(members.map((m) => [m.member, m.status, m.inputsMoved])).toEqual([
-      ["a", "applied", undefined],
-      ["app", "applied", ["a"]],
+    expect(w.ranWith.app).toEqual({ subnet: "a-v2" });
+    expect(rounds).toBeUndefined();
+    expect(members.map((m) => [m.member, m.status, m.inputsMoved, m.round])).toEqual([
+      ["a", "applied", undefined, undefined],
+      ["app", "applied", undefined, undefined],
     ]);
   });
 
@@ -360,6 +381,226 @@ describe("applyPrSet", () => {
       net: "applied",
     });
     expect(members.find((m) => m.member === "a")?.error).toBe("a failed");
+  });
+});
+
+describe("a dependent planned on its upstream's planned outputs (#3999)", () => {
+  /** `a` and `app` reading its `id`, the change touching `a`. */
+  const plan = () => planFanOut({ components: ESTATE, changed: ["a"] });
+  const approveAll = (digest: string, gate: string) =>
+    decidePrGate(memoryGateLedgerPort({ resolutions: [{ ...approval(digest), gate }] }), { op: "pr-12", gate, digest, now: NOW });
+  const decideWith = (approved: Set<string>) => async ({ gate, set }: { gate: string; set: PrPlanSet }) => {
+    const check = approved.has(set.doc.digest) ? await approveAll(set.doc.digest, gate) : await decidePrGate(readOnlyLedger(memoryGateLedgerPort()), { op: "pr-12", gate, digest: set.doc.digest, now: NOW });
+    return { satisfied: check.satisfied, approval: approvalOf(check) };
+  };
+
+  test("an output the change leaves as it is: the dependent plans on the planned value, which is the deployed one", async () => {
+    const w = world();
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    expect(w.planned.find((p) => p.root === "app")?.vars).toEqual({ subnet: "a-v1" });
+    expect(set.plannedOutputs).toEqual({ a: ["id"] });
+    const applied = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set });
+    expect(applied.status).toBe("applied");
+    expect(w.applied).toEqual(["a", "app"]);
+  });
+
+  test("an output the change moves: the dependent plans on the moved value, not the one standing now", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    expect(w.state.a).toEqual({ id: "a-v1" });
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    expect(w.planned.find((p) => p.root === "app")?.vars).toEqual({ subnet: "a-v2" });
+    expect(w.outputsRead).not.toContain("a");
+    // The reviewer approves app's plan against a-v2, and that is what applies.
+    const applied = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set });
+    expect(applied.status).toBe("applied");
+    expect(w.ranWith.app).toEqual({ subnet: "a-v2" });
+  });
+
+  test("an output known only after apply is listed on the dependent, which the apply plans again and gates once its upstream applied", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    expect(set.failed).toBe(false);
+    expect(w.planned.find((p) => p.root === "app")?.vars?.subnet).toBeUndefined();
+    expect(set.plannedOutputs).toEqual({ a: [] });
+    expect(set.members.map((m) => [m.member, m.unknownInputs])).toEqual([
+      ["a", undefined],
+      ["app", ["a.id"]],
+    ]);
+
+    // No approval of the plan made after a applied: a applies, app waits.
+    const waiting = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set, decideRound: decideWith(new Set()) });
+    expect(waiting.status).toBe("waiting");
+    expect(w.applied).toEqual(["a"]);
+    expect(waiting.rounds).toHaveLength(1);
+    const round = waiting.rounds![0]!;
+    expect(round).toMatchObject({ round: 2, gate: "pr-apply-round-2", components: ["app"], status: "waiting", approval: { status: "pending" } });
+    // Round 2 planned app against the id a applied as.
+    expect(w.planned.at(-1)).toEqual({ root: "app", vars: { subnet: "a-v2" } });
+    const app = waiting.members.find((m) => m.member === "app")!;
+    expect(app).toMatchObject({ status: "waiting", round: 2, held: "its plan read a.id before that output applied as another value" });
+    expect(app.planDigest).toBe(round.changeSet.members[0]!.planDigest);
+    expect(app.planDigest).not.toBe(set.members.find((m) => m.member === "app")!.planDigest);
+
+    // With that plan approved, app applies against the value a applied as.
+    const w2 = world();
+    w2.versions.a = "v2";
+    w2.predict.a = () => ({ known: {}, unknown: ["id"] });
+    const set2 = await planPrSet({ components: ESTATE, plan: plan(), registry: w2.registry, env: "prod" });
+    const applied = await applyPrSet({ components: ESTATE, plan: plan(), registry: w2.registry, env: "prod", set: set2, decideRound: decideWith(new Set([round.digest])) });
+    expect(applied.status).toBe("applied");
+    expect(w2.applied).toEqual(["a", "app"]);
+    expect(w2.ranWith.app).toEqual({ subnet: "a-v2" });
+    expect(applied.rounds?.map((r) => [r.round, r.status, r.approval.status])).toEqual([[2, "applied", "approved"]]);
+    expect(applied.members.find((m) => m.member === "app")).toMatchObject({ status: "applied", round: 2 });
+  });
+
+  test("an upstream new in the same pull request plans, and so does its dependent", async () => {
+    const pair: DriverComponent[] = [root("vpc"), root("svc", ["vpc"], { vpc: { stackOutput: { stack: "vpc", name: "id" } } })];
+    const w = world();
+    w.state = {};
+    // A new root: its plan creates it, and its id is known only after apply.
+    w.versions.vpc = "v2";
+    w.predict.vpc = () => ({ known: {}, unknown: ["id"] });
+    const p = planFanOut({ components: pair, changed: ["vpc", "svc"] });
+    const set = await planPrSet({ components: pair, plan: p, registry: w.registry, env: "prod" });
+    expect(set.failed).toBe(false);
+    expect(set.members.map((m) => [m.member, m.status, m.unknownInputs])).toEqual([
+      ["svc", "planned", ["vpc.id"]],
+      ["vpc", "planned", undefined],
+    ]);
+    expect(w.outputsRead).toEqual([]);
+    expect(set.deployedOutputs).toBeUndefined();
+  });
+
+  test("an upstream that applies as another value than its plan said holds the dependent back, which does not apply its approved plan", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    w.appliesAs = "a-v2-real";
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    expect(w.planned.find((p) => p.root === "app")?.vars).toEqual({ subnet: "a-v2" });
+
+    // Without a way to decide a later round, app is left waiting.
+    const held = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set });
+    expect(held.status).toBe("waiting");
+    expect(w.applied).toEqual(["a"]);
+    expect(held.members.find((m) => m.member === "app")).toMatchObject({ status: "waiting", held: "its plan read a.id before that output applied as another value" });
+    expect(held.run.held).toEqual([{ component: "app", reason: "its plan read a.id before that output applied as another value" }]);
+  });
+
+  test("a resumed apply carries on from a waiting round once its plan is approved", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    const first = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set, decideRound: decideWith(new Set()) });
+    expect(first.status).toBe("waiting");
+    const roundDigest = first.rounds![0]!.digest;
+
+    const record = recordOf(set);
+    const resumed = await resumePrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", record, completed: ["a"] });
+    if (!resumed.ok) throw new Error(resumed.reasons.join("; "));
+    expect(resumed.plan.order).toEqual(["app"]);
+    const second = await applyPrSet({
+      components: ESTATE,
+      plan: resumed.plan,
+      registry: w.registry,
+      env: "prod",
+      set: resumed.set,
+      resumed: { completed: ["a"], outputs: { a: first.run.componentOutputs.a! } },
+      decideRound: decideWith(new Set([roundDigest])),
+    });
+    expect(second.status).toBe("applied");
+    expect(second.rounds?.[0]?.digest).toBe(roundDigest);
+    expect(w.applied).toEqual(["a", "app"]);
+    expect(w.ranWith.app).toEqual({ subnet: "a-v2" });
+  });
+});
+
+describe("a digest a build in the same pull request publishes (#3999)", () => {
+  /** `web-image` builds and publishes an image; `web` deploys it, and with `withSubnet` also reads `a.id`. */
+  const estate = (withSubnet = false): DriverComponent[] => [
+    root("a"),
+    { name: "web-image", dependsOn: [], deploy: [{ phase: "Publish", steps: [{ kind: "fake-build" }] }] },
+    root("web", withSubnet ? ["web-image", "a"] : ["web-image"], {
+      image: "@web-image.publish.digest",
+      ...(withSubnet ? { subnet: { stackOutput: { stack: "a", name: "id" } } } : {}),
+    }),
+  ];
+  function buildWorld() {
+    const w = world();
+    let n = 0;
+    w.registry.register({
+      kind: "fake-build",
+      async run() {
+        n++;
+        return { uri: "registry.example/web", digest: `sha256:built-${n}` };
+      },
+    } as never);
+    return w;
+  }
+  const neverApproved = async () => ({ satisfied: false, approval: { status: "pending" as const } });
+
+  test("image plus deploy in one pull request: the deploy plans with the digest unknown, lists it as the build's, and applies in one round", async () => {
+    const w = buildWorld();
+    const components = estate();
+    const plan = planFanOut({ components, changed: ["web-image", "web"] });
+    const set = await planPrSet({ components, plan, registry: w.registry, env: "prod" });
+    expect(set.failed).toBe(false);
+    const web = set.members.find((m) => m.member === "web")!;
+    expect(web.buildInputs).toEqual(["web-image.publish.digest"]);
+    expect(web.unknownInputs).toBeUndefined();
+
+    let asked = 0;
+    const applied = await applyPrSet({ components, plan, registry: w.registry, env: "prod", set, decideRound: async () => (asked++, neverApproved()) });
+    expect(applied.status).toBe("applied");
+    expect(asked).toBe(0);
+    expect(applied.rounds).toBeUndefined();
+    expect(w.ranWith.web).toEqual({ image: "sha256:built-1" });
+    expect(applied.members.find((m) => m.member === "web")).toMatchObject({ status: "applied" });
+
+    const note = renderPrNote(prReport({ stage: "plan", pr: 12, env: "prod", base: "1".repeat(40), head: "2".repeat(40), op: "pr-12", gate: "pr-apply", plan, signal: { changed: ["web-image", "web"], indeterminate: [], unclaimed: [] }, set, approval: { status: "pending" }, status: "planned" }));
+    expect(note).toContain("From this pull request's build: `web` reads `web-image.publish.digest`. The image digest comes from this pull request's build");
+    expect(note).not.toContain("Known only after apply");
+  });
+
+  test("a deploy that also reads an output known only after apply still goes to round 2", async () => {
+    const w = buildWorld();
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    const components = estate(true);
+    const plan = planFanOut({ components, changed: ["a", "web-image", "web"] });
+    const set = await planPrSet({ components, plan, registry: w.registry, env: "prod" });
+    const web = set.members.find((m) => m.member === "web")!;
+    expect(web.buildInputs).toEqual(["web-image.publish.digest"]);
+    expect(web.unknownInputs).toEqual(["a.id"]);
+
+    const applied = await applyPrSet({ components, plan, registry: w.registry, env: "prod", set, decideRound: neverApproved });
+    expect(applied.status).toBe("waiting");
+    expect(w.ranWith.web).toBeUndefined();
+    // Held for a.id alone: the image digest is not a reason.
+    expect(applied.members.find((m) => m.member === "web")).toMatchObject({ status: "waiting", round: 2, held: "its plan read a.id before that output applied as another value" });
+    expect(applied.rounds?.map((r) => [r.gate, r.components])).toEqual([["pr-apply-round-2", ["web"]]]);
+  });
+
+  test("under --wave-gate, the approved set covers a wave whose member waited only on the build's digest", () => {
+    const hole = (member: string, digest: string): ChangeSetPart => ({
+      member: { member, lexicon: "aws", planner: "chant", status: "planned", planDigest: `jcs1-sha256:${digest.repeat(64)}`, holes: [{ address: member, reason: "inputs from web-image; re-checked on apply" }] },
+      entries: [],
+    });
+    const approvedDoc = composeChangeSet([hole("web", "1")]);
+    const fresh = composeChangeSet([
+      {
+        member: { member: "web", lexicon: "aws", planner: "chant", status: "planned", planDigest: `jcs1-sha256:${"2".repeat(64)}`, holes: [] },
+        entries: [{ member: "web", lexicon: "aws", planner: "chant", address: "Service", type: "AWS::ECS::Service", action: "update", attributes: [{ path: "Image", after: "sha256:built-1" }] }],
+      },
+    ]);
+    const member = (extra: Record<string, unknown>) => [{ member: "web", component: "web", planDigest: null, status: "planned" as const, counts: { create: 0, update: 0, replace: 0, delete: 0 }, ...extra }];
+    expect(waveNotCovered(approvedDoc, fresh, member({ buildInputs: ["web-image.publish.digest"] }))).toEqual([]);
+    expect(waveNotCovered(approvedDoc, fresh, member({ buildInputs: ["web-image.publish.digest"], unknownInputs: ["a.id"] }))).toHaveLength(1);
+    expect(waveNotCovered(approvedDoc, fresh)).toHaveLength(1);
   });
 });
 
@@ -471,7 +712,7 @@ describe("resuming an apply that failed partway (#3464)", () => {
     expect(report.resumed).toEqual({ applied: ["b", "dns", "net"] });
   });
 
-  test("a dependent whose dependency applied in the earlier attempt applies its approved plan and says its inputs moved", async () => {
+  test("a dependent whose dependency applied as planned in the earlier attempt applies its approved plan", async () => {
     const w = world();
     w.versions.a = "v2";
     const plan = planFanOut({ components: ESTATE, changed: ["a"] });
@@ -483,8 +724,8 @@ describe("resuming an apply that failed partway (#3464)", () => {
     w.planned.length = 0;
     const resumed = await resumePrSet({ components: ESTATE, plan, registry: w.registry, env: "prod", record, completed: ["a"] });
     if (!resumed.ok) throw new Error(resumed.reasons.join("; "));
-    // app is planned against the value it was approved with, not the one a wrote since.
-    expect(w.planned).toEqual([{ root: "app", vars: { subnet: "a-v1" } }]);
+    // app is planned against the value it was approved with: the one a's plan said, which a wrote.
+    expect(w.planned).toEqual([{ root: "app", vars: { subnet: "a-v2" } }]);
 
     const second = await applyPrSet({
       components: ESTATE,
@@ -494,9 +735,11 @@ describe("resuming an apply that failed partway (#3464)", () => {
       set: resumed.set,
       resumed: { completed: ["a"], outputs },
     });
+    expect(second.status).toBe("applied");
+    expect(w.ranWith.app).toEqual({ subnet: "a-v2" });
     expect(second.members.map((m) => [m.member, m.status, m.inputsMoved])).toEqual([
       ["a", "applied", undefined],
-      ["app", "applied", ["a"]],
+      ["app", "applied", undefined],
     ]);
   });
 

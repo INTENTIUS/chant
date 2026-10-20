@@ -14,8 +14,20 @@
  * (`chant:<stack>`, the prune selector) and the deploy unit the status walk
  * reads (core `components/deploy-units.ts`) — one name, both jobs, the same
  * pairing `cfn-deploy` has with its stack.
+ *
+ * ## Outputs (#3999)
+ *
+ * A manifest has no outputs of its own, so a step names the ones a
+ * dependent reads: `outputs: { host: { object: "Service/prod/web", field:
+ * "status.loadBalancer.ingress.0.hostname" } }`, each a field of an object
+ * the manifest declares. `run` returns them as `outputs` once it applied,
+ * which is what a dependent's `stackOutput()` reads, and `outputs` reads
+ * them from the cluster without applying anything. A plan knows a field the
+ * manifest sets, since the apply writes that value, and any field of an
+ * object the plan leaves as it is; every other one is known only after
+ * apply.
  */
-import type { Capability, CapabilityPlan, DeployContext } from "@intentius/chant/components/capability";
+import type { Capability, CapabilityPlan, DeployContext, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetAttribute, ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { releaseAttributesSuffix } from "@intentius/chant/telemetry-attribution";
@@ -52,6 +64,8 @@ export interface KubectlApplyOutcome {
    * enter the prunable set. Present whenever the prune ran.
    */
   retained?: AppliedRef[];
+  /** The fields the step names as outputs (#3999), read once the apply landed. Absent when it names none. */
+  outputs?: Record<string, unknown>;
 }
 
 interface ApplierArgs {
@@ -93,6 +107,16 @@ export interface KubectlApplyDryRun {
 }
 
 type Planner = (args: ApplierArgs) => Promise<KubectlApplyDryRun>;
+
+/** The mirror of the activity's `ReadLiveObjectsArgs`. */
+interface LiveReaderArgs {
+  refs: AppliedRef[];
+  environment?: string;
+  context?: string;
+}
+
+/** Reads objects as the cluster holds them, `undefined` for one that does not exist (#3999). */
+type LiveReader = (args: LiveReaderArgs) => Promise<Array<Record<string, unknown> | undefined>>;
 
 /** What `plan` hands `run` through `DeployContext.plans` (#3998). */
 export interface KubectlApplyPlanArtifact {
@@ -254,6 +278,64 @@ export interface KubectlApplyInput {
    * candidate.
    */
   delete?: "never" | "owned-only";
+  /**
+   * The outputs the step exposes (#3999), by name: each a field of an object
+   * the manifest declares. A dependent reads them with `stackOutput()`.
+   */
+  outputs?: Record<string, KubectlApplyOutputField>;
+}
+
+/** One output of a `kubectl-apply` step (#3999). */
+export interface KubectlApplyOutputField {
+  /**
+   * The object, named as the manifest declares it: `Kind/namespace/name`, or
+   * `Kind/name` for a document with no namespace.
+   */
+  object: string;
+  /** The field's dot path in the object; a list index is a number, `status.loadBalancer.ingress.0.hostname`. */
+  field: string;
+}
+
+/** The value at a dot path, or `undefined`. */
+function fieldAt(object: unknown, path: string): unknown {
+  return path.split(".").reduce<unknown>((acc, key) => (acc !== null && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), object);
+}
+
+/** The declared ref of each output's object, keyed by output name. Throws for an object the manifest does not declare. */
+function outputRefs(member: string, input: KubectlApplyInput, documents: Record<string, unknown>[]): Map<string, AppliedRef> {
+  const declared = new Map<string, AppliedRef>();
+  for (const doc of documents) {
+    const metadata = (doc.metadata ?? {}) as { name?: unknown; namespace?: unknown };
+    const ref: AppliedRef = {
+      apiVersion: String(doc.apiVersion ?? ""),
+      kind: String(doc.kind ?? ""),
+      name: String(metadata.name ?? ""),
+      ...(metadata.namespace !== undefined ? { namespace: String(metadata.namespace) } : {}),
+    };
+    declared.set(addressOf(ref), ref);
+  }
+  const out = new Map<string, AppliedRef>();
+  for (const [name, spec] of Object.entries(input.outputs ?? {})) {
+    const ref = declared.get(spec.object);
+    if (!ref) {
+      throw new Error(`kubectl-apply "${member}": output "${name}" names ${spec.object}, which ${input.manifest} does not declare (it declares ${[...declared.keys()].join(", ") || "nothing"})`);
+    }
+    out.set(name, ref);
+  }
+  return out;
+}
+
+/** Each output's field as `objects` hold it, one object per distinct ref; an output with no value is left out. */
+async function readOutputs(read: LiveReader, refs: Map<string, AppliedRef>, input: KubectlApplyInput, where: Omit<LiveReaderArgs, "refs">): Promise<Record<string, unknown>> {
+  const distinct = [...new Map([...refs.values()].map((r) => [addressOf(r), r])).values()];
+  const live = await read({ refs: distinct, ...where });
+  const byAddress = new Map(distinct.map((r, i) => [addressOf(r), live[i]]));
+  const out: Record<string, unknown> = {};
+  for (const [name, ref] of refs) {
+    const value = fieldAt(byAddress.get(addressOf(ref)), input.outputs![name]!.field);
+    if (value !== undefined) out[name] = value;
+  }
+  return out;
 }
 
 /** Factory with an injectable applier, so tests assert the delegation without
@@ -264,6 +346,7 @@ export function createKubectlApplyCapability(
   apply?: Applier,
   read?: ManifestReader,
   dryRun?: Planner,
+  readLive?: LiveReader,
 ): Capability<KubectlApplyInput, KubectlApplyOutcome> {
   const activities = () => import("../op/activities/kubectl");
   const target = (ctx: DeployContext, input: KubectlApplyInput) => ({
@@ -277,6 +360,34 @@ export function createKubectlApplyCapability(
     const planner: Planner = dryRun ?? (await activities()).planManifest;
     const result = await planner({ manifest: input.manifest, documents, ...target(ctx, input) });
     return { result, planDigest: dryRunDigest(ctx, member, input, documents, result) };
+  };
+  const liveReader = async (): Promise<LiveReader> => readLive ?? (await activities()).readLiveObjects;
+  const where = (ctx: DeployContext, input: KubectlApplyInput) => ({
+    environment: ctx.env,
+    ...(input.context !== undefined ? { context: input.context } : {}),
+  });
+  /** The outputs the step names, read from the cluster now. */
+  const liveOutputs = async (ctx: DeployContext, input: KubectlApplyInput, documents: Record<string, unknown>[]) =>
+    readOutputs(await liveReader(), outputRefs(input.stack ?? ctx.component, input, documents), input, where(ctx, input));
+  /**
+   * What the plan knows of each output: a field the manifest sets, and any
+   * field of an object the dry run leaves unchanged, read from the cluster.
+   */
+  const plannedOutputs = async (ctx: DeployContext, input: KubectlApplyInput, member: string, documents: Record<string, unknown>[], dry: KubectlApplyDryRun): Promise<PlannedOutputs> => {
+    const refs = outputRefs(member, input, documents);
+    const declared = new Map(documents.map((d) => [addressOf({ apiVersion: "", kind: String(d.kind ?? ""), name: String((d.metadata as { name?: unknown } | undefined)?.name ?? ""), ...((d.metadata as { namespace?: unknown } | undefined)?.namespace !== undefined ? { namespace: String((d.metadata as { namespace: unknown }).namespace) } : {}) }), d]));
+    const unchanged = new Set(dry.objects.filter((o) => o.action === "no-op").map((o) => addressOf(o.ref)));
+    const fromLive = new Map([...refs].filter(([, ref]) => unchanged.has(addressOf(ref))));
+    const live = fromLive.size > 0 ? await readOutputs(await liveReader(), fromLive, input, where(ctx, input)) : {};
+    const known: Record<string, unknown> = {};
+    const unknown: string[] = [];
+    for (const [name, ref] of refs) {
+      const set = fieldAt(declared.get(addressOf(ref)), input.outputs![name]!.field);
+      if (set !== undefined) known[name] = set;
+      else if (name in live) known[name] = live[name];
+      else unknown.push(name);
+    }
+    return { known, unknown: unknown.sort() };
   };
   return {
     kind: "kubectl-apply",
@@ -297,7 +408,18 @@ export function createKubectlApplyCapability(
       if (suffix !== "") annotateRelease(documents, suffix);
       const { result, planDigest } = await dryRunOf(ctx, input, member, documents);
       const artifact: KubectlApplyPlanArtifact = { kind: "kubectl-apply-plan", planDigest, documents };
-      return { member, planDigest, artifact, changeSet: changeSetPartOf(member, planDigest, result) };
+      const outputs = input.outputs ? await plannedOutputs(ctx, input, member, documents, result) : undefined;
+      return { member, planDigest, artifact, changeSet: changeSetPartOf(member, planDigest, result), ...(outputs ? { outputs } : {}) };
+    },
+    /**
+     * The fields the step names as outputs, as the cluster holds them now
+     * (#3999). A step that names none has none; an object not made yet
+     * leaves its outputs out.
+     */
+    async outputs(ctx: DeployContext, input: KubectlApplyInput): Promise<Record<string, unknown>> {
+      if (!input.outputs || Object.keys(input.outputs).length === 0) return {};
+      const documents = (read ?? (await activities()).readManifestDocuments)(input.manifest);
+      return liveOutputs(ctx, input, documents);
     },
     async run(ctx: DeployContext, input: KubectlApplyInput): Promise<KubectlApplyOutcome> {
       const member = input.stack ?? ctx.component;
@@ -308,7 +430,8 @@ export function createKubectlApplyCapability(
         const { planDigest } = await dryRunOf(ctx, input, member, approved.documents);
         if (planDigest !== approved.planDigest) throw new KubectlApplyPlanMovedError(member, approved.planDigest, planDigest);
         const applier: Applier = apply ?? (await activities()).applyManifest;
-        return applier({ manifest: input.manifest, documents: approved.documents, ...target(ctx, input) });
+        const outcome = await applier({ manifest: input.manifest, documents: approved.documents, ...target(ctx, input) });
+        return input.outputs ? { ...outcome, outputs: await liveOutputs(ctx, input, approved.documents) } : outcome;
       }
       const loaded = apply && read ? undefined : await activities();
       const applier: Applier = apply ?? loaded!.applyManifest;
@@ -320,7 +443,10 @@ export function createKubectlApplyCapability(
         documents = (read ?? loaded!.readManifestDocuments)(input.manifest);
         if (annotateRelease(documents, suffix) === 0) documents = undefined;
       }
-      return applier({ manifest: input.manifest, ...(documents ? { documents } : {}), ...target(ctx, input) });
+      const outcome = await applier({ manifest: input.manifest, ...(documents ? { documents } : {}), ...target(ctx, input) });
+      if (!input.outputs) return outcome;
+      const declared = documents ?? (read ?? (await activities()).readManifestDocuments)(input.manifest);
+      return { ...outcome, outputs: await liveOutputs(ctx, input, declared) };
     },
   };
 }

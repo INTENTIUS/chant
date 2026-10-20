@@ -21,7 +21,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { Capability, CapabilityPlan, DeployContext } from "@intentius/chant/components/capability";
+import type { Capability, CapabilityPlan, DeployContext, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
@@ -205,6 +205,15 @@ function cfnPlanDigest(
  * refusal shows in the pull request's plan rather than at apply (#3997).
  * Otherwise the result carries a {@link CfnPlanArtifact} that `run` checks
  * its own change set against.
+ *
+ * The plan answers the outputs the stack will have (#3999), from the
+ * outputs it has now (`DescribeStacks`) and the change set: an output keeps
+ * its value when every resource its template `Value` reads keeps its
+ * physical resource, which an in-place `Modify` does and an `Add`, a
+ * `Remove` or a replacement does not ({@link cfnPlannedOutputs}). An output
+ * that reads a parameter, an import or a condition is known only after
+ * apply. A wrong guess costs a round, never a wrong apply: a dependent whose
+ * input applies as another value is held back and planned again.
  */
 async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input: CfnDeployInput): Promise<CapabilityPlan> {
   const stack = input.stack ?? ctx.component;
@@ -248,7 +257,10 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
   try {
     if (isNoopChangeSet(changeSet)) {
       const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
-      return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries: [] } };
+      // Nothing to apply, so the outputs the stack has are the ones it will have (#3999).
+      const standing = await standingOutputs(executor, stack);
+      const outputs = standing ? { known: { ...standing }, unknown: [] } : undefined;
+      return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries: [] }, ...(outputs ? { outputs } : {}) };
     }
     if (changeSet.status === "FAILED") {
       throw new Error(
@@ -259,7 +271,8 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     if (blocked.length > 0 && (input.onReplace ?? "block") === "block") throw new CfnReplacementBlockedError(stack, blocked);
     const entries = changeSet.changes.map((c) => cfnChangeEntry(stack, c));
     const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
-    return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries } };
+    const outputs = changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes);
+    return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries }, ...(outputs ? { outputs } : {}) };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
   }
@@ -284,6 +297,118 @@ async function cleanUpPlanChangeSet(executor: CloudExecutor, changeSet: CfnChang
       console.error(`cfn-deploy plan "${changeSet.stackName}": could not delete the empty stack its CREATE change set made: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+}
+
+/** The stack's outputs as they stand, or `undefined` when they cannot be read. */
+async function standingOutputs(executor: CloudExecutor, stack: string): Promise<Record<string, string> | undefined> {
+  try {
+    return { ...(await executor.cloudformation.describeStack(stack)).outputs };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What the plan says of the stack's outputs once `changes` apply: none to
+ * say for a template with no `Outputs`, which needs no `DescribeStacks`.
+ */
+async function plannedStackOutputs(executor: CloudExecutor, stack: string, templatePath: string, changes: readonly CfnChange[]): Promise<PlannedOutputs | undefined> {
+  const template = readTemplate(templatePath) as { Outputs?: Record<string, unknown> } | undefined;
+  if (!template || typeof template !== "object") return undefined;
+  if (Object.keys(template.Outputs ?? {}).length === 0) return { known: {}, unknown: [] };
+  return cfnPlannedOutputs(template, changes, await standingOutputs(executor, stack));
+}
+
+/** The template at `path` as JSON, or `undefined` when it cannot be read or parsed here. */
+function readTemplate(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What a template's `Value` reads (#3999): the logical ids it names through
+ * `Ref`, `Fn::GetAtt` and `Fn::Sub`, and whether it reads anything this plan
+ * cannot follow (`Fn::ImportValue`, a condition's `Fn::If`, or an intrinsic
+ * it does not know).
+ */
+function valueReads(value: unknown): { ids: Set<string>; opaque: boolean } {
+  const ids = new Set<string>();
+  let opaque = false;
+  const sub = (text: string): void => {
+    for (const m of text.matchAll(/\$\{([^}!][^}]*)\}/g)) ids.add(m[1]!.split(".")[0]!);
+  };
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (v === null || typeof v !== "object") return;
+    const entries = Object.entries(v as Record<string, unknown>);
+    if (entries.length === 1) {
+      const [key, arg] = entries[0]!;
+      if (key === "Ref") {
+        if (typeof arg === "string") ids.add(arg);
+        else opaque = true;
+        return;
+      }
+      if (key === "Fn::GetAtt") {
+        if (Array.isArray(arg) && typeof arg[0] === "string") ids.add(arg[0]);
+        else if (typeof arg === "string") ids.add(arg.split(".")[0]!);
+        else opaque = true;
+        return;
+      }
+      if (key === "Fn::Sub") {
+        if (typeof arg === "string") sub(arg);
+        else if (Array.isArray(arg) && typeof arg[0] === "string") {
+          const vars = (arg[1] ?? {}) as Record<string, unknown>;
+          for (const m of arg[0].matchAll(/\$\{([^}!][^}]*)\}/g)) if (!(m[1]! in vars)) ids.add(m[1]!.split(".")[0]!);
+          walk(vars);
+        } else opaque = true;
+        return;
+      }
+      if (key === "Fn::Join" || key === "Fn::Select" || key === "Fn::Split" || key === "Fn::Base64") return walk(arg);
+      if (key.startsWith("Fn::") || key === "Condition") {
+        opaque = true;
+        return;
+      }
+    }
+    entries.forEach(([, x]) => walk(x));
+  };
+  walk(value);
+  return { ids, opaque };
+}
+
+/**
+ * The outputs a stack will have once `changes` apply (#3999), from its
+ * template and the outputs it has now. An output is known, at the value it
+ * has now, when its `Value` reads only pseudo parameters and resources whose
+ * physical resource the change set keeps (no `Add`, `Remove`, `Import` or
+ * `Dynamic`, no replacement, no change in a nested stack under it). One
+ * that reads a parameter, an import or a condition, one the stack does not
+ * have yet, and every output of a template this cannot read, is unknown.
+ * `undefined` when there is no template or no standing stack to read from.
+ */
+export function cfnPlannedOutputs(template: unknown, changes: readonly CfnChange[], standing: Record<string, string> | undefined): PlannedOutputs | undefined {
+  if (!standing || template === null || typeof template !== "object") return undefined;
+  const t = template as { Outputs?: Record<string, { Value?: unknown; Condition?: unknown }>; Parameters?: Record<string, unknown> };
+  const parameters = new Set(Object.keys(t.Parameters ?? {}));
+  const moved = new Set<string>();
+  for (const c of changes) {
+    const id = c.nestedStack?.[0] ?? c.logicalResourceId;
+    const keeps = !c.nestedStack && c.action === "Modify" && !c.replacement && c.replacementMode !== "True" && c.replacementMode !== "Conditional";
+    if (!keeps) moved.add(id);
+  }
+  const known: Record<string, unknown> = {};
+  const unknown: string[] = [];
+  for (const [name, output] of Object.entries(t.Outputs ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const { ids, opaque } = valueReads(output?.Value);
+    const stays =
+      !opaque && output?.Condition === undefined && name in standing &&
+      [...ids].every((id) => id.startsWith("AWS::") || (!parameters.has(id) && !moved.has(id)));
+    if (stays) known[name] = standing[name];
+    else unknown.push(name);
+  }
+  return { known, unknown };
 }
 
 /** Whether a CloudFormation error says the stack does not exist. */
