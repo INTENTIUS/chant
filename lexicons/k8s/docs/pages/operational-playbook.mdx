@@ -38,6 +38,14 @@ kubectl apply -f manifests.yaml --dry-run=server
 kubectl apply -f manifests.yaml
 ```
 
+### What a `kubectl-apply` plan shows
+
+A component step `{ kind: "kubectl-apply", manifest, stack }` has a plan, which `chant components pr-plan` and a gated wave of `chant components fan-out` read. The plan sends each document as a server-side apply with `dryRun=All` and the step's field manager `chant:<stack>`, then compares the result with the live object. Nothing is persisted.
+
+Each declared object is a create (no live object), an update naming the fields that change, or a `no-op`. Managed fields, the resource version, the uid, the creation timestamp, the generation and `status` are dropped before comparing, and a field the server defaults has the same value on both sides. With `delete: "owned-only"` the plan lists the deletes the apply's prune would make, from the same marker-scoped search. A change to an immutable field shows as an update with a hole that carries the API server's refusal, since the apply does not recreate objects and would fail the same way.
+
+A `kubectl-apply` step handed its approved plan dry-runs the approved documents again and fails without applying anything when the digest moved. The [pull request guide](/chant/guide/pull-request-ci/#kubernetes-manifests) says what the digest covers.
+
 ## Rollout & rollback
 
 ```bash
