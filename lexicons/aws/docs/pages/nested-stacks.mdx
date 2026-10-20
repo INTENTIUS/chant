@@ -125,6 +125,10 @@ src/
 
 The build pipeline detects circular references and reports an error if child A references child B which references child A.
 
+## Planning a parent stack
+
+A component that deploys the parent with `cfn-deploy` creates its change set with nested stacks included when the template declares an `AWS::CloudFormation::Stack`. Its plan, in `chant components pr-plan` or a gated wave, then lists each change inside a child as well as the change to the child stack itself. A change in a child is addressed by the child's logical id and its own, for example `Network/Subnet`, and a grandchild's as `Infra/Network/Subnet`. The child templates must already be at `TemplateBasePath` when the plan runs, since CloudFormation reads them there.
+
 ## Lint rules
 
 Three lint rules catch common nested stack mistakes:

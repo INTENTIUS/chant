@@ -54,6 +54,7 @@ import { GateNotRecordableError } from "../lifecycle/no-record";
 import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
+import { isPlanMovedError } from "./capability";
 import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent } from "./run-progress";
@@ -154,6 +155,8 @@ export interface DriverStepRecord {
   durationMs: number;
   output?: unknown;
   error?: string;
+  /** Set on a failed step whose capability refused a plan that moved since it was approved (`isPlanMovedError`, #3997). */
+  planMoved?: true;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
   approval?: {
     gate: string;
@@ -501,6 +504,7 @@ async function runCapabilityStep(
         status: "fail",
         durationMs: Date.now() - start,
         error: errMessage(err),
+        ...(isPlanMovedError(err) ? { planMoved: true as const } : {}),
       },
       resolvedInput,
     };
@@ -993,6 +997,11 @@ function findStackOutputs(
     }
   }
   return found;
+}
+
+/** Whether a step in `results` refused a plan that moved since it was approved (#3997). */
+export function planMovedIn(results: readonly DriverComponentResult[]): boolean {
+  return results.some((r) => r.records.some((s) => s.planMoved === true));
 }
 
 function errMessage(err: unknown): string {
