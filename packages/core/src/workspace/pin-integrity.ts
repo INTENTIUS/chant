@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isWorkDir } from "../lifecycle/work-dir";
 
 export type IntegrityAlgorithm = "sha256" | "sha384" | "sha512";
 
@@ -39,7 +40,7 @@ export function parseIntegrity(value: string): { algorithm: IntegrityAlgorithm; 
   return m ? { algorithm: m[1] as IntegrityAlgorithm, digest: m[2] } : undefined;
 }
 
-/** Directories a plugin hash never looks inside. */
+/** Directories a plugin hash never looks inside, with `.chant/work`, where work worktrees are (#2893). */
 const SKIPPED_DIRS = new Set(["node_modules", ".git"]);
 
 /** Thrown when a path can't be hashed: it is missing, or holds a symbolic link. */
@@ -50,7 +51,7 @@ function walk(dir: string, prefix: string, out: string[]): void {
     const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isSymbolicLink()) throw new PinHashError(`${rel} is a symbolic link, which a pinned plugin may not contain`);
     if (entry.isDirectory()) {
-      if (!SKIPPED_DIRS.has(entry.name)) walk(join(dir, entry.name), rel, out);
+      if (!SKIPPED_DIRS.has(entry.name) && !isWorkDir(rel)) walk(join(dir, entry.name), rel, out);
     } else if (entry.isFile()) {
       out.push(rel);
     }

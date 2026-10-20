@@ -180,7 +180,8 @@ function topLevelString(body: string, name: string): string | undefined {
   return undefined;
 }
 
-const SKIP_DIRS = new Set([".git", ".terragrunt-cache", "node_modules", ".terraform"]);
+// `.chant` holds work worktrees in `.chant/work`, each a copy of the checkout (chant#2893).
+const SKIP_DIRS = new Set([".git", ".terragrunt-cache", "node_modules", ".terraform", ".chant"]);
 
 /** Every `terragrunt.stack.hcl` under `dir`, generated ones included, relative to `dir`. */
 export function findTerragruntStackFiles(dir: string): string[] {

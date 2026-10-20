@@ -39,10 +39,11 @@
  *
  * An Op with `changesCheckout` (applying a build, `chant workspace upgrade`)
  * must declare `workLease`, and its leased steps get a git worktree of their
- * own: `chant/work/<item>` checked out under the repository's git directory,
- * from the checkout's HEAD, or from the branch as an earlier run left it. The
- * worktree is removed when the run ends and the branch keeps whatever the
- * steps committed, for the runner to deliver. The checkout a coding agent is
+ * own: `chant/work/<item>` checked out at `.chant/work/<item>` in the
+ * checkout (#2893), which `<git-common-dir>/info/exclude` keeps out of
+ * `git status`, from the checkout's HEAD or from the branch as an earlier run
+ * left it. The worktree is removed when the run ends and the branch keeps
+ * whatever the steps committed, for the runner to deliver. The checkout a coding agent is
  * editing, its index and its uncommitted files, are never touched.
  *
  * A run that ends `not_done` keeps its attempt aside (#3147): whatever the
@@ -54,7 +55,7 @@
  */
 
 import { existsSync, rmSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { getRuntime } from "../runtime-adapter";
 import {
   claimWorkLease,
@@ -69,6 +70,7 @@ import {
   type WorkLease,
 } from "../lifecycle/work-lease";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
+import { excludeWorkDir, legacyWorkWorktreePath, LEGACY_WORK_DIR, removeEmptyWorkDirs, WORK_DIR, workWorktreePath } from "../lifecycle/work-dir";
 import { currentHolderId } from "../lifecycle/lease";
 import { parseDuration } from "./duration";
 import { isStepOutputRef, stepOutput, type StepOutputRef } from "./step-output-ref";
@@ -271,21 +273,36 @@ export class RunWorkLease {
   }
 
   /**
-   * A worktree for `id` on `chant/work/[<member>/]<id>`, under the git
-   * directory so the checkout's own `git status` never lists it. Starts from
-   * the branch when an earlier run left it, from HEAD otherwise.
+   * A worktree for `id` on `chant/work/[<member>/]<id>`, at
+   * `<checkout>/.chant/work/[<member>/]<id>` (#2893): inside the checkout, so
+   * a coding agent may write there and `node_modules` resolves, and in
+   * `<git-common-dir>/info/exclude`, so the checkout's own `git status` never
+   * lists it. Starts from the branch when an earlier run left it, from HEAD
+   * otherwise. A worktree an earlier run left on the branch, here or where
+   * older versions made it under the git directory, is removed first.
    */
   private async makeWorktree(id: string, members: readonly string[]): Promise<{ worktree: string; branch: string }> {
     const cwd = this.opts.cwd;
     const common = await git(["rev-parse", "--git-common-dir"], cwd);
     if (!common.ok) throw new Error(`Op "${this.config.name}" changes the checkout, but ${cwd} is not a git checkout: ${common.stderr}`);
     const commonDir = isAbsolute(common.stdout) ? common.stdout : resolve(cwd, common.stdout);
+    // The top as the caller spells it (git's --show-toplevel resolves symbolic links).
+    const cdup = await git(["rev-parse", "--show-cdup"], cwd);
+    if (!cdup.ok) throw new Error(`Op "${this.config.name}" changes the checkout, but ${cwd} has no working tree: ${cdup.stderr}`);
+    const top = resolve(cwd, cdup.stdout);
     const scope = members.join("/");
     const branch = `${WORK_BRANCH_PREFIX}${scope ? `${scope}/` : ""}${id}`;
-    const worktree = join(commonDir, "chant-work", ...members, id);
-    if (existsSync(worktree)) {
-      await git(["worktree", "remove", "--force", worktree], cwd);
-      rmSync(worktree, { recursive: true, force: true });
+    const worktree = workWorktreePath(top, members, id);
+    const ignored = (await git(["check-ignore", "-q", `${WORK_DIR}/${id}`], top)).ok;
+    excludeWorkDir(commonDir, ignored);
+    for (const stale of await this.staleWorktrees(branch, commonDir, members, id)) {
+      await git(["worktree", "remove", "--force", stale], cwd);
+      rmSync(stale, { recursive: true, force: true });
+    }
+    for (const dir of [worktree, legacyWorkWorktreePath(commonDir, members, id)]) {
+      if (!existsSync(dir)) continue;
+      await git(["worktree", "remove", "--force", dir], cwd);
+      rmSync(dir, { recursive: true, force: true });
     }
     await git(["worktree", "prune"], cwd);
     const exists = (await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], cwd)).ok;
@@ -296,6 +313,28 @@ export class RunWorkLease {
     const base = await git(["rev-parse", "HEAD"], worktree);
     if (base.ok) this.start = { base: base.stdout, members };
     return { worktree, branch };
+  }
+
+  /**
+   * The registered worktrees that have `branch` checked out at a path chant
+   * makes work worktrees at: `.chant/work/[<member>/]<id>` in any checkout,
+   * or `<git-common-dir>/chant-work/[<member>/]<id>` where versions before
+   * #2893 made them. A run that crashed leaves one behind, and `git worktree
+   * add` then refuses the branch as already checked out.
+   */
+  private async staleWorktrees(branch: string, commonDir: string, members: readonly string[], id: string): Promise<string[]> {
+    const list = await git(["worktree", "list", "--porcelain"], this.opts.cwd);
+    if (!list.ok) return [];
+    const tail = [...members, id].join("/");
+    const legacy = legacyWorkWorktreePath(commonDir, members, id).split(sep).join("/");
+    const out: string[] = [];
+    for (const block of list.stdout.split(/\n\s*\n/)) {
+      const path = /^worktree (.+)$/m.exec(block)?.[1];
+      if (!path || !block.split("\n").includes(`branch refs/heads/${branch}`)) continue;
+      const posixPath = path.split(sep).join("/");
+      if (posixPath.endsWith(`/${WORK_DIR}/${tail}`) || posixPath === legacy || posixPath.endsWith(`/${LEGACY_WORK_DIR}/${tail}`)) out.push(path);
+    }
+    return out;
   }
 
   private lose(why: string): void {
@@ -408,6 +447,7 @@ export class RunWorkLease {
     if (lease.worktree) {
       await git(["worktree", "remove", "--force", lease.worktree], this.opts.cwd).catch(() => undefined);
       rmSync(lease.worktree, { recursive: true, force: true });
+      removeEmptyWorkDirs(lease.worktree);
       await git(["worktree", "prune"], this.opts.cwd).catch(() => undefined);
     }
     if (this.lost !== undefined) return base;
