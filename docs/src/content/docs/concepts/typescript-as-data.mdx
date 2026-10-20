@@ -235,7 +235,9 @@ The function is a callable, not a value. `{ resolver: optionalAccountId }` does 
 
 ### Method calls on folded values
 
-Since [#1966](https://github.com/INTENTIUS/chant/issues/1966), a method call folds when its receiver itself folds to a real value, not one of fold's own symbolic placeholders, and the named property on that value is a function. The method name is not checked against any list; calling it is no different from what running the file would do, because the receiver is the same real object either way.
+Since [#1966](https://github.com/INTENTIUS/chant/issues/1966), a method call folds when its receiver itself folds to a real value, not one of fold's own symbolic placeholders, and the named property on that value is a function.
+
+Since [#4011](https://github.com/INTENTIUS/chant/issues/4011), a method the JavaScript engine provides folds only when a fixed table lists it for the receiver's type. The table keeps string methods such as `slice` and `split` and number formatting such as `toFixed`. For arrays it keeps only methods that take no callback, such as `join`. Names that reach `Function` or the host locale never fold on any receiver, and EVL001 flags them. `constructor`, `call` and the `toLocale*` methods are among them. So `[].constructor.constructor("return Date.now()")` falls back to run. A method written in a lexicon package (`toString` on a github `Expression`) is not in the table and folds as before.
 
 ```typescript
 import { StorageType } from "@intentius/chant-lexicon-<name>";
@@ -278,7 +280,7 @@ export const store = new StorageType({
 });
 ```
 
-`.map` itself is an ordinary method call on a real receiver, which is the shape [Method calls on folded values](#method-calls-on-folded-values) covers. Its callback argument is what fold rejects. An arrow function used as a value is never foldable, whether called or not. `list.join(",")` above folds instead, because its argument is a plain string, not a function.
+Fold reaches the callback argument before it looks `.map` up, and the callback is what it rejects. An arrow function used as a value is never foldable, whether called or not. `list.join(",")` above folds instead, because its argument is a plain string, not a function.
 
 ### Control flow around resources
 

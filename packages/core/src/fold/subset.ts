@@ -462,6 +462,98 @@ export function unsupportedExpressionMessage(node: ts.Node): string {
 }
 
 /**
+ * chant#4011 — S-CallMethod's closed table of HOST methods, by receiver type.
+ * PROVISIONAL until typescript-as-data narrows F-Eval-CallMethod to the same
+ * table (see the module doc's provisional path).
+ *
+ * Since #1966 `fold()` called any function-valued property on a real
+ * receiver, so `[].constructor.constructor("return Date.now()")` reached
+ * `Function` and a `[fold:fold]` file could put the clock, `process.env` or
+ * `Math.random()` in its output. A method the JavaScript engine provides
+ * (a native function) now folds only when it is listed here for the
+ * receiver's type AND is the very function that type's prototype carries, so
+ * an own property cannot shadow a listed name. Every entry is deterministic
+ * given its receiver and arguments: no callbacks (`map`, `filter`), no
+ * mutation (`push`, `sort`), and no `toLocale*` or `localeCompare`, whose
+ * answer follows the host's locale and time zone.
+ *
+ * A method defined by a lexicon package's own code (the github lexicon's
+ * `Expression.prototype.toString`) is not a host method and is not looked up
+ * here; it is the same class of package code as an eager intrinsic call.
+ */
+export const FOLDABLE_HOST_METHODS: {
+  readonly string: ReadonlySet<string>;
+  readonly number: ReadonlySet<string>;
+  readonly boolean: ReadonlySet<string>;
+  readonly array: ReadonlySet<string>;
+  readonly object: ReadonlySet<string>;
+} = {
+  string: new Set([
+    "at",
+    "charAt",
+    "charCodeAt",
+    "codePointAt",
+    "concat",
+    "endsWith",
+    "includes",
+    "indexOf",
+    "lastIndexOf",
+    "padEnd",
+    "padStart",
+    "repeat",
+    "replace",
+    "replaceAll",
+    "slice",
+    "split",
+    "startsWith",
+    "substring",
+    "toLowerCase",
+    "toString",
+    "toUpperCase",
+    "trim",
+    "trimEnd",
+    "trimStart",
+    "valueOf",
+  ]),
+  number: new Set(["toExponential", "toFixed", "toPrecision", "toString", "valueOf"]),
+  boolean: new Set(["toString", "valueOf"]),
+  array: new Set(["at", "concat", "flat", "includes", "indexOf", "join", "lastIndexOf", "slice", "toString"]),
+  object: new Set(["hasOwnProperty", "toString", "valueOf"]),
+};
+
+/**
+ * chant#4011 — method names `fold()` refuses on every receiver, lexicon
+ * objects included. These are the names that reach `Function` (`constructor`,
+ * and `call`/`apply`/`bind` on whatever it returns) or read the host locale.
+ * Unlike {@link FOLDABLE_HOST_METHODS}, which needs the receiver's runtime
+ * type, a name in this set is decidable from syntax, so EVL001 refuses it too.
+ */
+export const REFUSED_METHOD_NAMES: ReadonlySet<string> = new Set([
+  "constructor",
+  "call",
+  "apply",
+  "bind",
+  "toLocaleString",
+  "toLocaleDateString",
+  "toLocaleTimeString",
+  "toLocaleUpperCase",
+  "toLocaleLowerCase",
+  "localeCompare",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
+/** The refusal for a method name in {@link REFUSED_METHOD_NAMES}, shared by `fold()` and EVL001. */
+export function refusedMethodMessage(methodName: string): string {
+  return (
+    `method call \`.${methodName}(...)\` is not foldable: it reaches \`Function\` or the host locale, ` +
+    "so its result is not determined by the source (chant#4011) — falls back to run"
+  );
+}
+
+/**
  * Classify one object-literal member (`{ a: 1 }`'s `a: 1`, `{ ...x }`'s
  * `...x`, or a shorthand `{ a }`). Checks the key's shape before the
  * value's, mirroring `propName()` in fold.ts, which runs before folding
@@ -720,7 +812,14 @@ export function findSubsetViolation(
     // a same-file `new` used as a value (#1169). Accepted here regardless of
     // the intrinsics registry, unlike the two cases just above: nothing about
     // whether a method call folds depends on a lexicon's registration.
+    //
+    // chant#4011 — except a name `fold()` refuses on every receiver, which is
+    // decidable here. The per-type host table needs the receiver's value, so
+    // it stays on `fold()`'s side, in the direction F-Direction allows.
     if (ts.isPropertyAccessExpression(node.expression)) {
+      if (REFUSED_METHOD_NAMES.has(node.expression.name.text)) {
+        return violation(node, refusedMethodMessage(node.expression.name.text));
+      }
       const v = findSubsetViolation(node.expression.expression, intrinsics);
       if (v) return v;
       for (const arg of node.arguments) {

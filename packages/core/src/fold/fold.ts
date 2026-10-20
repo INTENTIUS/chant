@@ -6,12 +6,15 @@ import {
   SUPPORTED_UNARY_OPERATORS,
   UNSUPPORTED_OBJECT_MEMBER_MESSAGE,
   UNSUPPORTED_UNARY_MESSAGE,
+  FOLDABLE_HOST_METHODS,
+  REFUSED_METHOD_NAMES,
   briefNodeText,
   callExpressionMessage,
   computedPropertyNameMessage,
   dynamicElementAccessMessage,
   isLiteralElementKey,
   isLiteralPropertyName,
+  refusedMethodMessage,
   unsupportedBinaryMessage,
   unsupportedExpressionMessage,
   type SubsetRuleId,
@@ -1700,8 +1703,15 @@ export function fold(
     // named property on it is actually a function. Calling it with the folded
     // arguments is then no different from what running the file would do:
     // the receiver is the same real object either way.
+    //
+    // chant#4011 — "never checked by name" let `[].constructor.constructor`
+    // reach `Function`, so a folded file could run any code. A name in
+    // REFUSED_METHOD_NAMES is refused on every receiver, before the receiver
+    // is folded, exactly as EVL001 refuses it; a host (native) method must be
+    // in FOLDABLE_HOST_METHODS for its receiver's type ({@link hostMethodRefusal}).
     if (ts.isPropertyAccessExpression(node.expression)) {
       const methodName = node.expression.name.text;
+      if (REFUSED_METHOD_NAMES.has(methodName)) throw foldError(node, refusedMethodMessage(methodName));
       const receiver = fold(node.expression.expression, consts, intrinsics, externals);
       // chant #2328 — a call is a link of an optional chain like any other:
       // `a?.b()` and `a?.b.c()` on a nullish `a` are `undefined` in
@@ -1722,7 +1732,22 @@ export function fold(
       if (typeof method !== "function") {
         throw foldError(node, `"${methodName}" is not a callable method on the folded value — falls back to run`);
       }
+      // The arguments fold first, so `list.map((n) => …)` keeps refusing on
+      // its callback, the reason the docs give for it.
       const args = node.arguments.map((arg) => fold(arg, consts, intrinsics, externals));
+      if (isNativeFunction(method)) {
+        const refusal = hostMethodRefusal(receiver, methodName, method);
+        if (refusal) throw foldError(node, refusal);
+        // A host method handed a function calls it (`"x".replace("x", fn)`),
+        // and the only functions a fold produces as values are host ones read
+        // by property access (`[].constructor`), so none is passed in.
+        if (args.some((arg) => typeof arg === "function")) {
+          throw foldError(
+            node,
+            `a function passed to the host method \`.${methodName}(...)\` is not foldable — falls back to run`,
+          );
+        }
+      }
       return (method as (...methodArgs: unknown[]) => unknown).apply(receiver, args) as FoldedValue;
     }
 
@@ -1730,6 +1755,52 @@ export function fold(
   }
 
   throw foldError(node, unsupportedExpressionMessage(node));
+}
+
+/**
+ * chant#4011 — true when `fn` is provided by the JavaScript engine rather than
+ * written in JavaScript. A lexicon's own method (`Expression.prototype.toString`)
+ * is JavaScript source; `Function`, `Date.now` and `Array.prototype.join` are
+ * not. `Function.prototype.toString` prints a native function's body as
+ * `[native code]` (ECMA-262, NativeFunction), and is read off the prototype so
+ * a receiver cannot override it.
+ */
+function isNativeFunction(fn: unknown): boolean {
+  return typeof fn === "function" && /\{\s*\[native code\]\s*\}\s*$/.test(Function.prototype.toString.call(fn));
+}
+
+const HOST_PROTOTYPES = {
+  string: String.prototype,
+  number: Number.prototype,
+  boolean: Boolean.prototype,
+  array: Array.prototype,
+  object: Object.prototype,
+} as const;
+
+/**
+ * chant#4011 — why a host method `method`, read as `receiver[methodName]`,
+ * does not fold, or `undefined` when it does. It folds only when the
+ * receiver's type has a row in {@link FOLDABLE_HOST_METHODS} listing the name
+ * and `method` is the function that type's prototype carries under it. A
+ * function receiver (`[].constructor.from(...)`) has no row; neither does a
+ * host object such as a `Date`, which has its own prototype.
+ */
+function hostMethodRefusal(receiver: unknown, methodName: string, method: unknown): string | undefined {
+  let kind: keyof typeof HOST_PROTOTYPES | undefined;
+  if (typeof receiver === "string") kind = "string";
+  else if (typeof receiver === "number") kind = "number";
+  else if (typeof receiver === "boolean") kind = "boolean";
+  else if (Array.isArray(receiver)) kind = "array";
+  else if (typeof receiver === "object" && receiver !== null) kind = "object";
+  const listed =
+    kind !== undefined &&
+    FOLDABLE_HOST_METHODS[kind].has(methodName) &&
+    (HOST_PROTOTYPES[kind] as unknown as Record<string, unknown>)[methodName] === method;
+  if (listed) return undefined;
+  return (
+    `the host method \`.${methodName}(...)\` is not in the foldable table for a ${kind ?? typeof receiver} ` +
+    "receiver (chant#4011) — falls back to run"
+  );
 }
 
 /**
