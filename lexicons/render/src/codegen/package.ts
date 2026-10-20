@@ -3,7 +3,7 @@ import { generate } from "./generate";
 import { renderPlugin } from "../plugin";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 
 /**
  * Package the render lexicon for distribution.
@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 export async function packageLexicon(options?: { verbose?: boolean; force?: boolean }) {
   // This file is src/codegen/package.ts — rules and skills are collected
   // relative to src/, so srcDir must be the parent of this directory.
-  const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const srcDir = dirname(moduleSourceDir(import.meta.url));
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "..", "package.json"), "utf-8"));
 
   const { spec, stats } = await packagePipeline({

@@ -6,7 +6,7 @@
 import { readFileSync } from "fs";
 import { gcpPlugin } from "../plugin";
 import { dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import {
   packagePipeline,
   collectSkills,
@@ -18,7 +18,7 @@ import { generate } from "./generate";
 export type { PackageOptions, PackageResult };
 
 // src/codegen/package.ts → dirname x2 → src/ (srcDir for rule collection)
-const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const pkgDir = dirname(moduleSourceDir(import.meta.url));
 
 /**
  * Package the GCP lexicon into a distributable BundleSpec.

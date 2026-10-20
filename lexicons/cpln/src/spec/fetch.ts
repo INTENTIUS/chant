@@ -32,7 +32,7 @@
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { fetchWithCache } from "@intentius/chant/codegen/fetch";
 
 export const SCHEMA_URL = "https://api.cpln.io/openapi.json";
@@ -44,7 +44,7 @@ export const SCHEMA_URL = "https://api.cpln.io/openapi.json";
  */
 const CACHE_FILE = join(homedir(), ".chant", "cpln-openapi.json");
 
-export const SNAPSHOT_FILE = join(dirname(fileURLToPath(import.meta.url)), "cpln-openapi.snapshot.json");
+export const SNAPSHOT_FILE = join(moduleSourceDir(import.meta.url), "cpln-openapi.snapshot.json");
 
 /** The single map key the parser is handed. The spec is one document. */
 export const SPEC_KEY = "Cpln::OpenAPI";

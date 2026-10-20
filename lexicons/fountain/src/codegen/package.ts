@@ -2,7 +2,7 @@ import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package
 import { generate } from "./generate";
 import { fountainPlugin } from "../plugin";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { readFileSync } from "fs";
 import { FOUNTAIN_SPEC_VERSION } from "../spec/fetch";
 
@@ -12,7 +12,7 @@ import { FOUNTAIN_SPEC_VERSION } from "../spec/fetch";
 export async function packageLexicon(options?: { verbose?: boolean; force?: boolean }) {
   // This file is src/codegen/package.ts — rules and skills are collected
   // relative to src/, so srcDir must be the parent of this directory.
-  const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const srcDir = dirname(moduleSourceDir(import.meta.url));
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "..", "package.json"), "utf-8"));
 
   const { spec, stats } = await packagePipeline({

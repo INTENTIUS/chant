@@ -6,7 +6,7 @@
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { readFileSync, writeFileSync } from "fs";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { fetchWithCache, clearCacheFile } from "@intentius/chant/codegen/fetch";
 
 /**
@@ -41,7 +41,7 @@ export function getCachePath(): string {
  * committed copy is equivalent and network-free.
  */
 export function getVendoredSchemaPath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "vendored", "gitlab-ci-schema.json");
+  return join(moduleSourceDir(import.meta.url), "vendored", "gitlab-ci-schema.json");
 }
 
 /**

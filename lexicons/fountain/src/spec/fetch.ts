@@ -25,7 +25,7 @@
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { fetchWithCache } from "@intentius/chant/codegen/fetch";
 
 /**
@@ -54,7 +54,7 @@ const SCHEMA_URL = `https://github.com/managoat/managoat/releases/download/${FOU
 
 const CACHE_FILE = join(homedir(), ".chant", `fountain-openapi-${FOUNTAIN_SPEC_VERSION}.json`);
 
-const SNAPSHOT_FILE = join(dirname(fileURLToPath(import.meta.url)), "fountain-openapi.snapshot.json");
+const SNAPSHOT_FILE = join(moduleSourceDir(import.meta.url), "fountain-openapi.snapshot.json");
 
 /**
  * Fetch the pinned fountain OpenAPI spec, falling back to the committed

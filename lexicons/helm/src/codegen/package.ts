@@ -5,7 +5,7 @@
 
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { helmPlugin } from "../plugin";
 import {
   packagePipeline,
@@ -17,7 +17,7 @@ import { generate } from "./generate";
 
 export type { PackageOptions, PackageResult };
 
-const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const pkgDir = dirname(moduleSourceDir(import.meta.url));
 
 /**
  * Package the Helm lexicon into a distributable BundleSpec.

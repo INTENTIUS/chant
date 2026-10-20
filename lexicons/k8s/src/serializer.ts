@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
@@ -37,7 +38,7 @@ import { isEncryptedSecretFileEntity } from "./sops/entity";
 import { isK8sInclude } from "./include/entity";
 import { isRuleGroup, ruleGroupConfig } from "@intentius/chant-lexicon-prometheus";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 /**
  * K8s resource kinds whose properties live directly on the manifest

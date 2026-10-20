@@ -19,12 +19,12 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { POSTGRES_PINS, postgresImage, postgresPin, type PostgresPin } from "./postgres-pin";
 import { parseCatalog, readCatalog, stringifyCatalog, type PostgresCatalog, type PostgresReader } from "./postgres-catalog";
 import { startScratchPostgres } from "../postgres/container";
 
-const specDir = dirname(fileURLToPath(import.meta.url));
+const specDir = moduleSourceDir(import.meta.url);
 
 /** The committed snapshot of one major. */
 export const snapshotFile = (major: number, dir: string = specDir): string =>

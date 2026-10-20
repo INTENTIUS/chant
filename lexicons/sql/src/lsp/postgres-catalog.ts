@@ -10,12 +10,12 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { parseCatalog, type PostgresCatalog } from "../spec/postgres-catalog";
 import { POSTGRES_LATEST_MAJOR, POSTGRES_MAJORS } from "../spec/postgres-pin";
 import { STORAGE_PARAMETER_TYPES } from "../postgres/overlays/storage";
 
-const SPEC = join(dirname(fileURLToPath(import.meta.url)), "..", "spec");
+const SPEC = join(moduleSourceDir(import.meta.url), "..", "spec");
 
 let cached: Map<number, PostgresCatalog> | null = null;
 

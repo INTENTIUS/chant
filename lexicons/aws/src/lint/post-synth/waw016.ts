@@ -17,6 +17,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parseCFTemplate } from "./cf-refs";
 
@@ -38,8 +39,7 @@ interface LexiconEntry {
 function loadDeprecatedProperties(): Map<string, Map<string, DeprecationBasis>> {
   const map = new Map<string, Map<string, DeprecationBasis>>();
   try {
-    const pkgDir = join(__dirname, "..", "..", "..");
-    const lexiconPath = join(pkgDir, "src", "generated", "lexicon-aws.json");
+    const lexiconPath = join(moduleSourceDir(import.meta.url), "..", "..", "generated", "lexicon-aws.json");
     const content = readFileSync(lexiconPath, "utf-8");
     const data = JSON.parse(content) as Record<string, LexiconEntry>;
 

@@ -201,3 +201,50 @@ describe("lexicons declared by module path (#2520)", () => {
     expect(typeof evaluator.evaluateGatePolicy).toBe("function");
   });
 });
+
+describe("tsx only for a lexicon that resolves to TypeScript (#3981)", () => {
+  const STATE = Symbol.for("chant.compiledCli");
+  const global = globalThis as { [STATE]?: { tsx: boolean } };
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "chant-lexicon-js-"));
+    // Stand in for the compiled CLI before it has registered tsx.
+    global[STATE] = { tsx: false };
+  });
+
+  afterEach(async () => {
+    delete global[STATE];
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function jsPackage(root: string, name: string): Promise<void> {
+    const pkg = join(root, "node_modules", "@intentius", `chant-lexicon-${name}`);
+    await mkdir(join(pkg, "dist"), { recursive: true });
+    await writeFile(join(pkg, "package.json"), JSON.stringify({ name: `@intentius/chant-lexicon-${name}`, type: "module", exports: { ".": "./dist/index.js" } }));
+    await writeFile(join(pkg, "dist", "index.js"), `export const marker = ${JSON.stringify(name)};\n`);
+  }
+
+  test("a compiled package the project installs imports with plain node", async () => {
+    await jsPackage(dir, "jsonly");
+    const { importLexiconPackage } = await import("./lexicon-module");
+    const mod = await importLexiconPackage("@intentius/chant-lexicon-jsonly", dir);
+    expect(mod.marker).toBe("jsonly");
+    expect(global[STATE]).toEqual({ tsx: false });
+  });
+
+  test("a compiled module named by absolute path imports with plain node", async () => {
+    const path = join(dir, "lexicon.mjs");
+    await writeFile(path, `export const marker = "by-path";\n`);
+    const { importLexiconPackage } = await import("./lexicon-module");
+    const mod = await importLexiconPackage(path, dir);
+    expect(mod.marker).toBe("by-path");
+    expect(global[STATE]).toEqual({ tsx: false });
+  });
+
+  test("a package missing from the project too rethrows the first error and registers nothing", async () => {
+    const { importLexiconPackage } = await import("./lexicon-module");
+    await expect(importLexiconPackage("@intentius/chant-lexicon-not-installed-3981", dir)).rejects.toThrow(/chant-lexicon-not-installed-3981/);
+    expect(global[STATE]).toEqual({ tsx: false });
+  });
+});

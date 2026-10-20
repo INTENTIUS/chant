@@ -1,7 +1,7 @@
 import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { LEXICON_ENTRIES } from "../catalog";
 import { e2bPlugin } from "../plugin";
 
@@ -11,7 +11,7 @@ import { e2bPlugin } from "../plugin";
  * the hand-written catalog in ../catalog.ts.
  */
 export async function packageLexicon(options?: { verbose?: boolean; force?: boolean }) {
-  const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const srcDir = dirname(moduleSourceDir(import.meta.url));
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "..", "package.json"), "utf-8")) as { version?: string };
 
   return packagePipeline(

@@ -18,9 +18,10 @@
  * workload roll; that verdict belongs to a lexicon whose spec does.
  */
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { DisruptionQuery, DisruptionVerdict } from "@intentius/chant/lexicon";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 /** The slice of a `lexicon-aws.json` entry that carries replacement semantics. */
 export interface DisruptionSpec {

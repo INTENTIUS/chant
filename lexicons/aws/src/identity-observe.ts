@@ -22,10 +22,11 @@
  * `create` the moment the emulator lacks Cloud Control.
  */
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import { AwsReadError, getResource, listResources, type AwsReadClientOptions, type CloudControlDescription } from "./api/read-client";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 interface LexiconEntry {
   resourceType: string;

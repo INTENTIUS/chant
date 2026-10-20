@@ -6,7 +6,7 @@
 import { readFileSync } from "fs";
 import { awsPlugin } from "../plugin";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
 import {
   packagePipeline,
@@ -18,7 +18,7 @@ import { generate } from "./generate";
 
 export type { PackageOptions, PackageResult };
 
-const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const pkgDir = dirname(moduleSourceDir(import.meta.url));
 
 /**
  * Map intrinsic name to its CloudFormation output key.

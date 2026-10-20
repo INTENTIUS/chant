@@ -6,10 +6,10 @@
 
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { parseCatalog, type ClickHouseCatalog, type SettingRow } from "../spec/catalog";
 
-const SNAPSHOT = join(dirname(fileURLToPath(import.meta.url)), "..", "spec", "clickhouse-catalog.snapshot.json");
+const SNAPSHOT = join(moduleSourceDir(import.meta.url), "..", "spec", "clickhouse-catalog.snapshot.json");
 
 export interface CatalogIndex {
   catalog: ClickHouseCatalog;

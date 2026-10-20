@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
@@ -16,7 +17,7 @@ import { emitYAML } from "@intentius/chant/yaml";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 /**
  * GVK mapping entry — loaded from generated lexicon-gcp.json.

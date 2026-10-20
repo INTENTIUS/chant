@@ -47,7 +47,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/lexicon";
 import {
   K8S_OBJECT_ENVELOPE_PRUNE_PATTERNS,
@@ -202,7 +202,7 @@ let cachedListMapKeys: ListMapKeyTable | undefined;
  * class of bug in #1581. A plain fs read has no module-system dependency.
  */
 export function listMapKeyTablePath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "generated", "list-map-keys.json");
+  return join(moduleSourceDir(import.meta.url), "generated", "list-map-keys.json");
 }
 
 /**

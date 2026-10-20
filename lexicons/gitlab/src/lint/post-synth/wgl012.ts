@@ -7,6 +7,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
 
@@ -23,8 +24,7 @@ interface LexiconEntry {
 function loadDeprecatedProperties(): Map<string, Set<string>> {
   const map = new Map<string, Set<string>>();
   try {
-    const pkgDir = join(__dirname, "..", "..", "..");
-    const lexiconPath = join(pkgDir, "src", "generated", "lexicon-gitlab.json");
+    const lexiconPath = join(moduleSourceDir(import.meta.url), "..", "..", "generated", "lexicon-gitlab.json");
     const content = readFileSync(lexiconPath, "utf-8");
     const data = JSON.parse(content) as Record<string, LexiconEntry>;
 

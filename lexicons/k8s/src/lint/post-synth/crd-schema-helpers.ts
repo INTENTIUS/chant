@@ -12,6 +12,7 @@
  */
 
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import type { CrdFieldSchema } from "../../spec/parse";
 import { docsToManifests, type K8sManifest } from "./k8s-helpers";
@@ -44,7 +45,7 @@ export function getCrdSchemaRegistry(): Map<string, CrdFieldSchema> {
     // Built lazily so importing this module stays edge-safe: `createRequire`
     // throws where import.meta.url is undefined (bundled Workers), and there
     // the registry is simply empty.
-    const require = createRequire(import.meta.url);
+    const require = createRequire(moduleSourceUrl(import.meta.url));
     const lexicon = require("../../generated/lexicon-k8s.json") as Record<string, LexiconEntry>;
     for (const entry of Object.values(lexicon)) {
       if (entry.kind === "resource" && entry.apiVersion && entry.gvkKind && entry.specSchema) {

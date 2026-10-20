@@ -3,7 +3,7 @@ import { generate } from "./generate";
 import { flyPlugin } from "../plugin";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 
 /**
  * Package the fly lexicon for distribution.
@@ -13,7 +13,7 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
   // relative to src/, so srcDir must be the parent of this directory.
   // Pointing it at src/codegen made collectRules glob a directory that does
   // not exist, and the bundle shipped zero rules alongside zero skills.
-  const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const srcDir = dirname(moduleSourceDir(import.meta.url));
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "..", "package.json"), "utf-8"));
 
   const { spec, stats } = await packagePipeline({

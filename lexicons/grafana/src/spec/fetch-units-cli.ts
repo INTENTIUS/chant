@@ -8,7 +8,7 @@
  */
 import { writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { sha256 } from "./schemas";
 import { GRAFANA_UNITS_SOURCE, LEGACY_UNIT_ALIASES } from "./units";
 
@@ -33,5 +33,5 @@ export const GRAFANA_UNIT_IDS: readonly string[] = [
 ${ids.map((id) => `  ${JSON.stringify(id)},`).join("\n")}
 ];
 `;
-writeFileSync(join(dirname(fileURLToPath(import.meta.url)), "units.gen.ts"), out);
+writeFileSync(join(moduleSourceDir(import.meta.url), "units.gen.ts"), out);
 console.error(`${ids.length} unit ids from ${repo}@${ref} written to src/spec/units.gen.ts`);

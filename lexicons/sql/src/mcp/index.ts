@@ -8,6 +8,7 @@
 
 import type { McpResourceContribution, McpToolContribution } from "@intentius/chant/mcp/types";
 import { createCatalogResource, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import { sqlSerializer } from "../serializer";
 import { catalogIndex } from "../lsp/catalog";
 import { database, dictionary, func, grant, policy, quota, role, settingsProfile, table, user, view } from "../clickhouse/entities";
@@ -272,9 +273,10 @@ const need = () => {
 /** The resources the sql lexicon contributes. */
 export function sqlMcpResources(): McpResourceContribution[] {
   return [
-    // `generated/` sits beside plugin.ts, which is where the helper looks.
+    // `generated/` sits beside plugin.ts, which is where the helper looks. The
+    // source URL, so a compiled module names src/plugin.ts too (#3981).
     createCatalogResource(
-      new URL("../plugin.ts", import.meta.url).href,
+      new URL("../plugin.ts", moduleSourceUrl(import.meta.url)).href,
       "SQL Entity Catalog",
       "The entity kinds the sql lexicon declares (database, table, view, materialized view, dictionary, function, user, role, row policy, grant)",
       "lexicon-sql.json",

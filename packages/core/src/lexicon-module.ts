@@ -27,8 +27,9 @@
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ensureTypeScriptLoader } from "./ts-loader";
+import { ensureTypeScriptLoader, ensureTypeScriptLoaderFor, typeScriptLoaderPending } from "./ts-loader";
 import { esModuleNamespace } from "./module-interop";
+import { isJavaScriptModule } from "./module-source";
 
 /**
  * One `lexicons` entry: a package-backed name, or a name plus the module that
@@ -180,6 +181,9 @@ export function resetLexiconModules(): void {
  * `typeScript: false` imports it with plain node, without registering tsx
  * (#3276): tsx's ESM hooks run on a thread of their own, which costs the
  * compiled CLI about 200 MB, so a caller whose module is JavaScript says so.
+ * Left out, the module's extension decides (#3981): a `.js` or `.mjs` module
+ * imports with plain node, and anything else (`.ts`, or no extension, which
+ * only tsx's resolver completes) registers tsx first.
  */
 export async function importLexiconModule(
   name: string,
@@ -188,7 +192,8 @@ export async function importLexiconModule(
   const path = modulePaths.get(name);
   if (path === undefined) return undefined;
   try {
-    if (options.typeScript !== false) ensureTypeScriptLoader();
+    const typeScript = options.typeScript ?? !isJavaScriptModule(path);
+    if (typeScript) ensureTypeScriptLoader();
     return esModuleNamespace((await import(path)) as Record<string, unknown>);
   } catch (err) {
     throw new Error(
@@ -259,6 +264,18 @@ export function resolveFromProject(spec: string, fromDir: string = process.cwd()
 }
 
 /**
+ * #3981 — where `spec` resolves from this module, as `import(spec)` here
+ * would resolve it. Throws as the import would when it cannot be resolved.
+ * An absolute path is its own file URL.
+ */
+function resolveImport(spec: string): string {
+  if (isAbsolute(spec)) return pathToFileURL(spec).href;
+  const resolveMeta = (import.meta as { resolve?: (specifier: string) => string }).resolve;
+  if (typeof resolveMeta === "function") return resolveMeta(spec);
+  return pathToFileURL(createRequire(import.meta.url).resolve(spec)).href;
+}
+
+/**
  * chant#2845 — import a lexicon package, or one of its subpaths, by its bare
  * specifier. chant's own install is tried first, as a bare `import()` always
  * did, so a lexicon chant can reach loads exactly as before. When the package
@@ -266,16 +283,41 @@ export function resolveFromProject(spec: string, fromDir: string = process.cwd()
  * that installs its lexicons in its own node_modules, it is resolved from
  * `fromDir` (the project) and imported from there. Any other failure, and a
  * package the project doesn't have either, rethrows the first error.
+ *
+ * #3981 — tsx is registered only when the module resolves to TypeScript. A
+ * lexicon that ships compiled JS imports with plain node. The module is
+ * resolved before it is imported, because a failed import is cached: one
+ * tried without tsx cannot be tried again with it. A resolution that fails
+ * for any reason but a missing package registers tsx, whose resolver may
+ * still complete it.
  */
 export async function importLexiconPackage(spec: string, fromDir: string = process.cwd()): Promise<Record<string, unknown>> {
+  const pkg = packageNameOf(spec);
+  if (typeScriptLoaderPending()) {
+    let resolved: string | undefined;
+    try {
+      resolved = resolveImport(spec);
+    } catch (err) {
+      if (pkg === undefined || !isPackageNotFound(err, pkg)) {
+        ensureTypeScriptLoader();
+      } else {
+        return importFromProject(spec, fromDir, err);
+      }
+    }
+    if (resolved !== undefined) ensureTypeScriptLoaderFor(resolved);
+  }
   try {
-    ensureTypeScriptLoader();
     return esModuleNamespace((await import(spec)) as Record<string, unknown>);
   } catch (err) {
-    const pkg = packageNameOf(spec);
     if (pkg === undefined || !isPackageNotFound(err, pkg)) throw err;
-    const resolved = resolveFromProject(spec, fromDir);
-    if (resolved === undefined) throw err;
-    return esModuleNamespace((await import(pathToFileURL(resolved).href)) as Record<string, unknown>);
+    return importFromProject(spec, fromDir, err);
   }
+}
+
+/** The project's copy of `spec`, for {@link importLexiconPackage}. Rethrows `err` when the project has none. */
+async function importFromProject(spec: string, fromDir: string, err: unknown): Promise<Record<string, unknown>> {
+  const resolved = resolveFromProject(spec, fromDir);
+  if (resolved === undefined) throw err;
+  ensureTypeScriptLoaderFor(resolved);
+  return esModuleNamespace((await import(pathToFileURL(resolved).href)) as Record<string, unknown>);
 }
