@@ -14,6 +14,7 @@ import {
 import type { StackGraph } from "../build";
 import type { Serializer } from "../serializer";
 import type { Declarable } from "../declarable";
+import { EMPTY_TREE_SHA } from "../components/changed-files";
 
 const execFileAsync = promisify(execFile);
 
@@ -135,6 +136,12 @@ describe("affectedStacks — baseDir (caller-supplied)", () => {
     const head = srcDir("head", "// a harmless refactor\n" + widget("Widget"));
     const r = await affectedStacks({ projectPath: head, baseDir: base, serializers: [fakeSerializer] });
     expect(r.changed).toEqual([]);
+  });
+
+  test("the empty tree as the base (a root commit, #4004) builds nothing: every head stack is changed", async () => {
+    const head = srcDir("head", widget("Widget"));
+    const r = await affectedStacks({ projectPath: head, baseRef: EMPTY_TREE_SHA, serializers: [fakeSerializer] });
+    expect(r.changed).toEqual(["fake"]);
   });
 });
 

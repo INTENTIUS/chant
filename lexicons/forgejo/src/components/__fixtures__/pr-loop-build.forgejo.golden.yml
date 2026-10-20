@@ -64,7 +64,9 @@ jobs:
         env:
           BASE_SHA: '${{ github.event.before }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
+          chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json
       - name: Keep the record for a re-run
         if: always()
         uses: https://code.forgejo.org/actions/cache/save@v4

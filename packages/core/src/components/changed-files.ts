@@ -21,12 +21,20 @@ async function git(cwd: string, args: string[]): Promise<string> {
 }
 
 /**
+ * Git's empty tree. A root commit has no parent, so a push of one is measured
+ * from this (#4004): every file it holds counts as changed.
+ */
+export const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/**
  * The commit a change is measured from: the merge base of `base` and `head`.
  * A pull request's head that branched before `base` moved is measured from
  * where it branched, so the other changes on `base` are not counted as its
- * own; a merge commit's first parent is its own merge base.
+ * own; a merge commit's first parent is its own merge base. The empty tree
+ * has no merge base with anything and is returned as it is.
  */
 export async function resolveMergeBase(cwd: string, base: string, head = "HEAD"): Promise<string> {
+  if (base === EMPTY_TREE_SHA) return base;
   try {
     return (await git(cwd, ["merge-base", base, head])).trim();
   } catch (err) {

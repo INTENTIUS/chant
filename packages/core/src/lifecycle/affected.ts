@@ -37,6 +37,7 @@ import { tmpdir } from "node:os";
 import { build, type StackGraph } from "../build";
 import { getPrimaryOutput } from "../lint/post-synth";
 import type { Serializer } from "../serializer";
+import { EMPTY_TREE_SHA } from "../components/changed-files";
 import type { Declarable } from "../declarable";
 
 const execFileAsync = promisify(execFile);
@@ -258,7 +259,9 @@ export interface AffectedStacksOptions {
  */
 export async function affectedStacks(opts: AffectedStacksOptions): Promise<AffectedResult> {
   const projectPath = resolve(opts.projectPath);
-  const needsWorktree = Boolean(opts.headRef) || Boolean(opts.baseRef && !opts.baseDir);
+  // The empty tree (#4004) builds nothing, so it needs no worktree.
+  const emptyBase = !opts.baseDir && opts.baseRef === EMPTY_TREE_SHA;
+  const needsWorktree = Boolean(opts.headRef) || Boolean(opts.baseRef && !opts.baseDir && !emptyBase);
   const repoRoot = needsWorktree ? await gitTopLevel(projectPath) : projectPath;
   // Canonicalize via realpath so the worktree-relative path is correct even when
   // the temp dir is a symlink (macOS /var → /private/var) and `git
@@ -293,6 +296,8 @@ export async function affectedStacks(opts: AffectedStacksOptions): Promise<Affec
   let baseMap: Map<string, string>;
   if (opts.baseDir) {
     baseMap = (await readArtifacts(resolve(opts.baseDir), false)).artifacts;
+  } else if (emptyBase) {
+    baseMap = new Map();
   } else if (opts.baseRef) {
     baseMap = await withWorktree(repoRoot, opts.baseRef, async (dir) => (await readArtifacts(join(dir, relProject), false)).artifacts);
   } else {

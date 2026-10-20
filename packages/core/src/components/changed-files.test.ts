@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { changedFilesBetween } from "./changed-files";
+import { changedFilesBetween, EMPTY_TREE_SHA, resolveMergeBase } from "./changed-files";
 
 const repo = mkdtempSync(join(tmpdir(), "chant-changed-files-"));
 afterAll(() => rmSync(repo, { recursive: true, force: true }));
@@ -54,5 +54,20 @@ describe("changedFilesBetween", () => {
       "../../shared/modules/base/main.tf",
       "roots/vpc/main.tf",
     ]);
+  });
+});
+
+describe("the empty tree as the base (a root commit, #4004)", () => {
+  test("is its own merge base, and every file the head holds counts as changed", async () => {
+    expect(await resolveMergeBase(repo, EMPTY_TREE_SHA, "HEAD")).toBe(EMPTY_TREE_SHA);
+    expect(await changedFilesBetween(repo, EMPTY_TREE_SHA)).toEqual([
+      "apps/web/main.tf",
+      "infra/network/roots/vpc/main.tf",
+      "shared/modules/base/main.tf",
+    ]);
+  });
+
+  test("is git's own empty tree", () => {
+    expect(git("hash-object", "-t", "tree", "/dev/null")).toBe(EMPTY_TREE_SHA);
   });
 });

@@ -114,7 +114,7 @@ On GitLab, put the `node_modules/.bin` directory on the path with `export PATH="
 The workflow runs on `pull_request` and on `push` to the target branch.
 
 - The `plan` job measures from `github.event.pull_request.base.sha`. It may comment and set statuses, and it cannot push, since it runs the pull request's code.
-- The `apply` job measures from `github.event.before`, the commit the push replaced. That works for merge commits, squash merges and rebase merges. It may push, to record a pending approval on `chant/lifecycle`. One apply runs at a time per environment, through `concurrency`.
+- The `apply` job measures from `github.event.before`, the commit the push replaced. That works for merge commits, squash merges and rebase merges. On a branch's first push GitHub sets it to forty zeros, so the job measures from the merge base of the target branch and the pushed commit, or from the pushed commit's parent when that merge base is the commit itself. A root commit is measured from the empty tree. A first push that changes a member and that no pull request merged is refused as `no-pull-request`, as any direct push is. It may push, to record a pending approval on `chant/lifecycle`. One apply runs at a time per environment, through `concurrency`.
 
 Both use the job's own `github.token`. On a pull request from a fork that token is read-only, so the note and the status are not posted. The run says so and its outcome stands.
 
@@ -124,7 +124,7 @@ The workflow is the GitHub one with the Forgejo dialect applied: the runner labe
 
 ### GitLab
 
-The pipeline runs `plan` in each merge request pipeline, measured from `CI_MERGE_REQUEST_DIFF_BASE_SHA`. It runs `apply` on each push to the target branch, measured from `CI_COMMIT_BEFORE_SHA`, one at a time per environment through `resource_group`. `GIT_DEPTH` is `0`.
+The pipeline runs `plan` in each merge request pipeline, measured from `CI_MERGE_REQUEST_DIFF_BASE_SHA`. It runs `apply` on each push to the target branch, measured from `CI_COMMIT_BEFORE_SHA`, which a first push settles as on GitHub, one at a time per environment through `resource_group`. `GIT_DEPTH` is `0`.
 
 A CI job token cannot write merge request notes. Create a project access token with the `api` scope and set it as a masked CI/CD variable named `CHANT_FORGE_TOKEN`.
 
