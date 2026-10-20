@@ -454,6 +454,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     set,
     approval,
     status,
+    ...(ctx.args.waveGate ? { waveGate: ctx.args.waveGate } : {}),
   });
   await finish(ctx, p, report, upload);
   // The plan stage settles on its planning: an approval still to come is what it reports, not a stop.

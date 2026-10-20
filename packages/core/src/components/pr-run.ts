@@ -572,7 +572,8 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.resumed ? { resumed: { applied: [...input.resumed].sort() } } : {}),
     ...(input.set.deployedOutputs ? { deployedOutputs: input.set.deployedOutputs } : {}),
     approval: input.approval,
-    ...(input.waveGate ? { waveGate: input.waveGate, waves: [...(input.waves ?? [])].sort((a, b) => a.wave - b.wave) } : {}),
+    ...(input.waveGate ? { waveGate: input.waveGate } : {}),
+    ...(input.waveGate && input.waves?.length ? { waves: [...input.waves].sort((a, b) => a.wave - b.wave) } : {}),
     selection: {
       changed: input.plan.order.filter((c) => changed.has(c)),
       dependents: input.plan.order.filter((c) => !changed.has(c)),

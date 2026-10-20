@@ -202,7 +202,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   return [
     {
       jobName: "plan",
-      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common].join(" "),
+      // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : [])].join(" "),
       env: github
         ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
         : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv },

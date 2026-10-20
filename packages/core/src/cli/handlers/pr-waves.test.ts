@@ -318,6 +318,18 @@ describe("pr-apply --wave-gate: wave 2's plan differs from the pull request's", 
   });
 });
 
+describe("pr-plan --wave-gate", () => {
+  test("the plan's report names the wave gate and its note says later waves may stop at their own gate", async () => {
+    expect(await runComponentsPrPlan(ctx({ pr: 12, waveGate: "release" }))).toBe(0);
+    const plan = JSON.parse(await readFile(join(dir, "pr-plan.json"), "utf8")) as PrReport;
+    expect(plan.waveGate).toBe("release");
+    expect(plan.waves).toBeUndefined();
+    expect(await readFile(join(dir, "pr-note.md"), "utf8")).toContain("stops at its own gate, `release-wave-<k>`, for approval.");
+    expect(await runComponentsPrPlan(ctx({ pr: 12 }))).toBe(0);
+    expect(await readFile(join(dir, "pr-note.md"), "utf8")).not.toContain("planned again");
+  });
+});
+
 describe("pr-apply --wave-gate refuses", () => {
   test("wave 1 without the pull request's approval: not-approved, exit 3, nothing applied", async () => {
     expect(await runComponentsPrPlan(ctx({ pr: 12 }))).toBe(0);

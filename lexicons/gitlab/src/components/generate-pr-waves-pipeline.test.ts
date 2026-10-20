@@ -67,7 +67,8 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
       // Every wave shares the commit's record, so wave k pulls what wave k-1 pushed.
       expect(job.cache).toEqual({ key: "chant-apply-prod-$CI_COMMIT_SHA", paths: [".chant/pr-resume/pr-apply.json"], when: "always" });
     }
-    expect((doc.plan as Job).script.at(-1)).not.toContain("--wave");
+    expect((doc.plan as Job).script.at(-1)).toContain("--forge gitlab --wave-gate release");
+    expect((doc.plan as Job).script.at(-1)).not.toContain("--wave ");
   });
 
   test("inside a workspace member the wave jobs carry the member's name", () => {

@@ -200,7 +200,7 @@ describe("the job as an Op (#4094)", () => {
     expect(() => parseArgs(["ci", "run", "plan", "--commit"])).toThrow(/--commit needs/);
   });
 
-  test("--wave-gate (#4003): the apply job runs pr-apply --wave-gate, the waves in order with no --wave, and the plan job is unchanged", () => {
+  test("--wave-gate (#4003): the apply job runs pr-apply --wave-gate, the waves in order with no --wave, and the plan passes the gate for its note", () => {
     for (const path of ["run", "serve"]) {
       const args = parseArgs(["ci", path, ...(path === "run" ? ["apply"] : []), "--env", "prod", "--gate", "infra", "--wave-gate", "release"]);
       expect(ciLoopOptions(args)).toEqual({ gate: "infra", waveGate: "release" });
@@ -208,7 +208,8 @@ describe("the job as an Op (#4094)", () => {
     const [plan, apply] = prLoopJobs("forgejo", "prod", ciLoopOptions(parseArgs(["ci", "run", "apply", "--env", "prod", "--wave-gate", "release"])));
     expect(apply!.command).toContain("--require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json");
     expect(apply!.command).not.toContain("--wave ");
-    expect(plan!.command).not.toContain("--wave");
+    expect(plan!.command).toContain("--wave-gate release");
+    expect(plan!.command).not.toContain("--wave ");
     const op = ciJobOp({ job: apply!, env: "prod", cwd: "/w", jobEnv: {}, setup: [], build: [] });
     expect(op.phases.map((p) => p.name)).toEqual(["apply"]);
   });

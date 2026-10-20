@@ -449,6 +449,10 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   if (report.status !== "nothing") {
     out.push("", `Plan digest: ${code(report.digest)}`, "", ...approvalLines(report, options.approver ?? "<you>"));
   }
+  // #4003: with a gate per wave, a later wave's plan on merge may differ from this one.
+  if (report.stage === "plan" && report.status === "planned" && report.waveGate) {
+    out.push("", `On merge each wave after the first is planned again once the waves before it apply, and a wave whose plan moved stops at its own gate, ${code(`${report.waveGate}-wave-<k>`)}, for approval.`);
+  }
   const head = out.join("\n") + "\n";
   if (report.status === "nothing" || report.changeSet.members.length === 0) return head;
   const room = limit - [...head].length - 1;

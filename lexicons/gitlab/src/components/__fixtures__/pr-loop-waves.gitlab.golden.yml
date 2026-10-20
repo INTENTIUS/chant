@@ -24,7 +24,7 @@ plan:
     PR_NUMBER: '$CI_MERGE_REQUEST_IID'
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
-    - chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab
+    - chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab --wave-gate release
   artifacts:
     when: always
     paths:

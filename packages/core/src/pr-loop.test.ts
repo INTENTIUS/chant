@@ -267,6 +267,16 @@ describe("a gate per wave on merge (#4003)", () => {
     golden("pr-apply-wave-waiting.note.golden.md", note);
   });
 
+  test("with --wave-gate the plan's note says later waves are planned again and may stop at their own gate; without it, nothing", () => {
+    const sentence = "On merge each wave after the first is planned again once the waves before it apply, and a wave whose plan moved stops at its own gate, `release-wave-<k>`, for approval.";
+    const planned = renderPrNote({ ...planReport, waveGate: "release" });
+    expect(planned).toContain(sentence);
+    expect(renderPrNote({ ...planReport, waveGate: "release", approval: { status: "approved", approvedBy: ["github:alice"] } })).toContain(sentence);
+    expect(renderPrNote(planReport)).not.toContain("planned again");
+    expect(renderPrNote(waveApplied)).not.toContain("planned again");
+    expectValid({ ...planReport, waveGate: "release" });
+  });
+
   test("the status: a wave applied succeeds, a wave waiting on its approval is pending, a moved approval fails", () => {
     expect(prStatusDescription(waveApplied)).toBe("applied wave 1 of 2 under the pull request's approval");
     expect(prStatusState(waveApplied)).toBe("success");

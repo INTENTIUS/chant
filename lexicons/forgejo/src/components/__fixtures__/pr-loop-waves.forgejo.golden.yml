@@ -26,7 +26,7 @@ jobs:
           BASE_SHA: '${{ github.event.pull_request.base.sha }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge forgejo
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge forgejo --wave-gate release
       - name: Keep the plan report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v3

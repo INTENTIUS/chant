@@ -68,7 +68,9 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
     ]);
     expect(doc.jobs["apply-wave-2"]!.needs).toEqual(["apply-wave-1"]);
     const plan = doc.jobs.plan!.steps.find((s) => s.run?.includes("pr-plan"))!;
-    expect(plan.run).not.toContain("--wave");
+    // The plan passes the wave gate for its note (#4003), and runs no wave.
+    expect(plan.run).toContain("--forge github --wave-gate release");
+    expect(plan.run).not.toContain("--wave ");
     for (const k of [1, 2, 3]) {
       const job = doc.jobs[`apply-wave-${k}`]!;
       expect(job.if).toBe("github.event_name == 'push'");
