@@ -56,6 +56,12 @@
  * recorded under `pr-<n>-<member>`, and the note and the statuses carry the
  * member's name, so each member's loop on one pull request stands apart.
  * The name must be the member that owns the current directory.
+ *
+ * `--no-status` (#4161) posts neither the stage's status nor its note: the
+ * report and the note are written under `--output` only. `chant ci run
+ * --local` passes it. pr-plan then builds no forge client, since posting is
+ * all it uses one for; pr-apply still reads the pull request and its reviews
+ * through `--forge`.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -177,7 +183,7 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
   }
 
   let forge: PrForge | undefined;
-  if (args.forge) {
+  if (args.forge && !(stage === "plan" && args.noStatus)) {
     try {
       forge = forgeFromEnv(args.forge as ForgeKind);
     } catch (err) {
@@ -356,7 +362,7 @@ function printMembers(report: PrReport): void {
 async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload?: PrReportUpload): Promise<void> {
   const note = noteFor(report, p.forge);
   writeOutputs(ctx, report, note, upload);
-  await publish(p.forge, report, note);
+  if (!ctx.args.noStatus) await publish(p.forge, report, note);
   if (ctx.args.json) console.log(JSON.stringify(report, null, 2));
 }
 

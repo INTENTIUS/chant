@@ -672,6 +672,8 @@ export async function readOpRunSource(cwd: string, top: string, base: string, si
       const { records } = await readRunLedger(env, op, { cwd });
       for (const record of records) {
         if (!record.gitSha) continue;
+        // #4161: a job `ci run --local` ran stays on the machine that ran it, and is never CI's verdict.
+        if (record.runOrigin?.forge === "local") continue;
         const v = verifyOpRunStatement(record, policy.runners, policy.roles);
         const counts = v.status === "signed" || (v.status === "unsigned" && (before === null || before.has(record.gitSha)));
         if (counts) byCommit.set(record.gitSha, [...(byCommit.get(record.gitSha) ?? []), opRunCheckRun(record, v.status === "signed" ? v.signer : null)]);

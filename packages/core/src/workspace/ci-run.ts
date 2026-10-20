@@ -56,6 +56,18 @@
  * job's whole environment less `CHANT_RUNNER_KEY`, since the forge job is
  * already the boundary, and the record's `runOrigin` names the forge's run,
  * job and attempt (`resolveCiJob`).
+ *
+ * Local (`--local`, #4161) runs the job the same way on this machine and
+ * leaves nothing outside it. It implies `--no-push` and `--no-status`, and
+ * writes nothing under a report URL, given or declared: the command gets no
+ * `--report-url`, and gets `--no-status`, so pr-plan and pr-apply post no
+ * status or note either. The record is still written to the local
+ * `chant/lifecycle`, where a reader on this machine finds it beside CI's for
+ * the same commit. It says `runOrigin: { forge: "local" }` and its events say
+ * `runtime: "local"`. `ci tick --source runs` and `ci list` never count it.
+ * A pr-apply still pushes its own release records and gate facts, as the
+ * command always does, since a local apply changes the same infrastructure
+ * a CI one does.
  */
 
 import { execFileSync } from "node:child_process";
@@ -96,6 +108,9 @@ export const CI_JOB_OPS: Record<CiJobName, string> = { plan: "pr-plan", apply: "
 
 /** Where a job the chant runner ran says it ran (#4094). */
 export const CHANT_RUNNER_ORIGIN: RunOrigin = { forge: "chant" };
+
+/** Where a job `chant ci run --local` ran says it ran (#4161): this machine, outside CI. */
+export const CHANT_LOCAL_ORIGIN: RunOrigin = { forge: "local" };
 
 /** The runner's variables every job gets, when the runner has them. */
 export const CI_RUN_BASE_ENV = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ"] as const;
@@ -450,6 +465,13 @@ export interface CiRunRequest {
    */
   inPlace?: boolean;
   /**
+   * `--local` (#4161): run on this machine and write nothing beyond it. It
+   * implies `push: false` and no status (`status` is ignored), writes
+   * nothing under `loop.reportUrl`, and the record and events say
+   * `runOrigin: { forge: "local" }` and `runtime: "local"`.
+   */
+  local?: boolean;
+  /**
    * `--wave <k>` (#4003, #4156): the one wave a generated apply job runs, as
    * `pr-apply --wave <k>`. Needs `--wave-gate`.
    */
@@ -478,6 +500,8 @@ export interface CiRunResult {
   exitCode?: number;
   /** The checkout the job ran in, removed by now. */
   checkout: string;
+  /** The job ran with `local` (#4161): its record stays on this machine. */
+  local?: true;
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -603,13 +627,15 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   if (!top) throw new CiRunError("a job runs in a fresh checkout of a commit, and this directory is not in a git repository");
   const commit = resolveJobCommit(top, req.commit ?? "HEAD");
   if (req.inPlace && commit !== resolveJobCommit(top, "HEAD")) throw new CiRunError(`--in-place runs the checkout's HEAD, and --commit names ${commit.slice(0, 12)}`);
+  if (req.local && req.inPlace) throw new CiRunError("--in-place runs a forge job in the forge's checkout, and --local runs one on this machine; pass one of them");
   const place = ciJobPlace(cwd, top);
-  const jobs = prLoopJobs(req.forge, req.env, req.loop ?? {}, place.member);
+  const jobs = prLoopJobs(req.forge, req.env, req.local ? localLoop(req.loop) : (req.loop ?? {}), place.member);
   const found = jobs.find((j) => j.jobName === req.job);
   if (!found) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
   if (req.wave !== undefined && (req.job !== "apply" || !req.loop?.waveGate)) throw new CiRunError("--wave names the one wave an apply runs, and takes --wave-gate: ci run apply --wave-gate <gate> --wave <k>");
-  // A generated wave job's command, as prLoopWaveJobs writes it.
-  const job = req.wave !== undefined ? { ...found, command: `${found.command} --wave ${req.wave}`, wave: req.wave } : found;
+  // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
+  const command = `${found.command}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${req.local ? " --no-status" : ""}`;
+  const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
   const own = ciJobEnv(job, {
     forge: req.forge,
     env: req.env,
@@ -633,6 +659,12 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   }
 }
 
+/** The generator's options for a `--local` job (#4161): the same, with no report URL. */
+function localLoop(loop: PrLoopPipelineOptions | undefined): PrLoopPipelineOptions {
+  const { reportUrl: _dropped, ...rest } = loop ?? {};
+  return rest;
+}
+
 /** The variables of `env` whose value is long enough to be a credential, 8 characters or more. */
 function longValues(env: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(env).filter(([, value]) => value.length >= 8));
@@ -654,7 +686,8 @@ function definedEnv(env: Record<string, string | undefined>): Record<string, str
  * for signed runs, a note for `--verbose` otherwise.
  */
 function ciRunSigner(req: CiRunRequest, at: { cwd: string; top: string; commit: string }): { signer?: ReturnType<typeof ciTagSigner>; warnings: string[]; notes: string[] } {
-  const required = signedRunsRequired(at.cwd);
+  // #4161: a local run never counts, signed or not, so nothing about its signature warns.
+  const required = req.local ? null : signedRunsRequired(at.cwd);
   const say = (text: string) => (required ? { warnings: [`${text}, and ci.green.signedSince is ${required}, so it will not count`], notes: [] } : { warnings: [], notes: [text] });
   if (req.runnerKey === undefined) return say("there is no runner key, so the run's record is unsigned");
   try {
@@ -681,13 +714,16 @@ async function runCiJob(
   at: { cwd: string; top: string; commit: string; place: { member?: string; dir: string }; job: PrLoopJob; jobEnv: Record<string, string>; redact?: Redact },
 ): Promise<CiRunResult> {
   const { cwd, top, commit, place, job, jobEnv, redact } = at;
+  const local = req.local === true;
+  const status = local ? undefined : req.status;
+  const reportUrl = local ? undefined : req.loop?.reportUrl;
 
   // The record is signed against .chant/trust.json at the commit the job runs, so a --key that commit does not list is refused before anything runs.
   const signing = ciRunSigner(req, { cwd, top, commit });
   const signer = signing.signer;
   const early = signing.warnings;
   const notes = signing.notes;
-  const origin: RunOrigin = req.inPlace ? (resolveCiJob(req.hostEnv ?? process.env)?.runOrigin ?? CHANT_RUNNER_ORIGIN) : CHANT_RUNNER_ORIGIN;
+  const origin: RunOrigin = local ? CHANT_LOCAL_ORIGIN : req.inPlace ? (resolveCiJob(req.hostEnv ?? process.env)?.runOrigin ?? CHANT_RUNNER_ORIGIN) : CHANT_RUNNER_ORIGIN;
   // In place, the job writes its record on the checkout's chant/lifecycle, which a forge checkout may not have fetched.
   if (req.inPlace && req.push !== false) await fetchLifecycleStatus({ cwd: top }).catch(() => undefined);
 
@@ -711,13 +747,13 @@ async function runCiJob(
       copyFileSync(resume.host, resume.job);
     }
     const statusContext = ciStatusContext(req.job, req.loop?.gate);
-    const statusUrl = req.status
-      ? ciStatusUrl({ ...(req.status.urlTemplate ? { urlTemplate: req.status.urlTemplate } : {}), ...(req.loop?.reportUrl ? { reportUrl: req.loop.reportUrl } : {}), ...(req.pr !== undefined ? { pr: req.pr } : {}), commit, ...(place.member ? { member: place.member } : {}) })
+    const statusUrl = status
+      ? ciStatusUrl({ ...(status.urlTemplate ? { urlTemplate: status.urlTemplate } : {}), ...(reportUrl ? { reportUrl } : {}), ...(req.pr !== undefined ? { pr: req.pr } : {}), commit, ...(place.member ? { member: place.member } : {}) })
       : undefined;
     const postStatus = async (state: CommitStatus["state"], description: string): Promise<void> => {
-      if (!req.status) return;
+      if (!status) return;
       try {
-        await req.status.client.setCommitStatus(commit, { context: statusContext, state, description: cut(redact ? redact(description) : description), ...(statusUrl ? { targetUrl: statusUrl } : {}) });
+        await status.client.setCommitStatus(commit, { context: statusContext, state, description: cut(redact ? redact(description) : description), ...(statusUrl ? { targetUrl: statusUrl } : {}) });
       } catch (err) {
         warnings.push(`could not set the ${statusContext} status: ${message(err)}`);
       }
@@ -733,7 +769,7 @@ async function runCiJob(
         cwd: jobDir,
         commit,
         ledger: { cwd: jobDir },
-        runner: { kind: "pipeline", runtime: "ci", runOrigin: origin },
+        runner: { kind: "pipeline", runtime: local ? "local" : "ci", runOrigin: origin },
         describeFailure: (records) => ciJobFailure({ job: req.job, op, records, reportDir: join(jobDir, PR_LOOP_REPORT_DIR) }),
         ...(req.runEvents ? { runEvents: { write: req.runEvents } } : {}),
         ...(req.stepOutput ? { stepOutput: req.stepOutput } : {}),
@@ -777,13 +813,15 @@ async function runCiJob(
         if (redact) redactTree(report, redact);
       }
     }
-    if (req.loop?.reportUrl) {
-      await recordInIndex({ url: req.loop.reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, runOrigin: origin, signer: result.record.statement && signer ? signer.principal : null, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
+    if (reportUrl) {
+      await recordInIndex({ url: reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, runOrigin: origin, signer: result.record.statement && signer ? signer.principal : null, reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
     }
     // In place the forge job's outcome is the command's, so a record that could not be written is a warning there.
     if (ledgerError && req.inPlace) warnings.push(ledgerError);
     else if (ledgerError) throw new CiRunError(ledgerError);
-    const pushed: { pushed: boolean; pushWarning?: string } = req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
+    const pushed: { pushed: boolean; pushWarning?: string } = local
+      ? { pushed: false }
+      : req.push === false ? { pushed: false, pushWarning: "chant/lifecycle was not pushed" } : await pushLifecycleReport({ cwd: top });
     const failed = result.records.find((r) => r.status === "fail");
     const exitCode = failed?.phase === req.job ? exitCodeOf(failed.error) : undefined;
     return {
@@ -799,6 +837,7 @@ async function runCiJob(
       warnings,
       notes,
       checkout: checkout.dir,
+      ...(local ? { local: true as const } : {}),
     };
   } finally {
     checkout.remove();
@@ -834,7 +873,8 @@ export function formatCiRun(r: CiRunResult): string {
   else if (r.failure) lines.push(`  ${r.failure.phase}: ${r.failure.error}`);
   lines.push(`  record: ${r.record.env}/runs__${r.op}.jsonl on chant/lifecycle, ${r.signer ? `signed by ${r.signer}` : "unsigned"}`);
   if (r.report) lines.push(`  report: ${r.report}`);
-  if (!r.pushed) lines.push(`  ${r.pushWarning ?? "chant/lifecycle was not pushed"}`);
+  if (r.local) lines.push("  local run: the record stays on this machine, with no push, commit status or report upload");
+  else if (!r.pushed) lines.push(`  ${r.pushWarning ?? "chant/lifecycle was not pushed"}`);
   return lines.join("\n");
 }
 
@@ -864,7 +904,7 @@ const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--no-require-review] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place] [--no-push] [--verbose] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -905,7 +945,8 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     const runnerKey = fromFlag ? readFileSync(resolve(args.key!), "utf-8") : process.env[RUNNER_KEY_ENV] || hostKey?.pem;
     const hostEnv = process.env;
     // #4156: in place the forge shows the job, so ci run sets no status of its own.
-    const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus || args.ciInPlace, statusUrl: args.statusUrl });
+    // #4161: a local run sets no status, so it builds no client and warns about none.
+    const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus || args.ciInPlace || args.local, statusUrl: args.statusUrl });
     if (warning) console.error(formatWarning({ message: warning }));
     const secrets = ciSecretsOf(args.ciSecrets);
     const result = await ciRun({
@@ -919,6 +960,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       ...(args.commit ? { commit: args.commit } : {}),
       loop: ciLoopOptions(args),
       ...(args.ciInPlace ? { inPlace: true } : {}),
+      ...(args.local ? { local: true } : {}),
       ...(args.noPush ? { push: false } : {}),
       ...(args.wave !== undefined ? { wave: args.wave } : {}),
       ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),

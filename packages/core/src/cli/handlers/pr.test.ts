@@ -445,6 +445,17 @@ describe("--require-review: whoever wrote the change never counts (#4000)", () =
         expect(await runComponentsPrApply(ctx({ pr: 12, forge: kind, requireReview: true, eventsJson: false }))).toBe(0);
         expect(await applyReport()).toMatchObject({ status: "applied" });
       });
+
+      test("--no-status (#4161): pr-plan asks the forge nothing, and pr-apply only reads the pull request", async () => {
+        const asked = serve(kind, "erin");
+        expect(await runComponentsPrPlan(ctx({ pr: 12, forge: kind, noStatus: true, eventsJson: false }))).toBe(0);
+        expect(asked).toEqual([]);
+        await approveAs(kind, "erin");
+        expect(await runComponentsPrApply(ctx({ pr: 12, forge: kind, requireReview: true, noStatus: true, eventsJson: false }))).toBe(0);
+        expect(await applyReport()).toMatchObject({ status: "applied" });
+        expect(asked.length).toBeGreaterThan(0);
+        expect(asked.filter((a) => !a.startsWith("GET "))).toEqual([]);
+      });
     });
   }
 });

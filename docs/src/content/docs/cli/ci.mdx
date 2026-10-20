@@ -16,7 +16,7 @@ chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--no-require-review]
                   [--no-status] [--status-url <url template>]
                   [--chant <command>] [--pass-env <NAME>]... [--secrets <file>]
-                  [--key <runner key.pem>] [-o <dir>] [--in-place] [--no-push] [--verbose]
+                  [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose]
 chant ci runs --report-url <url> [--json]
 chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [ci run's job flags]
@@ -212,6 +212,16 @@ A failed job's record says why in `failure`, as does its `run-settle` event. `fa
 chant ci run plan --env prod --forge forgejo --base "$(git merge-base origin/main HEAD)" --pr 42 --key runner.pem
 chant ci run apply --env prod --forge forgejo --base "$(git rev-parse HEAD^)" --key runner.pem
 chant ci tick --source runs --key runner.pem
+```
+
+### On this machine
+
+`--local` ([#4161](https://github.com/INTENTIUS/chant/issues/4161)) runs the job the same way, in a fresh worktree of `--commit`, and writes nothing outside this machine. It implies `--no-push` and `--no-status`. It writes nothing under a report URL and nothing to the run index, even when `--report-url` is given. The job's command gets no `--report-url` and gets `--no-status`, so `pr-plan` and `pr-apply` post no status and no note on the pull request. `--events-json` still streams, and the exit code is the same as without `--local`. A runner key still signs the record when one is given, and with none the record is unsigned and nothing warns.
+
+The record is still written to `chant/lifecycle` in this repository, as `pr-plan` or `pr-apply`, so a reader on this machine can show it next to CI's run for the same commit. Its `runOrigin` is `{ "forge": "local" }` and its events say `runtime: "local"`, where a CI job's say `ci`. `ci tick --source runs` and `ci list` never count a record with `runOrigin.forge` `local`, signed or not. A `pr-apply` still pushes its own release records and gate facts, since a local apply changes the same infrastructure a CI one does. `--local` and `--in-place` are refused together.
+
+```bash
+chant ci run plan --local --events-json --env prod --forge github --base "$(git merge-base origin/main HEAD)" --pr 42
 ```
 
 ### Secrets
