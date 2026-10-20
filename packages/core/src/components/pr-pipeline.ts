@@ -52,6 +52,7 @@
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
 import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
+import { EMPTY_TREE_SHA } from "./changed-files";
 
 /** Where both jobs write their reports, kept as a CI artifact. */
 export const PR_LOOP_REPORT_DIR = ".chant/pr";
@@ -193,7 +194,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
         "--resume", PR_APPLY_RECORD,
       ].join(" "),
       env: github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv },
-      ...(github ? {} : { setup: [gitlabBaseFallback(options.branch)] }),
+      setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
       ...build,
     },
   ];
@@ -227,19 +228,38 @@ export function prApplyRecordKey(env: string, commit: string, member?: string): 
 }
 
 /**
- * GitLab sets `CI_COMMIT_BEFORE_SHA` to forty zeros on a branch's first push.
- * The line replaces it with the merge request's diff base when the pipeline
- * has one, and otherwise with the merge base of the target branch and the
- * pushed commit, or the pushed commit's parent when that is the commit itself.
+ * The shell that settles an unusable push base. `before` is empty or forty
+ * zeros on a branch's first push; then the base is `diffBase` when the forge
+ * gives one, else the merge base of `target` and `commit`, else `commit`'s
+ * parent when the merge base is `commit` itself, else, for a root commit, the
+ * empty tree.
  */
-export function gitlabBaseFallback(branch?: string): string {
-  const target = branch ? JSON.stringify(branch) : "$CI_DEFAULT_BRANCH";
+function pushBaseFallback(target: string, commit: string, diffBase?: string): string {
+  const fromBranch =
+    `git fetch origin ${target} && BASE_SHA="$(git merge-base FETCH_HEAD "${commit}")"; ` +
+    `if [ "$BASE_SHA" = "${commit}" ]; then BASE_SHA="$(git rev-parse --verify --quiet "${commit}^" || echo ${EMPTY_TREE_SHA})"; fi; `;
   return (
     'if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then ' +
-    'BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; ' +
-    'if [ -z "$BASE_SHA" ]; then ' +
-    `git fetch origin ${target} && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; ` +
-    'if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse "$CI_COMMIT_SHA^")"; fi; ' +
-    "fi; fi; export BASE_SHA"
+    (diffBase ? `BASE_SHA="\${${diffBase}:-}"; if [ -z "$BASE_SHA" ]; then ${fromBranch}fi; ` : fromBranch) +
+    "fi; export BASE_SHA"
   );
+}
+
+/**
+ * GitLab sets `CI_COMMIT_BEFORE_SHA` to forty zeros on a branch's first push.
+ * The line replaces it with the merge request's diff base when the pipeline
+ * has one, and otherwise as {@link pushBaseFallback} does.
+ */
+export function gitlabBaseFallback(branch?: string): string {
+  return pushBaseFallback(branch ? JSON.stringify(branch) : "$CI_DEFAULT_BRANCH", "$CI_COMMIT_SHA", "CI_MERGE_REQUEST_DIFF_BASE_SHA");
+}
+
+/**
+ * GitHub and Forgejo set `github.event.before` to forty zeros on a branch's
+ * first push (#4004). The line replaces it as {@link pushBaseFallback} does,
+ * with the target branch `main` unless the pipeline names another, the
+ * generators' default.
+ */
+export function githubBaseFallback(branch?: string): string {
+  return pushBaseFallback(JSON.stringify(branch ?? "main"), "$GITHUB_SHA");
 }

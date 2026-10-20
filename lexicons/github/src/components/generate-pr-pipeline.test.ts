@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
-import { prApplyGroup, prApplyRecordKey } from "@intentius/chant/components/pr-pipeline";
+import { githubBaseFallback, prApplyGroup, prApplyRecordKey } from "@intentius/chant/components/pr-pipeline";
 import { generateGithubPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -76,6 +76,20 @@ describe("the GitHub pull-request workflow", () => {
     for (const job of Object.values(doc.jobs)) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
   });
 
+  test("a first push's all-zero github.event.before is settled in the apply's own shell, before pr-apply reads it (#4004)", () => {
+    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
+    const lines = apply.run!.trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe(githubBaseFallback());
+    expect(lines[0]).toContain('[ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]');
+    expect(lines[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
+    expect(lines[1]).toMatch(/^chant components pr-apply --base "\$BASE_SHA"/);
+    const trunk = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { branch: "trunk" } }).yaml) as { jobs: Record<string, Job> };
+    expect(trunk.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!.run).toContain('git fetch origin "trunk"');
+    const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!;
+    expect(plan.run).not.toContain("0000000000000000000000000000000000000000");
+  });
+
   test("the apply resumes from a record the cache keeps for the pushed commit across a re-run (#3543)", () => {
     const steps = doc.jobs.apply.steps;
     const restore = steps.findIndex((s) => s.uses === "actions/cache/restore@v4");
@@ -120,7 +134,7 @@ describe("the GitHub pull-request workflow", () => {
   test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {
     const loud = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "s3://chant-reports/acme" } }).yaml) as { jobs: Record<string, Job> };
     for (const job of ["plan", "apply"]) {
-      const run = loud.jobs[job].steps.find((s) => s.run?.startsWith("chant components"))!;
+      const run = loud.jobs[job].steps.find((s) => s.run?.includes("chant components"))!;
       expect(run.run).toContain('--events-json --report-url "s3://chant-reports/acme"');
       expect(run.env?.CHANT_RUN_EVENTS_DIR).toBe(".chant/pr/run-events");
     }

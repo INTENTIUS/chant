@@ -212,7 +212,8 @@ function prLoopGithubDoc(
     ...runSteps(beforeScript),
     ...(job.build ? [{ name: "Build the templates", run: job.build[0] }, { name: "Lint the project", run: job.build[1] }] : []),
     ...(job.jobName === "apply" ? [restoreRecord] : []),
-    { name, env: job.env, run: job.command },
+    // The job's setup lines (#4004) run in the command's shell, so a value they settle reaches it.
+    { name, env: job.env, run: [...(job.setup ?? []), job.command].join("\n") },
     ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord] : []),
     {
