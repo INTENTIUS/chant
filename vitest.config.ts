@@ -190,7 +190,10 @@ export default defineConfig({
           exclude: [...configDefaults.exclude, "**/*.e2e.test.ts"],
           // The per-test budget (chant #2817). CHANT_UNIT_TEST_BUDGET_MS
           // overrides the 15s default; 0 turns it off, for a debugger.
-          setupFiles: ["test/unit-test-budget.setup.ts"],
+          // The AWS isolation setup (chant #3958) keeps the developer's
+          // ~/.aws and AWS_* credentials away from the read transport's
+          // credential chain.
+          setupFiles: ["test/unit-test-budget.setup.ts", "test/aws-credential-isolation.setup.ts"],
         },
       },
       {
