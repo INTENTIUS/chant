@@ -319,3 +319,72 @@ describe("kubectl-apply plan: a server-side dry-run diff (#3998)", () => {
     expect(applied).toEqual([{ manifest: "k8s.yaml", environment: "prod", stack: "web" }]);
   });
 });
+
+describe("kubectl-apply outputs: the fields a step names (#3999)", () => {
+  type DryRun = import("./kubectl-apply").KubectlApplyDryRun;
+  const svcRef = { apiVersion: "v1", kind: "Service", name: "web", namespace: "prod" };
+  const service = () => ({ apiVersion: "v1", kind: "Service", metadata: { name: "web", namespace: "prod" }, spec: { type: "LoadBalancer", ports: [{ port: 80 }] } });
+  const live = () => ({ ...service(), spec: { ...service().spec, clusterIP: "10.0.0.9" }, status: { loadBalancer: { ingress: [{ hostname: "web.example" }] } } });
+  const outputs = {
+    host: { object: "Service/prod/web", field: "status.loadBalancer.ingress.0.hostname" },
+    port: { object: "Service/prod/web", field: "spec.ports.0.port" },
+  };
+  const dryRun = (action: "create" | "update" | "no-op"): DryRun => ({ fieldManager: "chant:web", stack: "web", objects: [{ ref: svcRef, action, changes: [] }], deletes: [], retained: [] });
+  const ctx = { env: "prod", component: "web" };
+  const applied = async () => ({ applied: [], pruned: [], fieldManager: "chant:web" });
+
+  test("outputs reads each named field from the cluster, applying nothing; a step that names none has none", async () => {
+    const reads: unknown[] = [];
+    const cap = createKubectlApplyCapability(
+      async () => {
+        throw new Error("applied");
+      },
+      () => [service()],
+      undefined,
+      async (args) => {
+        reads.push(args);
+        return [live()];
+      },
+    );
+    expect(await cap.outputs!(ctx, { manifest: "k8s.yaml", stack: "web", outputs })).toEqual({ host: "web.example", port: 80 });
+    expect(reads).toEqual([{ refs: [svcRef], environment: "prod" }]);
+    expect(await cap.outputs!(ctx, { manifest: "k8s.yaml", stack: "web" })).toEqual({});
+  });
+
+  test("an object not made yet leaves its outputs out", async () => {
+    const cap = createKubectlApplyCapability(applied, () => [service()], undefined, async () => [undefined]);
+    expect(await cap.outputs!(ctx, { manifest: "k8s.yaml", stack: "web", outputs })).toEqual({});
+  });
+
+  test("run returns the named fields as outputs, read once the apply landed, which a dependent's stackOutput() reads", async () => {
+    const cap = createKubectlApplyCapability(applied, () => [service()], undefined, async () => [live()]);
+    const out = await cap.run(ctx, { manifest: "k8s.yaml", stack: "web", outputs });
+    expect(out.outputs).toEqual({ host: "web.example", port: 80 });
+  });
+
+  test("an output naming an object the manifest does not declare is an error that says what it declares", async () => {
+    const cap = createKubectlApplyCapability(applied, () => [service()], undefined, async () => [live()]);
+    await expect(cap.outputs!(ctx, { manifest: "k8s.yaml", stack: "web", outputs: { x: { object: "Service/prod/api", field: "spec" } } })).rejects.toThrow(
+      'kubectl-apply "web": output "x" names Service/prod/api, which k8s.yaml does not declare (it declares Service/prod/web)',
+    );
+  });
+
+  test("a plan knows a field the manifest sets; a field the server fills is known only after apply", async () => {
+    const cap = createKubectlApplyCapability(applied, () => [service()], async () => dryRun("create"), async () => {
+      throw new Error("a created object has nothing live to read");
+    });
+    const planned = await cap.plan!(ctx, { manifest: "k8s.yaml", stack: "web", outputs });
+    expect(planned.outputs).toEqual({ known: { port: 80 }, unknown: ["host"] });
+  });
+
+  test("a plan that leaves the object as it is knows every named field, as the cluster holds it", async () => {
+    const cap = createKubectlApplyCapability(applied, () => [service()], async () => dryRun("no-op"), async () => [live()]);
+    const planned = await cap.plan!(ctx, { manifest: "k8s.yaml", stack: "web", outputs });
+    expect(planned.outputs).toEqual({ known: { host: "web.example", port: 80 }, unknown: [] });
+  });
+
+  test("a step that names no outputs plans none", async () => {
+    const cap = createKubectlApplyCapability(applied, () => [service()], async () => dryRun("update"));
+    expect((await cap.plan!(ctx, { manifest: "k8s.yaml", stack: "web" })).outputs).toBeUndefined();
+  });
+});

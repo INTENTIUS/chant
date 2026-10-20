@@ -85,12 +85,46 @@ describe("cfn-deploy plan (#4084)", () => {
     expect(planSummaryHeadline(groupChangeSet(doc))).toContain("3 destroys or replacements");
   });
 
-  it("a change set with nothing to apply is a member with no entries and no holes", async () => {
-    const { counts, doc, mock } = await planOne({ noChanges: true });
+  it("a change set with nothing to apply is a member with no entries and no holes, whose outputs are the stack's own (#3999)", async () => {
+    const { counts, doc, mock, planned } = await planOne({ noChanges: true, outputs: { VpcId: "vpc-1" } });
     expect(counts).toEqual({ create: 0, update: 0, replace: 0, delete: 0 });
     expect(doc.members[0]).toMatchObject({ status: "planned", holes: [] });
     expect(groupChangeSet(doc, { unit: "member" }).groups[0].noChanges).toBe(true);
-    expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet"]);
+    expect(planned.outputs).toEqual({ known: { VpcId: "vpc-1" }, unknown: [] });
+    expect(methods(mock)).toEqual(["createChangeSet", "describeStack", "deleteChangeSet"]);
+  });
+
+  it("a change set with changes keeps the outputs of resources it keeps, and not of the ones it adds or replaces (#3999)", async () => {
+    writeFileSync(
+      template,
+      JSON.stringify({
+        Parameters: { Env: { Type: "String" } },
+        Resources: { Topic: { Type: "AWS::SNS::Topic" }, Queue: { Type: "AWS::SQS::Queue" }, Table: { Type: "AWS::DynamoDB::Table" } },
+        Outputs: {
+          TopicArn: { Value: { Ref: "Topic" } },
+          QueueUrl: { Value: { "Fn::GetAtt": ["Queue", "QueueUrl"] } },
+          TableArn: { Value: { "Fn::Sub": "${Table.Arn}" } },
+          Region: { Value: { "Fn::Sub": "${AWS::Region}" } },
+          EnvName: { Value: { Ref: "Env" } },
+          Imported: { Value: { "Fn::ImportValue": "x" } },
+        },
+      }),
+    );
+    const standing = { TopicArn: "arn:topic", QueueUrl: "https://q", TableArn: "arn:table", Region: "us-east-1", EnvName: "prod", Imported: "x" };
+    const { planned } = await planOne({
+      outputs: standing,
+      changes: [
+        { action: "Modify", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false, replacementMode: "False" },
+        { action: "Modify", logicalResourceId: "Queue", resourceType: "AWS::SQS::Queue", replacement: true, replacementMode: "True" },
+        { action: "Modify", logicalResourceId: "Table", resourceType: "AWS::DynamoDB::Table", replacement: false, replacementMode: "Conditional" },
+      ],
+    }, { onReplace: "allow" });
+    expect(planned.outputs).toEqual({ known: { Region: "us-east-1", TopicArn: "arn:topic" }, unknown: ["EnvName", "Imported", "QueueUrl", "TableArn"] });
+  });
+
+  it("a stack the change set creates says nothing of its outputs (#3999)", async () => {
+    const { planned } = await planOne({ missing: true, changes: [{ action: "Add", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false }] });
+    expect(planned.outputs).toBeUndefined();
   });
 
   it("a stack that does not exist yet counts every resource as a create, and the empty stack the CREATE change set made is deleted", async () => {
@@ -178,21 +212,51 @@ describe("pr-plan over cfn-deploy members (#4084)", () => {
 
   it("counts each member's changes from its change set, and the note and status line show them", async () => {
     const { set, report } = await planBoth({
+      network: { outputs: { TopicArn: "arn:topic" }, noChanges: true },
+      "cluster-a": { changes: [{ action: "Add", logicalResourceId: "clusterAQueue", resourceType: "AWS::SQS::Queue", replacement: false }] },
+    });
+    expect(set.members.map((m) => [m.member, m.counts])).toEqual([
+      ["cluster-a", { create: 1, update: 0, replace: 0, delete: 0 }],
+      ["network", { create: 0, update: 0, replace: 0, delete: 0 }],
+    ]);
+    // network changes nothing, so its plan knows its outputs: the ones it has (#3999).
+    expect(set.plannedOutputs).toEqual({ network: ["TopicArn"] });
+    const note = renderPrNote(report);
+    expect(note).toContain("| `network` | network | planned | 0 | 0 | 0 | 0 |");
+    expect(note).toContain("| `cluster-a` | cluster-a | planned | 1 | 0 | 0 | 0 |");
+    expect(prStatusDescription(report)).toMatch(/^2 members: 1 to change, 0 to destroy or replace;/);
+  });
+
+  it("a stack whose upstream changes in the same pull request reads its outputs as known only after apply (#3999)", async () => {
+    const { set, report, mock } = await planBoth({
       network: {
         outputs: { TopicArn: "arn:topic" },
         changes: [{ action: "Modify", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false, details: ["DisplayName"] }],
       },
       "cluster-a": { changes: [{ action: "Add", logicalResourceId: "clusterAQueue", resourceType: "AWS::SQS::Queue", replacement: false }] },
     });
-    expect(set.members.map((m) => [m.member, m.counts])).toEqual([
-      ["cluster-a", { create: 1, update: 0, replace: 0, delete: 0 }],
-      ["network", { create: 0, update: 1, replace: 0, delete: 0 }],
-    ]);
+    // network's template has no Outputs to say TopicArn stays, so it is not the TopicArn standing now.
+    expect(mock.calls.filter((c) => c.method === "describeStack")).toEqual([]);
+    expect(set.plannedOutputs).toEqual({ network: [] });
+    expect(set.members.find((m) => m.member === "cluster-a")?.unknownInputs).toEqual(["network.TopicArn"]);
     const note = renderPrNote(report);
-    expect(note).toContain("| `network` | network | planned | 0 | 1 | 0 | 0 |");
-    expect(note).toContain("| `cluster-a` | cluster-a | planned | 1 | 0 | 0 | 0 |");
-    expect(note).not.toContain("no changes");
-    expect(prStatusDescription(report)).toMatch(/^2 members: 2 to change, 0 to destroy or replace;/);
+    expect(note).toContain("| `cluster-a` | cluster-a | planned; inputs from network; re-checked on apply | ? | ? | ? | ? |");
+    expect(note).toContain("Known only after apply: `cluster-a` reads `network.TopicArn`.");
+  });
+
+  it("a stack whose upstream changes a resource in place reads the output that resource keeps, at its value now (#3999)", async () => {
+    writeFileSync(template, JSON.stringify({ Resources: { Topic: { Type: "AWS::SNS::Topic" } }, Outputs: { TopicArn: { Value: { Ref: "Topic" } } } }));
+    const { set, mock } = await planBoth({
+      network: {
+        outputs: { TopicArn: "arn:topic" },
+        changes: [{ action: "Modify", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false, details: ["DisplayName"] }],
+      },
+      "cluster-a": { outputs: {}, changes: [{ action: "Add", logicalResourceId: "clusterAQueue", resourceType: "AWS::SQS::Queue", replacement: false }] },
+    });
+    expect(set.plannedOutputs).toEqual({ network: ["TopicArn"] });
+    expect(set.members.find((m) => m.member === "cluster-a")?.unknownInputs).toBeUndefined();
+    const created = mock.calls.filter((c) => c.method === "createChangeSet").map((c) => c.args as { stackName: string; parameters?: Record<string, string> });
+    expect(created.find((c) => c.stackName === "cluster-a")?.parameters).toEqual({ TopicArn: "arn:topic" });
   });
 
   it("a member whose inputs come from a stack the run creates first says so, with no counts and no change set", async () => {

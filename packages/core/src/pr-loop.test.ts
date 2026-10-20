@@ -14,6 +14,8 @@ import {
   describePlanChanged,
   memberCounts,
   PR_REPORT_DEPLOYED_OUTPUTS_FLOOR,
+  PR_REPORT_PLANNED_OUTPUTS_FLOOR,
+  prRoundGate,
   PR_REPORT_SCHEMA_ID,
   PR_REPORT_WAVES_FLOOR,
   prApproveCommand,
@@ -114,6 +116,34 @@ const resumedReport: PrReport = {
 /** A plan whose members read `net` and `a` from the deployed estate (#4104). */
 const deployedReport: PrReport = { ...planReport, deployedOutputs: { a: ["id"], net: ["cidr"], dns: [] } };
 
+/** A plan where `app` reads `a.id`, which `a`'s plan knows only after apply, and `a.arn`, which it knows (#3999). */
+const unknownReport: PrReport = {
+  ...planReport,
+  deployedOutputs: { net: ["cidr"] },
+  plannedOutputs: { a: ["arn"] },
+  members: [planReport.members[0]!, { ...planReport.members[1]!, unknownInputs: ["a.id"] }],
+};
+
+const roundDoc = composeChangeSet([part("app", 3, [{ address: "terraform_data.app", action: "update" }])]);
+/** The apply of {@link unknownReport}: `a` applied, and `app`, planned again, waits on round 2's gate (#3999). */
+const waitingReport: PrReport = {
+  ...unknownReport,
+  stage: "apply",
+  status: "waiting",
+  approval: { status: "approved", approvedBy: ["github:alice"] },
+  rounds: [{ round: 2, gate: prRoundGate("pr-apply", 2), digest: roundDoc.digest, components: ["app"], approval: { status: "pending" }, status: "waiting", changeSet: roundDoc }],
+  members: [
+    { ...planReport.members[0]!, status: "applied" },
+    {
+      ...unknownReport.members[1]!,
+      status: "waiting",
+      round: 2,
+      planDigest: `jcs1-sha256:${hex(3)}`,
+      held: "its plan read a.id before that output applied as another value",
+    },
+  ],
+};
+
 describe("the pr-report schema", () => {
   test("is a valid schema and names this module's id", () => {
     expect(validSchema(schema)).toBe(true);
@@ -121,7 +151,7 @@ describe("the pr-report schema", () => {
   });
 
   test("every stage's report validates, and its change set validates against the change-set schema", () => {
-    for (const report of [planReport, refusedReport, appliedReport, resumedReport, deployedReport]) {
+    for (const report of [planReport, refusedReport, appliedReport, resumedReport, deployedReport, unknownReport, waitingReport]) {
       expectValid(report);
       expectValidChangeSet(report.changeSet);
       expect(report.changeSet.digest).toBe(report.digest);
@@ -169,6 +199,25 @@ describe("the note", () => {
     expect(renderPrNote(planReport)).not.toContain("deployed estate");
     expect(PR_REPORT_DEPLOYED_OUTPUTS_FLOOR).toBe("0.124.30");
     expect(schema.required).not.toContain("deployedOutputs");
+  });
+
+  test("a plan names the outputs read from upstream plans and the ones known only after apply (#3999)", () => {
+    const note = renderPrNote(unknownReport);
+    expect(note).toContain("Planned against the outputs this change's plans say its upstreams will have: `a` (`arn`).");
+    expect(note).toContain("Known only after apply: `app` reads `a.id`. This approval does not cover what those members do with them.");
+    expect(renderPrNote(planReport)).not.toContain("Known only after apply");
+    expect(PR_REPORT_PLANNED_OUTPUTS_FLOOR).toBe("0.124.32");
+    expect(schema.required).not.toContain("plannedOutputs");
+  });
+
+  test("a waiting apply names the round's digest and the command that approves it (#3999)", () => {
+    const note = renderPrNote(waitingReport, { approver: "github:<your-login>" });
+    expect(note).toContain("Applied 1 of 2 members; 1 wait on an approval of the plan made after their upstream applied.");
+    expect(note).toContain(`chant approve pr-12 pr-apply-round-2 --plan ${roundDoc.digest} --approver github:<your-login> --sign`);
+    expect(note).toContain("| `app` | app | waiting on its new plan |");
+    expect(prStatusState(waitingReport)).toBe("pending");
+    expect(prStatusDescription(waitingReport)).toBe("waiting: app planned again after an upstream applied, not approved yet");
+    expect(prRoundGate("pr-apply", 1)).toBe("pr-apply");
   });
 
   test("a small limit leaves the summary out rather than cutting the table", () => {

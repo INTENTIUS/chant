@@ -359,12 +359,44 @@ export function unresolvedWiringSources(
   input: Record<string, unknown>,
   componentOutputs: Record<string, Record<string, unknown>>,
 ): string[] {
-  const found = new Set<string>();
+  return [...new Set(unresolvedWiringReferences(input, componentOutputs).map((r) => r.source))].sort();
+}
+
+/** One cross-component reference a step input makes: whose output, and which. */
+export interface WiringReference {
+  /** The component or stack whose output it reads. */
+  source: string;
+  /** `<stack>.<name>` for `stackOutput()`, `<component>.publish.<field>` for an artifact. */
+  ref: string;
+}
+
+/**
+ * Every cross-component reference in `input` that has no value in
+ * `componentOutputs`, sorted by `ref` and each once (#3999). A pull
+ * request's plan names these when the output is known only after its
+ * upstream applies.
+ */
+export function unresolvedWiringReferences(
+  input: Record<string, unknown>,
+  componentOutputs: Record<string, Record<string, unknown>>,
+): WiringReference[] {
+  return wiringReferences(input).filter((r) => r.value(componentOutputs) === undefined).map(({ source, ref }) => ({ source, ref }));
+}
+
+/**
+ * Every cross-component reference in `input`, each once, sorted by `ref`,
+ * with the value it resolves to against a given outputs map.
+ */
+function wiringReferences(input: Record<string, unknown>): Array<WiringReference & { value: (outputs: Record<string, Record<string, unknown>>) => unknown }> {
+  const found = new Map<string, WiringReference & { value: (outputs: Record<string, Record<string, unknown>>) => unknown }>();
   const walk = (value: unknown): void => {
     if (typeof value === "string") {
       if (PRIOR_STEP_REF.test(value)) return;
       const ref = value.match(COMPONENT_ARTIFACT_REF);
-      if (ref && resolvePath(componentOutputs[ref[1]]?.publish, ref[2]) === undefined) found.add(ref[1]);
+      if (ref) {
+        const [, source, field] = ref;
+        found.set(`${source}.publish.${field}`, { source, ref: `${source}.publish.${field}`, value: (o) => resolvePath(o[source]?.publish, field) });
+      }
       return;
     }
     if (Array.isArray(value)) {
@@ -374,14 +406,29 @@ export function unresolvedWiringSources(
     if (value && typeof value === "object") {
       if ("stackOutput" in value) {
         const { stack, name } = (value as { stackOutput: { stack: string; name: string } }).stackOutput;
-        if (resolvePath(componentOutputs[stack], name) === undefined) found.add(stack);
+        found.set(`${stack}.${name}`, { source: stack, ref: `${stack}.${name}`, value: (o) => resolvePath(o[stack], name) });
         return;
       }
       Object.values(value as Record<string, unknown>).forEach(walk);
     }
   };
   walk(input);
-  return [...found].sort();
+  return [...found.values()].sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
+/**
+ * The cross-component references in `input` that resolve to another value
+ * against `now` than against `read`, sorted (#3999). A pull request's apply
+ * holds back a member whose plan read `read` when its upstream applied and
+ * left `now`.
+ */
+export function movedWiringReferences(
+  input: Record<string, unknown>,
+  read: Record<string, Record<string, unknown>>,
+  now: Record<string, Record<string, unknown>>,
+): WiringReference[] {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return wiringReferences(input).filter((r) => !same(r.value(read), r.value(now))).map(({ source, ref }) => ({ source, ref }));
 }
 
 // ── Step + phase execution ───────────────────────────────────────────────

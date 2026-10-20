@@ -8,26 +8,42 @@
  * everything before applying anything is what makes the two digests
  * comparable: each member is planned against the same state both times.
  *
- * ## Dependents read the outputs standing now
+ * ## What a dependent is planned against
  *
  * A member that reads another one's output through `stackOutput()` is
- * planned with the value that output has now, read through the capability's
- * `outputs` (`readComponentOutputs`). When the change moves that output, the
- * dependent's approved plan still carries the old value; the apply applies
- * it as approved and marks the member `inputsMoved`, and the next run plans
- * it against the new value. A change that must carry a moved output through
- * its dependents in one rollout is what gated waves are for (#3049): each
- * wave is planned after the one before it applied.
+ * planned with one of three values (#3999):
  *
- * A dependency the change did not select is read the same way (#4104), so
- * a change to one cluster plans it against the network it sits on. That is
- * why `components` is every component in the project and not the selection.
- * `--seed-outputs` wins over a read, and a dependency whose steps cannot say
- * leaves its dependents' references unresolved. The apply stage's plan reads
- * the same dependencies, so on the same estate it gets the digest the plan
- * stage showed, and it applies against the outputs its plans read
- * (`set.outputs`). A resume plans against the outputs the approved plans
- * read, from the record (`planOutputs`), and reads nothing those cover.
+ * - the upstream is in the change too: the value its plan says it will
+ *   expose (`CapabilityPlan.outputs`). The report lists these under
+ *   `plannedOutputs`.
+ * - the upstream is not in the change (#4104): the value it has now, read
+ *   through its capability's `outputs` (`readComponentOutputs`). The report
+ *   lists these under `deployedOutputs`. A change to one cluster is planned
+ *   against the network it sits on, which is why `components` is every
+ *   component in the project and not the selection.
+ * - the upstream is in the change and its plan cannot say, or says the value
+ *   is known only after apply: no value. The dependent's members list the
+ *   reference under `unknownInputs`, and the approval does not cover what
+ *   it will do with it.
+ *
+ * `--seed-outputs` wins over both. The apply stage's plan reads the same
+ * values, so on the same estate it gets the digest the plan stage showed.
+ * A resume plans against the outputs the approved plans read, from the
+ * record (`planOutputs`), and reads nothing those cover.
+ *
+ * ## Planning again once an upstream applied
+ *
+ * The apply runs each member's approved plan, except a member whose plan
+ * read an upstream output that is not the value standing when its turn
+ * comes (`movedWiringReferences`): the upstream applied as another value
+ * than its plan said, or the value was unknown. That member, and what is
+ * downstream of it, is held back. Once the rest settled, the held members
+ * are planned again against the outputs the apply left, and that set's
+ * digest is decided at its own gate, `<gate>-round-<n>` (`prRoundGate`), as
+ * a gated wave decides each wave (#3049). Approved, it applies, and a member
+ * that is held again goes to the next round. Not approved, the apply stops
+ * `waiting` with the new digest named, and the same apply with its
+ * `--resume` record carries on from there.
  *
  * ## Finishing an apply that failed partway
  *
@@ -56,24 +72,33 @@ import { composeChangeSet, verifyChangeSetDigest, type ChangeSetDocument, type C
 import { evaluateGate, type GateCheck, type GateLedgerPort } from "../op/gate";
 import {
   memberCounts,
+  PR_APPLY_GATE,
+  prRoundGate,
   PR_REPORT_CONTRACT,
   PR_REPORT_SCHEMA_ID,
   type PrApproval,
   type PrMember,
   type PrRefusal,
+  type PrRound,
   type PrReport,
   type PrStatus,
   type PrWave,
 } from "../pr-loop";
-import { deployContext, type DriverComponent, type DriverComponentResult } from "./driver";
+import {
+  deployContext,
+  movedWiringReferences,
+  unresolvedWiringReferences,
+  type DriverComponent,
+  type DriverComponentResult,
+} from "./driver";
 import { deployUnits } from "./deploy-units";
 import { runFanOut, type FanOutRunResult } from "./fan-out-run";
 import { remainingFanOut, type ComponentChangeSignal, type FanOutPlan } from "./fan-out";
 import type { PrApplyRecord } from "./fan-out-record";
-import type { CapabilityRegistry } from "./capability";
+import type { CapabilityRegistry, PlannedOutputs } from "./capability";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
-import { planWaveComponent, readDeployedOutputs } from "./wave-plan";
+import { capabilitySteps, planWaveComponent, readDeployedOutputs } from "./wave-plan";
 
 export interface PrPlanSetOptions {
   /** Every component in the project, not the selection: a planned member's dependency outside it is read too (#4104). */
@@ -111,6 +136,12 @@ export interface PrPlanSet {
    * nothing was read. The report's `deployedOutputs`.
    */
   deployedOutputs?: Record<string, string[]>;
+  /**
+   * Per dependency in the change that a member read (#3999), the names of
+   * the outputs its plan knows, sorted. Absent when there is none. The
+   * report's `plannedOutputs`.
+   */
+  plannedOutputs?: Record<string, string[]>;
   /** Whether any component failed to plan. */
   failed: boolean;
 }
@@ -125,36 +156,51 @@ function failedParts(component: DriverComponent, error: string): ChangeSetPart[]
 }
 
 /**
- * Plan every component in `plan.order`, a wave at a time, each against the
- * outputs its dependencies have now. Never throws for a component that fails
- * to plan: it becomes a failed member, and `failed` is set. Throws when a
- * planned member's dependency is not among `components`, which means the
- * caller passed the selection where the whole graph belongs.
+ * Plan every component in `plan.order`, a wave at a time, each against its
+ * dependencies' planned outputs when the change plans them too, and against
+ * the outputs they have now otherwise. Never throws for a component that
+ * fails to plan: it becomes a failed member, and `failed` is set. Throws
+ * when a planned member's dependency is not among `components`, which means
+ * the caller passed the selection where the whole graph belongs.
  */
 export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const byName = new Map(options.components.map((c) => [c.name, c]));
   const outputs: Record<string, Record<string, unknown>> = { ...(options.seededOutputs ?? {}) };
   const read = new Set(Object.keys(outputs));
+  const inChange = new Set(options.plan.order);
+  /** What each component of the change planned to expose, once its wave planned. */
+  const plannedBy = new Map<string, PlannedOutputs | undefined>();
   const deployed: Record<string, string[]> = {};
+  const planned: Record<string, string[]> = {};
   const parts: ChangeSetPart[] = [];
   const componentOf = new Map<string, string>();
+  const unknownOf = new Map<string, string[]>();
   const plans: Record<string, Record<string, unknown>> = {};
   let failed = false;
   const emit = options.onRunEvent;
   emit?.({ type: "phase-start", component: null, phase: PR_PLAN_PHASE });
 
   for (const wave of options.plan.waves) {
-    // The dependencies' outputs first, each read once. A dependency that
-    // cannot say leaves its references unresolved, which its dependent's
-    // plan reports if it needs them. A dependency outside the selection is
-    // read the same way (#4104).
+    // The dependencies' outputs first, each once. One the change plans is
+    // read from its plan, which an earlier wave made (#3999). Any other is
+    // read from the deployed estate (#4104). A dependency that cannot say
+    // leaves its references unresolved, which its dependent's plan reports
+    // if it needs them.
     const deps = [...new Set(wave.flatMap((name) => byName.get(name)?.dependsOn ?? []))].filter((dep) => !read.has(dep));
+    const fromEstate: string[] = [];
     for (const dep of deps) {
       read.add(dep);
       if (!byName.has(dep)) throw new Error(`planPrSet: ${dep}, a dependency of a planned member, is not among the components; pass every component in the project`);
+      if (!inChange.has(dep)) {
+        fromEstate.push(dep);
+        continue;
+      }
+      const known = plannedBy.get(dep)?.known ?? {};
+      outputs[dep] = { ...known };
+      planned[dep] = Object.keys(known).sort();
     }
-    Object.assign(deployed, await readDeployedOutputs(deps, byName, options.registry, (dep) => deployContext(options, dep), outputs));
-    const planned = await Promise.all(
+    Object.assign(deployed, await readDeployedOutputs(fromEstate, byName, options.registry, (dep) => deployContext(options, dep), outputs));
+    const results = await Promise.all(
       wave.map(async (name) => {
         const at = { component: name, phase: PR_PLAN_PHASE, step: "plan" };
         emit?.({ type: "step-start", ...at });
@@ -170,16 +216,20 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
         return p;
       }),
     );
-    for (const p of planned) {
+    for (const p of results) {
       const component = byName.get(p.component)!;
+      const unknown = unknownInputsOf(component, outputs, inChange);
+      if (unknown.length > 0) unknownOf.set(p.component, unknown);
       if ("error" in p) {
         failed = true;
+        plannedBy.set(p.component, undefined);
         for (const part of failedParts(component, p.error)) {
           parts.push(part);
           componentOf.set(part.member.member, p.component);
         }
         continue;
       }
+      plannedBy.set(p.component, p.outputs);
       plans[p.component] = p.plans;
       for (const part of p.parts) {
         parts.push(part);
@@ -190,16 +240,64 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
 
   emit?.({ type: "phase-settle", component: null, phase: PR_PLAN_PHASE, status: failed ? "failed" : "ok" });
   const doc = composeChangeSet(parts);
-  const members: PrMember[] = doc.members.map((m) => ({
-    member: m.member,
-    component: componentOf.get(m.member) ?? m.member,
-    planDigest: m.planDigest,
-    status: m.status === "failed" ? "plan-failed" : "planned",
-    counts: memberCounts(doc, m.member),
-    ...(m.error ? { error: m.error } : {}),
-  }));
-  const deployedOutputs = Object.fromEntries(Object.entries(deployed).sort(([a], [b]) => a.localeCompare(b)));
-  return { doc, members, plans, outputs, failed, ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}) };
+  const members: PrMember[] = doc.members.map((m) => {
+    const component = componentOf.get(m.member) ?? m.member;
+    const unknown = unknownOf.get(component);
+    return {
+      member: m.member,
+      component,
+      planDigest: m.planDigest,
+      status: m.status === "failed" ? "plan-failed" : "planned",
+      counts: memberCounts(doc, m.member),
+      ...(m.error ? { error: m.error } : {}),
+      ...(unknown ? { unknownInputs: unknown } : {}),
+    };
+  });
+  const sorted = (r: Record<string, string[]>) => Object.fromEntries(Object.entries(r).sort(([a], [b]) => a.localeCompare(b)));
+  const deployedOutputs = sorted(deployed);
+  const plannedOutputs = sorted(planned);
+  return {
+    doc,
+    members,
+    plans,
+    outputs,
+    failed,
+    ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}),
+    ...(Object.keys(plannedOutputs).length > 0 ? { plannedOutputs } : {}),
+  };
+}
+
+/**
+ * The references `component`'s steps make to an output of a component in
+ * the change that `outputs` holds no value for (#3999): ones its upstream's
+ * plan could not say, known only after that upstream applies. Sorted.
+ */
+function unknownInputsOf(component: DriverComponent, outputs: Record<string, Record<string, unknown>>, inChange: ReadonlySet<string>): string[] {
+  const refs = new Set<string>();
+  for (const step of capabilitySteps(component.deploy)) {
+    const { kind: _kind, ...rest } = step;
+    for (const r of unresolvedWiringReferences(rest, outputs)) if (inChange.has(r.source)) refs.add(r.ref);
+  }
+  return [...refs].sort();
+}
+
+/**
+ * Why `component` cannot apply the plan that read `read` now that `now`
+ * stands (#3999): each reference its steps make that resolves to another
+ * value, said once. `undefined` when every one resolves as it did.
+ */
+export function heldReason(
+  component: DriverComponent,
+  read: Record<string, Record<string, unknown>>,
+  now: Record<string, Record<string, unknown>>,
+): string | undefined {
+  const refs = new Set<string>();
+  for (const step of capabilitySteps(component.deploy)) {
+    const { kind: _kind, ...rest } = step;
+    for (const r of movedWiringReferences(rest, read, now)) refs.add(r.ref);
+  }
+  if (refs.size === 0) return undefined;
+  return `its plan read ${[...refs].sort().join(", ")} before ${refs.size === 1 ? "that output" : "those outputs"} applied as another value`;
 }
 
 /**
@@ -283,57 +381,149 @@ export interface PrApplyOptions {
   resumed?: { completed: string[]; outputs: Record<string, Record<string, unknown>> };
   /** Called as each component settles, so an attempt record survives a kill (`runFanOut`). */
   onComponentSettled?: (result: DriverComponentResult, outputs: Record<string, unknown> | undefined) => void;
+  /** The pull request's gate, which names each later round's gate ({@link prRoundGate}). Default `pr-apply`. */
+  gate?: string;
+  /**
+   * Decide the gate over the plans of a round after the first (#3999): the
+   * members held back because an upstream they read applied as another value
+   * than their plan read, planned again against the outputs the apply left.
+   * The gate is {@link prRoundGate}. Without it, held members are left
+   * `waiting` and nothing is planned again.
+   */
+  decideRound?: (round: { round: number; gate: string; set: PrPlanSet; plan: FanOutPlan }) => Promise<PrRoundDecision>;
 }
 
-const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+/** How a round's gate was decided: whether it applies, and where its approval stands. */
+export interface PrRoundDecision {
+  satisfied: boolean;
+  approval: PrApproval;
+  /** Why it does not apply, when an approval stands but does not count (`--require-review`). */
+  message?: string;
+}
+
+export interface PrApplyResult {
+  members: PrMember[];
+  /** `waiting`: some members wait on an approval of the plan a later round made. */
+  status: "applied" | "failed" | "waiting";
+  /** Every round's runs together: their results, components and outputs. */
+  run: FanOutRunResult;
+  /** Each round after the first, in order. Absent when nothing was held back. */
+  rounds?: PrRound[];
+}
+
+/** Two runs of one apply as one: `b` ran after `a`, against the outputs `a` left. */
+function joinRuns(a: FanOutRunResult, b: FanOutRunResult): FanOutRunResult {
+  const status: FanOutRunResult["status"] = a.status === "fail" || b.status === "fail" ? "fail" : a.status === "gated" || b.status === "gated" ? "gated" : "ok";
+  const gate = a.gate ?? b.gate;
+  return {
+    plan: a.plan,
+    status,
+    results: [...a.results, ...b.results],
+    completed: [...new Set([...a.completed, ...b.completed])].sort(),
+    failed: [...new Set([...a.failed, ...b.failed])].sort(),
+    blocked: [...a.blocked, ...b.blocked],
+    componentOutputs: b.componentOutputs,
+    ...(gate ? { gate } : {}),
+    ...(b.held ? { held: b.held } : {}),
+  };
+}
 
 /**
  * Apply the approved plans in dependency order. A failed component blocks
- * its dependents and nothing else (`runFanOut`).
+ * its dependents and nothing else (`runFanOut`). A member whose plan read an
+ * upstream output that is not the value standing when its turn comes is held
+ * back with what is downstream of it, planned again once the rest settled,
+ * and applied when `decideRound` approves that plan (#3999).
  */
-export async function applyPrSet(options: PrApplyOptions): Promise<{ members: PrMember[]; status: "applied" | "failed"; run: FanOutRunResult }> {
-  const before = options.set.outputs;
-  const run = await runFanOut(options.plan, options.components, options.registry, {
-    env: options.env,
-    ...(options.vars ? { vars: options.vars } : {}),
-    plans: options.set.plans,
-    componentOutputs: { ...before },
-    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
-    ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
-    ...(options.onComponentSettled ? { onComponentSettled: options.onComponentSettled } : {}),
-  });
-  const completed = new Set(run.completed);
+export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult> {
+  const byName = new Map(options.components.map((c) => [c.name, c]));
   const priorCompleted = new Set(options.resumed?.completed ?? []);
-  /**
-   * Whether a dependency's outputs moved from what the plans read: by this
-   * run's apply, or by the earlier attempt's when the record kept them.
-   */
-  const movedBy = (dep: string): boolean => {
-    if (completed.has(dep)) return !sameJson(before[dep], run.componentOutputs[dep]);
-    const earlier = options.resumed?.outputs;
-    return priorCompleted.has(dep) && earlier !== undefined && dep in earlier && !sameJson(before[dep], earlier[dep]);
+  const toApply = new Set([...options.set.members.map((m) => m.component), ...options.plan.order].filter((name) => !priorCompleted.has(name)));
+  // The outputs standing as the apply starts: what the plans read of
+  // components outside the change, and what an earlier attempt's components
+  // left (the values the plans read, where its record kept none). A planned
+  // value of a component still to apply stands nowhere until it applies.
+  const standing: Record<string, Record<string, unknown>> = {
+    ...Object.fromEntries(Object.entries(options.set.outputs).filter(([name]) => !toApply.has(name))),
+    ...(options.resumed?.outputs ?? {}),
   };
+  const runRound = (plan: FanOutPlan, plans: Record<string, Record<string, unknown>>, read: Record<string, Record<string, unknown>>, outputs: Record<string, Record<string, unknown>>) =>
+    runFanOut(plan, options.components, options.registry, {
+      env: options.env,
+      ...(options.vars ? { vars: options.vars } : {}),
+      plans,
+      componentOutputs: outputs,
+      hold: (name, now) => heldReason(byName.get(name)!, read, now),
+      ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+      ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
+      ...(options.onComponentSettled ? { onComponentSettled: options.onComponentSettled } : {}),
+    });
+
+  let run = await runRound(options.plan, options.set.plans, options.set.outputs, { ...standing });
+  const rounds: PrRound[] = [];
+  /** Per component, the round that applied it or holds it, and that round's set, after the first. */
+  const roundOf = new Map<string, { round: number; set: PrPlanSet }>();
+  let stopped: "waiting" | "plan-failed" | undefined;
+  while (run.held && run.held.length > 0 && run.status === "ok" && options.decideRound) {
+    const round = rounds.length + 2;
+    const gate = prRoundGate(options.gate ?? PR_APPLY_GATE, round);
+    const heldNames = new Set(run.held.map((h) => h.component));
+    const plan = remainingFanOut(options.plan, options.components, { completed: options.plan.order.filter((name) => !heldNames.has(name)) });
+    const set = await planPrSet({
+      components: options.components,
+      plan,
+      registry: options.registry,
+      env: options.env,
+      ...(options.vars ? { vars: options.vars } : {}),
+      seededOutputs: run.componentOutputs,
+    });
+    for (const name of plan.order) roundOf.set(name, { round, set });
+    const record = (status: PrRound["status"], approval: PrApproval, message?: string): void => {
+      rounds.push({ round, gate, digest: set.doc.digest, components: plan.order, approval, status, ...(message ? { message } : {}), changeSet: set.doc });
+    };
+    if (set.failed) {
+      record("plan-failed", { status: "pending" });
+      stopped = "plan-failed";
+      break;
+    }
+    const decision = await options.decideRound({ round, gate, set, plan });
+    if (!decision.satisfied) {
+      record("waiting", decision.approval, decision.message);
+      stopped = "waiting";
+      break;
+    }
+    const next = await runRound(plan, set.plans, set.outputs, run.componentOutputs);
+    record(next.status === "fail" ? "failed" : "applied", decision.approval);
+    run = joinRuns(run, next);
+  }
+
+  const completed = new Set(run.completed);
+  const held = new Map((run.held ?? []).map((h) => [h.component, h]));
   const blocked = new Set(run.blocked.map((b) => b.component));
   const errorOf = (component: string): string | undefined => {
-    const result = run.results.find((r) => r.component === component);
+    const result = [...run.results].reverse().find((r) => r.component === component);
     if (result?.status === "gated") return `stopped at its own gate ${result.gate?.gate ?? ""}`.trim();
     return result?.records.find((r) => r.status === "fail")?.error;
   };
-  const byName = new Map(options.components.map((c) => [c.name, c]));
   const members = options.set.members.map((m): PrMember => {
     if (priorCompleted.has(m.component)) return { ...m, status: "applied" };
-    if (completed.has(m.component)) {
-      const moved = (byName.get(m.component)?.dependsOn ?? [])
-        .filter(movedBy)
-        .sort();
-      return { ...m, status: "applied", ...(moved.length > 0 ? { inputsMoved: moved } : {}) };
-    }
-    if (blocked.has(m.component)) return { ...m, status: "blocked" };
+    const later = roundOf.get(m.component);
+    const fresh = later?.set.members.find((x) => x.member === m.member);
+    const asPlanned: PrMember = later && fresh ? { ...m, planDigest: fresh.planDigest, counts: fresh.counts, round: later.round } : m;
+    if (completed.has(m.component)) return { ...asPlanned, status: "applied" };
+    const h = held.get(m.component);
+    if (h) return { ...asPlanned, status: "waiting", held: h.heldBy ? `${h.heldBy} is held: ${h.reason}` : h.reason };
+    if (fresh?.status === "plan-failed") return { ...asPlanned, status: "plan-failed", ...(fresh.error ? { error: fresh.error } : {}) };
+    if (blocked.has(m.component)) return { ...asPlanned, status: "blocked" };
     const error = errorOf(m.component);
-    return { ...m, status: "failed", ...(error ? { error } : {}) };
+    return { ...asPlanned, status: "failed", ...(error ? { error } : {}) };
   });
-  return { members, status: run.status === "ok" ? "applied" : "failed", run };
+  const status: PrApplyResult["status"] =
+    run.status !== "ok" || stopped === "plan-failed" ? "failed" : held.size > 0 || stopped === "waiting" ? "waiting" : "applied";
+  return { members, status, run, ...(rounds.length > 0 ? { rounds } : {}) };
 }
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 const entryKey = (e: Pick<ChangeSetEntry, "member" | "address" | "deposed">): string => `${e.member}\u0000${e.address}\u0000${e.deposed ?? ""}`;
 
@@ -549,6 +739,8 @@ export interface PrReportInput {
   /** `--wave-gate` (#4003): the wave gate's base name, and each wave reached so far. */
   waveGate?: string;
   waves?: PrWave[];
+  /** The rounds the apply planned after an upstream applied (#3999). */
+  rounds?: PrRound[];
 }
 
 /** The report a stage writes. */
@@ -571,6 +763,8 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.message ? { message: input.message } : {}),
     ...(input.resumed ? { resumed: { applied: [...input.resumed].sort() } } : {}),
     ...(input.set.deployedOutputs ? { deployedOutputs: input.set.deployedOutputs } : {}),
+    ...(input.set.plannedOutputs ? { plannedOutputs: input.set.plannedOutputs } : {}),
+    ...(input.rounds && input.rounds.length > 0 ? { rounds: input.rounds } : {}),
     approval: input.approval,
     ...(input.waveGate ? { waveGate: input.waveGate } : {}),
     ...(input.waveGate && input.waves?.length ? { waves: [...input.waves].sort((a, b) => a.wave - b.wave) } : {}),

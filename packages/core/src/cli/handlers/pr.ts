@@ -107,6 +107,7 @@ import {
   type PrMember,
   type PrReport,
   type PrWave,
+  type PrRound,
 } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
@@ -299,6 +300,7 @@ function settleOf(status: PrReport["status"]): RunEventSettleStatus {
     case "applied":
       return "ok";
     case "refused":
+    case "waiting":
       return "gated";
     default:
       return "failed";
@@ -607,7 +609,8 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     }
   }
 
-  const review = await reviewCheck(args, p, pr)(approval.approvedBy ?? [], "The plan");
+  const reviewOf = reviewCheck(args, p, pr);
+  const review = await reviewOf(approval.approvedBy ?? [], "The plan");
   if (review && "error" in review) return fail(review.error);
   if (review) {
     emitReviewStop(events, review.message);
@@ -646,12 +649,38 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   };
   recordAttempt();
 
+  // #3999: a round planned after an upstream applied waits on a gate of its
+  // own, under the same identity.gates rule and the same review checks.
+  const roundLedger = gitGateLedgerPort();
+  const decideRound = async ({ round, gate, set: planned }: { round: number; gate: string; set: PrPlanSet }) => {
+    console.error(formatInfo(`round ${round}: ${planned.members.map((m) => m.component).filter((c, i, all) => all.indexOf(c) === i).join(", ")} planned again after an upstream applied, ${planned.doc.digest}`));
+    await storeChangeSetForGate(ctx, p, planned.doc);
+    const port = {
+      ...roundLedger,
+      ...(roundLedger.approvalRule ? { approvalRule: (g: string, at?: { base?: string }) => roundLedger.approvalRule!(g === gate ? p.gate : g, at) } : {}),
+    };
+    const check = await emitGateStep(events?.emit, { op, gate }, () =>
+      decidePrGate(port, { op, gate, digest: planned.doc.digest, description: `pull request #${pr}, round ${round}: planned again after an upstream applied` }),
+    );
+    const roundApproval = approvalOf(check);
+    if (!check.satisfied) return { satisfied: false, approval: roundApproval };
+    const refused = await reviewOf(roundApproval.approvedBy ?? [], `Round ${round}'s plan`);
+    if (refused) {
+      const message = "error" in refused ? refused.error : refused.message;
+      emitReviewStop(events, message);
+      return { satisfied: false, approval: roundApproval, message };
+    }
+    return { satisfied: true, approval: roundApproval };
+  };
+
   const applied = await applyPrSet({
     components: p.components,
     plan: resumed?.plan ?? p.plan,
     registry: p.registry,
     env: p.env,
     set,
+    gate: p.gate,
+    decideRound,
     ...(resumed ? { resumed: prior } : {}),
     // The apply is this run's waves, so the fan-out's own run framing is
     // dropped. The log's lines go to stderr with or without --events-json.
@@ -682,11 +711,13 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     status: applied.status,
     members: applied.members,
     ...(resumed ? { resumed: resumed.completed } : {}),
+    ...(applied.rounds ? { rounds: applied.rounds } : {}),
+    ...(applied.status === "waiting" ? { message: waitingMessage(op, applied.rounds) } : {}),
   });
   // A component that stopped at a gate of its own leaves the apply waiting on
   // a person. A step that refused its plan because the target moved since
   // the approval exits 3, as a moved digest does before anything applies (#3997).
-  const exit = applied.status === "applied" ? 0 : failedRunExitCode(applied.run.results);
+  const exit = applied.status === "applied" ? 0 : applied.status === "waiting" ? GATED_EXIT_CODE : failedRunExitCode(applied.run.results);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
@@ -753,6 +784,17 @@ function reviewCheck(args: CommandContext["args"], p: Prepared, pr: number): (ap
     }
     return undefined;
   };
+}
+
+/** What a `waiting` apply prints (#3999): the round's gate and digest to approve, and how to carry on. */
+function waitingMessage(op: string, rounds: PrRound[] | undefined): string {
+  const last = rounds?.at(-1);
+  if (!last) return "Some members were held back after an upstream applied.";
+  return (
+    `${last.components.join(", ")} ${last.components.length === 1 ? "was" : "were"} planned again after an upstream applied, ` +
+    `and no approval stands for that plan (${last.digest}), so ${last.components.length === 1 ? "it" : "they"} did not apply. ` +
+    `Approve it: ${prApproveCommand({ op, gate: last.gate, digest: last.digest })}; then run the apply again with the same --resume record.`
+  );
 }
 
 /** What a component's settle says in the job log. */

@@ -205,6 +205,25 @@ export interface FanOutRunOptions {
    * the returned result cannot do.
    */
   onComponentSettled?: (result: DriverComponentResult, outputs: Record<string, unknown> | undefined) => void;
+  /**
+   * Asked as each component's wave starts, with the outputs standing then
+   * (#3999). A reason holds the component back: it does not run, and nothing
+   * downstream of it runs either; each is listed in `held` and settles
+   * `waiting`. A pull request's apply holds a member whose plan read an
+   * upstream output that applied as another value, or that was known only
+   * after apply. Not with `waveGate`, which plans each wave after the one
+   * before it applied.
+   */
+  hold?: (component: string, componentOutputs: Record<string, Record<string, unknown>>) => string | undefined;
+}
+
+/** A component {@link FanOutRunOptions.hold} held back, or one downstream of it. */
+export interface FanOutHeld {
+  component: string;
+  /** Why the hook held it, or, downstream, why it held the component named in `heldBy`. */
+  reason: string;
+  /** Downstream of a held component: that component. */
+  heldBy?: string;
 }
 
 export interface FanOutRunResult {
@@ -223,6 +242,8 @@ export interface FanOutRunResult {
   gate?: PendingGateRecord;
   /** With `waveGate`: each wave this attempt planned, in order, the one it stopped at included. */
   waves?: WaveRecord[];
+  /** What {@link FanOutRunOptions.hold} held back, in plan order. Absent when nothing was. */
+  held?: FanOutHeld[];
 }
 
 /**
@@ -296,9 +317,21 @@ export async function runFanOut(
   const completed: string[] = [];
   const failed: string[] = [];
   const blockedBy = new Map<string, string>();
+  const held = new Map<string, FanOutHeld>();
   let gatedFact: PendingGateRecord | undefined;
 
   const inPlan = new Set(active.order);
+  const waveOf = waveNumbers(active.waves);
+  /** Hold `root` and everything downstream of it that has not settled otherwise. */
+  const markHeld = (root: string, reason: string): void => {
+    held.set(root, { component: root, reason });
+    emit?.({ type: "component-settle", wave: waveOf.get(root)!, component: root, status: "waiting" });
+    for (const [component] of downstreamWithin(components, inPlan, [root])) {
+      if (held.has(component) || blockedBy.has(component) || failed.includes(component)) continue;
+      held.set(component, { component, reason, heldBy: root });
+      emit?.({ type: "component-settle", wave: waveOf.get(component)!, component, status: "waiting" });
+    }
+  };
   /** Skip everything downstream of `root`, blaming `root` rather than the nearest edge. */
   const markBlocked = (root: string): void => {
     for (const [component, by] of downstreamWithin(components, inPlan, [root])) {
@@ -310,7 +343,12 @@ export async function runFanOut(
   for (const [waveIndex, wave] of active.waves.entries()) {
     const waveNum = waveIndex + 1;
     // A component whose upstream failed in an earlier wave is not dispatched.
-    const runnable = wave.filter((name) => inPlan.has(name) && !blockedBy.has(name));
+    const candidates = wave.filter((name) => inPlan.has(name) && !blockedBy.has(name) && !held.has(name));
+    for (const name of candidates) {
+      const reason = options.hold?.(name, componentOutputs);
+      if (reason !== undefined) markHeld(name, reason);
+    }
+    const runnable = candidates.filter((name) => !held.has(name));
     if (runnable.length === 0) continue;
 
     emit?.({ type: "wave-start", wave: waveNum, components: runnable });
@@ -384,6 +422,7 @@ export async function runFanOut(
     blocked,
     componentOutputs,
     ...(gatedFact ? { gate: gatedFact } : {}),
+    ...(held.size > 0 ? { held: active.order.filter((name) => held.has(name)).map((name) => held.get(name)!) } : {}),
   };
 }
 

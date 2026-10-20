@@ -61,6 +61,12 @@ export const PR_REPORT_DEPLOYED_OUTPUTS_FLOOR = "0.124.30";
 
 /** The first chant whose report can carry `waveGate` and `waves` (#4003). */
 export const PR_REPORT_WAVES_FLOOR = "0.124.32";
+/**
+ * The first chant whose report can carry `plannedOutputs`, `rounds`, a
+ * member's `unknownInputs`, `round` and `held`, and the `waiting` statuses
+ * (#3999).
+ */
+export const PR_REPORT_PLANNED_OUTPUTS_FLOOR = "0.124.32";
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -71,6 +77,16 @@ export const PR_APPLY_GATE = "pr-apply";
  */
 export function prOp(pr: number, member?: string): string {
   return member ? `pr-${pr}-${member}` : `pr-${pr}`;
+}
+
+/**
+ * The gate a round of an apply waits on (#3999): the pull request's own
+ * gate for the first, and `<gate>-round-<n>` for each one planned after an
+ * upstream applied. A workspace's `identity.gates` entry for `gate` covers
+ * every round.
+ */
+export function prRoundGate(gate: string, round: number): string {
+  return round <= 1 ? gate : `${gate}-round-${round}`;
 }
 
 /** Whether `op` is a pull request's gate op, with or without a member. Member names follow the declaration's name pattern. */
@@ -108,7 +124,13 @@ export type PrMemberStatus =
   /** The apply failed. */
   | "failed"
   /** Not applied because a member it depends on failed. */
-  | "blocked";
+  | "blocked"
+  /**
+   * Apply stage (#3999): held back because its plan read an upstream output
+   * that applied as another value, or was known only after apply. It waits
+   * on an approval of the plan the apply made for it afterwards (`rounds`).
+   */
+  | "waiting";
 
 export interface PrMember {
   /** The member's name in the change set: a root, for a terraform-family step. */
@@ -123,9 +145,40 @@ export interface PrMember {
   /**
    * Components this one depends on whose outputs changed when they applied
    * (apply stage). Its applied plan read the values from before, so the next
-   * run plans it again.
+   * run plans it again. Not written since #3999, which holds such a member
+   * back and plans it again in the same apply (`held`, `round`).
    */
   inputsMoved?: string[];
+  /**
+   * The upstream outputs its plan read that the change's plans could not
+   * say (#3999), as `<component>.<output>`, sorted: known only after that
+   * upstream applies. The approval does not cover what this member does
+   * with them; the apply plans it again once they are known.
+   */
+  unknownInputs?: string[];
+  /** Apply stage (#3999): the round whose plan it applied or waits on, when not the first. */
+  round?: number;
+  /** Apply stage (#3999): why the first round's plan did not apply. */
+  held?: string;
+}
+
+/** A round of plans an apply made after an upstream applied (#3999), the report's `rounds`. */
+export interface PrRound {
+  /** 2 for the first plan made after an upstream applied, and on. */
+  round: number;
+  /** The gate it waits on: {@link prRoundGate}. */
+  gate: string;
+  /** The change-set digest of what the round planned. What its gate binds. */
+  digest: string;
+  /** The components planned again, in apply order. */
+  components: string[];
+  approval: PrApproval;
+  /** `waiting`: no approval stands for `digest`. `plan-failed`: a member failed to plan, so the round did not apply. */
+  status: "applied" | "failed" | "waiting" | "plan-failed";
+  /** With `waiting`: why an approval that stands does not count (`--require-review`). */
+  message?: string;
+  /** The change-set document the round planned. */
+  changeSet: ChangeSetDocument;
 }
 
 /** Where the approval stands for the planned digest. */
@@ -160,7 +213,13 @@ export type PrStatus =
    */
   | "wave-applied"
   /** Apply stage: nothing applied, see `refusal`. */
-  | "refused";
+  | "refused"
+  /**
+   * Apply stage (#3999): the approved plans applied, except members held
+   * back after an upstream applied. They wait on the approval of the plan
+   * the last of `rounds` made.
+   */
+  | "waiting";
 
 /** Why an apply refused. */
 export type PrRefusal =
@@ -249,6 +308,19 @@ export interface PrReport {
    * {@link PR_REPORT_DEPLOYED_OUTPUTS_FLOOR}.
    */
   deployedOutputs?: Record<string, string[]>;
+  /**
+   * Per dependency in the change that a member was planned against (#3999),
+   * the names of the outputs its plan knows, sorted. An output it reads that
+   * is not here is known only after apply (a member's `unknownInputs`).
+   * Absent when no member read one. Added within contract 1 by chant
+   * {@link PR_REPORT_PLANNED_OUTPUTS_FLOOR}.
+   */
+  plannedOutputs?: Record<string, string[]>;
+  /**
+   * Apply stage (#3999): the rounds planned after an upstream applied, in
+   * order, each with its own gate and digest. Absent when nothing was held.
+   */
+  rounds?: PrRound[];
   approval: PrApproval;
   /**
    * The wave gate's base name with `--wave-gate` (#4003): wave k waits on
@@ -315,6 +387,7 @@ const STATUS_WORDS: Record<PrMemberStatus, string> = {
   applied: "applied",
   failed: "apply failed",
   blocked: "blocked",
+  waiting: "waiting on its new plan",
 };
 
 function headline(report: PrReport): string {
@@ -340,6 +413,8 @@ function headline(report: PrReport): string {
       const waiting = report.waves?.find((w) => w.status === "waiting");
       return waiting ? `Wave ${waiting.wave} waits at its gate ${code(waiting.gate)}; nothing in it applied.` : "The apply refused.";
     }
+    case "waiting":
+      return `Applied ${report.members.filter((m) => m.status === "applied").length} of ${members}; ${report.members.filter((m) => m.status === "waiting").length} wait on an approval of the plan made after their upstream applied.`;
   }
 }
 
@@ -446,6 +521,28 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     const each = deployed.map(([dep, names]) => `${code(dep)} (${names.length > 0 ? names.map(code).join(", ") : "none yet"})`);
     out.push("", `Planned against outputs read from the deployed estate: ${each.join("; ")}.`);
   }
+  const planned = Object.entries(report.plannedOutputs ?? {});
+  if (planned.length > 0) {
+    const each = planned.map(([dep, names]) => `${code(dep)} (${names.length > 0 ? names.map(code).join(", ") : "none known"})`);
+    out.push("", `Planned against the outputs this change's plans say its upstreams will have: ${each.join("; ")}.`);
+  }
+  const unknown = [...new Set(report.members.flatMap((m) => (m.unknownInputs ?? []).map((ref) => `${code(m.component)} reads ${code(ref)}`)))];
+  if (unknown.length > 0) {
+    out.push(
+      "",
+      `Known only after apply: ${unknown.join("; ")}. This approval does not cover what those members do with them. ` +
+        "The apply plans them again once their upstream applied and asks for an approval of that plan.",
+    );
+  }
+  for (const r of report.rounds ?? []) {
+    const what = `Round ${r.round} planned ${r.components.map(code).join(", ")} again after their upstream applied, digest ${code(r.digest)}`;
+    if (r.status === "waiting") {
+      if (r.message) out.push("", `> ${r.message}`);
+      out.push("", `${what}. Not approved yet. Approve it, then run the apply again with the same \`--resume\` record:`, "", "```", prApproveCommand({ op: report.op, gate: r.gate, digest: r.digest }, options.approver ?? "<you>"), "```");
+    } else {
+      out.push("", `${what}: ${r.status === "applied" ? `applied, approved by ${(r.approval.approvedBy ?? []).map(code).join(", ")}` : r.status === "plan-failed" ? "a member failed to plan" : "the apply failed"}.`);
+    }
+  }
   if (report.status !== "nothing") {
     out.push("", `Plan digest: ${code(report.digest)}`, "", ...approvalLines(report, options.approver ?? "<you>"));
   }
@@ -492,6 +589,9 @@ export function prStatusDescription(report: PrReport): string {
     case "failed":
       text = `apply failed for ${report.members.filter((m) => m.status === "failed").map((m) => m.member).join(", ")}`;
       break;
+    case "waiting":
+      text = `waiting: ${report.members.filter((m) => m.status === "waiting").map((m) => m.member).join(", ")} planned again after an upstream applied, not approved yet`;
+      break;
     case "refused": {
       const waiting = report.waves?.find((w) => w.status === "waiting");
       if (waiting && (report.refusal === "wave-not-approved" || report.refusal === "wave-plan-changed")) {
@@ -513,5 +613,6 @@ export function prStatusDescription(report: PrReport): string {
 export function prStatusState(report: PrReport): "success" | "failure" | "pending" {
   if (report.status === "planned" || report.status === "applied" || report.status === "wave-applied" || report.status === "nothing") return "success";
   if (report.status === "refused" && (report.refusal === "not-approved" || report.refusal === "wave-not-approved")) return "pending";
+  if (report.status === "waiting") return "pending";
   return "failure";
 }
