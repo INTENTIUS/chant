@@ -29,11 +29,9 @@
  * while `aws sts get-caller-identity` answered with a principal. An expired
  * SSO session is `no-credentials` naming `aws sso login --profile <p>`.
  *
- * The native read transport still signs with environment keys only
- * (`resolveCredentials` in ./api/sigv4.ts; #3958). So a profile-sourced row says
- * what the CLI, and anything shelling out to it, would act as; it does not
- * yet say what `describeResources` signs with. The `source` column names the
- * profile, so the difference is visible.
+ * The native read transport walks the same chain (`transportCredentials`,
+ * #3958), so a profile-sourced row also says what `describeResources` signs
+ * with.
  *
  * Against an endpoint override the chain is not walked: the emulator call is
  * unsigned whatever resolves, and a whoami against Floci should not start an

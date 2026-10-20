@@ -80,6 +80,7 @@ import {
   AwsReadError,
   requestHeaders,
   serviceUrl,
+  withChainCredentials,
   withEndpointOverride,
   type AwsCredentialSource,
   type AwsReadHttp,
@@ -536,7 +537,7 @@ async function agentCorePost(
   http: AwsReadHttp,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const options = withEndpointOverride(SERVICE, readOptions);
+  const options = await withChainCredentials(withEndpointOverride(SERVICE, readOptions));
   const url = `${serviceUrl(SERVICE, options.endpoint, options.region)}${path.replace(/^\//, "")}`;
   const wire = JSON.stringify(body);
   const res = await http(

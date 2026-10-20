@@ -35,6 +35,7 @@ import {
   AwsReadError,
   requestHeaders,
   serviceUrl,
+  withChainCredentials,
   withEndpointOverride,
   type AwsCredentialSource,
   type AwsReadClientOptions,
@@ -79,7 +80,7 @@ export async function ssmCall(
   payload: Record<string, unknown>,
   options: AwsReadClientOptions,
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  const settled = withEndpointOverride(SSM_SERVICE, options);
+  const settled = await withChainCredentials(withEndpointOverride(SSM_SERVICE, options));
   const url = serviceUrl(SSM_SERVICE, settled.endpoint, settled.region);
   const body = JSON.stringify(payload);
   const base = {
