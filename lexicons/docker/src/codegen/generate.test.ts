@@ -67,6 +67,16 @@ describe("generate()", () => {
     expect(result.typesDTS).toContain("declare const Service");
   });
 
+  test("every Compose entity's props accept x- extension fields, which import keeps (#4136)", async () => {
+    const result = await generate({ verbose: false });
+    for (const out of [result.typesDTS, result.indexTS]) {
+      for (const name of ["ServiceProps", "VolumeProps", "NetworkProps", "DockerConfigProps", "DockerSecretProps"]) {
+        const body = out.slice(out.indexOf(`export interface ${name} {`));
+        expect(body.slice(0, body.indexOf("\n}")), name).toContain("[extension: `x-${string}`]: unknown;");
+      }
+    }
+  });
+
   test("properties count is non-zero", async () => {
     const result = await generate({ verbose: false });
     expect(result.properties).toBeGreaterThan(0);

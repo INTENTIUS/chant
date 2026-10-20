@@ -117,6 +117,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -137,6 +149,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-01",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -167,6 +191,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -187,6 +223,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-02",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -217,6 +265,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -237,6 +297,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-03",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -267,6 +339,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -287,6 +371,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-04",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -317,6 +413,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -337,6 +445,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-05",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -367,6 +487,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -387,6 +519,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-06",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -417,6 +561,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -437,6 +593,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-07",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -467,6 +635,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -487,6 +667,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-08",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -517,6 +709,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -537,6 +741,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-09",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -567,6 +783,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -587,6 +815,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-10",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -617,6 +857,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -637,6 +889,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-11",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -667,6 +931,18 @@ exit: 0
         "RetentionInDays": 14,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -687,6 +963,18 @@ exit: 0
         "QueueName": "fan-out-estate-app-12",
         "SqsManagedSseEnabled": true,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -714,6 +1002,18 @@ exit: 0
         "LogGroupName": "/chant/fan-out-estate/cluster-a",
         "RetentionInDays": 14,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -747,6 +1047,18 @@ exit: 0
         "TableName": "fan-out-estate-cluster-a",
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -775,6 +1087,18 @@ exit: 0
         "LogGroupName": "/chant/fan-out-estate/cluster-b",
         "RetentionInDays": 14,
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
@@ -808,6 +1132,18 @@ exit: 0
         "TableName": "fan-out-estate-cluster-b",
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -837,6 +1173,18 @@ exit: 0
         "SqsManagedSseEnabled": true,
         "Tags": [
           {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
+          {
             "Key": "chant:estate",
             "Value": "fan-out-estate"
           },
@@ -853,6 +1201,18 @@ exit: 0
         "DisplayName": "fan-out-estate network",
         "KmsMasterKeyId": "alias/aws/sns",
         "Tags": [
+          {
+            "Key": "chant:managed-by",
+            "Value": "chant"
+          },
+          {
+            "Key": "chant:stack",
+            "Value": "chant-fan-out-estate"
+          },
+          {
+            "Key": "chant:env",
+            "Value": "local"
+          },
           {
             "Key": "chant:estate",
             "Value": "fan-out-estate"

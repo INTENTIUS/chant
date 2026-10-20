@@ -170,6 +170,9 @@ function composeTypeLines(compose: ComposeParseResult[]): string[] {
       if (p.description) lines.push(`  /** ${p.description} */`);
       lines.push(`  ${p.name}${opt}: ${p.type};`);
     }
+    // The Compose spec allows `x-` extension fields on every entity, and import keeps them (#4136).
+    lines.push(`  /** A Compose extension field. The spec allows any \`x-\` key, and Compose itself ignores it. */`);
+    lines.push("  [extension: `x-${string}`]: unknown;");
     lines.push(`}`);
     lines.push("");
   }
