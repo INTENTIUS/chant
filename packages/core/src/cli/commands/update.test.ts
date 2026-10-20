@@ -25,6 +25,12 @@ describe("updateCommand", () => {
       const result = await updateCommand({ path: testDir });
       expect(result.success).toBe(true);
       expect(result.warnings.some((w) => w.includes("not found"))).toBe(true);
+      // chant #3988 — the warning names the install command for the package.
+      expect(
+        result.warnings.some((w) =>
+          w.includes('npm install --save-dev @intentius/chant-lexicon-nonexistent'),
+        ),
+      ).toBe(true);
     });
   });
 

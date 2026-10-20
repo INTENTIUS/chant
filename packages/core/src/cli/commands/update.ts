@@ -154,7 +154,10 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
     const pkgPath = resolvePackagePath(pkgName, projectDir);
 
     if (!pkgPath) {
-      warnings.push(`${pkgName} not found in node_modules. Run "npm install" first.`);
+      // chant #3988 — update copies from node_modules and never installs.
+      warnings.push(
+        `${pkgName} not found in node_modules. chant update does not install lexicons: run "npm install --save-dev ${pkgName}" first.`,
+      );
       continue;
     }
 

@@ -666,6 +666,18 @@ describe("resolveCommand", () => {
     expect(result!.compound).toBe(false);
   });
 
+  test("`sync` is an alias for `update` (#3988)", () => {
+    const result = resolveCommand(makeArgs({ command: "sync" }), [...testRegistry, { name: "update", handler: noop }]);
+    expect(result!.def.name).toBe("update");
+    expect(result!.compound).toBe(false);
+  });
+
+  test("`sync <path>` resolves to `update` with the path kept (#3988)", () => {
+    const result = resolveCommand(makeArgs({ command: "sync", path: "./proj" }), [...testRegistry, { name: "update", handler: noop }]);
+    expect(result!.def.name).toBe("update");
+    expect(result!.compound).toBe(false);
+  });
+
   test("resolves components status as compound command", () => {
     const result = resolveCommand(makeArgs({ command: "components", path: "status" }), testRegistry);
     expect(result!.def.name).toBe("components status");
@@ -1020,5 +1032,11 @@ describe("chant --help", () => {
     const listed = new Set([...help.matchAll(/^ {2}([a-z][a-z-]*)\b/gm)].map((m) => m[1]));
     const commands = new Set(commandRegistry.map((def) => def.name.split(" ")[0]));
     expect([...commands].filter((name) => !listed.has(name))).toEqual([]);
+  });
+
+  test("names `sync` as the alias of `update` (#3988)", () => {
+    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
+    const help = source.slice(source.indexOf("function printHelp("), source.indexOf("Options:", source.indexOf("function printHelp(")));
+    expect(help).toMatch(/^ {2}update \(alias: sync\)/m);
   });
 });

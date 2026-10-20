@@ -998,7 +998,8 @@ Servers:
   serve mcp             Start the MCP server (stdio)
 
 Project:
-  update                Sync lexicon types into .chant/types/
+  update (alias: sync)  Sync lexicon types into .chant/types/ (does not install
+                        packages: run npm install first)
   doctor                Check project health and configuration
 
 Options:
