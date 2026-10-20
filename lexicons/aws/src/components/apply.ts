@@ -67,13 +67,17 @@ export function cfnChangeReplaces(change: CfnChange): boolean {
  */
 export function cfnChangeEntry(member: string, change: CfnChange): ChangeSetEntry {
   const attributes = [...new Set(change.details ?? [])].sort().map((path) => ({ path }));
+  // A change inside a nested stack (#3997) sits under the nested stacks'
+  // logical ids, the way a terraform address sits under its module.
+  const module = change.nestedStack?.length ? change.nestedStack.join("/") : undefined;
   const base = {
     member,
     lexicon: "aws",
     planner: "chant" as const,
-    address: change.logicalResourceId,
+    address: module ? `${module}/${change.logicalResourceId}` : change.logicalResourceId,
     type: change.resourceType,
     name: change.logicalResourceId,
+    ...(module ? { module } : {}),
     attributes,
   };
   switch (change.action) {
@@ -89,6 +93,66 @@ export function cfnChangeEntry(member: string, change: CfnChange): ChangeSetEntr
       return cfnChangeReplaces(change)
         ? { ...base, action: "replace", disruption: "replace" }
         : { ...base, action: "update", disruption: "in-place" };
+  }
+}
+
+/**
+ * The changes `onReplace: "block"` refuses: those CloudFormation says replace
+ * their resource (`Replacement: True`). `run` and `plan` refuse on the same
+ * set, so a plan that passes is one `run` would not block (#3997).
+ */
+function blockedReplacements(changes: CfnChange[]): CfnChange[] {
+  return changes.filter((c) => c.replacement);
+}
+
+/**
+ * What a `cfn-deploy` plan hands `run` through `DeployContext.plans[stack]`
+ * (#3997): the stack and a digest over the changes the plan's change set
+ * proposed. `run` creates its change set, and executes it only when its
+ * changes have the same digest.
+ */
+export interface CfnPlanArtifact {
+  kind: "cfn-deploy-plan";
+  stack: string;
+  /** {@link cfnChangesDigest} of the planned change set's changes. */
+  changesDigest: string;
+}
+
+function isCfnPlanArtifact(value: unknown): value is CfnPlanArtifact {
+  const v = value as Partial<CfnPlanArtifact> | undefined;
+  return v?.kind === "cfn-deploy-plan" && typeof v.stack === "string" && typeof v.changesDigest === "string";
+}
+
+/**
+ * A digest over a change set's changes as entries, independent of the change
+ * set's name and of the order CloudFormation lists them in. A change set with
+ * nothing to apply digests as no entries.
+ */
+export function cfnChangesDigest(stack: string, changeSet: CfnChangeSet): string {
+  const entries = isNoopChangeSet(changeSet) ? [] : changeSet.changes.map((c) => cfnChangeEntry(stack, c));
+  entries.sort((a, b) => a.address.localeCompare(b.address) || a.action.localeCompare(b.action));
+  return computePlanDigest("cfn-deploy-changes", { stack, entries });
+}
+
+/**
+ * Thrown by `run` when the change set it created proposes other changes than
+ * the change set its plan read (#3997): the stack, the template or the
+ * parameters moved between the plan and the apply. The change set is deleted
+ * unexecuted. `planMoved` is core's mark for a moved plan
+ * (`isPlanMovedError`), so the command that applied it exits 3.
+ */
+export class CfnPlanMovedError extends Error {
+  readonly planMoved = true;
+  constructor(
+    public readonly stack: string,
+    public readonly planned: string,
+    public readonly now: string,
+  ) {
+    super(
+      `cfn-deploy "${stack}": refusing to apply. The change set proposes other changes than the plan that was approved ` +
+        `(planned ${planned}, now ${now}); the stack, its template or its parameters changed since. Plan it again.`,
+    );
+    this.name = "CfnPlanMovedError";
   }
 }
 
@@ -133,7 +197,14 @@ function cfnPlanDigest(
  * deleted too. A change set with nothing to apply (`isNoopChangeSet`) gives
  * a member with no entries. A step whose parameters read outputs that are
  * not known yet, from a stack the same run applies first, creates no change
- * set: its member gets a hole saying whose outputs it waits on.
+ * set: its member gets a hole saying whose outputs it waits on, and no
+ * artifact, so `run` plans it afresh.
+ *
+ * With `onReplace: "block"` (the default), a change set that replaces a
+ * resource fails the plan with {@link CfnReplacementBlockedError}, so the
+ * refusal shows in the pull request's plan rather than at apply (#3997).
+ * Otherwise the result carries a {@link CfnPlanArtifact} that `run` checks
+ * its own change set against.
  */
 async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input: CfnDeployInput): Promise<CapabilityPlan> {
   const stack = input.stack ?? ctx.component;
@@ -176,15 +247,19 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
   });
   try {
     if (isNoopChangeSet(changeSet)) {
-      return { member: stack, planDigest, changeSet: { member: member([]), entries: [] } };
+      const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
+      return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries: [] } };
     }
     if (changeSet.status === "FAILED") {
       throw new Error(
         `cfn-deploy "${stack}": CloudFormation could not create a change set to plan it${changeSet.statusReason ? `: ${changeSet.statusReason}` : ""}`,
       );
     }
+    const blocked = blockedReplacements(changeSet.changes);
+    if (blocked.length > 0 && (input.onReplace ?? "block") === "block") throw new CfnReplacementBlockedError(stack, blocked);
     const entries = changeSet.changes.map((c) => cfnChangeEntry(stack, c));
-    return { member: stack, planDigest, changeSet: { member: member([]), entries } };
+    const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
+    return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries } };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
   }
@@ -324,6 +399,18 @@ export function createCfnDeployCapability(
         parameters: flattenCfnInputs(input),
       });
 
+      // Handed the plan the approver approved (#3997), apply only a change
+      // set that proposes the same changes. Anything else means the stack,
+      // the template or the parameters moved since the plan.
+      const planned = ctx.plans?.[stack];
+      if (isCfnPlanArtifact(planned)) {
+        const now = cfnChangesDigest(stack, changeSet);
+        if (now !== planned.changesDigest) {
+          await cleanUpPlanChangeSet(executor, changeSet);
+          throw new CfnPlanMovedError(stack, planned.changesDigest, now);
+        }
+      }
+
       // An unchanged stack yields a change set with nothing to apply.
       // `execute-change-set` rejects it ("The submitted information didn't
       // contain changes"), which would fail this component and stop the whole
@@ -340,7 +427,7 @@ export function createCfnDeployCapability(
         return { stackStatus, outputs };
       }
 
-      const replacements = changeSet.changes.filter((c) => c.replacement);
+      const replacements = blockedReplacements(changeSet.changes);
       let snapshotId: string | undefined;
 
       if (replacements.length > 0 && onReplace === "block") {

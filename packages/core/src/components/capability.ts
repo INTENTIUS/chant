@@ -43,7 +43,9 @@ export interface DeployContext {
    * (#3049), keyed by {@link CapabilityPlan.member}. Set by a gated-wave
    * fan-out and by a pull request's apply (#3183). A capability whose `run`
    * finds its own member here applies that plan, the one the approver
-   * approved, instead of planning again.
+   * approved, instead of planning again. A `run` that finds the target moved
+   * since that plan refuses with an error {@link isPlanMovedError} accepts
+   * (#3997), and the command that applied it exits 3, as for a moved digest.
    */
   plans?: Record<string, unknown>;
   /**
@@ -159,6 +161,16 @@ export type RollbackPolicy = "native" | "none-by-design" | "needs-opt-out";
 export type CapabilityInput<C> = C extends Capability<infer In, unknown> ? In : never;
 /** Extract a capability's `Out` type. */
 export type CapabilityOutput<C> = C extends Capability<unknown, infer Out> ? Out : never;
+
+/**
+ * Whether `err` is a `run`'s refusal to apply a plan from
+ * `DeployContext.plans` because the target moved since it was planned
+ * (#3997). The mark is a `planMoved: true` property, not a class, so a
+ * lexicon built against an older core can set it.
+ */
+export function isPlanMovedError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { planMoved?: unknown }).planMoved === true;
+}
 
 /**
  * Thrown by a stub `run`/`rollback` — the verb is specified and typed but has

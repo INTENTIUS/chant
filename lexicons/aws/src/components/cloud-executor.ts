@@ -54,6 +54,13 @@ export interface CfnChange {
   replacementMode?: "True" | "False" | "Conditional";
   /** Resource-specific detail, when the executor's changeset backend provides it (e.g. property/scope). */
   details?: string[];
+  /**
+   * The logical ids of the nested stacks this change sits in, outermost
+   * first (#3997). Absent for a change to the stack's own resources. Set when
+   * the change set was created with nested stacks included and CloudFormation
+   * described a nested change set for an `AWS::CloudFormation::Stack`.
+   */
+  nestedStack?: string[];
 }
 
 export interface CfnChangeSet {
@@ -444,6 +451,62 @@ export function awsDeployCapabilitiesForBody(body: string): string[] {
   }
 }
 
+/** What `describe-change-set` answers, as far as a plan and an apply read it. */
+export interface DescribedCfnChangeSet {
+  Status: string;
+  StatusReason?: string | null;
+  Changes?: Array<{
+    ResourceChange: {
+      Action: string;
+      LogicalResourceId: string;
+      ResourceType: string;
+      Replacement?: string;
+      Details?: Array<{ Target?: { Name?: string } }>;
+      /** Set on an `AWS::CloudFormation::Stack` change when the change set includes nested stacks: the nested change set's ARN. */
+      ChangeSetId?: string | null;
+    };
+  }>;
+}
+
+/** Whether a template body declares an `AWS::CloudFormation::Stack` resource. A body that isn't JSON declares none here. */
+export function templateHasNestedStacks(body: string): boolean {
+  try {
+    const resources = (JSON.parse(body) as { Resources?: Record<string, { Type?: unknown }> }).Resources ?? {};
+    return Object.values(resources).some((r) => r?.Type === "AWS::CloudFormation::Stack");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A described change set's changes as {@link CfnChange}s, and the changes of
+ * every nested change set it names, each marked with the nested stacks it
+ * sits in (#3997). `describeNested` describes a nested change set by its ARN.
+ */
+export async function readCfnChanges(
+  described: DescribedCfnChangeSet,
+  describeNested: (changeSetId: string) => Promise<DescribedCfnChangeSet>,
+  nestedStack: string[] = [],
+): Promise<CfnChange[]> {
+  const out: CfnChange[] = [];
+  for (const c of described.Changes ?? []) {
+    const rc = c.ResourceChange;
+    out.push({
+      action: rc.Action as CfnChange["action"],
+      logicalResourceId: rc.LogicalResourceId,
+      resourceType: rc.ResourceType,
+      replacement: rc.Replacement === "True",
+      ...(rc.Replacement === "True" || rc.Replacement === "False" || rc.Replacement === "Conditional" ? { replacementMode: rc.Replacement } : {}),
+      details: rc.Details?.map((d) => d.Target?.Name).filter((x): x is string => !!x),
+      ...(nestedStack.length > 0 ? { nestedStack } : {}),
+    });
+    if (rc.ResourceType === "AWS::CloudFormation::Stack" && rc.ChangeSetId) {
+      out.push(...(await readCfnChanges(await describeNested(rc.ChangeSetId), describeNested, [...nestedStack, rc.LogicalResourceId])));
+    }
+  }
+  return out;
+}
+
 const realCloudFormation: CloudFormationClient = {
   async createChangeSet(args) {
     const changeSetName = `cs-${Date.now()}`;
@@ -469,10 +532,14 @@ const realCloudFormation: CloudFormationClient = {
       .map(([k, v]) => q(`Key=${k},Value=${v}`))
       .join(" ");
     const tagsFlag = stackTags ? ` --tags ${stackTags}` : "";
+    // A template with nested stacks gets their change sets too, so a plan
+    // shows what changes inside each child, not only that the child changes
+    // (#3997). Executing the root change set executes the nested ones.
+    const nestedFlag = templateHasNestedStacks(body) ? " --include-nested-stacks" : "";
     await run(
       `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
         `--change-set-type ${changeSetType} ` +
-        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}${tagsFlag}`,
+        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}${tagsFlag}${nestedFlag}`,
     );
     await run(
       `aws cloudformation wait change-set-create-complete --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,
@@ -480,37 +547,18 @@ const realCloudFormation: CloudFormationClient = {
     const { stdout } = await run(
       `aws cloudformation describe-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,
     );
-    const described = JSON.parse(stdout) as {
-      Status: string;
-      StatusReason?: string;
-      Changes?: Array<{
-        ResourceChange: {
-          Action: string;
-          LogicalResourceId: string;
-          ResourceType: string;
-          Replacement?: string;
-          Details?: Array<{ Target?: { Name?: string } }>;
-        };
-      }>;
-    };
+    const described = JSON.parse(stdout) as DescribedCfnChangeSet;
+    const describeNested = async (changeSetId: string): Promise<DescribedCfnChangeSet> =>
+      JSON.parse((await run(`aws cloudformation describe-change-set --change-set-name ${q(changeSetId)}`)).stdout) as DescribedCfnChangeSet;
     return {
       changeSetName,
       stackName: args.stackName,
       status: described.Status,
-      statusReason: described.StatusReason,
+      statusReason: described.StatusReason ?? undefined,
       isCreate: described.Status === "CREATE_COMPLETE" && !described.Changes?.length,
       changeSetType,
       stackCreated: !existed,
-      changes: (described.Changes ?? []).map((c) => ({
-        action: c.ResourceChange.Action as CfnChange["action"],
-        logicalResourceId: c.ResourceChange.LogicalResourceId,
-        resourceType: c.ResourceChange.ResourceType,
-        replacement: c.ResourceChange.Replacement === "True",
-        ...(c.ResourceChange.Replacement === "True" || c.ResourceChange.Replacement === "False" || c.ResourceChange.Replacement === "Conditional"
-          ? { replacementMode: c.ResourceChange.Replacement }
-          : {}),
-        details: c.ResourceChange.Details?.map((d) => d.Target?.Name).filter((x): x is string => !!x),
-      })),
+      changes: await readCfnChanges(described, describeNested),
     };
   },
   async executeChangeSet(args) {

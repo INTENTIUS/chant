@@ -11,11 +11,14 @@ import { join } from "node:path";
 import { CapabilityRegistry } from "@intentius/chant/components/capability";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { planFanOut } from "@intentius/chant/components/fan-out";
-import { planPrSet, prReport } from "@intentius/chant/components/pr-run";
+import { applyPrSet, planPrSet, prReport } from "@intentius/chant/components/pr-run";
 import { composeChangeSet } from "@intentius/chant/change-set";
 import { groupChangeSet, planSummaryHeadline } from "@intentius/chant/plan-summary";
 import { memberCounts, prStatusDescription, renderPrNote } from "@intentius/chant/pr-loop";
-import { createCfnDeployCapability } from "./apply";
+import { CfnPlanMovedError, CfnReplacementBlockedError, cfnChangeEntry, createCfnDeployCapability, type CfnDeployInput } from "./apply";
+import { isPlanMovedError } from "@intentius/chant/components/capability";
+import { planMovedIn } from "@intentius/chant/components/driver";
+import { readCfnChanges, templateHasNestedStacks, type DescribedCfnChangeSet } from "./cloud-executor";
 import { createMockCloudExecutor, type FakeStackConfig } from "./__tests__/mock-cloud-executor";
 
 let dir: string;
@@ -31,10 +34,10 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const ctx = { env: "local", component: "network" };
 
-async function planOne(config: FakeStackConfig) {
+async function planOne(config: FakeStackConfig, extra: Partial<CfnDeployInput> = {}) {
   const mock = createMockCloudExecutor({ stacks: { network: config } });
   const capability = createCfnDeployCapability(mock.executor);
-  const planned = await capability.plan!(ctx, { stack: "network", template });
+  const planned = await capability.plan!(ctx, { stack: "network", template, ...extra });
   const doc = composeChangeSet([planned.changeSet!]);
   return { mock, planned, doc, counts: memberCounts(doc, "network") };
 }
@@ -77,7 +80,7 @@ describe("cfn-deploy plan (#4084)", () => {
         { action: "Modify", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false, replacementMode: "Conditional" },
         { action: "Remove", logicalResourceId: "Old", resourceType: "AWS::SQS::Queue", replacement: false },
       ],
-    });
+    }, { onReplace: "allow" });
     expect(counts).toEqual({ create: 0, update: 0, replace: 2, delete: 1 });
     expect(planSummaryHeadline(groupChangeSet(doc))).toContain("3 destroys or replacements");
   });
@@ -220,5 +223,147 @@ describe("pr-plan over cfn-deploy members (#4084)", () => {
       network: { outputs: { TopicArn: "arn:topic" }, changes: [{ action: "Modify", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: true }] },
     });
     expect(replaced.set.doc.digest).not.toBe(first.set.doc.digest);
+  });
+});
+
+describe("cfn-deploy applies the change set it planned (#3997)", () => {
+  const topicUpdate = { action: "Modify" as const, logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false, replacementMode: "False" as const, details: ["DisplayName"] };
+  const queueAdd = { action: "Add" as const, logicalResourceId: "Queue", resourceType: "AWS::SQS::Queue", replacement: false };
+
+  it("a plan hands run an artifact over its changes, and run executes a change set with the same changes", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: { changes: [topicUpdate] } } });
+    const capability = createCfnDeployCapability(mock.executor);
+    const planned = await capability.plan!(ctx, { stack: "network", template });
+    expect(planned.artifact).toMatchObject({ kind: "cfn-deploy-plan", stack: "network" });
+    const out = await capability.run({ ...ctx, plans: { network: planned.artifact } }, { stack: "network", template });
+    expect(out.stackStatus).toBe("UPDATE_COMPLETE");
+    expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet", "createChangeSet", "executeChangeSet", "waitForStack"]);
+  });
+
+  it("run refuses, deletes its change set unexecuted and marks the error as a moved plan when the changes differ from the plan's", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: { changes: [topicUpdate] } } });
+    const capability = createCfnDeployCapability(mock.executor);
+    const planned = await capability.plan!(ctx, { stack: "network", template });
+    mock.setStack("network", { changes: [topicUpdate, queueAdd] });
+    const err = await capability.run({ ...ctx, plans: { network: planned.artifact } }, { stack: "network", template }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CfnPlanMovedError);
+    expect(isPlanMovedError(err)).toBe(true);
+    expect((err as Error).message).toMatch(/refusing to apply.*Plan it again/);
+    expect(methods(mock).slice(2)).toEqual(["createChangeSet", "deleteChangeSet"]);
+  });
+
+  it("a plan of no changes refuses a run whose change set now has some, and accepts one that still has none", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: { noChanges: true } } });
+    const capability = createCfnDeployCapability(mock.executor);
+    const planned = await capability.plan!(ctx, { stack: "network", template });
+    await expect(capability.run({ ...ctx, plans: { network: planned.artifact } }, { stack: "network", template })).resolves.toMatchObject({ stackStatus: "UPDATE_COMPLETE" });
+    mock.setStack("network", { noChanges: false, changes: [queueAdd] });
+    await expect(capability.run({ ...ctx, plans: { network: planned.artifact } }, { stack: "network", template })).rejects.toBeInstanceOf(CfnPlanMovedError);
+    expect(methods(mock)).not.toContain("executeChangeSet");
+  });
+
+  it("a run whose CREATE change set moved deletes the empty stack it made, too", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: { missing: true, changes: [queueAdd] } } });
+    const capability = createCfnDeployCapability(mock.executor);
+    const planned = await capability.plan!(ctx, { stack: "network", template });
+    mock.setStack("network", { changes: [queueAdd, { ...queueAdd, logicalResourceId: "Dlq" }] });
+    await expect(capability.run({ ...ctx, plans: { network: planned.artifact } }, { stack: "network", template })).rejects.toBeInstanceOf(CfnPlanMovedError);
+    expect(methods(mock).slice(3)).toEqual(["createChangeSet", "deleteChangeSet", "deleteStackShell"]);
+  });
+
+  it("a member with holes hands run no artifact, so run plans it afresh", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: { changes: [queueAdd] } } });
+    const capability = createCfnDeployCapability(mock.executor);
+    const planned = await capability.plan!({ ...ctx, unresolvedInputs: ["upstream"] }, { stack: "network", template });
+    expect(planned.artifact).toBeUndefined();
+  });
+
+  it('onReplace "block" refuses at plan time, naming the resources, and the change set is still deleted', async () => {
+    const mock = createMockCloudExecutor({
+      stacks: { network: { changes: [{ action: "Modify", logicalResourceId: "Table", resourceType: "AWS::DynamoDB::Table", replacement: true, replacementMode: "True" }] } },
+    });
+    const capability = createCfnDeployCapability(mock.executor);
+    const err = await capability.plan!(ctx, { stack: "network", template }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CfnReplacementBlockedError);
+    expect((err as Error).message).toContain("(Table)");
+    expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet"]);
+  });
+
+  it('onReplace "block" lets a Conditional replacement plan, as run does', async () => {
+    const { counts } = await planOne({
+      changes: [{ action: "Modify", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false, replacementMode: "Conditional" }],
+    });
+    expect(counts.replace).toBe(1);
+  });
+
+  it("pr-apply over a moved stack fails the member with the refusal, executes nothing, and the run reads as a moved plan", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: { changes: [topicUpdate] } } });
+    const registry = new CapabilityRegistry();
+    registry.register(createCfnDeployCapability(mock.executor));
+    const components: DriverComponent[] = [
+      { name: "network", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "network", template }] }] },
+    ];
+    const plan = planFanOut({ components, changed: ["network"] });
+    const set = await planPrSet({ components, plan, registry, env: "local" });
+    expect(set.plans.network?.network).toMatchObject({ kind: "cfn-deploy-plan" });
+
+    mock.setStack("network", { changes: [queueAdd] });
+    const moved = await applyPrSet({ components, plan, registry, env: "local", set });
+    expect(moved.status).toBe("failed");
+    expect(planMovedIn(moved.run.results)).toBe(true);
+    expect(moved.members[0]).toMatchObject({ member: "network", status: "failed" });
+    expect(methods(mock)).not.toContain("executeChangeSet");
+
+    mock.setStack("network", { changes: [topicUpdate] });
+    const applied = await applyPrSet({ components, plan, registry, env: "local", set });
+    expect(applied.status).toBe("applied");
+    expect(planMovedIn(applied.run.results)).toBe(false);
+    expect(methods(mock)).toContain("executeChangeSet");
+  });
+});
+
+describe("cfn-deploy plans nested stacks (#3997)", () => {
+  it("reads a nested change set's changes under the nested stack's logical id", async () => {
+    const root: DescribedCfnChangeSet = {
+      Status: "CREATE_COMPLETE",
+      Changes: [
+        { ResourceChange: { Action: "Modify", LogicalResourceId: "Child", ResourceType: "AWS::CloudFormation::Stack", Replacement: "False", ChangeSetId: "arn:child" } },
+        { ResourceChange: { Action: "Add", LogicalResourceId: "Queue", ResourceType: "AWS::SQS::Queue" } },
+      ],
+    };
+    const nested: Record<string, DescribedCfnChangeSet> = {
+      "arn:child": {
+        Status: "CREATE_COMPLETE",
+        Changes: [
+          { ResourceChange: { Action: "Modify", LogicalResourceId: "Grand", ResourceType: "AWS::CloudFormation::Stack", Replacement: "False", ChangeSetId: "arn:grand" } },
+          { ResourceChange: { Action: "Modify", LogicalResourceId: "Topic", ResourceType: "AWS::SNS::Topic", Replacement: "True", Details: [{ Target: { Name: "TopicName" } }] } },
+        ],
+      },
+      "arn:grand": { Status: "CREATE_COMPLETE", Changes: [{ ResourceChange: { Action: "Remove", LogicalResourceId: "Old", ResourceType: "AWS::SQS::Queue" } }] },
+    };
+    const described: string[] = [];
+    const changes = await readCfnChanges(root, async (id) => {
+      described.push(id);
+      return nested[id]!;
+    });
+    expect(described).toEqual(["arn:child", "arn:grand"]);
+    expect(changes.map((c) => [c.logicalResourceId, c.nestedStack ?? []])).toEqual([
+      ["Child", []],
+      ["Grand", ["Child"]],
+      ["Old", ["Child", "Grand"]],
+      ["Topic", ["Child"]],
+      ["Queue", []],
+    ]);
+    const entries = changes.map((c) => cfnChangeEntry("app", c));
+    expect(entries.find((e) => e.name === "Topic")).toMatchObject({ address: "Child/Topic", module: "Child", action: "replace" });
+    expect(entries.find((e) => e.name === "Old")).toMatchObject({ address: "Child/Grand/Old", module: "Child/Grand", action: "delete" });
+    expect(entries.find((e) => e.name === "Queue")).toMatchObject({ address: "Queue", action: "create" });
+    expect(entries.find((e) => e.name === "Queue")).not.toHaveProperty("module");
+  });
+
+  it("asks for nested change sets only for a template that declares a nested stack", () => {
+    expect(templateHasNestedStacks(JSON.stringify({ Resources: { Child: { Type: "AWS::CloudFormation::Stack" } } }))).toBe(true);
+    expect(templateHasNestedStacks(JSON.stringify({ Resources: { Topic: { Type: "AWS::SNS::Topic" } } }))).toBe(false);
+    expect(templateHasNestedStacks("not json")).toBe(false);
   });
 });

@@ -68,7 +68,7 @@ import { approveCommand, gateIsSealed } from "../../op/gate";
 import { getHeadCommit } from "../../lifecycle/git";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { readDeployedOutputs } from "../../components/wave-plan";
-import { deployContext } from "../../components/driver";
+import { deployContext, planMovedIn } from "../../components/driver";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
@@ -530,5 +530,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     return result.status === "gated" ? GATED_EXIT_CODE : 1;
   }
 
-  return result.status === "ok" ? 0 : 1;
+  // A step that refused the wave's plan because its target moved since the
+  // approval exits 3, the code of a wave whose plan changed (#3997).
+  return result.status === "ok" ? 0 : planMovedIn(result.results) ? GATED_EXIT_CODE : 1;
 }
