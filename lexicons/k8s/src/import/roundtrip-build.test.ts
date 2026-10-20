@@ -84,4 +84,50 @@ describe("k8s import round trip", () => {
     }
     expect(await roundTrip(yaml)).toEqual(loadAll(yaml));
   });
+
+  test("import names an error-severity check the generated source will fail at build (#3605)", async () => {
+    const yaml = [
+      "apiVersion: apps/v1",
+      "kind: StatefulSet",
+      "metadata:",
+      "  name: mysql",
+      "spec:",
+      "  selector:",
+      "    matchLabels:",
+      "      app: mysql",
+      "  serviceName: mysql",
+      "  template:",
+      "    metadata:",
+      "      labels:",
+      "        app: mysql",
+      "    spec:",
+      "      containers:",
+      "      - name: mysql",
+      "        image: mysql:5.7",
+      "        env:",
+      "        - name: MYSQL_ALLOW_EMPTY_PASSWORD",
+      '          value: "1"',
+    ].join("\n");
+    const imported = await importManifest(yaml);
+    try {
+      expect(imported.result.success).toBe(true);
+      const named = imported.result.warnings.filter((w) => w.startsWith("WK8005:"));
+      expect(named).toHaveLength(1);
+      expect(named[0]).toContain('"MYSQL_ALLOW_EMPTY_PASSWORD"');
+      expect(named[0]).toContain("chant build stops on this error");
+    } finally {
+      removeDir(imported.dir);
+    }
+  });
+
+  test("import names no check for a manifest that builds cleanly", async () => {
+    const imported = await importManifest(
+      ["apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: settings", "data:", "  mode: fast"].join("\n"),
+    );
+    try {
+      expect(imported.result.warnings.filter((w) => /^[A-Z]+\d+: /.test(w))).toEqual([]);
+    } finally {
+      removeDir(imported.dir);
+    }
+  });
 });
