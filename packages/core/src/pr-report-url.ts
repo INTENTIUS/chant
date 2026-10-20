@@ -44,17 +44,17 @@ export type ReportTarget =
   | { scheme: "file"; url: string; dir: string }
   | { scheme: "s3"; url: string; bucket: string; prefix: string };
 
-/** `--report-url` read, or why it can't be. */
-export function parseReportUrl(raw: string): ReportTarget | { error: string } {
+/** `--report-url` read, or why it can't be. `name` is what the error calls the value: the flag, or `ci.reportUrl` (#4160). */
+export function parseReportUrl(raw: string, name = "--report-url"): ReportTarget | { error: string } {
   const url = raw.trim();
   if (url.startsWith("file://")) {
     let dir: string;
     try {
       dir = fileURLToPath(url);
     } catch (err) {
-      return { error: `--report-url ${url}: ${err instanceof Error ? err.message : String(err)}` };
+      return { error: `${name} ${url}: ${err instanceof Error ? err.message : String(err)}` };
     }
-    if (!isAbsolute(dir)) return { error: `--report-url ${url}: a file URL names an absolute directory` };
+    if (!isAbsolute(dir)) return { error: `${name} ${url}: a file URL names an absolute directory` };
     return { scheme: "file", url: url.replace(/\/+$/, ""), dir };
   }
   const s3 = /^s3:\/\/([^/]+)\/?(.*)$/.exec(url);
@@ -62,7 +62,7 @@ export function parseReportUrl(raw: string): ReportTarget | { error: string } {
     const prefix = s3[2]!.replace(/\/+$/, "");
     return { scheme: "s3", url: `s3://${s3[1]}${prefix ? `/${prefix}` : ""}`, bucket: s3[1]!, prefix };
   }
-  return { error: `--report-url ${url}: takes an s3://<bucket>/<prefix> or file://<directory> URL` };
+  return { error: `${name} ${url}: takes an s3://<bucket>/<prefix> or file://<directory> URL` };
 }
 
 /** The key a stage's files are kept under, below the URL: `<pr>/<commit>[/<member>]`. */

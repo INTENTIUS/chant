@@ -17,6 +17,7 @@
  */
 
 import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-policy";
+import { parseReportUrl } from "../pr-report-url";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
@@ -232,6 +233,14 @@ export type CiSource = "checks" | "runs";
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
   green: CiGreen | null;
+  /**
+   * `ci.reportUrl` (#4160): where the pull-request jobs copy their reports
+   * and `chant ci run` keeps the run index, `<reportUrl>/runs/index.json`.
+   * An `s3://` or `file://` URL, as `--report-url` takes, without a trailing
+   * slash. The commands that take `--report-url` default to it. Null when
+   * the declaration sets none.
+   */
+  reportUrl: string | null;
 }
 
 export interface MemberRole {
@@ -1087,8 +1096,15 @@ function retentionOf(raw: unknown): RetentionOverride | null {
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string; source?: CiSource } };
-  if (block.green === undefined) return { green: null };
+  const block = raw as { reportUrl?: string; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string; source?: CiSource } };
+  let reportUrl: string | null = null;
+  if (block.reportUrl !== undefined) {
+    // #4160: refused here as pr-plan and ci run refuse the flag, so a reader never gets a URL no job can write to.
+    const target = parseReportUrl(block.reportUrl, "ci.reportUrl");
+    if ("error" in target) throw new WorkspaceReadError("declaration-invalid", target.error, at("/ci/reportUrl"));
+    reportUrl = target.url;
+  }
+  if (block.green === undefined) return { green: null, reportUrl };
   const g = block.green;
   const phases: CiPhase[] = Object.entries(g.phases).map(([name, p]) => ({
     name,
@@ -1104,7 +1120,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       at(`/ci/green/require/${i}`),
     );
   }
-  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" } };
+  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" }, reportUrl };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

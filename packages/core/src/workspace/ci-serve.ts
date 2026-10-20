@@ -63,6 +63,7 @@ import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type LeaseRecord } from "../lifecycle/lease";
 import { parseDuration } from "../op/duration";
+import { reportUrlOf } from "./ci-report-url";
 import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
 import { RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
 import { gitTop } from "./tree";
@@ -661,6 +662,9 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     else if (keyed.note && args.verbose) console.error(`ci serve: ${keyed.note}`);
     // #4096: read once, so a loose or broken secrets file stops the serve before its first poll.
     const secrets = ciSecretsOf(args.ciSecrets);
+    // #4160: without --report-url, the declaration's ci.reportUrl.
+    const reportUrl = await reportUrlOf(args.reportUrl, cwd);
+    if (reportUrl && !args.reportUrl) console.error(`ci serve: reports and the run index go to ${reportUrl}, the declaration's ci.reportUrl`);
     const hostEnv = { ...process.env, GITHUB_REPOSITORY: args.ciRepo };
     const client = forgeFromEnv(forge, hostEnv);
     const { status, warning } = ciStatusFromEnv({ forge, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
@@ -677,7 +681,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
       ...(args.rerunFailed ? { rerunFailed: true } : {}),
       job: {
-        loop: ciLoopOptions(args),
+        loop: ciLoopOptions(reportUrl ? { ...args, reportUrl } : args),
         ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

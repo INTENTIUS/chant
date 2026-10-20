@@ -51,7 +51,7 @@ describe("the ci.green block (#3573)", () => {
     });
     expect(parseDeclaration(decl({ green: { ...GREEN, signedSince: "a".repeat(40) } }), "chant.workspace.json").ci!.green!.signedSince).toBe("a".repeat(40));
     expect(parseDeclaration(decl({ green: { ...GREEN, window: "90m" } }), "chant.workspace.json").ci!.green!.window).toBe("90m");
-    expect(parseDeclaration(decl({}), "chant.workspace.json").ci).toEqual({ green: null });
+    expect(parseDeclaration(decl({}), "chant.workspace.json").ci).toEqual({ green: null, reportUrl: null });
     expect(parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [] }), "chant.workspace.json").ci).toBeNull();
   });
 

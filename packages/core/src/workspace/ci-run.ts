@@ -90,6 +90,7 @@ import type { ActivityStep, OpConfig, PhaseDefinition } from "../op/types";
 import { redactText, type Redact } from "../op/redact";
 import { findWorkspaceRoot } from "../project-root";
 import { parseReportUrl, reportKey } from "../pr-report-url";
+import { reportUrlOf } from "./ci-report-url";
 import { ciTagSigner, RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
 import { loadRunnerKey } from "./trust/dsse";
 import { ciRedactor, ciSecretsFor, CI_SECRETS_ENV, readCiSecrets, type CiSecrets } from "./ci-secrets";
@@ -949,6 +950,8 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     const { status, warning } = ciStatusFromEnv({ forge: forge as ForgeKind, hostEnv, noStatus: args.noStatus || args.ciInPlace || args.local, statusUrl: args.statusUrl });
     if (warning) console.error(formatWarning({ message: warning }));
     const secrets = ciSecretsOf(args.ciSecrets);
+    // #4160: without --report-url, the declaration's ci.reportUrl.
+    const reportUrl = await reportUrlOf(args.reportUrl, process.cwd());
     const result = await ciRun({
       cwd: process.cwd(),
       ...(status ? { status } : {}),
@@ -958,7 +961,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       ...(args.base ? { base: args.base } : {}),
       ...(args.pr !== undefined ? { pr: args.pr } : {}),
       ...(args.commit ? { commit: args.commit } : {}),
-      loop: ciLoopOptions(args),
+      loop: ciLoopOptions(reportUrl ? { ...args, reportUrl } : args),
       ...(args.ciInPlace ? { inPlace: true } : {}),
       ...(args.local ? { local: true } : {}),
       ...(args.noPush ? { push: false } : {}),

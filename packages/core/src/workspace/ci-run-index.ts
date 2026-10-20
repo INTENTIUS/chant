@@ -29,6 +29,7 @@
 import type { RunOrigin } from "../lifecycle/release-ledger";
 import type { CommandContext } from "../cli/registry";
 import { formatError } from "../cli/format";
+import { reportUrlOf } from "./ci-report-url";
 import { parseReportUrl, reportGet, reportPut, type ReportGet, type ReportPut, type ReportTarget } from "../pr-report-url";
 import { readerVersion } from "./declaration";
 
@@ -178,13 +179,14 @@ export function formatCiRunIndex(index: CiRunIndex): string {
     .join("\n");
 }
 
-const RUNS_USAGE = "chant ci runs --report-url <s3://<bucket>/<prefix> | file://<directory>> [--json]";
+const RUNS_USAGE = "chant ci runs [--report-url <s3://<bucket>/<prefix> | file://<directory>>] [--json]";
 
 /** `chant ci runs` (#4098): list the index at the report URL. */
 export async function runCiRuns(ctx: CommandContext): Promise<number> {
   try {
-    const raw = ctx.args.reportUrl;
-    if (!raw) throw new Error("--report-url names where the index is kept");
+    // #4160: without --report-url, the declaration's ci.reportUrl.
+    const raw = await reportUrlOf(ctx.args.reportUrl, process.cwd());
+    if (!raw) throw new Error("--report-url names where the index is kept, unless the workspace declares ci.reportUrl");
     const target = parseReportUrl(raw);
     if ("error" in target) throw new Error(target.error);
     const index = await readCiRunIndex(target);

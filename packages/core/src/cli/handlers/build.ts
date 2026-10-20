@@ -16,13 +16,14 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
  * and the branch, and with `--events-json` and `--report-url` (#4007) the
  * flags the generated jobs pass to pr-plan and pr-apply. `--pr-build` and
  * `--pr-build-command` (#4088) add the build and lint steps before both.
+ * `reportUrl` is `--report-url`, else the workspace's `ci.reportUrl` (#4160).
  */
-function prLoopOption(args: CommandContext["args"]): PrLoopPipelineOptions {
+function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined): PrLoopPipelineOptions {
   return {
     ...(args.gate ? { gate: args.gate } : {}),
     ...(args.branch ? { branch: args.branch } : {}),
     ...(args.eventsJson ? { events: true } : {}),
-    ...(args.reportUrl ? { reportUrl: args.reportUrl } : {}),
+    ...(reportUrl ? { reportUrl } : {}),
     ...(args.prBuild ? { build: true } : {}),
     ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
   };
@@ -91,6 +92,16 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const found = findWorkspaceRoot(resolve(args.path));
   let plan: import("../../workspace/member-pipeline").MemberComponentPlan | undefined;
   let memberPipeline: typeof import("../../workspace/member-pipeline") | undefined;
+  // #4160: without --report-url, the declaration's ci.reportUrl. Read only inside a workspace.
+  let reportUrl = args.reportUrl;
+  if (found && args.prLoop && !reportUrl) {
+    try {
+      reportUrl = await (await import("../../workspace/ci-report-url")).declaredReportUrl(resolve(args.path));
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
   if (found) {
     memberPipeline = await import("../../workspace/member-pipeline");
     try {
@@ -105,7 +116,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         params: args.param,
         paramsFile: args.paramsFile,
         ...(args.waveGate ? { waveGate: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } } : {}),
-        ...(args.prLoop ? { prLoop: prLoopOption(args) } : {}),
+        ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl) } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       });
@@ -135,7 +146,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
-      ...(args.prLoop ? { prLoop: prLoopOption(args) } : {}),
+      ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl) } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
