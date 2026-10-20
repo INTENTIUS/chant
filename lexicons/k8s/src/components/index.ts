@@ -16,8 +16,11 @@ export * from "./builders";
 export {
   kubectlApplyCapability,
   createKubectlApplyCapability,
+  KubectlApplyPlanMovedError,
   type KubectlApplyInput,
   type KubectlApplyOutcome,
+  type KubectlApplyDryRun,
+  type KubectlApplyPlanArtifact,
 } from "./kubectl-apply";
 export {
   kustomizeApplyCapability,

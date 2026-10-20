@@ -79,6 +79,20 @@ A stack that does not exist yet gets a CREATE change set, so every resource coun
 
 The plan job needs the same AWS credentials and region as the apply job, with permission to create, describe and delete change sets, and to delete a stack. Build the templates before `pr-plan`, as before the apply. Generate the pipeline with `--pr-build` and both jobs do it for you, as the next section shows.
 
+### Kubernetes manifests
+
+For a `kubectl-apply` step, the plan is a server-side dry run. It reads the manifest, sets the release attributes the apply would set, and sends each document as the apply does, with the same field manager `chant:<stack>`, but with `dryRun=All`, so the API server persists nothing. It reads each live object and compares it with what the dry run returned. A step without a `stack` gives its component's name to the member; otherwise the member takes the stack's name.
+
+An object with no live counterpart counts as a create, with the fields the manifest declares. An object whose dry run equals the live object is a `no-op`, and one that differs is an update naming each changed field with its value before and after. Before comparing, the plan drops what the server writes on every request: `managedFields`, `resourceVersion`, `uid`, `creationTimestamp`, `generation` and `status`. A field the server defaults has the same value on both sides, so it does not show. A Secret's `data` and `stringData` are marked sensitive, and their values are left out of the note and the change set. An update under `spec.template` of a workload whose pods roll on such a change shows as a rolling change. Every other update shows as in place.
+
+With `delete: "owned-only"` the plan also lists what the apply's prune would delete: objects carrying chant's marker and the step's stack label, in the namespaces the manifest touches, that the manifest no longer declares. Generated-once Secrets and effect receipts are never in that list, as the prune never deletes them. With the default `delete: "never"` the plan lists no deletes.
+
+The apply never deletes and recreates an object. A change to an immutable field, such as a Deployment's `spec.selector`, is refused by the API server in the dry run as it would be in the apply. The plan shows that object as an update with unknown disruption, and a hole carrying the server's message, so the note says the apply would fail until someone deletes the object.
+
+The gate's digest binds the documents sent. For each object it also binds the action and the new value of every changed field. A `kubectl-apply` step that receives the approved plan dry-runs those documents again before it applies them. If the digest moved, the step fails before the cluster changes, and its message names the approved digest beside the new one. A live value that moved under a field the apply sets to the same value does not move the digest.
+
+The plan job needs credentials that can read, list and dry-run apply the manifest's kinds in the cluster, and resolves the context the same way the apply does: the step's `context`, or `k8s.profiles.<env>.context`.
+
 ## Generate the pipeline
 
 ```bash

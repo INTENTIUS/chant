@@ -46,6 +46,7 @@ import { operationFor } from "../../api/operation-surface";
 import { DEFAULT_IMPORT_TYPES } from "../../api/sweep-types";
 import { isGeneratedOnce } from "../../secret-labels";
 import { isEffectReceiptObject } from "../../effect-receipt-row";
+import { diffFields, normalizeServerObject, type FieldChange } from "./apply-diff";
 
 /**
  * How the apply treats chant-owned objects that are no longer declared. The
@@ -362,6 +363,149 @@ export async function applyManifest(
   return { fieldManager, applied, pruned, retained };
 }
 
+/** What a dry-run apply would do to one declared object (#3998). */
+export interface PlannedObject {
+  ref: AppliedRef;
+  /** `create` when no live object exists, `no-op` when the dry run equals it, `update` otherwise. */
+  action: "create" | "update" | "no-op";
+  /**
+   * For a create, the document as the apply sends it (ownership stamped).
+   * Not the dry-run result: the server can fill in values a dry run picks
+   * afresh each time (a Service's cluster IP), which would make the plan
+   * differ from itself.
+   */
+  object?: Record<string, unknown>;
+  /** The fields an update changes, live against the dry-run result, both normalized. */
+  changes: FieldChange[];
+  /**
+   * The API server rejected the dry run of a change to a live object because
+   * it changes an immutable field. The apply does not delete and recreate,
+   * so it would fail the same way. The server's message.
+   */
+  refused?: string;
+}
+
+/** What {@link planManifest} found. */
+export interface ManifestPlanResult {
+  fieldManager: string;
+  stack?: string;
+  objects: PlannedObject[];
+  /** What the apply's prune would delete: empty unless `deleteMode` deletes. */
+  deletes: AppliedRef[];
+  /** Owned, undeclared objects the prune keeps (#1830, #2074). */
+  retained: AppliedRef[];
+}
+
+/** A 404 from the API server, matched by shape. */
+function isNotFound(err: unknown): boolean {
+  const e = err as { name?: unknown; statusCode?: unknown };
+  return !!e && e.name === "K8sApiError" && e.statusCode === 404;
+}
+
+/** A 422 from the API server whose message says a field is immutable. Matched by shape, as {@link isChantSelfConflict} is. */
+function immutableRefusal(err: unknown): string | undefined {
+  const e = err as { name?: unknown; statusCode?: unknown; apiMessage?: unknown; message?: unknown };
+  if (!e || e.name !== "K8sApiError" || e.statusCode !== 422) return undefined;
+  const message = typeof e.apiMessage === "string" && e.apiMessage !== "" ? e.apiMessage : String(e.message ?? "");
+  return /immutable/i.test(message) ? message : undefined;
+}
+
+/**
+ * Say what {@link applyManifest} would do, without changing anything (#3998).
+ *
+ * Every document is stamped and dry-run applied exactly as the apply sends
+ * it: the same field manager, `force: false`, and the same retake of a
+ * conflict chant has only with itself. The live object is read first and
+ * compared with the dry-run result through `./apply-diff.ts`, so a field the
+ * server defaults counts as unchanged when the live object already has it.
+ *
+ * An object in a namespace an earlier document of the same plan creates
+ * cannot be dry-run (the server answers 404, as the namespace was never
+ * persisted), so it plans as a create of the document as sent.
+ *
+ * Deletes come from the apply's own prune scope (`findOrphans`): marker
+ * scoped, in the namespaces the apply set touches, generated-once Secrets
+ * and effect receipts kept. They are found only when `deleteMode` is not
+ * `never`, as the apply prunes only then.
+ */
+export async function planManifest(
+  args: KubectlApplyArgs,
+  signal?: AbortSignal,
+  connect: K8sConnector = defaultK8sConnector,
+): Promise<ManifestPlanResult> {
+  const documents = args.documents ?? readManifestDocuments(args.manifest);
+  const { fieldManager, stack } = await resolveApplyIdentity(args);
+  const { client } = await connect({
+    ...(args.environment !== undefined ? { environment: args.environment } : {}),
+    ...(args.context !== undefined ? { context: args.context } : {}),
+    ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+  });
+
+  const objects: PlannedObject[] = [];
+  /** Namespaces this plan creates. A dry run cannot place an object in one, since nothing persisted it. */
+  const creating = new Set<string>();
+  for (const document of documents) {
+    const stamped = stampOwnership(document as K8sObject, stack);
+    const declaredRef = {
+      apiVersion: String(stamped.apiVersion ?? ""),
+      kind: String(stamped.kind ?? ""),
+      name: String(stamped.metadata?.name ?? ""),
+      ...(stamped.metadata?.namespace !== undefined ? { namespace: String(stamped.metadata.namespace) } : {}),
+    };
+    const live = await client.readIfPresent(declaredRef, signal ? { signal } : {});
+    let result: K8sObject;
+    try {
+      try {
+        result = await client.apply(stamped, { fieldManager, force: args.force ?? false, dryRun: true, signal });
+      } catch (err) {
+        if (!isChantSelfConflict(err)) throw err;
+        result = await client.apply(stamped, { fieldManager, force: true, dryRun: true, signal });
+      }
+    } catch (err) {
+      if (!live && declaredRef.namespace !== undefined && creating.has(declaredRef.namespace) && isNotFound(err)) {
+        objects.push({ ref: declaredRef, action: "create", object: stamped as Record<string, unknown>, changes: [] });
+        continue;
+      }
+      const refused = live ? immutableRefusal(err) : undefined;
+      if (refused === undefined) throw err;
+      objects.push({ ref: refOf(live!, document), action: "update", changes: [], refused });
+      continue;
+    }
+    const ref = refOf(result, document);
+    if (!live) {
+      if (ref.kind === "Namespace" && ref.apiVersion === "v1") creating.add(ref.name);
+      objects.push({ ref, action: "create", object: stamped as Record<string, unknown>, changes: [] });
+      continue;
+    }
+    const changes = diffFields(
+      normalizeServerObject(live as Record<string, unknown>),
+      normalizeServerObject(result as Record<string, unknown>),
+    );
+    objects.push({ ref, action: changes.length === 0 ? "no-op" : "update", changes });
+  }
+
+  const deleteMode = args.deleteMode ?? "never";
+  const { candidates, retained } =
+    deleteMode === "never"
+      ? { candidates: [], retained: [] }
+      : await findOrphans(
+          client,
+          objects.map((o) => o.ref),
+          { ...(stack !== undefined ? { stack } : {}), ...(signal ? { signal } : {}) },
+        );
+  return { fieldManager, ...(stack !== undefined ? { stack } : {}), objects, deletes: candidates, retained };
+}
+
+/** The ref an applied or dry-run object answers with, as {@link applyManifest} records it. */
+function refOf(result: K8sObject, document: Record<string, unknown>): AppliedRef {
+  return {
+    apiVersion: String(result.apiVersion ?? document.apiVersion ?? ""),
+    kind: String(result.kind ?? document.kind ?? ""),
+    name: String(result.metadata?.name ?? ""),
+    ...(result.metadata?.namespace !== undefined ? { namespace: String(result.metadata.namespace) } : {}),
+  };
+}
+
 /**
  * Apply every document in `args.manifest`.
  * Uses the longInfra profile: 20m timeout, three attempts backing off from 30s.
@@ -405,6 +549,36 @@ async function pruneOrphans(
   applied: readonly AppliedRef[],
   options: { stack?: string; signal?: AbortSignal },
 ): Promise<{ pruned: AppliedRef[]; retained: AppliedRef[] }> {
+  const { candidates, retained } = await findOrphans(client, applied, options);
+  for (const ref of retained) {
+    console.log(
+      ref.kind === "Secret"
+        ? `${ref.apiVersion} ${ref.kind}/${ref.name} retained (generated-once — owned and no longer declared, ` +
+            `but never pruned; delete it explicitly if you mean to)`
+        : `${ref.apiVersion} ${ref.kind}/${ref.name} retained (effect receipt: owned and never declared ` +
+            `in an apply set, but never pruned; the effect() step is its sole writer)`,
+    );
+  }
+  const pruned: AppliedRef[] = [];
+  for (const ref of candidates) {
+    await client.delete(ref, { ...(options.signal ? { signal: options.signal } : {}) });
+    pruned.push(ref);
+    console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} pruned (chant-owned, no longer declared)`);
+  }
+  return { pruned, retained };
+}
+
+/**
+ * The objects {@link pruneOrphans} would delete (`candidates`) and the owned,
+ * undeclared ones it keeps (`retained`), found without deleting anything. A
+ * plan (#3998) asks this for its delete entries, so the plan and the apply
+ * share one prune scope.
+ */
+async function findOrphans(
+  client: K8sClient,
+  applied: readonly AppliedRef[],
+  options: { stack?: string; signal?: AbortSignal },
+): Promise<{ candidates: AppliedRef[]; retained: AppliedRef[] }> {
   const stack = options.stack;
   const selector = [
     `${LABEL_OWNERSHIP_KEYS.managedBy}=${OWNERSHIP_MANAGED_BY_VALUE}`,
@@ -498,10 +672,6 @@ async function pruneOrphans(
     // an explicit act (`kubectl delete`, or a future gated op).
     if (target.kind === "Secret" && isGeneratedOnce(item.metadata?.labels)) {
       retained.push(ref);
-      console.log(
-        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (generated-once — owned and no longer declared, ` +
-          `but never pruned; delete it explicitly if you mean to)`,
-      );
       continue;
     }
     // An effect receipt never enters the prunable set either (#2074, epic
@@ -512,22 +682,11 @@ async function pruneOrphans(
     // the estate re-running a migration on every apply.
     if (target.kind === "ConfigMap" && isEffectReceiptObject(item.metadata?.labels)) {
       retained.push(ref);
-      console.log(
-        `${ref.apiVersion} ${ref.kind}/${ref.name} retained (effect receipt: owned and never declared ` +
-          `in an apply set, but never pruned; the effect() step is its sole writer)`,
-      );
       continue;
     }
     candidates.push(ref);
   }
-
-  const pruned: AppliedRef[] = [];
-  for (const ref of candidates) {
-    await client.delete(ref, { ...(options.signal ? { signal: options.signal } : {}) });
-    pruned.push(ref);
-    console.log(`${ref.apiVersion} ${ref.kind}/${ref.name} pruned (chant-owned, no longer declared)`);
-  }
-  return { pruned, retained };
+  return { candidates, retained };
 }
 
 function refKey(ref: AppliedRef): string {
