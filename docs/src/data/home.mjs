@@ -32,6 +32,7 @@ export const LEXICONS = [
 		{ label: 'SQL', href: '/lexicons/sql/' },
 		{ label: 'Cedar', href: '/lexicons/cedar/' },
 		{ label: 'Fountain', href: '/lexicons/fountain/' },
+		{ label: 'E2B', href: '/lexicons/e2b/' },
 	] },
 ];
 

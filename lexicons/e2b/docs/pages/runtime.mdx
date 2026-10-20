@@ -1,0 +1,84 @@
+---
+title: "Running an Op on E2B"
+description: "How to point chant run --on e2b at a steward sandbox, and what each run does there."
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/e2b/runtime/.
+  Add an e2b profile to `chant.config.ts` as the page shows, with the domain, template and steward I name and the API key and git token read from environment variables, never the values themselves.
+  Run `npx chant run list --on e2b` and `npx chant run status <op> --on e2b` for the Ops I name, and show me the output; they only read.
+  Open a pull request with the config. Print the `chant run <op> --on e2b` command for me to run; do not start or cancel a run yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+order: 1
+---
+
+`chant run <op> --on e2b` hands a run to a steward: one E2B sandbox that outlives every run. The steward keeps a clone of the project and its installed tools on its disk, runs one Op at a time, and sleeps paused between runs. Any API that speaks E2B's can host it, hosted E2B or a platform of your own that serves the same API.
+
+## Before the first run
+
+Declare a profile in `chant.config.ts`. Secrets are named by environment variable, never written in the file:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-e2b";
+
+export default {
+  lexicons: ["e2b"],
+  e2b: {
+    profiles: {
+      prod: {
+        apiKey: { env: "E2B_API_KEY" },
+        domain: "e2b.example.com",
+        template: "chant-steward",
+        steward: "prod-steward",
+        gitToken: { env: "GITHUB_TOKEN" },
+      },
+    },
+    defaultProfile: "prod",
+  },
+} satisfies ChantConfig;
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `apiKey` | `{ env: "E2B_API_KEY" }` | The E2B API key, by environment variable. |
+| `domain` | `E2B_DOMAIN`, else hosted E2B | The domain the SDK talks to, as a bare host: `api.<domain>` and `<port>-<id>.<domain>`. |
+| `template` | `base` | The template the steward is made from. It needs git and Node; see [the Template reference](/template/). |
+| `steward` | the repository's name | The steward's sandbox is found again by its `chant/steward` metadata. |
+| `repo` | `origin`, as https | The repository the steward clones. An ssh `origin` is rewritten to https. |
+| `gitToken` | `CHANT_GIT_TOKEN`, when set | A token to fetch a private repository and push chant's ledger branch. It is handed to each command in the sandbox and never written to its disk. |
+
+With no profile, the runtime reads `E2B_API_KEY`, `E2B_DOMAIN` and `CHANT_GIT_TOKEN`. `--profile <name>` picks another profile for one run, and a name that is not declared is an error rather than a fall back to the default.
+
+The project must depend on `@intentius/chant`, because the steward runs the chant the project installs. Push the commit you want run first: the steward fetches it from the repository, and uncommitted changes stay behind.
+
+## What a run does
+
+1. The runtime finds the steward's sandbox, or makes it from the profile's template. A steward already running an Op is busy, and the run is refused rather than queued.
+2. In the steward's clone it fetches the repository and checks out the commit this checkout is at, then runs `npm ci` if the lockfile changed. Ignored files such as `node_modules` are kept between runs.
+3. There it runs `chant run <op> --on local --json --progress-json` and streams each settled step back.
+4. Last, it pushes the steward's ledger and pauses the sandbox.
+
+Gates, leases and the run ledger are the local runtime's, unchanged. A gate the steward reaches pushes its pending fact to the repository's `chant/lifecycle` branch, `chant approve` on any checkout records the answer, and the next run walks through:
+
+```bash
+chant run prod-apply --on e2b              # exit 3: pending on rollout-gate
+chant approve prod-apply rollout-gate      # from any checkout
+chant run prod-apply --on e2b              # walks through, applies
+chant run status prod-apply --on e2b       # a run in progress, or the last one recorded
+chant run log prod-apply --on e2b
+chant run cancel prod-apply --on e2b --force
+```
+
+A client that dies mid-run leaves the run going in the sandbox. `status` reports it, and the steward pauses itself when its awake window runs out (30 minutes, renewed while a client is watching). Ctrl-C, or `chant run cancel` from any checkout, stops it the way Ctrl-C stops a local run: SIGTERM, then SIGKILL after ten seconds. `status`, `log` and `list` wake the sandbox to read its ledger and leave it to pause itself five minutes later.
+
+## The steward's ledger
+
+chant pushes the facts other checkouts need as it writes them (a gate's pending fact, an approval, a lease) and keeps run records on the local branch. A checkout that lives on, as a steward's does, would diverge from the repository the first time someone approved a gate elsewhere, and chant refuses to read a diverged ledger. So before and after each run the steward reconciles its `chant/lifecycle` with the repository's. When it is only ahead it pushes. When the two have diverged it merges them, adding to each append-only `.jsonl` file the lines one side lacks, and pushes the merge. Its run records therefore reach the repository, and `chant run log` on any checkout sees them. A push that fails is reported and tried again on the next run.
+
+## Schedules
+
+Nothing in E2B fires on a clock. Run `chant run <op> --on e2b` from whatever does: a CI `schedule:` trigger (the github lexicon renders an Op's `schedule` as one), a CronJob, or `chant operator` on a machine that stays up. The job is short, because the steward does the work.
+
+## Limits
+
+`status`, `log` and `list` read the root project's run ledger only, not a workspace member's. `declareSteward` has `local` and `fountain` forms and no `e2b` form yet, so a steward's schedules do not render to anything here; drive them from a clock as above.

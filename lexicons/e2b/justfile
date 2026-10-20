@@ -1,0 +1,24 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Write the post-synth barrel
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Write dist/manifest.json, dist/meta.json, the rules and the skills
+bundle:
+    npx tsx src/package-cli.ts
+
+# Generate this lexicon's docs into the main site (docs/src/content/docs/lexicons/), then start its dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix ../../docs
+    npm run --prefix ../../docs dev
+
+# Build the whole docs site, every lexicon's section included
+docs-build:
+    cd ../.. && bash scripts/build-docs.sh
+
+# Package the lexicon (generate + bundle)
+package: generate bundle

@@ -54,6 +54,12 @@
       "@intentius/chant-lexicon-docker/*": [
         "./lexicons/docker/src/*"
       ],
+      "@intentius/chant-lexicon-e2b": [
+        "./lexicons/e2b/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-e2b/*": [
+        "./lexicons/e2b/src/*"
+      ],
       "@intentius/chant-lexicon-fly": [
         "./lexicons/fly/src/index.ts"
       ],
