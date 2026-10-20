@@ -89,7 +89,7 @@ With `delete: "owned-only"` the plan also lists what the apply's prune would del
 
 The apply never deletes and recreates an object. A change to an immutable field, such as a Deployment's `spec.selector`, is refused by the API server in the dry run as it would be in the apply. The plan shows that object as an update with unknown disruption, and a hole carrying the server's message, so the note says the apply would fail until someone deletes the object.
 
-The gate's digest binds the documents sent. For each object it also binds the action and the new value of every changed field. A `kubectl-apply` step that receives the approved plan dry-runs those documents again before it applies them. If the digest moved, the step fails before the cluster changes, and its message names the approved digest beside the new one. A live value that moved under a field the apply sets to the same value does not move the digest.
+The gate's digest binds the documents sent. For each object it also binds the action and the new value of every changed field. A `kubectl-apply` step that receives the approved plan dry-runs those documents again before it applies them. If the digest moved, the step fails before the cluster changes, and its message names the approved digest beside the new one. `pr-apply` exits 3 for it, as for a `cfn-deploy` change set that moved. A live value that moved under a field the apply sets to the same value does not move the digest.
 
 The plan job needs credentials that can read, list and dry-run apply the manifest's kinds in the cluster, and resolves the context the same way the apply does: the step's `context`, or `k8s.profiles.<env>.context`.
 
@@ -181,6 +181,8 @@ The plan changed after review, so nothing was applied. approved: jcs1-sha256:d18
 ```
 
 The note and the report carry the same message. Read the new plan in `.chant/pr/pr-apply.json`, which the job keeps as an artifact. If it is right, approve it and re-run the job.
+
+The target can also move after that check, while the apply runs. A step that finds it moved applies nothing for its member and fails it: a `cfn-deploy` change set, a `kubectl-apply` dry run, or a choudoufu root's apply that differs from the approved plan. The apply then exits 3 as well, and the members before it stay applied. Plain terraform and tofu refuse a stale plan file too, but chant does not tell that error from others, so it exits 1.
 
 ## What each run keeps
 

@@ -296,7 +296,10 @@ describe("kubectl-apply plan: a server-side dry-run diff (#3998)", () => {
     const { KubectlApplyPlanMovedError } = await import("./kubectl-apply");
     const moved = cap.run({ env: "prod", component: "api", plans: { web: planned.artifact } }, input);
     await expect(moved).rejects.toBeInstanceOf(KubectlApplyPlanMovedError);
-    await expect(moved).rejects.toMatchObject({ exitCode: 3, approved: planned.planDigest });
+    await expect(moved).rejects.toMatchObject({ planMoved: true, exitCode: 3, approved: planned.planDigest });
+    // Core's mark for a moved plan, so the command that applied it exits 3 (#3997).
+    const { isPlanMovedError } = await import("@intentius/chant/components/capability");
+    expect(isPlanMovedError(await moved.catch((e: unknown) => e))).toBe(true);
     expect(applied).toHaveLength(1);
   });
 

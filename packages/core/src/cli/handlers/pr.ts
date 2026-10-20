@@ -98,7 +98,7 @@ import { resolveChangedUnits } from "./fan-out";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
-import { planMovedIn, type DriverComponent } from "../../components/driver";
+import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import type { CapabilityRegistry } from "../../components/capability";
 
 
@@ -693,7 +693,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   // A component that stopped at a gate of its own leaves the apply waiting on
   // a person. A step that refused its plan because the target moved since
   // the approval exits 3, as a moved digest does before anything applies (#3997).
-  const exit = applied.status === "applied" ? 0 : planMovedIn(applied.run.results) ? GATED_EXIT_CODE : 1;
+  const exit = applied.status === "applied" ? 0 : failedRunExitCode(applied.run.results);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;

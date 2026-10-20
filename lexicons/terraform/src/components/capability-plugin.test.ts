@@ -51,7 +51,8 @@ vi.mock("../op/activities/terraform", () => ({
   }),
 }));
 
-const { terraformApplyCapability, terraformCapabilityPlugin } = await import("./capability-plugin");
+const { terraformApplyCapability, terraformCapabilityPlugin, TerraformPlanMovedError } = await import("./capability-plugin");
+const { isPlanMovedError } = await import("@intentius/chant/components/capability");
 
 beforeEach(() => {
   calls.length = 0;
@@ -124,6 +125,24 @@ describe("terraform-apply on a choudoufu root in a gated wave (#3459)", () => {
     expect(calls).toEqual(["wave-apply e01 sha256:set-e01"]);
     expect(kept).toEqual([carry]);
   });
+
+  test("a moved set throws core's plan-moved mark, so the command exits 3 (#3997)", async () => {
+    waveApply = { exitCode: 3, landed: false, message: "choudoufu refused the approved set" };
+    const err = await terraformApplyCapability
+      .run({ env: "test", component: "e01", plans: { e01: wavePlan } }, { root: "e01" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TerraformPlanMovedError);
+    expect(isPlanMovedError(err)).toBe(true);
+  });
+
+  test("a root that could not land is an ordinary failure, not a moved plan", async () => {
+    waveApply = { exitCode: 4, landed: false, message: "choudoufu could not land the root" };
+    const err = await terraformApplyCapability
+      .run({ env: "test", component: "e01", plans: { e01: wavePlan } }, { root: "e01" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(isPlanMovedError(err)).toBe(false);
+  });
 });
 
 describe("terraform-apply", () => {
@@ -177,5 +196,24 @@ describe("terraform-apply", () => {
       ),
     ).rejects.toThrow(/refused the plan it was given \(approval-mismatch\)/);
     expect(calls).not.toContain("output app");
+  });
+
+  test.each(["approval-mismatch", "wrong-estate"])(
+    "choudoufu's %s refusal of the wave's plan throws core's plan-moved mark, so the command exits 3 (#3997)",
+    async (refused) => {
+      applyResult = { applied: false, refused, refusal: "refused" };
+      const err = await terraformApplyCapability
+        .run({ env: "test", component: "app", plans: { app: { planFile: "chant.tfplan", planDigest: "d" } } }, { root: "app" })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TerraformPlanMovedError);
+      expect(isPlanMovedError(err)).toBe(true);
+    },
+  );
+
+  test("a refusal of a plan this run made itself is an ordinary failure: the next run plans afresh", async () => {
+    applyResult = { applied: false, refused: "approval-mismatch", refusal: "refused" };
+    const err = await terraformApplyCapability.run({ env: "test", component: "app" }, { root: "app" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(isPlanMovedError(err)).toBe(false);
   });
 });

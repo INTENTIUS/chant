@@ -31,7 +31,7 @@ import type { RunEvent } from "../../run-event";
 import { openCliRunEvents, refusesBothStreams, stdoutLine } from "../run-events";
 import { maybeRecordAutoRelease } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
-import type { DriverComponentResult } from "../../components/driver";
+import { failedRunExitCode, type DriverComponentResult } from "../../components/driver";
 import { isComponentList, type ComponentRunPlan, type RunComponentsResult } from "../../components/cli-support";
 import { resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
 import { gateAdmission, gateApprover } from "../../components/promote";
@@ -1283,7 +1283,10 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
     }
   }
 
-  return result.success ? 0 : 1;
+  // A step that refused a plan that moved since it was approved exits 3
+  // (#3997). `--gated-exit` doesn't remap it: the run failed.
+  if (result.success) return 0;
+  return result.run ? failedRunExitCode(result.run.results) : 1;
 }
 
 /**

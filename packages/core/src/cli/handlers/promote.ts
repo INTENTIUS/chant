@@ -58,7 +58,7 @@ import {
   type PromotionItem,
   type PromotionPlan,
 } from "../../components/promote";
-import type { DriverComponent } from "../../components/driver";
+import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
 import { approveCommand, describeGateMismatch, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../../op/gate";
 import type { ReleaseGateBinding } from "../../components/driver";
@@ -522,7 +522,8 @@ async function deployPlan(
 
   if (run.status !== "ok") {
     console.error(formatError({ message: `${verb} failed at "${run.failedComponent ?? "unknown"}"` }));
-    return 1;
+    // A step that refused a plan that moved since it was approved exits 3 (#3997).
+    return failedRunExitCode(run.results);
   }
   return 0;
 }

@@ -20,7 +20,10 @@
  * that file and nothing else. terraform and tofu refuse a saved plan whose
  * state moved since it was written; choudoufu re-plans against the live
  * system and refuses with exit 3 when its fresh plan differs (choudoufu
- * #878). Either refusal fails the step.
+ * #878). Either refusal fails the step. choudoufu's refusal of a plan the
+ * wave handed `run` throws {@link TerraformPlanMovedError}, so the command
+ * that applied it exits 3 (#3997). terraform's and tofu's stale-plan error
+ * is not classified and exits 1.
  *
  * Run without a wave plan (`chant run --components`, or a fan-out with no
  * wave gate), `run` plans and applies in one go, which is what `terraform
@@ -107,6 +110,24 @@ async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot & {
   };
 }
 
+/**
+ * choudoufu refused the plan `run` was handed by its wave (its exit 3):
+ * the live system moved since the plan, or the plan names another estate.
+ * Nothing was applied. `planMoved` is core's mark for a moved plan
+ * (`isPlanMovedError`), so the command that applied it exits 3, as for the
+ * other capabilities that refuse a moved plan (#3997).
+ */
+export class TerraformPlanMovedError extends Error {
+  readonly planMoved = true;
+  constructor(public readonly root: string, message: string) {
+    super(message);
+    this.name = "TerraformPlanMovedError";
+  }
+}
+
+/** `live-wave-apply`'s exit status for a set whose plan moved (`CHOUDOUFU_WAVE_EXIT.setMoved`). */
+const CHOUDOUFU_SET_MOVED_EXIT = 3;
+
 function isPlannedRoot(value: unknown): value is PlannedRoot {
   const v = value as Partial<PlannedRoot> | undefined;
   return typeof v?.planFile === "string" && typeof v.planDigest === "string";
@@ -141,7 +162,9 @@ async function runChoudoufuWave(
   });
   if (applied.carry) ctx.carry?.(input.root, applied.carry);
   if (!applied.landed) {
-    throw new Error(`terraform-apply: root "${input.root}": ${applied.message}`);
+    const message = `terraform-apply: root "${input.root}": ${applied.message}`;
+    if (applied.exitCode === CHOUDOUFU_SET_MOVED_EXIT) throw new TerraformPlanMovedError(input.root, message);
+    throw new Error(message);
   }
   const outputs = await terraformOutputs(rootArgs(input));
   return { root: input.root, planDigest: planned.planDigest, fromWavePlan: true, outputs };
@@ -179,10 +202,13 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     const planned: PlannedRoot = isPlannedRoot(fromWave) ? fromWave : await planRoot(input);
     const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile });
     if (!applied.applied) {
-      throw new Error(
+      const message =
         `terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ` +
-          (applied.refusal ?? ""),
-      );
+        (applied.refusal ?? "");
+      // A plan the wave approved that choudoufu refuses moved since the
+      // approval. One this run made itself is planned afresh by the next run.
+      if (applied.refused !== undefined && isPlannedRoot(fromWave)) throw new TerraformPlanMovedError(input.root, message);
+      throw new Error(message);
     }
     const outputs = await terraformOutputs(rootArgs(input));
     return { root: input.root, planDigest: planned.planDigest, fromWavePlan: isPlannedRoot(fromWave), outputs };
