@@ -13,6 +13,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parseCFTemplate, type CFResource } from "./cf-refs";
 
@@ -36,9 +37,8 @@ interface LexiconEntry {
 function loadLexiconConstraints(): Map<string, ExtensionConstraint[]> {
   const map = new Map<string, ExtensionConstraint[]>();
   try {
-    // Navigate from src/lint/post-synth/ up to the package root
-    const pkgDir = join(__dirname, "..", "..", "..");
-    const lexiconPath = join(pkgDir, "src", "generated", "lexicon-aws.json");
+    // From src/lint/post-synth/ (or its compiled twin under dist/) to src/generated/
+    const lexiconPath = join(moduleSourceDir(import.meta.url), "..", "..", "generated", "lexicon-aws.json");
     const content = readFileSync(lexiconPath, "utf-8");
     const data = JSON.parse(content) as Record<string, LexiconEntry>;
 

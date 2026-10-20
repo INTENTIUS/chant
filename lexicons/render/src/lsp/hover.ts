@@ -1,8 +1,9 @@
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { LexiconIndex, lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { CATALOG } from "../catalog";
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 let cachedIndex: LexiconIndex | null = null;
 

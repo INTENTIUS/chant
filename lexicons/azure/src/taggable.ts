@@ -6,7 +6,7 @@
 
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 
 interface LexiconEntry {
   kind: string;
@@ -17,7 +17,7 @@ interface LexiconEntry {
 
 let _cached: Set<string> | undefined;
 
-const __dirname_ = dirname(fileURLToPath(import.meta.url));
+const __dirname_ = moduleSourceDir(import.meta.url);
 
 /**
  * Load taggable resource types from the lexicon JSON.

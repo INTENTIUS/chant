@@ -19,13 +19,13 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { CLICKHOUSE_VERSION, clickhouseImage } from "./pin";
 import { parseCatalog, readCatalog, stringifyCatalog, type ClickHouseCatalog } from "./catalog";
 import { startScratchServer } from "../clickhouse/container";
 import type { ClickHouseEndpoint } from "../clickhouse/http";
 
-export const SNAPSHOT_FILE = join(dirname(fileURLToPath(import.meta.url)), "clickhouse-catalog.snapshot.json");
+export const SNAPSHOT_FILE = join(moduleSourceDir(import.meta.url), "clickhouse-catalog.snapshot.json");
 
 /** The key the single catalog document is filed under in the pipeline's schema map. */
 export const CATALOG_KEY = "ClickHouse::Catalog";

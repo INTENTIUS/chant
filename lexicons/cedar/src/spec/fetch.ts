@@ -23,7 +23,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, isAbsolute, join, resolve } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { CEDAR_DEFAULT_SCHEMA_PATH } from "../config";
 
 /** Filename the bundled fallback schema ships under. */
@@ -44,7 +44,7 @@ let specDir: string | undefined;
 function resolveSpecDir(): string | undefined {
   if (specDir !== undefined) return specDir;
   try {
-    specDir = dirname(fileURLToPath(import.meta.url));
+    specDir = moduleSourceDir(import.meta.url);
   } catch {
     return undefined;
   }

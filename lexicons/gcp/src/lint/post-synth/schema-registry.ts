@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 
 export interface FieldSchema {
   type: string;
@@ -38,7 +39,7 @@ export function getSchemaRegistry(): Map<string, ResourceSchema> {
     // Built lazily (not at module load) so importing this module stays edge-safe:
     // `createRequire(import.meta.url)` throws where import.meta.url is undefined
     // (bundled Workers); there it's caught here and the registry is just empty.
-    const require = createRequire(import.meta.url);
+    const require = createRequire(moduleSourceUrl(import.meta.url));
     const lexicon = require("../../generated/lexicon-gcp.json") as Record<string, LexiconEntry>;
     for (const entry of Object.values(lexicon)) {
       if (entry.kind === "resource" && entry.gvkKind && entry.schema) {

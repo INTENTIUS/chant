@@ -20,7 +20,7 @@ import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-w
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
@@ -87,7 +87,7 @@ const RESOURCE_LEVEL_FIELDS = new Set([
  * silently bypasses the per-provider pins in spec/api-versions.ts.
  */
 function resolveDir(): string {
-  return dirname(fileURLToPath(import.meta.url));
+  return moduleSourceDir(import.meta.url);
 }
 
 export function apiVersionRegistryCandidates(dir: string = resolveDir()): string[] {

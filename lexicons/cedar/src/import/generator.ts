@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { CedarPolicyIR } from "./parser";
 
 /** The package this generated source imports from. */
@@ -199,7 +199,7 @@ interface RegistryEntry {
  * `Policy` class accepts and the compiler still checks.
  */
 export function loadActionConstants(packageDir?: string): Record<string, string> {
-  const base = packageDir ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  const base = packageDir ?? dirname(moduleSourceDir(import.meta.url));
   const path = join(base, "generated", REGISTRY_FILE);
   if (!existsSync(path)) return {};
 

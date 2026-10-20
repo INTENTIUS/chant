@@ -10,7 +10,7 @@
 import { readFileSync } from "fs";
 import { forgejoPlugin } from "../plugin";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import {
   packagePipeline,
   collectSkills,
@@ -23,7 +23,7 @@ export type { PackageOptions, PackageResult };
 
 // package.ts is at src/codegen/package.ts — 2 dirname calls reach src/
 // then join(pkgDir, "..") is the package root where package.json lives
-const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const pkgDir = dirname(moduleSourceDir(import.meta.url));
 
 /**
  * Package the Forgejo lexicon into a distributable BundleSpec.

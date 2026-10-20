@@ -19,7 +19,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { SchemaName } from "../pin";
 
 export interface OverlayPatch {
@@ -42,7 +42,7 @@ export interface SchemaOverlay {
 }
 
 export function overlayDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "overlay");
+  return join(moduleSourceDir(import.meta.url), "overlay");
 }
 
 export function overlayPath(name: SchemaName): string {

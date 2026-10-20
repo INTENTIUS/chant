@@ -13,6 +13,7 @@ import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { azureSerializer } from "./serializer";
 import { hardcodedLocationRule } from "./lint/rules/hardcoded-location";
 import { storageHttpsRule } from "./lint/rules/storage-https";
@@ -373,7 +374,7 @@ export const tags = defaultTags([
         required: ["query"],
       },
       handler: async (args: Record<string, unknown>) => {
-        const dir = dirname(fileURLToPath(import.meta.url));
+        const dir = moduleSourceDir(import.meta.url);
         try {
           const lexicon = JSON.parse(
             readFileSync(join(dir, "generated", "lexicon-azure.json"), "utf-8"),
@@ -398,7 +399,7 @@ export const tags = defaultTags([
         description: "All available Azure resource types",
         mimeType: "application/json",
         handler: async () => {
-          const dir = dirname(fileURLToPath(import.meta.url));
+          const dir = moduleSourceDir(import.meta.url);
           try {
             return readFileSync(join(dir, "generated", "lexicon-azure.json"), "utf-8");
           } catch {

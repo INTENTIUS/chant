@@ -7,8 +7,8 @@
  */
 
 import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
+import { moduleSourceDir } from "./module-source";
 import type { SkillDefinition } from "./lexicon";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { Serializer } from "./serializer";
@@ -44,7 +44,8 @@ export function createSkillsLoader(
   specs: SkillFileSpec[],
 ): () => SkillDefinition[] {
   return () => {
-    const skillsDir = join(dirname(fileURLToPath(importMetaUrl)), "skills");
+    // Skills are markdown beside the source; a compiled plugin finds them under src/ (#3981).
+    const skillsDir = join(moduleSourceDir(importMetaUrl), "skills");
     return specs.map(({ file, ...meta }) => {
       try {
         const content = readFileSync(join(skillsDir, file), "utf-8");
@@ -123,7 +124,8 @@ export function createCatalogResource(
     description,
     mimeType: "application/json",
     async handler(): Promise<string> {
-      const dir = dirname(fileURLToPath(importMetaUrl));
+      // Generated JSON sits beside the source; a compiled plugin finds it under src/ (#3981).
+      const dir = moduleSourceDir(importMetaUrl);
       const lexicon = JSON.parse(
         readFileSync(join(dir, "generated", lexiconJsonFile), "utf-8"),
       ) as Record<string, { resourceType: string; kind: string }>;

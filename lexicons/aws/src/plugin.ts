@@ -3,7 +3,7 @@ import { createRequire } from "module";
 import { awsBehaviourKinds } from "./behaviour-kinds";
 import { detectTemplate } from "./detect";
 import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DescribeIdentityOptions, DescribeIdentityResult, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -15,6 +15,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import { awsSerializer } from "./serializer";
 import { FLOCI_EMULATOR } from "./op/activities/floci";
 import { applyAwsEndpointArgv } from "./components/cloud-executor";

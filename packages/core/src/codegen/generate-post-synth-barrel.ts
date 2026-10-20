@@ -14,7 +14,7 @@
  */
 
 import { createRequire } from "module";
-import { listRuleFiles } from "../lint/discover";
+import { listRuleFiles, ruleModuleBase } from "../lint/discover";
 import { isPostSynthCheck } from "../lint/post-synth";
 
 export interface BarrelEntry {
@@ -34,7 +34,7 @@ export function scanPostSynthChecks(dir: string, importMetaUrl: string): BarrelE
   const require = createRequire(importMetaUrl);
   const entries: BarrelEntry[] = [];
   for (const file of listRuleFiles(dir)) {
-    const base = file.replace(/\.ts$/, "");
+    const base = ruleModuleBase(file);
     let mod: Record<string, unknown>;
     try {
       mod = require(`${dir}/${base}`) as Record<string, unknown>;

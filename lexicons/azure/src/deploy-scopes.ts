@@ -14,6 +14,7 @@
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 
 export type DeployScope = "resourceGroup" | "subscription" | "managementGroup" | "tenant";
@@ -94,7 +95,7 @@ let _cached: Map<string, DeployScope[]> | undefined;
  */
 function moduleDir(): string | undefined {
   try {
-    return dirname(fileURLToPath(import.meta.url));
+    return moduleSourceDir(import.meta.url);
   } catch {
     return undefined;
   }

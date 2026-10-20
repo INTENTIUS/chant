@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
 import { generate } from "./generate";
 import { terraformPlugin } from "../plugin";
@@ -12,7 +12,7 @@ import { terraformPlugin } from "../plugin";
  * `lint/rules` does not exist). `lexicons/aws/src/codegen/package.ts` resolves
  * it the same way.
  */
-const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const srcDir = dirname(moduleSourceDir(import.meta.url));
 
 /** The published version, so the manifest cannot drift from package.json. */
 function packageVersion(): string {

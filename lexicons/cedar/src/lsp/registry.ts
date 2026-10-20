@@ -16,10 +16,11 @@
  */
 
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 import { LexiconIndex, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { LEXICON_JSON_FILENAME } from "../codegen/generate";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 /** One `lexicon-cedar.json` entry, as {@link generateRegistry} writes it. */
 export interface CedarRegistryEntry {

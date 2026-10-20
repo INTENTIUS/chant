@@ -25,6 +25,7 @@ import { existsSync } from "node:fs";
 import * as nodeModule from "node:module";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isJavaScriptModule, moduleSourceDir } from "./module-source";
 
 // `module.registerHooks` (Node 22.15+, 24) is newer than the @types/node the
 // repository pins, so its shape is declared here.
@@ -105,18 +106,38 @@ export function ensureTypeScriptLoader(): boolean {
 }
 
 /**
+ * #3981 — register tsx only when the module about to be imported is not
+ * JavaScript. `pathOrUrl` is the resolved module, a path or a file URL. A
+ * compiled lexicon (`dist/*.js`) imports with plain node, so a command that
+ * loads only compiled modules never pays for tsx's hooks thread. A `.ts`
+ * module, or one with no extension, registers tsx as before. Returns what
+ * {@link ensureTypeScriptLoader} does, or whether tsx is already registered
+ * when the module is JavaScript.
+ */
+export function ensureTypeScriptLoaderFor(pathOrUrl: string): boolean {
+  if (!isJavaScriptModule(pathOrUrl)) return ensureTypeScriptLoader();
+  return compiledState()?.tsx ?? false;
+}
+
+/**
+ * #3981 — whether a caller about to import a module of unknown kind should
+ * resolve it first: true only in the compiled CLI before tsx is registered.
+ * From source, and once tsx is in, every module loads either way.
+ */
+export function typeScriptLoaderPending(): boolean {
+  const state = compiledState();
+  return state !== undefined && !state.tsx;
+}
+
+/**
  * The source directory for a module of chant's own: `dirname` of `moduleUrl`
  * from source, and the matching directory under `<package>/src` when the
  * module runs from `<package>/dist`. The sandbox drivers hand chant's own
  * modules to esbuild by path, and must name the TypeScript source the
  * project's own `@intentius/chant/*` imports resolve to. String arithmetic
- * only: no filesystem access, so it is safe inside a sandboxed child.
+ * only: no filesystem access, so it is safe inside a sandboxed child. The
+ * same mapping as {@link moduleSourceDir}, which lexicons use.
  */
 export function chantSourceDir(moduleUrl: string): string {
-  const dir = dirname(fileURLToPath(moduleUrl));
-  if (!moduleUrl.endsWith(".js")) return dir;
-  const marker = `${sep}dist${sep}`;
-  const at = (dir + sep).lastIndexOf(marker);
-  if (at < 0) return dir;
-  return dir.slice(0, at) + `${sep}src` + dir.slice(at + marker.length - 1);
+  return moduleSourceDir(moduleUrl);
 }

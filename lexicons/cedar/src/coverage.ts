@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { LEXICON_JSON_FILENAME } from "./codegen/generate";
 import { attributesTypeName, contextTypeName } from "./codegen/emit";
 import { readSchemaSource, type ResolveSchemaOptions } from "./spec/fetch";
@@ -60,7 +60,7 @@ export interface CedarCoverageOptions extends ResolveSchemaOptions {
 }
 
 function defaultGeneratedDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "generated");
+  return join(moduleSourceDir(import.meta.url), "generated");
 }
 
 function pct(covered: number, total: number): number {

@@ -13,13 +13,13 @@
 import { createHash } from "crypto";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { GRAFANA_SCHEMA_PIN, VENDORED_SCHEMA_NAMES, type SchemaName, type VendoredSchemaName } from "../pin";
 import { applyOverlay, loadOverlay } from "./overlay";
 
 /** Where the vendored files live: beside this module, under `src/`. */
 export function schemasDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "schemas");
+  return join(moduleSourceDir(import.meta.url), "schemas");
 }
 
 export function schemaPath(name: VendoredSchemaName): string {

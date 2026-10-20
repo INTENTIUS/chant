@@ -4,7 +4,7 @@
 
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import {
   packagePipeline,
   collectSkills,
@@ -17,7 +17,7 @@ import { prometheusSkills } from "../skill-defs";
 export type { PackageOptions, PackageResult };
 
 // src/codegen/package.ts -> src/
-const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const srcDir = dirname(moduleSourceDir(import.meta.url));
 
 export async function packageLexicon(opts: PackageOptions = {}): Promise<PackageResult> {
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "..", "package.json"), "utf-8"));

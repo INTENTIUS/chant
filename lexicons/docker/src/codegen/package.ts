@@ -5,7 +5,7 @@
 import { readFileSync } from "fs";
 import { dockerPlugin } from "../plugin";
 import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
 import {
   packagePipeline,
@@ -17,7 +17,7 @@ import { generate } from "./generate";
 
 export type { PackageOptions, PackageResult };
 
-const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const pkgDir = dirname(moduleSourceDir(import.meta.url));
 
 /**
  * Package the Docker lexicon into a distributable BundleSpec.

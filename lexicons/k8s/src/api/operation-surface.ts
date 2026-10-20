@@ -13,8 +13,9 @@
  */
 
 import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 /** One resource's addressing information, as `chant generate` emits it. */
 export interface K8sOperationDescriptor {

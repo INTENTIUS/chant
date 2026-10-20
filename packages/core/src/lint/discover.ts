@@ -1,8 +1,11 @@
 /**
  * Auto-discovery for lint rules and post-synth checks.
  *
- * Scans directories for .ts files and loads exported rules/checks,
- * eliminating the need to manually list every rule in plugin.ts.
+ * Scans directories for rule modules and loads exported rules/checks,
+ * eliminating the need to manually list every rule in plugin.ts. A lexicon
+ * run from source has `.ts` rule modules; one run compiled has `.js` modules
+ * beside `.d.ts` declarations (#3981). Both are found, and tsx is registered
+ * only when a module found is TypeScript.
  */
 
 import { readdirSync } from "fs";
@@ -11,6 +14,7 @@ import { createRequire } from "module";
 import type { LintRule } from "./rule";
 import type { PostSynthCheck } from "./post-synth";
 import { ensureTypeScriptLoader } from "../ts-loader";
+import { isTypeScriptModule } from "../module-source";
 
 let cjsTypeScript = false;
 
@@ -22,7 +26,8 @@ let cjsTypeScript = false;
  * From source this runs when the module loads, as it always has: vitest and
  * the source CLI rely on tsx's CommonJS hook being in place from then on. The
  * compiled CLI imports this module on every start and most commands read no
- * rule directory, so there it waits for the first one (#3878).
+ * rule directory, so there it waits for the first directory that holds a
+ * TypeScript rule module (#3878, #3981).
  */
 function registerTypeScriptRequire(): void {
   if (cjsTypeScript) return;
@@ -40,82 +45,83 @@ function registerTypeScriptRequire(): void {
 if (!import.meta.url.endsWith(".js")) registerTypeScriptRequire();
 
 /**
+ * Load every rule module in `dir` and collect the exports `accept` takes.
+ * Registers tsx first only when one of the modules is TypeScript.
+ */
+function discoverExports<T>(dir: string, importMetaUrl: string, accept: (value: unknown) => value is T): T[] {
+  const files = listRuleFiles(dir);
+  if (files.some(isTypeScriptModule)) registerTypeScriptRequire();
+  const require = createRequire(importMetaUrl);
+  const found: T[] = [];
+  for (const file of files) {
+    try {
+      const mod = require(join(dir, file)) as Record<string, unknown>;
+      for (const exp of Object.values(mod)) {
+        if (accept(exp)) found.push(exp);
+      }
+    } catch {
+      // Skip files that fail to load
+    }
+  }
+  return found;
+}
+
+/**
  * Discover lint rules from a directory.
  *
- * Scans the directory for .ts files (excluding tests, helpers, and index files),
- * loads each module, and collects any exported objects that look like a LintRule
- * (has `id`, `severity`, `category`, and `check` function).
+ * Scans the directory for rule modules (see {@link listRuleFiles}), loads
+ * each one, and collects any exported objects that look like a LintRule (has
+ * `id`, `severity`, `category`, and `check` function).
  *
  * @param dir - Absolute path to the rules directory
  * @param importMetaUrl - The caller's import.meta.url (for createRequire)
  */
 export function discoverLintRules(dir: string, importMetaUrl: string): LintRule[] {
-  registerTypeScriptRequire();
-  const require = createRequire(importMetaUrl);
-  const rules: LintRule[] = [];
-
-  for (const file of listRuleFiles(dir)) {
-    try {
-      // Strip .ts extension — require() resolves without it
-      const modPath = join(dir, file.replace(/\.ts$/, ""));
-      const mod = require(modPath);
-      for (const exp of Object.values(mod)) {
-        if (isLintRule(exp)) rules.push(exp);
-      }
-    } catch {
-      // Skip files that fail to load
-    }
-  }
-
-  return rules.sort((a, b) => a.id.localeCompare(b.id));
+  return discoverExports(dir, importMetaUrl, isLintRule).sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**
  * Discover post-synth checks from a directory.
  *
- * Scans the directory for .ts files (excluding tests, helpers, and index files),
- * loads each module, and collects any exported objects that look like a PostSynthCheck
- * (has `id`, `description`, and `check` function).
+ * Scans the directory for rule modules (see {@link listRuleFiles}), loads
+ * each one, and collects any exported objects that look like a
+ * PostSynthCheck (has `id`, `description`, and `check` function).
  *
  * @param dir - Absolute path to the post-synth rules directory
  * @param importMetaUrl - The caller's import.meta.url (for createRequire)
  */
 export function discoverPostSynthChecks(dir: string, importMetaUrl: string): PostSynthCheck[] {
-  registerTypeScriptRequire();
-  const require = createRequire(importMetaUrl);
-  const checks: PostSynthCheck[] = [];
+  return discoverExports(dir, importMetaUrl, isPostSynthCheck).sort((a, b) => a.id.localeCompare(b.id));
+}
 
-  for (const file of listRuleFiles(dir)) {
-    try {
-      // Strip .ts extension — require() resolves without it
-      const modPath = join(dir, file.replace(/\.ts$/, ""));
-      const mod = require(modPath);
-      for (const exp of Object.values(mod)) {
-        if (isPostSynthCheck(exp)) checks.push(exp);
-      }
-    } catch {
-      // Skip files that fail to load
-    }
-  }
-
-  return checks.sort((a, b) => a.id.localeCompare(b.id));
+/** A rule module's name without its extension: `foo` for `foo.ts` and `foo.js`. */
+export function ruleModuleBase(file: string): string {
+  return file.replace(/\.(?:ts|js)$/, "");
 }
 
 /**
- * List rule files in a directory (excluding tests, helpers, index).
+ * List rule modules in a directory: `.ts` source or compiled `.js`, leaving
+ * out declarations (`.d.ts`), tests, helpers and the index. A directory
+ * holding both `foo.ts` and `foo.js` lists `foo.ts` alone, so a rule is
+ * never loaded twice.
  */
 export function listRuleFiles(dir: string): string[] {
+  let entries: string[];
   try {
-    return readdirSync(dir).filter((f) => {
-      if (!f.endsWith(".ts")) return false;
-      if (f.endsWith(".test.ts")) return false;
-      if (f === "index.ts") return false;
-      if (f.includes("helper")) return false;
-      return true;
-    });
+    entries = readdirSync(dir);
   } catch {
     return [];
   }
+  const modules = entries.filter((f) => {
+    if (!f.endsWith(".ts") && !f.endsWith(".js")) return false;
+    if (f.endsWith(".d.ts")) return false;
+    if (/\.test\.[tj]s$/.test(f)) return false;
+    if (f === "index.ts" || f === "index.js") return false;
+    if (f.includes("helper")) return false;
+    return true;
+  });
+  const sources = new Set(modules.filter((f) => f.endsWith(".ts")).map(ruleModuleBase));
+  return modules.filter((f) => f.endsWith(".ts") || !sources.has(ruleModuleBase(f)));
 }
 
 function isLintRule(obj: unknown): obj is LintRule {

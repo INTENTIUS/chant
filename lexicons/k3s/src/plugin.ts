@@ -6,6 +6,7 @@ import type { McpToolContribution, McpResourceContribution } from "@intentius/ch
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k3sSerializer } from "./serializer";
 import { rules } from "./lint/rules";
@@ -99,7 +100,7 @@ export const k3sPlugin: LexiconPlugin = {
 
   skills() {
     const skills: SkillDefinition[] = [];
-    const dir = dirname(fileURLToPath(import.meta.url));
+    const dir = moduleSourceDir(import.meta.url);
     const entries = [
       {
         file: "chant-k3s.md",

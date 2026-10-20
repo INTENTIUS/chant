@@ -15,7 +15,7 @@
 import { execFileSync } from "child_process";
 import { writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { moduleSourceDir } from "@intentius/chant/module-source";
 import { GRAFANA_NOTIFIERS_SOURCE, renderNotifiers, type NotifierResponse } from "./notifiers";
 
 /** curl, not fetch: the response is read from a Grafana the caller runs, and the egress catalogue lists only the commands that reach a remote host. */
@@ -50,6 +50,6 @@ async function viaDocker(): Promise<NotifierResponse[]> {
 }
 
 const notifiers = process.argv[2] ? readFrom(process.argv[2].replace(/\/$/, "")) : await viaDocker();
-const out = join(dirname(fileURLToPath(import.meta.url)), "..", "contact-point-settings.gen.ts");
+const out = join(moduleSourceDir(import.meta.url), "..", "contact-point-settings.gen.ts");
 writeFileSync(out, renderNotifiers(notifiers));
 console.log(`wrote ${out} (${notifiers.length} integrations)`);

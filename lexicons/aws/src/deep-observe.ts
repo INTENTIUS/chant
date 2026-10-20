@@ -72,8 +72,9 @@ import {
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { toIngressRules } from "./dependencies";
 import { createRequire } from "node:module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
 
-const require = createRequire(import.meta.url);
+const require = createRequire(moduleSourceUrl(import.meta.url));
 
 /**
  * Where each type's live model comes from.
