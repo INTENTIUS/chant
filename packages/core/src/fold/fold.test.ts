@@ -1375,3 +1375,75 @@ describe("fold — same-file functions without externals (chant#2436)", () => {
     expect(() => fold(consts.get("x")!, consts, [], new Map())).toThrow(FoldError);
   });
 });
+
+// chant#4011 — since #1966 a method call folded whenever the receiver was real
+// and the property was a function, so `.constructor.constructor` reached
+// `Function` and a folded file could read the clock, the environment or a
+// random number. Each case below folded to a value before the fix.
+describe("fold — a method call cannot reach Function or other host behaviour (#4011)", () => {
+  const refuses = (src: string) => expect(() => foldConst(src, "x")).toThrow(FoldError);
+
+  test("Date.now() through [].constructor.constructor", () => {
+    refuses(`const x = [].constructor.constructor("return String(Date.now())").call();`);
+  });
+
+  test("process.env through [].constructor.constructor", () => {
+    refuses("const x = `${[].constructor.constructor(\"return process.env.HOME\").call()}`;");
+  });
+
+  test("Math.random() through [].constructor.constructor", () => {
+    refuses(`const x = [].constructor.constructor("return Math.random()").call();`);
+  });
+
+  test("Function reached through a prototype chain on a string", () => {
+    refuses(`const x = "".__proto__.constructor.constructor("return Date.now()").call();`);
+  });
+
+  test("Function stored under a name the table does not list", () => {
+    // No refused name appears in the call: `f` is a plain property whose value
+    // is Function, read by property access. The host-method table catches it.
+    refuses(`const o = { f: [].constructor.constructor }; const x = o.f("return 1");`);
+  });
+
+  test("Function stored under a listed name is still refused: the table checks identity", () => {
+    refuses(`const o = { toString: [].constructor.constructor }; const x = o.toString("return 1");`);
+  });
+
+  test("a static method on a host constructor has no row", () => {
+    refuses(`const A = [].constructor; const x = A.of(1, 2);`);
+  });
+
+  test("a function passed to a listed host method is refused", () => {
+    refuses(`const x = "abc".replace("b", [].constructor);`);
+  });
+
+  test("toLocaleString follows the host locale and is refused", () => {
+    refuses(`const x = (1234567.891).toLocaleString();`);
+  });
+
+  test("the error names the refused method", () => {
+    expect(() => foldConst(`const x = [].constructor.constructor("return 1");`, "x")).toThrow(
+      /`\.constructor\(\.\.\.\)` is not foldable/,
+    );
+  });
+
+  test("listed host methods still fold", () => {
+    expect(foldConst(`const x = ["a", "b"].join(",");`, "x")).toBe("a,b");
+    expect(foldConst(`const x = "a.b.c".split(".").slice(1).join("-");`, "x")).toBe("b-c");
+    expect(foldConst(`const x = (3.14159).toFixed(2);`, "x")).toBe("3.14");
+    expect(foldConst(`const x = "Abc".toUpperCase();`, "x")).toBe("ABC");
+    expect(foldConst(`const x = true.toString();`, "x")).toBe("true");
+  });
+
+  test("a method written in package code is not a host method and still folds", () => {
+    // The github lexicon's `Expression.prototype.toString` is this shape.
+    class Expr {
+      toString(): string {
+        return "${{ github.actor }}";
+      }
+    }
+    const consts = parseConsts(`const x = actor.toString();`);
+    const externals = new Map<string, unknown>([["actor", new Expr()]]);
+    expect(fold(consts.get("x") as ts.Expression, consts, [], externals)).toBe("${{ github.actor }}");
+  });
+});

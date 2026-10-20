@@ -691,3 +691,34 @@ describe("findSubsetViolation — project-local calls (chant#2435)", () => {
     expect(() => findSubsetViolation(synthetic)).toThrow(/Cannot read|undefined|getSourceFile|getText/i);
   });
 });
+
+// chant#4011 — a refused method name is decidable from syntax, so EVL001 and
+// fold() refuse it together. Before the fix both accepted every case here.
+describe("subset — method names that reach Function or the host locale (#4011)", () => {
+  const cases = [
+    `[].constructor.constructor("return Date.now()").call()`,
+    `[].constructor.constructor("return process.env.HOME").call()`,
+    `"".__proto__.constructor.constructor("return Math.random()").call()`,
+    `(1234.5).toLocaleString()`,
+  ];
+  for (const expr of cases) {
+    test(expr, () => {
+      const source = `const bad = new Thing({ x: ${expr} });`;
+      const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+      const consts = collectConsts(sourceFile);
+      expect(() => foldResource(consts.get("bad") as ts.NewExpression, consts, [])).toThrow(FoldError);
+
+      const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+      expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(1);
+      const violation = findSubsetViolation((consts.get("bad") as ts.NewExpression).arguments![0]);
+      expect(violation?.message).toContain("chant#4011");
+    });
+  }
+
+  test("a listed method keeps passing EVL001", () => {
+    const source = `const ok = new Thing({ x: ["a", "b"].join(",") });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
+  });
+});
