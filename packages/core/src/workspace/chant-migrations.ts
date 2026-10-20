@@ -42,6 +42,7 @@ import { chudLexiconExitShipInputs } from "./chant-migrations/chud-lexicon-exit-
 import { chudLexiconExitShipPolicy } from "./chant-migrations/chud-lexicon-exit-ship-policy";
 import { chudLexiconExitFlySite } from "./chant-migrations/chud-lexicon-exit-fly-site";
 import { chudLexiconExitLiveNames } from "./chant-migrations/chud-lexicon-exit-live-names";
+import { fountainRetiredKinds } from "./chant-migrations/fountain-retired-kinds";
 
 /** One file a plan writes or deletes, relative to the scope. */
 export interface PlannedChange {
@@ -98,6 +99,7 @@ export const CHANT_MIGRATIONS: readonly ChantMigration[] = [
   chudLexiconExitShipPolicy,
   chudLexiconExitFlySite,
   chudLexiconExitLiveNames,
+  fountainRetiredKinds,
 ];
 
 /** The plans for a scope: each migration not yet in the lineage that finds something to move. */

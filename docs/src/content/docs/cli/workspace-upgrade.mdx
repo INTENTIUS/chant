@@ -122,6 +122,7 @@ Each one lists every file it writes or deletes and why, what it does not move an
 | `chud-lexicon-exit-ship-inputs` | Has the release Op that `chud-lexicon-exit` wrote ask `ship-skip` with the inputs the point declares ([#2811](https://github.com/INTENTIUS/chant/issues/2811)) |
 | `chud-lexicon-exit-ship-policy` | Lets a person pass the ship gate: the Cedar policy `chud-lexicon-exit` kept permitted no person ([#2810](https://github.com/INTENTIUS/chant/issues/2810)) |
 | `chud-lexicon-exit-fly-site` | Declares the Fly site with the fly lexicon's [`FlySite`](/chant/lexicons/fly/fly-site/) composite, the instance the app component deploys ([#2809](https://github.com/INTENTIUS/chant/issues/2809)) |
+| `fountain-retired-kinds` | Removes the `Teammate`, `Schedule` and `Webhook` declarations and `sandbox_mode: "persistent"` that Managoat dropped and FTN025 fails, and lists each Schedule as not moved ([#3987](https://github.com/INTENTIUS/chant/pull/3987)) |
 
 The migrations run in the order of this table, and each one plans from the tree the ones before it left, so a repo migrated now gets all of them in one upgrade. A repo migrated before `chud-lexicon-exit-rollback` existed already has `chud-lexicon-exit` in its lock, and its next upgrade plans only the rollback migration, which the dry run lists.
 
