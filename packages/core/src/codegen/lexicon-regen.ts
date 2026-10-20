@@ -402,7 +402,7 @@ function runExampleHarness(lexiconDir: string, verbose: boolean): RegenFailure |
 /**
  * Extract the fresh surface from the generated artifacts in the lexicon directory.
  */
-function extractFreshSurface(lexiconDir: string): SurfaceSnapshot | null {
+export function extractFreshSurface(lexiconDir: string): SurfaceSnapshot | null {
   const generatedDir = join(lexiconDir, "src", "generated");
   if (!existsSync(generatedDir)) return null;
 
