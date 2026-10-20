@@ -15,7 +15,7 @@ const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
 const overview = `The **e2b** lexicon runs chant Ops on a steward: one [E2B](https://e2b.dev) sandbox that outlives every run. \`chant run <op> --on e2b\` hands the run to it. The steward keeps a clone of the project and its installed tools on its disk, runs one Op at a time, and sleeps paused between runs. Any API that speaks E2B's can host it, hosted E2B or a platform of your own.
 
-The lexicon also declares one kind, \`Template\`, for the image a steward is made from. \`chant build\` writes each template as the \`e2b.<name>.Dockerfile\` and \`e2b.<name>.toml\` pair that \`e2b template build\` reads.
+The lexicon also declares one kind, \`Template\`, for the image a steward is made from. \`chant build\` writes each template as \`e2b.<name>.Dockerfile\`, and the \`e2b template create\` command line that builds it.
 
 Install it with:
 
@@ -66,11 +66,11 @@ Then build the template once and run an Op on the steward:
 
 \`\`\`bash
 chant build src --lexicon e2b -o dist/e2b.json
-(cd dist && e2b template build --config e2b.chant-steward.toml)
+(cd dist && e2b template create chant-steward --dockerfile e2b.chant-steward.Dockerfile --cpu-count 2 --memory-mb 2048)
 chant run prod-apply --on e2b
 \`\`\``;
 
-const outputFormat = `The e2b lexicon writes each \`Template\` as two files that \`e2b template build\` reads, named after the template so several can share a directory.
+const outputFormat = `The e2b lexicon writes each \`Template\` as a Dockerfile named after the template, so several can share a directory, and indexes them with the command that builds each one.
 
 ## Building
 
@@ -82,17 +82,7 @@ ENV CI="1"
 RUN apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*
 \`\`\`
 
-\`e2b.<name>.toml\` names the template and its Dockerfile. The other settings appear only when the declaration sets them:
-
-\`\`\`toml
-# Built with: e2b template build --config e2b.chant-steward.toml
-template_name = "chant-steward"
-dockerfile = "e2b.chant-steward.Dockerfile"
-cpu_count = 2
-memory_mb = 2048
-\`\`\`
-
-The primary output is a JSON index of the templates, keyed by the name each was exported as:
+The primary output is a JSON index of the templates, keyed by the name each was exported as. \`build\` is the \`e2b template create\` command line for the template. It names the Dockerfile and passes \`--cmd\`, \`--ready-cmd\`, \`--cpu-count\` and \`--memory-mb\` only when the declaration sets them:
 
 \`\`\`json
 {
@@ -100,7 +90,7 @@ The primary output is a JSON index of the templates, keyed by the name each was 
     "steward": {
       "name": "chant-steward",
       "dockerfile": "e2b.chant-steward.Dockerfile",
-      "config": "e2b.chant-steward.toml",
+      "build": "e2b template create chant-steward --dockerfile e2b.chant-steward.Dockerfile --cpu-count 2 --memory-mb 2048",
       "cpuCount": 2,
       "memoryMB": 2048
     }
@@ -112,7 +102,7 @@ A project that declares no template gets \`{ "templates": {} }\`.
 
 ## Applying
 
-chant does not build templates. Run \`e2b template build --config e2b.<name>.toml\` in the output directory, once, and again when the declaration changes. A profile's \`template\` then names the template, and the next steward made from that profile starts from it. A steward that already exists keeps the sandbox it has; delete it to have the next run make a new one.`;
+chant does not build templates. Run each template's \`build\` command in the output directory, once, and again when the declaration changes. A profile's \`template\` then names the template, and the next steward made from that profile starts from it. A steward that already exists keeps the sandbox it has; delete it to have the next run make a new one.`;
 
 /**
  * Generate the e2b lexicon's docs.

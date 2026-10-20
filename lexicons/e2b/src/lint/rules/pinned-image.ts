@@ -14,7 +14,7 @@ export function isFloatingImage(image: string): boolean {
  * E2B002: A template's base image is pinned.
  *
  * A steward keeps one sandbox for months, but a template is rebuilt whenever
- * someone runs `e2b template build`. With `fromImage` untagged or on `latest`,
+ * someone runs `e2b template create`. With `fromImage` untagged or on `latest`,
  * two builds of the same declaration can carry different Node or git
  * versions, and a steward made from the second behaves differently with no
  * change in the repository.

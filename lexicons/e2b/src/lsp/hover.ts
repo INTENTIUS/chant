@@ -16,7 +16,7 @@ export function hover(ctx: HoverContext): HoverInfo | undefined {
       "",
       `E2B type: \`${entry.resourceType}\``,
       "",
-      "*A sandbox template, written out as `e2b.<name>.Dockerfile` and `e2b.<name>.toml` for `e2b template build`.*",
+      "*A sandbox template, written out as `e2b.<name>.Dockerfile` and built with `e2b template create`.*",
       "",
       ...Object.entries(TEMPLATE_PROPERTIES).map(
         ([name, p]) => `- \`${name}${p.required ? "" : "?"}: ${p.type}\`: ${p.description}`,

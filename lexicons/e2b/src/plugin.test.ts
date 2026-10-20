@@ -16,7 +16,7 @@ describe("e2b plugin", () => {
   it("ships lint rules and post-synth checks under the E2B prefix, every check catalogued", () => {
     expect((e2bPlugin.lintRules?.() ?? []).map((r) => r.id)).toEqual(["E2B001", "E2B002"]);
     const checks = (e2bPlugin.postSynthChecks?.() ?? []).map((c) => c.id);
-    expect(checks).toEqual(["E2B010", "E2B011", "E2B012"]);
+    expect(checks).toEqual(["E2B011", "E2B012"]);
     for (const id of checks) expect(e2bPlugin.auditCatalog?.()[id]).toBeDefined();
   });
 

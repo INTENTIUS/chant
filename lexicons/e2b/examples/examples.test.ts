@@ -12,11 +12,11 @@ describeAllExamples(
   {
     steward: {
       checks: (output) => {
-        const index = JSON.parse(output) as { templates: Record<string, { name: string; dockerfile: string; config: string }> };
+        const index = JSON.parse(output) as { templates: Record<string, { name: string; dockerfile: string; build: string }> };
         expect(index.templates.steward).toMatchObject({
           name: "chant-steward",
           dockerfile: "e2b.chant-steward.Dockerfile",
-          config: "e2b.chant-steward.toml",
+          build: "e2b template create chant-steward --dockerfile e2b.chant-steward.Dockerfile --cpu-count 2 --memory-mb 2048",
         });
       },
     },

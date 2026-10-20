@@ -13,7 +13,7 @@ describe("e2b LSP hover", () => {
   it("describes Template with what it builds into and its properties", () => {
     const info = hover(on("Template", "new Template({})"));
     expect(info?.contents).toContain("E2B::Template");
-    expect(info?.contents).toContain("e2b template build");
+    expect(info?.contents).toContain("e2b template create");
     expect(info?.contents).toContain("`fromImage: string`");
   });
 

@@ -27,7 +27,7 @@ export const TEMPLATE_PROPERTIES: Record<string, PropertyDoc> = {
   fromImage: {
     type: "string",
     required: true,
-    description: "The Debian-based image the template starts from, such as `node:22-bookworm`. Pin a tag.",
+    description: "The image the template starts from, such as `node:22-bookworm`. Pin a tag.",
   },
   run: {
     type: "string[]",
@@ -43,11 +43,11 @@ export const TEMPLATE_PROPERTIES: Record<string, PropertyDoc> = {
   },
   startCmd: {
     type: "string",
-    description: "A command E2B runs when the template is snapshotted, so a sandbox starts with it running.",
+    description: "The start command (`--cmd`): E2B runs it when the template is snapshotted, so a sandbox starts with it running.",
   },
   readyCmd: {
     type: "string",
-    description: "A command E2B polls until it exits 0 before it snapshots the template.",
+    description: "The ready command (`--ready-cmd`): E2B polls it until it exits 0 before it snapshots the template.",
   },
   cpuCount: {
     type: "number",
@@ -55,11 +55,7 @@ export const TEMPLATE_PROPERTIES: Record<string, PropertyDoc> = {
   },
   memoryMB: {
     type: "number",
-    description: "Memory per sandbox in MiB. A positive even integer; E2B's default is 512.",
-  },
-  teamId: {
-    type: "string",
-    description: "The E2B team that owns the template, when the API key can act for more than one.",
+    description: "Memory per sandbox in MiB. A positive even integer; E2B's default is 1024.",
   },
 };
 

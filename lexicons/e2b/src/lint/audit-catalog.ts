@@ -14,12 +14,6 @@ function rule(id: string, tier: RuleMeta["tier"], title: string, remediation: st
 }
 
 export const e2bAuditCatalog: Record<string, RuleMeta> = {
-  E2B010: rule(
-    "E2B010",
-    "merge-worthy",
-    "Template starts from an Alpine image",
-    "Start the template from a Debian-based image, such as `node:22-bookworm`.",
-  ),
   E2B011: rule(
     "E2B011",
     "merge-worthy",

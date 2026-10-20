@@ -4,7 +4,7 @@
  * The runtime clones the repository with git and runs the project's own chant
  * with Node, and it stops a run at once on a sandbox that lacks either. This
  * check looks for both in the declaration: Node from a `node` image or a
- * step that installs it, git from a full (not `-slim`) `node` image, which
+ * step that installs it, git from a full (not `-slim` or `-alpine`) `node` image, which
  * ships it, or a step that installs it. It cannot see inside other images, so
  * it warns rather than fails: a template from an image that already has both
  * can say so with a `run` step such as `git --version && node --version`.
@@ -27,7 +27,7 @@ export function stewardTools(props: TemplateProps): { git: boolean; node: boolea
   const nodeImage = repo === "node";
   return {
     node: nodeImage || /\b(nodejs|node|nvm|fnm|volta)\b/.test(steps),
-    git: (nodeImage && !/slim/.test(tag)) || /\bgit\b/.test(steps),
+    git: (nodeImage && !/slim|alpine/.test(tag)) || /\bgit\b/.test(steps),
   };
 }
 

@@ -5,7 +5,7 @@ import { at, numberLiteral, property, templateLiterals } from "./template-litera
  * E2B001: A template's CPU and memory are sizes E2B accepts.
  *
  * `cpuCount` is a whole number of vCPUs, at least one. `memoryMB` is a whole
- * number of MiB, at least one and even: `e2b template build` refuses an odd
+ * number of MiB, at least one and even: `e2b template create` refuses an odd
  * one. Both are only checked when written as literals.
  */
 export const templateSizeRule: LintRule = {

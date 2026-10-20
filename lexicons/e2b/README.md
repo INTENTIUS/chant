@@ -75,15 +75,16 @@ const steward = new Template({
 export { steward };
 ```
 
-`chant build` writes it as `e2b.chant-steward.Dockerfile` and
-`e2b.chant-steward.toml`; build those once with
-`e2b template build --config e2b.chant-steward.toml`. A steward that already
-exists keeps its sandbox until it is deleted.
+`chant build` writes it as `e2b.chant-steward.Dockerfile`, and the JSON index
+in its main output gives the command that builds it, to run once in the output
+directory:
+`e2b template create chant-steward --dockerfile e2b.chant-steward.Dockerfile --cpu-count 2 --memory-mb 2048`.
+A steward that already exists keeps its sandbox until it is deleted.
 
 Two lint rules check a template's sizes and that its base image is pinned
-(E2B001, E2B002). Three post-synth checks catch an Alpine base image, a name
-E2B refuses or two templates sharing one, and a template with no visible git
-or Node (E2B010 to E2B012). The [docs](https://intentius.io/chant/lexicons/e2b/)
+(E2B001, E2B002). Two post-synth checks catch a name E2B refuses or two
+templates sharing one (E2B011), and a template with no visible git or Node
+(E2B012). The [docs](https://intentius.io/chant/lexicons/e2b/)
 cover each property and rule.
 
 ## What a run does

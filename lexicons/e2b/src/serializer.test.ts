@@ -9,7 +9,7 @@ function serialize(entries: Array<[string, unknown]>): SerializerResult {
 }
 
 describe("e2b serializer", () => {
-  it("writes a Dockerfile and an e2b.toml per template, named after it", () => {
+  it("writes a Dockerfile per template, named after it, and the command that builds it", () => {
     const out = serialize([
       [
         "steward",
@@ -23,13 +23,12 @@ describe("e2b serializer", () => {
           readyCmd: "curl -sf localhost:3000",
           cpuCount: 2,
           memoryMB: 2048,
-          teamId: "team-123",
         }),
       ],
     ]);
 
-    expect(Object.keys(out.files ?? {}).sort()).toEqual(["e2b.chant-steward.Dockerfile", "e2b.chant-steward.toml"]);
-    expect(out.verbatimFiles?.sort()).toEqual(["e2b.chant-steward.Dockerfile", "e2b.chant-steward.toml"]);
+    expect(Object.keys(out.files ?? {})).toEqual(["e2b.chant-steward.Dockerfile"]);
+    expect(out.verbatimFiles).toEqual(["e2b.chant-steward.Dockerfile"]);
     expect(out.files?.["e2b.chant-steward.Dockerfile"]).toBe(
       [
         "FROM node:22-bookworm",
@@ -41,25 +40,14 @@ describe("e2b serializer", () => {
         "",
       ].join("\n"),
     );
-    expect(out.files?.["e2b.chant-steward.toml"]).toBe(
-      [
-        "# Built with: e2b template build --config e2b.chant-steward.toml",
-        'template_name = "chant-steward"',
-        'dockerfile = "e2b.chant-steward.Dockerfile"',
-        'start_cmd = "node server.js"',
-        'ready_cmd = "curl -sf localhost:3000"',
-        "cpu_count = 2",
-        "memory_mb = 2048",
-        'team_id = "team-123"',
-        "",
-      ].join("\n"),
-    );
     expect(JSON.parse(out.primary)).toEqual({
       templates: {
         steward: {
           name: "chant-steward",
           dockerfile: "e2b.chant-steward.Dockerfile",
-          config: "e2b.chant-steward.toml",
+          build:
+            "e2b template create chant-steward --dockerfile e2b.chant-steward.Dockerfile " +
+            "--cmd 'node server.js' --ready-cmd 'curl -sf localhost:3000' --cpu-count 2 --memory-mb 2048",
           cpuCount: 2,
           memoryMB: 2048,
         },
@@ -70,8 +58,16 @@ describe("e2b serializer", () => {
   it("leaves out what a template does not set", () => {
     const out = serialize([["base", new Template({ name: "slim", fromImage: "debian:12" })]]);
     expect(out.files?.["e2b.slim.Dockerfile"]).toBe("FROM debian:12\n");
-    expect(out.files?.["e2b.slim.toml"]).not.toMatch(/start_cmd|ready_cmd|cpu_count|memory_mb|team_id/);
-    expect(JSON.parse(out.primary).templates.base).toEqual({ name: "slim", dockerfile: "e2b.slim.Dockerfile", config: "e2b.slim.toml" });
+    expect(JSON.parse(out.primary).templates.base).toEqual({
+      name: "slim",
+      dockerfile: "e2b.slim.Dockerfile",
+      build: "e2b template create slim --dockerfile e2b.slim.Dockerfile",
+    });
+  });
+
+  it("quotes a start command with a single quote in it as one shell word", () => {
+    const out = serialize([["s", new Template({ name: "s", fromImage: "node:22-bookworm", startCmd: "echo 'hi'" })]]);
+    expect(JSON.parse(out.primary).templates.s.build).toContain(`--cmd 'echo '\\''hi'\\'''`);
   });
 
   it("orders templates by export name and ignores anything that is not one", () => {
@@ -81,7 +77,7 @@ describe("e2b serializer", () => {
       ["other", { entityType: "Other::Thing", props: {} }],
     ]);
     expect(Object.keys(JSON.parse(out.primary).templates)).toEqual(["alpha", "zeta"]);
-    expect(Object.keys(out.files ?? {})).toHaveLength(4);
+    expect(Object.keys(out.files ?? {})).toHaveLength(2);
   });
 
   it("gives a build with no templates an empty index", () => {

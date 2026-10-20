@@ -3,17 +3,15 @@ import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import { templateProps, type TemplateProps } from "./resources";
 
 /**
- * The e2b serializer: each declared `Template` becomes the pair of files
- * `e2b template build` reads, named after the template so several can sit in
- * one directory:
- *
- * - `e2b.<name>.Dockerfile`: `FROM`, then `ENV`, `WORKDIR` and one `RUN` per step;
- * - `e2b.<name>.toml`: the template's name, its Dockerfile, its start and
- *   ready commands, and its CPU, memory and team.
+ * The e2b serializer: each declared `Template` becomes `e2b.<name>.Dockerfile`
+ * (`FROM`, then `ENV`, `WORKDIR` and one `RUN` per step), named after the
+ * template so several can sit in one directory.
  *
  * The primary output is a JSON index of the templates, keyed by the name each
- * was exported as, with the two file names and the sizes. A build with no
- * templates (a project that only runs Ops here) gets an empty index.
+ * was exported as. Each entry carries the Dockerfile's name and `build`, the
+ * `e2b template create` command line that builds the template from it, run in
+ * the output directory. A build with no templates (a project that only runs
+ * Ops here) gets an empty index.
  */
 export const e2bSerializer: Serializer = {
   name: "e2b",
@@ -30,13 +28,11 @@ export const e2bSerializer: Serializer = {
     for (const [exportName, props] of templates) {
       const name = props.name || exportName;
       const dockerfile = `e2b.${name}.Dockerfile`;
-      const config = `e2b.${name}.toml`;
       files[dockerfile] = renderDockerfile(props);
-      files[config] = renderToml(name, dockerfile, props);
       index[exportName] = {
         name,
         dockerfile,
-        config,
+        build: createCommand(name, dockerfile, props),
         ...(props.cpuCount !== undefined ? { cpuCount: props.cpuCount } : {}),
         ...(props.memoryMB !== undefined ? { memoryMB: props.memoryMB } : {}),
       };
@@ -53,6 +49,11 @@ export const e2bSerializer: Serializer = {
 /** A Dockerfile string literal: Docker reads double-quoted values with JSON's escapes. */
 const quote = (value: string): string => JSON.stringify(value);
 
+/** A word as one shell argument. */
+function shellWord(value: string): string {
+  return /^[A-Za-z0-9._:@+=/,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export function renderDockerfile(props: TemplateProps): string {
   const lines = [`FROM ${props.fromImage}`];
   for (const [key, value] of Object.entries(props.env ?? {})) lines.push(`ENV ${key}=${quote(value)}`);
@@ -61,16 +62,12 @@ export function renderDockerfile(props: TemplateProps): string {
   return lines.join("\n") + "\n";
 }
 
-export function renderToml(name: string, dockerfile: string, props: TemplateProps): string {
-  const lines = [
-    `# Built with: e2b template build --config e2b.${name}.toml`,
-    `template_name = ${quote(name)}`,
-    `dockerfile = ${quote(dockerfile)}`,
-  ];
-  if (props.startCmd) lines.push(`start_cmd = ${quote(props.startCmd)}`);
-  if (props.readyCmd) lines.push(`ready_cmd = ${quote(props.readyCmd)}`);
-  if (props.cpuCount !== undefined) lines.push(`cpu_count = ${props.cpuCount}`);
-  if (props.memoryMB !== undefined) lines.push(`memory_mb = ${props.memoryMB}`);
-  if (props.teamId) lines.push(`team_id = ${quote(props.teamId)}`);
-  return lines.join("\n") + "\n";
+/** The `e2b template create` command line that builds the template, run where the Dockerfile is. */
+export function createCommand(name: string, dockerfile: string, props: TemplateProps): string {
+  const args = ["e2b", "template", "create", name, "--dockerfile", dockerfile];
+  if (props.startCmd) args.push("--cmd", props.startCmd);
+  if (props.readyCmd) args.push("--ready-cmd", props.readyCmd);
+  if (props.cpuCount !== undefined) args.push("--cpu-count", String(props.cpuCount));
+  if (props.memoryMB !== undefined) args.push("--memory-mb", String(props.memoryMB));
+  return args.map(shellWord).join(" ");
 }

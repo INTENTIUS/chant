@@ -8,8 +8,8 @@ full `node:22-bookworm` image, which has the git and Node the runtime needs,
 and adds `jq` and the GitHub CLI.
 
 ```bash
-npm run build                     # writes dist/e2b.json, dist/e2b.chant-steward.Dockerfile, dist/e2b.chant-steward.toml
-cd dist && e2b template build --config e2b.chant-steward.toml
+npm run build                     # writes dist/e2b.json and dist/e2b.chant-steward.Dockerfile
+cd dist && e2b template create chant-steward --dockerfile e2b.chant-steward.Dockerfile --cpu-count 2 --memory-mb 2048
 export E2B_API_KEY=e2b_... GITHUB_TOKEN=...
 chant run <op> --on e2b           # the first run makes the steward from chant-steward
 ```

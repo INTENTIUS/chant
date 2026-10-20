@@ -2,15 +2,15 @@
  * E2B011: a template's name is one E2B accepts, and only one template has it.
  *
  * E2B names templates with lowercase letters, digits, dashes and underscores;
- * `e2b template build` refuses anything else. The name is also the profile's
- * `template` and the stem of the two files the serializer writes, so two
- * templates with one name would overwrite each other's files.
+ * `e2b template create` refuses anything else. The name is also the profile's
+ * `template` and the stem of the Dockerfile the serializer writes, so two
+ * templates with one name would overwrite each other's file.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { templateProps } from "../../resources";
 
-export const TEMPLATE_NAME = /^[a-z0-9][a-z0-9_-]*$/;
+export const TEMPLATE_NAME = /^[a-z0-9_-]+$/;
 
 export const e2b011: PostSynthCheck = {
   id: "E2B011",
@@ -38,7 +38,7 @@ export const e2b011: PostSynthCheck = {
         diagnostics.push({
           checkId: "E2B011",
           severity: "error",
-          message: `Templates "${first}" and "${entityName}" are both named "${name}"; their e2b.${name}.* files would overwrite each other.`,
+          message: `Templates "${first}" and "${entityName}" are both named "${name}"; their e2b.${name}.Dockerfile files would overwrite each other.`,
           entity: entityName,
           lexicon: "e2b",
         });
