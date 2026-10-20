@@ -25,10 +25,11 @@ export interface OpDiscoveryResult {
   errors: string[];
 }
 
-async function findGitRoot(cwd?: string): Promise<string> {
+/** The git root `cwd` is inside, or undefined when it is in no repository. */
+async function findGitRoot(cwd?: string): Promise<string | undefined> {
   const rt = getRuntime();
   const result = await rt.spawn(["git", "rev-parse", "--show-toplevel"], { cwd });
-  if (result.exitCode !== 0) throw new Error("Not in a git repository");
+  if (result.exitCode !== 0) return undefined;
   return result.stdout.trim();
 }
 
@@ -43,16 +44,25 @@ async function findGitRoot(cwd?: string): Promise<string> {
  * file is the project boundary, the same one entity discovery respects.
  * With no config anywhere up to the git root, the git root stands —
  * #1675's original scope, kept for configless layouts.
+ *
+ * Outside any git repository the walk goes to the filesystem root, and the
+ * config is all discovery needs (#2504): a demo copy, an unpacked tarball or
+ * a fresh `chant init` before `git init`. Only a directory with neither a
+ * config above it nor a git root has no Op root, and that is the error.
  */
 async function findDiscoveryRoot(cwd?: string): Promise<string> {
-  const gitRoot = resolve(await findGitRoot(cwd));
+  const found = await findGitRoot(cwd);
+  const gitRoot = found === undefined ? undefined : resolve(found);
   let dir = resolve(cwd ?? process.cwd());
   for (;;) {
     if (existsSync(join(dir, "chant.config.ts")) || existsSync(join(dir, "chant.config.json"))) return dir;
     if (dir === gitRoot) break;
     const parent = dirname(dir);
-    if (parent === dir) break; // filesystem root — cwd was outside the git root
+    if (parent === dir) break; // filesystem root — cwd was outside the git root, or there is none
     dir = parent;
+  }
+  if (gitRoot === undefined) {
+    throw new Error("Not in a git repository, and no chant.config.ts or chant.config.json above the current directory");
   }
   return gitRoot;
 }
