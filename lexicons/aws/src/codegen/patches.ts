@@ -11,10 +11,12 @@ import { join } from "path";
 import { homedir } from "os";
 import { rfc6902Apply } from "@intentius/chant/codegen/json-patch";
 import { fetchAndExtractTar } from "@intentius/chant/codegen/fetch";
-import { cfnLintTarballUrl } from "./versions";
+import { cfnLintTarballUrl, PINNED_VERSIONS } from "./versions";
 
 const CFN_LINT_TARBALL_URL = cfnLintTarballUrl();
-const PATCHES_DEST_DIR = join(homedir(), ".chant", "cfn-lint-patches");
+// Keyed by version: the cache lives for 7 days, so an unkeyed directory would
+// keep serving the old release's patches after the pin moves.
+const PATCHES_DEST_DIR = join(homedir(), ".chant", `cfn-lint-patches-${PINNED_VERSIONS.cfnLint}`);
 const PATCHES_TAR_PREFIX = "src/cfnlint/data/schemas/patches/extensions/all/";
 const PATCH_FILES = ["manual.json", "smithy.json", "format.json"] as const;
 
@@ -24,10 +26,48 @@ export interface PatchWarning {
   error: Error;
 }
 
+/**
+ * A patch in the pinned cfn-lint release that is known not to apply to the
+ * pinned spec. Its failure is reported as a skip rather than a warning; an
+ * entry that applies again, or whose patch file is gone, is reported as
+ * retirable so the list cannot go stale.
+ */
+export interface StalePatch {
+  typeName: string;
+  patchFile: (typeof PATCH_FILES)[number];
+  /** The cfn-lint release the entry was checked against. */
+  cfnLint: string;
+  reason: string;
+}
+
+export const KNOWN_STALE_PATCHES: readonly StalePatch[] = [
+  {
+    // Adds `format: ipv4-network` to `Cidr`, a constraint only; no generated
+    // type changes. Every cfn-lint release from v1.32.4 to v1.51.5 still
+    // targets the old name, and v1.52.0 removed the patch tree from cfn-lint
+    // (it moved to aws-cloudformation/resource-provider-enhanced-schemas,
+    // which has the corrected path but publishes only a rolling `latest`).
+    typeName: "AWS::MediaLive::InputSecurityGroup",
+    patchFile: "format.json",
+    cfnLint: "v1.32.4",
+    reason: "the 2026-10-19 spec renamed definition InputWhitelistRuleCidr to InputWhitelistRule (#4144)",
+  },
+];
+
+export interface PatchSkip {
+  stale: StalePatch;
+  error: Error;
+}
+
 export interface PatchStats {
   patchesApplied: number;
   resourcesFixed: number;
+  /** Failures not in `KNOWN_STALE_PATCHES`. */
   warnings: PatchWarning[];
+  /** Failures listed in `KNOWN_STALE_PATCHES`. */
+  skipped: PatchSkip[];
+  /** `KNOWN_STALE_PATCHES` entries that did not fail: applied, or no such schema or patch file. */
+  retirable: StalePatch[];
 }
 
 /**
@@ -49,9 +89,11 @@ export async function fetchCfnLintPatches(force = false): Promise<string> {
  */
 export function applyPatches(
   schemas: Map<string, Buffer>,
-  patchesDir: string
+  patchesDir: string,
+  knownStale: readonly StalePatch[] = KNOWN_STALE_PATCHES,
 ): { schemas: Map<string, Buffer>; stats: PatchStats } {
-  const stats: PatchStats = { patchesApplied: 0, resourcesFixed: 0, warnings: [] };
+  const stats: PatchStats = { patchesApplied: 0, resourcesFixed: 0, warnings: [], skipped: [], retirable: [] };
+  const staleByKey = new Map(knownStale.map((s) => [`${s.typeName}/${s.patchFile}`, s]));
   const result = new Map<string, Buffer>();
 
   for (const [typeName, data] of schemas) {
@@ -72,11 +114,10 @@ export function applyPatches(
         patched = Buffer.from(rfc6902Apply(patched.toString("utf-8"), patchData.toString("utf-8")));
         stats.patchesApplied++;
       } catch (err) {
-        stats.warnings.push({
-          typeName,
-          patchFile: pf,
-          error: err instanceof Error ? err : new Error(String(err)),
-        });
+        const error = err instanceof Error ? err : new Error(String(err));
+        const stale = staleByKey.get(`${typeName}/${pf}`);
+        if (stale) stats.skipped.push({ stale, error });
+        else stats.warnings.push({ typeName, patchFile: pf, error });
       }
     }
 
@@ -85,6 +126,9 @@ export function applyPatches(
     }
     result.set(typeName, patched);
   }
+
+  const skippedStale = new Set(stats.skipped.map((s) => s.stale));
+  stats.retirable = knownStale.filter((s) => !skippedStale.has(s));
 
   return { schemas: result, stats };
 }

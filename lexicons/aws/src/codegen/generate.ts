@@ -104,8 +104,17 @@ const awsPipelineConfig: GeneratePipelineConfig<SchemaParseResult> = {
       const { schemas: patched, stats } = applyPatches(schemas, patchesDir);
       schemas = patched;
       log(`Applied ${stats.patchesApplied} patches across ${stats.resourcesFixed} resources`);
+      for (const s of stats.skipped) {
+        log(`Skipped known-stale patch ${s.stale.typeName}/${s.stale.patchFile}: ${s.stale.reason} (${s.error.message})`);
+      }
       for (const w of stats.warnings) {
         warnings.push({ file: `${w.typeName}/${w.patchFile}`, error: w.error.message });
+      }
+      for (const r of stats.retirable) {
+        warnings.push({
+          file: `${r.typeName}/${r.patchFile}`,
+          error: `listed in KNOWN_STALE_PATCHES (src/codegen/patches.ts) but did not fail; retire the entry`,
+        });
       }
     } catch (err) {
       log(`WARNING: failed to fetch cfn-lint patches: ${err}`);
