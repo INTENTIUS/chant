@@ -29,6 +29,7 @@ import {
   type FountainSseEvent,
 } from "./runtime";
 import type { FountainHttp } from "./activities/fountain-apply";
+import { __resetTeamWarningForTests } from "../config";
 import { Steward, __resetStewardsForTests } from "../composites/steward";
 import { Environment } from "../generated/index";
 
@@ -41,7 +42,7 @@ const CONFIG: ChantConfig = {
       staging: {
         endpoint: "https://fountain.example.com",
         token: { env: "FOUNTAIN_TEST_TOKEN" },
-        team: "steward",
+        steward: "steward",
       },
     },
     defaultProfile: "staging",
@@ -92,9 +93,9 @@ function fakeHttp(routes: Record<string, { status: number; json?: unknown }>): {
 function stewardRoutes(extra: Record<string, { status: number; json?: unknown }> = {}) {
   return {
     "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
-    "GET /api/team/agent-1/conversations": {
+    "GET /api/conversations?agent_id=agent-1&channel_id=chant%3Asteward%3Asteward&limit=1": {
       status: 200,
-      json: { data: [{ id: "conv-1", status: "idle", channel_id: "fountain:team" }] },
+      json: { data: [{ id: "conv-1", status: "idle", channel_id: "chant:steward:steward" }] },
     },
     ...extra,
   };
@@ -216,7 +217,8 @@ describe("start", () => {
   it("posts to the steward's thread, tails the stream, and reports the record", async () => {
     const { http, calls } = fakeHttp(
       stewardRoutes({
-        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
       }),
     );
     const { sse, opens } = fakeSse([
@@ -248,12 +250,20 @@ describe("start", () => {
     expect(status.runId).toBe("run-7");
     expect(status.endedAt).toBe("2026-03-01T10:04:00.000Z");
 
-    // The prompt is the command line, posted on the single-writer team path.
+    // The prompt is the command line, posted on the steward's thread: the
+    // conversation bound to its channel, resumed (200), then the prompt queued
+    // on it, since a resume does not deliver one (managoat/managoat#2793).
     // `--on local` keeps a project's `run.on: "fountain"` from posting again
     // from the sandbox (#3225).
-    const post = calls.find((c) => c.method === "POST");
-    expect(post?.path).toBe("/api/team/agent-1/messages");
-    expect(post?.body).toEqual({ prompt: "chant run alb-deploy --on local" });
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts[0].path).toBe("/api/conversations");
+    expect(posts[0].body).toEqual({
+      agent_id: "agent-1",
+      channel_id: "chant:steward:steward",
+      prompt: "chant run alb-deploy --on local",
+    });
+    expect(posts[1].path).toBe("/api/conversations/conv-1/prompts");
+    expect(posts[1].body).toEqual({ prompt: "chant run alb-deploy --on local" });
 
     // Phases reached the progress sink the way the local runtime feeds it.
     expect(progress).toHaveLength(1);
@@ -270,7 +280,8 @@ describe("start", () => {
   it("posts --env on the command line when the run names one (#3232)", async () => {
     const { http, calls } = fakeHttp(
       stewardRoutes({
-        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
       }),
     );
     const { sse } = fakeSse([
@@ -286,7 +297,7 @@ describe("start", () => {
     const handle = await runtime.start(OP, { env: "staging" });
     await handle.result();
 
-    const post = calls.find((c) => c.method === "POST");
+    const post = calls.find((c) => c.method === "POST" && c.path.endsWith("/prompts"));
     expect(post?.body).toEqual({ prompt: "chant run alb-deploy --env staging --on local" });
 
     const { parseChantCommandLine } = await import("../acp/command-line");
@@ -311,7 +322,8 @@ describe("start", () => {
   it("posts each --param on the command line (#3539)", async () => {
     const { http, calls } = fakeHttp(
       stewardRoutes({
-        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
       }),
     );
     const { sse } = fakeSse([
@@ -327,7 +339,7 @@ describe("start", () => {
     const handle = await runtime.start(OP, { env: "staging", params: { tier: "gold", note: "two words" } });
     await handle.result();
 
-    const post = calls.find((c) => c.method === "POST");
+    const post = calls.find((c) => c.method === "POST" && c.path.endsWith("/prompts"));
     const prompt = (post?.body as { prompt: string }).prompt;
     expect(prompt).toBe('chant run alb-deploy --env staging --param tier=gold --param "note=two words" --on local');
 
@@ -344,7 +356,8 @@ describe("start", () => {
   it("posts --work and --holder on the command line (#3555)", async () => {
     const { http, calls } = fakeHttp(
       stewardRoutes({
-        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
       }),
     );
     const { sse } = fakeSse([
@@ -361,7 +374,7 @@ describe("start", () => {
     const handle = await runtime.start(OP, { env: "staging", work: { item: "ISSUE-7", holder: "box steward" } });
     await handle.result();
 
-    const post = calls.find((c) => c.method === "POST");
+    const post = calls.find((c) => c.method === "POST" && c.path.endsWith("/prompts"));
     const prompt = (post?.body as { prompt: string }).prompt;
     expect(prompt).toBe('chant run alb-deploy --env staging --work ISSUE-7 --holder "box steward" --on local');
 
@@ -395,7 +408,8 @@ describe("start", () => {
           status: 200,
           json: { data: [{ id: "turn-old", prompt: runPrompt("alb-deploy"), state: "done" }] },
         },
-        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
       }),
     );
     const { sse } = fakeSse([
@@ -427,8 +441,8 @@ describe("start", () => {
     expect(status.runId).not.toBe("run-old");
   });
 
-  it("opens a fresh conversation on the Op's labels.Agent when no profile names a team", async () => {
-    const configWithoutTeam = {
+  it("opens a fresh conversation on the Op's labels.Agent when no profile names a steward", async () => {
+    const configWithoutSteward = {
       lexicons: ["fountain"],
       fountain: { profiles: { staging: { endpoint: "https://f.example.com", token: { env: "T" } } }, defaultProfile: "staging" },
     } as ChantConfig;
@@ -439,7 +453,7 @@ describe("start", () => {
     const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
 
     const runtime = createFountainOpRuntime({
-      config: configWithoutTeam, endpoint: "https://f.example.com", token: "t", http, sse, now: fakeClock(),
+      config: configWithoutSteward, endpoint: "https://f.example.com", token: "t", http, sse, now: fakeClock(),
     });
 
     const labelled = { ...OP, labels: { Agent: "watchtower" } } as OpConfig;
@@ -452,7 +466,7 @@ describe("start", () => {
   });
 
   it("prefers a --param agent binding over the Op's label", async () => {
-    const configWithoutTeam = {
+    const configWithoutSteward = {
       lexicons: ["fountain"],
       fountain: { profiles: { staging: { endpoint: "https://f.example.com", token: { env: "T" } } }, defaultProfile: "staging" },
     } as ChantConfig;
@@ -462,7 +476,7 @@ describe("start", () => {
     });
     const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
     const runtime = createFountainOpRuntime({
-      config: configWithoutTeam, endpoint: "https://f.example.com", token: "t", http, sse, now: fakeClock(),
+      config: configWithoutSteward, endpoint: "https://f.example.com", token: "t", http, sse, now: fakeClock(),
     });
 
     await (await runtime.start({ ...OP, labels: { Agent: "watchtower" } } as OpConfig, {
@@ -475,9 +489,10 @@ describe("start", () => {
   it("reports conversation_busy with the conversation's address and never retries", async () => {
     const { http, calls } = fakeHttp(
       stewardRoutes({
-        "POST /api/team/agent-1/messages": {
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": {
           status: 400,
-          json: { error: { code: "conversation_busy" }, data: { conversation_id: "conv-1" } },
+          json: { error: { code: "conversation_busy" } },
         },
       }),
     );
@@ -491,7 +506,57 @@ describe("start", () => {
       /https:\/\/fountain\.example\.com\/conversations\/conv-1/,
     );
     // Two calls, one per invocation — the refusal is reported, not retried.
-    expect(calls.filter((c) => c.path === "/api/team/agent-1/messages")).toHaveLength(2);
+    expect(calls.filter((c) => c.path === "/api/conversations/conv-1/prompts")).toHaveLength(2);
+  });
+
+  it("opens the steward's thread with the prompt as its first turn, and queues nothing more (201)", async () => {
+    const { http, calls } = fakeHttp({
+      "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
+      "GET /api/conversations?agent_id=agent-1&channel_id=chant%3Asteward%3Asteward&limit=1": {
+        status: 200,
+        json: { data: [] },
+      },
+      "POST /api/conversations": { status: 201, json: { data: { id: "conv-1" } } },
+    });
+    const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, sse, now: fakeClock(),
+    });
+
+    const handle = await runtime.start(OP, {});
+    await handle.result();
+
+    expect(handle.runId).toBe("conv-1");
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/api/conversations"]);
+  });
+
+  it("reads a profile's deprecated team as its steward (managoat/managoat#2793)", async () => {
+    __resetTeamWarningForTests();
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const config = {
+      lexicons: ["fountain"],
+      fountain: {
+        profiles: { staging: { endpoint: "https://f.example.com", token: { env: "T" }, team: "steward" } },
+        defaultProfile: "staging",
+      },
+    } as ChantConfig;
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
+      }),
+    );
+    const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
+    const runtime = createFountainOpRuntime({ config, endpoint: "https://f.example.com", token: "t", http, sse, now: fakeClock() });
+
+    await (await runtime.start(OP, {})).result();
+
+    expect(
+      (calls.find((c) => c.method === "POST" && c.path === "/api/conversations")?.body as { channel_id?: string })
+        .channel_id,
+    ).toBe("chant:steward:steward");
+    expect(warn.mock.calls.some(([m]) => String(m).includes("team is deprecated"))).toBe(true);
+    warn.mockRestore();
   });
 
   it("refuses a named profile that chant.config.ts does not declare", async () => {
@@ -501,15 +566,15 @@ describe("start", () => {
 
   // #2192 — `chant run <op> --on fountain --profile prod` reaches here as
   // `OpRunStartOptions.profile`, and picks that profile's endpoint, token and
-  // team instead of `defaultProfile`'s.
-  it("--profile on the run selects that profile's endpoint, token and team", async () => {
+  // steward instead of `defaultProfile`'s.
+  it("--profile on the run selects that profile's endpoint, token and steward", async () => {
     vi.stubEnv("FOUNTAIN_PROD_TOKEN", "prod-token");
     const config = {
       lexicons: ["fountain"],
       fountain: {
         profiles: {
-          staging: { endpoint: "https://staging.example.com", token: { env: "FOUNTAIN_TEST_TOKEN" }, team: "staging-steward" },
-          prod: { endpoint: "https://prod.example.com", token: { env: "FOUNTAIN_PROD_TOKEN" }, team: "prod-steward" },
+          staging: { endpoint: "https://staging.example.com", token: { env: "FOUNTAIN_TEST_TOKEN" }, steward: "staging-steward" },
+          prod: { endpoint: "https://prod.example.com", token: { env: "FOUNTAIN_PROD_TOKEN" }, steward: "prod-steward" },
         },
         defaultProfile: "staging",
       },
@@ -520,7 +585,8 @@ describe("start", () => {
         status: 200,
         json: { data: [{ id: "agent-9", name: "prod-steward" }] },
       },
-      "POST /api/team/agent-9/messages": { status: 202, json: { data: { conversation_id: "conv-9" } } },
+      "POST /api/conversations": { status: 200, json: { data: { id: "conv-9" } } },
+      "POST /api/conversations/conv-9/prompts": { status: 200, json: { status: "queued" } },
     });
     const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
     const runtime = createFountainOpRuntime({ config, http, sse, now: fakeClock() });
@@ -528,8 +594,8 @@ describe("start", () => {
     const handle = await runtime.start(OP, { profile: "prod" });
     await handle.result();
 
-    // The prod profile's team, not the default profile's.
-    expect(calls.some((c) => c.path === "/api/team/agent-9/messages")).toBe(true);
+    // The prod profile's steward, not the default profile's.
+    expect(calls.some((c) => c.path === "/api/conversations/conv-9/prompts")).toBe(true);
     expect(calls.some((c) => c.path.includes("staging-steward"))).toBe(false);
     vi.unstubAllEnvs();
   });
@@ -541,7 +607,7 @@ describe("start", () => {
     );
   });
 
-  it("prefers a declared Steward over the profile's team", async () => {
+  it("prefers a declared Steward over the profile's steward", async () => {
     __resetStewardsForTests();
     Steward({
       name: "declared-steward",
@@ -554,16 +620,21 @@ describe("start", () => {
         status: 200,
         json: { data: [{ id: "agent-7", name: "declared-steward" }] },
       },
-      "POST /api/team/agent-7/messages": { status: 202, json: { data: { conversation_id: "conv-7" } } },
+      "POST /api/conversations": { status: 200, json: { data: { id: "conv-7" } } },
+      "POST /api/conversations/conv-7/prompts": { status: 200, json: { status: "queued" } },
     });
     const { sse } = fakeSse([[sseEvent("1", { stream: "stage", stage: "turn", state: "done" })]]);
     const runtime = createFountainOpRuntime({
       config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, sse, now: fakeClock(),
     });
 
-    // CONFIG's profile names the team "steward"; the declaration wins.
+    // CONFIG's profile names the steward "steward"; the declaration wins.
     await (await runtime.start(OP, {})).result();
-    expect(calls.some((c) => c.path === "/api/team/agent-7/messages")).toBe(true);
+    expect(calls.some((c) => c.path === "/api/conversations/conv-7/prompts")).toBe(true);
+    expect(
+      (calls.find((c) => c.method === "POST" && c.path === "/api/conversations")?.body as { channel_id?: string })
+        .channel_id,
+    ).toBe("chant:steward:declared-steward");
     expect(calls.some((c) => c.path.includes("search=steward&"))).toBe(false);
     __resetStewardsForTests();
   });
@@ -571,7 +642,8 @@ describe("start", () => {
   it("fails the run on fountain's own reason when the conversation dies during provision (#2167)", async () => {
     const { http, calls } = fakeHttp(
       stewardRoutes({
-        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+        "POST /api/conversations": { status: 200, json: { data: { id: "conv-1" } } },
+        "POST /api/conversations/conv-1/prompts": { status: 200, json: { status: "queued" } },
         "GET /api/conversations/conv-1": {
           status: 200,
           json: {
@@ -941,14 +1013,14 @@ describe("status, log and list read the thread", () => {
   it("status reports a conversation fountain failed before any turn started (#2167)", async () => {
     const { http } = fakeHttp({
       "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
-      "GET /api/team/agent-1/conversations": {
+      "GET /api/conversations?agent_id=agent-1&channel_id=chant%3Asteward%3Asteward&limit=1": {
         status: 200,
         json: {
           data: [
             {
               id: "conv-1",
               status: "failed",
-              channel_id: "fountain:team",
+              channel_id: "chant:steward:steward",
               turn_count: 0,
               sandbox: { status: "failed" },
               inserted_at: "2026-03-01T10:00:00.000Z",
@@ -974,9 +1046,9 @@ describe("status, log and list read the thread", () => {
   it("status still says nothing for a failed conversation that ran other turns", async () => {
     const { http } = fakeHttp({
       "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
-      "GET /api/team/agent-1/conversations": {
+      "GET /api/conversations?agent_id=agent-1&channel_id=chant%3Asteward%3Asteward&limit=1": {
         status: 200,
-        json: { data: [{ id: "conv-1", status: "failed", channel_id: "fountain:team", turn_count: 1 }] },
+        json: { data: [{ id: "conv-1", status: "failed", channel_id: "chant:steward:steward", turn_count: 1 }] },
       },
       "GET /api/conversations/conv-1/turns": {
         status: 200,
@@ -1032,7 +1104,9 @@ describe("status, log and list read the thread", () => {
     expect(states.get("alb-deploy")?.state).toBe("completed");
     expect(states.get("db-migrate")?.state).toBe("running");
     expect(states.get("never-run")).toBeUndefined();
-    expect(calls.filter((c) => c.path === "/api/team/agent-1/conversations")).toHaveLength(1);
+    expect(
+      calls.filter((c) => c.path === "/api/conversations?agent_id=agent-1&channel_id=chant%3Asteward%3Asteward&limit=1"),
+    ).toHaveLength(1);
     expect(calls.filter((c) => c.path === "/api/conversations/conv-1/turns")).toHaveLength(1);
   });
 });
@@ -1065,7 +1139,7 @@ describe("cancel", () => {
   it("says so when nothing is hosting the op", async () => {
     const { http } = fakeHttp({
       "GET /api/agents?search=steward": { status: 200, json: { data: [{ id: "agent-1", name: "steward" }] } },
-      "GET /api/team/agent-1/conversations": { status: 200, json: { data: [] } },
+      "GET /api/conversations?agent_id=agent-1&channel_id=chant%3Asteward%3Asteward&limit=1": { status: 200, json: { data: [] } },
     });
     const runtime = createFountainOpRuntime({
       config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),

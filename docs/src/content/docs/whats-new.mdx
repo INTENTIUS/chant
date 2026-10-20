@@ -7,6 +7,10 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## The fountain lexicon follows Managoat's removals
+
+Managoat removed the team and persistent sandboxes, with the team's schedules and webhooks, and the fountain lexicon is now generated from Managoat v0.29.0, whose spec has none of them. [managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793) tracks the change across both projects. A [steward](/chant/lexicons/fountain/steward/) is an `acp` Agent. `chant run <op> --on fountain` sends its runs to one long-lived conversation resumed by `channel_id`, and that conversation's sandbox keeps its disk across park and wake. Its cadences fire from a clock outside Managoat. `Teammate`, `Schedule` and `Webhook` are deprecated stubs that fail the build with FTN025, which names the replacement, and a profile's `team` is now `steward`. [Coming from Teammate, Schedule and Webhook](/chant/tutorials/fountain-steward/#coming-from-teammate-schedule-and-webhook) maps each removed construct to what replaced it.
+
 ## Postgres schemas in the sql lexicon
 
 The sql lexicon has a second dialect, Postgres, at `@intentius/chant-lexicon-sql/postgres`. Each schema object is written as its own `CREATE` statement in a tagged template, with `COMMENT ON` statements after it, and `nextval(${seq})` keeps a sequence a reference. The types come from one pinned `postgres` release per supported major, 14 to 18. `sql.postgresMajor` picks the major a project targets, and four lint rules and eighteen post-synth checks hold a schema to it.

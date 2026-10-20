@@ -1,8 +1,9 @@
 // Every quarter hour: snapshot prod and diff it against the declaration.
 //
-// `schedule` is Op data, not a resource. The Steward in ./fountain.ts reads
-// the cron off this Op and turns it into a fountain Schedule on the steward's
-// thread, so the cadence is written once and lives with the Op it paces.
+// `schedule` is Op data, not a resource. The Steward in ./fountain.ts lists
+// this Op, and a clock outside Managoat (a CI schedule or a CronJob that runs
+// `chant run prod-watch --on fountain`) fires it on this cron, so the cadence
+// is written once and lives with the Op it paces.
 //
 //   chant run prod-watch                 # here, on the local executor
 //   chant run prod-watch --on fountain   # on the steward, as a turn

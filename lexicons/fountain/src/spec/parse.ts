@@ -2,10 +2,11 @@
  * Fountain OpenAPI parser.
  *
  * Fountain's spec (OpenApiSpex, published as a release asset) is
- * request/response DTOs, so we generate a curated set of resources — the six
- * declarable kinds. Environment, Vault and Agent are what `fountain apply`
- * reconciles; Teammate, Schedule and Webhook belong to the team, schedule and
- * webhook routes. Each pairs a request schema (writable authoring surface)
+ * request/response DTOs, so we generate a curated set of resources — the three
+ * declarable kinds, Environment, Vault and Agent, which are what `fountain
+ * apply` reconciles. (Teammate, Schedule and Webhook were generated from the
+ * team, schedule and webhook routes until Managoat removed them; they are
+ * retired stubs now, in `retired.ts`.) Each pairs a request schema (writable authoring surface)
  * with a response schema (read-only attributes). Object schemas reachable from
  * the request schemas (e.g. Repository) are emitted as standalone
  * property-type classes.
@@ -17,8 +18,8 @@
  *
  *   - Typed references. A request schema carries `agent_id`; a chant author
  *     writes `agent: someAgent`. The `refs` entries rename an id field, or
- *     add one that reaches the API only as a path parameter (a schedule's
- *     teammate), into a by-name reference the serializer resolves and FTN021
+ *     add one that reaches the API only as a path parameter, into a by-name
+ *     reference the serializer resolves and FTN021
  *     proves resolvable — the same shape an Agent's `environment` has.
  *   - Extensions. A prop chant accepts that the request schema does not
  *     describe, declared here so the generated type documents it instead of
@@ -139,7 +140,6 @@ const REF_TARGET = {
   agent: `Fountain::${SERVICE}::Agent`,
   environment: `Fountain::${SERVICE}::Environment`,
   vault: `Fountain::${SERVICE}::Vault`,
-  teammate: `Fountain::${SERVICE}::Teammate`,
 };
 
 const RESOURCES: ResourceSpec[] = [
@@ -156,58 +156,13 @@ const RESOURCES: ResourceSpec[] = [
     extensions: [SECRETS_EXTENSION],
   },
   { typeName: `Fountain::${SERVICE}::Agent`, request: "AgentRequest", response: "Agent" },
-  {
-    typeName: `Fountain::${SERVICE}::Teammate`,
-    request: "TeamAddRequest",
-    response: "Teammate",
-    refs: [
-      {
-        prop: "agent",
-        from: "agent_id",
-        target: REF_TARGET.agent,
-        required: true,
-        description: "The agent this teammate is, by name. A dangling reference is FTN021, not a 404 at apply.",
-      },
-      {
-        prop: "environment",
-        from: "environment_id",
-        target: REF_TARGET.environment,
-        required: false,
-        description:
-          "Provision the teammate's computer from this environment instead of the agent's own. Must satisfy the agent's allowed_environment_ids.",
-      },
-      {
-        prop: "vault",
-        from: "vault_id",
-        target: REF_TARGET.vault,
-        required: false,
-        description: "Layer this vault's secrets on top. Must satisfy allowed_vault_ids.",
-      },
-    ],
-  },
-  {
-    typeName: `Fountain::${SERVICE}::Schedule`,
-    request: "TeamScheduleCreateRequest",
-    response: "TeamSchedule",
-    refs: [
-      {
-        prop: "teammate",
-        target: REF_TARGET.teammate,
-        required: true,
-        description:
-          "The teammate whose thread this prompt goes to. The route carries it as a path parameter " +
-          "(POST /api/team/{agent_id}/schedules), so it is a chant-level reference rather than a body field.",
-      },
-    ],
-  },
-  { typeName: `Fountain::${SERVICE}::Webhook`, request: "WebhookEndpointCreateRequest", response: "WebhookEndpoint" },
 ];
 
 /**
  * The request schemas the curated manifest models, by schema name.
  *
- * Coverage reads this rather than guessing `${kind}Request`: a Teammate is
- * created by `TeamAddRequest` and a Schedule by `TeamScheduleCreateRequest`.
+ * Coverage reads this rather than guessing `${kind}Request`, so a kind whose
+ * create schema is named otherwise needs no special case there.
  */
 export const MODELED_REQUEST_SCHEMAS: string[] = RESOURCES.map((r) => r.request);
 
@@ -295,8 +250,8 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
 
     // Attributes = response props not authored on the request side. Both the
     // id field a ref replaced (`agent_id`) and the ref that replaced it
-    // (`agent`) count as authored, so a Teammate's `agent` is a constructor
-    // prop and not also a readonly attribute shadowing it.
+    // (`agent`) count as authored, so a ref is a constructor prop and not
+    // also a readonly attribute shadowing it.
     const authored = new Set([...Object.keys(reqProps), ...properties.map((p) => p.name)]);
     const attributes: Array<{ name: string; tsType: string }> = [];
     for (const [name, prop] of Object.entries(res?.properties ?? {})) {

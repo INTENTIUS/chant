@@ -12,7 +12,7 @@
  *       staging: {
  *         endpoint: "https://fountain-staging.example.com",
  *         token: { env: "FOUNTAIN_STAGING_TOKEN" },
- *         team: "staging-steward",
+ *         steward: "staging-steward",
  *       },
  *       prod: {
  *         endpoint: "https://fountain.inevitable.fyi",
@@ -53,8 +53,15 @@ export const fountainProfileSchema = z.strictObject({
    */
   token: z.strictObject({ env: z.string() }),
   /**
-   * Default steward (a `Teammate` name) that `chant run --on fountain` posts
-   * to when the op has no steward of its own.
+   * Default steward (a `Steward`'s name, which is its Agent's) that `chant run
+   * --on fountain` posts to when the op has no steward of its own. Its runs go
+   * to the one conversation bound to the channel `chant:steward:<name>`.
+   */
+  steward: z.string().optional(),
+  /**
+   * @deprecated The name of `steward` while a steward was a `Teammate`, which
+   * Managoat removed with the team (managoat/managoat#2793). Read as
+   * `steward`, with a warning; `steward` wins when both are set.
    */
   team: z.string().optional(),
 });
@@ -110,4 +117,32 @@ export function resolveProfile(
   }
 
   return undefined;
+}
+
+let warnedTeam = false;
+
+/**
+ * A profile's default steward: `steward`, else the deprecated `team` (#2793).
+ * `team` warns once per process, so a run that resolves the steward several
+ * times says it once.
+ */
+export function stewardOfProfile(
+  profile: FountainProfile | undefined,
+  warn: (msg: string) => void = (msg) => console.error(msg),
+): string | undefined {
+  if (profile?.steward) return profile.steward;
+  if (!profile?.team) return undefined;
+  if (!warnedTeam) {
+    warnedTeam = true;
+    warn(
+      `[fountain] fountain.profiles.<name>.team is deprecated: Managoat has no team. ` +
+        `Rename it to steward; it means the same steward.`,
+    );
+  }
+  return profile.team;
+}
+
+/** Tests only: let the next `team` read warn again. */
+export function __resetTeamWarningForTests(): void {
+  warnedTeam = false;
 }

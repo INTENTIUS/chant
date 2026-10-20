@@ -24,10 +24,10 @@ export default {
       prod: {
         endpoint: "https://fountain.inevitable.fyi",
         token: { env: "FOUNTAIN_TOKEN" },
-        // The teammate a run posts to when the op is not listed on a Steward
+        // The steward a run goes to when the op is not listed on a Steward
         // this process loaded. The Steward below lists both, so this is the
         // fallback rather than the usual path.
-        team: "prod-steward",
+        steward: "prod-steward",
       },
     },
     defaultProfile: "prod",

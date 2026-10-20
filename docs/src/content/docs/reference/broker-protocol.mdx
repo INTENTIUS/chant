@@ -68,7 +68,7 @@ The owner saves a secret at the broker with the one host it may be sent to. The 
 
 `/fountain/api/...` is Fountain's API, with the operator's Fountain key sent as the bearer. The scope words are the ones the declaration already documents for Fountain. With `agent` the box starts a conversation with its own agent. `conversations` lets it read and continue its own conversations. `sandboxes` and `vault` reach its own sandboxes and its own vault. The broker checks that what the box names is its own.
 
-`fountain-callback` is different. It is the callback token fountain gives every persistent sandbox ([#2780](https://github.com/INTENTIUS/chant/issues/2780)), which fountain brokers itself, and it has no route here.
+`fountain-callback` is different. It is the callback token fountain gives a box's sandbox ([#2780](https://github.com/INTENTIUS/chant/issues/2780)), which fountain brokers itself, and it has no route here.
 
 ### Who pays
 

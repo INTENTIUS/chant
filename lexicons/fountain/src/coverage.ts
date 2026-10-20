@@ -37,16 +37,8 @@ export const EXCLUDED_KINDS: Record<string, string> = {
   ConversationCreateRequest: "conversations are runs, not declarables — started by the fountainRun op",
   PromptRequest: "turn-level input inside a conversation run — sent by the fountainPrompt op",
   PermissionAnswerRequest: "a human's answer to one tool card mid-run — an event on a conversation, not estate",
-  TeamMessageRequest: "one turn addressed to a teammate — the run, not the seat",
   ConversationLabelsRequest:
     "merges labels into one conversation; a runtime action on a run, not estate",
-  ConversationReapplyRequest:
-    "swaps the Agent, Environment or Vault under a running conversation; a runtime action on a run, not estate",
-  SandboxRequest:
-    "a queued start or schedule run waiting for sandbox capacity; runtime state, and a response record despite the name",
-  PendingPermissionRequest:
-    "a permission request still open after its turn ended; runtime state on a conversation, and a response record " +
-    "despite the name. Answering it is PermissionAnswerRequest",
   ApplyRequest:
     "the envelope fountainApply builds around a manifest, not a thing anyone declares — " +
     "its contents are the Environment/Vault/Agent resources, which are modeled",
@@ -62,42 +54,27 @@ export const EXCLUDED_KINDS: Record<string, string> = {
   VaultSecretMetadataRequest:
     "edits a stored secret's advisory expiry. The secret stays write-only; its expiry is metadata chant#2391 " +
     "proposes surfacing as drift rather than declaring",
-  InferenceCredentialSetCreateRequest:
-    "an account-level store of provider API keys, write-only. A kind of its own if it is ever modeled; until then " +
-    "an Agent names one by uuid in inference_credential_id",
-  InferenceCredentialSetUpdateRequest: "renames an inference credential set or makes it the default; same reason as the create",
 
-  // Partial updates of a modeled kind — chant declares the whole thing.
-  TeamRenameRequest: "a partial update of a modeled Teammate — chant declares the full shape and applies it",
-  TeamScheduleUpdateRequest: "a partial update of a modeled Schedule",
-  WebhookEndpointUpdateRequest: "a partial update of a modeled Webhook",
+  // Presentation, not configuration.
   AvatarRequest: "sets an agent's avatar image; presentation, not configuration",
 
-  // The account, its people, and its money.
+  // The account and its people.
   RegisterRequest: "account signup",
   AuthTokenRequest: "mints a session token; the credential chant reads from FOUNTAIN_TOKEN",
   TokenRequest: "mints a session token; the credential chant reads from FOUNTAIN_TOKEN",
   OAuthTokenRequest: "an OAuth token exchange",
+  DeviceAuthRequest: "starts the device-code half of an interactive login",
   DeviceTokenRequest: "the device-code half of an interactive login",
   EmailRequest: "sends a verification or reset mail",
-  EmailChangeRequest: "changes the account email",
   PasswordChangeRequest: "changes the account password",
   PasswordResetRequest: "completes a password reset",
   AccountDeleteRequest: "deletes the account — the opposite of estate",
-  CreditsCheckoutRequest: "starts a Stripe checkout for credits",
-  SupportReportCreateRequest: "files a support report",
-  ConnectionProviderRequest: "registers an OAuth app for third-party connections; the connections themselves are per-user grants",
   OAuthClientRequest: "registers an OAuth client app against fountain; app registration, not estate",
   OAuthClientUpdateRequest: "renames an OAuth client or changes its redirect URIs; app registration, not estate",
-  BuzzProvisionRequest: "provisions a Buzz identity for an agent — a separate product surface",
-  BuzzAccessUpdateRequest: "changes who may use a Buzz identity",
 
   // Instance administration. An operator's console, not a tenant's estate.
-  AdminCompRequest: "instance administration — comps a user's balance",
-  AdminCreditsRequest: "instance administration — grants credits",
+  AdminCreateUserRequest: "instance administration — creates a user",
   AdminRoleRequest: "instance administration — changes a user's role",
-  AdminSandboxLimitRequest: "instance administration — sets a user's sandbox ceiling",
-  AdminSuspendRequest: "instance administration — suspends a user",
 };
 
 /**
@@ -192,8 +169,8 @@ export function computeFountainCoverage(
     }).components?.schemas ?? {},
   );
   // The request schema per modeled kind comes from the curated manifest, not
-  // from `${kind}Request`: a Teammate is created by TeamAddRequest and a
-  // Schedule by TeamScheduleCreateRequest.
+  // from `${kind}Request`, so a kind whose create schema is named otherwise
+  // needs no special case here.
   const modeledRequests = new Set(MODELED_REQUEST_SCHEMAS);
   const unaccountedKinds = schemas.filter(
     (name) =>

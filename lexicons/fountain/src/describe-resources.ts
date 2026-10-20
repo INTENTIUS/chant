@@ -11,18 +11,16 @@
  *
  * The read is a lookup, not a fetch: fountain has no per-resource-by-name
  * endpoint, so the adapter lists each declared kind once
- * (GET /api/environments|vaults|agents|team|team/schedules|webhooks) and
- * indexes it by the key that kind is reconciled under. The list promise is
+ * (GET /api/environments|vaults|agents) and indexes it by name, the key
+ * fountain reconciles by. The list promise is
  * cached per kind, so concurrent reads share one request and a failed list
  * marks only that kind's entities read-failed.
  *
- * Six kinds are read (#2128). The three team-side ones do not key on a name
- * the way the first three do — a schedule is identified by its teammate and
- * its name together, a webhook by its url — and they carry no `managed-by`
- * marker of their own, so ownership is inherited from the agent behind them
- * and a webhook's verdict is `unknown`. Both rules live in ./live-identity.ts,
- * shared with the deep reader so the two cannot disagree about what a
- * declaration matches.
+ * Three kinds are read. The team-side kinds #2128 added went with Managoat's
+ * removal of them (managoat/managoat#2793); a retired stub is reported as an
+ * unsupported kind. The identity and ownership rules live in
+ * ./live-identity.ts, shared with the deep reader so the two cannot disagree
+ * about what a declaration matches.
  *
  * Endpoint + auth reuse the applier verbatim (FOUNTAIN_ENDPOINT /
  * FOUNTAIN_TOKEN), so plan reads the same instance fountainApply writes.
@@ -47,21 +45,12 @@ import {
 import {
   FountainLists,
   KIND_PATHS,
-  declaredKey,
-  nameIndex,
-  ownershipGap,
+  effectiveName,
   ownershipOf,
   type LiveRecord,
   type Ownership,
 } from "./live-identity";
-import {
-  AGENT_TYPE,
-  ENVIRONMENT_TYPE,
-  SCHEDULE_TYPE,
-  TEAMMATE_TYPE,
-  VAULT_TYPE,
-  WEBHOOK_TYPE,
-} from "./deep-observe-hooks";
+import { AGENT_TYPE, ENVIRONMENT_TYPE, VAULT_TYPE } from "./deep-observe-hooks";
 
 /** Thrown by bind() when there is no token to read with. */
 class MissingTokenError extends Error {}
@@ -80,58 +69,23 @@ export interface DescribeResourcesOptions {
 /**
  * The scrubbed outputs each kind reports, beyond its id and timestamps.
  *
- * These are what a snapshot diff compares, and therefore what
- * `classifyDisruption` (./disruption.ts) is handed as `attributes.<key>`
- * deltas — a teammate's `vault_id` moving is only classifiable as `replace`
- * because the id is here. Deliberately excluded: a schedule's `next_run_at`,
- * `last_run_at`, `last_error` and `last_conversation_id`, which the scheduler
- * rewrites on every fire and which would report a working schedule as drift on
- * every read.
+ * These are what a snapshot diff compares.
  */
 const ATTRIBUTE_FIELDS: Record<string, readonly string[]> = {
   [ENVIRONMENT_TYPE]: [],
   [VAULT_TYPE]: [],
   [AGENT_TYPE]: ["environment_id"],
-  [TEAMMATE_TYPE]: ["agent_id", "environment_id", "vault_id"],
-  [SCHEDULE_TYPE]: ["agent_id", "cron", "prompt", "enabled", "one_off"],
-  [WEBHOOK_TYPE]: ["url", "status", "event_types"],
 };
 
-/**
- * A teammate has no id column of its own — it *is* an agent on the reserved
- * team channel — so the agent's id is its physical identity.
- */
-function physicalIdOf(entityType: string, record: LiveRecord): string | undefined {
-  if (entityType === TEAMMATE_TYPE) {
-    return typeof record.agent_id === "string" ? record.agent_id : undefined;
-  }
-  return typeof record.id === "string" ? record.id : undefined;
-}
-
-/**
- * A teammate's environment and vault are per-launch settings on its
- * conversation, not columns on the roster row, so read them from there when
- * the row itself does not carry them.
- */
-function attributeSource(entityType: string, record: LiveRecord): Record<string, unknown> {
-  if (entityType !== TEAMMATE_TYPE) return record;
-  const conversation =
-    record.conversation && typeof record.conversation === "object"
-      ? (record.conversation as Record<string, unknown>)
-      : {};
-  return { ...conversation, ...record };
-}
-
 function present(entityType: string, found: LiveRecord, ownership: Ownership): ResourceMetadata {
-  const id = physicalIdOf(entityType, found);
-  const source = attributeSource(entityType, found);
+  const id = typeof found.id === "string" ? found.id : undefined;
   const attributes: Record<string, unknown> = {
     ...(id ? { id } : {}),
     ...(found.inserted_at ? { inserted_at: found.inserted_at } : {}),
     ...(found.updated_at ? { updated_at: found.updated_at } : {}),
   };
   for (const field of ATTRIBUTE_FIELDS[entityType] ?? []) {
-    const value = source[field];
+    const value = found[field];
     if (value !== undefined && value !== null) attributes[field] = value;
   }
 
@@ -145,20 +99,10 @@ function present(entityType: string, found: LiveRecord, ownership: Ownership): R
   };
 }
 
-/** Why an entity was withheld by `--owned`, in terms of the channel that kind actually has. */
-function filteredDetail(entityType: string, key: string, ownership: Ownership): string {
-  if (ownership === "unknown") {
-    return `"${key}" exists but its ownership cannot be established — ${ownershipGap(entityType)}`;
-  }
-  return `"${key}" exists but does not carry the ${OWNERSHIP_KEY}: ${OWNERSHIP_VALUE} marker`;
-}
-
 function createAdapter(
   options: DescribeResourcesOptions,
   http?: FountainHttp,
 ): ObserverAdapter<FountainLists> {
-  const index = nameIndex(options.entities);
-
   return {
     async bind() {
       if (http) return new FountainLists(http);
@@ -193,17 +137,7 @@ function createAdapter(
         };
       }
 
-      const key = declaredKey(entity.type, entity.name, entity.props, index);
-      if (key === undefined) {
-        // Not an absence: the declaration itself resolves to no identity, so
-        // the read never happened. FTN021 is the build-time version of this.
-        return {
-          unobserved: {
-            reason: "read-failed",
-            detail: `"${entity.name}" does not resolve to a fountain identity — a schedule needs a teammate reference, a webhook a url`,
-          },
-        };
-      }
+      const key = effectiveName(entity.name, entity.props);
 
       // A list failure throws — the harness records read-failed for this
       // entity, and the cached rejected promise gives the same verdict to
@@ -214,12 +148,12 @@ function createAdapter(
       // Observed absent: we asked, fountain said no → eligible for `create`.
       if (!found) return { absent: true };
 
-      const ownership = ownershipOf(entity.type, found, await lists.rosterFor(entity.type));
+      const ownership = ownershipOf(found);
       if (options.owned && ownership !== "owned") {
         return {
           unobserved: {
             reason: "filtered",
-            detail: filteredDetail(entity.type, key, ownership),
+            detail: `"${key}" exists but does not carry the ${OWNERSHIP_KEY}: ${OWNERSHIP_VALUE} marker`,
           },
         };
       }

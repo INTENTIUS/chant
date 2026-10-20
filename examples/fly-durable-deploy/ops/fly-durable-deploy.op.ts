@@ -11,9 +11,10 @@ import { flyApplyStep } from "@intentius/chant-lexicon-fly";
  * same Machine, so a re-run is a correction rather than a second deploy. That
  * is what makes the cadence below safe to leave running.
  *
- * `schedule` is Op data, not a resource. The Steward in ./fountain.ts
- * reads this cron and turns it into a fountain Schedule on the steward's
- * thread, so the cadence is written once, next to the Op it paces.
+ * `schedule` is Op data, not a resource. The Steward in ./fountain.ts lists
+ * this Op, and a clock outside Managoat (a CI schedule, a CronJob) fires
+ * `chant run fly-durable-deploy --on fountain` on this cron, so the cadence is
+ * written once, next to the Op it paces.
  *
  *   chant run fly-durable-deploy                 # here, on the local executor
  *   chant run fly-durable-deploy --on fountain   # on the steward, as a turn

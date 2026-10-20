@@ -31,7 +31,6 @@ export {
   resolveAgent,
   resolveAgentId,
   TERMINAL_STATUSES,
-  PERSISTENT_DONE_STATUSES,
 } from "./fountain-run";
 export type { FountainRunArgs, FountainRunResult, ResolvedAgent, TerminatePolicy } from "./fountain-run";
 

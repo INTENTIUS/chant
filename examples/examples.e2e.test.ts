@@ -607,9 +607,9 @@ describe("sprites-build-sandbox Op (#869)", () => {
 });
 
 // ── Scheduled Fly deploy — fly-durable-deploy (#870, #2132) ─────────────
-// The same App+Machine deploy as local-fly, now scheduled on a fountain
-// steward: Build serializes src/infra.ts, Deploy applies it via flyApply, and
-// the Op carries the cron the Steward turns into a Schedule. The live run
+// The same App+Machine deploy as local-fly, now run by a fountain steward:
+// Build serializes src/infra.ts, Deploy applies it via flyApply, and the Op
+// carries the cron a clock outside Managoat fires it on. The live run
 // (against mudflaps, or on a real steward) is in the README; here we
 // compile-validate the two-phase shape, the flyApply activity and the cadence.
 
@@ -1907,7 +1907,9 @@ describe("local-op-quickstart gated migration (#1835)", () => {
 
 // ── fountain steward (#2129, epic #2115) ─────────────────────────────
 // The hosted-runtime story: one Environment + Vault + Steward, two Ops with
-// cadences, and the six kinds the manifest carries. The live half — applying
+// cadences, and the three documents the manifest carries. Managoat has no team,
+// schedules or webhooks (managoat/managoat#2793), so the cadences stay on the
+// Ops and the manifest is the Agent and what it layers on. The live half — applying
 // it and running `chant run prod-watch --on fountain` against a real fountain
 // instance — is the README's walkthrough; this is the offline half.
 
@@ -1920,15 +1922,12 @@ describeExample("fountain-steward", {
   checks: (output) => {
     const kinds = [...output.matchAll(/^kind:\s+(\S+)$/gm)].map((m) => m[1]);
     // Every kind the steward composes, in the serializer's dependency order.
-    expect(kinds).toEqual(["Environment", "Vault", "Agent", "Teammate", "Schedule", "Schedule"]);
-    // The steward is an ACP agent on a persistent computer.
+    expect(kinds).toEqual(["Environment", "Vault", "Agent"]);
+    // The steward is an ACP agent. Every conversation gets a sandbox of its
+    // own, so it names no sandbox_mode.
     expect(output).toContain("runtime: acp");
-    expect(output).toContain("runtime_command: chant acp");
-    expect(output).toContain("sandbox_mode: persistent");
-    // One Schedule per Op that carries a cadence, prompted with the exact
-    // command line `chant acp` parses back.
-    expect(output).toContain("prompt: chant run prod-watch");
-    expect(output).toContain("prompt: chant run prod-converge");
+    expect(output).toContain("runtime_command: chant acp --steward prod-steward");
+    expect(output).not.toContain("sandbox_mode");
     // The build parameter reached the manifest as a literal, not a reference.
     expect(output).toContain("https://github.com/INTENTIUS/chant");
   },

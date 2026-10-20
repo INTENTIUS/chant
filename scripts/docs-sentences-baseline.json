@@ -813,7 +813,7 @@
   "claude/colon-reveal": 6,
   "tricolon/comma-series": 2,
   "dead-metaphor/rare-lemma": 1,
-  "repetition/near-duplicate": 33,
+  "repetition/near-duplicate": 34,
   "claude/contrast-tail": 3,
   "claude-technical-vocabulary": 1,
   "anaphora/repeated-opening": 11,
@@ -1018,7 +1018,6 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/tutorials/fly-durable-deploy.mdx": {
-  "tricolon/comma-series": 1,
   "formatting/em-dash-density": 4
  },
  "docs/src/content/docs/tutorials/fly-machines-reconcile.mdx": {

@@ -37,7 +37,7 @@ chant run crdb-publish-ui        # once, by hand: prints the nameservers, then f
 chant run crdb-ui-converge       # or leave the schedule to notice
 ```
 
-`ops/fountain.ts` declares the steward those cadences live on — an `Environment`, a `Vault`, an `Agent` speaking ACP over `chant acp`, a `Teammate` seat, and one `Schedule` per Op with a cron. `chant run <op> --on fountain` posts the command line to that thread instead of running it here, so the conversation is the estate's operational history. Every Op above still runs locally with no fountain at all; see [`fountain-steward`](../fountain-steward/) for that shape on its own.
+`ops/fountain.ts` declares the steward those cadences belong to — an `Environment`, a `Vault` and an `Agent` speaking ACP over `chant acp`. Managoat has no scheduler, so a clock outside it (a CI schedule, a CronJob) fires each cron. `chant run <op> --on fountain` posts the command line to the steward's one long-lived conversation instead of running it here, so the conversation is the estate's operational history. Every Op above still runs locally with no fountain at all; see [`fountain-steward`](../fountain-steward/) for that shape on its own.
 
 ```bash
 npm run build:fountain           # dist/fountain.yaml
@@ -457,4 +457,4 @@ npm run deploy
 - **[k8s-eks-microservice](../k8s-eks-microservice/)** — EKS with ALB ingress and IRSA
 - **[k8s-aks-microservice](../k8s-aks-microservice/)** — AKS with AGIC ingress and Workload Identity
 - **[gitlab-cells-single-region-gke](../gitlab-cells-single-region-gke/)** — multi-cell GitLab on GKE with Cloud SQL, Redis and GCS
-- **[fountain-steward](../fountain-steward/)** — the steward shape on its own: a watch, a converge and a gated apply on one thread
+- **[fountain-steward](../fountain-steward/)** — the steward shape on its own: a watch, a converge and a gated apply in one conversation

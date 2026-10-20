@@ -23,7 +23,7 @@ Deciding whether Ops is the right deployment model for your project? See [Choosi
 - A stop for human approval or an external event (DNS delegation, change windows).
 - Rollback on failure, with `onFailure` phases in place of hand-rolled scripts.
 
-`chant run <name>` executes an Op **in this process**. `--on <lexicon>` hands the same Op to a runtime that hosts it instead, and `chant run <op> --on fountain` is the one chant ships: a [steward](/chant/lexicons/fountain/steward/) runs it on a machine of its own and keeps the record on a thread. See [Ops as teammates](/chant/concepts/durable-workflows/) for what each half is for.
+`chant run <name>` executes an Op **in this process**. `--on <lexicon>` hands the same Op to a runtime that hosts it instead, and `chant run <op> --on fountain` is the one chant ships: a [steward](/chant/lexicons/fountain/steward/) runs it on a machine of its own and keeps the record in one long-lived conversation. See [Ops as teammates](/chant/concepts/durable-workflows/) for what each half is for.
 
 <Aside type="note" title="Prerequisites">
 `Op`, `phase` and the base step builders come from `@intentius/chant/op`, which
@@ -753,7 +753,7 @@ export const { op: scheduledOp } = WorkflowAuditOp({
 
 ### Scheduling an Op
 
-`schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Three readers render it.
+`schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Two readers render it.
 
 `generateOpsPipeline` (`@intentius/chant/op`) validates that every named Op exists, then delegates to the target lexicon's `generateOpPipeline` (gitlab, github, forgejo), which synthesizes one CI file per Op (on gitlab, one document holding a job apiece, since a trigger there is job-scoped). Each job runs `chant run <name>` with only the token/permission scope its finding-mode needs (read-only for `report`; scoped write for `issue`/`comment`/`pull-request`/`merge-request`). This is the Op counterpart to [generate mode](/chant/components/orchestration/#generate-mode)'s component pipeline.
 
@@ -774,7 +774,7 @@ The `permissions:` column is GitHub's alone. Any non-`report` mode on a `pull_re
 
 [`chant operator`](/chant/guide/operator/) is the second. A timer and a ref lease around the local executor, ticking every discovered `ConvergeOp` from your own machine or from a CronJob.
 
-A fountain [`Steward`](/chant/lexicons/fountain/steward/) is the third: every op it lists that carries a cadence becomes a `Schedule` on the teammate, in-thread, and a fire that lands while a turn is running is dropped rather than queued.
+A fountain [`Steward`](/chant/lexicons/fountain/steward/) is not a third: Managoat has no scheduler, so a steward's cadences fire from one of the two above, or a CronJob, running `chant run <op> --on fountain`. A fire that lands while the steward's turn is running is refused rather than queued.
 
 Three per-Op options sit beside the finding mode, two of them widening what the generated job can do without loosening that set ([#2242](https://github.com/INTENTIUS/chant/issues/2242)) and the third deciding who may let the job start at all ([#2257](https://github.com/INTENTIUS/chant/issues/2257)). `setup` is an ordered list of steps emitted between the checkout and the `beforeScript` lines, each either `{ uses, with?, env? }` or `{ run, env? }`. It is the only way a generated job reaches a marketplace action, and `aws-actions/configure-aws-credentials` is the motivating one. `permissions` is a map merged over the finding mode's own set, additively: it can add a scope no mode grants, `id-token: write` above all, and the github generator refuses at build time any entry that touches a scope the mode already granted, names `write-all`, names a scope GitHub does not define, or asks for `pull-requests: write` on a trigger with no pull request. A `setup` action reference has to be pinned to something other than the action repository's own default branch. A generated workflow is committed once and then re-run unattended over whatever role it assumes.
 

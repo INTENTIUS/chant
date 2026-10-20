@@ -10,7 +10,13 @@
 
 import { describe, test, expect } from "vitest";
 import type { ChantConfig } from "@intentius/chant/config";
-import { fountainConfigSchema, resolveProfile, type FountainConfig } from "./config";
+import {
+  __resetTeamWarningForTests,
+  fountainConfigSchema,
+  resolveProfile,
+  stewardOfProfile,
+  type FountainConfig,
+} from "./config";
 
 describe("the fountain config namespace (#2124)", () => {
   test("the documented example typechecks as a ChantConfig", () => {
@@ -21,7 +27,7 @@ describe("the fountain config namespace (#2124)", () => {
           staging: {
             endpoint: "https://fountain-staging.example.com",
             token: { env: "FOUNTAIN_STAGING_TOKEN" },
-            team: "staging-steward",
+            steward: "staging-steward",
           },
           prod: {
             endpoint: "https://fountain.inevitable.fyi",
@@ -122,5 +128,33 @@ describe("resolveProfile (#2124)", () => {
     expect(resolveProfile(undefined, "staging")).toBeUndefined();
     expect(resolveProfile({}, "staging")).toBeUndefined();
     expect(resolveProfile({ fountain: {} }, "staging")).toBeUndefined();
+  });
+});
+
+describe("a profile's steward (managoat/managoat#2793)", () => {
+  const base = { endpoint: "https://x", token: { env: "T" } };
+
+  test("reads steward", () => {
+    expect(stewardOfProfile({ ...base, steward: "ops" }, () => {})).toBe("ops");
+  });
+
+  test("reads the deprecated team as steward, warning once", () => {
+    __resetTeamWarningForTests();
+    const warnings: string[] = [];
+    expect(stewardOfProfile({ ...base, team: "ops" }, (m) => warnings.push(m))).toBe("ops");
+    expect(stewardOfProfile({ ...base, team: "ops" }, (m) => warnings.push(m))).toBe("ops");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/team is deprecated.*steward/);
+  });
+
+  test("steward wins over team, with no warning", () => {
+    __resetTeamWarningForTests();
+    const warnings: string[] = [];
+    expect(stewardOfProfile({ ...base, steward: "new", team: "old" }, (m) => warnings.push(m))).toBe("new");
+    expect(warnings).toEqual([]);
+  });
+
+  test("the schema still accepts team", () => {
+    expect(fountainConfigSchema.safeParse({ profiles: { p: { ...base, team: "ops" } } }).success).toBe(true);
   });
 });

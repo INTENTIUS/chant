@@ -23,7 +23,7 @@
  * unattended tick to run.
  *
  *   chant run crdb-ui-converge                 # one tick, here
- *   chant run crdb-ui-converge --on fountain   # on the steward's thread
+ *   chant run crdb-ui-converge --on fountain   # in the steward's conversation
  */
 
 import { ConvergeOp, gt, run, when } from "@intentius/chant/op";

@@ -1,7 +1,7 @@
 /**
  * The fountain `opRuntime` provider (#2126, epic #2115).
  *
- * `chant run <op> --on fountain` hands the run to a fountain teammate instead
+ * `chant run <op> --on fountain` hands the run to a fountain steward instead
  * of executing it here. This module is the client for that: it posts the
  * command line `chant run <op> [--env <env>] [--param k=v ...] [--work <id>] [--holder <name>] --on local` ({@link hostedRunPrompt})
  * as a prompt on the steward's thread, tails the
@@ -29,17 +29,26 @@
  * 1. a declared `Steward` (#2127) that lists this Op. The composite registers
  *    the mapping when the project's declarations load, so this answers
  *    whenever the run and the declaration share a process.
- * 2. the profile's `team` (#2124) — a teammate name. The post goes to
- *    `POST /api/team/:agent_id/messages`, which serialises against the turn in
- *    flight. That refusal is fountain's single-writer rule, and it is the
- *    reason a steward thread is the right place for an op to run.
+ * 2. the profile's `steward` (#2124; `team` before managoat/managoat#2793,
+ *    still read with a warning).
  * 3. `--param agent=<name>`, then the Op's `labels.Agent`. Either opens a
- *    fresh conversation with `POST /api/conversations` instead.
+ *    fresh conversation with `POST /api/conversations`.
  *
- * A `400 conversation_busy` is reported with the conversation's address and
- * never retried: the steward is running another op, and queueing behind it
- * from a CLI that may be Ctrl-C'd in a second would be a promise this client
- * cannot keep.
+ * A steward's runs share one long-lived conversation, its thread: the one
+ * bound to the channel `chant:steward:<name>`. `POST /api/conversations` with
+ * that `channel_id` opens it (201, and the prompt is its first turn) or
+ * resumes it (200). A resume does not deliver the prompt, so the prompt then
+ * goes to `POST /api/conversations/:id/prompts`. The thread's sandbox keeps
+ * its disk across park and wake (Managoat's ADR 0017), so the steward's
+ * checkout and tool cache survive between runs. This used to be the team's
+ * thread, `POST /api/team/:agent_id/messages`, until Managoat removed the
+ * team (ADR 0074); the channel is what replaced it.
+ *
+ * A conversation runs one turn at a time: the prompts route answers `400
+ * conversation_busy` while one is running. That is reported with the
+ * conversation's address and never retried: the steward is running another
+ * op, and queueing behind it from a CLI that may be Ctrl-C'd in a second would
+ * be a promise this client cannot keep.
  *
  * ## Patience
  *
@@ -67,7 +76,7 @@ import { runStateOf } from "@intentius/chant/op";
 import type { GateResolutionRecord } from "@intentius/chant/lifecycle/gate-ledger";
 import type { RunEventSettleStatus } from "@intentius/chant";
 import { openRunEventStream, runEventRunOf, type RunEventStream } from "@intentius/chant/run-event-stream";
-import { resolveProfile, type FountainProfile } from "../config";
+import { resolveProfile, stewardOfProfile, type FountainProfile } from "../config";
 import {
   defaultFountainHttp,
   resolveConnection,
@@ -539,12 +548,21 @@ const SETTLED_TOOL_STATUS = new Set(["completed", "failed", "error", "cancelled"
 
 /** How this run reached fountain, and where the reply will be. */
 interface Steward {
-  /** Teammate or agent name, as declared. */
+  /** Steward or agent name, as declared. A steward's name is its Agent's. */
   agent: string;
-  /** True when the post goes to the team thread — fountain's single-writer path. */
-  team: boolean;
+  /**
+   * The channel the steward's thread is bound to, `chant:steward:<name>`.
+   * Absent for an agent named by param or label, whose runs each open a
+   * conversation of their own.
+   */
+  channel?: string;
   /** Which declaration named it, for an error that can be acted on. */
-  via: "steward" | "profile-team" | "param-agent" | "label-agent";
+  via: "steward" | "profile-steward" | "param-agent" | "label-agent";
+}
+
+/** The channel a steward's thread is bound to (managoat/managoat#2793). */
+export function stewardChannel(name: string): string {
+  return `chant:steward:${name}`;
 }
 
 /**
@@ -645,7 +663,7 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 
   const resolveSteward = async (op: OpConfig | undefined, params?: Record<string, unknown>): Promise<Steward> => {
     // A declared `Steward` (#2127) wins: an Op listed in its `ops` goes to
-    // that teammate's thread whatever the profile says, because the steward is
+    // that steward's thread whatever the profile says, because the steward is
     // the declaration that put the Op on that machine in the first place. The
     // registry it fills is only populated when the project's declarations have
     // been loaded into this process — `chant build` and anything that imports
@@ -653,42 +671,46 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
     // `chant run <op> --on fountain` in a project that keeps its Ops and its
     // steward in separate modules.
     const declared = op ? stewardForOp(op.name) : undefined;
-    if (declared) return { agent: declared, team: true, via: "steward" };
+    if (declared) return { agent: declared, channel: stewardChannel(declared), via: "steward" };
 
     const { profile } = await connect();
-    if (profile?.team) return { agent: profile.team, team: true, via: "profile-team" };
+    const named = stewardOfProfile(profile);
+    if (named) return { agent: named, channel: stewardChannel(named), via: "profile-steward" };
 
     const param = params?.agent;
     if (typeof param === "string" && param.length > 0) {
-      return { agent: param, team: false, via: "param-agent" };
+      return { agent: param, via: "param-agent" };
     }
 
     const label = op?.labels?.Agent;
-    if (label) return { agent: label, team: false, via: "label-agent" };
+    if (label) return { agent: label, via: "label-agent" };
 
     throw new Error(
       `fountain runtime: no steward for Op "${op?.name ?? "?"}". ` +
-        `Set fountain.profiles.<name>.team in chant.config.ts, label the Op \`Agent: "<agent>"\`, ` +
+        `Set fountain.profiles.<name>.steward in chant.config.ts, label the Op \`Agent: "<agent>"\`, ` +
         `or pass --param agent=<agent>.`,
     );
   };
 
   /**
-   * The steward's own thread. For a teammate that is its `fountain:team`
-   * conversation; `GET /api/team/:agent_id/conversations` is one round trip
-   * for it, which is also what `list` joins several ops over.
+   * The steward's own thread: the most recently updated conversation of its
+   * agent bound to its channel, one round trip, which is also what `list`
+   * joins several ops over. For an agent named by param or label it is that
+   * agent's most recent conversation.
    */
   const stewardConversation = async (
     http: FountainHttp,
     steward: Steward,
   ): Promise<Conversation | undefined> => {
     const agentId = await resolveAgentId(http, steward.agent);
-    const { status, json } = await http("GET", `/api/team/${agentId}/conversations`);
+    const query = `agent_id=${encodeURIComponent(agentId)}` +
+      (steward.channel ? `&channel_id=${encodeURIComponent(steward.channel)}` : "") +
+      "&limit=1";
+    const { status, json } = await http("GET", `/api/conversations?${query}`);
     if (status !== 200) {
       throw new Error(`fountain runtime: listing "${steward.agent}" conversations failed (${status})`);
     }
-    const conversations = listOf<Conversation>(json);
-    return conversations.find((c) => c.channel_id === "fountain:team") ?? conversations[0];
+    return listOf<Conversation>(json)[0];
   };
 
   /**
@@ -770,13 +792,13 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       const steward = await resolveSteward(op, startOpts.params);
       const agentId = await resolveAgentId(http, steward.agent);
 
-      // A teammate's thread already holds earlier turns, and the stream's first
+      // A steward's thread already holds earlier turns, and the stream's first
       // connection replays the whole log from the start. Note which turns are
       // there before the post, so the tail can skip them (#3524).
-      const before = steward.team ? await turnsBeforePost(http, steward) : undefined;
+      const before = steward.channel ? await turnsBeforePost(http, steward) : undefined;
 
-      const conversationId = steward.team
-        ? await postTeamMessage(http, agentId, steward, prompt, conversationUrl)
+      const conversationId = steward.channel
+        ? await postToStewardThread(http, agentId, steward, steward.channel, prompt, conversationUrl)
         : await openConversation(http, agentId, prompt);
 
       const startedAt = new Date(now()).toISOString();
@@ -846,8 +868,8 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       const http = await rest();
       const out = new Map<string, OpRunStatus | undefined>();
       // Group by steward first: the issue's "one GET per steward, joined by op
-      // name" is the whole point — a team of twenty ops behind one teammate is
-      // one round trip, not twenty.
+      // name" is the whole point — twenty ops behind one steward is one round
+      // trip, not twenty.
       const bySteward = new Map<string, { steward: Steward; ops: OpConfig[] }>();
       for (const op of ops) {
         known.set(op.name, op);
@@ -860,7 +882,7 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
           out.set(op.name, undefined);
           continue;
         }
-        const key = `${steward.agent}:${steward.team}`;
+        const key = `${steward.agent}:${steward.channel ?? ""}`;
         const entry = bySteward.get(key);
         if (entry) entry.ops.push(op);
         else bySteward.set(key, { steward, ops: [op] });
@@ -1031,33 +1053,39 @@ function envIdleTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 /**
- * `POST /api/team/:agent_id/messages` — the single-writer path. The 202 is not
- * the answer: it carries the conversation id, and everything else arrives on
- * the stream.
+ * Post a run to the steward's thread (managoat/managoat#2793): open or resume
+ * the conversation bound to `channel`, then, on a resume, queue the prompt on
+ * it. The answer is the conversation id; everything else arrives on the
+ * stream.
  */
-async function postTeamMessage(
+async function postToStewardThread(
   http: FountainHttp,
   agentId: string,
   steward: Steward,
+  channel: string,
   prompt: string,
   urlOf: (id: string) => Promise<string>,
 ): Promise<string> {
-  const { status, json } = await http("POST", `/api/team/${agentId}/messages`, { prompt });
+  const { status, json } = await http("POST", "/api/conversations", { agent_id: agentId, channel_id: channel, prompt });
+  if (status !== 200 && status !== 201) {
+    throw new Error(`fountain runtime: opening steward "${steward.agent}"'s thread failed (${status})`);
+  }
+  const conversationId = stringField(json, "id", "conversation_id");
+  if (!conversationId) throw new Error("fountain runtime: the steward's thread was opened but named no conversation");
+  // 201 opened the thread with the prompt as its first turn.
+  if (status === 201) return conversationId;
 
-  if (status === 400 && errorCode(json) === "conversation_busy") {
-    const conversationId = stringField(json, "conversation_id", "id");
-    const where = conversationId ? ` (${await urlOf(conversationId)})` : "";
+  // 200 resumed it, and a resume does not deliver the prompt.
+  const posted = await http("POST", `/api/conversations/${conversationId}/prompts`, { prompt });
+  if (posted.status === 400 && errorCode(posted.json) === "conversation_busy") {
     throw new Error(
-      `fountain runtime: the steward "${steward.agent}" is running another op${where}. ` +
-        `A teammate runs one turn at a time; wait for it to finish and run this again.`,
+      `fountain runtime: the steward "${steward.agent}" is running another op (${await urlOf(conversationId)}). ` +
+        `Its thread runs one turn at a time; wait for it to finish and run this again.`,
     );
   }
-  if (status !== 200 && status !== 201 && status !== 202) {
-    throw new Error(`fountain runtime: posting to steward "${steward.agent}" failed (${status})`);
+  if (posted.status !== 200 && posted.status !== 201 && posted.status !== 202) {
+    throw new Error(`fountain runtime: posting to steward "${steward.agent}" failed (${posted.status})`);
   }
-
-  const conversationId = stringField(json, "conversation_id", "id");
-  if (!conversationId) throw new Error("fountain runtime: the steward accepted the prompt but named no conversation");
   return conversationId;
 }
 

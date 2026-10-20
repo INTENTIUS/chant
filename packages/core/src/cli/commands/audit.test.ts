@@ -153,13 +153,13 @@ describe("auditCommand", () => {
     const envelope = JSON.parse(json.output) as { findings: Array<{ checkId: string; authority: Array<{ url: string }>; severity: string }> };
     const ftn11 = envelope.findings.find((f) => f.checkId === "FTN011")!;
     expect(ftn11.authority.length).toBeGreaterThan(0);
-    expect(ftn11.authority[0].url).toContain("fountain");
+    expect(ftn11.authority[0].url).toContain("managoat");
     expect(envelope.findings.find((f) => f.checkId === "FTN012")!.severity).toBe("error");
 
     const sarif = await auditCommand({ path: repo, format: "sarif" });
     const run = (JSON.parse(sarif.output) as { runs: Array<{ tool: { driver: { rules: Array<{ id: string; helpUri?: string }> } }; results: Array<{ ruleId: string }> }> }).runs[0];
     expect(run.results.some((r) => r.ruleId === "FTN011")).toBe(true);
-    expect(run.tool.driver.rules.find((r) => r.id === "FTN011")!.helpUri).toContain("fountain");
+    expect(run.tool.driver.rules.find((r) => r.id === "FTN011")!.helpUri).toContain("managoat");
 
     const md = await auditCommand({ path: repo, format: "markdown" });
     expect(md.output).toContain("FTN011");

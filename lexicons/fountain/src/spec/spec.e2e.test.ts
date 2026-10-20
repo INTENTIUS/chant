@@ -34,7 +34,7 @@ describe("snapshot fallback (#2389)", () => {
   });
 
   it("refuses a snapshot from another release, naming both versions", () => {
-    expect(() => readSnapshot(specAt("0.16.0"), "v0.21.0")).toThrow(/0\.16\.0.*v0\.21\.0/);
+    expect(() => readSnapshot(specAt("0.16.0"), "v0.29.0")).toThrow(/0\.16\.0.*v0\.29\.0/);
   });
 
   it("is what fetchSchemas falls back through when the pinned release cannot be fetched", async () => {
@@ -42,20 +42,20 @@ describe("snapshot fallback (#2389)", () => {
       new RegExp(`fountain 0\\.16\\.0, but the pin is ${FOUNTAIN_SPEC_VERSION.replace(/\./g, "\\.")}`),
     );
     const served = await fetchSchemas();
-    expect(JSON.parse(served.get("fountain-openapi.json")!.toString("utf-8")).info.version).toBe("0.21.0");
+    expect(JSON.parse(served.get("fountain-openapi.json")!.toString("utf-8")).info.version).toBe("0.29.0");
   });
 
   it("refuses a snapshot with no info.version", () => {
-    expect(() => readSnapshot(specAt(undefined), "v0.21.0")).toThrow(/no info\.version.*v0\.21\.0/);
+    expect(() => readSnapshot(specAt(undefined), "v0.29.0")).toThrow(/no info\.version.*v0\.29\.0/);
   });
 
   it("accepts the tag and the bare version as the same release", () => {
-    expect(readSnapshot(specAt("0.21.0"), "v0.21.0").length).toBeGreaterThan(0);
-    expect(readSnapshot(specAt("v0.21.0"), "v0.21.0").length).toBeGreaterThan(0);
+    expect(readSnapshot(specAt("0.29.0"), "v0.29.0").length).toBeGreaterThan(0);
+    expect(readSnapshot(specAt("v0.29.0"), "v0.29.0").length).toBeGreaterThan(0);
   });
 });
 
-describe("the generated surface at v0.21.0", () => {
+describe("the generated surface at v0.29.0", () => {
   const parsed = parseFountainOpenAPI(snapshot);
   const propsOf = (kind: string): Map<string, ParsedProperty> => {
     const result = parsed.find((r) => r.resource.typeName === `Fountain::V1::${kind}`);
@@ -79,7 +79,7 @@ describe("the generated surface at v0.21.0", () => {
 
   it("takes the acp runtime and runtime_command from the spec, with model optional", () => {
     const agent = propsOf("Agent");
-    expect(agent.get("runtime")?.tsType).toBe('"acp" | "claude" | "codex" | "gemini" | "opencode"');
+    expect(agent.get("runtime")?.tsType).toBe('"acp" | "claude" | "codex" | "gemini"');
     expect(agent.get("runtime")?.required).toBe(true);
     // Upstream's own description, not chant's extension note.
     expect(agent.get("runtime_command")?.description).toContain("Required when runtime is acp");
@@ -87,15 +87,23 @@ describe("the generated surface at v0.21.0", () => {
     expect(agent.get("model")?.required).toBe(false);
   });
 
-  it("keeps permission_policy a map, with ask_timeout's number in the value union", () => {
-    // v0.21.0 moved the policy behind a PermissionPolicy $ref that has one
-    // named property and a typed additionalProperties. Emitted as a class it
-    // would have only ask_timeout, and { default: "auto_allow" } would stop
-    // compiling.
+  it("keeps permission_policy a map of verdicts", () => {
+    // The policy sits behind a PermissionPolicy $ref with a typed
+    // additionalProperties. Emitted as a class, { default: "auto_allow" } would
+    // stop compiling. v0.29.0 dropped the ask_timeout key and its number.
     expect(propsOf("Agent").get("permission_policy")?.tsType).toBe(
-      'Record<string, "ask" | "auto_allow" | "auto_deny" | number>',
+      'Record<string, "ask" | "auto_allow" | "auto_deny">',
     );
     expect(parsed.some((r) => r.resource.typeName === "Fountain::V1::PermissionPolicy")).toBe(false);
+  });
+
+  // managoat/managoat#2793: the spec no longer describes them, so the parse
+  // does not either; retired.ts keeps the stubs FTN025 reports.
+  it("generates only the three kinds Managoat still has, and its providers", () => {
+    const kinds = parsed.filter((r) => !r.isProperty).map((r) => r.resource.typeName).sort();
+    expect(kinds).toEqual(["Fountain::V1::Agent", "Fountain::V1::Environment", "Fountain::V1::Vault"]);
+    expect(propsOf("Agent").get("sandbox_provider")?.tsType).toBe('"e2b" | "sprites"');
+    expect(propsOf("Agent").has("inference_credential_id")).toBe(false);
   });
 
   it("refuses an extension once upstream declares the prop itself", () => {
@@ -149,7 +157,7 @@ describe("the generated declarations accept what the skill tells an author to wr
         name: "steward",
         runtime: "acp",
         runtime_command: "chant acp",
-        permission_policy: { default: "auto_allow", ask_timeout: 600 },
+        permission_policy: { default: "auto_allow" },
       };
     `);
     expect(errors).toEqual([]);

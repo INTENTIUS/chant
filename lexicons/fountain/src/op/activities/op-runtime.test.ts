@@ -35,7 +35,6 @@ spec:
   model: a/m
   runtime: claude
   environment: box-env
-  sandbox_mode: persistent
 `;
 
 const PROFILES: Record<string, ActivityProfile> = {
@@ -75,7 +74,7 @@ async function startFakeFountain(): Promise<FakeFountain> {
         });
       }
       if (key === "GET /api/agents?search=box") {
-        return reply(200, { data: [{ id: "agent-1", name: "box", sandbox_mode: "persistent" }] });
+        return reply(200, { data: [{ id: "agent-1", name: "box" }] });
       }
       if (key === "POST /api/conversations") return reply(201, { data: { id: "conv-1" } });
       if (key === "GET /api/conversations/conv-1") {
@@ -144,8 +143,8 @@ describe("fountain activities under the local Op runtime (#2775)", () => {
     ]);
     expect(fake.calls).toContain("POST /api/apply");
     expect(fake.calls).toContain("POST /api/conversations");
-    // Persistent and finished: nothing terminated.
-    expect(fake.calls).not.toContain("POST /api/conversations/conv-1/terminate");
+    // Finished, so the run's own machine is terminated (terminate: always, the default).
+    expect(fake.calls).toContain("POST /api/conversations/conv-1/terminate");
   });
 
   it("fountainRun stops polling when the step is aborted, and the terminate policy decides", async () => {
@@ -177,12 +176,16 @@ describe("fountain activities under the local Op runtime (#2775)", () => {
     expect(fake.calls.filter((c) => c === "GET /api/conversations/conv-1").length).toBe(polls);
   });
 
-  it("fountainRun leaves a persistent agent's machine alone on abort (terminate: never, its default)", async () => {
+  it("fountainRun leaves the machine alone on abort with terminate: never", async () => {
     fake.reset(["running"]);
     const op: OpConfig = {
-      name: "fountain-hung-persistent",
-      overview: "a turn that never ends, on a home",
-      phases: [phase("Start", [activity("fountainRun", { agent: "box", prompt: "hi", pollMs: 10, ...connection() }, "atMostOnce")])],
+      name: "fountain-hung-kept",
+      overview: "a turn that never ends, kept up for a later turn",
+      phases: [
+        phase("Start", [
+          activity("fountainRun", { agent: "box", prompt: "hi", pollMs: 10, terminate: "never", ...connection() }, "atMostOnce"),
+        ]),
+      ],
     };
     await expect(runOpLocally(op, activities, PROFILES)).rejects.toBeInstanceOf(OpRunFailure);
     await new Promise((r) => setTimeout(r, 100));

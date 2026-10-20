@@ -233,7 +233,7 @@ chant run crdb-publish-ui        # once, by hand: prints the nameservers you del
 chant run crdb-ui-converge       # one tick, or leave the cadence to notice
 ```
 
-`ops/fountain.ts` declares the steward those cadences live on. Out of it come an `Environment` and a `Vault`, an `Agent` speaking ACP over `chant acp` with a `Teammate` seat, and one `Schedule` per Op that carries a cron. `chant run <op> --on fountain` posts the command line to that thread instead of running it here, so the conversation is the estate's operational history. Every Op above still runs locally with no fountain at all.
+`ops/fountain.ts` declares the steward those cadences live on. Out of it come an `Environment`, a `Vault` and an `Agent` speaking ACP over `chant acp`. `chant run <op> --on fountain` posts the command line to the steward's one long-lived conversation instead of running it here, so the conversation is the estate's operational history. Managoat has no scheduler, so a CI schedule or a CronJob that runs `chant run <op> --on fountain` fires the cadences. Every Op above still runs locally with no fountain at all.
 
 ```bash
 npm run build:fountain           # dist/fountain.yaml
