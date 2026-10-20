@@ -157,6 +157,7 @@ const {
   extractEgressCatalogueBlock,
   renderEgressCatalogueBlock,
   scanEgressSites,
+  egressPrimitivesIn,
 } = await import("./egress-catalogue");
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -673,6 +674,13 @@ describe("chant #1984 — the egress catalogue matches the tree", () => {
       expect(source, `${shellOut.file} no longer runs ${shellOut.binary} ${shellOut.subcommand}`).toContain(`"${shellOut.subcommand}"`);
       expect(EGRESS_PHASES.map((p) => p.id)).toContain(shellOut.phase);
     }
+  });
+
+  test("the scan reads strings, regular expressions and nested templates as code means them", () => {
+    // lexicons/e2b/src/op/runtime.ts: a `/*` inside a string once opened a comment, and `git fetch` read as a fetch.
+    expect(egressPrimitivesIn(`const sh = ["git fetch origin '+refs/heads/*:refs/remotes/origin/*'", "x"];\nconst y = 1; // */`)).toEqual([]);
+    expect(egressPrimitivesIn("const q = /'/.test(s) ? `a${`b${'c'}`}` : '';\nawait fetch(url);")).toEqual(["fetch"]);
+    expect(egressPrimitivesIn('const sdk = () => import("e2b");')).toEqual(["sdk-client-package"]);
   });
 
   test("no catalogue entry is listed twice", () => {

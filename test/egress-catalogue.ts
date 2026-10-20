@@ -36,6 +36,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import ts from "typescript";
 
 // ── Phases ───────────────────────────────────────────────────────────────────
 
@@ -395,7 +396,9 @@ export type EgressPrimitive =
   | "node:dns"
   | "http-client-package"
   /** A database driver that opens its own sockets (`pg`). */
-  | "database-client-package";
+  | "database-client-package"
+  /** A provider's SDK that makes its own requests to that provider's API (`e2b`). */
+  | "sdk-client-package";
 
 export interface EgressSite {
   /** Repo-relative path, forward slashes. */
@@ -570,7 +573,14 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     primitives: ["fetch"],
     phase: "apply",
     destination: "the fountain control-plane API, or a declared endpoint",
-    why: "`chant run <op> --on fountain` posts the run to a steward's thread and tails its SSE stream.",
+    why: "`chant run <op> --on fountain` posts the run to a steward's conversation and tails its SSE stream.",
+  },
+  {
+    file: "lexicons/e2b/src/op/sandbox.ts",
+    primitives: ["sdk-client-package"],
+    phase: "apply",
+    destination: "the E2B API at `api.<domain>` and a steward sandbox's own hosts under `<domain>`: hosted E2B, or the `domain` an `e2b.profiles.<env>` (or `E2B_DOMAIN`) names, such as loam",
+    why: "`chant run <op> --on e2b` (#3986) finds, makes, wakes and pauses a steward's sandbox and runs the op in it, through the `e2b` SDK, which is imported on first use. runtime.ts drives it through the injectable `StewardSandboxes` seam, so its tests hand in a fake and reach no network.",
   },
   {
     file: "lexicons/render/src/op/activities/render-apply.ts",
@@ -795,6 +805,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`fetchWithCache`/`fetchWithRetry` — the single transport under every lexicon's `spec/fetch.ts`, the k8s CRD loader, `chant vendor` and `chant dev pinned-upgrade`. Caches to disk, bounds each attempt, and falls back to the committed snapshot when the endpoint is unreachable.",
   },
   {
+    file: "packages/core/src/project-codegen.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "the URL sources a project declares in `chant.config.ts`, through the lexicon's `ProjectCodegen.generate`",
+    why: "`chant generate` (#3566) hands an injectable `fetch` to a lexicon's project codegen (the k8s CRD and Helm values generators), which fetch through `packages/core/src/codegen/fetch.ts` when none is given. A build only compares the inputs' digest with the committed stamp and never fetches.",
+  },
+  {
     file: "lexicons/aws/src/spec/fetch.ts",
     primitives: ["fetch"],
     phase: "codegen",
@@ -947,7 +964,8 @@ const BUILTIN_EGRESS_SYMBOLS: Record<string, { primitive: EgressPrimitive; symbo
 /** Third-party HTTP clients. None are dependencies today; importing one is the point of the check. */
 const HTTP_CLIENT_PACKAGES = new Set(["undici", "axios", "got", "node-fetch", "ky", "superagent", "phin", "needle"]);
 const DATABASE_CLIENT_PACKAGES = new Set(["pg"]);
-/** A dynamic `import("pkg")`, the way a lexicon loads a driver only when it is used. */
+const SDK_CLIENT_PACKAGES = new Set(["e2b"]);
+/** A dynamic `import("pkg")`, the way a lexicon loads a driver or an SDK only when it is used. */
 const DYNAMIC_IMPORT = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
 
 export interface ScannedSite {
@@ -974,21 +992,88 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** Tokens after which a `/` divides; after anything else it opens a regular expression. */
+const ENDS_EXPRESSION = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.Identifier,
+  ts.SyntaxKind.PrivateIdentifier,
+  ts.SyntaxKind.ThisKeyword,
+  ts.SyntaxKind.SuperKeyword,
+  ts.SyntaxKind.TrueKeyword,
+  ts.SyntaxKind.FalseKeyword,
+  ts.SyntaxKind.NullKeyword,
+  ts.SyntaxKind.NumericLiteral,
+  ts.SyntaxKind.BigIntLiteral,
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateTail,
+  ts.SyntaxKind.RegularExpressionLiteral,
+  ts.SyntaxKind.CloseParenToken,
+  ts.SyntaxKind.CloseBracketToken,
+  ts.SyntaxKind.CloseBraceToken,
+  ts.SyntaxKind.PlusPlusToken,
+  ts.SyntaxKind.MinusMinusToken,
+]);
+
+const LITERAL_KINDS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateHead,
+  ts.SyntaxKind.TemplateMiddle,
+  ts.SyntaxKind.TemplateTail,
+  ts.SyntaxKind.RegularExpressionLiteral,
+]);
+
+/**
+ * The source with its comments removed and, with `blank`, each string,
+ * template piece and regular expression replaced by `""`. TypeScript's own
+ * scanner reads it, so a `/*` inside a string (`'+refs/heads/*:refs/...'`), a
+ * quote inside a regular expression and a template nested in a template's
+ * `${}` are read as the code means them, which no regex pass manages.
+ */
+function scrub(source: string, blank: boolean): string {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
+  const templateBraces: number[] = [];
+  let braces = 0;
+  let previous = ts.SyntaxKind.Unknown;
+  let out = "";
+  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+    if ((kind === ts.SyntaxKind.SlashToken || kind === ts.SyntaxKind.SlashEqualsToken) && !ENDS_EXPRESSION.has(previous)) {
+      kind = scanner.reScanSlashToken();
+    } else if (kind === ts.SyntaxKind.OpenBraceToken) {
+      braces++;
+    } else if (kind === ts.SyntaxKind.CloseBraceToken) {
+      if (templateBraces.length > 0 && templateBraces[templateBraces.length - 1] === braces) {
+        templateBraces.pop();
+        kind = scanner.reScanTemplateToken(false);
+      } else {
+        braces--;
+      }
+    }
+    if (kind === ts.SyntaxKind.TemplateHead || kind === ts.SyntaxKind.TemplateMiddle) templateBraces.push(braces);
+
+    if (kind === ts.SyntaxKind.SingleLineCommentTrivia || kind === ts.SyntaxKind.MultiLineCommentTrivia) {
+      out += scanner.getTokenText().replace(/[^\n]/g, "");
+      continue;
+    }
+    out += blank && LITERAL_KINDS.has(kind) ? '""' : scanner.getTokenText();
+    if (kind !== ts.SyntaxKind.WhitespaceTrivia && kind !== ts.SyntaxKind.NewLineTrivia) previous = kind;
+  }
+  return out;
+}
+
 /** Comments removed; string and template contents preserved (import specifiers live there). */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  return scrub(source, false);
 }
 
 /**
- * Comments, strings and template literals blanked. Init templates and docs
- * embed `fetch(...)` as string content; without this the scan would report the
- * module that *describes* a fetch alongside the one that performs it.
+ * Comments, strings, template literals and regular expressions blanked. Init
+ * templates and docs embed `fetch(...)` as string content; without this the
+ * scan would report the module that *describes* a fetch alongside the one
+ * that performs it.
  */
 function blankLiterals(source: string): string {
-  return stripComments(source)
-    .replace(/`(?:\\.|[^`\\])*`/g, "``")
-    .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\\n])*'/g, "''");
+  return scrub(source, true);
 }
 
 /**
@@ -1035,6 +1120,7 @@ export function egressPrimitivesIn(source: string): EgressPrimitive[] {
 
   for (const match of withStrings.matchAll(DYNAMIC_IMPORT)) {
     if (DATABASE_CLIENT_PACKAGES.has(match[1]!)) found.add("database-client-package");
+    if (SDK_CLIENT_PACKAGES.has(match[1]!)) found.add("sdk-client-package");
   }
 
   for (const match of withStrings.matchAll(IMPORT_STATEMENT)) {
@@ -1042,6 +1128,10 @@ export function egressPrimitivesIn(source: string): EgressPrimitive[] {
     if (!specifier) continue;
     if (DATABASE_CLIENT_PACKAGES.has(specifier)) {
       found.add("database-client-package");
+      continue;
+    }
+    if (SDK_CLIENT_PACKAGES.has(specifier)) {
+      found.add("sdk-client-package");
       continue;
     }
 

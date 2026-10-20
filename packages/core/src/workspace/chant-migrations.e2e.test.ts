@@ -34,6 +34,7 @@ import { CHUD_LEXICON_EXIT_ROLLBACK } from "./chant-migrations/chud-lexicon-exit
 import { CHUD_LEXICON_EXIT_SHIP_POLICY } from "./chant-migrations/chud-lexicon-exit-ship-policy";
 import { CHUD_LEXICON_EXIT_FLY_SITE, chudLexiconExitFlySite } from "./chant-migrations/chud-lexicon-exit-fly-site";
 import { CHUD_LEXICON_EXIT_LIVE_NAMES } from "./chant-migrations/chud-lexicon-exit-live-names";
+import { FOUNTAIN_RETIRED_KINDS } from "./chant-migrations/fountain-retired-kinds";
 import { readerVersion } from "./declaration";
 import { runChecks } from "./lineage-check";
 import { initFromCommand } from "./lineage-init";
@@ -174,6 +175,10 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(out).toContain(`chant migration: ${CHUD_LEXICON_EXIT_ROLLBACK} (applied)`);
     expect(out).toContain("write: delivery/ops/rollback.op.ts");
     expect(out).not.toContain("not moved: the release's steps after the ship gate");
+    // #3987: the template's Teammates, Schedules and persistent sandbox fail FTN025, so a migrated repo would not build.
+    expect(out).toContain(`chant migration: ${FOUNTAIN_RETIRED_KINDS} (applied)`);
+    expect(out).toContain("write: delivery/agents/team.ts");
+    expect(out).toMatch(/not moved: the Schedule factoryDispatch \(cron "\*\/15 \* \* \* \*"\) in delivery\/agents\/team\.ts -> a clock outside Managoat/);
     // #2805: the plan lists README.md, CLAUDE.md and design/CLAUDE.md as
     // changed, not silently left describing what the migration just deleted.
     expect(out).toContain("write: README.md");
