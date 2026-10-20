@@ -25,9 +25,19 @@ const dtsPath = join(pkgDir, "src/generated/index.d.ts");
  * with nothing beside it, one upstream `$ref` to an undeclared definition, and
  * one `$ref` to a definition that is itself a bare `$ref`. Plus 38
  * non-constructor `any`s (readonly attributes and intrinsic return types).
+ *
+ * The 2026-10-19 spec pin (#3960) added 5 of each, all from schemas the new
+ * spec brought in rather than from a resolver change. `: any;`:
+ * QuickSight::DLPSetting.ProviderConfig, QuickSight::ApprovalPolicy
+ * ApplicableTo.Type (exported twice) and the new Connect::Rule
+ * InAppNotificationRecipientType.UserTags (exported twice). `: any[];`:
+ * QuickSight::ApprovalPolicy Actions and AssetTypes, BedrockAgentCore::GatewayRule
+ * Actions and Conditions, and the new BedrockAgentCore::Gateway
+ * InterceptorPayloadFilter.Exclude (exported twice), less one: the bare `Group`
+ * export now names AWS::QuickSight::Group.
  */
-const ANY_BUDGET = 226;
-const ANY_ARRAY_BUDGET = 20;
+const ANY_BUDGET = 231;
+const ANY_ARRAY_BUDGET = 25;
 
 describe.skipIf(!existsSync(dtsPath))("generated `any` budget", () => {
   const dts = existsSync(dtsPath) ? readFileSync(dtsPath, "utf-8") : "";

@@ -1,19 +1,4 @@
 {
   "$comment": "Properties CloudFormation has shipped since the pinned Registry spec (src/spec/pin.ts) was accepted (chant #3953). Hand-maintained, merged into the raw schema at codegen time by src/codegen/property-overlay.ts. Each entry is copied from the live Registry schema; retire it when a pin bump (#3960) brings the property in; generation warns when it does.",
-  "entries": [
-    {
-      "type": "AWS::BedrockAgentCore::Runtime",
-      "property": "PlatformVersion",
-      "issue": 3953,
-      "source": "https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip (aws-bedrockagentcore-runtime.json)",
-      "reviewed": "2026-10-12",
-      "schema": {
-        "type": "string",
-        "description": "The version of the runtime platform",
-        "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[^\\s]+$"
-      }
-    }
-  ]
+  "entries": []
 }
