@@ -352,6 +352,18 @@ A revoked commit doesn't go green again by itself. Deleting its `ci/revoked/<sha
 
 With `signedSince`, the annotation also holds the statement a runner key signed, and every reader ignores and reports a tag outside the ancestry of `signedSince` without a valid one ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
 
+### Report URL
+
+`ci.reportUrl` says where the pull-request jobs copy their reports and events, and where [`chant ci run`](/chant/cli/ci/#the-run-index) keeps the run index ([#4160](https://github.com/INTENTIUS/chant/issues/4160)). A reader such as behold then finds the index at `<reportUrl>/runs/index.json` from the declaration, with no URL of its own to configure.
+
+```json
+"ci": {
+  "reportUrl": "s3://acme-chant-reports/prod"
+}
+```
+
+The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` or `file://<directory>`, with an absolute directory. Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it.
+
 ## Retention
 
 `retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.

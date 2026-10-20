@@ -17,7 +17,7 @@ chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--
                   [--no-status] [--status-url <url template>]
                   [--chant <command>] [--pass-env <NAME>]... [--secrets <file>]
                   [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose]
-chant ci runs --report-url <url> [--json]
+chant ci runs [--report-url <url>] [--json]
 chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [ci run's job flags]
 chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
@@ -284,7 +284,7 @@ A status the forge refuses is a warning, and the job's result and exit code stan
 
 ### The run index
 
-With `--report-url`, `ci run` also adds the job to `<report-url>/runs/index.json` when it settles ([#4098](https://github.com/INTENTIUS/chant/issues/4098)). A failed job is added too. `ci serve` passes its job flags on, so it keeps the same index. Entries are newest first. The index keeps the newest 200, or as many as `--run-index-limit` says.
+With `--report-url`, `ci run` also adds the job to `<report-url>/runs/index.json` when it settles ([#4098](https://github.com/INTENTIUS/chant/issues/4098)). Without the flag, `ci run`, `ci serve` and `ci runs` use the workspace's [`ci.reportUrl`](/chant/reference/workspace-declaration/#report-url) when it declares one, and `ci serve` says so when it starts ([#4160](https://github.com/INTENTIUS/chant/issues/4160)). The flag wins over the field. A declaration that can't be read stops the command with its reason code, such as `declaration-invalid`, before any job runs. Outside a workspace nothing is read. A failed job is added too. `ci serve` passes its job flags on, so it keeps the same index. Entries are newest first. The index keeps the newest 200, or as many as `--run-index-limit` says.
 
 | Entry field | Holds |
 |---|---|
@@ -300,7 +300,7 @@ The update uses the upload path `--report-url` already has: `aws s3 cp` for `s3:
 
 ## ci runs
 
-`chant ci runs --report-url <url>` lists the index, one line per run, newest first. With `--json` it prints the index document unchanged. The command exits 1 when the URL has no index or the index can't be read.
+`chant ci runs --report-url <url>` lists the index, one line per run, newest first. Without `--report-url` it reads the workspace's `ci.reportUrl`. With `--json` it prints the index document unchanged. The command exits 1 when the URL has no index or the index can't be read.
 
 ## ci serve
 

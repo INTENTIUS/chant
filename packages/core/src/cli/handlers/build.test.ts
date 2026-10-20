@@ -148,6 +148,75 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--pr-loop without --report-url bakes the workspace's ci.reportUrl into the jobs, and the flag wins (#4160)", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFileSync } = await import("node:child_process");
+    const root = mkdtempSync(join(tmpdir(), "chant-build-report-url-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: root });
+      mkdirSync(join(root, "app"));
+      writeFileSync(
+        join(root, "chant.workspace.json"),
+        JSON.stringify({ name: "acme", schema: 1, ci: { reportUrl: "s3://acme-reports/prod/" }, members: [{ name: "app", dir: "app", kind: "chant", because: "the app" }] }),
+      );
+      generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "jobs: {}", stages: [], jobs: [] });
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const path = join(root, "app");
+      const output = join(root, "out.yml");
+
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[0][2].prLoop).toEqual({ reportUrl: "s3://acme-reports/prod" });
+
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true, reportUrl: "file:///srv/reports" }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[1][2].prLoop).toEqual({ reportUrl: "file:///srv/reports" });
+
+      // Without --pr-loop the declaration's URL is not read and nothing changes.
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github" }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[2][2]).not.toHaveProperty("prLoop");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("--pr-loop outside any workspace has no report URL unless the flag gives one (#4160)", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const plain = mkdtempSync(join(tmpdir(), "chant-build-plain-"));
+    try {
+      generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "jobs: {}", stages: [], jobs: [] });
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      expect(await runBuild({ args: makeArgs({ path: plain, generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock).toHaveBeenCalledWith(plain, "github", { env: undefined, prLoop: {} }, undefined, []);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("an invalid ci.reportUrl stops --pr-loop with its reason code, and generates nothing (#4160)", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFileSync } = await import("node:child_process");
+    const root = mkdtempSync(join(tmpdir(), "chant-build-report-url-bad-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: root });
+      mkdirSync(join(root, "app"));
+      writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "acme", schema: 1, ci: { reportUrl: "https://reports.example" }, members: [{ name: "app", dir: "app", kind: "chant", because: "the app" }] }));
+      const stderr = makeStderrSpy();
+      expect(await runBuild({ args: makeArgs({ path: join(root, "app"), generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(1);
+      expect(generateComponentsPipelineMock).not.toHaveBeenCalled();
+      expect(stderr.join("\n")).toMatch(/ci\.reportUrl https:\/\/reports\.example: .*\[declaration-invalid\]/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      vi.restoreAllMocks();
+    }
+  });
+
   test("--pr-build and --pr-build-command become the prLoop build options (#4088)", async () => {
     generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "jobs: {}", stages: [], jobs: [] });
     vi.spyOn(console, "log").mockImplementation(() => {});

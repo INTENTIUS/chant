@@ -281,13 +281,14 @@ CI:
                         With --report-url it also adds the run to
                         <url>/runs/index.json, newest first, cut to the
                         newest --run-index-limit entries (default 200).
+                        Without --report-url, the workspace's ci.reportUrl.
                         --local runs the job on this machine: the record is
                         kept on the local chant/lifecycle with runOrigin
                         local and is never pushed, no status is set, nothing
                         goes under a report URL, and ci tick does not count it.
-  ci runs --report-url <url> [--json]
-                        List the runs in the index at the report URL, newest
-                        first.
+  ci runs [--report-url <url>] [--json]
+                        List the runs in the index at the report URL (default
+                        the workspace's ci.reportUrl), newest first.
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
               [--author <login>]... [--once] [--rerun-failed] [--unsigned]

@@ -186,8 +186,12 @@ export type LsDocument =
       groups: LsGroup[];
       /** Every declared diagram, the workspace's own first, then each member's, in file order (#2764). */
       diagrams: LsDiagram[];
-      /** What the workspace's CI decides about its commits (#3573), or null with no `ci` block. */
-      ci: { green: LsCiGreen | null } | null;
+      /**
+       * What the workspace's CI decides about its commits (#3573), or null
+       * with no `ci` block. `reportUrl` (#4160) is the declared report URL,
+       * where the run index is kept, present only when it is set.
+       */
+      ci: { green: LsCiGreen | null; reportUrl?: string } | null;
       summary: { members: number; unreadable: number; groups: number; matches: number };
     }
   | {
@@ -330,6 +334,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
                   ...(declaration.ci.green.source === "runs" ? { source: "runs" as const } : {}),
                 }
               : null,
+            ...(declaration.ci.reportUrl !== null ? { reportUrl: declaration.ci.reportUrl } : {}),
           }
         : null,
       summary: {

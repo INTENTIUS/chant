@@ -103,7 +103,13 @@
             {
               "type": "object",
               "required": ["green"],
-              "properties": { "green": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ciGreen" }] } }
+              "properties": {
+                "green": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ciGreen" }] },
+                "reportUrl": {
+                  "type": "string",
+                  "description": "Added in contract 1 by chant 0.124.32 (#4160). The declaration's ci.reportUrl, an s3:// or file:// URL without a trailing slash, present only when it is set. The run index is at <reportUrl>/runs/index.json (ci-run-index), and each job's report under <reportUrl>/<pr>/<commit>[/<member>]/."
+                }
+              }
             }
           ]
         },

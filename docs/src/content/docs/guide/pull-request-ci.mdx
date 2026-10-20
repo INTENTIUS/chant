@@ -246,6 +246,8 @@ chant build --components --generate github --pr-loop --env prod \
   --output .github/workflows/chant-pr.yml
 ```
 
+A workspace can declare the URL once as [`ci.reportUrl`](/chant/reference/workspace-declaration/#report-url) instead ([#4160](https://github.com/INTENTIUS/chant/issues/4160)). `chant build --pr-loop` then writes it into the jobs without `--report-url`, and `chant ci run`, `ci serve` and `ci runs` use it too. A reader finds it in `chant workspace ls --json`. `--report-url` still wins when given.
+
 The AWS CLI uploads to an `s3://` URL with the credentials in the job's environment. Give the jobs an identity that can write only that prefix. The URL is passed in double quotes, so `$CHANT_REPORT_URL` names a CI variable the job expands. [Pull request reports](/chant/reference/workspace-read-contract/#pull-request-reports) gives the layout.
 
 ## Limits
