@@ -68,10 +68,15 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 
 Everything under `lexicons/*/examples/` is the feature tier and is not listed individually here.
 
-This table is a gate, not a courtesy: `examples/root-examples-gate.e2e.test.ts` fails when a directory
-under `examples/` holding a `chant.config.*` is missing from it, or when a name here has no
-directory. The same file builds and lints every one of those examples the way its own
-`package.json` scripts do, with an allowlist that carries a reason per entry.
+This table is a gate, not a courtesy: `examples/static-gates.test.ts` fails on every pull request
+when a directory under `examples/` holding a `chant.config.*` is missing from it, or when a name
+here has no directory. `examples/root-examples-gate.e2e.test.ts` builds and lints every one of
+those examples the way its own `package.json` scripts do, with an allowlist in
+`examples/root-examples.ts` that carries a reason per entry.
+
+A new example is also a new fold corpus entry. Add it to `EXPECTED_FOLD` in
+`examples/fold-classification.ts` if it folds, or to `EXPECTED_RUN_FALLBACK` with a reason, and
+run `npm run generate:fold-coverage` to refresh the published count.
 
 ## The golden teaching example
 

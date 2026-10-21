@@ -23,7 +23,7 @@
  * Machines properties) would be worse than leaving them visible.
  *
  * KNOWN_FAILURES is exactly that: visible, not hidden. It works the same
- * way `EXPECTED_FOLD` in examples/fold-differential.e2e.test.ts already does for
+ * way `EXPECTED_FOLD` in examples/fold-classification.ts already does for
  * fold coverage — a precise, named, must-stay-current fixture of today's
  * state. A failure NOT listed here is a regression and fails the gate. A
  * listed failure that starts passing prints an INFO line asking for the
