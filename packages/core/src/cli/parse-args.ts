@@ -540,6 +540,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace wip --branch <branch>` (#3172)
       result.branch = args[++i];
       if (!result.branch || result.branch.startsWith("-")) throw new Error("--branch needs a branch name: --branch <branch>");
+    } else if (arg === "--security") {
+      // `chant ci init --security <group>`, repeatable (#4168 step 6): a security group to turn on.
+      const group = args[++i];
+      if (!group || group.startsWith("-")) throw new Error("--security needs a group: --security verified-releases|supply-chain|who-ran-it|review-rules|isolated-runners");
+      result.securityGroups = [...(result.securityGroups ?? []), group];
     } else if (arg === "--workflow") {
       // `chant ci workflow --workflow <name>`, repeatable (#3573)
       const name = args[++i];

@@ -17,7 +17,7 @@ A release is the compiled output of one green commit, cut once and promoted thro
 
 ## Before you start
 
-You need a project whose commits get `ci/green/<sha>` tags from [`chant ci`](/chant/cli/ci/), and whose `chant.config.ts` lists its `environments`. You also need an ssh key that `.chant/allowed_signers` at base lists for you, with no `namespaces` option or one that includes `chant-release`: `chant release publish` refuses a release whose signature does not verify ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). Under a `release` gate in `identity.gates` the cut itself needs it. See [who may cut](/chant/cli/release/#who-may-cut).
+You need a project whose commits get `ci/green/<sha>` tags from [`chant ci`](/chant/cli/ci/), and whose `chant.config.ts` lists its `environments`. [`chant ci init`](/chant/guide/trunk-curated-setup/) sets both up, with the publish job below. Signing is opt-in. It applies under the [`verified-releases`](/chant/guide/security-verified-releases/) group or a `release` gate in `identity.gates`. There `chant release publish` refuses a release whose signature does not verify. You then need an ssh key that `.chant/allowed_signers` at base lists for you. Its entry has no `namespaces` option, or one that includes `chant-release`. See [who may cut](/chant/cli/release/#who-may-cut).
 
 ## Check out a green trunk commit
 
@@ -73,7 +73,7 @@ git push origin release/v1.4.0
 
 ## Publish from CI
 
-The workflow below runs on a `release/**` tag and ships the release the tag names. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance. The job checks out the tag, so the checkout is the release's commit, as a publish with targets requires. A publish never builds, so build what the targets upload before it runs, into paths `.gitignore` covers.
+[`chant release workflow`](/chant/cli/release/) writes this file for your forge, with `--require-provenance` under the `supply-chain` group and a `release verify` step under `verified-releases`. The workflow below runs on a `release/**` tag and ships the release the tag names. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance. The job checks out the tag, so the checkout is the release's commit, as a publish with targets requires. A publish never builds, so build what the targets upload before it runs, into paths `.gitignore` covers.
 
 ```yaml
 # .github/workflows/release-publish.yml

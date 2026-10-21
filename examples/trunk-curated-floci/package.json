@@ -1,0 +1,16 @@
+{
+  "name": "trunk-curated-floci",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A chant project the From Zero to a Promoted Release tutorial makes a trunk-curated workspace: an S3 bucket and an SQS queue per environment, deployed by cfn-deploy.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-github": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "chant build src --lexicon aws -o template.json"
+  }
+}

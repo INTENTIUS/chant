@@ -1,0 +1,142 @@
+---
+title: From Zero to a Promoted Release
+description: Cut a release from a green commit of a trunk-curated workspace and deploy it to staging and then prod, each behind a gate, offline against Floci.
+diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/tutorials/zero-to-promoted-release/.
+  Start Floci on a port of its own as the page says, copy `examples/trunk-curated-floci` into a new directory, and make the repository and the workspace as the page says, with only the local endpoint and the test credentials it sets.
+  Run `npx chant workspace check` and the cut without `--yes`, and show me both; I run the cut with `--yes`.
+  After the cut, run each environment's export and its run.
+  Stop at each gate and show me the `chant approve` line it prints; I approve it.
+  Then show me the two stacks with `aws --endpoint-url "$AWS_ENDPOINT_URL" cloudformation describe-stacks`, and remove the Floci container with its volume.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+In this tutorial you take a small chant project from a fresh repository to a release running in two environments. You make it a workspace on the [`trunk-curated`](/chant/reference/ci-workflows/) workflow with `chant ci init`. Then you make a commit green, cut a release from it, and deploy that release to staging and then prod, approving a gate in each. Everything runs on your machine against [Floci](https://floci.io), a local AWS emulator, with no AWS account.
+
+The project is [`examples/trunk-curated-floci`](https://github.com/INTENTIUS/chant/tree/main/examples/trunk-curated-floci). It synthesizes an S3 bucket and an SQS queue with the AWS lexicon and deploys them with `cfn-deploy`, one stack per environment, behind a gate. [`test/trunk-curated-floci-e2e.sh`](https://github.com/INTENTIUS/chant/blob/main/test/trunk-curated-floci-e2e.sh) runs every step on this page.
+
+Floci needs Docker and the aws CLI, and the rest needs git and Node.
+
+## Start Floci
+
+Floci listens on port 4566 inside its container. Give it a port of its own, so it can't meet another emulator already running, and point chant at it.
+
+```bash
+docker run -d -p 4597:4566 --name tutorial-floci floci/floci:latest
+export AWS_ENDPOINT_URL=http://localhost:4597
+export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1
+```
+
+## Make the repository
+
+Copy the example into a new directory and make it a repository with a remote. The remote is a bare repository next to it, so nothing leaves your machine.
+
+```bash
+mkdir tutorial && cp -R chant/examples/trunk-curated-floci/. tutorial/
+git init -q --bare tutorial-origin.git
+cd tutorial
+npm install
+printf 'node_modules/\n' >> .gitignore
+git init -q -b main
+git add -A && git commit -q -m "the stack"
+git remote add origin "$(cd ../tutorial-origin.git && pwd)"
+git push -q origin main
+```
+
+## Set up the workflow
+
+Make the repository a workspace. `chant workspace init` proposes a declaration with the project as its one member and writes it with `--yes`.
+
+```bash
+npx chant workspace init --yes
+```
+
+Then set it up for `trunk-curated`. Run it once without `--yes` to read the diff it proposes.
+
+```bash
+npx chant ci init --workflow trunk-curated --forge github
+npx chant ci init --workflow trunk-curated --forge github --yes
+```
+
+The declaration gains `ci.workflow` and a `ci.green` block. Two generated files follow: the pull-request pipeline, which plans on a pull request and records on merge, and the publish job. The project already declares its environments and a component with a gate, so those are left alone.
+
+Run the workspace check. It reports the one thing this repository can't have: the tick, which reads CI results this repository has no CI to produce.
+
+```bash
+npx chant workspace check
+git add -A && git commit -q -m "set up trunk-curated with chant ci init"
+git push -q origin main
+```
+
+## Make the commit green
+
+In a real repository, CI tags each commit that passes its required phases `ci/green/<sha>`. This one has no CI, so tag the commit by hand.
+
+```bash
+SHA=$(git rev-parse HEAD)
+git tag -a "ci/green/$SHA" -m "green, by hand: this repository has no CI"
+git push -q origin "ci/green/$SHA"
+```
+
+## Cut a release
+
+Cut `v0.1.0` from that commit. `--at` names the commit, so your checkout could be anywhere. `--build` runs before each environment's templates are read, with `CHANT_ENV` set to that environment.
+
+```bash
+npx chant release cut v0.1.0 --at "$SHA" --build "npx chant build src --lexicon aws -o template.json" --yes
+```
+
+The cut compiles the template once per environment and records both. It prints the release's digest and the next commands.
+
+## Deploy staging
+
+Write the template the release recorded for staging, and run the component under the release.
+
+```bash
+npx chant release export v0.1.0 --env staging
+npx chant run --components all --env staging --release v0.1.0
+```
+
+The run stops at the component's `release` gate and prints the line that approves it. Approve it, as the person who signs off would, and run again.
+
+```bash
+npx chant approve infra release --env staging
+npx chant run --components all --env staging --release v0.1.0
+```
+
+## Deploy prod
+
+Prod is the same release, with its own template and its own gate.
+
+```bash
+npx chant release export v0.1.0 --env prod
+npx chant run --components all --env prod --release v0.1.0
+npx chant approve infra release --env prod
+npx chant run --components all --env prod --release v0.1.0
+```
+
+Both stacks now exist:
+
+```bash
+aws --endpoint-url "$AWS_ENDPOINT_URL" cloudformation describe-stacks --query 'Stacks[].[StackName,StackStatus]' --output text
+```
+
+```
+trunk-curated-staging	CREATE_COMPLETE
+trunk-curated-prod	CREATE_COMPLETE
+```
+
+## Clean up
+
+The Floci image declares a data volume, so remove it with the container.
+
+```bash
+docker rm -f -v tutorial-floci
+```
+
+## What you did
+
+You cut one release from a green commit and ran it in two environments, approving each. Nothing you merged deployed anything. [Trunk and Releases](/chant/concepts/trunk-and-releases/#why-merge-never-deploys) explains why, and [Curate a Release](/chant/guide/curate-a-release/) picks which green commit to cut from.
+
+A component with an artifact, such as an image, can go from staging to prod with [`chant components promote --release`](/chant/guide/promote-a-release/), which reads what staging runs. This member deploys only a template, and a run records what an environment runs only for a component that publishes an artifact, so each environment here is deployed from the release's export.
