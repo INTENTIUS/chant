@@ -143,7 +143,11 @@ export interface TerraformAdoptOpConfig {
    * object with no `command`, throws when the Op is built, naming the Op,
    * rather than warning at the moment a rollback is already wanted.
    */
-  compensate?: boolean | { command?: string };
+  compensate?: boolean | {
+    command?: string;
+    /** Run the rollback command in a container pinned by digest (#4015), as `shell()`'s `image` does. */
+    image?: string;
+  };
 }
 
 export interface TerraformAdoptOpResources {
@@ -153,6 +157,7 @@ export interface TerraformAdoptOpResources {
 
 export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdoptOpResources {
   const compensateCommand = typeof config.compensate === "object" ? config.compensate.command : undefined;
+  const compensateImage = typeof config.compensate === "object" ? config.compensate.image : undefined;
   if (config.compensate !== undefined && config.compensate !== false && compensateCommand === undefined) {
     throw new Error(
       `TerraformAdoptOp "${config.name}": compensate is enabled, but there is no automatic undo for an ` +
@@ -212,7 +217,7 @@ export function TerraformAdoptOp(config: TerraformAdoptOpConfig): TerraformAdopt
       phase("Adopt", [adopt]),
     ],
     ...(compensateCommand
-      ? { onFailure: [phase("Rollback", [activity("shellCmd", { cmd: compensateCommand })])] }
+      ? { onFailure: [phase("Rollback", [activity("shellCmd", { cmd: compensateCommand, ...(compensateImage ? { image: compensateImage } : {}) })])] }
       : {}),
   });
 
