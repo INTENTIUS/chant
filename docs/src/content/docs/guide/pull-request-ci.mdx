@@ -198,6 +198,8 @@ The record job plans every member on the merged commit before it writes anything
 
 Read the new plan in `.chant/pr/pr-record.json`, which the job keeps as an artifact. The release gate reads the change set a release deploys and decides on it, so a moved plan is caught again before anything ships.
 
+A component whose steps have no `plan`, such as a `helm-upgrade`, is bound by the files it deploys from as well as its declaration ([#4155](https://github.com/INTENTIUS/chant/issues/4155)). A chart edited after the approval moves the digest the same way, and so does a function's source beside a `cfn-deploy`. [Plan previews](/chant/components/plan-previews/#a-capability-without-plan) lists the fields read and the steps the digest can't bind.
+
 ## What each run keeps
 
 Both jobs keep `.chant/pr` as an artifact:

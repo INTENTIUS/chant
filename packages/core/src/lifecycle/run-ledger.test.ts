@@ -92,6 +92,19 @@ describe("buildRunRecord", () => {
     expect(input.phases[1].steps.map((s) => s.status)).toEqual(["ok", "skipped"]);
   });
 
+  test("keeps a shell step's image on its record (#4015), and nothing for a step without one", () => {
+    const image = `node:24@sha256:${"c".repeat(64)}`;
+    const input = buildRunRecord(
+      { name: "build" },
+      [
+        { phase: "Build", fn: "shellCmd", args: { cmd: "npm test", image }, status: "ok", durationMs: 3 },
+        { phase: "Build", fn: "shellCmd", args: { cmd: "echo hi" }, status: "ok", durationMs: 1 },
+      ],
+      { started: "2026-01-01T00:00:00.000Z", ended: "2026-01-01T00:00:01.000Z", status: "ok" },
+    );
+    expect(input.phases[0].steps.map((s) => s.image)).toEqual([image, undefined]);
+  });
+
   test("carries the commit and the CI run origin when given (#4020), and neither when not", () => {
     const times = { started: "2026-01-01T00:00:00.000Z", ended: "2026-01-01T00:00:01.000Z", status: "ok" as const };
     const withBoth = buildRunRecord({ name: "ship" }, [], { ...times, gitSha: "a".repeat(40), runOrigin: { forge: "github", repo: "acme/app" } });

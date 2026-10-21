@@ -128,8 +128,8 @@ describe("chant release cut, publish and list", () => {
         expect(result.release.releaseDigest).toBe(dryJson.releaseDigest);
         expect(result.release.commit).toBe(sha);
         expect(result.release.targets).toEqual([
-          { env: "dev", params: [], templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(`{"env":"dev"}`) }] },
-          { env: "prod", params: [], templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(`{"env":"prod"}`) }] },
+          { env: "dev", params: [], templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(`{"env":"dev"}`) }], trees: [] },
+          { env: "prod", params: [], templates: [{ component: "api", path: "dist/api.template.json", digest: contentDigest(`{"env":"prod"}`) }], trees: [] },
         ]);
         expect(result.cut).toMatchObject({ actor: "t@chant.dev", runId: expect.stringMatching(/^local-\d+$/), runOrigin: { forge: "local" }, signature: null });
         expect(result.next).toEqual(["git push origin release/v1", "chant release publish v1", "chant components promote --release v1 --to dev"]);

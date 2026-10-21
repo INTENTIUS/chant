@@ -315,7 +315,7 @@ async function deployPlan(
   if (under) {
     const { pinReleaseTemplates } = await import("../../components/release-promote");
     const { readReleaseTemplate } = await import("../../lifecycle/release-store");
-    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest) => readReleaseTemplate(digest));
+    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest, encoding) => readReleaseTemplate(digest, undefined, encoding));
     if ("errors" in pinned) {
       for (const message of pinned.errors) console.error(formatError({ message }));
       console.error(formatError({ message: `nothing was deployed` }));

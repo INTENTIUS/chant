@@ -119,6 +119,7 @@ export function buildRunRecord(
       ...(record.point ? { point: record.point } : {}),
       ...(record.gate ? { gate: record.gate } : {}),
       ...(record.resumed ? { resumed: record.resumed } : {}),
+      ...(record.fn === "shellCmd" && typeof record.args?.image === "string" ? { image: record.args.image } : {}),
     });
     if (record.outcome) outcomes[record.outcome.name] = record.outcome.value;
   }

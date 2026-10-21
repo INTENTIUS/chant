@@ -85,6 +85,10 @@ Each member carries the value a gate on that member alone binds ([#2300](https:/
 | `warden` | `computePlanDigest("reconcile-plan", …)` over each change set's org and entries, sorted |
 | `sql`, versioned plan | the product's own gate digest when the plan carries `digest` (SQL Yodeler's), else `computePlanDigest("sql-versioned-plan", …)` over the dialect, environment and pending steps |
 | `sql`, migration Op | the Op's plan step `planDigest`, taken before the verification (not the swap or switch gate's value); a swapped or finished Op gets `computePlanDigest("sql-op-plan", …)` over its state |
+| `chant`, a component with no step that has `plan` | `componentPlanDigest` over the environment, the composition and its vars, plus `inputs`, the content digest of each local file its steps deploy from ([#4155](https://github.com/INTENTIUS/chant/issues/4155)), when any exists |
+| `chant`, `<component>#inputs` | `computePlanDigest("component-inputs", …)` over the environment, the component and the content digests of the files its steps without `plan` deploy from |
+
+A component member's holes include each step whose content the digest can't name, with a reason that starts `unbound:`. [Plan previews](/chant/components/plan-previews/#a-capability-without-plan) lists the fields read.
 
 The set digest is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member that is not provisional, sorted by member. `changeSetDigest(members)` computes it. A wave of [gated waves](https://github.com/INTENTIUS/chant/issues/3049) is a subset of members, and the wave's gate value is the set digest over that subset.
 

@@ -13,6 +13,7 @@ import {
   buildReleaseArtifacts,
   buildStepsOf,
   compileEnvironment,
+  recordedInputRefs,
   ReleaseCompileError,
   templateRefs,
   withOnlyArchiveSteps,
@@ -45,6 +46,18 @@ describe("templateRefs", () => {
       ["cfn-deploy", "template", "dist/edge.template.json"],
       ["helm-upgrade", "values", "values/base.yaml"],
       ["kubectl-apply", "manifest", "k8s/api.yaml"],
+    ]);
+  });
+});
+
+describe("recordedInputRefs (#4155)", () => {
+  test("adds each kind's own fields to the template fields: a chart; a missing one need not exist", () => {
+    expect(recordedInputRefs(api).map((r) => [r.kind, r.field, r.path, r.required])).toEqual([
+      ["cfn-deploy", "template", "dist/api.template.json", true],
+      ["cfn-deploy", "template", "dist/edge.template.json", true],
+      ["helm-upgrade", "values", "values/base.yaml", true],
+      ["helm-upgrade", "chart", "charts/api", false],
+      ["kubectl-apply", "manifest", "k8s/api.yaml", true],
     ]);
   });
 });
@@ -97,6 +110,27 @@ describe("compileEnvironment", () => {
       expect(target.buildSteps).toEqual({ api: [{ kind: "docker-build", context: "svc", into: "api.tar" }] });
       expect(target.buildInputs).toEqual({ api: ["svc", "svc/Dockerfile"] });
       expect(target.componentFiles).toEqual({ api: "api.component.ts" });
+    });
+  });
+
+  test("records a chart directory file by file and names it in trees; a file that is not UTF-8 as base64 (#4155)", async () => {
+    await withTestDir(async (dir) => {
+      writeFileSync(
+        join(dir, "web.component.ts"),
+        `export const web = { name: "web", dependsOn: [], deploy: [{ phase: "Deploy", steps: [
+          { kind: "helm-upgrade", release: "web", chart: "chart" },
+          { kind: "helm-upgrade", release: "remote", chart: "bitnami/nginx", repo: "https://charts.example" },
+        ] }] };`,
+      );
+      mkdirSync(join(dir, "chart", "charts"), { recursive: true });
+      writeFileSync(join(dir, "chart", "Chart.yaml"), "name: web\n");
+      writeFileSync(join(dir, "chart", "charts", "dep.tgz"), Buffer.from([0x1f, 0x8b, 0xff, 0x00]));
+      const target = await compileEnvironment({ projectDir: dir }, "prod");
+      expect(target.trees).toEqual([{ component: "web", path: "chart" }]);
+      expect(target.templates).toEqual([
+        { component: "web", path: "chart/Chart.yaml", content: "name: web\n" },
+        { component: "web", path: "chart/charts/dep.tgz", content: Buffer.from([0x1f, 0x8b, 0xff, 0x00]).toString("base64"), encoding: "base64" },
+      ]);
     });
   });
 

@@ -40,6 +40,23 @@ Each step takes an optional `profile` that controls the step's retry and timeout
 
 A step's own `timeout` sets how long one attempt may run, in place of its profile's, and keeps the profile's retries ([#2787](https://github.com/INTENTIUS/chant/issues/2787)). `shell("./build.sh", { timeout: "45m" })` is still one attempt, now of 45 minutes. `activity(fn, args, { timeout })` and a step literal's `timeout` field do the same. The value is a duration such as `45m` or `1h30m`, more than zero and at most six hours (`MAX_STEP_TIMEOUT`). A longer wait is waiting on a person, which a gate step is for. OPS012 flags a bad value at `chant build`, and the run fails the step if one gets that far. `op.json` carries the value on the step beside its `profile`.
 
+### A shell step in a container
+
+`shell()` with an `image` runs the command in a container instead of on the host ([#4015](https://github.com/INTENTIUS/chant/issues/4015)), so the step pins the toolchain it ran with.
+
+```ts
+shell("npm ci && npm run build", {
+  image: "node:24@sha256:<digest>",
+  outputs: ["dist"],
+});
+```
+
+The local executor runs `docker run --rm`, or the command `CHANT_CONTAINER_CLI` names, such as `podman`. The step's working directory is mounted at `/workspace`, read-only unless `mounts: { workspace: "rw" }`, and the command runs there as your user. The container sees the step's `env` by name and none of chant's own environment. Each directory in `outputs` is created on the host if it is missing and mounted writable at the same path, so what the command writes there stays. A directory the command leaves empty fails a step that otherwise passed.
+
+The run ledger keeps the image on the step's record, so a reader of the run can see what ran. The image must be pinned by digest; [OPS018](/chant/lint-rules/correctness/#ops018-shell-step-image-not-pinned) refuses a tag at `chant build`. Gates and `onFailure` stay in chant's executor; only the command moves into the container. `TerraformApplyOp` and `TerraformAdoptOp` take `compensate: { command, image }` for a rollback that runs the same way.
+
+This isolates a step. An ephemeral machine per CI job is runner isolation, which `runner-start/v1` covers ([#4147](https://github.com/INTENTIUS/chant/issues/4147)).
+
 ## Labels
 
 An Op's `labels` are its discovery keys: free-form `name: value` pairs that say what kind of Op this is and where it belongs. `ConvergeOp` sets `Converge: "true"` alongside an `Env`. `WatchOp` sets `Watch`. `chant operator --env <name>` filters on `labels.Env`, and `chant run list` prints whatever an Op declares.

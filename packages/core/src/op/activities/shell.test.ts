@@ -10,7 +10,7 @@
 
 import { describe, test, expect } from "vitest";
 import { z } from "zod";
-import { shellCmd } from "./shell";
+import { containerCommand, imageProblem, shellCmd } from "./shell";
 import { shellCmdContract } from "./activity-contracts";
 import { shell } from "../builders";
 import { activity, phase } from "../builders";
@@ -244,3 +244,46 @@ describe("a step's own timeout (#2787)", () => {
     }
   });
 });
+
+describe("shellCmd in a container (#4015)", () => {
+  const PINNED = `alpine:3.21@sha256:${"e".repeat(64)}`;
+
+  test("builds a docker run --rm line: workspace read-only, env by name, the command under sh -c", () => {
+    const line = containerCommand({ cmd: "make test", image: PINNED, env: { TOKEN: "x", MODE: "ci" } }, { cwd: "/src/app" });
+    expect(line).toBe(`docker run --rm -v '/src/app:/workspace:ro' -w /workspace -e 'TOKEN' -e 'MODE' '${PINNED}' sh -c 'make test'`);
+  });
+
+  test("mounts each output directory writable over a read-only workspace, and none over a writable one", () => {
+    const ro = containerCommand({ cmd: "npm run build", image: PINNED, outputs: ["dist", "./reports/"] }, { cwd: "/src/app", cli: "podman", user: "501:20" });
+    expect(ro).toBe(
+      `podman run --rm --user 501:20 -v '/src/app:/workspace:ro' -v '/src/app/dist:/workspace/dist:rw' -v '/src/app/reports:/workspace/reports:rw' -w /workspace '${PINNED}' sh -c 'npm run build'`,
+    );
+    const rw = containerCommand({ cmd: "make", image: PINNED, mounts: { workspace: "rw" }, outputs: ["dist"] }, { cwd: "/src/app" });
+    expect(rw).toBe(`docker run --rm -v '/src/app:/workspace:rw' -w /workspace '${PINNED}' sh -c 'make'`);
+  });
+
+  test("an image is pinned by digest, as a literal string", () => {
+    expect(imageProblem(PINNED)).toBeUndefined();
+    expect(imageProblem("alpine:3.21")).toMatch(/not pinned by digest/);
+    expect(imageProblem(`alpine@sha256:${"E".repeat(64)}`)).toMatch(/not pinned by digest/);
+    expect(imageProblem(42)).toMatch(/literal string/);
+  });
+
+  test("refuses before running anything: a tag, an output outside the working directory, outputs without an image", async () => {
+    await expect(shellCmd({ cmd: "true", image: "alpine:3.21" })).rejects.toThrow(/not pinned by digest/);
+    await expect(shellCmd({ cmd: "true", image: PINNED, outputs: ["../escape"] })).rejects.toThrow(/inside the working directory/);
+    await expect(shellCmd({ cmd: "true", image: PINNED, outputs: ["/etc"] })).rejects.toThrow(/inside the working directory/);
+    await expect(shellCmd({ cmd: "true", outputs: ["dist"] })).rejects.toThrow(/give the step an image/);
+  });
+
+  test("the contract accepts image, mounts and outputs", () => {
+    expect(shellCmdContract.args.safeParse({ cmd: "x", image: PINNED, mounts: { workspace: "rw" }, outputs: ["dist"] }).success).toBe(true);
+    expect(shellCmdContract.args.safeParse({ cmd: "x", mounts: { workspace: "rwx" } }).success).toBe(false);
+  });
+
+  test("the shell() builder passes them through to the step", () => {
+    const step = shell("npm test", { image: PINNED, outputs: ["coverage"] });
+    expect(step.args).toEqual({ cmd: "npm test", image: PINNED, outputs: ["coverage"] });
+  });
+});
+

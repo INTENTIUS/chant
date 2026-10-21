@@ -844,7 +844,7 @@
  "docs/src/content/docs/lint-rules/correctness.mdx": {
   "formatting/em-dash-density": 14,
   "discourse/punchy-fragments": 8,
-  "claude/colon-reveal": 5,
+  "claude/colon-reveal": 6,
   "repetition/near-duplicate": 3,
   "tricolon/comma-series": 1
  },

@@ -7,14 +7,17 @@ import {
   CloudRunService as CloudRunServiceResource,
   IAMPolicyMember,
 } from "../generated";
+import { GCP } from "../pseudo";
 
 export interface CloudRunServiceProps {
   /** Service name. */
   name: string;
   /** Container image. */
   image: string;
-  /** GCP region. */
+  /** GCP region (default: GCP.Region, resolved from GCP_REGION at build). */
   location?: string;
+  /** GCP project the service runs in, as `projectRef.external` (default: GCP.ProjectId, resolved from GCP_PROJECT_ID at build). */
+  projectId?: string;
   /** Port the container listens on (default: 8080). */
   port?: number;
   /** CPU limit (default: "1000m"). */
@@ -47,10 +50,12 @@ export interface CloudRunServiceProps {
  *
  * @example
  * ```ts
- * import { CloudRunService } from "@intentius/chant-lexicon-gcp";
+ * import { CloudRunServiceComposite } from "@intentius/chant-lexicon-gcp";
  *
- * const { service, publicIam } = CloudRunService({
+ * const { service, publicIam } = CloudRunServiceComposite({
  *   name: "my-api",
+ *   projectId: "my-project",
+ *   location: "us-central1",
  *   image: "gcr.io/my-project/my-api:latest",
  *   publicAccess: true,
  * });
@@ -61,6 +66,7 @@ export const CloudRunServiceComposite = Composite((props: CloudRunServiceProps) 
     name,
     image,
     location,
+    projectId,
     port = 8080,
     cpuLimit = "1000m",
     memoryLimit = "512Mi",
@@ -97,7 +103,8 @@ export const CloudRunServiceComposite = Composite((props: CloudRunServiceProps) 
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "service" },
     },
-    ...(location && { location }),
+    location: location ?? GCP.Region,
+    projectRef: { external: projectId ?? GCP.ProjectId },
     template: {
       maxInstanceRequestConcurrency,
       scaling: {
@@ -106,7 +113,7 @@ export const CloudRunServiceComposite = Composite((props: CloudRunServiceProps) 
       },
       containers,
     },
-  } as Record<string, unknown>, defs?.service));
+  }, defs?.service));
 
   const result: Record<string, any> = { service };
 

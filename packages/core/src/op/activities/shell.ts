@@ -1,4 +1,6 @@
 import { exec } from "node:child_process";
+import { mkdir, readdir } from "node:fs/promises";
+import { isAbsolute, join, normalize, resolve } from "node:path";
 import { promisify } from "node:util";
 import { GateWait, asPendingGate } from "../gate-wait";
 import type { PendingGateRecord } from "../../lifecycle/gate-ledger";
@@ -56,6 +58,84 @@ export interface ShellCmdArgs {
    * something else. Empty stdout is `null`.
    */
   json?: boolean;
+  /**
+   * Run the command in a container (#4015) instead of on the host: an image
+   * pinned by digest, `<ref>@sha256:<64 hex>`, so the step names the
+   * toolchain it ran with. The step's working directory is mounted at
+   * `/workspace`, which is the command's working directory; the container
+   * sees `env` by name and nothing of this process's environment, whatever
+   * `inheritEnv` says. Run with `docker run --rm`, or the command
+   * `CHANT_CONTAINER_CLI` names (`podman`).
+   */
+  image?: string;
+  /** How the container mounts the working directory (#4015). Default `{ workspace: "ro" }`. */
+  mounts?: { workspace?: "ro" | "rw" };
+  /**
+   * Directories under the working directory the containerized command writes
+   * (#4015). Each is created on the host if missing and mounted writable at
+   * the same path, so what the command leaves there stays on the host. A
+   * directory still empty when the command ends fails a step that otherwise
+   * passed. Only with `image`.
+   */
+  outputs?: string[];
+}
+
+/** An image reference pinned by digest (#4015): anything, then `@sha256:` and 64 lowercase hex digits. */
+export const PINNED_IMAGE = /^[^\s@]+@sha256:[0-9a-f]{64}$/;
+
+/** Why `image` can't run, or undefined when it is a reference pinned by digest. */
+export function imageProblem(image: unknown): string | undefined {
+  if (typeof image !== "string") return "image must be a literal string, an image reference pinned by digest";
+  if (!PINNED_IMAGE.test(image)) return `image ${JSON.stringify(image)} is not pinned by digest: name it as <ref>@sha256:<digest>`;
+  return undefined;
+}
+
+/** Why an `outputs` path can't be copied back, or undefined when it is a relative path inside the working directory. */
+function outputProblem(path: string): string | undefined {
+  const n = normalize(path);
+  if (path === "" || isAbsolute(path) || n === ".." || n.startsWith("../") || n === ".") return `output ${JSON.stringify(path)} must be a relative path inside the working directory`;
+  return undefined;
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Where a containerized command sees the working directory. */
+const WORKSPACE = "/workspace";
+
+/**
+ * The `docker run --rm` line for a step with `image` (#4015). The working
+ * directory is mounted at `/workspace`, read-only by default, and each
+ * declared output directory is mounted writable on top of it.
+ */
+export function containerCommand(args: ShellCmdArgs & { image: string }, where: { cwd: string; cli?: string; user?: string }): string {
+  const mode = args.mounts?.workspace ?? "ro";
+  const outputs = mode === "ro" ? (args.outputs ?? []).map((p) => normalize(p).replace(/\/+$/, "")) : [];
+  return [
+    where.cli ?? "docker",
+    "run",
+    "--rm",
+    ...(where.user ? ["--user", where.user] : []),
+    "-v",
+    shellQuote(`${where.cwd}:${WORKSPACE}:${mode}`),
+    ...outputs.flatMap((p) => ["-v", shellQuote(`${join(where.cwd, p)}:${WORKSPACE}/${p}:rw`)]),
+    "-w",
+    WORKSPACE,
+    ...Object.keys(args.env ?? {}).flatMap((name) => ["-e", shellQuote(name)]),
+    shellQuote(args.image),
+    "sh",
+    "-c",
+    shellQuote(args.cmd),
+  ].join(" ");
+}
+
+/** Throw when a declared output directory is still empty after a command that passed. */
+async function checkOutputs(outputs: readonly string[], cwd: string): Promise<void> {
+  for (const p of outputs) {
+    const entries = await readdir(join(cwd, normalize(p))).catch(() => []);
+    if (entries.length === 0) throw new Error(`the step declares output ${JSON.stringify(p)}, and the command left it empty`);
+  }
 }
 
 /**
@@ -130,12 +210,20 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
   };
   const out = stepLineSplitter();
   const err = stepLineSplitter();
+  if (args.image === undefined && (args.outputs !== undefined || args.mounts !== undefined)) {
+    throw new Error("outputs and mounts apply only to a step that runs in a container: give the step an image");
+  }
+  const container = args.image !== undefined ? await prepareContainer(args) : undefined;
   try {
-    const running = execAsync(args.cmd, {
+    const running = execAsync(container?.cmd ?? args.cmd, {
       cwd: args.cwd,
       // In a run that keeps an in-flight record, CHANT_RUN_ACTIVITY names the
-      // file the command appends activity lines to (../run-live.ts).
-      env: { ...(args.inheritEnv === false ? {} : process.env), ...liveRunEnv(), ...args.env },
+      // file the command appends activity lines to (../run-live.ts). Under
+      // `image` the container CLI gets this process's environment, so it can
+      // reach its daemon, and the container gets `env` alone, by name.
+      env: container
+        ? { ...process.env, ...args.env }
+        : { ...(args.inheritEnv === false ? {} : process.env), ...liveRunEnv(), ...args.env },
       maxBuffer: MAX_STDOUT_BYTES,
       signal,
     });
@@ -152,6 +240,7 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
     }
     const { stdout, stderr } = settled;
     printStderr(stderr);
+    if (container) await checkOutputs(args.outputs ?? [], container.cwd);
     return withJson({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 }, args);
   } catch (caught) {
     const failure = caught as ExecFailure;
@@ -177,6 +266,24 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
     }
     throw failure;
   }
+}
+
+/** The container line for a step with `image` (#4015), checked first, with each output directory made on the host. */
+async function prepareContainer(args: ShellCmdArgs): Promise<{ cmd: string; cwd: string }> {
+  const problem = imageProblem(args.image) ?? (args.outputs ?? []).map(outputProblem).find((p) => p !== undefined);
+  if (problem) throw new Error(problem);
+  const cwd = resolve(args.cwd ?? process.cwd());
+  // A writable mount inside a read-only one needs its mountpoint to exist already.
+  for (const p of args.outputs ?? []) await mkdir(join(cwd, normalize(p)), { recursive: true });
+  // The host's uid and gid, so what the command writes belongs to whoever
+  // runs chant rather than to the image's root.
+  const user = typeof process.getuid === "function" && typeof process.getgid === "function" ? `${process.getuid()}:${process.getgid()}` : undefined;
+  const cmd = containerCommand(args as ShellCmdArgs & { image: string }, {
+    cwd,
+    ...(process.env.CHANT_CONTAINER_CLI ? { cli: process.env.CHANT_CONTAINER_CLI } : {}),
+    ...(user ? { user } : {}),
+  });
+  return { cmd, cwd };
 }
 
 /** The pending fact a command's stdout carries: the whole of it as JSON, or its last line. */
