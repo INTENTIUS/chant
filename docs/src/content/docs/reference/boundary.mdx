@@ -51,9 +51,9 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 242 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 251 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 57 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 58 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
@@ -353,6 +353,15 @@ Each row follows, in the order of the table above.
 | reason code | `security-runner-start-no-key` | chant | check.schema.json | Under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
 | reason code | `security-runner-start-no-role` | chant | check.schema.json | Under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
 | reason code | `security-trust-unreadable` | chant | check.schema.json | Under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
+| reason code | `ci-workflow-green-undeclared` | chant | check.schema.json | Under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut. |
+| reason code | `ci-workflow-no-pre-merge` | chant | check.schema.json | Under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves. |
+| reason code | `ci-workflow-apply-in-green` | chant | check.schema.json | Under ci.workflow, a phase in ci.green.require matches an apply job, which would wait on its own verdict. |
+| reason code | `ci-workflow-no-components` | chant | check.schema.json | Under ci.workflow, a member declares no component, so nothing of it can be cut or promoted. |
+| reason code | `ci-workflow-no-environments` | chant | check.schema.json | Under ci.workflow, a member's chant.config.ts declares no environments, so a release has nowhere to be promoted to. |
+| reason code | `ci-workflow-ungated-env` | chant | check.schema.json | Under ci.workflow, a component has no gate, so a promote to the last environment waits on no approval. |
+| reason code | `ci-workflow-pipeline-missing` | chant | check.schema.json | Under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick. |
+| reason code | `ci-workflow-pipeline-differs` | chant | check.schema.json | Under ci.workflow, the merge job does not match the workflow: it applies under trunk-curated, or records under trunk-curated+apply-on-merge. |
+| reason code | `ci-workflow-publish-missing` | chant | check.schema.json | Under ci.workflow, no pipeline file runs chant release publish. |
 | reason code | `box-fountain-callback-undeclared` | chant | check.schema.json | A box member builds a fountain Box, whose sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner. |
 | reason code | `box-intent-unknown` | chant | check.schema.json | A box block names an intent, and no record of a declared kind named decision has that id. |
 | reason code | `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory. |
@@ -505,6 +514,7 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP131` `diagram-source-missing` | chant | check.schema.json | A diagram's source file, when it names one, exists in the tree read. |
 | WSP check | `WSP132` `diagram-render-missing` | chant | check.schema.json | A diagram's render, when it names one, exists in the tree read. Only a mermaid or excalidraw diagram may name none. |
 | WSP check | `WSP133` `diagram-render-drift` | chant | check.schema.json | A diagram that records a sourceHash is unchanged since its render was made: the source's bytes still hash to it. Runs no renderer. |
+| WSP check | `WSP151` `ci-workflow` | chant | check.schema.json | Under ci.workflow: ci.green with pre-merge phases and no apply job required, each member with a component, environments and a gate on each component, and pipeline files that plan, record (or apply under apply on merge), tick and publish. |
 | WSP check | `WSP161` `security-verified-releases` | chant | check.schema.json | Under the verified-releases group: a signers file, a release gate naming a class, and no publish job that passes --allow-unsigned. |
 | WSP check | `WSP162` `security-supply-chain` | chant | check.schema.json | Under the supply-chain group: every publish target attaches an SBOM it has a source for, publish jobs require OIDC provenance, and components generate an SBOM and verify what they deploy. |
 | WSP check | `WSP163` `security-who-ran-it` | chant | check.schema.json | Under the who-ran-it group: ci.green.signedSince is set, .chant/trust.json lists a runner key, and the tick signs its tags. |

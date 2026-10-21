@@ -29,6 +29,7 @@ import { WORK_WARNING_CODES } from "./work";
 import { BOX_FINDING_CODES } from "./checks/boxes";
 import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { SECURITY_FINDING_CODES } from "./checks/security";
+import { CI_WORKFLOW_FINDING_CODES } from "./ci-workflow";
 import { WORK_ERROR_CODES, WORK_HISTORY_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
 import { RUN_STATEMENT_ERROR_CODES, RUNS_ERROR_CODES, RUNS_REASON_CODES, RUNS_WRITE_ERROR_CODES } from "./runs-cli";
 import { RUN_STATEMENT_FAILURE_CODES } from "./trust/run-statement";
@@ -68,6 +69,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   BOX_FINDING_CODES,
   DIAGRAM_FINDING_CODES,
   SECURITY_FINDING_CODES,
+  CI_WORKFLOW_FINDING_CODES,
   STATUS_REASON_CODES,
   STATUS_ERROR_CODES,
   STATUS_GATE_REASON_CODES,

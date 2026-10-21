@@ -337,6 +337,7 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 | `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
 | `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass", "build": "newest" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. `build` is `every` or `newest`, described below; read by chant 0.124.33 and newer, so set `minReader` with it. |
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
+| `preMerge` | no | The phases that must pass before the branch moves, such as the quick checks a pull request runs ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Each must be declared under `phases`. The `trunk-curated` workflow needs at least one. |
 | `signedSince` | no | The full sha of the first commit on `branch` whose tags must be signed. A tag on it or on any commit that is not a strict first-parent ancestor of it counts only with a statement signed by a runner key; a tag on an ancestor counts unsigned. A sha that names no commit in the clone is refused with `declaration-invalid`. Absent, every tag counts. See [signed tags](/chant/cli/ci/#signed-tags). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 | `source` | no | Where the tick reads each phase's results: `checks`, the default, reads the forge's check runs, and `runs` reads chant's own Op runs on `chant/lifecycle` ([#4044](https://github.com/INTENTIUS/chant/issues/4044)). With `runs`, a phase's patterns match Op names, a run counts for the commit its record names as `gitSha`, and only a run signed by a runner key counts. See [chant runs as the status source](/chant/cli/ci/#chant-runs-as-the-status-source). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 
@@ -414,6 +415,10 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 ```
 
 `failureWindowDays` is the number of days after a deploy in which a revocation of the commit it deployed, or a rollback of the environment from it, counts the deploy as failed. It is a whole number from 1 to 365, and the default is 7. `workspace metrics` takes it from the declaration in the working tree. Older chant releases refuse the block, which is why its `minReader` floor is `0.124.29`.
+
+### Workflow
+
+`ci.workflow` names a prescribed delivery workflow, `trunk-curated` or `trunk-curated+apply-on-merge` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). At the top level it covers every member that builds with chant. A member's own `"ci": { "workflow": ... }` wins over it. `chant ci init` writes it, and `chant workspace check` reports what a member under it still lacks as `WSP151`. The requirements are on [CI Workflows](/chant/reference/ci-workflows/).
 
 ## Security
 

@@ -83,7 +83,7 @@ function groupPointer(declaration: Declaration, group: SecurityGroup): string {
   return m ? `${m.pointer}/security/${m.security.indexOf(group)}` : "/security";
 }
 
-function read(tree: WorkspaceTree, path: string): string | null {
+export function read(tree: WorkspaceTree, path: string): string | null {
   if (tree.stat(path) !== "file") return null;
   try {
     return tree.read(path);
@@ -109,18 +109,18 @@ function pipelineFiles(tree: WorkspaceTree, dir: string): { path: string; lines:
 }
 
 /** Every pipeline file of the workspace: its root's, and each member's. */
-function allPipelineFiles(ctx: WorkspaceCheckContext): { path: string; lines: string[] }[] {
+export function allPipelineFiles(ctx: WorkspaceCheckContext): { path: string; lines: string[] }[] {
   const dirs = new Set(["", ...ctx.declaration.members.map((m) => memberDir(m.dir))]);
   return [...dirs].flatMap((d) => pipelineFiles(ctx.tree, d));
 }
 
 /** The lines of the pipeline files that run a chant command, `command` naming it, such as `release publish`. */
-function commandLines(ctx: WorkspaceCheckContext, command: RegExp): { path: string; line: number; text: string }[] {
+export function commandLines(ctx: WorkspaceCheckContext, command: RegExp): { path: string; line: number; text: string }[] {
   return allPipelineFiles(ctx).flatMap((f) => f.lines.flatMap((text, i) => (command.test(text) ? [{ path: f.path, line: i + 1, text }] : [])));
 }
 
 /** The member's `*.component.ts` files, walked a few levels down, past node_modules and build output. */
-function componentFiles(tree: WorkspaceTree, dir: string, depth = 4): string[] {
+export function componentFiles(tree: WorkspaceTree, dir: string, depth = 4): string[] {
   const out: string[] = [];
   for (const e of tree.list(dir) ?? []) {
     if (e.type === "dir") {

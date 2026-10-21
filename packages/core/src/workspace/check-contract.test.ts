@@ -14,6 +14,7 @@ import { BOX_FINDING_CODES } from "./checks/boxes";
 import { RECORD_FINDING_CODES } from "./checks/records";
 import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { SECURITY_FINDING_CODES } from "./checks/security";
+import { CI_WORKFLOW_FINDING_CODES } from "./ci-workflow";
 import { WORKSPACE_ERROR_CODES } from "./declaration";
 import { CHECK_CODES, CHECK_CONTRACT_VERSION, CHECK_ERROR_CODES, CHECK_OUTPUT_SCHEMA_ID, runChecks, type CheckDocument } from "./lineage-check";
 
@@ -39,8 +40,8 @@ describe("check output schema", () => {
   test("lists exactly the codes the code can return", () => {
     expect(schema.$defs.lockFinding.properties.code.enum).toEqual([...CHECK_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...CHECK_ERROR_CODES]);
-    expect(schema.$defs.diagnostic.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES]);
-    expect(schema.$defs.suppressed.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES]);
+    expect(schema.$defs.diagnostic.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES, ...CI_WORKFLOW_FINDING_CODES]);
+    expect(schema.$defs.suppressed.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES, ...CI_WORKFLOW_FINDING_CODES]);
   });
 });
 

@@ -222,6 +222,12 @@ export interface CiGreen {
   /** The phases a commit must pass, by name, in file order. */
   require: string[];
   /**
+   * The phases that must pass before the branch moves (#4168 4.4), by name,
+   * in file order: the quick checks a pull request, a merge queue or a local
+   * run gives before a change lands. Absent or empty when the declaration names none.
+   */
+  preMerge?: string[];
+  /**
    * The full sha of the first commit on the branch whose ci tags need a
    * statement signed by a runner key (#4031). A tag on a strict
    * first-parent ancestor of it counts unsigned, and any other tag counts
@@ -244,9 +250,20 @@ export interface CiGreen {
 /** Where `ci tick` reads phase results (#4044): forge check runs, or chant Op runs. */
 export type CiSource = "checks" | "runs";
 
+/**
+ * A prescribed delivery workflow (#4168 section 7). `trunk-curated`: a merge
+ * records the plan and deploys nothing, and releases are cut from green
+ * commits and promoted through the environments. `trunk-curated+apply-on-merge`
+ * adds the apply on merge as an opt-in. `chant workspace check` reports what a
+ * member under one still lacks (./checks/ci-workflow.ts, WSP151).
+ */
+export type CiWorkflow = "trunk-curated" | "trunk-curated+apply-on-merge";
+
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
   green: CiGreen | null;
+  /** `ci.workflow` (#4168 step 6): the workflow every member follows unless it names its own; absent when the declaration sets none. */
+  workflow?: CiWorkflow;
   /**
    * `ci.reportUrl` (#4160): where the pull-request jobs copy their reports
    * and `chant ci run` keeps the run index, `<reportUrl>/runs/index.json`.
@@ -573,6 +590,8 @@ export interface Member {
   travel: boolean;
   /** The security groups this member adds to the declaration's top-level `security` (#4168 step 7), in file order; empty when it names none. */
   security: SecurityGroup[];
+  /** The member's own `ci.workflow` (#4168 step 6), which wins over the top level's; null when it names none. */
+  ciWorkflow: CiWorkflow | null;
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -869,6 +888,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       because: (e.because as string | undefined) ?? null,
       travel: e.travel === true,
       security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
+      ciWorkflow: ((e.ci as { workflow?: CiWorkflow } | undefined)?.workflow) ?? null,
       suppress,
       pointer,
     };
@@ -1116,7 +1136,8 @@ function retentionOf(raw: unknown): RetentionOverride | null {
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const workflow = block.workflow !== undefined ? { workflow: block.workflow } : {};
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {
     // #4160: refused here as pr-plan and ci run refuse the flag, so a reader never gets a URL no job can write to.
@@ -1124,7 +1145,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     if ("error" in target) throw new WorkspaceReadError("declaration-invalid", target.error, at("/ci/reportUrl"));
     reportUrl = target.url;
   }
-  if (block.green === undefined) return { green: null, reportUrl };
+  if (block.green === undefined) return { green: null, ...workflow, reportUrl };
   const g = block.green;
   const phases: CiPhase[] = Object.entries(g.phases).map(([name, p]) => ({
     name,
@@ -1141,7 +1162,15 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       at(`/ci/green/require/${i}`),
     );
   }
-  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" }, reportUrl };
+  for (const [i, name] of (g.preMerge ?? []).entries()) {
+    if (phases.some((p) => p.name === name)) continue;
+    throw new WorkspaceReadError(
+      "declaration-invalid",
+      `ci.green.preMerge names the phase ${JSON.stringify(name)}, which ci.green.phases does not declare; declared phases: ${phases.map((p) => p.name).join(", ")}`,
+      at(`/ci/green/preMerge/${i}`),
+    );
+  }
+  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" }, ...workflow, reportUrl };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

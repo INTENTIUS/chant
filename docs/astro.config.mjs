@@ -305,6 +305,7 @@ export default defineConfig({
 						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
 						{ label: 'Publish Targets', slug: 'reference/publish-targets' },
 						{ label: 'Security Features', slug: 'reference/security-features' },
+						{ label: 'CI Workflows', slug: 'reference/ci-workflows' },
 						{ label: 'Change-Set Document', slug: 'reference/change-set' },
 						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
