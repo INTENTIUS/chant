@@ -16,6 +16,12 @@ Trunk is the branch every pull request merges to, `main` unless `ci.green.branch
 
 Each change names the work item it serves. [`chant workspace check --changes`](/chant/cli/workspace-check/#commits-that-name-no-work-item) reports one that names none or a wrong one, and [Link commits to work items](/chant/guide/work-items/#link-commits-to-work-items) shows how to name it. That link lets a reader go from a deploy back to the reason for it.
 
+## Why merge never deploys
+
+A merge puts a change on trunk, and nothing more. What reaches an environment is a release, which a person cuts from a green sha and promotes behind that environment's gate. Keeping the two apart is what lets people merge without fear: a change that is on trunk but not in a release has run nowhere, and a change behind a flag that is off ships without doing anything.
+
+A deploy on merge ties every merge to a deploy, so the order changes land in is the order they ship in, and an environment runs whatever the tip happens to be when the pipeline fires. chant's [pull request pipeline](/chant/guide/pull-request-ci/) can still apply a reviewed plan on merge, for repositories that want that. The release model doesn't need it, and [#4168](https://github.com/INTENTIUS/chant/issues/4168) makes it something a repository opts into.
+
 ## Green
 
 A sha is green when it passed every CI phase the workspace requires. The phases are declared in the [`ci.green`](/chant/reference/workspace-declaration/#ci) block, and [`chant ci tick`](/chant/cli/ci/#ci-tick) reads their results and records the verdict as git tags. A passing sha gets `ci/green/<sha>`. One that is green and later fails a required phase, such as on a re-run, gets `ci/revoked/<sha>`.
@@ -23,6 +29,12 @@ A sha is green when it passed every CI phase the workspace requires. The phases 
 The verdict lives in git rather than in the forge, so anyone with a clone and the tags can ask what is green, with no token and no API call. `chant ci last-green` prints the newest green sha, and [`chant ci list`](/chant/cli/ci/#ci-list) prints the recent history with each state and the result of every phase. The results come from the forge's check runs by default, or from chant's own signed Op runs with `ci.green.source: "runs"`, which works on any forge. With `ci.green.signedSince`, a tag counts only when a runner key signed it, so a tag someone pushed by hand is ignored.
 
 chant never moves or deletes a tag. A person may delete a `ci/revoked/<sha>` tag to restore a sha, and that is the only edit the model expects.
+
+## A green sha, not the tip
+
+A deploy binds to a green sha, never to a branch tip. The tip is wherever trunk was a moment ago, and asking whether it is correct right now means every merge has to keep it correct. A green sha is fixed: CI passed on that exact commit, and the tag says so for as long as nobody revokes it.
+
+That changes what a red tip costs. A merge that breaks the build leaves the tip red, and the newest green sha is still there to cut from while someone fixes it. [`chant release candidates`](/chant/cli/release/#release-candidates) lists every green sha since what each environment runs, with the changes each would ship, and [`chant release cut --at <sha>`](/chant/cli/release/#cutting-a-chosen-commit) cuts any of them without checking it out. Choosing an older candidate is how a change that is not ready stays out, when it has no flag. [Curate a Release](/chant/guide/curate-a-release/) walks through it.
 
 ## Releases
 
@@ -67,6 +79,7 @@ An agent can author changes, run the dry runs and read every record above. The s
 ## Next
 
 - [Tag Green Commits](/chant/guide/green-commits/) sets up the tick and reads its tags.
+- [Curate a Release](/chant/guide/curate-a-release/) picks the green sha a release ships from.
 - [Release from Your Workstation](/chant/guide/release-from-workstation/) signs a cut on your machine and ships it from CI.
 - [Promote a Release](/chant/guide/promote-a-release/) moves a build through the environments and back.
 - [Feature Flags](/chant/guide/feature-flags/) keeps unfinished work on trunk.

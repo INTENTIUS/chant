@@ -209,6 +209,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Tag Green Commits', slug: 'guide/green-commits' },
+								{ label: 'Curate a Release', slug: 'guide/curate-a-release' },
 								{ label: 'Release from Your Workstation', slug: 'guide/release-from-workstation' },
 								{ label: 'Promote a Release', slug: 'guide/promote-a-release' },
 								{ label: 'Prune chant/lifecycle', slug: 'guide/prune-lifecycle' },

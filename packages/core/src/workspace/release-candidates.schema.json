@@ -1,0 +1,353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json",
+  "title": "chant release candidates output",
+  "description": "What `chant release candidates --json` prints (#4168 4.2): the green commits of trunk a release can be cut from, newest first, each with the commits, work items, pull requests, merge records and flags it would ship since the previous candidate, and what each environment of the member runs. It reads local refs and tags and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.33 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "member",
+        "branch",
+        "tip",
+        "environments",
+        "since",
+        "candidates",
+        "skipped",
+        "pending"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The workspace member read, or null for a project outside a workspace."
+        },
+        "branch": {
+          "type": "string",
+          "description": "The trunk walked: ci.green.branch, else what origin/HEAD names."
+        },
+        "tip": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The branch's tip as this clone knows it, or null when it knows none."
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/environment"
+          },
+          "description": "The member's environments in promotion order, or the one --env names."
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The oldest commit an environment runs, where the walk stopped, or null when it read its limit of commits."
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          },
+          "description": "Green commits that are not revoked, newest first."
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "commit",
+              "subject",
+              "reason"
+            ],
+            "properties": {
+              "commit": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "revoked"
+                ]
+              }
+            }
+          },
+          "description": "Revoked green commits, newest first. Their changes are in the next candidate."
+        },
+        "pending": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/change"
+          },
+          "description": "Commits after the newest candidate, newest first: not green yet, or red."
+        }
+      },
+      "description": "Exit code 0, with or without candidates."
+    },
+    "failure": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "ledger-unreadable"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "description": "Exit code 1."
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "env",
+        "running"
+      ],
+      "properties": {
+        "env": {
+          "type": "string"
+        },
+        "running": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/running"
+          },
+          "description": "The releases the environment's latest deploys name, newest cut first."
+        }
+      }
+    },
+    "running": {
+      "type": "object",
+      "required": [
+        "releaseDigest",
+        "label",
+        "commit",
+        "components"
+      ],
+      "properties": {
+        "releaseDigest": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The commit it was cut from, or null when its release file is not on this clone's branch."
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "commit",
+        "subject",
+        "date",
+        "newFor",
+        "cut",
+        "changes",
+        "flags"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "newFor": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The environments that run neither this commit nor a later one."
+        },
+        "cut": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The labels of releases already cut from it."
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/change"
+          },
+          "description": "The first-parent commits after the previous candidate, up to and including this one, newest first."
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/flag"
+          },
+          "description": "The flags of the declared flag kinds whose record files those commits change."
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "required": [
+        "commit",
+        "subject",
+        "date",
+        "work",
+        "records",
+        "pr",
+        "merge"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "description": "Author date, ISO 8601."
+        },
+        "work": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ids its `Chant-Record: work:<id>` trailers name."
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every `Chant-Record` trailer, as `<kind>:<id>`."
+        },
+        "pr": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The pull request the merge record or the squash subject (`(#123)` at its end) names, or null."
+        },
+        "merge": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The merge record `_merges/<sha>.json` on chant/lifecycle (#4168 4.1), as stored, or null when there is none."
+        }
+      },
+      "description": "One first-parent commit."
+    },
+    "flag": {
+      "type": "object",
+      "required": [
+        "id",
+        "member",
+        "param",
+        "path",
+        "values"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "member": {
+          "type": "string"
+        },
+        "param": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file from the workspace root."
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "description": "The value per environment, as the working tree's record writes it."
+        }
+      }
+    }
+  }
+}

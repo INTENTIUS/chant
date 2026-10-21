@@ -49,6 +49,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
 | [`chant ci run --report-url`](/chant/cli/ci/#the-run-index), the file it keeps, and [`chant ci runs`](/chant/cli/ci/#ci-runs) with `--json` | `<report-url>/runs/index.json`, floor chant 0.124.31 | `https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json` |
 | [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
+| [`chant release candidates`](/chant/cli/release/#release-candidates) | `--json`, floor chant 0.124.33 | `https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json` |
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 | [`chant workspace metrics`](/chant/cli/workspace-metrics/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json` |

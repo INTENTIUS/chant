@@ -7,8 +7,9 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant release cut [<label>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
+chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
+chant release candidates [--env <env>] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
 chant release list [--json]
@@ -50,6 +51,32 @@ The cut refuses before it writes anything when:
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
 
 The code is printed in square brackets at the end of the message. The dry run refuses with the same codes, and also with `release-label-taken` when the label already names a release of another commit.
+
+### Cutting a chosen commit
+
+`--at <sha>` cuts that commit instead of `HEAD` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The cut checks the commit out in a temporary detached worktree, runs the compile and the artifact builds there, and removes the worktree when it ends. The checkout you run it from can be at any commit and can have uncommitted changes, so `release-worktree-dirty` does not apply. Every other check in the table above does: the commit must be on `origin/<trunk>`, carry a `ci/green` tag that counts and no `ci/revoked` tag. `--at` takes anything git resolves to a commit, and refuses a name this clone does not know with `release-at-unknown`.
+
+```bash
+git fetch origin --tags
+chant release candidates
+chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build" --yes
+```
+
+The worktree shares the repository's refs, so the release and the cut go to the repository's `chant/lifecycle` and the `release/<label>` tag names the commit. The checkout's `node_modules` are linked into the worktree at the top and in each directory down to the member, so the compile resolves the packages already installed. A commit whose lockfile differs from the checkout's needs its own install.
+
+### The label in the build
+
+When the cut has a label, every compile and artifact build runs with `CHANT_RELEASE_LABEL` set to it. The version reaches the build without a commit that bumps it ([#4168](https://github.com/INTENTIUS/chant/issues/4168), decision 5). A [build-time parameter](/chant/concepts/build-time-parameters/) reads it by declaring the variable:
+
+```ts
+// chant.config.ts
+export default {
+  environments: ["staging", "prod"],
+  buildParams: { version: { type: "string", env: "CHANT_RELEASE_LABEL", required: false } },
+};
+```
+
+A build step's own tool reads the variable directly. A Cargo crate takes it at compile time with `option_env!("CHANT_RELEASE_LABEL")`, which is `None` for a build outside a cut, or a `build.rs` passes it on with `println!("cargo:rustc-env=APP_VERSION={}", std::env::var("CHANT_RELEASE_LABEL").unwrap_or_default())` and `println!("cargo:rerun-if-env-changed=CHANT_RELEASE_LABEL")`. An npm build reads `process.env.CHANT_RELEASE_LABEL` in its bundler config. A label in the caller's shell is never passed through: only the cut sets the variable, and a cut with no label leaves it unset. A parameter that reads the label is recorded on each target like any other, so two labels of one commit are two releases.
 
 ### What the dry run prints
 
@@ -307,6 +334,20 @@ kubectl apply -f dist/build.yaml
 ```
 
 This is how a project with no components deploys what it cut. [`chant components promote --release`](/chant/cli/components/#components-promote) deploys components, and refuses such a cut with a pointer to this command. The project's own deploy, an Op such as `chant run deploy` or a CI job, then reads the exported files. An Op whose first phase runs the build again would overwrite them, so drop that phase when it deploys exported files. `--json` prints the digest and label with the environment and the directory written to. It also prints the target's templates and params.
+
+## release candidates
+
+Lists the green commits of trunk a release can be cut from, newest first ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Trunk is the branch `release cut` checks, and the walk follows its first-parent line from the tip back to the oldest commit an environment of the member runs. When some environment runs no release yet, it reads the newest 50 commits. `--env <env>` gives one environment's view, so the walk stops at what that environment runs.
+
+```bash
+git fetch origin --tags
+git fetch origin chant/lifecycle:chant/lifecycle
+chant release candidates --env prod
+```
+
+Each candidate is a commit with a `ci/green` tag that counts and no `ci/revoked` tag. Under it are the first-parent commits since the previous candidate, so each commit appears under exactly one candidate. A commit shows the pull request its subject names, `(#123)` at the end as a forge's squash merge writes it, and the work items its `Chant-Record: work:<id>` trailers name. A candidate also lists the flags whose record files those commits change. It says which environments run neither it nor a later commit, and which labels were already cut from it. A revoked commit is listed as skipped, and its changes stay with the next candidate. Commits after the newest candidate are counted as not green yet.
+
+With `--json` the output is the [read contract](/chant/reference/workspace-read-contract/)'s `release-candidates.schema.json` document. Its `environments` field lists what each one runs, `since` is the commit the walk stopped at (or `null`), `candidates` and `skipped` are newest first, and `pending` holds the commits after the newest candidate. Each change has `commit`, `subject`, `date`, `work`, `records` (every `Chant-Record` trailer as `<kind>:<id>`), `pr` and `merge`, the merge record `_merges/<sha>.json` on `chant/lifecycle` when one exists. Outside git the command exits 1 with `not-a-git-repository`. When the ledger or the tags can't be read it exits 1 with `ledger-unreadable`. Nothing is fetched, so fetch the tags and `chant/lifecycle` first.
 
 ## release list
 

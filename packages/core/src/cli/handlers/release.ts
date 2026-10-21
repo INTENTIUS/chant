@@ -1,7 +1,7 @@
 /**
  * `chant release` (#4026, ws-104): the release is what graduates.
  *
- *   release cut [<label>] [--yes] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
+ *   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param k=v]... [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
  *       a dry run of a cut of this member from the checkout's HEAD, which must be
  *       clean, on trunk and pushed, and green (#4027); `--yes` cuts, records,
  *       and tags the commit `release/<label>` locally;
@@ -17,6 +17,9 @@
  *   release verify <label|digest> [--json]
  *       check the release's signature offline against .chant/allowed_signers
  *       at the release's commit (#4049)
+ *   release candidates [--env <env>] [--json]
+ *       the green commits of trunk a release can be cut from, each with what it
+ *       would ship, and what each environment runs (#4168 4.2)
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
@@ -39,13 +42,19 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
-function compileInputs(ctx: CommandContext, params: Record<string, string> | undefined): import("../../components/release-compile").CompileInputs {
+function compileInputs(
+  ctx: CommandContext,
+  params: Record<string, string> | undefined,
+  projectDir: string = resolve("."),
+  releaseLabel?: string | null,
+): import("../../components/release-compile").CompileInputs {
   const { args } = ctx;
   return {
-    projectDir: resolve("."),
+    projectDir,
+    ...(releaseLabel ? { releaseLabel } : {}),
     ...(args.buildCommand ? { buildCommand: args.buildCommand } : {}),
     ...(params ? { params } : {}),
     ...(args.paramsFile ? { paramsFile: args.paramsFile } : {}),
@@ -102,6 +111,11 @@ function describeActorSource(source: import("../../lifecycle/release-workstation
  * would record, build and tag, and what publishes where. With `--yes` it
  * cuts, signs with `--sign`, records the cut with its actor and run id,
  * tags the commit locally and prints the next command.
+ *
+ * `--at <sha>` (#4168 4.2) cuts that commit instead of `HEAD`, from a
+ * temporary worktree (../../lifecycle/release-at.ts), so the checkout need
+ * not be clean or at the commit. The label reaches every compile and
+ * artifact build as `CHANT_RELEASE_LABEL` (decision 5).
  */
 export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -124,6 +138,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
     return 1;
   };
+  const at = await import("../../lifecycle/release-at");
+  let checkout: import("../../lifecycle/release-at").CommitCheckout | null = null;
 
   try {
     // The workstation checks come first, in the order #4027 lists them; the
@@ -139,9 +155,16 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     let trunk: import("../../lifecycle/release-workstation").Trunk | null = null;
     let signers: readonly import("../../workspace/trust/trust-files").Signer[] = [];
     let member: string | null = null;
+    if (args.at !== undefined && !top) {
+      return fail("not-a-git-repository", "--at names a commit, and this directory is not in a git repository");
+    }
     if (top) {
-      commit = await getHeadCommit({ cwd });
-      ws.checkCleanTree(top, commit);
+      if (args.at !== undefined) {
+        commit = at.resolveCutCommit(top, args.at);
+      } else {
+        commit = await getHeadCommit({ cwd });
+        ws.checkCleanTree(top, commit);
+      }
       const { scopeSource } = await import("../../workspace/write-scope");
       const { releaseRuleFrom } = await import("../../workspace/identity");
       const source = scopeSource(cwd);
@@ -179,8 +202,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     const tag = label !== null && commit !== null && top ? { name: ws.releaseTagName(member, label), state: ws.checkReleaseTag(top, ws.releaseTagName(member, label), commit) } : null;
     const ci = resolveCiRun(process.env);
     const params = parseParamFlags(args.param);
-    const compiler = spawnTargetCompiler(compileInputs(ctx, params));
-    const request = { cwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) };
+    // --at: the cut reads, compiles and builds the commit's tree, not the checkout's.
+    if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
+    const cutCwd = checkout?.memberDir ?? cwd;
+    const compiler = spawnTargetCompiler(compileInputs(ctx, params, cutCwd, label));
+    const request = { cwd: cutCwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) };
 
     if (dryRun) {
       const plan = await planRelease(request);
@@ -195,7 +221,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const ref = plan.label ?? plan.alreadyCut ?? plan.releaseDigest;
       const provenance = detectProvenance();
       // The targets release publish would run, as the config here declares them; their files are read at publish.
-      const publishTargets = await releasePublishTargets(cwd).then(
+      const publishTargets = await releasePublishTargets(cutCwd).then(
         (ts) => ts.map((t) => `${t.name} to ${t.destination}`),
         (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
       );
@@ -207,6 +233,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         actorSource: who.source,
         run: ci ? { runId: ci.runId, runOrigin: ci.runOrigin } : { runId: null, runOrigin: { forge: "local" as const } },
         trunk,
+        at: args.at !== undefined ? { ref: args.at, commit } : null,
         sign: args.sign !== undefined ? { key: publicKey !== null ? publicKey.split(" ")[0] : null, readable: publicKey !== null } : null,
         tag: tag ? { name: tag.name, exists: tag.state === "present" } : null,
         publish: { targets: Array.isArray(publishTargets) ? publishTargets : [], provenance },
@@ -294,7 +321,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (tagWarning) console.error(formatWarning({ message: tagWarning }));
     return 0;
   } catch (err) {
-    if (err instanceof ws.WorkstationCheckError || err instanceof ReleaseCutError) {
+    if (err instanceof ws.WorkstationCheckError || err instanceof ReleaseCutError || err instanceof at.CutAtError) {
       return fail(err.code, err.message, err.fix);
     }
     if (err instanceof ReleaseLabelError) return fail(err.code, err.message);
@@ -303,6 +330,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       return 1;
     }
     throw err;
+  } finally {
+    checkout?.remove();
   }
 }
 
@@ -477,6 +506,47 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     return 1;
   }
   console.error(formatSuccess(`Verified ${name}: ${result.reason}`));
+  return 0;
+}
+
+/**
+ * `release candidates [--env <env>] [--json]` (#4168 4.2): the green commits
+ * of trunk a release can be cut from, newest first, each with what it would
+ * ship since the previous one, and what each environment runs. `--json`
+ * prints the read contract's `release-candidates` document.
+ */
+export async function runReleaseCandidates(ctx: CommandContext): Promise<number> {
+  const { releaseCandidatesDocument } = await import("../../workspace/release-candidates");
+  const doc = await releaseCandidatesDocument({ cwd: resolve("."), ...(ctx.args.env ? { env: ctx.args.env } : {}) });
+  if (ctx.args.json) {
+    console.log(JSON.stringify(doc, null, 2));
+    return "error" in doc ? 1 : 0;
+  }
+  if ("error" in doc) {
+    console.error(formatError({ message: `${doc.error.message} [${doc.error.code}]`, hint: USAGE }));
+    return 1;
+  }
+  for (const e of doc.environments) {
+    const runs = e.running.map((r) => `${r.label ?? r.releaseDigest.slice(0, 19)}${r.commit ? ` at ${r.commit.slice(0, 12)}` : ""}`).join(", ");
+    console.log(`${e.env}: ${runs || "runs no release yet"}`);
+  }
+  if (!doc.tip) {
+    console.error(`No candidates: this clone knows no ${doc.branch}. Fetch it: git fetch origin ${doc.branch} --tags`);
+    return 0;
+  }
+  if (doc.pending.length > 0) console.log(`${doc.pending.length} commit(s) on ${doc.branch} after the newest candidate are not green yet`);
+  if (doc.candidates.length === 0) console.log(`No green commit on ${doc.branch}${doc.since ? ` since ${doc.since.slice(0, 12)}` : ""} to cut from.`);
+  for (const c of doc.candidates) {
+    const tags = [...(c.newFor.length > 0 ? [`new for ${c.newFor.join(", ")}`] : []), ...(c.cut.length > 0 ? [`cut as ${c.cut.join(", ")}`] : [])];
+    console.log(`${c.commit.slice(0, 12)}  ${c.subject}${tags.length > 0 ? `  (${tags.join("; ")})` : ""}`);
+    for (const ch of c.changes) {
+      const links = [...(ch.pr !== null ? [`#${ch.pr}`] : []), ...ch.work.map((w) => `work:${w}`)];
+      console.log(`    ${ch.commit.slice(0, 12)}  ${ch.subject}${links.length > 0 ? `  [${links.join(", ")}]` : ""}`);
+    }
+    for (const f of c.flags) console.log(`    flag ${f.id} (${f.member} ${f.param}) changed`);
+  }
+  for (const sk of doc.skipped) console.log(`skipped ${sk.commit.slice(0, 12)}  ${sk.subject}  (revoked)`);
+  if (doc.candidates.length > 0) console.error(`Cut one: chant release cut <label> --at <sha>`);
   return 0;
 }
 
