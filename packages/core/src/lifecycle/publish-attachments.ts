@@ -127,8 +127,9 @@ function nearestLockfile(cwd: string): { kind: "npm" | "maven"; path: string } |
  * The SBOM a target attaches, for an OCI image or a forge release: the file
  * `declared` names (relative to the member, checked against the release's
  * digest when the release records it), else one written from the member's
- * lockfile for `subject`. Null when `declared` is `false`. Throws
- * `publish-sbom-missing` when there is neither.
+ * lockfile for `subject`. Null when `declared` is `false`, and when there is
+ * neither and `ctx.requireSbom` is not set (#4168). Throws
+ * `publish-sbom-missing` when there is neither under `supply-chain`.
  */
 export function memberSbom(ctx: PublishContext, declared: string | false | undefined, subject: string, target: string): Attachment | null {
   if (declared === false) return null;
@@ -142,6 +143,7 @@ export function memberSbom(ctx: PublishContext, declared: string | false | undef
   }
   const lock = nearestLockfile(ctx.cwd);
   if (!lock) {
+    if (!ctx.requireSbom) return null;
     throw new PublishTargetError(
       "publish-sbom-missing",
       `${target} attaches an SBOM to what it publishes, and its declaration names none and there is no package-lock.json or pom.xml in ${ctx.cwd} or above it to write one from`,
@@ -162,11 +164,13 @@ export function memberSbom(ctx: PublishContext, declared: string | false | undef
 /**
  * The SBOM an npm package carries at its root: the file `declared` names, else
  * the first of {@link PACKAGE_SBOM_FILES} it holds, in a package directory or
- * under `package/` in a packed `.tgz`. Null when `declared` is `false`.
- * Throws `publish-sbom-missing` when the package has none, and
+ * under `package/` in a packed `.tgz`. Null when `declared` is `false`, and
+ * when the package has none and `required` is false (#4168). Throws
+ * `publish-sbom-missing` when it has none and `required` is set (the
+ * `supply-chain` group) or `declared` names a file, and
  * `publish-sbom-invalid` when it is not SPDX or CycloneDX JSON.
  */
-export function packageSbom(abs: string, isDirectory: boolean, path: string, name: string, declared: string | false | undefined): { file: string; digest: string } | null {
+export function packageSbom(abs: string, isDirectory: boolean, path: string, name: string, declared: string | false | undefined, required = false): { file: string; digest: string } | null {
   if (declared === false) return null;
   const candidates = declared !== undefined ? [declared] : [...PACKAGE_SBOM_FILES];
   let listed: Set<string> | null = null;
@@ -188,6 +192,7 @@ export function packageSbom(abs: string, isDirectory: boolean, path: string, nam
     if (!sbomMediaType(bytes)) throw invalid(`${file} in ${path}`);
     return { file, digest: bytesDigest(bytes) };
   }
+  if (!required && declared === undefined) return null;
   throw new PublishTargetError(
     "publish-sbom-missing",
     `${name} (${path}) carries no SBOM: npm keeps no file beside a package, so its SBOM goes in it, and ${declared !== undefined ? declared : `none of ${PACKAGE_SBOM_FILES.join(", ")}`} is at its root`,

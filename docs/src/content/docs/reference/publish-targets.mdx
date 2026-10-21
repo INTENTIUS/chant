@@ -88,7 +88,7 @@ An asset already on the draft with the same name and a matching `digest` is left
 
 ## SBOMs and provenance
 
-Each target attaches an SBOM and the release's provenance statement to what it publishes ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). Both are attached in the stage, so nothing is visible before they are.
+Each target attaches the release's provenance statement to what it publishes, and an SBOM when it has a source for one ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). Both are attached in the stage, so nothing is visible before they are. A missing SBOM source is refused only when the workspace opts into the `supply-chain` security group, `"security": ["supply-chain"]` in `chant.workspace.json` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Without that group nothing is attached and nothing is printed.
 
 | Target | SBOM | Provenance in CI | Provenance from a workstation |
 |---|---|---|---|
@@ -98,9 +98,9 @@ Each target attaches an SBOM and the release's provenance statement to what it p
 
 ### The SBOM
 
-An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Keep it in what npm packs: a package with a `files` list names it there. A package with none is refused with `publish-sbom-missing` in the plan, before anything is sent.
+An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Keep it in what npm packs: a package with a `files` list names it there. A package with none publishes without one. Under `supply-chain`, or when `sbom` names a file the package does not hold, it is refused with `publish-sbom-missing` in the plan, before anything is sent.
 
-The OCI and forge targets attach the file `sbom` names. Without one they write an SPDX document from the nearest `package-lock.json` or `pom.xml`, in the member's directory or above it inside the repository, with the hermetic writer the [`generate-sbom`](/chant/components/build-archive/) capability uses. It lists the declared dependencies and not an image's base layers, so an image built with a layer scan (BuildKit's `--sbom`, `syft`) should name that scan's file in `sbom`. The document is dated with the cut's time, so a publish run again writes the same bytes. With neither a declared file nor a lockfile, the target is refused with `publish-sbom-missing`. A file that is not SPDX or CycloneDX JSON is refused with `publish-sbom-invalid`. `sbom: false` publishes without an SBOM.
+The OCI and forge targets attach the file `sbom` names. Without one they write an SPDX document from the nearest `package-lock.json` or `pom.xml`, in the member's directory or above it inside the repository, with the hermetic writer the [`generate-sbom`](/chant/components/build-archive/) capability uses. It lists the declared dependencies and not an image's base layers, so an image built with a layer scan (BuildKit's `--sbom`, `syft`) should name that scan's file in `sbom`. The document is dated with the cut's time, so a publish run again writes the same bytes. With neither a declared file nor a lockfile there is nothing to attach, which only `supply-chain` refuses. A file that is not SPDX or CycloneDX JSON is refused with `publish-sbom-invalid`. `sbom: false` publishes without an SBOM.
 
 ### The provenance statement
 

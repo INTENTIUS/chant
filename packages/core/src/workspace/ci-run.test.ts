@@ -206,7 +206,11 @@ describe("the job as an Op (#4094)", () => {
       expect(ciLoopOptions(args)).toEqual({ gate: "infra", waveGate: "release" });
     }
     const [plan, apply] = prLoopJobs("forgejo", "prod", ciLoopOptions(parseArgs(["ci", "run", "apply", "--env", "prod", "--wave-gate", "release"])));
-    expect(apply!.command).toContain("--require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json");
+    // #4168: no --require-review unless asked for.
+    expect(apply!.command).toContain(" --wave-gate release --resume .chant/pr-resume/pr-apply.json");
+    expect(apply!.command).not.toContain("--require-review");
+    const reviewed = prLoopJobs("forgejo", "prod", ciLoopOptions(parseArgs(["ci", "run", "apply", "--env", "prod", "--wave-gate", "release", "--require-review"])))[1]!;
+    expect(reviewed.command).toContain("--require-review --wave-gate release --resume .chant/pr-resume/pr-apply.json");
     expect(apply!.command).not.toContain("--wave ");
     expect(plan!.command).toContain("--wave-gate release");
     expect(plan!.command).not.toContain("--wave ");
@@ -294,7 +298,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
 
     expect(apply.status).toBe("ok");
     const applyArgs = readFileSync(join(reports, "apply", "pr-apply.args"), "utf-8").trimEnd().split("\n");
-    expect(applyArgs).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--require-review", "--resume", ".chant/pr-resume/pr-apply.json"]);
+    expect(applyArgs).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--resume", ".chant/pr-resume/pr-apply.json"]);
     expect(formatCiRun(apply)).toContain("signed by chant-runner");
   });
 
@@ -746,12 +750,14 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
   // What a GitHub or Forgejo job has in its environment: the forge's run, job and attempt, and the secret.
   const FORGE = { GITHUB_RUN_ID: "4242", GITHUB_RUN_ATTEMPT: "2", GITHUB_JOB: "apply", GITHUB_REPOSITORY: "acme/estate", GITHUB_SERVER_URL: "http://forgejo.localhost" };
 
-  test("the generated job's line parses to the same job, and --in-place, --no-push, --no-require-review and --wave reach it", () => {
-    const [plan, apply] = prLoopJobs("forgejo", "prod", { events: true, reportUrl: "s3://b/p", requireReview: false, waveGate: "release", branch: "trunk" });
+  test("the generated job's line parses to the same job, and --in-place, --no-push, --require-review and --wave reach it", () => {
+    const [plan, apply] = prLoopJobs("forgejo", "prod", { events: true, reportUrl: "s3://b/p", requireReview: true, waveGate: "release", branch: "trunk" });
     expect(plan!.run.command).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge forgejo --wave-gate release --events-json --report-url "s3://b/p"');
     const args = parseArgs(apply!.run.command.replace(/"\$BASE_SHA"/, "b".repeat(40)).replace(/"/g, "").split(" ").slice(1).concat(["--wave", "2"]));
-    expect(args).toMatchObject({ ciInPlace: true, requireReview: false, wave: 2, waveGate: "release", branch: "trunk", eventsJson: true, reportUrl: "s3://b/p" });
-    expect(ciLoopOptions(args)).toEqual({ gate: "pr-apply", branch: "trunk", events: true, reportUrl: "s3://b/p", waveGate: "release", requireReview: false });
+    expect(args).toMatchObject({ ciInPlace: true, requireReview: true, wave: 2, waveGate: "release", branch: "trunk", eventsJson: true, reportUrl: "s3://b/p" });
+    expect(ciLoopOptions(args)).toEqual({ gate: "pr-apply", branch: "trunk", events: true, reportUrl: "s3://b/p", waveGate: "release", requireReview: true });
+    // --no-require-review, which pipelines generated before #4168 pass, is the default now.
+    expect(ciLoopOptions(parseArgs(["ci", "run", "apply", "--no-require-review"]))).toEqual({});
     expect(parseArgs(["ci", "run", "plan", "--no-push"]).noPush).toBe(true);
     // ci run rebuilds pr-apply from those options: the very command the job ran before #4156.
     expect(prLoopJobs("forgejo", "prod", ciLoopOptions(args))[1]!.command).toBe(apply!.command);
@@ -774,7 +780,7 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
     expect(r.report).toBe(join(realpathSync(app), ".chant/pr"));
     expect(r.record.phases.map((p) => p.name)).toEqual(["apply"]);
     const argv = readFileSync(join(app, ".chant/pr/pr-apply.args"), "utf-8").trimEnd().split("\n");
-    expect(argv).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--require-review", "--resume", ".chant/pr-resume/pr-apply.json"]);
+    expect(argv).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--resume", ".chant/pr-resume/pr-apply.json"]);
     // The forge job's whole environment reaches the step, but never the runner key.
     const env = envFile(join(app, ".chant/pr"), "pr-apply");
     expect(env).toMatchObject({ NOT_FOR_JOBS: "leak", GITHUB_RUN_ID: "4242", BASE_SHA: base, GITHUB_SHA: sha });

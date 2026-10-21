@@ -459,6 +459,23 @@ describe("ci.reportUrl (#4160)", () => {
   });
 });
 
+describe("security (#4168)", () => {
+  test("the groups are read in file order, empty when absent, and securityGroupsOf reads them", async () => {
+    const { securityGroupsOf } = await import("./security");
+    expect(parse(base([])).security).toEqual([]);
+    const decl = parse(base([], { security: ["supply-chain", "verified-releases"] }));
+    expect(decl.security).toEqual(["supply-chain", "verified-releases"]);
+    expect([...securityGroupsOf(decl)]).toEqual(["supply-chain", "verified-releases"]);
+    expect(securityGroupsOf(null).size).toBe(0);
+  });
+
+  test("an unknown group, a repeated group and a non-array are refused", () => {
+    for (const security of [["signed"], ["supply-chain", "supply-chain"], "supply-chain"]) {
+      expect(failure(base([], { security })).code).toBe("declaration-invalid");
+    }
+  });
+});
+
 describe("metrics (#4039)", () => {
   test("failureWindowDays is read as written, without x- keys, and the block is null when absent", () => {
     expect(parse(base([])).metrics).toBeNull();

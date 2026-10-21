@@ -151,41 +151,32 @@ describe("chant release cut, publish and list", () => {
         expect(doc.releases[0]).toMatchObject({ releaseDigest: result.release.releaseDigest, label: "v1", environments: [] });
         expect(doc.releases[0].cuts[0]).toMatchObject({ runId: result.cut.runId, runOrigin: { forge: "local" } });
 
-        // #4049: the cut is not signed, so a publish refuses it unless --allow-unsigned.
-        const unsignedPub = chant(dir, ["release", "publish", "v1"]);
-        expect(unsignedPub.code).toBe(1);
-        expect(unsignedPub.stderr).toMatch(/v1 has no signed cut.*\[release-unsigned\]/);
-        expect(unsignedPub.stderr).toContain("pass --allow-unsigned");
-
+        // #4168: the cut is not signed, and with no release gate or verified-releases group a publish takes it quietly.
         // A publish is a dry run without --yes, as a cut is.
-        const dryPub = chant(dir, ["release", "publish", "v1", "--allow-unsigned"]);
+        const dryPub = chant(dir, ["release", "publish", "v1"]);
         expect(dryPub.code, dryPub.stderr).toBe(0);
-        expect(dryPub.stderr).toContain("v1 has no signed cut; publishing it anyway under --allow-unsigned");
+        expect(dryPub.stderr).not.toContain("release-unsigned");
+        expect(dryPub.stderr).not.toContain("no signed cut");
         expect(dryPub.stdout).toContain("What would be published where:\n  nothing: this member declares no publish target (release.publish in chant.config.ts)");
-        expect(dryPub.stderr).toContain("Dry run: nothing was published. Run again with --yes to publish: chant release publish v1 --allow-unsigned --yes");
+        expect(dryPub.stderr).toContain("Dry run: nothing was published. Run again with --yes to publish: chant release publish v1 --yes");
 
-        // Publish from the workstation: the warning comes before anything else is said about publishing.
-        const pub = chant(dir, ["release", "publish", "v1", "--allow-unsigned", "--yes"]);
+        // Publish from the workstation: with no supply-chain group there is no OIDC warning either.
+        const pub = chant(dir, ["release", "publish", "v1", "--yes"]);
         expect(pub.code, pub.stderr).toBe(0);
-        const warning = pub.stderr.indexOf("this publish runs without OIDC, so what it publishes carries no provenance");
-        const nothing = pub.stderr.indexOf("Nothing was published: this member declares no publish target (release.publish in chant.config.ts).");
-        expect(warning).toBeGreaterThan(-1);
-        expect(nothing).toBeGreaterThan(warning);
+        expect(pub.stderr).not.toContain("without OIDC");
+        expect(pub.stderr).toContain("Nothing was published: this member declares no publish target (release.publish in chant.config.ts).");
         expect(pub.stderr).toContain("chant components promote --release v1 --to dev");
 
-        // In GitHub Actions with id-token: write there is no warning.
+        // The --json document records what is missing: no signature and no OIDC provenance.
+        const asJson = chant(dir, ["release", "publish", "v1", "--json"]);
+        expect(asJson.code, asJson.stderr).toBe(0);
+        expect(JSON.parse(asJson.stdout)).toMatchObject({ dryRun: true, label: "v1", signature: { status: "unsigned" }, provenance: { oidc: false }, warnings: [], targets: [], published: [] });
+
+        // In GitHub Actions with id-token: write the provenance is OIDC.
         const oidc = { GITHUB_ACTIONS: "true", ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.example", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "t" };
-        const fromCi = chant(dir, ["release", "publish", "v1", "--allow-unsigned", "--json"], oidc);
+        const fromCi = chant(dir, ["release", "publish", "v1", "--json"], oidc);
         expect(fromCi.code, fromCi.stderr).toBe(0);
-        expect(fromCi.stderr).not.toContain("without OIDC");
-        expect(JSON.parse(fromCi.stdout)).toMatchObject({
-          dryRun: true,
-          label: "v1",
-          provenance: { oidc: true, ci: "github" },
-          warnings: ["v1 has no signed cut; publishing it anyway under --allow-unsigned, so chant release verify v1 will fail for it"],
-          targets: [],
-          published: [],
-        });
+        expect(JSON.parse(fromCi.stdout)).toMatchObject({ dryRun: true, label: "v1", provenance: { oidc: true, ci: "github" }, warnings: [], targets: [], published: [] });
 
         const unknown = chant(dir, ["release", "publish", "v9"]);
         expect(unknown.code).toBe(1);

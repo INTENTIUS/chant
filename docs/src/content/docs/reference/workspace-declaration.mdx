@@ -64,6 +64,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.108.0. |
 | `retention` | no | How long `chant lifecycle gc` keeps stored change sets, releases and run event files. See [Retention](#retention). It was added in chant 0.124.29. |
 | `metrics` | no | The failure window `chant workspace metrics` counts a failed deploy in, new in chant 0.124.29. See [Metrics](#metrics). |
+| `security` | no | The security groups the workspace opts into, new in chant 0.124.33. See [Security](#security). |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. [`status --json`](/chant/cli/workspace-status/#output) and [`ls --json`](/chant/cli/workspace-ls/#output) print them back, as written, on the object of their output that the declaration holds them on ([#3595](https://github.com/INTENTIUS/chant/issues/3595)), so a tool reads what it wrote without parsing the file. |
@@ -393,6 +394,24 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 ```
 
 `failureWindowDays` is the number of days after a deploy in which a revocation of the commit it deployed, or a rollback of the environment from it, counts the deploy as failed. It is a whole number from 1 to 365, and the default is 7. `workspace metrics` takes it from the declaration in the working tree. Older chant releases refuse the block, which is why its `minReader` floor is `0.124.29`.
+
+## Security
+
+Every security feature is opt-in ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With no `security` field, chant stays quiet about a feature the workspace has not turned on: no refusal and no warning. `security` lists groups, each turning on the features one use case needs:
+
+```json
+"security": ["verified-releases", "supply-chain"]
+```
+
+| Group | What it turns on so far |
+|---|---|
+| `verified-releases` | [`chant release publish`](/chant/cli/release/#release-publish) refuses a release none of whose cuts carries a signature that verifies against `.chant/allowed_signers` at base, unless `--allow-unsigned`. |
+| `supply-chain` | A publish with no OIDC token warns on stderr, and a [publish target](/chant/reference/publish-targets/#sboms-and-provenance) with no SBOM source is refused with `publish-sbom-missing`. |
+| `review-rules` | `chant build --pr-loop` writes an apply job that passes `--require-review`, so an approval counts only from someone who approved the pull request on the forge and never from its author. |
+| `who-ran-it` | Accepted. Nothing reads it yet. |
+| `isolated-runners` | Accepted. Nothing reads it yet. |
+
+Each feature also turns on alone: a `release` gate in [`identity.gates`](#identity), `--require-provenance`, `--require-review`. A group is read at base, as the release gate is. Each name may appear once, and an unknown name is refused. A chant older than 0.124.33 refuses `security`, so set `minReader` to at least that version when you use it.
 
 ## Diagrams
 

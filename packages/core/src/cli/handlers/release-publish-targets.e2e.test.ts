@@ -199,10 +199,10 @@ describe("chant release publish with targets", () => {
       }
       expect(pub.stderr).toContain("npm notice token [redacted]");
 
-      // From a workstation the publish warns that it carries no provenance, and the plan offers none.
+      // From a workstation the plan offers no provenance, and with no supply-chain group says nothing about it (#4168).
       const asJson = await chant(dir, ["release", "publish", "v1", "--json"], { ...path, ...secrets });
       expect(asJson.code, asJson.stderr).toBe(0);
-      expect(asJson.stderr).toContain("this publish runs without OIDC");
+      expect(asJson.stderr).not.toContain("this publish runs without OIDC");
       const doc = JSON.parse(asJson.stdout);
       expect(doc).toMatchObject({ dryRun: true, label: "v1", provenance: { oidc: false } });
       expect(doc.targets.map((t: { kind: string }) => t.kind)).toEqual(["npm", "oci"]);

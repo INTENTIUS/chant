@@ -57,7 +57,7 @@ describe("the GitLab merge-request pipeline", () => {
       ...PR_LOOP_SETUP,'chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge gitlab']);
     expect(doc.apply.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
     expect(doc.apply.variables).toEqual({ BASE_SHA: "$CI_COMMIT_BEFORE_SHA" });
-    // #4156: ci run builds pr-apply with --require-review, and GitLab hands CHANT_RUNNER_KEY to the job as a CI/CD variable when it has one.
+    // #4156: ci run builds pr-apply (with no --require-review since #4168), and GitLab hands CHANT_RUNNER_KEY to the job as a CI/CD variable when it has one.
     expect(doc.apply.script.at(-1)).toBe('chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab');
     expect(result.yaml).not.toContain("CHANT_RUNNER_KEY");
     expect(doc.apply.resource_group).toBe("chant-apply-prod");

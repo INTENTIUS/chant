@@ -1,8 +1,11 @@
 /**
  * #4027: `chant release publish`'s contract. It refuses a release no cut
- * names, a revoked one, and one with no verified signature (#4049; under
- * identity.gates.release even with --allow-unsigned); it warns when the run has no OIDC token; and with no
- * publish target declared it has nothing to publish. With a target (#4047)
+ * names, a revoked one, and under identity.gates.release (even with
+ * --allow-unsigned) or the verified-releases security group (#4049, #4168)
+ * one with no verified signature; under supply-chain it warns when the run
+ * has no OIDC token. With no group a missing signature or OIDC token says
+ * nothing (#4168). With no publish target declared it has nothing to
+ * publish. With a target (#4047)
  * it reads them from release.publish and refuses a checkout that is not the
  * release's commit with a clean tree.
  */
@@ -76,26 +79,37 @@ describe("provenance", () => {
 });
 
 describe("chant release publish", () => {
-  test("warns on a workstation that what it publishes carries no provenance, and has no target to publish to", async () => {
+  test("publishes an unsigned release on a workstation quietly, records it unsigned, and has no target to publish to (#4168)", async () => {
     const { r } = setup(null);
     await cut(r, "v1");
-    const plan = await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION, allowUnsigned: true });
+    const plan = await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION });
     expect(refusal(plan)).toBeNull();
     const p = plan as PublishPlan;
     expect(p.label).toBe("v1");
     expect(p.signature.status).toBe("unsigned");
     expect(p.provenance.oidc).toBe(false);
+    expect(p.warning).toBeNull();
+    expect(p.signatureWarning).toBeNull();
+    expect(p.requireSbom).toBe(false);
+    expect(p.targets).toEqual([]);
+    expect(p.releaseTag).toBe("release/v1");
+  });
+
+  test("under supply-chain, warns on a workstation that what it publishes carries no provenance, and not in CI with OIDC (#4168)", async () => {
+    const { r } = setup({ security: ["supply-chain"] });
+    await cut(r, "v1");
+    const plan = await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION });
+    expect(refusal(plan)).toBeNull();
+    const p = plan as PublishPlan;
+    expect(p.requireSbom).toBe(true);
     expect(p.warning).toBe(
       "this publish runs without OIDC, so what it publishes carries no provenance: this run is not in CI, and a workstation has no OIDC token. Publish from CI to get provenance.",
     );
-    expect(p.targets).toEqual([]);
-    expect(p.releaseTag).toBe("release/v1");
 
     const inCi = (await preparePublish({
       cwd: r.dir,
       ref: p.release.releaseDigest,
       env: { GITHUB_ACTIONS: "true", ACTIONS_ID_TOKEN_REQUEST_URL: "https://x", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "t" },
-      allowUnsigned: true,
     })) as PublishPlan;
     expect(inCi.warning).toBeNull();
     expect(inCi.label).toBe("v1");
@@ -146,12 +160,14 @@ describe("chant release publish", () => {
     expect(refusal(await preparePublish({ cwd: r.dir, ref: "v2", env: WORKSTATION, allowUnsigned: true }))?.code).toBe("release-signature-unverified");
   });
 
-  test("refuses an unsigned release with no release gate, and publishes it under --allow-unsigned with a warning", async () => {
-    const { r } = setup(null);
+  test("under verified-releases, refuses an unsigned release with no release gate, and publishes it under --allow-unsigned with a warning", async () => {
+    const { r } = setup({ security: ["verified-releases"] });
     await cut(r, "v1");
     const refused = refusal(await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION }));
     expect(refused?.code).toBe("release-unsigned");
-    expect(refused?.message).toBe("v1 has no signed cut, and chant release publish publishes only a release signed by a key in .chant/allowed_signers");
+    expect(refused?.message).toBe(
+      "v1 has no signed cut, and the workspace opts into verified-releases (security in chant.workspace.json), which publishes only a release signed by a key in .chant/allowed_signers",
+    );
     expect(refused?.fix).toContain("chant release cut v1 --sign --yes");
     expect(refused?.fix).toContain("--allow-unsigned");
 
@@ -161,8 +177,12 @@ describe("chant release publish", () => {
     expect(allowed.cut).toMatchObject({ actor: "alice", label: "v1", signature: null });
   });
 
-  test.skipIf(!hasSshKeygen)("with no release gate, publishes a release signed by a listed key and refuses one signed by a key the signers file does not list", async () => {
-    const { r, alice, bob } = setup(null, { signers: true });
+  test.skipIf(!hasSshKeygen)("under verified-releases with no release gate, publishes a release signed by a listed key and refuses one signed by a key the signers file does not list", async () => {
+    const { r, alice, bob } = setup({ security: ["verified-releases"] });
+    // Only alice is a signer.
+    r.write(".chant/allowed_signers", `alice ${alice.pub}\n`);
+    const head = r.commit("only alice signs");
+    r.git(["tag", `ci/green/${head}`]);
     await cut(r, "v1", alice);
     const signed = (await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION })) as PublishPlan;
     expect(refusal(signed)).toBeNull();
@@ -178,6 +198,16 @@ describe("chant release publish", () => {
     const unlisted = refusal(await preparePublish({ cwd: r.dir, ref: "v2", env: WORKSTATION }));
     expect(unlisted?.code).toBe("release-signature-unverified");
     expect(unlisted?.message).toMatch(/bob has no key in \.chant\/allowed_signers at base/);
+  });
+
+  test.skipIf(!hasSshKeygen)("with no security group, publishes a release whose signature does not verify, records it unverified, and says nothing (#4168)", async () => {
+    const { r, bob } = setup(null, { signers: true });
+    await cut(r, "v1", bob, "bob");
+    const p = (await preparePublish({ cwd: r.dir, ref: "v1", env: WORKSTATION })) as PublishPlan;
+    expect(refusal(p)).toBeNull();
+    expect(p.signature.status).toBe("unverified");
+    expect(p.signatureWarning).toBeNull();
+    expect(p.warning).toBeNull();
   });
 
   test("--require-provenance refuses a run with no OIDC token and passes one in CI", async () => {
