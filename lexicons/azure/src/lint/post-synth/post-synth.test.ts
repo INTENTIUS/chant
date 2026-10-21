@@ -33,7 +33,7 @@ describe("findArmResourceRefs", () => {
     const refs = findArmResourceRefs({
       subnet: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'mySubnet')]",
     });
-    expect(refs.has("mySubnet")).toBe(true);
+    expect(refs.has("myVnet/mySubnet")).toBe(true);
   });
 
   test("extracts reference targets", () => {

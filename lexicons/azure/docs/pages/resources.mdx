@@ -94,6 +94,14 @@ export const storage = new StorageAccount({
 });
 ```
 
+## properties
+
+Everything that isn't a resource-level field goes under the template's `properties`. Pass the fields flat, or pass ARM's own `properties` object as the generated types describe it; either way the template has one `properties` level.
+
+## Names and references
+
+A resource's `name` prop is its ARM name, and the export name stands in only when there is no `name`. A reference to another resource uses the ARM name: `.id` becomes `[resourceId('<type>', '<name>')]`, any other attribute becomes `[reference('<name>').<attribute>]`, and `dependsOn` is inferred from both. A child resource named `vnet/apps` gets one `resourceId` argument per segment.
+
 ## apiVersion
 
 Every ARM resource requires an `apiVersion`. The serializer fills in the latest stable version, so you rarely set it.

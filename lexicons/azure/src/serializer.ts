@@ -171,19 +171,51 @@ export function getApiVersion(resourceType: string): string {
 }
 
 /**
+ * The ARM name of a chant export, as the arguments an ARM function takes
+ * (#4183). A resource's `name` prop is its ARM name, and the export name is
+ * used only when it has none. A literal name is quoted, one argument per
+ * segment of a child's `parent/child` name; a bracket expression such as
+ * `[parameters('n')]` is passed unwrapped.
+ */
+function armNameArgs(entity: Declarable | undefined, exportName: string): { args: string; literal: string | null } {
+  const props = entity && isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null
+    ? entity.props as Record<string, unknown>
+    : undefined;
+  const name = typeof props?.name === "string" ? props.name : exportName;
+  if (name.startsWith("[") && name.endsWith("]")) return { args: name.slice(1, -1), literal: null };
+  return { args: name.split("/").map((seg) => `'${seg}'`).join(", "), literal: name };
+}
+
+function entityNamed(entityNames: Map<Declarable, string>, name: string): Declarable | undefined {
+  return [...entityNames.entries()].find(([, n]) => n === name)?.[0];
+}
+
+/** `resourceId(...)` for an export: the type and its ARM name. */
+function armResourceId(entityNames: Map<Declarable, string>, name: string): string {
+  const entity = entityNamed(entityNames, name);
+  const { args } = armNameArgs(entity, name);
+  return entity ? `resourceId('${entity.entityType}', ${args})` : `resourceId(${args})`;
+}
+
+/**
+ * An attribute of an export. `id` is `resourceId()`, since `reference()`
+ * returns the resource's properties and they have no `id`; anything else
+ * reads `reference()` by the ARM name.
+ */
+export function armAttrExpression(entityNames: Map<Declarable, string>, name: string, attr: string): string {
+  if (attr === "id") return `[${armResourceId(entityNames, name)}]`;
+  const { args, literal } = armNameArgs(entityNamed(entityNames, name), name);
+  const target = literal !== null && !literal.includes("/") ? args : armResourceId(entityNames, name);
+  return `[reference(${target}).${attr}]`;
+}
+
+/**
  * ARM-specific visitor for the generic serializer walker.
  */
 function armVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
   return {
-    attrRef: (name, attr) => `[reference('${name}').${attr}]`,
-    resourceRef: (name) => {
-      // Look up the resource type from entityNames
-      const entity = [...entityNames.entries()].find(([, n]) => n === name)?.[0];
-      if (entity) {
-        return `[resourceId('${entity.entityType}', '${name}')]`;
-      }
-      return `[resourceId('${name}')]`;
-    },
+    attrRef: (name, attr) => armAttrExpression(entityNames, name, attr),
+    resourceRef: (name) => `[${armResourceId(entityNames, name)}]`,
     propertyDeclarable: (entity, walk) => {
       if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
@@ -203,6 +235,12 @@ function armVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
 /**
  * Convert a value to ARM-compatible JSON using the generic walker.
  */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 function toArmValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
   return walkValue(value, entityNames, armVisitor(entityNames));
 }
@@ -330,6 +368,12 @@ function serializeToTemplate(
             (resource as unknown as Record<string, unknown>)[key] = toArmValue(value, entityNames);
           } else if (key === "name") {
             resource.name = toArmValue(value, entityNames) as string;
+          } else if (key === "properties" && isPlainObject(value)) {
+            // The generated types take ARM's own `properties` object, so
+            // merge it, not nest it (#4183).
+            for (const [inner, innerValue] of Object.entries(value)) {
+              if (innerValue !== undefined) armProperties[inner] = toArmValue(innerValue, entityNames);
+            }
           } else {
             armProperties[key] = toArmValue(value, entityNames);
           }
@@ -356,14 +400,9 @@ function serializeToTemplate(
       if (attrs?.DependsOn !== undefined) {
         const resolved = resolveDependsOn(attrs.DependsOn, entityNames, name);
         if (resolved.length > 0) {
-          resource.dependsOn = resolved.map((dep) => {
-            // Convert to resourceId expression
-            const depEntity = [...entityNames.entries()].find(([, n]) => n === dep)?.[0];
-            if (depEntity) {
-              return `[resourceId('${depEntity.entityType}', '${dep}')]`;
-            }
-            return dep;
-          });
+          resource.dependsOn = resolved.map((dep) =>
+            entityNamed(entityNames, dep) ? `[${armResourceId(entityNames, dep)}]` : dep,
+          );
         }
       }
 
@@ -424,7 +463,7 @@ function serializeToTemplate(
         // Find the resource to build the resourceId expression
         const depResource = template.resources.find((r) => r.name === refName);
         if (depResource) {
-          const depExpr = `[resourceId('${depResource.type}', '${refName}')]`;
+          const depExpr = `[resourceId('${depResource.type}', ${refName.split("/").map((seg) => `'${seg}'`).join(", ")})]`;
           if (!existing.has(depExpr)) {
             existing.add(depExpr);
           }
@@ -450,7 +489,7 @@ function serializeToTemplate(
         if (logicalName) {
           template.outputs[name] = {
             type: "string",
-            value: `[reference('${logicalName}').${ref.attribute}]`,
+            value: armAttrExpression(entityNames, logicalName, ref.attribute),
           };
         }
       }
