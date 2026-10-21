@@ -200,8 +200,6 @@ The note and the report carry the same message. Read the new plan in `.chant/pr/
 
 The target can also move after that check, while the apply runs. A step that finds it moved applies nothing for its member and fails it: a `cfn-deploy` change set, a `kubectl-apply` dry run, or a choudoufu root's apply that differs from the approved plan. The apply then exits 3 as well, and the members before it stay applied. Plain terraform and tofu refuse a stale plan file too, but chant does not tell that error from others, so it exits 1.
 
-A component whose steps have no `plan`, such as a `helm-upgrade`, is bound by the files it deploys from as well as its declaration ([#4155](https://github.com/INTENTIUS/chant/issues/4155)). A chart edited after the approval moves the digest the same way, and so does a function's source beside a `cfn-deploy`. [Plan previews](/chant/components/plan-previews/#a-capability-without-plan) lists the fields read and the steps the digest can't bind.
-
 ## What each run keeps
 
 Both jobs keep `.chant/pr` as an artifact:

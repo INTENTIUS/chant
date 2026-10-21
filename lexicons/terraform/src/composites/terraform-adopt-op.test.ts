@@ -176,12 +176,6 @@ describe("TerraformAdoptOp compensation (#2105)", () => {
     expect((op.onFailure![0].steps[0] as ActivityStep).args?.cmd).toBe("./untag.sh");
   });
 
-  test("a supplied image runs the rollback in that container (#4015)", () => {
-    const image = `alpine:3.20@sha256:${"b".repeat(64)}`;
-    const op = props({ ...base, compensate: { command: "./untag.sh", image } });
-    expect((op.onFailure![0].steps[0] as ActivityStep).args).toEqual({ cmd: "./untag.sh", image });
-  });
-
   test("compensate: false and omitting it both leave no onFailure", () => {
     expect(props(base).onFailure).toBeUndefined();
     expect(props({ ...base, compensate: false }).onFailure).toBeUndefined();

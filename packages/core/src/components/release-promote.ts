@@ -11,24 +11,14 @@
  * under `.chant/release-templates/<digest>/` in the member's directory and the
  * step reads them from there. The path is relative and fixed by the digest,
  * so a gate approval bound to the promote's plan still matches on a re-run.
- *
- * A release cut since #4155 (a target with `trees`) records every local path
- * a deploy step names (`recordedInputRefs`), directories file by file. A
- * promote points each of them at the recorded copy: a directory is written
- * under `.chant/release-templates/<digest>/<name>/`, its digest taken over its
- * files the way a gate's directory digest is (`./deploy-inputs.ts`). A path
- * outside the template fields that the release does not record, such as a
- * chart named from a repository, is left as written. A target cut before
- * #4155 is pinned as it was then: template fields only, other paths read from
- * the checkout.
  */
 
 import { mkdirSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { contentDigest } from "../content-digest";
 import type { DriverComponent, DriverGate, DriverPhase, DriverStep } from "./driver";
-import { recordedFields, recordedInputRefs, TEMPLATE_FIELDS, templateRefs, type RecordedInputRef } from "./release-compile";
-import { templateBytesDigest, type Release, type ReleaseTarget } from "../lifecycle/release-store";
-import { computePlanDigest } from "../lifecycle/plan-digest";
+import { TEMPLATE_FIELDS, templateRefs } from "./release-compile";
+import type { Release, ReleaseTarget } from "../lifecycle/release-store";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
 import type { BuildArchiveManifest } from "./verbs/build-archive";
 
@@ -39,13 +29,8 @@ export const RELEASE_TEMPLATES_DIR = ".chant/release-templates";
 export interface PinnedTemplate {
   /** Relative to the member's directory. */
   path: string;
-  /** The text, or the base64 of the bytes under `encoding: "base64"`. */
   content: string;
-  encoding?: "base64";
 }
-
-/** Reads a recorded template's stored copy by digest: its text, or its base64 under `base64`. */
-export type TemplateReader = (digest: string, encoding?: "base64") => Promise<string | null>;
 
 /** The release's target for `env`, or an error naming the environments it has. */
 export function targetFor(release: Release, env: string): { target: ReleaseTarget } | { error: string } {
@@ -80,45 +65,37 @@ export async function pinReleaseTemplates(
   components: readonly DriverComponent[],
   release: Release,
   target: ReleaseTarget,
-  readTemplate: TemplateReader,
+  readTemplate: (digest: string) => Promise<string | null>,
 ): Promise<{ components: DriverComponent[]; files: PinnedTemplate[] } | { errors: string[] }> {
   const errors: string[] = [];
   const files: PinnedTemplate[] = [];
   const out: DriverComponent[] = [];
-  // #4155: a target with `trees` records every deploy input; one without was cut before and records template fields only.
-  const full = target.trees !== undefined;
   for (const component of components) {
     const replace = new Map<string, string>();
-    const refs: RecordedInputRef[] = full ? recordedInputRefs(component) : templateRefs(component).map((r) => ({ ...r, required: true }));
-    for (const ref of refs) {
+    for (const ref of templateRefs(component)) {
       if (replace.has(ref.value)) continue;
-      const dir = ref.path.replace(/\/+$/, "");
-      const tree = full ? target.trees!.find((t) => t.component === component.name && t.path === dir) : undefined;
-      if (tree) {
-        const pinned = await pinTree(component.name, tree.path, target, readTemplate);
-        if ("errors" in pinned) errors.push(...pinned.errors);
-        else {
-          files.push(...pinned.files);
-          replace.set(ref.value, pinned.path);
-        }
-        continue;
-      }
       const recorded = target.templates.find((t) => t.component === component.name && t.path === ref.path);
       if (!recorded) {
-        if (!ref.required) continue;
         errors.push(
           `component "${component.name}" reads ${ref.field} "${ref.value}", which release ${release.releaseDigest} does not record for "${target.env}"; ` +
             `this checkout's deploy is not the one the release was compiled from (commit ${release.commit.slice(0, 12)})`,
         );
         continue;
       }
-      const read = await readChecked(component.name, ref.path, recorded, target, readTemplate);
-      if ("error" in read) {
-        errors.push(read.error);
+      const content = await readTemplate(recorded.digest);
+      if (content === null) {
+        errors.push(`component "${component.name}": the bytes of template "${ref.path}" (${recorded.digest}) are not on the chant/lifecycle branch; fetch it and try again`);
+        continue;
+      }
+      const got = contentDigest(content);
+      if (got !== recorded.digest) {
+        errors.push(
+          `component "${component.name}": template "${ref.path}" hashes to ${got}, but the release's target for "${target.env}" records ${recorded.digest}; refusing to deploy it`,
+        );
         continue;
       }
       const path = join(RELEASE_TEMPLATES_DIR, recorded.digest.replace(/:/g, "_"), basename(ref.path));
-      files.push({ path, content: read.content, ...(recorded.encoding ? { encoding: recorded.encoding } : {}) });
+      files.push({ path, content });
       replace.set(ref.value, path);
     }
     const rewrite = (phase: DriverPhase): DriverPhase => ({
@@ -127,7 +104,7 @@ export async function pinReleaseTemplates(
         if (isPhase(step)) return rewrite(step);
         if (isGate(step)) return step;
         const next: DriverStep = { ...step };
-        for (const field of full ? recordedFields(step.kind) : TEMPLATE_FIELDS) {
+        for (const field of TEMPLATE_FIELDS) {
           const v = next[field];
           if (typeof v === "string" && replace.has(v)) next[field] = replace.get(v);
           else if (Array.isArray(v)) next[field] = v.map((x) => (typeof x === "string" && replace.has(x) ? replace.get(x) : x));
@@ -138,51 +115,6 @@ export async function pinReleaseTemplates(
     out.push({ ...component, deploy: component.deploy.map(rewrite) });
   }
   return errors.length > 0 ? { errors } : { components: out, files };
-}
-
-/** One recorded template's stored copy, checked against its digest. */
-async function readChecked(
-  component: string | null,
-  path: string,
-  recorded: ReleaseTarget["templates"][number],
-  target: ReleaseTarget,
-  readTemplate: TemplateReader,
-): Promise<{ content: string } | { error: string }> {
-  const who = component === null ? "" : `component "${component}": `;
-  const content = await readTemplate(recorded.digest, recorded.encoding);
-  if (content === null) return { error: `${who}the bytes of template "${path}" (${recorded.digest}) are not on the chant/lifecycle branch; fetch it and try again` };
-  const got = templateBytesDigest(content, recorded.encoding);
-  if (got !== recorded.digest) {
-    return { error: `${who}template "${path}" hashes to ${got}, but the release's target for "${target.env}" records ${recorded.digest}; refusing to deploy it` };
-  }
-  return { content };
-}
-
-/**
- * A recorded directory's files, under `.chant/release-templates/<digest>/<name>/`
- * (#4155). The digest is taken over the files' paths from the directory and
- * their bytes, as a gate's directory digest is, so the path names the tree.
- */
-async function pinTree(
-  component: string,
-  dir: string,
-  target: ReleaseTarget,
-  readTemplate: TemplateReader,
-): Promise<{ path: string; files: PinnedTemplate[] } | { errors: string[] }> {
-  const prefix = `${dir}/`;
-  const entries = target.templates.filter((t) => t.component === component && t.path.startsWith(prefix));
-  const errors: string[] = [];
-  const read: Array<{ rel: string; content: string; encoding?: "base64"; digest: string }> = [];
-  for (const e of entries) {
-    const got = await readChecked(component, e.path, e, target, readTemplate);
-    if ("error" in got) errors.push(got.error);
-    else read.push({ rel: e.path.slice(prefix.length), content: got.content, digest: e.digest, ...(e.encoding ? { encoding: e.encoding } : {}) });
-  }
-  if (errors.length > 0) return { errors };
-  read.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
-  const digest = computePlanDigest("directory", read.map(({ rel, digest }) => ({ path: rel, digest })));
-  const path = join(RELEASE_TEMPLATES_DIR, digest.replace(/:/g, "_"), basename(dir));
-  return { path, files: read.map((r) => ({ path: join(path, r.rel), content: r.content, ...(r.encoding ? { encoding: r.encoding } : {}) })) };
 }
 
 /**
@@ -197,7 +129,7 @@ async function pinTree(
 export async function targetFiles(
   release: Release,
   target: ReleaseTarget,
-  readTemplate: TemplateReader,
+  readTemplate: (digest: string) => Promise<string | null>,
 ): Promise<{ files: PinnedTemplate[] } | { errors: string[] }> {
   const errors: string[] = [];
   const files: PinnedTemplate[] = [];
@@ -207,12 +139,12 @@ export async function targetFiles(
       errors.push(`${who}template "${t.path}" is not a path inside the member's directory; refusing to write it`);
       continue;
     }
-    const content = await readTemplate(t.digest, t.encoding);
+    const content = await readTemplate(t.digest);
     if (content === null) {
       errors.push(`${who}the bytes of template "${t.path}" (${t.digest}) are not on the chant/lifecycle branch; fetch it and try again`);
       continue;
     }
-    const got = templateBytesDigest(content, t.encoding);
+    const got = contentDigest(content);
     if (got !== t.digest) {
       errors.push(`${who}template "${t.path}" hashes to ${got}, but release ${release.releaseDigest} records ${t.digest} for "${target.env}"; refusing to write it`);
       continue;
@@ -222,7 +154,7 @@ export async function targetFiles(
       if (same.content !== content) errors.push(`two components record different bytes at "${t.path}" for "${target.env}", so they can't both be written there`);
       continue;
     }
-    files.push({ path: t.path, content, ...(t.encoding ? { encoding: t.encoding } : {}) });
+    files.push({ path: t.path, content });
   }
   return errors.length > 0 ? { errors } : { files };
 }
@@ -232,7 +164,7 @@ export function writePinnedTemplates(dir: string, files: readonly PinnedTemplate
   for (const f of files) {
     const full = join(dir, f.path);
     mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, f.encoding === "base64" ? Buffer.from(f.content, "base64") : f.content);
+    writeFileSync(full, f.content);
   }
 }
 
@@ -243,9 +175,7 @@ export function writePinnedTemplates(dir: string, files: readonly PinnedTemplate
  * again from the release.
  */
 export function removePinnedTemplates(dir: string, files: readonly PinnedTemplate[]): void {
-  // Each file sits under `.chant/release-templates/<digest>/`, a recorded tree's deeper; that digest directory goes.
-  const prefix = RELEASE_TEMPLATES_DIR.split("/").length;
-  for (const f of files) rmSync(join(dir, ...f.path.split(/[\\/]/).slice(0, prefix + 1)), { recursive: true, force: true });
+  for (const f of files) rmSync(dirname(join(dir, f.path)), { recursive: true, force: true });
   const root = join(dir, RELEASE_TEMPLATES_DIR);
   try {
     if (readdirSync(root).length === 0) rmdirSync(root);

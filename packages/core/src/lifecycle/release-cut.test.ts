@@ -20,7 +20,6 @@ import {
   readReleaseTemplate,
   ReleaseLabelError,
   resolveRelease,
-  templateBytesDigest,
   verifyReleaseDigest,
   type ReleaseArtifact,
 } from "./release-store";
@@ -115,14 +114,6 @@ describe("the release digest", () => {
     expect(computeReleaseDigest({ ...subject, member: "api" })).not.toBe(digest);
   });
 
-  test("a target without trees or encodings hashes as before #4155; trees and an encoding are in the digest", () => {
-    const digest = computeReleaseDigest(subject);
-    const t = subject.targets[0];
-    expect(computeReleaseDigest({ ...subject, targets: [{ ...t, trees: [] }] })).not.toBe(digest);
-    expect(computeReleaseDigest({ ...subject, targets: [{ ...t, trees: [{ component: "api", path: "chart" }] }] })).not.toBe(computeReleaseDigest({ ...subject, targets: [{ ...t, trees: [] }] }));
-    expect(computeReleaseDigest({ ...subject, targets: [{ ...t, templates: [{ ...t.templates[0], encoding: "base64" as const }] }] })).not.toBe(digest);
-  });
-
   test("verifyReleaseDigest catches a release whose content no longer matches its digest", () => {
     const release = makeRelease(subject);
     expect(verifyReleaseDigest(release)).toBe(true);
@@ -131,38 +122,6 @@ describe("the release digest", () => {
 });
 
 describe("cutRelease", () => {
-  test("records a directory's files and a file that is not UTF-8, which read back by digest (#4155)", async () => {
-    await withTestDir(async (dir) => {
-      const sha = initRepo(dir);
-      green(dir, sha);
-      const tgz = Buffer.from([0x1f, 0x8b, 0xff]).toString("base64");
-      const base = fixtureCompiler();
-      const compiler: TargetCompiler = {
-        ...base,
-        async compile(env) {
-          const t = await base.compile(env);
-          return {
-            ...t,
-            templates: [
-              ...t.templates,
-              { component: "api", path: "chart/Chart.yaml", content: "name: api\n" },
-              { component: "api", path: "chart/charts/dep.tgz", content: tgz, encoding: "base64" },
-            ],
-            trees: [{ component: "api", path: "chart" }],
-          };
-        },
-      };
-      const { release } = await cut(dir, compiler, null);
-      const prod = release.targets.find((t) => t.env === "prod")!;
-      expect(prod.trees).toEqual([{ component: "api", path: "chart" }]);
-      const bin = prod.templates.find((t) => t.path === "chart/charts/dep.tgz")!;
-      expect(bin).toMatchObject({ encoding: "base64", digest: templateBytesDigest(tgz, "base64") });
-      expect(await readReleaseTemplate(bin.digest, { cwd: dir }, "base64")).toBe(tgz);
-      expect(await readReleaseTemplate(bin.digest, { cwd: dir })).toBeNull();
-      expect((await readRelease(release.releaseDigest, { cwd: dir }))?.targets.find((t) => t.env === "prod")?.trees).toEqual([{ component: "api", path: "chart" }]);
-    });
-  });
-
   test("cuts a release from a green commit and stores it apart from the deploy records", async () => {
     await withTestDir(async (dir) => {
       const sha = initRepo(dir);

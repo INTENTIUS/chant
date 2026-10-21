@@ -106,6 +106,13 @@ export async function runCiTick(ctx: CommandContext): Promise<number> {
     // The forge is made only when the source is check runs, so a tick from chant runs needs no forge token.
     const forge = () => ciForgeFromEnv(ctx.args.forge ?? "github");
     const runnerKey = ctx.args.key !== undefined ? readFileSync(resolve(ctx.args.key), "utf-8") : process.env[RUNNER_KEY_ENV] || undefined;
+    // #4168: under who-ran-it every tag the tick makes is signed, so a tick without a key makes none.
+    if (runnerKey === undefined && ctx.args.dryRun !== true) {
+      const { securityGroupsAt } = await import("./security");
+      if (securityGroupsAt(process.cwd()).has("who-ran-it")) {
+        throw new Error(`the workspace opts into who-ran-it, so the tick signs every tag it makes and needs a runner key; pass --key <runner key.pem> or set ${RUNNER_KEY_ENV}`);
+      }
+    }
     const result = await ciTick({ cwd: process.cwd(), forge, dryRun: ctx.args.dryRun === true, ...(source ? { source } : {}), ...(runnerKey !== undefined ? { runnerKey } : {}) });
     console.log(formatTick(result, ctx.args.dryRun === true));
     return 0;
@@ -165,8 +172,9 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     if (push && "appIdVar" in push) parts.push("--app-id-var", push.appIdVar, "--app-key-secret", push.appKeySecret);
     const runnerKeySecret = ctx.args.ciRunnerKeySecret;
     if (runnerKeySecret) parts.push("--runner-key-secret", runnerKeySecret);
-    if (green.signedSince && !runnerKeySecret) {
-      console.error(`warning: ci.green.signedSince is set, so the tick needs a runner key; pass --runner-key-secret <NAME> naming the repository secret that holds it, or every tick will fail`);
+    const { securityGroupsAt } = await import("./security");
+    if ((green.signedSince || securityGroupsAt(root).has("who-ran-it")) && !runnerKeySecret) {
+      console.error(`warning: ci.green.signedSince is set or the workspace opts into who-ran-it, so the tick needs a runner key; pass --runner-key-secret <NAME> naming the repository secret that holds it, or every tick will fail`);
     }
     const command = parts.map(shellArg).join(" ");
     const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";

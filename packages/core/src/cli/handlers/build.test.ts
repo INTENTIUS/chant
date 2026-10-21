@@ -173,6 +173,11 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
       declare({ security: ["review-rules"] });
       expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(0);
       expect(generateComponentsPipelineMock.mock.calls[2][2].prLoop).toEqual({ requireReview: true });
+
+      // #4168 step 7: a member's own group counts, and isolated-runners asks for --require-runner-start.
+      writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "acme", schema: 1, members: [{ name: "app", dir: "app", kind: "chant", because: "the app", security: ["isolated-runners"] }] }));
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[3][2].prLoop).toEqual({ requireRunnerStart: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
       vi.restoreAllMocks();

@@ -19,6 +19,13 @@ import { forgePrincipalOf } from "../../pr-forge";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 
+/** The security groups pr-apply reads from the declaration (#4168); none unless a test sets them. */
+let groups: string[] = [];
+vi.mock("../../workspace/security", async (original) => ({
+  ...(await original<typeof import("../../workspace/security")>()),
+  securityGroupsAt: () => new Set(groups),
+}));
+
 vi.mock("../../components/changed-files", () => ({
   resolveCommit: async () => HEAD,
   resolveMergeBase: async () => BASE,
@@ -126,6 +133,7 @@ beforeEach(async () => {
   failing.clear();
   refusal.clear();
   onRun = () => {};
+  groups = [];
   gateLedger = memoryGateLedgerPort();
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
   vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.map(String).join(" ")); });
@@ -345,6 +353,12 @@ describe("--events-json beside --json", () => {
   });
 });
 
+test("under the review-rules security group pr-apply needs --forge, since it reads the pull request's reviews (#4168)", async () => {
+  groups = ["review-rules"];
+  expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(1);
+  expect(errors.join("\n")).toContain("the workspace opts into review-rules");
+});
+
 describe("--require-review: whoever wrote the change never counts (#4000)", () => {
   type Kind = "github" | "forgejo" | "gitlab";
   const ENV: Record<Kind, Record<string, string>> = {
@@ -437,6 +451,14 @@ describe("--require-review: whoever wrote the change never counts (#4000)", () =
         const report = await applyReport();
         expect(report).toMatchObject({ status: "refused", refusal: "author-approved" });
         expect(report.message).toContain(`approved by ${forgePrincipalOf(kind, HOST[kind], "dave")}, who wrote #12`);
+      });
+
+      test("under the review-rules security group the author's approval is refused without --require-review (#4168)", async () => {
+        serve(kind, "carol");
+        await approveAs(kind, "carol");
+        groups = ["review-rules"];
+        expect(await runComponentsPrApply(ctx({ pr: 12, forge: kind, eventsJson: false }))).toBe(3);
+        expect(await applyReport()).toMatchObject({ status: "refused", refusal: "author-approved" });
       });
 
       test("an outside reviewer approves: the plan applies", async () => {

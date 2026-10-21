@@ -484,6 +484,11 @@ export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
 }
 
 async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number> {
+  // #4168: the review-rules security group turns --require-review on, read from the declaration at base.
+  const { securityGroupsAt } = await import("../../workspace/security");
+  const reviewRules = !ctx.args.requireReview && securityGroupsAt(process.cwd(), ctx.args.base).has("review-rules");
+  if (reviewRules && !ctx.args.forge) return fail("the workspace opts into review-rules, which reads the pull request's reviews, so pr-apply needs --forge <kind>");
+  if (reviewRules) ctx = { ...ctx, args: { ...ctx.args, requireReview: true } };
   const { args } = ctx;
   if (args.requireReview && !args.forge) return fail("--require-review reads the pull request's reviews, so it needs --forge <kind>");
   if (args.wave !== undefined && !args.waveGate) return fail("--wave runs one wave of a --wave-gate apply, so it needs --wave-gate <name>");

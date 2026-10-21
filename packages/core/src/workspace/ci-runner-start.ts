@@ -19,7 +19,7 @@
  *
  * {@link runnerStartReadiness} says whether a repository could require it
  * at base, and what is missing, for the isolated-runners security group
- * (#4168, section 8), which reports `group-unavailable` until it calls this.
+ * (#4168, section 8), whose WSP165 check reports these gaps.
  */
 
 import { execFileSync } from "node:child_process";

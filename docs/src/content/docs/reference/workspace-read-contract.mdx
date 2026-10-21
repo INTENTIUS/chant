@@ -317,6 +317,23 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `diagram-source-missing` | finding, `check` | `WSP131`: a [diagram](/chant/reference/workspace-declaration/#diagrams) names a source, and it doesn't exist in the tree read. |
 | `diagram-render-missing` | finding, `check` | `WSP132`: a diagram names a render, and it doesn't exist in the tree read. A `mermaid` or `excalidraw` diagram may name none. |
 | `diagram-render-drift` | finding, `check` | `WSP133`: a diagram records a `sourceHash`, and the source's bytes now hash to something else. `check` never runs the renderer to find this; it compares the recorded hash against the source in the tree read. |
+| `security-signers-missing` | finding, `check` | `WSP161`: the workspace opts into verified-releases, and there is no .chant/allowed_signers to verify a release's signature against. |
+| `security-release-gate-missing` | finding, `check` | `WSP161`: under verified-releases, identity.gates has no release entry, or it names no class, so a cut is not held to a class of signers. |
+| `security-publish-allows-unsigned` | finding, `check` | `WSP161`: under verified-releases, a pipeline file runs release publish with --allow-unsigned. |
+| `security-sbom-disabled` | finding, `check` | `WSP162`: under supply-chain, a member's chant.config.ts sets sbom: false on a publish target. |
+| `security-sbom-unsourced` | finding, `check` | `WSP162`: under supply-chain, a member publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock to write one from. |
+| `security-publish-no-provenance` | finding, `check` | `WSP162`: under supply-chain, a pipeline file runs release publish without --require-provenance. |
+| `security-component-no-sbom` | finding, `check` | `WSP162`: under supply-chain, a member's components have no generate-sbom step. |
+| `security-component-no-verify` | finding, `check` | `WSP162`: under supply-chain, a member's components have no verify step. |
+| `security-signed-since-unset` | finding, `check` | `WSP163`: under who-ran-it, ci.green sets no signedSince, or there is no ci.green block. |
+| `security-runner-untrusted` | finding, `check` | `WSP163`: under who-ran-it, .chant/trust.json lists no runner key. |
+| `security-tick-no-key` | finding, `check` | `WSP163`: under who-ran-it, a pipeline file runs ci tick with no runner key. |
+| `security-review-not-required` | finding, `check` | `WSP164`: under review-rules, an apply job passes --no-require-review, which the group overrides. |
+| `security-attribution-any` | finding, `check` | `WSP164`: under review-rules, identity.attribution is not identified. |
+| `security-gate-unsigned` | finding, `check` | `WSP164`: under review-rules, an apply job names a gate identity.gates does not list, or identity.gates lists none. |
+| `security-runner-start-no-key` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
+| `security-runner-start-no-role` | finding, `check` | `WSP165`: under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
+| `security-trust-unreadable` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
 | `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
 | `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |
 | `box-intent-unconstrained` | finding, `check` | `WSP127`: the decision record a box names as its intent constrains no member or path of this workspace at all. |

@@ -841,7 +841,7 @@
  "docs/src/content/docs/lint-rules/correctness.mdx": {
   "formatting/em-dash-density": 14,
   "discourse/punchy-fragments": 8,
-  "claude/colon-reveal": 6,
+  "claude/colon-reveal": 5,
   "repetition/near-duplicate": 3,
   "tricolon/comma-series": 1
  },
@@ -949,6 +949,11 @@
   "claude/colon-reveal": 5,
   "tricolon/comma-series": 2,
   "anaphora/repeated-opening": 1
+ },
+ "docs/src/content/docs/reference/security-features.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/template-migrations.mdx": {
   "discourse/punchy-fragments": 1,

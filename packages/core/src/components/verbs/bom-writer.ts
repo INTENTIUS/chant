@@ -72,7 +72,7 @@ export interface BomPackage {
   /** Version string, when known. Omitted for resources with no version concept (e.g. a CFN resource). */
   version?: string;
   /** Package manager / ecosystem this entry came from (e.g. "npm", "maven"), surfaced in SPDX's `externalRefs`/CycloneDX's `purl` when derivable. */
-  type?: "npm" | "maven" | "config" | "external-reference";
+  type?: "npm" | "maven" | "cargo" | "config" | "external-reference";
   /** Package URL (purl), when derivable — e.g. `pkg:npm/left-pad@1.3.0`. */
   purl?: string;
   /** SPDX download location, when known. Defaults to `"NOASSERTION"` per the SPDX spec's requirement that every package declare one. */

@@ -37,6 +37,8 @@
  * | WSP126, WSP127 | box intent: the decision record a box names exists, and constrains a member or path of this workspace (#2850, #2857) |
  * | WSP141, WSP142 | member links resolved against a live read, with `--live` (#2549) |
  * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
+ * | WSP151 | reserved for the `ci.workflow` preset (#4168 step 6) |
+ * | WSP161 to WSP165 | the security groups the declaration opts into: what each still lacks (#4168 step 7) |
  */
 
 import { realpathSync } from "node:fs";
@@ -58,6 +60,7 @@ import { gatherLiveLinkFacts, LIVE_CHECKS, type LiveLinkFacts } from "./checks/l
 import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
 import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
+import { SECURITY_CHECKS } from "./checks/security";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
 import { gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
@@ -371,6 +374,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...DIAGRAM_CHECKS,
   // Links resolved against a live read, with --live (#2549), WSP141 and WSP142.
   ...LIVE_CHECKS,
+  // The security groups the declaration opts into (#4168 step 7), WSP161 to WSP165.
+  ...SECURITY_CHECKS,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));

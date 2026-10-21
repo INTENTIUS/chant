@@ -129,33 +129,15 @@ Its `outputs` runs `output -json` in the root after an `init`. The plan says the
 
 A component with no step that has `plan` is one member under the component's name. Its row reads `planned` with a count of 0 in every column, and its group in the plan summary says `no changes`. That row says nothing about what the component will change, since the plan had nothing to ask.
 
-The member's plan digest is the component's composition digest, the one its own gates bind. It is computed over the component's declaration and the environment with its vars. Every step's input goes in as written, and since [#4155](https://github.com/INTENTIUS/chant/issues/4155) so does the content of each local file or directory a step deploys from. A commit pushed after review that changes a chart, a values file or a site's tree moves the digest, and `pr-apply` exits 3 as it does for a moved cfn or k8s plan.
+The member's plan digest is the component's composition digest, the one its own gates bind. It is computed over the component's declaration and the environment with its vars. Every step's input goes in as written. When a step input names a file, the digest holds the name and leaves the content out. A commit pushed after review can change what the file holds without moving the digest, and so can a merge to the target branch. `pr-apply` then applies the new content under the old approval. Nothing compares what the step deploys with what the reviewer saw.
 
-These are the paths the digest reads, from the step's literal input (`packages/core/src/components/deploy-inputs.ts`):
+A reviewer of such a member has to read the change itself.
 
-| Steps | Fields |
-|---|---|
-| any step | `template`, `manifest`, `values` |
-| `helm-upgrade` | `chart` |
-| `kustomize-apply` | `dir` |
-| `fly-release`, `fly-rollback` | `plan` |
-| `s3-sync`, `r2-sync`, `copy-to-host` | `from` |
-| `wrangler-deploy`, `wrangler-versions-promote` | `config` |
-| `docker-build` | `context`, and `dockerfile` under it |
-| `zip-package` | `source` |
-| `jvm-build` | `path` |
-
-A file is hashed by its bytes. A directory is hashed over the files under it that git does not ignore, each by its path and bytes, so a Docker context leaves out `node_modules` and `dist`. A value wired from another step, such as `codeRef: "@Build.uri"`, and an `archive:` path are build outputs and are not read. A `lambda-deploy` is bound through its bundle step's `source` instead, so a build that is not reproducible still applies under its approval. A path that does not exist is left out, and one that appears later moves the digest.
-
-Some steps deploy what the digest can't name. A `shell` or `run-agent` step runs content its input does not list, and a directory git ignores as a whole is a build output, such as `s3-sync` from `dist`. The member then has a hole for each such step, with a reason that starts `unbound:`, and the plan note lists it under Holes. A reviewer of such a member has to read the change itself.
-
-- Read what the step deploys in the pull request's diff: the script a `shell` step runs, or the sources of the build that writes the synced directory.
-- Approve the pull request only once its head is the commit you read.
+- Read the files the component's steps deploy in the pull request's diff: the chart and values for `helm-upgrade`, the kustomization for `kustomize-apply`, the bundle for `lambda-deploy`, the directory for `s3-sync`.
+- Approve the pull request only once its head is the commit you read, since the approval does not bind what the files hold.
 - Turn on the forge's setting that drops approvals when commits are pushed: "Dismiss stale pull request approvals when new commits are pushed" on GitHub, "Dismiss stale approvals" on Forgejo, "Remove all approvals when commits are added to the source branch" on GitLab. With the default `requireReview`, `pr-apply` counts only an approving review that still stands on the forge, so a push after your review needs a new one.
 
 A gated wave treats such a component the same way: one member, the composition digest, and no entries.
-
-A component that has a step with `plan` beside steps without one, such as a `lambda-deploy` beside a `cfn-deploy`, gets one more member, `<component>#inputs`. Its digest is taken over the files the steps without `plan` deploy from, and its holes are those steps' unbound ones. The member is there only when those steps name a file or have a hole.
 
 ## Outputs
 

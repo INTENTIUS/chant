@@ -83,23 +83,6 @@ describe("CloudRunServiceComposite", () => {
     expect(result.service).toBeDefined();
   });
 
-  test("sets projectRef and location, which the RunService CRD requires", () => {
-    const result = CloudRunServiceComposite({
-      name: "api",
-      image: "gcr.io/p/api:1",
-      projectId: "proj",
-      location: "us-central1",
-    });
-    expect(p(result.service).projectRef).toEqual({ external: "proj" });
-    expect(p(result.service).location).toBe("us-central1");
-  });
-
-  test("defaults projectRef and location to the GCP pseudo-parameters", () => {
-    const result = CloudRunServiceComposite({ name: "api", image: "gcr.io/p/api:1" });
-    expect(JSON.parse(JSON.stringify(p(result.service).projectRef))).toEqual({ external: { Ref: "GCP::ProjectId" } });
-    expect(JSON.parse(JSON.stringify(p(result.service).location))).toEqual({ Ref: "GCP::Region" });
-  });
-
   test("no public IAM by default", () => {
     const result = CloudRunServiceComposite({ name: "api", image: "gcr.io/p/api:1" });
     expect(result.publicIam).toBeUndefined();

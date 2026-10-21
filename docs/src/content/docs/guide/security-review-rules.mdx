@@ -1,0 +1,36 @@
+---
+title: Require Forge Review for Applies
+description: Opt into the review-rules security group so pr-apply counts an approval only from someone who approved the pull request on the forge, and fill the gaps workspace check reports.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/security-review-rules/.
+  Add `review-rules` to `security` in `chant.workspace.json`, run `npx chant workspace check`, and fix the `WSP164` findings that are file changes: drop `--no-require-review`, set `identity.attribution`, list the apply gates under `identity.gates`.
+  Open a pull request with the changes.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Every security feature in chant is off until a workspace turns it on ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). A group turns on a set of them at once, and each feature still turns on alone; the [security features reference](/chant/reference/security-features/) lists them all.
+
+Under `review-rules`, `chant components pr-apply` counts an approval only from someone who approved the pull request on the forge, and never from one of its authors, as `--require-review` does. It reads the group from the declaration at `--base`, so a generated pipeline, `chant ci run apply` and `chant ci serve` all get it, and it needs `--forge`. `chant build --pr-loop` also writes `--require-review` into the apply job.
+
+Without the group, review is off: an approval counts whoever gave it.
+
+## Opt in
+
+Add the group to `security` in `chant.workspace.json`, at the top level for every member or on one member for that member only. A member's list adds to the top-level one.
+
+```json
+"security": ["review-rules"]
+```
+
+A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
+
+## Fill the gaps
+
+`chant workspace check` reports what the group still lacks as `WSP164` warnings:
+
+| Code | What to do |
+|---|---|
+| `security-review-not-required` | Drop `--no-require-review` from the apply job the finding names. The group overrides it, so the file should say what runs. |
+| `security-attribution-any` | Set `identity.attribution` to `identified`. |
+| `security-gate-unsigned` | List each gate the apply jobs name under `identity.gates`, so its approval must be signed. |

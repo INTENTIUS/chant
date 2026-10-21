@@ -11,6 +11,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import {
   parseNpmPackageLock,
   parsePomXml,
+  parseCargoLock,
   createLockfileSbomGenerator,
   sbomOutputPath,
 } from "./lockfile-sbom-generator";
@@ -191,5 +192,40 @@ describe("createLockfileSbomGenerator (#613) — hermetic SbomGenerator backend"
     const docB = await createLockfileSbomGenerator({ now: fixedNow }).forDir({ path: dirB });
 
     expect(docA.bytes).toBe(docB.bytes);
+  });
+});
+
+describe("parseCargoLock (#4168)", () => {
+  const LOCK = [
+    "version = 4",
+    "",
+    "[[package]]",
+    'name = "app"',
+    'version = "0.1.0"',
+    "dependencies = [",
+    ' "serde",',
+    ' "tokio 1.40.0",',
+    "]",
+    "",
+    "[[package]]",
+    'name = "serde"',
+    'version = "1.0.210"',
+    'source = "registry+https://github.com/rust-lang/crates.io-index"',
+    "",
+    "[[package]]",
+    'name = "tokio"',
+    'version = "1.40.0"',
+    'source = "registry+https://github.com/rust-lang/crates.io-index"',
+    "dependencies = [",
+    ' "pin-project-lite",',
+    "]",
+    "",
+  ].join("\n");
+
+  it("lists every package with a source, with its purl and dependencies, and leaves out the workspace's own crates", () => {
+    expect(parseCargoLock(LOCK)).toEqual([
+      { name: "serde", version: "1.0.210", type: "cargo", purl: "pkg:cargo/serde@1.0.210", dependsOn: undefined },
+      { name: "tokio", version: "1.40.0", type: "cargo", purl: "pkg:cargo/tokio@1.40.0", dependsOn: ["pin-project-lite"] },
+    ]);
   });
 });

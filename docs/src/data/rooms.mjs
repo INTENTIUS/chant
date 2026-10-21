@@ -213,7 +213,6 @@ export const ROOMS = [
 			'A generated pull-request pipeline that plans what a change reaches, posts the plan, and on merge applies only the plan a reviewer approved',
 			"`chant audit` reads a repository's existing pipelines and reports security findings, with a diff for each mechanical fix",
 			'`chant migrate` translates a GitHub Actions workflow into GitLab CI',
-			"Pipelines are compiled to the forge's own YAML at build time, so CI runs no extra engine and forge tooling such as required checks keeps working",
 		],
 		differs: {},
 		first: {
@@ -233,10 +232,7 @@ export const ROOMS = [
 			{ label: 'Per-PR Preview Environments', href: 'tutorials/github-pr-preview' },
 			{ label: 'GitLab CI + AWS ALB', href: 'tutorials/gitlab-aws-alb' },
 		],
-		background: [
-			{ label: 'Components', href: 'concepts/components' },
-			{ label: 'Pipeline engines', href: 'concepts/comparison#pipeline-engines' },
-		],
+		background: [{ label: 'Components', href: 'concepts/components' }],
 		reference: [
 			{ label: 'chant audit', href: 'cli/audit' },
 			{ label: 'chant migrate', href: 'cli/migrate' },

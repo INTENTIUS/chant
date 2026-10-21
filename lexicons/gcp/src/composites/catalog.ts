@@ -119,13 +119,7 @@ export const compositeCatalog: CompositeEntry[] = [
         "name": "location",
         "type": "string",
         "required": false,
-        "description": "GCP region (default: GCP.Region, resolved from GCP_REGION at build)."
-      },
-      {
-        "name": "projectId",
-        "type": "string",
-        "required": false,
-        "description": "GCP project the service runs in, as `projectRef.external` (default: GCP.ProjectId, resolved from GCP_PROJECT_ID at build)."
+        "description": "GCP region."
       },
       {
         "name": "port",

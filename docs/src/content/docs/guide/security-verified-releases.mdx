@@ -1,0 +1,41 @@
+---
+title: Publish Only Verified Releases
+description: Opt into the verified-releases security group so chant release publish and promote take only a release signed by a key in the signers file, and read what workspace check says is missing.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/security-verified-releases/.
+  Add `verified-releases` to `security` in `chant.workspace.json`, run `npx chant workspace check`, and list each `WSP161` finding with what a person has to do about it.
+  Open a pull request with the declaration change only.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Every security feature in chant is off until a workspace turns it on ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). A group turns on a set of them at once, and each feature still turns on alone; the [security features reference](/chant/reference/security-features/) lists them all.
+
+Under `verified-releases`:
+
+- `chant release publish` refuses a release none of whose cuts carries a signature that verifies against `.chant/allowed_signers` at base (`release-unsigned`, `release-signature-unverified`). `--allow-unsigned` publishes it anyway, with a warning.
+- `chant components promote --release` and `chant components rollback --release` run [`chant release verify`](/chant/cli/release/) first, and refuse a release that does not verify.
+
+Without the group, an unsigned release publishes and the plan records `signature: unsigned`.
+
+## Opt in
+
+Add the group to `security` in `chant.workspace.json`, at the top level for every member or on one member for that member only. A member's list adds to the top-level one.
+
+```json
+"security": ["verified-releases"]
+```
+
+A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
+
+## Fill the gaps
+
+`chant workspace check` reports what the group still lacks as `WSP161` warnings:
+
+| Code | What to do |
+|---|---|
+| `security-signers-missing` | A person adds the keys of the people who cut releases to `.chant/allowed_signers`, in ssh-keygen's allowed_signers format, with the `chant-release` namespace. |
+| `security-release-gate-missing` | Add `identity.gates.release` with the `class` that may cut, so a cut is held to that class. |
+| `security-publish-allows-unsigned` | Drop `--allow-unsigned` from the publish job the finding names. |
+
+Cut releases signed from then on with `chant release cut <label> --sign --yes`, and check one with `chant release verify <label>`.

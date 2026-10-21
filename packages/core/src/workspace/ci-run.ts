@@ -100,6 +100,7 @@ import { signOpRunRecord } from "./trust/op-run-statement";
 import { gitTop } from "./tree";
 import { hostRunnerKey } from "./ci-runner-key";
 import { requireRunnerStart } from "./ci-runner-start";
+import { securityGroupsAt } from "./security";
 
 /** The two jobs a pull-request pipeline has. */
 export type CiJobName = PrLoopJob["jobName"];
@@ -656,7 +657,9 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   if (!found) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
   if (req.wave !== undefined && (req.job !== "apply" || !req.loop?.waveGate)) throw new CiRunError("--wave names the one wave an apply runs, and takes --wave-gate: ci run apply --wave-gate <gate> --wave <k>");
   // #4147: before anything runs or any secret reaches a step, the provisioner's word that this runner was started for this job.
-  const started = req.requireRunnerStart ? runnerStartFor(req, { top, commit, hostEnv }) : undefined;
+  // #4168: under the isolated-runners security group an apply job requires the statement too, unless it runs on this machine.
+  const isolated = !req.requireRunnerStart && !req.local && req.job === "apply" && securityGroupsAt(cwd).has("isolated-runners");
+  const started = req.requireRunnerStart || isolated ? runnerStartFor(req, { top, commit, hostEnv }) : undefined;
   // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
   const command = `${found.command}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${req.local ? " --no-status" : ""}`;
   const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
