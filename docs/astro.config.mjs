@@ -187,6 +187,7 @@ export default defineConfig({
 								{ label: 'Ops', slug: 'guide/ops' },
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
 								{ label: 'Drift Back to Source', slug: 'guide/drift-to-source' },
+								{ label: 'Checking Health', slug: 'guide/checking-health' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },

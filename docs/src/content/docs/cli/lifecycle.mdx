@@ -15,6 +15,7 @@ chant lifecycle plan <env> [lexicon] [--json] [--owned] [--namespace <ns>] [--re
 chant lifecycle rollback [env] --to <ref> [--dry-run]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
 chant lifecycle whoami <env> [lexicon] [--json] [--strict]
+chant lifecycle health <env> [lexicon] [--json] [--src <dir>]
 chant lifecycle teardown <env> [--yes] [--confirm-prod] [--json]
 chant lifecycle log [env]
 chant lifecycle gc [--yes] [--push] [--json] [--verbose]
@@ -558,6 +559,50 @@ The environment's declared `endpoint` is applied for the identity query exactly 
 |---|---|
 | `--json` | Emit `{ environment, identities: [...] }`, one row per lexicon, with the same verdicts. |
 | `--strict` | Exit 1 when any lexicon could not determine an identity. A `not reported` row never fails, since a lexicon that implements nothing is not a failure. |
+
+### `lifecycle health <env>`
+
+Whether each declared resource that has a health read is up, read separately from drift ([#4177](https://github.com/INTENTIUS/chant/issues/4177)). `diff --live` says what changed; `health` says whether it is serving.
+
+```bash
+chant lifecycle health prod
+chant lifecycle health prod aws     # one lexicon
+chant lifecycle health prod --json
+```
+
+| Lexicon | Type | What decides the state |
+|---|---|---|
+| aws | `AWS::Route53::HealthCheck` | `GetHealthCheckStatus`. Healthy when more than 18% of the checkers report success, the rule Route 53 applies. The detail gives the count and the latest status text; `checkedAt` is the latest checker's time. |
+| aws | `AWS::ECS::Service` | `DescribeServices`: healthy when `runningCount` reaches `desiredCount`, unhealthy below it or when the service is not `ACTIVE`, unknown when `desiredCount` is 0. |
+| azure | `Microsoft.App/containerApps` | The active revisions: unhealthy when there is none, or one is `Failed`, `Degraded` or `Stopped`, or reports `Unhealthy`; healthy when every active revision is `Running`; unknown while one is still provisioning. When the revisions cannot be listed, the app's own `runningStatus` answers, and the detail says so. |
+| gcp | `GCP::Run::Service` | The `Ready` condition: `terminalCondition` on a Cloud Run v2 body, `status.conditions` otherwise. |
+
+Each entity lands in exactly one of three places. `entities` holds what was read, with `state` (`healthy`, `unhealthy` or `unknown`), a short `detail`, `observedAt` and, when the provider says, `checkedAt`. `unobserved` holds a read that failed, with the same reasons `diff --live` uses (`read-failed`, `no-credentials`, `no-binding`, `unsupported-kind`); a failed read is never `unhealthy`. `absent` lists what the provider says is not deployed.
+
+The aws read maps logical ids to physical ids through the stack's resource list, so a stack that does not exist yet reports every entity absent. Endpoints follow the other live reads: `AWS_ENDPOINT_URL`, `AZURE_ENDPOINT_URL`, `GCP_ENDPOINT_URL`, or the environment's declared `endpoint`. Against an emulator, a Route 53 health check reports what the emulator's checkers report, which means nothing until the emulator probes the endpoint.
+
+With `--json` the output is a `chant-health/v1` document.
+
+```json
+{
+  "schema": "chant-health/v1",
+  "chantVersion": "0.124.33",
+  "environment": "prod",
+  "observedAt": "2026-10-20T21:00:00.000Z",
+  "lexicons": {
+    "aws": {
+      "entities": {
+        "web": { "type": "AWS::ECS::Service", "state": "healthy", "detail": "2/2 running, rollout COMPLETED", "observedAt": "2026-10-20T21:00:00.000Z" }
+      },
+      "unobserved": {},
+      "absent": []
+    }
+  },
+  "summary": { "healthy": 1, "unhealthy": 0, "unknown": 0, "unobserved": 0, "absent": 0 }
+}
+```
+
+Entity names are the graph's node ids. A multi-stack project nests the lexicons under `stacks.<name>`. Routing is not modelled. A consumer that wants rotation reads the graph's edges, for example a record whose `HealthCheckId` names an unhealthy check. The command exits 0 whatever the states are, and 1 only when the build fails.
 
 ### `lifecycle teardown <env>`
 

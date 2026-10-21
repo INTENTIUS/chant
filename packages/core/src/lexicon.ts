@@ -78,6 +78,15 @@ export type {
   UnobservedReason,
 } from "./observation";
 
+// The runtime-health contract (#4177), re-exported so a lexicon's
+// `observeHealth` types itself from the same entry.
+export type {
+  HealthEntry,
+  HealthReadOptions,
+  HealthReadResult,
+  HealthState,
+} from "./health";
+
 // The identity contract (#1982), re-exported from the same entry so a
 // lexicon's `describeIdentity` types itself without a second import path.
 // Runtime helpers live in `@intentius/chant/identity`.
@@ -1798,6 +1807,25 @@ export interface LexiconPlugin {
     /** Restrict to chant-owned resources (#119). A lexicon with no marker channel on this path says so. */
     owned?: boolean;
   }): Promise<DeepObservationResult>;
+
+  /**
+   * Entity types {@link observeHealth} reads (#4177). Data, not a method, so
+   * core picks the entities a health read applies to without calling it.
+   */
+  healthTypes?: readonly string[];
+
+  /**
+   * Whether each declared entity of a {@link healthTypes} type is up (#4177),
+   * read separately from drift: a service's running count, a health check's
+   * checkers, a revision's running state, a Ready condition.
+   *
+   * Every entity in `options.entities` lands in exactly one of `entities`,
+   * `unobserved` or `absent`. A read that failed is `unobserved` with a reason,
+   * never `unhealthy`: `unhealthy` is something the provider said. Throwing is
+   * the whole-lexicon failure, and core reports every entity `read-failed`.
+   * Endpoint overrides apply as on the other reads, so an emulator answers.
+   */
+  observeHealth?(options: import("./health").HealthReadOptions): Promise<import("./health").HealthReadResult>;
 
   /**
    * This lexicon's noise rules for deep observation (#1014): which fields are
