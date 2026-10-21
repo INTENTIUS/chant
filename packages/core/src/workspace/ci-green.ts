@@ -71,6 +71,7 @@ import { gitRevisionSource } from "./record-source";
 import { emptyPolicy, readTrustPolicy } from "./trust/policy";
 import { loadRunnerKey } from "./trust/dsse";
 import { signCiTagRecord, verifyCiTagStatement, CI_TAG_SIGNER_ROLE, type CiTagFailure, type CiTagRecord, type CiTagSigner } from "./trust/ci-tag-statement";
+import { COMPOSE_BRANCH_PREFIX, composedIncluding, isComposeBranch, remoteComposeBranches } from "../lifecycle/compose-refs";
 
 /** The environment variable a tick (#4031) and `chant run` (#4044) read a runner key from, as PEM, when `--key` is not given. */
 export const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -478,7 +479,9 @@ export function readCiTags(top: string, green: CiGreen | null = null, base: stri
       continue;
     }
     const p = policyAtBase();
-    const v = verifyCiTagStatement(t.record, { sha: t.sha, kind: t.kind, branch: green!.branch }, p.runners, p.roles);
+    // A tag the tick made walking a compose branch (#4168 4.3) is checked against that branch.
+    const walked = isComposeBranch(t.record?.branch) ? (t.record!.branch as string) : green!.branch;
+    const v = verifyCiTagStatement(t.record, { sha: t.sha, kind: t.kind, branch: walked }, p.runners, p.roles);
     if (v.status === "signed") counted(v.signer);
     else ignore(v.status, `${v.reason}; ci.green.signedSince is ${green!.signedSince}, so a tag on a commit that is not a strict first-parent ancestor of it needs one`);
   }
@@ -535,12 +538,21 @@ export interface TickRequest {
   runnerKey?: string;
 }
 
+/** One compose branch a tick walked (#4168 4.3): its composed commits within the window. */
+export interface ComposedBranchTick {
+  branch: string;
+  ref: string;
+  commits: TickCommit[];
+}
+
 export interface TickResult {
   branch: string;
   window: string;
   /** The ref the commits were read from. */
   ref: string;
   commits: TickCommit[];
+  /** The compose branches walked (#4168 4.3), each with its composed commits judged. Their tags are in `made`. */
+  composed: ComposedBranchTick[];
   /** The tags made and pushed, or that would be under `dryRun`. */
   made: string[];
   /** The builds asked for (#4169), as `ci/build/<sha>` tags made and pushed, or that would be under `dryRun`. */
@@ -596,7 +608,16 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
   const now = req.now ?? new Date();
   const tracking = `refs/remotes/${remote}/${green.branch}`;
   try {
-    git(top, ["fetch", "--quiet", "--no-tags", "--prune", remote, `+refs/heads/${green.branch}:${tracking}`, "+refs/tags/ci/*:refs/tags/ci/*"]);
+    git(top, [
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--prune",
+      remote,
+      `+refs/heads/${green.branch}:${tracking}`,
+      `+refs/heads/${COMPOSE_BRANCH_PREFIX}*:refs/remotes/${remote}/${COMPOSE_BRANCH_PREFIX}*`,
+      "+refs/tags/ci/*:refs/tags/ci/*",
+    ]);
   } catch (err) {
     throw new Error(`could not fetch ${green.branch} and the ci tags from ${remote}: ${stderrOf(err)}`);
   }
@@ -648,6 +669,28 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     signer,
   });
   if (links) for (const c of planned) c.work = links.get(c.sha);
+  // Compose branches (#4168 4.3): each composed commit within the window is judged as trunk's are, and its tags name its branch.
+  const composed: ComposedBranchTick[] = [];
+  for (const b of remoteComposeBranches(top, remote)) {
+    const own = git(top, ["log", "--first-parent", `--max-age=${cutoff}`, "--format=%H %ct", b.ref, `^${tracking}`])
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split(" "))
+      .filter(([, ct]) => Number(ct) >= cutoff)
+      .map(([sha, ct]) => ({ sha, committed: iso(new Date(Number(ct) * 1000)) }));
+    if (own.length === 0) continue;
+    const judged = await planTick({
+      green: { ...green, branch: b.branch },
+      commits: own,
+      greenTags: new Set(tags.green.keys()),
+      revokedTags: new Set(tags.revoked.keys()),
+      ignored: tags.ignored,
+      checkRuns: async (sha) => (runs ? runs.checkRuns(sha) : await forge!.checkRuns(sha)),
+      now,
+      signer,
+    });
+    composed.push({ branch: b.branch, ref: b.ref, commits: judged });
+  }
   if (runs) {
     for (const c of planned) {
       const ignored = runs.ignored.get(c.sha);
@@ -658,7 +701,14 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
   const requests = readBuildRequests(top);
   const retryVia = green.source === "runs" ? "request" : forge?.rerun ? "forge" : null;
   const builds = planBuilds({ green, commits: planned, runs: runsBy, requests, records, now, retryVia });
-  const due = planned.filter((c) => c.made !== null);
+  const due = [...planned, ...composed.flatMap((b) => b.commits)].filter((c) => c.made !== null);
+  // Decision 4: revoking a trunk commit says which composed commits carry it; their own CI decides their releases.
+  for (const c of planned) {
+    if (!c.made?.tag.startsWith(CI_REVOKED_TAG_PREFIX)) continue;
+    for (const k of composedIncluding(top, c.sha, remote)) {
+      warnings.push(`${c.sha.slice(0, 12)} is revoked, and ${k.branch} carries it as ${k.commit.slice(0, 12)}; that composed commit's own CI decides whether its releases stand`);
+    }
+  }
   if (!req.dryRun && due.length > 0) {
     const ident = taggerConfig(top);
     for (const c of due) git(top, [...ident, "tag", "-a", "-m", c.made!.message, c.made!.tag, c.sha]);
@@ -683,6 +733,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
     ref: tracking,
     commits: planned,
     made: due.map((c) => c.made!.tag),
+    composed,
     requested: builds.requests,
     retried,
     recorded,
@@ -1079,6 +1130,19 @@ export function formatTick(r: TickResult, dryRun = false): string {
     for (const t of c.ignored ?? []) lines.push(`      ignored ${t.tag} (${t.status}): ${t.reason}`);
     for (const r of c.ignoredRuns ?? []) lines.push(`      ignored run ${r.run} of ${r.op} in ${r.env} (${r.status}): ${r.reason}`);
     if (c.blocked) lines.push(`      did not make ${c.blocked}: an ignored tag holds the name. Delete it to let the tick tag the commit: git push origin :refs/tags/${c.blocked}`);
+  }
+  for (const b of r.composed ?? []) {
+    lines.push(`${b.branch}, composed commits within ${r.window}: ${b.commits.length}`);
+    for (const c of b.commits) {
+      const what = c.made
+        ? `${dryRun ? "would make" : "made"} ${c.made.tag.slice(0, c.made.tag.lastIndexOf("/"))}`
+        : c.before !== "none"
+          ? c.before
+          : c.verdict?.verdict === "fail"
+            ? `failed: phase ${c.verdict.failure!.phase}`
+            : "undecided";
+      lines.push(`  ${c.sha.slice(0, 12)}  ${what}`);
+    }
   }
   if (r.signer && r.made.length > 0) lines.push(`signed as ${r.signer}`);
   for (const q of r.requested) lines.push(`${dryRun ? "would ask" : "asked"} for ${q.phases.join(", ")} at ${q.commit.slice(0, 12)} (${q.reason}): ${q.tag}`);

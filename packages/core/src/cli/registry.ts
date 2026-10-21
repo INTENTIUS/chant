@@ -302,6 +302,10 @@ export interface ParsedArgs {
    * pr-apply finds it from the commit through `--forge` when omitted.
    */
   pr?: number;
+  /** Every `--pr <n>`, in order: `chant release compose` (#4168 4.3) takes several. */
+  prs?: number[];
+  /** `chant release cut --channel <tag>` (#4168 4.3): the tag a publish of the release moves in place of `latest`. */
+  channel?: string;
   /**
    * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
    * — post the note and the commit status on this forge, with the client
@@ -709,6 +713,8 @@ export interface ParsedArgs {
   holder?: string;
   /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. `chant workspace check --changes --work <id>` (#2773): the work item in hand. */
   work?: string;
+  /** Every `--work <id>`, in order: `chant release compose` (#4168 4.3) takes several. */
+  works?: string[];
   /** `chant workspace work claim|renew <id> --ttl <seconds|duration>` (#2732): how long the lease lasts unless renewed. */
   ttl?: string;
   /** `chant workspace work renew|release <id> --token <token>` (#2732): the fencing token the caller holds. */

@@ -8,8 +8,9 @@ diataxis: reference
 
 ```
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
-                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json]
+                  [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json]
 chant release candidates [--env <env>] [--json]
+chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
 chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
@@ -39,7 +40,7 @@ The cut refuses before it writes anything when:
 | Code | When |
 |---|---|
 | `release-worktree-dirty` | A tracked file has uncommitted changes, or a file git does not ignore is untracked, so the compile would not be the commit's. A new `*.component.ts` left untracked would otherwise be compiled into the release. |
-| `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>`. Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
+| `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>`, and is not a first-parent commit of a pushed `chant/compose/<name>` branch (see [Cutting a composed commit](#cutting-a-composed-commit)). Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
 | `release-commit-not-pushed` | `HEAD` is on the local trunk branch but not on `origin/<trunk>`, or this clone has no `origin/<trunk>`. The check reads the remote-tracking branch as this clone last fetched it and fetches nothing, so a commit pushed from elsewhere needs a `git fetch origin <trunk>` first. |
 | `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
@@ -64,6 +65,17 @@ chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build" --yes
 ```
 
 The worktree shares the repository's refs, so the release and the cut go to the repository's `chant/lifecycle` and the `release/<label>` tag names the commit. The checkout's `node_modules` are linked into the worktree at the top and in each directory down to the member, so the compile resolves the packages already installed. A commit whose lockfile differs from the checkout's needs its own install.
+
+### Cutting a composed commit
+
+A commit of a pushed `chant/compose/<name>` branch, as [`release compose`](#release-compose) makes it, is cut like a trunk commit ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The branch is read as this clone last fetched it from `origin`. Green and revoked tags decide as they do on trunk. With [signed tags](/chant/cli/ci/#signed-tags) the tag's statement names the compose branch the tick walked.
+
+The cut line's `composed` field names the branch and the base it was composed on. It also lists the trunk commits its `Chant-Composed-From` trailers name, oldest first. The walk goes back along first parents to the first commit on trunk, past any commit made on the branch by hand. `--channel <tag>` records `channel` on the cut line, and [`release publish`](#release-publish) then moves that tag in place of `latest`. The dry run and `--json` print both as `composed` and `channel`.
+
+```bash
+git fetch origin --tags
+chant release cut v1.4.1 --at "$(git rev-parse origin/chant/compose/hotfix-1-4)" --channel hotfix --yes
+```
 
 ### The label in the build
 
@@ -253,6 +265,8 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `release-head-mismatch` | A target is declared, and the checkout's `HEAD` is not the release's commit. |
 | `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. |
 
+A release whose cut names a `channel` moves that tag instead of `latest`: the npm target's dist-tag and the OCI target's image tag. The newest cut that names one decides.
+
 The last two hold because a target uploads files from the checkout it runs in, which are the release's only at its commit. A CI job on the release's tag passes both. A publish with no target reads nothing and checks neither.
 
 Signing is opt-in ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With no `release` gate and no `security` group in `chant.workspace.json`, an unsigned release publishes without a word, and the `--json` document's `signature.status` says `unsigned` or `unverified`. A workspace that sets `"security": ["verified-releases"]` publishes only a release signed by a key the signers file lists, so cut it with `--sign` (see [Who may cut](#who-may-cut)). There `--allow-unsigned` publishes a release with no signature that verifies anyway. It prints a warning first, and `release verify` then fails for what was published. Under a `release` gate in `identity.gates`, `--allow-unsigned` changes nothing: the gate publishes only a signed release.
@@ -373,6 +387,36 @@ chant release candidates --env prod
 Each candidate is a commit with a `ci/green` tag that counts and no `ci/revoked` tag. Under it are the first-parent commits since the previous candidate, so each commit appears under exactly one candidate. Its pull request is the one its merge record names. Without a merge record it is the one the subject names, `(#123)` at the end as a forge's squash merge writes it. Its work items are the ones its `Chant-Record: work:<id>` trailers name. The list is grouped by work item and then by pull request ([#4168](https://github.com/INTENTIUS/chant/issues/4168) 4.4). Changes with two work items show under both, and those with none come last, under "no work item". Within a group, the ones that landed without a pull request show under "no pull request". A candidate also lists the flags whose record files those commits change. It says which environments run neither it nor a later commit, and which labels were already cut from it. A revoked commit is listed as skipped, and its changes stay with the next candidate. Commits after the newest candidate are counted as not green yet.
 
 With `--json` the output is the [read contract](/chant/reference/workspace-read-contract/)'s `release-candidates.schema.json` document. Its `environments` field lists what each one runs, `since` is the commit the walk stopped at (or `null`), `candidates` and `skipped` are newest first, and `pending` holds the commits after the newest candidate. Each change has `commit`, `subject`, `date`, `work`, `records` (every `Chant-Record` trailer as `<kind>:<id>`), `pr` and `merge`, the merge record `_merges/<sha>.json` on `chant/lifecycle` when one exists. Each candidate's `groups` holds the same changes as `{ work, pullRequests: [{ pr, commits }] }`, with `null` for no work item and no pull request, in the order the text output prints them. Outside git the command exits 1 with `not-a-git-repository`. When the ledger or the tags can't be read it exits 1 with `ledger-unreadable`. Nothing is fetched, so fetch the tags and `chant/lifecycle` first.
+
+## release compose
+
+Picks chosen changes from trunk onto a base, on the branch `chant/compose/<name>` ([#4168](https://github.com/INTENTIUS/chant/issues/4168), mode b). [Compose a Release](/chant/guide/compose-a-release/) walks through it.
+
+```bash
+chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache        # a dry run
+chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache --yes  # composes and pushes
+```
+
+`--base` takes a release label or digest of the member, or anything git resolves to a commit. `--pr <n>` and `--work <id>` can each be given more than once. A pull request matches a first-parent commit of trunk after the base by its merge record `_merges/<sha>.json` on `chant/lifecycle`, or by `(#n)` at the end of its subject. A work item matches by a `Chant-Record: work:<id>` trailer or a merge record whose source names it. Every matching commit is cherry-picked in trunk order, a merge commit against its first parent, and each gets a `Chant-Composed-From: <sha>` trailer.
+
+The picks are made in a temporary detached worktree, so the checkout is never touched and a dry run finds a conflict too. With `--yes` the local branch moves and is pushed to `origin`, never forced.
+
+A branch that exists is only appended to. It keeps the base it has, read by walking back from its tip to the first commit on trunk, and a chosen change it already carries is listed as carried and not picked again. It refuses before any ref moves when:
+
+| Code | When |
+|---|---|
+| `compose-name-invalid` | The name is not letters, digits, dots, dashes and underscores starting with a letter or digit. |
+| `compose-nothing-chosen` | No `--pr` or `--work` is given. |
+| `compose-base-unknown` | `--base` names no release and no commit, or the branch is new and `--base` is missing. |
+| `compose-base-differs` | The branch exists on another base than `--base` names. |
+| `compose-branch-diverged` | The local branch and `origin`'s have diverged. |
+| `compose-source-unknown` | A `--pr` or `--work` matches no commit on trunk after the base. |
+| `compose-conflict` | A pick does not apply. The message names the change, its pull request and work items, and the conflicting files. |
+| `compose-push-refused` | `origin` refused the push. The local branch has moved, so push it by hand. |
+
+The `--json` document has the compose's `name` and `branch`, its `base`, and `from`, the tip before it ran or `null`. `picked` and `already` list sources, each with `commit`, `subject`, `pr`, `work` and `chosenBy`. Then come `tip`, `written`, `pushed`, `dryRun` and `next`. A refusal prints `{ "error": { "code", "message", "conflict" } }`, with `conflict` only for `compose-conflict`.
+
+[`chant ci tick`](/chant/cli/ci/#ci-tick) walks each pushed compose branch as it walks trunk, judging the composed commits in the window and tagging them. Each tag's record names the compose branch. When the tick revokes a trunk commit that a composed commit carries, it warns and names the composed commit. That commit's own tags decide its releases.
 
 ## release list
 
