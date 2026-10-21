@@ -911,6 +911,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   /** The noise rules the deep pass applies to both the live and declared trees. */
   deepNormalizationHooks: awsDeepNormalizationHooks,
 
+  /** Runtime health (#4177): Route 53 health checks and ECS services. Implementation in ./health.ts. */
+  healthTypes: ["AWS::Route53::HealthCheck", "AWS::ECS::Service"],
+
+  async observeHealth(options) {
+    const { observeHealthAws } = await import("./health");
+    return observeHealthAws(options);
+  },
+
   async describeStackStatus(options: { environment: string; stack: string }): Promise<StackStatusObservation | null> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
     const rt = getRuntime();

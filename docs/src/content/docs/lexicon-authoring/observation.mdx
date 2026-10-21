@@ -325,6 +325,20 @@ Return `{ unresolved: { reason, detail } }` whenever you cannot resolve an ident
 
 `no-credentials` and `read-failed` are different claims and render differently, so do not collapse them. Never invent an identity to fill a row: a lexicon that returns an empty principal is forced to `unresolved` by core, and a throw degrades to `read-failed` for that lexicon alone without failing the command. A lexicon that omits the method gets a `not reported` row.
 
+## observeHealth(): whether a service is up
+
+`chant lifecycle health` ([#4177](https://github.com/INTENTIUS/chant/issues/4177)) asks a lexicon whether each declared service is serving, apart from drift. Name the entity types you can read in `healthTypes`, which is plain data, so core picks the entities without calling you. Then implement `observeHealth(options)`. It receives only entities of those types, keyed by chant entity name, and returns `{ entities, unobserved, absent }`.
+
+```ts
+healthTypes: ["AWS::ECS::Service"],
+async observeHealth(options) {
+  const { observeHealthAws } = await import("./health");
+  return observeHealthAws(options);
+},
+```
+
+Each entry in `entities` carries a `state` of `healthy`, `unhealthy` or `unknown` and a one-line `detail` in the provider's terms. It also carries `observedAt`, plus `checkedAt` when the provider says when it last checked. Put a read that failed in `unobserved` with an `UnobservedReason`, never in `entities` as `unhealthy`; `unhealthy` is something the provider reported. Put what the provider says is not deployed in `absent`. Core makes the result total, so a name you leave out comes back `read-failed`, and a reader that throws reports every entity `read-failed`. Read through the same transport and endpoint rule as `describeResources()`, so an emulator answers. The aws, azure and gcp lexicons' `src/health.ts` are worked examples.
+
 ## listArtifacts()
 
 Reference implementation: `lexicons/helm/src/list-artifacts.ts`.

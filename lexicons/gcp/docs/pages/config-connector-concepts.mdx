@@ -45,6 +45,19 @@ export const subnet = new ComputeSubnetwork({
 });
 ```
 
+### Status attributes
+
+Config Connector writes a resource's `status` once it is ready, so a value such as a Cloud Run service's URL never appears in the YAML you apply. Another lexicon or an output can still reference it. Each scalar field of a CRD's `status` is an attribute, with dots read as underscores:
+
+```typescript
+export const web = new CloudRunService({ /* ... */ });
+
+web.status_uri;           // status.uri
+web.status_latestReadyRevision;
+```
+
+Nested and list fields, such as `status.conditions`, are not attributes.
+
 ## Project binding
 
 Bind resources to a GCP project via annotations:

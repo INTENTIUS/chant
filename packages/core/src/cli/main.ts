@@ -339,7 +339,7 @@ CI:
                         signs its tags with.
 
 Releases:
-  release cut [<label>] [--yes] [--build <command>] [--param <k=v>]
+  release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
               [--actor <name>] [--sign [<key file>]] [--json]
                         A dry run of a cut of this member from HEAD, which
@@ -358,7 +358,15 @@ Releases:
                         requires it. A project with no components releases
                         what chant build --env <env> writes: --src <dir> is
                         the build root, -o <file> the output (dist/build.yaml),
-                        --lexicon narrows it.
+                        --lexicon narrows it. --at <sha> cuts that commit of
+                        trunk from a temporary worktree instead of HEAD, so
+                        the checkout need not be clean. The label reaches
+                        every compile and build as CHANT_RELEASE_LABEL.
+  release candidates [--env <env>] [--json]
+                        The green commits of trunk a release can be cut from,
+                        newest first, each with the commits, work items, pull
+                        requests and flags it would ship, and what each
+                        environment runs.
   release publish <label|digest> [--yes] [--allow-unsigned]
                   [--require-provenance] [--json]
                         Publish a cut release to the targets release.publish
@@ -903,6 +911,10 @@ Lifecycle (alias: lc):
                             estate size rather than stack count (#2405)
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
+  lifecycle health <env>    Whether each declared service is up, separate from
+                            drift: ECS running vs desired, Route 53 health
+                            checks, Container Apps revisions, Cloud Run Ready.
+                            A failed read is "not read", never unhealthy (--json)
   lifecycle whoami <env>    Who chant would act as in each configured lexicon,
                             and what that principal is scoped to — read-only,
                             before anything acts (--json, --strict)
@@ -1412,6 +1424,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   // #4049: check a release's signature offline.
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
+  { name: "release candidates", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCandidates(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },
@@ -1522,6 +1535,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
   { name: "lifecycle whoami", requiresPlugins: true, handler: runLifecycleWhoami },
+  // #4177 — runtime health, separate from drift. Imported on first use.
+  { name: "lifecycle health", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/lifecycle-health")).runLifecycleHealth(ctx) },
   { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
   // #4036 — retention's garbage collection. Imported on first use.

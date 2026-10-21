@@ -187,6 +187,7 @@ export default defineConfig({
 								{ label: 'Ops', slug: 'guide/ops' },
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
 								{ label: 'Drift Back to Source', slug: 'guide/drift-to-source' },
+								{ label: 'Checking Health', slug: 'guide/checking-health' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
@@ -208,6 +209,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Tag Green Commits', slug: 'guide/green-commits' },
+								{ label: 'Curate a Release', slug: 'guide/curate-a-release' },
 								{ label: 'Release from Your Workstation', slug: 'guide/release-from-workstation' },
 								{ label: 'Promote a Release', slug: 'guide/promote-a-release' },
 								{ label: 'Prune chant/lifecycle', slug: 'guide/prune-lifecycle' },

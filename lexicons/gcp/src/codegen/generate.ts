@@ -125,7 +125,7 @@ function generateLexiconJSON(results: GcpParseResult[], naming: NamingStrategy):
         required: r.resource.properties.filter((p) => p.required).map((p) => p.name),
       },
       attrs: Object.fromEntries(
-        r.resource.attributes.map((a) => [a.name, a.tsType]),
+        r.resource.attributes.map((a) => [attrKey(a.name), a.tsType]),
       ),
     };
 
@@ -170,7 +170,7 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
 
     // Attributes
     for (const attr of r.resource.attributes) {
-      lines.push(`  readonly ${attr.name}: ${attr.tsType};`);
+      lines.push(`  readonly ${attrKey(attr.name)}: ${attr.tsType};`);
     }
 
     lines.push(`}`);
@@ -222,6 +222,11 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
 
 // ── Runtime index generation ────────────────────────────────────────
 
+/** The property an attribute is read through: `status.uri` is `status_uri`, as AWS's `Endpoint.Address` is `Endpoint_Address`. */
+function attrKey(name: string): string {
+  return name.replace(/\./g, "_");
+}
+
 function generateRuntimeIndex(results: GcpParseResult[], naming: NamingStrategy): string {
   const resourceEntries: RuntimeIndexEntry[] = [];
   const propertyEntries: RuntimeIndexPropertyEntry[] = [];
@@ -234,7 +239,7 @@ function generateRuntimeIndex(results: GcpParseResult[], naming: NamingStrategy)
 
     const attrs: Record<string, string> = {};
     for (const a of r.resource.attributes) {
-      attrs[a.name] = a.name;
+      attrs[attrKey(a.name)] = a.name;
     }
 
     resourceEntries.push({ tsName, resourceType: cfnType, attrs });

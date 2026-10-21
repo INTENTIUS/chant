@@ -238,7 +238,18 @@ export interface CompileInputs {
   output?: string;
   /** For a project with no components: build only this lexicon, as `chant build --lexicon` does. */
   lexicon?: string;
+  /**
+   * The release's label (#4168, decision 5), passed to every compile and
+   * artifact build as `CHANT_RELEASE_LABEL`, so a version reaches the build
+   * without a version-bump commit. A build parameter reads it by declaring
+   * `env: "CHANT_RELEASE_LABEL"`, and a build step's own tool (cargo, npm)
+   * reads the variable. Unset for a cut with no label.
+   */
+  releaseLabel?: string;
 }
+
+/** The variable a cut's label reaches the build through (#4168). */
+export const RELEASE_LABEL_ENV = "CHANT_RELEASE_LABEL";
 
 /**
  * Where a project with no components writes its build output when the cut
@@ -468,10 +479,20 @@ export function ownChantCommand(): string[] {
   return [process.execPath, ...process.execArgv, main];
 }
 
-function runChild(command: readonly string[], args: readonly string[], cwd: string, env: string): Promise<{ code: number; stdout: string; stderr: string }> {
+function runChild(
+  command: readonly string[],
+  args: readonly string[],
+  cwd: string,
+  env: string,
+  releaseLabel?: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     const [bin, ...lead] = command;
-    const child = spawn(bin, [...lead, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CHANT_ENV: env } });
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, CHANT_ENV: env };
+    // A label never leaks in from the caller's shell: only the cut sets it.
+    delete childEnv[RELEASE_LABEL_ENV];
+    if (releaseLabel !== undefined) childEnv[RELEASE_LABEL_ENV] = releaseLabel;
+    const child = spawn(bin, [...lead, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], env: childEnv });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
@@ -500,7 +521,7 @@ export function spawnTargetCompiler(inputs: CompileInputs, command: readonly str
     return args;
   };
   const call = async (env: string, extra: string[]): Promise<unknown> => {
-    const run = await runChild(command, ["release", "compile", "--env", env, ...common(), ...extra, "--json"], inputs.projectDir, env);
+    const run = await runChild(command, ["release", "compile", "--env", env, ...common(), ...extra, "--json"], inputs.projectDir, env, inputs.releaseLabel);
     if (run.code !== 0) throw new ReleaseCompileError(`compiling "${env}" failed (exit ${run.code})`);
     try {
       return JSON.parse(run.stdout);

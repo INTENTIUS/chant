@@ -1,0 +1,34 @@
+---
+title: Checking Whether Services Are Up
+description: Read the runtime health of declared ECS services, Route 53 health checks, Container Apps and Cloud Run services with chant lifecycle health
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/checking-health/.
+  In my chant project, run `chant lifecycle health <env> --json` for the environment I name and tell me which entities are unhealthy, which could not be read and why, and which are not deployed. Do not change any resource to make it healthy; that is mine to do.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+`chant lifecycle diff --live` tells you what changed. `chant lifecycle health` tells you whether the services you declared are serving, and it reads nothing else.
+
+1. Point the read at the environment. Real accounts use your usual credentials. For an emulator, declare an `endpoint` on the environment in `chant.config.ts`, or export the lexicon's endpoint variable (`AWS_ENDPOINT_URL` for aws).
+
+2. Run the read:
+
+   ```bash
+   chant lifecycle health staging
+   ```
+
+   ```text
+   aws
+     healthy   web (AWS::ECS::Service): 2/2 running, rollout COMPLETED
+     unhealthy webCheck (AWS::Route53::HealthCheck): 0/8 checkers healthy; last: Failure: Connection timed out
+   gcp
+     not read  api (GCP::Run::Service): no-binding, no GCP project resolved
+   1 healthy, 1 unhealthy, 0 unknown, 1 not observed
+   ```
+
+3. Fix what keeps a row from being read before you trust the rest. A `not read` row is a read that failed, so chant does not know whether that service is up. It is never counted as unhealthy.
+
+4. For a script or a dashboard, add `--json`. The output is `chant-health/v1`, keyed by the graph's node ids, so you can join it to `chant graph --json`. The [reference](/chant/cli/lifecycle/#lifecycle-health-env) lists the fields and what decides each state.
+
+The command exits 0 whatever the states are. It exits 1 only when the project does not build.
