@@ -443,11 +443,34 @@ export function resolveGcpEndpoint(
 }
 
 /** Resolve the project: `GOOGLE_CLOUD_PROJECT` env, else the CNRM project-id annotation. Pure. */
+/**
+ * The project a resource names in `spec.projectRef.external` (#4201): a
+ * project id or `projects/<id>`. A `GCP.ProjectId` pseudo-parameter there
+ * (`{ Ref: "GCP::ProjectId" }`, unresolved in discovery output) reads
+ * `GCP_PROJECT_ID`, as the serializer does.
+ */
+export function projectRefProject(spec: Record<string, unknown> | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const ref = spec?.projectRef;
+  if (ref === null || typeof ref !== "object") return undefined;
+  let external = (ref as Record<string, unknown>).external;
+  if (external !== null && typeof external === "object" && typeof (external as { toJSON?: unknown }).toJSON === "function") {
+    external = (external as { toJSON(): unknown }).toJSON();
+  }
+  if (external !== null && typeof external === "object" && (external as Record<string, unknown>).Ref === "GCP::ProjectId") {
+    return env.GCP_PROJECT_ID || undefined;
+  }
+  if (typeof external !== "string" || external === "") return undefined;
+  return external.startsWith("projects/") ? external.slice("projects/".length).split("/")[0] : external;
+}
+
 export function resolveGcpProject(resource: GcpResource, env: NodeJS.ProcessEnv = process.env): string {
-  const project = env.GOOGLE_CLOUD_PROJECT || resource.metadata?.annotations?.[PROJECT_ID_ANNOTATION];
+  const project =
+    projectRefProject(resource.spec, env) ||
+    env.GOOGLE_CLOUD_PROJECT ||
+    resource.metadata?.annotations?.[PROJECT_ID_ANNOTATION];
   if (!project) {
     throw new Error(
-      `no GCP project — set GOOGLE_CLOUD_PROJECT or the ${PROJECT_ID_ANNOTATION} annotation`,
+      `no GCP project — set spec.projectRef.external, GOOGLE_CLOUD_PROJECT or the ${PROJECT_ID_ANNOTATION} annotation`,
     );
   }
   return project;

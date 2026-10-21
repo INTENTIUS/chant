@@ -91,7 +91,7 @@ export async function observeHealthGcp(options: GcpHealthOptions): Promise<Healt
       }
       let project: string;
       try {
-        project = resolveReadProject(gvk.kind, name, metadata, manifestProjects);
+        project = resolveReadProject(gvk.kind, name, metadata, manifestProjects, props);
       } catch (err) {
         unobserved[entityName] = { type: entityType, reason: "no-binding", detail: err instanceof Error ? err.message : String(err) };
         return;

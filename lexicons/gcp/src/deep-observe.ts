@@ -244,7 +244,7 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
     let client: GcpReadClientOptions;
     try {
       client = {
-        project: resolveReadProject(gvk.kind, name, metadata, manifestProjects),
+        project: resolveReadProject(gvk.kind, name, metadata, manifestProjects, props),
         ...(endpoint ? { endpoint } : {}),
       };
     } catch (err) {

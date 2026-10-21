@@ -34,6 +34,7 @@ export {
   isChantOwned,
   resolveGcpEndpoint,
   resolveGcpProject,
+  projectRefProject,
   parseManifest,
 } from "./gcp-apply";
 export type {

@@ -40,7 +40,7 @@ import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@int
 import { observation } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, readOwnership, type ChannelKeys } from "@intentius/chant/ownership";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
-import { resolveGcpProject, parseManifest } from "./op/activities/gcp-apply";
+import { resolveGcpProject, parseManifest, projectRefProject } from "./op/activities/gcp-apply";
 import { resolveGVK } from "./serializer";
 
 /**
@@ -105,7 +105,7 @@ export function manifestProjectAnnotations(buildOutput: string | undefined): Map
   if (!buildOutput) return out;
   try {
     for (const doc of parseManifest(buildOutput, "<build output>")) {
-      const project = doc.metadata?.annotations?.["cnrm.cloud.google.com/project-id"];
+      const project = projectRefProject(doc.spec) ?? doc.metadata?.annotations?.["cnrm.cloud.google.com/project-id"];
       if (doc.kind && doc.metadata?.name && typeof project === "string") {
         out.set(`${doc.kind}/${doc.metadata.name}`, project);
       }
@@ -119,8 +119,9 @@ export function manifestProjectAnnotations(buildOutput: string | undefined): Map
 }
 
 /**
- * The project a read should target: `GOOGLE_CLOUD_PROJECT` / the entity's own
- * annotation (via `resolveGcpProject`, the applier's rule), then the built
+ * The project a read should target: the entity's `projectRef.external`,
+ * `GOOGLE_CLOUD_PROJECT`, the entity's own annotation (via
+ * `resolveGcpProject`, the applier's rule), then the built
  * manifest's merged annotation. Throws the applier's own error when nothing
  * resolves, so the `no-binding` detail names both knobs.
  */
@@ -129,9 +130,10 @@ export function resolveReadProject(
   name: string,
   metadata: { annotations?: Record<string, string> } | undefined,
   manifestProjects: Map<string, string>,
+  props?: Record<string, unknown>,
 ): string {
   try {
-    return resolveGcpProject({ kind, metadata });
+    return resolveGcpProject({ kind, metadata, ...(props ? { spec: props } : {}) });
   } catch (err) {
     const fromManifest = manifestProjects.get(`${kind}/${name}`);
     if (fromManifest) return fromManifest;
@@ -230,7 +232,7 @@ export async function describeResources(options: {
     let client: GcpReadClientOptions;
     try {
       client = {
-        project: resolveReadProject(gvk.kind, name, metadata, manifestProjects),
+        project: resolveReadProject(gvk.kind, name, metadata, manifestProjects, props),
         ...(endpoint ? { endpoint } : {}),
       };
     } catch (err) {

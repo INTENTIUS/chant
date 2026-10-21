@@ -72,6 +72,10 @@ export const annotations = defaultAnnotations({
 
 This injects the project annotation into every resource. Without it, Config Connector uses the namespace's default project.
 
+`GCP.ProjectId`, `GCP.Region` and `GCP.Zone` are read from `GCP_PROJECT_ID`, `GCP_REGION` and `GCP_ZONE` at build. Config Connector YAML has no parameters, so a pseudo-parameter in a resource's spec, such as `CloudRunServiceComposite`'s default `location` and `projectRef`, must resolve: a build with the variable unset fails and names each resource and variable. Set the variable, or pass the value explicitly.
+
+`gcpApply` and the live reads (health, drift) take a resource's project from `spec.projectRef.external` (an id or `projects/<id>`), then `GOOGLE_CLOUD_PROJECT`, then the project annotation.
+
 ## Reconciliation lifecycle
 
 Config Connector resources go through a reconciliation lifecycle:
