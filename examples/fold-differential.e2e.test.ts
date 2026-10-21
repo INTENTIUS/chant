@@ -376,6 +376,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "examples/local-cloud-trio",
   "examples/local-fly",
   "examples/testing-harness-aws",
+  "examples/trunk-curated-floci",
   "lexicons/aws/examples/fargate-alb",
   "lexicons/aws/examples/lambda-dynamodb",
   "lexicons/aws/examples/lambda-eventbridge",
