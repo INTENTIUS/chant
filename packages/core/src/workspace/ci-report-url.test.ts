@@ -79,10 +79,13 @@ async function cli(cwd: string, argv: string[], run: (ctx: CommandContext) => Pr
   return { code, out: out.join("\n"), err: err.join("\n") };
 }
 
+// A job image of its own, so the job gets no setup lines: the default image's
+// OpenTofu install downloads from the network on a runner without tofu, as
+// in ci-run.test.ts.
 const runPlan = (w: ReturnType<typeof workspace>, extra: string[] = []) =>
   cli(
     w.app,
-    ["ci", "run", "plan", "--env", "prod", "--base", w.base, "--pr", "7", "--forge", "forgejo", "--no-status", "--chant", w.chant, "-o", join(scratchDir("chant-report-url-out-"), "pr"), ...extra],
+    ["ci", "run", "plan", "--image", "chant-ci-report-url-test:local", "--env", "prod", "--base", w.base, "--pr", "7", "--forge", "forgejo", "--no-status", "--chant", w.chant, "-o", join(scratchDir("chant-report-url-out-"), "pr"), ...extra],
     runCiRun,
   );
 
