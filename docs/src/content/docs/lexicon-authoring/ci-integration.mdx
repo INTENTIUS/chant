@@ -146,19 +146,34 @@ missing from these docs, and both `@intentius/chant-k8s-client` and
 published at all until it was added.
 </Aside>
 
-Releases go out through `just release`, which bumps every package in lockstep,
-commits, and pushes the tag the workflow listens for:
+Releases go out through `just release`, which cuts chant with its own release
+command ([#4040](https://github.com/INTENTIUS/chant/issues/4040)):
 
 ```bash
 just release patch             # or: minor / major
-just release minor --dry-run   # print the commit and version, change nothing
+just release minor --dry-run   # run the cut without --yes, change nothing
 just release patch <commit>    # release a named commit on main
 ```
 
-The recipe releases the newest commit on main whose `chant` run succeeded, not
-main's HEAD. It commits the version bump on top of that commit, tags it, and
-merges the tag back into main, so main ends up on the released version without
-any history being rewritten.
+The recipe picks the newest green commit on main, not main's HEAD, and runs
+`chant release cut <version> --at <commit>` from `release/`, the workspace
+member `npm`. No version-bump commit is made: the version is the release's
+label, one past the highest version in any `package.json` at the commit or in
+a `chant-v*` or `release/npm/*` tag. The cut pushes `chant/lifecycle`, and the
+recipe pushes the `release/npm/<version>` tag.
+
+On that tag, `publish.yml`'s `release-publish` job runs
+`scripts/release-pack.sh <version>`. It sets every package to the version, with
+the `@intentius/*` ranges at `^<version>`, packs each one into `.release/packs/`,
+and puts the `package.json` files back. Then `chant release publish <version>
+--yes` publishes the tarballs `release/chant.config.ts` names, core first,
+straight to `latest` (`stage: false`). A new lexicon needs a line in that list,
+and `scripts/release-member.test.ts` fails until it has one.
+
+`just release-legacy` is the path before #4040. It commits the version bump on
+top of the green commit, tags it `chant-v<version>`, and merges the tag back
+into main. It stays until two releases have gone through `just release`. The
+gate and untag jobs below belong to that path.
 
 The publish workflow's `test` job is the CI gate. Instead of running the suite
 again, `scripts/publish-verify-ci.sh` looks up the `chant` run through the API.
@@ -236,8 +251,8 @@ version it was run from (`packages/core/src/cli/commands/init.ts:101`):
 Under 0.x semver a caret does not float across minors: `^0.57.0` resolves to
 `>=0.57.0 <0.58.0`. A lexicon published at a different minor from core is
 unreachable from a scaffolded project. Every package in the monorepo is versioned
-together, which is what `just release` does; bump them in lockstep before
-tagging.
+together, which is what `just release` does when it packs every package at the
+release's version.
 
 ## Why the root dependency exists
 
