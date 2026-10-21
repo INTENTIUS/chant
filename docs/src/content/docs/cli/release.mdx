@@ -96,7 +96,11 @@ The environments are the entries of the member's [`environments`](/chant/configu
 3. discovers the components enabled under those parameters;
 4. reads each template their deploys name.
 
-A template is a file named by a literal path in a deploy step's `template`, `manifest` or `values` field, such as `cfn-deploy`'s `template: "dist/api.template.json"`. A path with the `archive:` prefix names the file after the prefix. Build and publish steps are not read, and a path that names a directory, such as a helm chart, is not a template. A template that does not exist after the build stops the cut.
+A template is a file named by a literal path in a deploy step's `template`, `manifest` or `values` field, such as `cfn-deploy`'s `template: "dist/api.template.json"`. A path with the `archive:` prefix names the file after the prefix. Build and publish steps are not read. A template that does not exist after the build stops the cut.
+
+Since [#4155](https://github.com/INTENTIUS/chant/issues/4155) the cut also records the other local paths a deploy step names, from the fields [Plan previews](/chant/components/plan-previews/#a-capability-without-plan) lists: a `helm-upgrade` chart, a `kustomize-apply` directory, an `s3-sync` source. A directory is recorded file by file. Each file is a template at its path under the directory, and the target names the directory in `trees`. A directory git ignores, such as a build's `dist`, is recorded whole, since the release is what the build wrote. A file that is not UTF-8, such as a packaged subchart, is recorded as base64 with `encoding: "base64"`. A chart named from a repository is not a local path. Such a path is not recorded and does not stop the cut.
+
+A promote under the release points each recorded path at its copy. A directory is written under `.chant/release-templates/<digest>/<name>/`, where the digest is taken over its files. The deploy reads the tree the cut recorded and not the checkout's. A target cut before #4155 has no `trees`, and a promote of it reads charts and the other directories from the checkout, as it did.
 
 The artifacts are built once. Each component's `docker-build`, `zip-package` and `jvm-build` steps run, and nothing else, in the first environment the component is enabled in. `docker-build` gives an `image` entry and the other two an `asset` entry, each with the archive path and the digest. When a component's source did not change since the release cut from the nearest earlier commit, its entries are carried from that release and nothing is built. Unchanged means git sees no change between the two commits in the component's file, the member's `chant.config.ts`, and the paths the build steps read (`context` and the Dockerfile, `source`, `path`). A commit that only changes a flag or a parameter then gets a release of its own with the same artifact digests.
 
@@ -123,6 +127,7 @@ The release is stored on `chant/lifecycle` under its digest, and a cut is a line
 | `_releases/<releaseDigest>.json` | The release, written once and never rewritten. `:` is written as `_`. |
 | `_releases/cuts.jsonl` | One line per cut: `{ version, releaseDigest, label, actor, timestamp, runId, runOrigin, signature }`. |
 | `_releases/templates/<digest>.txt` | Each template's bytes, by content digest, for a promote to deploy. |
+| `_releases/templates/<digest>.b64` | The base64 of a template that is not UTF-8, by the digest of its bytes. |
 
 A workspace member's copies sit under `_members/<member>/`. The cut writes the local branch and pushes it when there is a remote.
 
@@ -131,7 +136,7 @@ A workspace member's copies sit under `_members/<member>/`. The cut writes the l
 | In the digest | Outside it |
 |---|---|
 | `member`, `commit` and `artifactDigests` | each parameter's `source` |
-| each target's `env` and `templates` | the cut line's `label`, `actor`, `timestamp`, `runId`, `runOrigin` and `signature` |
+| each target's `env`, `templates` (with each one's `encoding`) and `trees` | the cut line's `label`, `actor`, `timestamp`, `runId`, `runOrigin` and `signature` |
 | each parameter's `name` and `value` | the chant version |
 
 So two cuts of one commit give the same digest.

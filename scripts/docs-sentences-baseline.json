@@ -133,7 +133,6 @@
   "repetition/near-duplicate": 2
  },
  "docs/src/content/docs/cli/import.mdx": {
-  "formatting/em-dash-density": 4,
   "claude/colon-reveal": 3,
   "tricolon/comma-series": 1
  },

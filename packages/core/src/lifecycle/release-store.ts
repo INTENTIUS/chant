@@ -14,6 +14,7 @@
  *   _releases/<releaseDigest>.json      the release, written once and never rewritten
  *   _releases/cuts.jsonl                one line per cut, with the release's label
  *   _releases/templates/<digest>.txt    each template's bytes, by content digest
+ *   _releases/templates/<digest>.b64    a file that is not UTF-8, base64 (#4155)
  *
  * `:` is written as `_` in file names, as `_plans/` and `_builds/` do. A
  * workspace member's copy sits under `_members/<member>/` through the same
@@ -24,6 +25,14 @@
  * (ws-104 question 5). They are named by content digest, so a template that
  * two environments or two releases share is stored once.
  *
+ * Since #4155 a cut records every local file a deploy step deploys from, not
+ * only `template`, `manifest` and `values` files: a chart, a kustomize
+ * directory, a site's tree. A directory is recorded as one template per file
+ * under it, and named in the target's `trees`, so a promote deploys the
+ * recorded tree. A target with `trees` is one such cut; a target without the
+ * field was cut before #4155, and a promote of it reads directories and the
+ * other fields from the checkout, as it did then.
+ *
  * `releaseDigest` is `computePlanDigest("release", subject)` over the member,
  * the commit, the artifact digests and each target's env, templates and the
  * name and value of each param. A param's `source`, the label, the actor, the
@@ -32,7 +41,7 @@
  */
 
 import { sortedJsonReplacer } from "../utils";
-import { contentDigest } from "../content-digest";
+import { contentDigest, sha256Hex } from "../content-digest";
 import { computePlanDigest } from "./plan-digest";
 import {
   ledgerDir,
@@ -74,6 +83,15 @@ export interface ReleaseTemplate {
   path: string;
   /** `sha256:<hex>` of the file's bytes. */
   digest: string;
+  /** `base64` for a file that is not UTF-8 (#4155): its stored copy is base64. Absent for text. */
+  encoding?: "base64";
+}
+
+/** A directory a component's deploy names, whose files the target records as templates under its path (#4155). */
+export interface ReleaseTree {
+  component: string | null;
+  /** The directory as the deploy step names it, relative to the member's directory. */
+  path: string;
 }
 
 /** One resolved build parameter of a target. */
@@ -89,6 +107,8 @@ export interface ReleaseTarget {
   env: string;
   templates: ReleaseTemplate[];
   params: ReleaseParam[];
+  /** The directories the target records (#4155). Absent on a target cut before #4155. */
+  trees?: ReleaseTree[];
 }
 
 /** The release file, `_releases/<releaseDigest>.json`. */
@@ -147,9 +167,12 @@ export function normalizeRelease<T extends ReleaseSubject>(release: T): T {
       .map((t) => ({
         env: t.env,
         templates: [...t.templates]
-          .map(({ component, path, digest }) => ({ component, path, digest }))
+          .map(({ component, path, digest, encoding }) => ({ component, path, digest, ...(encoding ? { encoding } : {}) }))
           .sort((a, b) => byString(a.component ?? "", b.component ?? "") || byString(a.path, b.path)),
         params: [...t.params].map(({ name, value, source }) => ({ name, value, source })).sort((a, b) => byString(a.name, b.name)),
+        ...(t.trees
+          ? { trees: [...t.trees].map(({ component, path }) => ({ component, path })).sort((a, b) => byString(a.component ?? "", b.component ?? "") || byString(a.path, b.path)) }
+          : {}),
       }))
       .sort((a, b) => byString(a.env, b.env)),
   };
@@ -162,7 +185,12 @@ export function releaseHashInput(release: ReleaseSubject): unknown {
     member: n.member,
     commit: n.commit,
     artifactDigests: n.artifactDigests,
-    targets: n.targets.map((t) => ({ env: t.env, templates: t.templates, params: t.params.map(({ name, value }) => ({ name, value })) })),
+    targets: n.targets.map((t) => ({
+      env: t.env,
+      templates: t.templates,
+      params: t.params.map(({ name, value }) => ({ name, value })),
+      ...(t.trees ? { trees: t.trees } : {}),
+    })),
   };
 }
 
@@ -184,7 +212,12 @@ export function verifyReleaseDigest(release: Release): boolean {
 
 const stem = (digest: string): string => digest.replace(/:/g, "_");
 const releaseFile = (digest: string): string => `${stem(digest)}.json`;
-const templateFile = (digest: string): string => `${stem(digest)}.txt`;
+const templateFile = (digest: string, encoding?: "base64"): string => `${stem(digest)}.${encoding === "base64" ? "b64" : "txt"}`;
+
+/** The digest of a template's bytes: its text, or what its base64 decodes to. */
+export function templateBytesDigest(content: string, encoding?: "base64"): string {
+  return encoding === "base64" ? `sha256:${sha256Hex(Buffer.from(content, "base64"))}` : contentDigest(content);
+}
 
 /** A label names a release in commands such as `chant release cut <label>`, so it is one plain word. */
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
@@ -209,7 +242,9 @@ export class ReleaseLabelError extends Error {
 /** A release's template bytes, as the cut read them. */
 export interface TemplateContent {
   digest: string;
+  /** The text, or the base64 of the bytes when `encoding` is `base64`. */
   content: string;
+  encoding?: "base64";
 }
 
 /**
@@ -226,7 +261,7 @@ export async function persistRelease(
     throw new Error(`release ${release.releaseDigest} does not hash to its own digest; refusing to store it`);
   }
   for (const t of templates) {
-    if (contentDigest(t.content) !== t.digest) throw new Error(`template bytes do not hash to ${t.digest}; refusing to store them`);
+    if (templateBytesDigest(t.content, t.encoding) !== t.digest) throw new Error(`template bytes do not hash to ${t.digest}; refusing to store them`);
   }
   const dir = await ledgerDir(RELEASES_DIR, opts);
   const files: LedgerFileWrite[] = [];
@@ -235,10 +270,11 @@ export async function persistRelease(
   if (!exists) files.push({ path: releasePath, content: `${JSON.stringify(release, sortedJsonReplacer)}\n`, expectPriorSha: null });
   const seen = new Set<string>();
   for (const t of templates) {
-    if (seen.has(t.digest)) continue;
-    seen.add(t.digest);
-    if ((await readPathSha(`${RELEASES_DIR}/${TEMPLATES_SUBDIR}`, templateFile(t.digest), opts)) !== null) continue;
-    files.push({ path: `${dir}/${TEMPLATES_SUBDIR}/${templateFile(t.digest)}`, content: t.content, expectPriorSha: null });
+    const file = templateFile(t.digest, t.encoding);
+    if (seen.has(file)) continue;
+    seen.add(file);
+    if ((await readPathSha(`${RELEASES_DIR}/${TEMPLATES_SUBDIR}`, file, opts)) !== null) continue;
+    files.push({ path: `${dir}/${TEMPLATES_SUBDIR}/${file}`, content: t.content, expectPriorSha: null });
   }
   if (files.length === 0) return { commit: null, written: false };
   try {
@@ -274,7 +310,15 @@ export function parseRelease(text: string): Release | null {
         t &&
         typeof t.env === "string" &&
         Array.isArray(t.templates) &&
-        t.templates.every((x) => x && (x.component === null || typeof x.component === "string") && typeof x.path === "string" && typeof x.digest === "string") &&
+        t.templates.every(
+          (x) =>
+            x &&
+            (x.component === null || typeof x.component === "string") &&
+            typeof x.path === "string" &&
+            typeof x.digest === "string" &&
+            (x.encoding === undefined || x.encoding === "base64"),
+        ) &&
+        (t.trees === undefined || (Array.isArray(t.trees) && t.trees.every((x) => x && (x.component === null || typeof x.component === "string") && typeof x.path === "string"))) &&
         Array.isArray(t.params) &&
         t.params.every((p) => p && typeof p.name === "string" && ["string", "number", "boolean"].includes(typeof p.value) && typeof p.source === "string"),
     );
@@ -414,9 +458,9 @@ export async function appendCut(
   throw lastErr;
 }
 
-/** A template's bytes by digest, or null when none is stored. */
-export async function readReleaseTemplate(digest: string, opts?: LedgerLocation): Promise<string | null> {
-  return readBlobFromPath(`${RELEASES_DIR}/${TEMPLATES_SUBDIR}`, templateFile(digest), opts);
+/** A template's bytes by digest, or null when none is stored. Under `base64` (#4155), the stored base64 of the bytes. */
+export async function readReleaseTemplate(digest: string, opts?: LedgerLocation, encoding?: "base64"): Promise<string | null> {
+  return readBlobFromPath(`${RELEASES_DIR}/${TEMPLATES_SUBDIR}`, templateFile(digest, encoding), opts);
 }
 
 /**
