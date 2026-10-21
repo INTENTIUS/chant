@@ -64,6 +64,7 @@ import {
   PR_APPLY_RECORD,
   PR_LOOP_REPORT_DIR,
   prApplyGroup,
+  prRecordGroup,
   prApplyRecordKey,
   prApplyWaveJobName,
   prLoopJobs,
@@ -171,7 +172,10 @@ function gatedWaveGithubDoc(
 
 /**
  * The pull-request workflow (#3183): `plan` on each pull request into the
- * target branch, `apply` on each push to it. The plan job can comment and set
+ * target branch, and on each push to it `record` (#4168), or `apply` with
+ * `applyOnMerge`. The record job plans on the merged commit and writes the
+ * merge record, applying nothing, so it pushes to `chant/lifecycle` and runs
+ * one at a time per environment as the apply does. The plan job can comment and set
  * statuses but cannot push, since it runs the pull request's code; the apply
  * job can push, to record a pending fact on `chant/lifecycle`, and runs one
  * at a time per environment. Both keep their report as an artifact, and both
@@ -206,7 +210,7 @@ function prLoopGithubDoc(
   const branch = loop.branch ?? "main";
   const member = options.member;
   const rooted = !member || member.dir === "." || member.dir === "";
-  const [plan, apply] = prLoopJobs(loop.forge ?? "github", env, loop, member?.name);
+  const [plan, apply, record] = prLoopJobs(loop.forge ?? "github", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
   // The apply's attempt record (#3543) lives in the cache under the pushed
   // commit. Cache keys cannot be overwritten, so each attempt saves under
@@ -259,7 +263,9 @@ function prLoopGithubDoc(
         prApplyWaveJobName(job.wave!),
         applyJob(job, job.wave! > 1 ? [prApplyWaveJobName(job.wave! - 1)] : [], `Apply wave ${job.wave}, under the approval its plan has`),
       ])
-    : [["apply", applyJob(apply, [], "Apply the plan a reviewer approved")]];
+    : loop.applyOnMerge
+      ? [["apply", applyJob(apply, [], "Apply the plan a reviewer approved")]]
+      : [["record", { ...applyJob(record, [], "Record the plan on the merged commit; nothing applies"), concurrency: concurrency(prRecordGroup(env, member?.name)) }]];
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: "github.event_name == 'pull_request'",
@@ -283,7 +289,7 @@ function prLoopGithubDoc(
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       ...applyNames.map((name, i) => ({
         jobName: name,
-        component: loop.waveGate ? `pull request apply, wave ${i + 1}` : "pull request apply",
+        component: loop.waveGate ? `pull request apply, wave ${i + 1}` : loop.applyOnMerge ? "pull request apply" : "merge record",
         stage: name,
         needs: i > 0 ? [applyNames[i - 1]] : [],
       })),

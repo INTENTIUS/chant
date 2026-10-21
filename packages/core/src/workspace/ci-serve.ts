@@ -3,11 +3,15 @@
  * host. It polls the forge for the open pull requests into the target branch
  * and for the branch's head, and runs the pull-request jobs with
  * {@link ciRun} (./ci-run.ts): `plan` for each new pull request head, and
- * `apply` for each new commit on the target branch, measured from the head
- * the previous poll saw (the push's `before`).
+ * `record` for each new commit on the target branch (#4168), measured from
+ * the head the previous poll saw (the push's `before`). The record applies
+ * nothing; with `applyOnMerge` (`--apply-on-merge`) the commit gets `apply`
+ * in its place, as before #4168. After each job settles it runs `ci tick`
+ * from the runs the jobs recorded, when the declaration has `ci.green`.
+ * What the list below says of the apply holds for it under `applyOnMerge`.
  *
  * - Dedupe. A state file in the state directory keeps every job it started,
- *   keyed by job and commit (`plan:<pr>:<sha>`, `apply:<sha>`), with how it
+ *   keyed by job and commit (`plan:<pr>:<sha>`, `record:<sha>`, `apply:<sha>`), with how it
  *   ended, and the target head the last apply was measured to. A job already
  *   in it is not started again, unless it failed and `rerunFailed` asks for
  *   it: the forge's "re-run failed jobs".
@@ -75,7 +79,7 @@ import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type
 import { parseDuration } from "../op/duration";
 import { reportUrlOf } from "./ci-report-url";
 import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
-import { RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
+import { CiGreenError, ciTick, RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
 import { gitTop } from "./tree";
 import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
 
@@ -90,10 +94,14 @@ export interface CiServeForge {
   pullRequestFor?(sha: string): Promise<number | null>;
 }
 
-/** A job the forge's state calls for: the plan of a pull request's head, or the apply of a target-branch commit. */
+/**
+ * A job the forge's state calls for: the plan of a pull request's head, or
+ * for a target-branch commit its record (#4168) or, with `applyOnMerge`,
+ * its apply.
+ */
 export type CiServeTrigger =
   | { job: "plan"; commit: string; base: string; pr: number; rerun?: boolean }
-  | { job: "apply"; commit: string; base: string; rerun?: boolean };
+  | { job: "apply" | "record"; commit: string; base: string; rerun?: boolean };
 
 /** One job in the state file. */
 export interface CiServeJobState {
@@ -141,6 +149,8 @@ export type CiServeEvent =
   | { type: "not-run"; job: CiJobName; commit: string; pr?: number; reason: "not-fast-forward" | "skip-ci"; branch?: string; from?: string }
   | { type: "ledger"; action: "deleted" | "reset"; local: string; forge?: string }
   | { type: "build"; commit: string; phases: string[]; status: "started" | "ok" | "fail" | "held"; exitCode?: number }
+  /** `ci tick` after the pass (#4168): the tags it made from the runs. */
+  | { type: "tick"; made: string[] }
   | { type: "error"; message: string };
 
 /** The `ciRun` request fields `ci serve` passes through to every job: the generator's options and the runner's. */
@@ -162,6 +172,18 @@ export interface CiServeOptions {
   authors?: readonly string[];
   /** Run again the failed apply at the target's head, and the failed plans of open heads. */
   rerunFailed?: boolean;
+  /**
+   * Apply each new target-branch commit (#4168), as `ci serve` did before
+   * #4168. Default false: each new commit gets the record job, which applies
+   * nothing.
+   */
+  applyOnMerge?: boolean;
+  /**
+   * Run after each pass that settled a job (#4168): `ci tick` from the runs
+   * the jobs recorded. Returns the tags it made, or undefined when the
+   * declaration has no `ci.green`. The command passes one; a test may not.
+   */
+  tick?: () => Promise<string[] | undefined>;
   /** Passed to each job. `job.hostEnv` gets `GITHUB_REPOSITORY` set to `repo`. */
   job?: CiServeJobOptions;
   /** This process's lease identity. Default `currentHolderId()`. */
@@ -190,7 +212,7 @@ export const newCiServeRuntime = (): CiServeRuntime => ({ inflight: new Map() })
 
 /** The state key of a job. */
 export function ciServeKey(t: { job: CiJobName; commit: string; pr?: number }): string {
-  return t.job === "plan" ? `plan:${t.pr}:${t.commit}` : `apply:${t.commit}`;
+  return t.job === "plan" ? `plan:${t.pr}:${t.commit}` : `${t.job}:${t.commit}`;
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -345,6 +367,8 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
   const triggers: CiServeTrigger[] = [];
   const events: CiServeEvent[] = [];
   const [head, prs] = await Promise.all([opts.client.branchHead(place.branch), opts.client.openPullRequests(place.branch)]);
+  // #4168: a new target commit is recorded, and applied only with applyOnMerge.
+  const onMerge: "apply" | "record" = opts.applyOnMerge ? "apply" : "record";
 
   if (head === undefined) {
     events.push({ type: "no-branch", branch: place.branch });
@@ -357,7 +381,7 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
   } else if (head !== state.target) {
     const from = state.target;
     const move = targetMove(place.top, place.branch, from, head);
-    const entry = state.jobs[ciServeKey({ job: "apply", commit: head })];
+    const entry = state.jobs[ciServeKey({ job: onMerge, commit: head })];
     if (move === "unknown") {
       events.push({ type: "error", message: `${place.branch} is at ${head.slice(0, 12)} on the forge, and that commit could not be fetched; the next poll tries again` });
     } else if (move === "other" || (!entry && skipsCi(place.top, head))) {
@@ -365,13 +389,13 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
       update((s) => {
         s.target = head;
       });
-      events.push({ type: "not-run", job: "apply", commit: head, reason: move === "other" ? "not-fast-forward" : "skip-ci", ...(move === "other" ? { branch: place.branch, from } : {}) });
-    } else if (!entry) triggers.push({ job: "apply", commit: head, base: from });
-    else if (opts.rerunFailed && failedEntry(entry, ciServeKey(entry), rt)) triggers.push({ job: "apply", commit: head, base: entry.base, rerun: true });
+      events.push({ type: "not-run", job: onMerge, commit: head, reason: move === "other" ? "not-fast-forward" : "skip-ci", ...(move === "other" ? { branch: place.branch, from } : {}) });
+    } else if (!entry) triggers.push({ job: onMerge, commit: head, base: from });
+    else if (opts.rerunFailed && failedEntry(entry, ciServeKey(entry), rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true });
   } else {
-    const key = ciServeKey({ job: "apply", commit: head });
+    const key = ciServeKey({ job: onMerge, commit: head });
     const entry = state.jobs[key];
-    if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "apply", commit: head, base: entry.base, rerun: true });
+    if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true });
   }
 
   const authors = opts.authors?.length ? new Set(opts.authors.map((a) => a.toLowerCase())) : undefined;
@@ -474,7 +498,7 @@ export async function ciServeSchedule(opts: CiServeOptions, triggers: readonly C
     const entry: CiServeJobState = { job: t.job, commit: t.commit, base: t.base, ...pr, status: "running", runId, attempts: attempt, startedAt: now().toISOString() };
     update((s) => {
       s.jobs[key] = entry;
-      if (t.job === "apply" && !t.rerun) s.target = t.commit;
+      if (t.job !== "plan" && !t.rerun) s.target = t.commit;
     });
     emit({ type: "started", job: t.job, commit: t.commit, ...pr, base: t.base, runId, attempt, ...(resume && existsSync(resume) ? { resume } : {}) });
 
@@ -489,7 +513,7 @@ export async function ciServeSchedule(opts: CiServeOptions, triggers: readonly C
         emit({ type: "error", message: `${key} settled, and the state file could not be written: ${message(err)}` });
       }
       emit({ type: "settled", job: t.job, commit: t.commit, ...pr, status: settled.status === "ok" ? "ok" : "fail", ...(settled.failure ? { failure: settled.failure } : {}), ...(settled.report ? { report: settled.report } : {}) });
-      return settled;
+      return serveTick(opts).then(() => settled);
     });
     rt.inflight.set(key, job);
     started.push(job);
@@ -517,7 +541,7 @@ async function runJob(
     tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", t.job === "plan" ? `refs/pull/${t.pr}/head` : place.branch]);
     const hostEnv = { ...(opts.job?.hostEnv ?? process.env), GITHUB_REPOSITORY: opts.repo };
     // An apply is for a merge: pass the pull request whose merge commit it is, so the commit status link and the run index use `<pr>/<commit>`. None found, or a forge that errs, is today's behaviour.
-    if (t.job === "apply" && opts.client.pullRequestFor) merged = (await opts.client.pullRequestFor(t.commit).catch(() => null)) ?? undefined;
+    if (t.job !== "plan" && opts.client.pullRequestFor) merged = (await opts.client.pullRequestFor(t.commit).catch(() => null)) ?? undefined;
     const run = opts.run ?? ciRun;
     const r = await run({
       ...opts.job,
@@ -626,6 +650,20 @@ async function runBuild(input: { top: string; request: BuildRequest; command: st
   }
 }
 
+/** `ci tick` after a job settled (#4168), logged; a tick that fails is an error event and never fails the job. */
+async function serveTick(opts: CiServeOptions): Promise<CiServeEvent | undefined> {
+  if (!opts.tick) return undefined;
+  let event: CiServeEvent | undefined;
+  try {
+    const made = await opts.tick();
+    event = made === undefined ? undefined : { type: "tick", made };
+  } catch (err) {
+    event = { type: "error", message: `ci tick after a job settled: ${message(err)}` };
+  }
+  if (event) opts.log?.(event);
+  return event;
+}
+
 /**
  * The loop: a pass every `intervalMs` until `signal` aborts, jobs running
  * across passes up to `maxJobs`. A pass the forge fails is logged and the
@@ -679,6 +717,8 @@ export function formatCiServeEvent(e: CiServeEvent): string {
       if (e.status === "held") return `${what} waits: --max-jobs jobs run`;
       return e.status === "started" ? `${what} started` : e.status === "ok" ? `${what} passed` : `${what} failed${e.exitCode !== undefined ? ` with exit code ${e.exitCode}` : ""}`;
     }
+    case "tick":
+      return e.made.length > 0 ? `ci tick made ${e.made.join(", ")}` : "ci tick: no tag due";
     case "error":
       return `error: ${e.message}`;
   }
@@ -738,6 +778,8 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     if (!args.ciRepo) throw new CiRunError("--repo names the repository whose pull requests ci serve polls: --repo <owner/repo>");
     if (!args.env) throw new CiRunError("--env names the environment the pipeline is for: --env <env>");
     for (const name of args.passEnv ?? []) if (!ENV_NAME.test(name)) throw new CiRunError(`--pass-env takes a variable's name, not ${JSON.stringify(name)}`);
+    // #4168: a gate per wave gates the apply on merge, which a merge runs only when opted in.
+    if (args.waveGate && !args.applyOnMerge) throw new CiRunError("--wave-gate gates the apply on merge, so it needs --apply-on-merge (#4168); without it a merge gets the record job, which applies nothing");
     const intervalMs = ciServeInterval(args.interval);
     const cwd = process.cwd();
     const top = gitTop(cwd);
@@ -770,6 +812,8 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     const { status, warning } = ciStatusFromEnv({ forge, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
     if (warning) console.error(formatWarning({ message: warning }));
     if (!client.openPullRequests || !client.branchHead) throw new CiRunError(`the ${forge} client cannot list pull requests`);
+    // #4168: a host that applied each merge before the upgrade hears that it no longer does.
+    if (!args.applyOnMerge) console.error("ci serve: each new commit on the target branch gets the record job, which applies nothing (#4168); --apply-on-merge applies it");
     const opts: CiServeOptions = {
       cwd,
       forge,
@@ -781,6 +825,16 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
       ...(args.rerunFailed ? { rerunFailed: true } : {}),
       ...(args.ciBuildCommand ? { buildCommand: args.ciBuildCommand } : {}),
+      ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
+      // #4168: the tick from the runs the jobs recorded, signed with the runs' key. No ci.green, no tick.
+      tick: async () => {
+        try {
+          return (await ciTick({ cwd, source: "runs", ...(runnerKey !== undefined ? { runnerKey } : {}) })).made;
+        } catch (err) {
+          if (err instanceof CiGreenError && err.code === "ci-green-undeclared") return undefined;
+          throw err;
+        }
+      },
       job: {
         loop: ciLoopOptions(reportUrl ? { ...args, reportUrl } : args),
         ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),

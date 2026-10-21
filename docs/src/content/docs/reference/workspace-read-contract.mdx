@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `run-event` and `delivery-metrics`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `run-event`, `delivery-metrics` and `merge-record`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -37,7 +37,8 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | the [`workEvidence`](/chant/guide/work-items/#acceptance-criteria) Op activity | its result, or the refusal it fails with | `https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json` |
 | the [change-set document](/chant/reference/change-set/), from the `composeChangeSet` Op activity | its `document` | `https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json` |
 | [`chant change-set summary`](/chant/cli/change-set/#output) | `--format json` | `https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json` |
-| [`chant components pr-plan` and `pr-apply`](/chant/cli/components/#components-pr-plan-and-components-pr-apply) | `pr-plan.json` and `pr-apply.json` under `--output`, or `--json` | `https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json` |
+| [`chant components pr-plan`, `pr-record` and `pr-apply`](/chant/cli/components/#components-pr-plan-and-components-pr-apply) | `pr-plan.json`, `pr-record.json` and `pr-apply.json` under `--output`, or `--json` | `https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json` |
+| [`chant components pr-record`](/chant/cli/components/#components-pr-record) | the merge record, `_merges/<commit>.json` on `chant/lifecycle` (`_members/<member>/_merges/` in a member) | `https://intentius.io/chant/schemas/workspace/merge-record/v1/merge-record.schema.json` |
 | [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
 | [`chant workspace agent`](/chant/cli/workspace-agent/) | `--json` | `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
 | [`chant workspace runs`](/chant/cli/workspace-runs/#reading-runs) | `--json` | `https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json` |
@@ -570,7 +571,7 @@ The two older streams keep their shape behind `--progress-json`. `runEventOfProg
 
 ## Pull request reports
 
-`chant components pr-plan` and `pr-apply` write `pr-<stage>.json` (`pr-report.schema.json`) and `change-set.json` under `--output`. With `--report-url <url>` ([#4007](https://github.com/INTENTIUS/chant/issues/4007)) they also copy them, and the stage's run events when `--events-json` is on, where a reader outside CI can fetch them:
+`chant components pr-plan`, `pr-record` and `pr-apply` write `pr-<stage>.json` (`pr-report.schema.json`) and `change-set.json` under `--output`. With `--report-url <url>` ([#4007](https://github.com/INTENTIUS/chant/issues/4007)) they also copy them, and the stage's run events when `--events-json` is on, where a reader outside CI can fetch them:
 
 ```
 <url>/<pr>/<commit>/pr-<stage>.json
@@ -1005,6 +1006,8 @@ These fields are optional in their documents. Each schema description names the 
 | `run-event`, `status` | `runOrigin.jobId` and `runOrigin.attempt`, and the same under `stewards[].ops[].lastRun.runOrigin` | 0.124.32 | The forge's job id and the run's attempt, from a generated forge job that runs `chant ci run --in-place` ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). Its run record in `<env>/runs__<op>.jsonl` carries them too |
 | `ci-list` | `null` as `opRun.signer` | 0.124.32 | An unsigned Op run counts, with no signer, unless `ci.green.signedSince` asks for a statement on its commit ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). `ignoredRuns` then lists only runs whose statement fails, and unsigned runs under `signedSince` |
 | `run-event` | `runtime: "local"` with `kind: "pipeline"`, and `runOrigin.forge` `local` on a `pr-plan` or `pr-apply` run record in `<env>/runs__<op>.jsonl` | 0.124.32 | A job `chant ci run --local` ran on the machine that started it ([#4161](https://github.com/INTENTIUS/chant/issues/4161)). Its record stays on that machine's `chant/lifecycle`, is never pushed, and never counts in `ci tick` or `ci list`. Both values were already in contract 1, so a reader needs no new case. A reader that shows a local run beside CI's for the same commit tells them apart by `runOrigin.forge` |
+| `pr-report` | `stage` value `record` and `status` value `recorded` | 0.124.33 | The record stage a merge runs unless apply on merge is opted in: it plans the merged commit, writes the merge record and applies nothing. `approval` says whether the plan is the approved one. Its status context is `chant/record` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)) |
+| `ci-run-index` | `runs[].job` value `record` | 0.124.33 | A record job `chant ci run record` ran ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Its run record in `<env>/runs__pr-record.jsonl` names the Op `pr-record` |
 | `ci-run-index` | `runs[].signer`, and the forge's run as `runs[].runOrigin` | 0.124.32 | The runner that signed the record, or `null`, and for a forge job the forge's run with `jobId` and `attempt` ([#4156](https://github.com/INTENTIUS/chant/issues/4156)) |
 | `ci-list` | `commits[].record`, and `unbuilt` as a phase `result` | 0.124.33 | What the commit's `_ci/<sha>.json` record on the local `chant/lifecycle` says, `{ state, reason, coveredBy, culprit }` with only the parts it has, or `null` without one. A phase read from the forge whose runs were cancelled is `unbuilt` ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). A reader that switches on `result` keeps a case for a value it does not know |
 | `ci-last-green` | `newer` | 0.124.33 | Up to 50 commits the walk passed over above the one found, newest first, each `{ sha, record }` with `record` as in `ci-list`. Empty when no commit is found ([#4169](https://github.com/INTENTIUS/chant/issues/4169)) |

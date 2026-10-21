@@ -210,7 +210,7 @@ export const ROOMS = [
 		lede: 'For a team that owns its pipelines: workflows for GitHub Actions, GitLab CI and Forgejo Actions from TypeScript, a generated pull-request pipeline, and an audit of the pipelines you already have.',
 		works: [
 			'Workflows for GitHub Actions, GitLab CI and Forgejo Actions from TypeScript',
-			'A generated pull-request pipeline that plans what a change reaches, posts the plan, and on merge applies only the plan a reviewer approved',
+			'A generated pull-request pipeline that plans what a change reaches, posts the plan, and on merge records it for a release to deploy; applying on merge is opt-in',
 			"`chant audit` reads a repository's existing pipelines and reports security findings, with a diff for each mechanical fix",
 			'`chant migrate` translates a GitHub Actions workflow into GitLab CI',
 		],
@@ -229,6 +229,8 @@ export const ROOMS = [
 		examples: ['examples/github-pr-preview', 'examples/gitlab-aws-alb-services'],
 		tasks: [
 			{ label: 'Generated CI for Pull Requests', href: 'guide/pull-request-ci' },
+			{ label: 'Apply on Merge (opt-in)', href: 'guide/apply-on-merge' },
+			{ label: 'Move off Apply on Merge', href: 'guide/move-off-apply-on-merge' },
 			{ label: 'Per-PR Preview Environments', href: 'tutorials/github-pr-preview' },
 			{ label: 'GitLab CI + AWS ALB', href: 'tutorials/gitlab-aws-alb' },
 		],

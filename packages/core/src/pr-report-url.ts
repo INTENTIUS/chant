@@ -71,7 +71,7 @@ export function reportKey(pr: number | null, commit: string, member?: string): s
 }
 
 /** The events file of a stage. */
-export const reportEventsFile = (stage: "plan" | "apply"): string => `pr-${stage}.events.jsonl`;
+export const reportEventsFile = (stage: "plan" | "apply" | "record"): string => `pr-${stage}.events.jsonl`;
 
 /** Puts one object: `key` below the URL. Rejects with a line a person can read. */
 export type ReportPut = (key: string, body: string, contentType: string) => Promise<void>;
@@ -194,7 +194,7 @@ const messageOf = (err: unknown): string => (err instanceof Error ? err.message 
 export function openPrReportUpload(input: {
   target: ReportTarget;
   key: string;
-  stage: "plan" | "apply";
+  stage: "plan" | "apply" | "record";
   warn: (message: string) => void;
   put?: ReportPut;
 }): PrReportUpload {

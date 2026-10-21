@@ -325,10 +325,16 @@ export interface ParsedArgs {
   reportUrl?: string;
   /**
    * `chant build --components --generate <lexicon> --pr-loop` (#3183) —
-   * generate the pull-request pipeline: plan on the pull request, apply on
-   * merge bound to the approved digest.
+   * generate the pull-request pipeline: plan on the pull request, and on
+   * merge record the plan (#4168), or apply it with `--apply-on-merge`.
    */
   prLoop?: boolean;
+  /**
+   * `chant build --pr-loop --apply-on-merge` and `chant ci serve
+   * --apply-on-merge` (#4168): on merge apply the approved plan, as before
+   * #4168, in place of recording it. Opt-in: a merge deploys nothing without it.
+   */
+  applyOnMerge?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */

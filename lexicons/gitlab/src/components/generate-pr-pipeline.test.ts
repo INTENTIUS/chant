@@ -33,7 +33,7 @@ interface Job {
 }
 
 describe("the GitLab merge-request pipeline", () => {
-  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {} });
+  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
   const doc = parseYAML(result.yaml) as { workflow: { rules: unknown[] }; variables: Record<string, string>; plan: Job; apply: Job };
 
   test("matches its golden", () => {
@@ -66,7 +66,7 @@ describe("the GitLab merge-request pipeline", () => {
   });
 
   test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {
-    const loud = parseYAML(generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "$CHANT_REPORT_URL" } }).yaml) as { plan: Job; apply: Job };
+    const loud = parseYAML(generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, events: true, reportUrl: "$CHANT_REPORT_URL" } }).yaml) as { plan: Job; apply: Job };
     for (const job of [loud.plan, loud.apply]) {
       expect(job.script.at(-1)).toContain('--events-json --report-url "$CHANT_REPORT_URL"');
       expect(job.variables.CHANT_RUN_EVENTS_DIR).toBe(".chant/pr/run-events");
@@ -78,7 +78,7 @@ describe("the GitLab merge-request pipeline", () => {
   test("runs in an image with git and installs OpenTofu, unless the caller names an image", () => {
     expect(doc.plan.image).toBe("node:22");
     expect(doc.apply.script[0]).toBe(PR_LOOP_SETUP[0]);
-    const own = generateGitlabPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: {} }).yaml;
+    const own = generateGitlabPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: { applyOnMerge: true } }).yaml;
     expect(own).toContain("image: example/ci:1");
     expect(own).not.toContain("install-opentofu");
   });
@@ -92,7 +92,7 @@ describe("the GitLab merge-request pipeline", () => {
   });
 
   test("a named branch replaces the default branch in the apply rule", () => {
-    const yaml = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { branch: "trunk" } }).yaml;
+    const yaml = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, branch: "trunk" } }).yaml;
     expect(yaml).toContain('$CI_COMMIT_BRANCH == "trunk"');
   });
 
@@ -106,13 +106,13 @@ describe("the GitLab merge-request pipeline", () => {
   });
 
   test("refuses a promote job beside it, and a canary beside --wave-gate (#4003)", () => {
-    expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no promote job/);
-    expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g", canary: ["net"] } })).toThrow(/takes no --canary/);
+    expect(() => generateGitlabPipeline(ESTATE, { prLoop: { applyOnMerge: true }, promoteTo: "prod" })).toThrow(/pull-request pipeline has no promote job/);
+    expect(() => generateGitlabPipeline(ESTATE, { prLoop: { applyOnMerge: true }, gatedWaves: { gate: "g", canary: ["net"] } })).toThrow(/takes no --canary/);
   });
 
   test("inside a workspace member: member-named jobs that cd into the member, with no changes rule (#3465)", () => {
     const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr.network.prod.gitlab-ci.yml" };
-    const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, member });
+    const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, member });
     const mdoc = parseYAML(scoped.yaml) as Record<string, unknown> & { workflow: { name?: string; rules: unknown[] } };
     expect(scoped.jobs.map((j) => j.jobName)).toEqual(["network-plan", "network-apply"]);
     expect(mdoc.plan).toBeUndefined();
@@ -137,12 +137,12 @@ describe("the GitLab merge-request pipeline", () => {
 
 describe("the merge-request pipeline's branch (#3765)", () => {
   test("a branch that would break the rules: expression is refused, as an Op's is", () => {
-    expect(() => generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { branch: "re$lease" } })).toThrow(/filters on branch "re\$lease"/);
+    expect(() => generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, branch: "re$lease" } })).toThrow(/filters on branch "re\$lease"/);
   });
 });
 
 describe("the gitlab pull-request pipeline with build (#4088)", () => {
-  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { build: true } });
+  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, build: true } });
   const doc = parseYAML(result.yaml) as Record<string, any>;
   const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-build.gitlab.golden.yml");
 
@@ -161,14 +161,52 @@ describe("the gitlab pull-request pipeline with build (#4088)", () => {
   });
 
   test("buildCommand replaces the build line and turns the option on", () => {
-    const yaml = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { buildCommand: "npm run build" } }).yaml;
+    const yaml = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, buildCommand: "npm run build" } }).yaml;
     expect(yaml).toContain("npm run build");
     expect(yaml).not.toContain("chant build --env");
     expect(yaml).toContain("chant lint");
   });
 
   test("the default output carries neither line", () => {
-    const plain = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    const plain = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } }).yaml;
     expect(plain).not.toContain("chant lint");
+  });
+});
+
+describe("the GitLab merge-request pipeline records on merge by default (#4168)", () => {
+  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {} });
+  const doc = parseYAML(result.yaml) as Record<string, unknown> & { stages: string[]; record: Job };
+  const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-record.gitlab.golden.yml");
+
+  test("matches its golden", () => {
+    if (process.env.UPDATE_GOLDEN) writeFileSync(golden, result.yaml);
+    expect(result.yaml).toBe(readFileSync(golden, "utf-8"));
+  });
+
+  test("validates against the vendored GitLab CI schema", () => {
+    const req = createRequire(import.meta.url);
+    const mod = req("ajv") as { default?: unknown };
+    const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): ((d: unknown) => boolean) & { errors?: unknown } };
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(JSON.parse(readFileSync(SCHEMA, "utf-8")));
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+  });
+
+  test("a push to the default branch runs the record job, which applies nothing and keeps no cache", () => {
+    expect(doc.stages).toEqual(["plan", "record"]);
+    expect(doc.apply).toBeUndefined();
+    expect(doc.record.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
+    expect(doc.record.script.at(-1)).toBe('chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab');
+    expect(doc.record.resource_group).toBe("chant-record-prod");
+    expect(doc.record.cache).toBeUndefined();
+  });
+
+  test("a gate per wave gates the apply, so it needs applyOnMerge", () => {
+    expect(() => generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, gatedWaves: { gate: "release" } })).toThrow(/needs --apply-on-merge/);
+  });
+
+  test("inside a workspace member the record job takes the member's name and group", () => {
+    const scoped = parseYAML(generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, member: { name: "network", dir: "infra/network" } }).yaml) as Record<string, Job>;
+    expect(scoped["network-record"].resource_group).toBe("chant-record.network.prod");
+    expect(scoped["network-record"].script.at(-1)).toContain("chant ci run record");
   });
 });

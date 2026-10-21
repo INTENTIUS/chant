@@ -737,7 +737,7 @@ export function waveNotCovered(approved: ChangeSetDocument, fresh: ChangeSetDocu
 }
 
 export interface PrReportInput {
-  stage: "plan" | "apply";
+  stage: "plan" | "apply" | "record";
   pr: number | null;
   env: string;
   /** The workspace member whose pipeline runs the stage (#3465). */

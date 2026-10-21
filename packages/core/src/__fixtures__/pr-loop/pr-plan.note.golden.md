@@ -18,7 +18,7 @@ A reviewer who approved this pull request approves the plan with:
 chant approve pr-12 pr-apply --plan jcs1-sha256:7623a8677afb0bf98d77c602521a3abfa96f76cff25675d350a28c2e26a7bad0 --approver github:<your-login> --sign
 ```
 
-It applies on merge if the plan is still this one. If it moved, the apply refuses and names both digests.
+On merge the plan is recorded, and a release deploys it. With apply on merge it applies if the plan is still this one; if it moved, the apply refuses and names both digests.
 
 ### Plan summary
 

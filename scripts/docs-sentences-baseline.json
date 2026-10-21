@@ -603,6 +603,9 @@
   "dead-metaphor/rare-lemma": 1,
   "tricolon/comma-series": 2
  },
+ "docs/src/content/docs/guide/apply-on-merge.mdx": {
+  "dead-metaphor/rare-lemma": 1
+ },
  "docs/src/content/docs/guide/building.mdx": {
   "discourse/punchy-fragments": 1
  },

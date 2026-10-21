@@ -68,6 +68,9 @@ export const PR_REPORT_WAVES_FLOOR = "0.124.32";
  */
 export const PR_REPORT_PLANNED_OUTPUTS_FLOOR = "0.124.32";
 
+/** The chant that writes the `record` stage and the `recorded` status (#4168 step 1). */
+export const PR_REPORT_RECORD_FLOOR = "0.124.33";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -97,11 +100,14 @@ export function prNoteMarker(env: string, member?: string): string {
   return member ? `<!-- chant-pr:${env}:${member} -->` : `<!-- chant-pr:${env} -->`;
 }
 
-/** The status contexts the two stages set on the commit. */
-export const PR_STATUS_CONTEXTS = { plan: "chant/plan", apply: "chant/apply" } as const;
+/** The status contexts the stages set on the commit. */
+export const PR_STATUS_CONTEXTS = { plan: "chant/plan", apply: "chant/apply", record: "chant/record" } as const;
+
+/** A pull-request loop stage: plan on the pull request, then record (#4168) or, opted in, apply on merge. */
+export type PrStage = keyof typeof PR_STATUS_CONTEXTS;
 
 /** A stage's status context: `chant/plan`, or `chant/plan/<member>` for a workspace member's pipeline. */
-export function prStatusContext(stage: "plan" | "apply", member?: string): string {
+export function prStatusContext(stage: PrStage, member?: string): string {
   return member ? `${PR_STATUS_CONTEXTS[stage]}/${member}` : PR_STATUS_CONTEXTS[stage];
 }
 
@@ -207,6 +213,12 @@ export interface PrApproval {
 export type PrStatus =
   /** Plan stage: every member planned. */
   | "planned"
+  /**
+   * Record stage (#4168): every member planned on the merged commit and the
+   * plan is kept with the merge record. Nothing applied; `approval` says
+   * whether the plan is the one approved.
+   */
+  | "recorded"
   /** Plan stage: a member failed to plan. Apply stage: the same, so nothing applied. */
   | "plan-failed"
   /** Nothing the change touches is deployed by a component. */
@@ -284,7 +296,7 @@ export interface PrWave {
 export interface PrReport {
   $schema: typeof PR_REPORT_SCHEMA_ID;
   contract: typeof PR_REPORT_CONTRACT;
-  stage: "plan" | "apply";
+  stage: PrStage;
   /** The pull or merge request number, when known. */
   pr: number | null;
   env: string;
@@ -406,6 +418,8 @@ function headline(report: PrReport): string {
       return "Nothing to plan: no component deploys what this change touches.";
     case "planned":
       return `Planned ${members}.`;
+    case "recorded":
+      return `Recorded the plan of ${members} on merge. Nothing applied: a release that carries this commit deploys it.`;
     case "plan-failed":
       return `Planning failed for ${report.members.filter((m) => m.status === "plan-failed").length} of ${members}, so nothing can apply.`;
     case "applied":
@@ -468,7 +482,7 @@ function approvalLines(report: PrReport, approver: string): string[] {
   const lines =
     a.status === "changed"
       ? [`An approval stands for ${code(a.approved ?? "(none)")}, not for this digest: the plan changed since it was approved.`]
-      : ["Not approved yet."];
+      : [report.stage === "record" ? "No approval stands for this plan. The release gate decides before it deploys." : "Not approved yet."];
   if (report.stage === "plan" && report.status === "planned") {
     lines.push(
       "",
@@ -478,7 +492,7 @@ function approvalLines(report: PrReport, approver: string): string[] {
       prApproveCommand(report, approver),
       "```",
       "",
-      "It applies on merge if the plan is still this one. If it moved, the apply refuses and names both digests.",
+      "On merge the plan is recorded, and a release deploys it. With apply on merge it applies if the plan is still this one; if it moved, the apply refuses and names both digests.",
     );
   }
   return lines;
@@ -494,7 +508,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
   const out: string[] = [
     prNoteMarker(report.env, report.member),
-    `### chant ${report.stage === "plan" ? "plan" : "apply"} for ${code(report.env)}${report.member ? ` in member ${code(report.member)}` : ""}`,
+    `### chant ${report.stage} for ${code(report.env)}${report.member ? ` in member ${code(report.member)}` : ""}`,
     "",
     `${headline(report)} Head ${code(short(report.head))}, measured from ${code(short(report.base))}.`,
   ];
@@ -594,6 +608,9 @@ export function prStatusDescription(report: PrReport): string {
     case "plan-failed":
       text = `a member failed to plan${digest}`;
       break;
+    case "recorded":
+      text = `recorded ${n} member${n === 1 ? "" : "s"}: ${report.approval.status === "approved" ? "the approved plan" : report.approval.status === "changed" ? "the plan differs from the approved one" : "no approval for this plan"}${digest}`;
+      break;
     case "applied":
       text = `applied ${n} member${n === 1 ? "" : "s"}${digest}`;
       break;
@@ -627,6 +644,8 @@ export function prStatusDescription(report: PrReport): string {
 
 /** The commit status state for a report: success, failure, or pending while it waits on approval. */
 export function prStatusState(report: PrReport): "success" | "failure" | "pending" {
+  // #4168 decision 1: a merge whose plan differs from the approved one is recorded, and its status fails.
+  if (report.status === "recorded") return report.approval.status === "changed" ? "failure" : "success";
   if (report.status === "planned" || report.status === "applied" || report.status === "wave-applied" || report.status === "nothing") return "success";
   if (report.status === "refused" && (report.refusal === "not-approved" || report.refusal === "wave-not-approved")) return "pending";
   if (report.status === "waiting") return "pending";

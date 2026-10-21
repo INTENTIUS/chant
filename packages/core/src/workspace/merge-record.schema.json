@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/merge-record/v1/merge-record.schema.json",
+  "title": "chant merge record",
+  "description": "What landed on the target branch, keyed by commit: _merges/<commit>.json on chant/lifecycle (#4168, chant 0.124.33 and newer). The record job writes it on merge. It applies nothing; a release that carries the commit deploys it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "contract", "commit", "base", "env", "source", "op", "gate", "digest", "plan", "approvedBy", "components", "recordedAt"],
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/workspace/merge-record/v1/merge-record.schema.json" },
+    "contract": { "const": 1 },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The merged commit." },
+    "base": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The commit the change is measured from." },
+    "env": { "type": "string", "minLength": 1 },
+    "member": { "type": "string", "minLength": 1, "description": "The workspace member whose pipeline wrote it." },
+    "source": {
+      "description": "Where the change came from: the pull request that merged it, else the work items its Chant-Record: work:<id> trailers name, else a direct push.",
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "pr"], "properties": { "kind": { "const": "pull-request" }, "pr": { "type": "integer", "minimum": 1 } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "records"],
+          "properties": {
+            "kind": { "const": "work-item" },
+            "records": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": { "kind": { "const": "work" }, "id": { "type": "string", "minLength": 1 } } }
+            }
+          }
+        },
+        { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "direct-push" } } }
+      ]
+    },
+    "op": { "type": ["string", "null"], "description": "The pull request's gate op, pr-<n> or pr-<n>-<member>; null without a pull request." },
+    "gate": { "type": "string", "minLength": 1 },
+    "digest": { "type": ["string", "null"], "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "The change-set digest planned on the merged commit; null when nothing was planned. The change set is stored under _change-sets/." },
+    "plan": {
+      "enum": ["approved", "changed", "unapproved", "nothing", "plan-failed"],
+      "description": "approved: an approval stands for digest. changed: one stands for approvedDigest, so the plan moved after review; the record job's chant/record status fails. unapproved: none stands. nothing: no component deploys what the change touches. plan-failed: a member failed to plan."
+    },
+    "approvedDigest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$" },
+    "approvedBy": { "type": "array", "items": { "type": "string" } },
+    "authorApproved": { "type": "array", "items": { "type": "string" }, "description": "Approvers who wrote the change (#4000), read with a forge." },
+    "components": { "type": "array", "items": { "type": "string" } },
+    "recordedAt": { "type": "string", "minLength": 1, "description": "ISO 8601." }
+  }
+}

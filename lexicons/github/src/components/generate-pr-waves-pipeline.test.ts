@@ -51,7 +51,7 @@ function hasActionlint(): boolean {
 }
 
 describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => {
-  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, gatedWaves: { gate: "release" } });
+  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, gatedWaves: { gate: "release" } });
   const doc = parseYAML(result.yaml) as { jobs: Record<string, Job> };
 
   test("matches its golden", () => {
@@ -98,7 +98,7 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
   });
 
   test("without --wave-gate the workflow is the one apply job it was", () => {
-    const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} });
+    const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
     expect(plain.jobs.map((j) => j.jobName)).toEqual(["plan", "apply"]);
     expect(plain.yaml).not.toContain("--wave");
   });

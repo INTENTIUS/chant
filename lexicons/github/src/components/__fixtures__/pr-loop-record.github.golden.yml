@@ -1,0 +1,74 @@
+name: chant-pr-prod
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  CHANT_ENV: prod
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container: node:22
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Plan the members this pull request reaches
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
+        run: chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github
+      - name: Keep the plan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-plan
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true
+  record:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container: node:22
+    concurrency:
+      group: chant-record-prod
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Record the plan on the merged commit; nothing applies
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
+          chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github
+      - name: Keep the record report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-record
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true

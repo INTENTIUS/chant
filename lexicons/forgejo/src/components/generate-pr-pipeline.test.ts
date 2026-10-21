@@ -34,7 +34,7 @@ function hasActionlint(): boolean {
 }
 
 describe("the Forgejo pull-request workflow", () => {
-  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: {} });
+  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
 
   test("matches its golden", () => {
     if (process.env.UPDATE_GOLDEN) writeFileSync(GOLDEN, result.yaml);
@@ -64,7 +64,7 @@ describe("the Forgejo pull-request workflow", () => {
   });
 
   test("events and reportUrl reach Forgejo's jobs as they reach GitHub's (#4007)", () => {
-    const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "file:///srv/chant-reports" } }).yaml;
+    const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, events: true, reportUrl: "file:///srv/chant-reports" } }).yaml;
     expect(yaml.match(/--forge forgejo --events-json --report-url "file:\/\/\/srv\/chant-reports"/g)).toHaveLength(2);
     expect(yaml.match(/CHANT_RUN_EVENTS_DIR: \.chant\/pr\/run-events/g)).toHaveLength(2);
   });
@@ -83,7 +83,7 @@ describe("the Forgejo pull-request workflow", () => {
     // v3 uploads hidden files with no input asking for it, so .chant/pr is still kept.
     expect(result.yaml).not.toContain("include-hidden-files");
     expect(result.yaml).toContain("path: .chant/pr");
-    const github = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    const github = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } }).yaml;
     expect(github.match(/uses: actions\/upload-artifact@v4$/gm)).toHaveLength(2);
     expect(github).toContain("include-hidden-files: true");
   });
@@ -104,7 +104,7 @@ describe("the Forgejo pull-request workflow", () => {
 });
 
 describe("the forgejo pull-request pipeline with build (#4088)", () => {
-  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { build: true } });
+  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, build: true } });
   const doc = parseYAML(result.yaml) as Record<string, any>;
   const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-build.forgejo.golden.yml");
 
@@ -122,14 +122,31 @@ describe("the forgejo pull-request pipeline with build (#4088)", () => {
   });
 
   test("buildCommand replaces the build line and turns the option on", () => {
-    const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { buildCommand: "npm run build" } }).yaml;
+    const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, buildCommand: "npm run build" } }).yaml;
     expect(yaml).toContain("npm run build");
     expect(yaml).not.toContain("chant build --env");
     expect(yaml).toContain("chant lint");
   });
 
   test("the default output carries neither line", () => {
-    const plain = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    const plain = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } }).yaml;
     expect(plain).not.toContain("chant lint");
+  });
+});
+
+describe("the Forgejo pull-request workflow records on merge by default (#4168)", () => {
+  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: {} });
+  const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-record.forgejo.golden.yml");
+
+  test("matches its golden", () => {
+    if (process.env.UPDATE_GOLDEN) writeFileSync(golden, result.yaml);
+    expect(result.yaml).toBe(readFileSync(golden, "utf-8"));
+  });
+
+  test("a push runs ci run record against Forgejo, and nothing applies", () => {
+    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "record"]);
+    expect(result.yaml).toContain('chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge forgejo');
+    expect(result.yaml).not.toContain("ci run apply");
+    expect(result.yaml).toContain("group: chant-record-prod");
   });
 });

@@ -1,0 +1,103 @@
+---
+title: Apply on Merge (opt-in)
+description: "Opt a generated pull-request pipeline into applying the approved plan on merge, with second approvals for dependents, a gate per wave and resumed applies"
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/apply-on-merge/.
+  Regenerate this repository's pull-request pipeline with `--apply-on-merge` beside the `--pr-loop` flags it was generated with, and open a pull request with the pipeline.
+  Say in the pull request description that a merge will now deploy, and list the credentials the apply job needs.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A generated [pull-request pipeline](/chant/guide/pull-request-ci/) records the plan on merge and deploys nothing; a release deploys it ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). This page opts a pipeline into the older behaviour: on merge it plans the same components again and applies them only if the digest is the one a reviewer approved. If the plan moved, it refuses with both digests named and applies nothing.
+
+<Aside type="caution">
+With apply on merge, a merge deploys. A commit applied this way never went green first, and the release gate does not see it. Use it for a repository whose merges are its deploys, such as an estate that has no releases.
+</Aside>
+
+## Generate the pipeline
+
+Add `--apply-on-merge` to the command the pipeline was generated with:
+
+```bash
+chant build --components --generate github --pr-loop --apply-on-merge --env prod --output .github/workflows/chant-pr.yml
+```
+
+The job on merge is `apply` in place of `record`, and runs [`chant components pr-apply`](/chant/cli/components/#components-pr-plan-and-components-pr-apply) through `chant ci run apply`. Like the record job, the apply measures from the commit the push replaced. A push that no pull request merged is refused as `no-pull-request`. The job may push to `chant/lifecycle`, to record a pending approval, and one apply runs at a time per environment through the group `chant-apply-<env>`, or `chant-apply.<member>.<env>` in a workspace member. Its status is `chant/apply`, and the generator option is `applyOnMerge: true`.
+
+With `--require-review` on `chant build --pr-loop`, the generator option `requireReview: true`, or `"security": ["review-rules"]` in `chant.workspace.json`, the apply counts an approval only from someone with an approving review on the pull request, and never from someone who wrote the change. [Approve a plan](/chant/guide/pull-request-ci/#approve-a-plan) describes the check. It is off by default, here as everywhere ([#4168](https://github.com/INTENTIUS/chant/issues/4168)).
+
+A workspace member whose pipeline is a declared generated file keeps the flag in the command its entry names, so [`chant workspace check`](/chant/cli/workspace-check/) compares the file with what that command writes.
+
+## A dependent that reads an upstream output
+
+The apply runs each approved plan in order, but before a member starts it resolves the member's references against the outputs standing then. When one differs from the value the plan read, because it was unknown or because the upstream applied as another value than its plan said, the member does not apply its approved plan. It is held back with its dependents. Once the rest settled, the apply plans the held members again against the outputs it left and decides that set's digest at a gate of its own, `pr-apply-round-2`, as [gated waves](/chant/cli/components/#one-gate-per-wave) gate each wave. The `identity.gates` entry for `pr-apply` and `--require-review` apply to it too. Approved, the round applies. Without an approval the apply ends `waiting` with exit code 3, and the report's `rounds` and the note give the round's digest and its approve command. Once that approval is recorded, the next run of the apply job restores its `--resume` record and applies only the round.
+
+A member that reads an output known only after apply needs a second approval once its upstream applied, and a chain of such members needs one per link. The first approval covers the upstream and everything that does not read such an output. The `cfn-deploy` guess at which outputs a stack keeps can be wrong for an attribute that changes on an in-place update. The apply then holds the dependent back and asks for a round, so the wrong guess costs an approval and never applies a plan made against the wrong value. A report written before 0.124.32 can carry `inputsMoved` on an applied member; chant no longer writes it.
+
+## When the plan changed after review
+
+The apply plans every member before it applies any. When the digest is the approved one, it applies each member's plan in dependency order and updates the note and the `chant/apply` status. When an approval stands for another digest, something moved between review and merge. A later commit, a merge to the target branch that touched the same root, or a change in the live state each does it. Then the apply stops with exit 3:
+
+```
+The plan changed after review, so nothing was applied. approved: jcs1-sha256:d181...; planned now: jcs1-sha256:cef9.... Read the new plan, and if it is right, approve it: chant approve pr-2 pr-apply --plan jcs1-sha256:cef9... --approver <you> --sign; then run the apply again.
+```
+
+The note and the report carry the same message. Read the new plan in `.chant/pr/pr-apply.json`, which the job keeps as an artifact. If it is right, approve it and re-run the job.
+
+The target can also move after that check, while the apply runs. A step that finds it moved applies nothing for its member and fails it: a `cfn-deploy` change set, a `kubectl-apply` dry run, or a choudoufu root's apply that differs from the approved plan. The apply then exits 3 as well, and the members before it stay applied. Plain terraform and tofu refuse a stale plan file too, but chant does not tell that error from others, so it exits 1.
+
+## Follow an apply while it runs
+
+The apply job's log prints a line as each wave starts and as each component settles, so the waves read in order while the job runs. A component held back by a failed dependency reads `blocked by <dependency>, not run`. With `--report-url` the events go up again whenever a wave or a component settles, so a viewer reads the apply while it runs. [Follow a run](/chant/guide/pull-request-ci/#follow-a-run) sets the flags.
+
+## Finish an apply that failed partway
+
+An apply that fails partway leaves the members it applied in place. The generated apply job runs `pr-apply` with [`--resume .chant/pr-resume/pr-apply.json`](/chant/cli/components/#finishing-an-apply-that-failed-partway) and keeps that record in the CI cache, saved even when the job fails. Re-run the failed apply job and it restores the record, skips the members that applied and applies the rest under the approval it already has. The record is not part of the report artifact, since it holds the outputs the members read.
+
+The cache key names the environment, the member and the pushed commit: on GitHub and Forgejo `chant-apply-<env>-<commit>-<run>-<attempt>`, restored by the prefix up to the commit, and on GitLab `chant-apply-<env>-<commit>`. In a workspace member the key starts `chant-apply.<member>.<env>` instead. A push of another commit never restores it. The pull request and the gate digest are not in the key, because the job learns them only once it runs; `pr-apply` checks them against the record and refuses a record made for another pull request, gate, commit or digest, or one whose approval no longer stands. A refused record changes nothing: the apply plans every member, and the new digest needs a fresh approval.
+
+The approved digest covers the change set's entries as well as each member's plan, so a record whose entries, holes or side effects are not the ones that were approved is refused like one for another digest. A member left to apply is checked against entries the approval binds, not against whatever the cache holds.
+
+The record survives a re-run when the cache does:
+
+- On GitHub, the Actions cache is per repository, and a run on the target branch reads only caches written from that branch or the default branch, so a pull request cannot write the record the apply reads.
+- On GitLab, the cache is kept on the runner unless the runners share a distributed cache, as GitLab.com's hosted runners do. A retry that lands on another runner without one plans every member again. GitLab keeps protected branches' caches apart from the others by default; keep it that way.
+- On Forgejo, the cache server runs with each runner unless the runners share one, with the same consequence. Run the apply on a runner the pull requests' jobs do not use, so no other job writes into the cache it reads.
+
+A record that comes back from an older attempt of the same run still resumes correctly: what it lists as applied did apply, and a member that applied since plans no change, which the approved plan covers.
+
+## A gate per wave on merge
+
+Generate the pipeline with `--wave-gate <name>` beside `--pr-loop --apply-on-merge` when a later member reads an output an earlier one moves ([#4003](https://github.com/INTENTIUS/chant/issues/4003)). The pull request is planned and approved as before. On merge the apply runs a wave at a time, and plans each wave after the one before it applied.
+
+```bash
+chant build --components --generate github --pr-loop --apply-on-merge --wave-gate release --env prod \
+  --output .github/workflows/chant-pr.yml
+```
+
+The apply job becomes one job per wave of the component graph, `apply-wave-1` to `apply-wave-<n>`, each after the one before it. Job `apply-wave-<k>` runs `pr-apply --wave-gate release --wave <k>`, through `chant ci run apply --wave-gate release --wave <k>`:
+
+- Wave 1 plans every member, as the single apply does, and decides the pull request's gate against that digest. Approved, it applies wave 1. A moved plan refuses with both digests named, as before.
+- Each later wave is planned again against the outputs the waves before it left. When the pull request's approved change set covers what it plans now, the wave applies under the pull request's approval. Coverage is the test a [resumed apply](/chant/cli/components/#finishing-an-apply-that-failed-partway) uses: each change the wave makes is one the approved plan made, and a value the approved plan knew only after apply may be any value now.
+- A wave whose plan moved waits at `release-wave-<k>`, under the pull request's op, for an approval of its new plan. Nothing in that wave applies, and the job exits 3. Its new plan is kept as `change-set-wave-<k>.json` beside the report, and the note gives the approve command. Once it is approved, re-run the job; the waves after it follow.
+
+```bash
+chant approve pr-12 release-wave-2 --plan jcs1-sha256:9b1f... --approver github:alice --sign
+```
+
+With `--wave-gate`, a wave's gate takes the place of a round. An output that was unknown when the pull request planned has a value by the time the wave that reads it plans, so nothing in a wave is held back. A member the pull request planned with such an output is covered only when its new plan makes the changes the approved one did; otherwise its wave waits at `<gate>-wave-<k>`. A member that waited only on an artifact a build in the change publishes is covered, as it is without `--wave-gate`. The apply never asks for `pr-apply-round-<n>` and `<gate>-wave-<k>` on the same change.
+
+`--require-review` holds a wave's approval to the same rules as the pull request's: the approver needs an approving review on the pull request, and whoever wrote the change never counts. The note and each wave job's report (`pr-apply.json`, kept as `chant-pr-apply-wave-<k>` on GitHub and Forgejo) carry a row per wave. Each row names the gate the wave applied or waits under and who approved it. The report's `waves` holds the same.
+
+The waves hand the approved change set and what applied to each other through the apply's resume record. On GitHub and Forgejo each wave saves it under its own cache key and restores the newest one for the pushed commit. On GitLab every wave shares the commit's key. A wave job with no record of the waves before it refuses with exit 1 and applies nothing. So does a record whose pull-request approval no longer stands. `chant ci serve --apply-on-merge --wave-gate <name>` runs the one apply job with `--wave-gate` and no `--wave`. That job applies the waves in order and stops at the first that waits, and `--rerun-failed` carries on once the wave is approved.
+
+## Apply from ci serve
+
+`chant ci serve --apply-on-merge` runs `chant ci run apply` for each new commit on the target branch in place of the record ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). It runs one apply at a time per environment through a git-ref lease, and keeps each apply's resume record in its state directory in place of the CI cache, so `chant ci serve --once --rerun-failed` re-runs a failed apply and finishes it. `--wave-gate` needs `--apply-on-merge`.
+
+## Move off apply on merge
+
+[Move off apply on merge](/chant/guide/move-off-apply-on-merge/) switches a pipeline back to the record job.

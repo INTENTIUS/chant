@@ -8,7 +8,7 @@
   "properties": {
     "$schema": { "const": "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json" },
     "contract": { "const": 1 },
-    "stage": { "enum": ["plan", "apply"] },
+    "stage": { "enum": ["plan", "apply", "record"], "description": "plan: on the pull request. record (#4168, chant 0.124.33 and newer): on merge, the default; it plans the merged commit and writes the merge record, applying nothing. apply: on merge with --apply-on-merge." },
     "pr": {
       "type": ["integer", "null"],
       "minimum": 1,
@@ -33,8 +33,8 @@
       "description": "The change-set digest of what this stage planned: computePlanDigest(\"change-set\", ...) over every member's { member, planDigest }. What the gate binds."
     },
     "status": {
-      "enum": ["planned", "plan-failed", "nothing", "applied", "failed", "wave-applied", "refused", "waiting"],
-      "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. wave-applied (#4003, chant 0.124.32 and newer): with --wave-gate and --wave, the wave applied and a later wave is still to run. refused: nothing applied, see refusal. waiting (#3999): the approved plans applied except members held back after an upstream applied, which wait on an approval of the plan the last of rounds made."
+      "enum": ["planned", "recorded", "plan-failed", "nothing", "applied", "failed", "wave-applied", "refused", "waiting"],
+      "description": "planned: every member planned (plan stage). recorded (#4168, chant 0.124.33 and newer): every member planned on the merged commit and the merge record was written (record stage); approval says whether the plan is the approved one, and nothing applied. plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. wave-applied (#4003, chant 0.124.32 and newer): with --wave-gate and --wave, the wave applied and a later wave is still to run. refused: nothing applied, see refusal. waiting (#3999): the approved plans applied except members held back after an upstream applied, which wait on an approval of the plan the last of rounds made."
     },
     "refusal": {
       "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request", "wave-not-approved", "wave-plan-changed", "earlier-wave"],

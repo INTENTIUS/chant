@@ -1,0 +1,46 @@
+workflow:
+  name: chant-pr-prod
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+stages:
+  - plan
+  - record
+
+variables:
+  CHANT_ENV: prod
+  GIT_DEPTH: '0'
+
+plan:
+  stage: plan
+  image: node:22
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
+  script:
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge gitlab
+  artifacts:
+    when: always
+    paths:
+      - .chant/pr
+
+record:
+  stage: record
+  image: node:22
+  resource_group: chant-record-prod
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    BASE_SHA: '$CI_COMMIT_BEFORE_SHA'
+  script:
+    - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+    - if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; if [ -z "$BASE_SHA" ]; then git fetch origin $CI_DEFAULT_BRANCH && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$CI_COMMIT_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; fi; export BASE_SHA
+    - chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab
+  artifacts:
+    when: always
+    paths:
+      - .chant/pr

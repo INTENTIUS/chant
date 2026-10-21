@@ -212,7 +212,7 @@ export interface ComponentPlanInput {
   params?: string[];
   paramsFile?: string;
   /** `--pr-loop`, with its `--gate` and `--branch` (#3465). */
-  prLoop?: { gate?: string; branch?: string };
+  prLoop?: { gate?: string; branch?: string; applyOnMerge?: boolean };
   /** `--wave-gate` with its `--canary` and `--base` (#3049). */
   waveGate?: { gate: string; canary?: string[]; base?: string };
   /** `--image` (#4002). */
@@ -258,6 +258,7 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
     parts.push("--pr-loop");
     if (input.prLoop.gate) parts.push("--gate", input.prLoop.gate);
     if (input.prLoop.branch) parts.push("--branch", input.prLoop.branch);
+    if (input.prLoop.applyOnMerge) parts.push("--apply-on-merge");
   }
   if (input.image) parts.push("--image", input.image);
   for (const line of input.beforeScript ?? []) parts.push("--before-script", line);

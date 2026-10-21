@@ -21,7 +21,7 @@ const ESTATE: DriverComponent[] = [root("net"), root("app", ["net"])];
 const GOLDEN = join(import.meta.dirname, "__fixtures__", "pr-loop-waves.forgejo.golden.yml");
 
 describe("the Forgejo pull-request workflow with a gate per wave (#4003)", () => {
-  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: {}, gatedWaves: { gate: "release" } });
+  const result = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, gatedWaves: { gate: "release" } });
   const doc = parseYAML(result.yaml) as { jobs: Record<string, { needs?: string[]; "runs-on": string; steps: Array<{ run?: string; uses?: string }> }> };
 
   test("matches its golden", () => {
