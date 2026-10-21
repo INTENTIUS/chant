@@ -24,7 +24,8 @@
  * PubSubTopic, PubSubSubscription, SecretManagerSecret, IAMServiceAccount,
  * RunService, IAMPolicyMember and the Cloud Run load balancer kinds
  * (ComputeAddress, ComputeRegionNetworkEndpointGroup, ComputeBackendService,
- * ComputeURLMap, ComputeTargetHTTPProxy, ComputeForwardingRule; #4233). An
+ * ComputeURLMap, ComputeTargetHTTPProxy, ComputeForwardingRule; #4233), and
+ * ComputeNetwork and ComputeSubnetwork (#4248). An
  * IAMPolicyMember is read through its target's policy and is present when the
  * policy grants its member the role. The kubectl path could fetch any CNRM kind the cluster knew
  * about, so this is narrower on paper. It is not narrower in practice for

@@ -139,6 +139,32 @@ describe("toCnrmTree — each REST shape in the declared vocabulary (#1210)", ()
     expect(other.template).toEqual({ serviceAccountRef: { external: "x@other.iam.gserviceaccount.com" } });
   });
 
+  test("run service: vpcAccess network and subnetwork paths map back to refs (#4249)", () => {
+    const tree = toCnrmTree(
+      "RunService",
+      {
+        name: "projects/my-project/locations/europe-west1/services/web",
+        template: {
+          vpcAccess: {
+            egress: "PRIVATE_RANGES_ONLY",
+            networkInterfaces: [
+              { network: "projects/my-project/global/networks/vpc", subnetwork: "projects/my-project/regions/europe-west1/subnetworks/apps" },
+              { network: "projects/other/global/networks/shared", subnetwork: "apps" },
+            ],
+          },
+        },
+      },
+      ctx,
+    ) as { template: { vpcAccess: unknown } };
+    expect(tree.template.vpcAccess).toEqual({
+      egress: "PRIVATE_RANGES_ONLY",
+      networkInterfaces: [
+        { networkRef: { name: "vpc" }, subnetworkRef: { name: "apps" } },
+        { networkRef: { external: "projects/other/global/networks/shared" }, subnetworkRef: { name: "apps" } },
+      ],
+    });
+  });
+
   test("bucket: GCS's iamConfiguration and lifecycle map onto the CNRM field names", () => {
     const tree = toCnrmTree(
       "StorageBucket",
@@ -250,7 +276,7 @@ describe("observeResourcesDeepGcp — over REST (#1209)", () => {
   });
 
   test("a kind the applier cannot write is unsupported-kind, and is never queried", async () => {
-    const out = await observe(entities([["e", "GCP::Compute::Network", { metadata: { name: "n" } }]]));
+    const out = await observe(entities([["e", "GCP::Compute::Firewall", { metadata: { name: "n" } }]]));
     expect(out.unobserved?.e?.reason).toBe("unsupported-kind");
     expect(fetchMock).not.toHaveBeenCalled();
   });

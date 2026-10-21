@@ -8,6 +8,8 @@ import {
   backendServiceMapper,
   computeAddressMapper,
   forwardingRuleMapper,
+  networkMapper,
+  subnetworkMapper,
   regionNetworkEndpointGroupMapper,
   targetHttpProxyMapper,
   urlMapMapper,
@@ -292,8 +294,37 @@ export function cloudRunServiceBody(resource: GcpResource, project?: string): { 
   if (!spec.template) return body;
   const { serviceAccountRef, ...template } = spec.template as { serviceAccountRef?: { name?: string; external?: string } };
   const email = serviceAccountEmail(serviceAccountRef, project);
-  body.template = email ? { ...template, serviceAccount: email } : template;
+  const out: Record<string, unknown> = email ? { ...template, serviceAccount: email } : { ...template };
+  const vpcAccess = out.vpcAccess as { networkInterfaces?: unknown } | undefined;
+  if (vpcAccess && Array.isArray(vpcAccess.networkInterfaces)) {
+    const region = ((resource.spec ?? {}) as { location?: string }).location ?? "us-central1";
+    out.vpcAccess = { ...vpcAccess, networkInterfaces: vpcAccess.networkInterfaces.map((i) => networkInterface(i, project, region)) };
+  }
+  body.template = out;
   return body;
+}
+
+type NameRef = { name?: string; external?: string };
+
+/**
+ * A CNRM Direct VPC egress interface as Cloud Run v2 takes it (#4249):
+ * `networkRef` and `subnetworkRef` become `network` and `subnetwork` paths,
+ * `name` in the project (the subnetwork in the service's region) and
+ * `external` as given. `tags` and anything else pass through. Pure.
+ */
+export function networkInterface(iface: unknown, project: string | undefined, region: string): unknown {
+  if (!iface || typeof iface !== "object") return iface;
+  const { networkRef, subnetworkRef, ...rest } = iface as { networkRef?: NameRef; subnetworkRef?: NameRef };
+  const path = (ref: NameRef | undefined, scoped: (p: string, n: string) => string, key: string): string | undefined => {
+    if (!ref) return undefined;
+    if (ref.external) return ref.external;
+    if (!ref.name) return undefined;
+    if (!project) throw new Error(`${key} { name: "${ref.name}" } needs a project to form its path`);
+    return scoped(project, ref.name);
+  };
+  const network = path(networkRef, (p, n) => `projects/${p}/global/networks/${n}`, "networkRef");
+  const subnetwork = path(subnetworkRef, (p, n) => `projects/${p}/regions/${region}/subnetworks/${n}`, "subnetworkRef");
+  return { ...rest, ...(network ? { network } : {}), ...(subnetwork ? { subnetwork } : {}) };
 }
 
 /**
@@ -435,6 +466,8 @@ export const MAPPERS: Record<string, ResourceMapper> = {
   ComputeURLMap: urlMapMapper,
   ComputeTargetHTTPProxy: targetHttpProxyMapper,
   ComputeForwardingRule: forwardingRuleMapper,
+  ComputeNetwork: networkMapper,
+  ComputeSubnetwork: subnetworkMapper,
 };
 
 /**
@@ -461,6 +494,8 @@ const REF_KINDS: Record<string, string> = {
   backendServiceRef: "ComputeBackendService",
   urlMapRef: "ComputeURLMap",
   targetHTTPProxyRef: "ComputeTargetHTTPProxy",
+  networkRef: "ComputeNetwork",
+  subnetworkRef: "ComputeSubnetwork",
 };
 
 /** The local resources this resource references via `*Ref` fields, each with its kind when known. Pure. */

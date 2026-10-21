@@ -5,6 +5,7 @@ import {
   bucketInsertBody,
   pubSubTopicBody,
   cloudRunServiceBody,
+  networkInterface,
   serviceAccountEmail,
   resolveGcpProject,
   resolveGcpEndpoint,
@@ -122,7 +123,9 @@ describe("mappers build correct plans (#706)", () => {
       "ComputeAddress",
       "ComputeBackendService",
       "ComputeForwardingRule",
+      "ComputeNetwork",
       "ComputeRegionNetworkEndpointGroup",
+      "ComputeSubnetwork",
       "ComputeTargetHTTPProxy",
       "ComputeURLMap",
       "IAMPolicyMember",
@@ -162,6 +165,41 @@ describe("Cloud Run mapper + LRO (#706)", () => {
     expect(serviceAccountEmail({ name: "run-sa" }, "p")).toBe("run-sa@p.iam.gserviceaccount.com");
     expect(serviceAccountEmail(undefined, "p")).toBeUndefined();
     expect(() => serviceAccountEmail({ name: "run-sa" })).toThrow(/needs a project/);
+  });
+
+  test("cloudRunServiceBody sends vpcAccess refs as network and subnetwork paths (#4249)", () => {
+    const resource = {
+      ...RUN_SERVICE,
+      spec: {
+        ...(RUN_SERVICE.spec as object),
+        location: "europe-west1",
+        template: {
+          containers: [{ image: "i" }],
+          vpcAccess: {
+            egress: "PRIVATE_RANGES_ONLY",
+            networkInterfaces: [{ networkRef: { name: "vpc" }, subnetworkRef: { name: "apps" }, tags: ["run"] }],
+          },
+        },
+      },
+    };
+    expect(cloudRunServiceBody(resource, "p")).toEqual({
+      template: {
+        containers: [{ image: "i" }],
+        vpcAccess: {
+          egress: "PRIVATE_RANGES_ONLY",
+          networkInterfaces: [
+            { tags: ["run"], network: "projects/p/global/networks/vpc", subnetwork: "projects/p/regions/europe-west1/subnetworks/apps" },
+          ],
+        },
+      },
+    });
+  });
+
+  test("networkInterface: external as given, name needs a project", () => {
+    expect(networkInterface({ networkRef: { external: "projects/o/global/networks/shared" } }, "p", "r")).toEqual({
+      network: "projects/o/global/networks/shared",
+    });
+    expect(() => networkInterface({ subnetworkRef: { name: "apps" } }, undefined, "r")).toThrow(/needs a project/);
   });
 
   test("RunService plan sends the service account email on create and update", () => {

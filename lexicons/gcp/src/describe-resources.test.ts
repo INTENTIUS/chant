@@ -80,7 +80,7 @@ describe("gcp describeResources — direct REST (#1209)", () => {
 
   test("a kind the applier has no mapper for is unsupported-kind, not absent", async () => {
     const out = await read(
-      makeEntities([{ name: "e", entityType: "GCP::Compute::Network", props: { metadata: { name: "net" } } }]),
+      makeEntities([{ name: "e", entityType: "GCP::Compute::Firewall", props: { metadata: { name: "net" } } }]),
     );
     expect(out.unobserved?.e?.reason).toBe("unsupported-kind");
     expect(fetchMock).not.toHaveBeenCalled();
