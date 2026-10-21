@@ -76,17 +76,19 @@ export function isBracketExpression(value: unknown): boolean {
  *
  * Handles:
  * - [resourceId('Type', 'name')]  -> extracts 'name'
+ * - [resourceId('Type', 'a', 'b')] -> extracts 'a/b'
  * - [reference('name')]           -> extracts 'name'
  * - [reference('name').prop]      -> extracts 'name'
  */
 export function extractRefsFromExpression(expr: string): string[] {
   const refs: string[] = [];
 
-  // Match resourceId('...', 'name') — extract the last quoted argument (the resource name)
-  const resourceIdPattern = /resourceId\s*\([^)]*,\s*'([^']+)'\s*\)/g;
+  // Match resourceId('Type', 'name', ...): the name is every quoted argument
+  // after the type, joined with "/" for a child resource ('vnet', 'subnet').
+  const resourceIdPattern = /resourceId\s*\(\s*'[^']+'((?:\s*,\s*'[^']+')+)\s*\)/g;
   let match: RegExpExecArray | null;
   while ((match = resourceIdPattern.exec(expr)) !== null) {
-    refs.push(match[1]);
+    refs.push([...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).join("/"));
   }
 
   // Match reference('name') — extract the name
