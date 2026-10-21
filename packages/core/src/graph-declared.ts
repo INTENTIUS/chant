@@ -13,6 +13,10 @@ import { buildGraphIr, type GraphIR, type IRNode } from "./graph-ir";
  * that live side, build each stack's `src` in isolation and qualify its node ids
  * and edge endpoints the same way. Stacks are merged into one graph.
  *
+ * Each stack's exports and imports come along with their `node` qualified the
+ * same way (#4202), so a workspace viewer can still match an import in another
+ * member to an export here once an environment is picked.
+ *
  * A stack without `src` contributes nothing here — it has no declared source to
  * scope to (its live nodes still show as foreign in the overlay).
  */
@@ -22,6 +26,8 @@ export async function buildDeclaredPerStack(
 ): Promise<GraphIR> {
   const nodes: IRNode[] = [];
   const edges: GraphIR["edges"] = [];
+  const exports: NonNullable<GraphIR["exports"]> = [];
+  const imports: NonNullable<GraphIR["imports"]> = [];
   // Which nodes belong to which stack (#1433). This is not derived or guessed:
   // the stack is declared in config and every node here is being renamed with
   // its name on the line below. The membership was always known and thrown
@@ -38,8 +44,10 @@ export async function buildDeclaredPerStack(
       (byStack[st.name] ??= []).push(id);
     }
     for (const e of g.edges) edges.push({ ...e, from: q(e.from), to: q(e.to) });
+    for (const e of g.exports ?? []) exports.push({ ...e, ...(e.node ? { node: q(e.node) } : {}) });
+    for (const i of g.imports ?? []) imports.push({ ...i, node: q(i.node) });
   }
   for (const ids of Object.values(byStack)) ids.sort();
   const groups: GraphIR["groups"] = Object.keys(byStack).length ? { byStack } : {};
-  return { nodes, edges, groups };
+  return { nodes, edges, groups, ...(exports.length ? { exports } : {}), ...(imports.length ? { imports } : {}) };
 }
