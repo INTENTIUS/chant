@@ -160,8 +160,17 @@ function run(bin: string, args: string[], ctx: PublishContext, cwd: string = ctx
   });
 }
 
+/** Seconds the reveal waits for the registry to serve what it published, by default (#4244). */
+export const NPM_REGISTRY_WAIT_SECONDS = 600;
+/** Between polls of the registry while it waits. */
+export const NPM_REGISTRY_POLL_MS = 10_000;
+/** npm's errors for a version the registry does not serve yet. */
+const NPM_NOT_SERVED = /\b(ETARGET|ERESOLVE|notarget)\b|No matching version found/;
+
 export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): PublishTarget {
   const bin = deps.npm ?? "npm";
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = deps.now ?? Date.now;
   const registry = decl.registry ?? "the registry npm's config names";
   const shown = (tag: string) => `${registry}, dist-tag ${tag}`;
   const revealTag = (ctx: PublishContext) => ctx.tag ?? "latest";
@@ -216,15 +225,50 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
    * `npm audit signatures` there (#4049), which checks each package's
    * registry signature and provenance attestation.
    */
+  /**
+   * Wait until the registry serves every version (#4244): npm accepts a
+   * publish minutes before `npm view` and `npm install` find it, so an
+   * install straight after fails with ETARGET or ERESOLVE.
+   */
+  const served = async (ctx: PublishContext, pkgs: NpmPackage[]): Promise<void> => {
+    const wait = (decl.registryWait ?? NPM_REGISTRY_WAIT_SECONDS) * 1000;
+    const start = now();
+    let missing = pkgs;
+    for (;;) {
+      const still: NpmPackage[] = [];
+      for (const pkg of missing) if (!(await onRegistry(ctx, pkg))) still.push(pkg);
+      missing = still;
+      if (missing.length === 0) return;
+      const names = missing.map((p) => `${p.name}@${p.version}`).join(", ");
+      if (now() - start >= wait) {
+        throw new PublishTargetError(
+          "publish-npm-not-served",
+          `the registry did not serve ${names} within ${Math.round(wait / 1000)}s of the publish, so nothing was audited`,
+          "Each package was published. Once npm serves them, run the publish again: it publishes nothing twice and audits again. `registryWait` sets the wait.",
+        );
+      }
+      ctx.log(`waiting for the registry to serve ${names}`);
+      await sleep(NPM_REGISTRY_POLL_MS);
+    }
+  };
   const audit = async (ctx: PublishContext, pkgs: NpmPackage[]): Promise<void> => {
+    await served(ctx, pkgs);
     const dir = mkdtempSync(join(tmpdir(), "chant-npm-audit-"));
     try {
       const dependencies = Object.fromEntries(pkgs.map((p) => [p.name, p.version]));
       writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "chant-publish-audit", version: "0.0.0", private: true, dependencies }, null, 2)}\n`);
       for (const args of [npmAuditInstallArgs(decl), npmAuditSignaturesArgs(decl)]) {
         ctx.log(`npm ${args.join(" ")}`);
-        const result = await npm(ctx, args, dir);
+        let result = await npm(ctx, args, dir);
         for (const line of result.output) ctx.log(`  ${line}`);
+        // `npm view` can answer before every mirror `npm install` reads does: wait once more, then install again.
+        if (result.code !== 0 && args[0] === "install" && result.output.some((l) => NPM_NOT_SERVED.test(l))) {
+          ctx.log("the registry does not serve every version to an install yet; waiting, then installing again");
+          await sleep(NPM_REGISTRY_POLL_MS);
+          await served(ctx, pkgs);
+          result = await npm(ctx, args, dir);
+          for (const line of result.output) ctx.log(`  ${line}`);
+        }
         if (result.code !== 0) {
           throw new PublishTargetError(
             "publish-npm-audit-failed",

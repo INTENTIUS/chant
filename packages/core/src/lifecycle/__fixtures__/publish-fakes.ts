@@ -155,6 +155,11 @@ export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): voi
  *   its registry at that version, and installs nothing.
  * - `audit signatures` (#4049) prints what npm prints for verified
  *   signatures and attestations, and exits 1 when `$FAKE_NPM_AUDIT_FAIL` is set.
+ * - `$FAKE_NPM_LAG` (#4244), `<name>=<n>[,<name>=<n>]`: after a publish of
+ *   that name, the next `n` views of the version find nothing, as a registry
+ *   that accepted a publish but does not serve it yet.
+ * - `$FAKE_NPM_INSTALL_ETARGET` (#4244), `<n>`: the first `n` installs fail
+ *   with ETARGET.
  */
 export function writeFakeNpm(binDir: string, log: string): string {
   mkdirSync(binDir, { recursive: true });
@@ -186,6 +191,10 @@ if (args[0] === "publish") {
   const p = reg.packages[name] || (reg.packages[name] = { versions: [], distTags: {} });
   if (p.versions.includes(version)) { console.error("npm error 403 You cannot publish over the previously published versions: " + version); process.exit(1); }
   p.versions.push(version);
+  for (const pair of (process.env.FAKE_NPM_LAG || "").split(",").filter(Boolean)) {
+    const eq = pair.lastIndexOf("=");
+    if (pair.slice(0, eq) === name) (p.lag || (p.lag = {}))[version] = Number(pair.slice(eq + 1));
+  }
   p.distTags[flag("--tag") || "latest"] = version;
   if (!p.distTags.latest) p.distTags.latest = version;
   save();
@@ -194,7 +203,8 @@ if (args[0] === "publish") {
   const [name, version] = split(args[1]);
   const p = reg.packages[name];
   if (!p) { console.error("npm error 404 Not Found - " + name); process.exit(1); }
-  if (p.versions.includes(version)) console.log(version);
+  if (p.lag && p.lag[version] > 0) { p.lag[version] -= 1; save(); }
+  else if (p.versions.includes(version)) console.log(version);
 } else if (args[0] === "dist-tag" && args[1] === "add") {
   const [name, version] = split(args[2]);
   if (process.env.FAKE_NPM_FAIL_TAG && name.includes(process.env.FAKE_NPM_FAIL_TAG)) { console.error("npm error 403 Forbidden - no permission to change dist-tags"); process.exit(1); }
@@ -204,6 +214,10 @@ if (args[0] === "publish") {
   save();
   console.log("+" + args[3] + ": " + args[2]);
 } else if (args[0] === "install") {
+  if (Number(process.env.FAKE_NPM_INSTALL_ETARGET || 0) > (reg.installs || 0)) {
+    reg.installs = (reg.installs || 0) + 1; save();
+    console.error("npm error code ETARGET"); console.error("npm error notarget No matching version found for a package"); process.exit(1);
+  }
   const deps = JSON.parse(fs.readFileSync("package.json", "utf-8")).dependencies || {};
   for (const [name, version] of Object.entries(deps)) {
     const p = reg.packages[name];

@@ -136,6 +136,10 @@ describe("npm", () => {
       ["dist-tag", "add", "@acme/core@1.4.0", "latest"],
       ["dist-tag", "add", "@acme/cli@1.4.0", "latest"],
       ["dist-tag", "add", "@acme/kit@1.4.0", "latest"],
+      // #4244: it first asks the registry for each version it published.
+      ["view", "@acme/core@1.4.0", "version"],
+      ["view", "@acme/cli@1.4.0", "version"],
+      ["view", "@acme/kit@1.4.0", "version"],
       // #4049: with an OIDC token, what was published is installed in an empty directory and its signatures audited.
       ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
       ["audit", "signatures"],
@@ -179,8 +183,8 @@ describe("npm", () => {
       ["publish", join(dir, "packages/core"), "--tag", "latest", "--access", "public", "--provenance"],
       ["publish", join(dir, "kit.tgz"), "--tag", "latest", "--access", "public", "--provenance"],
     ]);
-    // The reveal only audits.
-    expect(calls(log).slice(before).map((c) => c.args[0])).toEqual(["install", "audit"]);
+    // The reveal only audits, once the registry serves both (#4244).
+    expect(calls(log).slice(before).map((c) => c.args[0])).toEqual(["view", "view", "install", "audit"]);
     expect(done.items.map((i) => i.destination)).toEqual(Array(2).fill("the registry npm's config names, dist-tag latest"));
     expect(readFakeNpmRegistry(log).packages["@acme/core"]!.distTags.next).toBeUndefined();
   });
@@ -479,6 +483,65 @@ describe("SBOMs and provenance (#4049)", () => {
     expect(err.code).toBe("publish-npm-audit-failed");
     expect(err.message).toBe("npm audit signatures exited 1 for @acme/core@1.0.0, after latest moved: 1 packages have invalid attestations");
     expect(readFileSync(log, "utf-8")).toContain(`"args":["audit","signatures"]`);
+  });
+
+  describe("npm: the reveal waits for the registry to serve what it published (#4244)", () => {
+    function lagged(env: Record<string, string>, registryWait?: number) {
+      const dir = temp();
+      writePackage(join(dir, "core"), "@acme/core", "1.0.0");
+      writePackage(join(dir, "cli"), "@acme/cli", "1.0.0");
+      const log = join(dir, "npm.log");
+      const npm = writeFakeNpm(join(dir, "bin"), log);
+      let clock = 0;
+      const sleeps: number[] = [];
+      const deps = { npm, now: () => clock, sleep: async (ms: number) => { sleeps.push(ms); clock += ms; } };
+      const ctx = context(dir, { env: { PATH: process.env.PATH, ...env }, provenance: OIDC });
+      const d = decl({ type: "npm", packages: ["core", "cli"], stage: false, ...(registryWait !== undefined ? { registryWait } : {}) });
+      return { log, deps, ctx, d, sleeps };
+    }
+    const installs = (log: string) => readFileSync(log, "utf-8").split("\n").filter((l) => l.includes(`"args":["install"`)).length;
+
+    test("every version served at once: no wait, one install", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({});
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(sleeps).toEqual([]);
+      expect(installs(log)).toBe(1);
+    });
+
+    test("one version served late: it waits, names it, then installs once", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_LAG: "@acme/cli=2" });
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(sleeps).toEqual([10_000, 10_000]);
+      expect(ctx.lines).toContain("waiting for the registry to serve @acme/cli@1.0.0");
+      expect(installs(log)).toBe(1);
+    });
+
+    test("a version never served: the wait ends with an error naming it, before any install", async () => {
+      const { log, deps, ctx, d } = lagged({ FAKE_NPM_LAG: "@acme/core=1000" }, 30);
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-not-served");
+      expect(err.message).toBe("the registry did not serve @acme/core@1.0.0 within 30s of the publish, so nothing was audited");
+      expect(installs(log)).toBe(0);
+    });
+
+    test("an install that fails with ETARGET waits and installs once more", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_INSTALL_ETARGET: "1" });
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(installs(log)).toBe(2);
+      expect(sleeps).toEqual([10_000]);
+    });
+
+    test("a second ETARGET is the audit's failure, not a third install", async () => {
+      const { log, deps, ctx, d } = lagged({ FAKE_NPM_INSTALL_ETARGET: "2" });
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-audit-failed");
+      expect(installs(log)).toBe(2);
+    });
   });
 
   test("OCI: the provenance statement carries the cut's signature, says a workstation's provenance is the signature, and is the same bytes every run; a declared SBOM is pushed as it is", async () => {
