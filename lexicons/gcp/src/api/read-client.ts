@@ -22,7 +22,11 @@
  *
  * Coverage is exactly the applier's dispatch table (`MAPPERS`) — StorageBucket,
  * PubSubTopic, PubSubSubscription, SecretManagerSecret, IAMServiceAccount,
- * RunService. The kubectl path could fetch any CNRM kind the cluster knew
+ * RunService, IAMPolicyMember and the Cloud Run load balancer kinds
+ * (ComputeAddress, ComputeRegionNetworkEndpointGroup, ComputeBackendService,
+ * ComputeURLMap, ComputeTargetHTTPProxy, ComputeForwardingRule; #4233). An
+ * IAMPolicyMember is read through its target's policy and is present when the
+ * policy grants its member the role. The kubectl path could fetch any CNRM kind the cluster knew
  * about, so this is narrower on paper. It is not narrower in practice for
  * anything chant can act on: a kind with no mapper cannot be applied either, so
  * observing it produced a live tree nothing could ever reconcile against.
@@ -44,11 +48,14 @@ export interface GcpReadClientOptions {
   http?: GcpReadHttp;
 }
 
-/** Injectable HTTP client — mirrors the applier's `GcpHttp`. */
-export type GcpReadHttp = (method: string, url: string) => Promise<{ status: number; text: string }>;
+/** Injectable HTTP client — mirrors the applier's `GcpHttp`. A body is sent only for a POST read (`:getIamPolicy`). */
+export type GcpReadHttp = (method: string, url: string, body?: unknown) => Promise<{ status: number; text: string }>;
 
-const defaultHttp: GcpReadHttp = async (method, url) => {
-  const res = await fetch(url, { method });
+const defaultHttp: GcpReadHttp = async (method, url, body) => {
+  const res = await fetch(url, {
+    method,
+    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  });
   return { status: res.status, text: await res.text() };
 };
 
@@ -100,21 +107,33 @@ export async function getResource(
     spec: (declared?.spec as Record<string, unknown> | undefined) ?? declared ?? {},
   };
 
-  let getUrl: string;
-  try {
-    getUrl = mapper.plan(resource, { base, project: client.project }).getUrl;
-  } catch (err) {
-    // A mapper that cannot plan from the declared spec cannot produce a URL, so
-    // there is nothing to read — a hole, never an absence.
-    throw new GcpReadError(`could not build a read URL for ${kind}/${name}: ${err instanceof Error ? err.message : String(err)}`);
+  const ctx = { base, project: client.project };
+  if (mapper.accepts && !mapper.accepts(resource, ctx)) {
+    throw new GcpReadError(`no REST read for ${kind}/${name}: its target has no endpoint chant can read`);
   }
 
   const http = client.http ?? defaultHttp;
   let res: { status: number; text: string };
-  try {
-    res = await http("GET", getUrl);
-  } catch (err) {
-    throw new GcpReadError(err instanceof Error ? err.message : String(err));
+  if (mapper.custom) {
+    try {
+      res = await mapper.custom.read(resource, ctx, (method, url, body) => http(method, url, body));
+    } catch (err) {
+      throw new GcpReadError(`could not read ${kind}/${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else {
+    let getUrl: string;
+    try {
+      getUrl = mapper.plan(resource, ctx).getUrl;
+    } catch (err) {
+      // A mapper that cannot plan from the declared spec cannot produce a URL, so
+      // there is nothing to read — a hole, never an absence.
+      throw new GcpReadError(`could not build a read URL for ${kind}/${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      res = await http("GET", getUrl);
+    } catch (err) {
+      throw new GcpReadError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   if (res.status === 404) throw new GcpReadError(`${kind}/${name} not found`, 404);

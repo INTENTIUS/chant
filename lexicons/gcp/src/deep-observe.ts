@@ -183,7 +183,122 @@ const CNRM_REFINERS: Record<string, (tree: CnrmTree, ctx: RefineContext) => void
     const m = ctx.restName ? /\/locations\/([^/]+)\//.exec(ctx.restName) : null;
     if (m) tree.location = m[1];
   },
+  // #4233: the inverse of gcp-compute.ts's body builders. Compute returns refs
+  // as full URLs and a region as a URL; CNRM writes `*Ref: { name }` and a
+  // bare `location` (`"global"` when the resource has no region).
+  IAMPolicyMember(tree) {
+    delete tree.etag;
+    delete tree.resource;
+  },
+  ComputeAddress(tree) {
+    computeLocation(tree);
+  },
+  ComputeRegionNetworkEndpointGroup(tree) {
+    if (typeof tree.region === "string") tree.region = lastSegment(tree.region);
+    const cloudRun = tree.cloudRun as Record<string, unknown> | undefined;
+    if (cloudRun && typeof cloudRun.service === "string") {
+      cloudRun.serviceRef = { name: cloudRun.service };
+      delete cloudRun.service;
+    }
+  },
+  ComputeBackendService(tree) {
+    computeLocation(tree);
+    if (tree.enableCDN !== undefined) {
+      tree.enableCdn = tree.enableCDN;
+      delete tree.enableCDN;
+    }
+    const draining = tree.connectionDraining as { drainingTimeoutSec?: unknown } | undefined;
+    if (draining) {
+      if (draining.drainingTimeoutSec !== undefined) tree.connectionDrainingTimeoutSec = draining.drainingTimeoutSec;
+      delete tree.connectionDraining;
+    }
+    if (Array.isArray(tree.backends)) {
+      tree.backend = (tree.backends as Array<Record<string, unknown>>).map((b) => {
+        const { group, ...rest } = b;
+        return { ...rest, ...(typeof group === "string" ? { group: refOf(group) } : {}) };
+      });
+      delete tree.backends;
+    }
+    if (Array.isArray(tree.healthChecks)) {
+      tree.healthChecks = (tree.healthChecks as unknown[]).map((h) => (typeof h === "string" ? { healthCheckRef: { name: lastSegment(h) } } : h));
+    }
+    if (typeof tree.securityPolicy === "string") {
+      tree.securityPolicyRef = { name: lastSegment(tree.securityPolicy) };
+      delete tree.securityPolicy;
+    }
+  },
+  ComputeURLMap(tree) {
+    computeLocation(tree);
+    if (typeof tree.defaultService === "string") tree.defaultService = refOf(tree.defaultService);
+    if (Array.isArray(tree.hostRules)) {
+      tree.hostRule = tree.hostRules;
+      delete tree.hostRules;
+    }
+    if (Array.isArray(tree.pathMatchers)) {
+      tree.pathMatcher = (tree.pathMatchers as Array<Record<string, unknown>>).map((m) => {
+        const { defaultService, pathRules, ...rest } = m;
+        return {
+          ...rest,
+          ...(typeof defaultService === "string" ? { defaultService: refOf(defaultService) } : {}),
+          ...(Array.isArray(pathRules)
+            ? {
+                pathRule: (pathRules as Array<Record<string, unknown>>).map(({ service, ...r }) => ({
+                  ...r,
+                  ...(typeof service === "string" ? { service: refOf(service) } : {}),
+                })),
+              }
+            : {}),
+        };
+      });
+      delete tree.pathMatchers;
+    }
+  },
+  ComputeTargetHTTPProxy(tree) {
+    computeLocation(tree);
+    if (typeof tree.urlMap === "string") {
+      tree.urlMapRef = { name: lastSegment(tree.urlMap) };
+      delete tree.urlMap;
+    }
+  },
+  ComputeForwardingRule(tree) {
+    computeLocation(tree);
+    if (tree.IPProtocol !== undefined) {
+      tree.ipProtocol = tree.IPProtocol;
+      delete tree.IPProtocol;
+    }
+    if (typeof tree.target === "string") tree.target = refOf(tree.target);
+    if (typeof tree.backendService === "string") {
+      tree.backendServiceRef = { name: lastSegment(tree.backendService) };
+      delete tree.backendService;
+    }
+  },
 };
+
+function lastSegment(url: string): string {
+  return url.slice(url.lastIndexOf("/") + 1);
+}
+
+/** Compute's `region` URL as CNRM's `location`; no region means a global resource. */
+function computeLocation(tree: CnrmTree): void {
+  tree.location = typeof tree.region === "string" ? lastSegment(tree.region) : "global";
+  delete tree.region;
+}
+
+/** The `*Ref` a compute URL names, by its collection (`.../backendServices/web` -> `{ backendServiceRef: { name: "web" } }`). */
+const REF_KEY_BY_COLLECTION: Record<string, string> = {
+  networkEndpointGroups: "networkEndpointGroupRef",
+  backendServices: "backendServiceRef",
+  backendBuckets: "backendBucketRef",
+  targetHttpProxies: "targetHTTPProxyRef",
+  targetHttpsProxies: "targetHTTPSProxyRef",
+  instanceGroups: "instanceGroupRef",
+};
+
+function refOf(url: string): unknown {
+  const parts = url.split("/");
+  const key = REF_KEY_BY_COLLECTION[parts[parts.length - 2] ?? ""];
+  return key ? { [key]: { name: parts[parts.length - 1] } } : url;
+}
 
 /**
  * A REST payload as a CNRM-shaped property tree, in the declared side's

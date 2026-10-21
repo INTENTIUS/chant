@@ -3,6 +3,15 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
+import { iamPolicyMemberMapper } from "./gcp-iam";
+import {
+  backendServiceMapper,
+  computeAddressMapper,
+  forwardingRuleMapper,
+  regionNetworkEndpointGroupMapper,
+  targetHttpProxyMapper,
+  urlMapMapper,
+} from "./gcp-compute";
 import {
   applyResult,
   type ApplyResult,
@@ -120,6 +129,29 @@ export interface ListSpec {
   items(responseBody: unknown): Array<{ name: string; labels?: Record<string, string> | null }>;
 }
 
+/**
+ * Where a mapper works: the API base, the project, and the rest of the applied
+ * manifest, so a `*Ref` to a resource declared alongside can take that
+ * resource's scope. The read path has no manifest.
+ */
+export interface MapperCtx {
+  base: string;
+  project: string;
+  manifest?: readonly GcpResource[];
+}
+
+/**
+ * A kind whose apply is not GET-then-create (#4233). IAMPolicyMember is a
+ * member inside another resource's policy, so it reads, merges and writes that
+ * policy instead. `read` answers like a GET: 200 with a body when present, 404
+ * when not.
+ */
+export interface CustomOps {
+  apply(resource: GcpResource, ctx: MapperCtx, http: GcpHttp, signal?: AbortSignal): Promise<{ created: boolean; updated: boolean }>;
+  delete(resource: GcpResource, ctx: MapperCtx, http: GcpHttp, signal?: AbortSignal): Promise<boolean>;
+  read(resource: GcpResource, ctx: MapperCtx, http: GcpHttp, signal?: AbortSignal): Promise<{ status: number; text: string }>;
+}
+
 /** Maps one CNRM kind to its GCP REST operations. The unit of the dispatch table. */
 export interface ResourceMapper {
   /** CNRM kind this handles. */
@@ -127,7 +159,11 @@ export interface ResourceMapper {
   /** Real-GCP API host, used when no `endpoint` override is given. */
   defaultHost: string;
   /** Build the GET + create plan for one resource against `base`. */
-  plan(resource: GcpResource, ctx: { base: string; project: string }): ApplyPlan;
+  plan(resource: GcpResource, ctx: MapperCtx): ApplyPlan;
+  /** False for a resource of this kind chant cannot act on (an IAM binding on a target with no policy endpoint): reported, not attempted. */
+  accepts?(resource: GcpResource, ctx: MapperCtx): boolean;
+  /** Present when apply, delete and read are not the plan's GET-then-create. */
+  custom?: CustomOps;
   /** Present for async resources whose create returns a long-running operation. */
   operation?: OperationSpec;
   /** Present when the kind can be pruned (list live → delete chant-owned orphans). */
@@ -368,6 +404,14 @@ export const MAPPERS: Record<string, ResourceMapper> = {
   SecretManagerSecret: secretManagerSecretMapper,
   IAMServiceAccount: gcpServiceAccountMapper,
   RunService: cloudRunServiceMapper,
+  // #4233: a binding member, and the Cloud Run load balancer.
+  IAMPolicyMember: iamPolicyMemberMapper,
+  ComputeAddress: computeAddressMapper,
+  ComputeRegionNetworkEndpointGroup: regionNetworkEndpointGroupMapper,
+  ComputeBackendService: backendServiceMapper,
+  ComputeURLMap: urlMapMapper,
+  ComputeTargetHTTPProxy: targetHttpProxyMapper,
+  ComputeForwardingRule: forwardingRuleMapper,
 };
 
 /**
@@ -376,7 +420,29 @@ export const MAPPERS: Record<string, ResourceMapper> = {
  * refs point outside the manifest and are ignored for ordering. Pure.
  */
 export function referencedNames(resource: GcpResource): string[] {
-  const names: string[] = [];
+  return [...new Set(referencedResources(resource).map((r) => r.name))];
+}
+
+/**
+ * The CNRM kind a `*Ref` key points at, where the key alone says. A ref that
+ * carries its own `kind` (`resourceRef`) uses that. Two resources of different
+ * kinds may share a name (a RunService `web` and its NEG `web`), so ordering
+ * matches on kind when it can.
+ */
+const REF_KINDS: Record<string, string> = {
+  topicRef: "PubSubTopic",
+  serviceRef: "RunService",
+  serviceAccountRef: "IAMServiceAccount",
+  addressRef: "ComputeAddress",
+  networkEndpointGroupRef: "ComputeRegionNetworkEndpointGroup",
+  backendServiceRef: "ComputeBackendService",
+  urlMapRef: "ComputeURLMap",
+  targetHTTPProxyRef: "ComputeTargetHTTPProxy",
+};
+
+/** The local resources this resource references via `*Ref` fields, each with its kind when known. Pure. */
+export function referencedResources(resource: GcpResource): Array<{ name: string; kind?: string }> {
+  const refs: Array<{ name: string; kind?: string }> = [];
   const visit = (v: unknown, key?: string): void => {
     if (Array.isArray(v)) {
       for (const x of v) visit(x, key);
@@ -385,13 +451,14 @@ export function referencedNames(resource: GcpResource): string[] {
     if (v && typeof v === "object") {
       const obj = v as Record<string, unknown>;
       if (key && /Refs?$/.test(key) && typeof obj.name === "string") {
-        names.push(obj.name);
+        const kind = typeof obj.kind === "string" ? obj.kind : REF_KINDS[key];
+        refs.push(kind ? { name: obj.name, kind } : { name: obj.name });
       }
       for (const [k, val] of Object.entries(obj)) visit(val, k);
     }
   };
   visit(resource.spec);
-  return [...new Set(names)];
+  return refs;
 }
 
 /**
@@ -401,10 +468,10 @@ export function referencedNames(resource: GcpResource): string[] {
  * Pure — a DFS post-order.
  */
 export function orderByReferences(resources: GcpResource[]): GcpResource[] {
-  const byName = new Map<string, GcpResource>();
+  const byName = new Map<string, GcpResource[]>();
   for (const r of resources) {
     const n = r.metadata?.name;
-    if (n) byName.set(n, r);
+    if (n) byName.set(n, [...(byName.get(n) ?? []), r]);
   }
   const ordered: GcpResource[] = [];
   const done = new Set<GcpResource>();
@@ -413,9 +480,10 @@ export function orderByReferences(resources: GcpResource[]): GcpResource[] {
     if (done.has(r)) return;
     if (active.has(r)) throw new Error(`reference cycle involving ${r.metadata?.name ?? "?"}`);
     active.add(r);
-    for (const ref of referencedNames(r)) {
-      const dep = byName.get(ref);
-      if (dep && dep !== r) visit(dep);
+    for (const ref of referencedResources(r)) {
+      const named = (byName.get(ref.name) ?? []).filter((d) => d !== r);
+      const deps = ref.kind ? named.filter((d) => d.kind === ref.kind) : named;
+      for (const dep of deps) visit(dep);
     }
     active.delete(r);
     done.add(r);
@@ -503,12 +571,16 @@ const defaultHttp: GcpHttp = async (method, url, body, signal) => {
 export async function applyResource(
   mapper: ResourceMapper,
   resource: GcpResource,
-  ctx: { base: string; project: string },
+  ctx: MapperCtx,
   http: GcpHttp = defaultHttp,
   signal?: AbortSignal,
 ): Promise<{ kind: string; name: string; created: boolean; updated: boolean }> {
-  const plan = mapper.plan(resource, ctx);
   const name = resource.metadata?.name ?? "?";
+  if (mapper.custom) {
+    const result = await mapper.custom.apply(resource, ctx, http, signal);
+    return { kind: mapper.kind, name, ...result };
+  }
+  const plan = mapper.plan(resource, ctx);
   const get = await http("GET", plan.getUrl, undefined, signal);
 
   if (get.status === 200) {
@@ -712,7 +784,7 @@ export interface GcpNotPrunable {
  */
 export async function pruneOrphans(
   desired: GcpResource[],
-  resolve: (mapper: ResourceMapper, resource?: GcpResource) => { base: string; project: string },
+  resolve: (mapper: ResourceMapper, resource?: GcpResource) => MapperCtx,
   http: GcpHttp = defaultHttp,
   signal?: AbortSignal,
 ): Promise<{
@@ -780,9 +852,10 @@ export async function gcpApply(
 }> {
   const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath));
   const endpoint = resolveGcpEndpoint(args);
-  const resolve = (mapper: ResourceMapper, resource?: GcpResource) => ({
+  const resolve = (mapper: ResourceMapper, resource?: GcpResource): MapperCtx => ({
     base: (endpoint ?? mapper.defaultHost).replace(/\/$/, ""),
     project: args.project ?? (resource ? resolveGcpProject(resource) : ""),
+    manifest: resources,
   });
 
   const applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> = [];
@@ -796,6 +869,11 @@ export async function gcpApply(
       continue;
     }
     const ctx = resolve(mapper, r);
+    if (mapper.accepts && !mapper.accepts(r, ctx)) {
+      console.log(`skip: ${r.kind}/${r.metadata?.name ?? "?"} has nothing chant can apply it to`);
+      notAttempted.push({ kind: r.kind as string, name: r.metadata?.name ?? "?", reason: "unsupported-kind" });
+      continue;
+    }
     const result = await applyResource(mapper, r, ctx, http, signal);
     const verb = result.created ? "created" : result.updated ? "updated" : "unchanged";
     console.log(`${verb}: ${result.kind}/${result.name} (${ctx.base})`);
@@ -816,12 +894,15 @@ export async function gcpApply(
 export async function deleteResource(
   mapper: ResourceMapper,
   resource: GcpResource,
-  ctx: { base: string; project: string },
+  ctx: MapperCtx,
   http: GcpHttp = defaultHttp,
   signal?: AbortSignal,
 ): Promise<{ kind: string; name: string; deleted: boolean }> {
-  const plan = mapper.plan(resource, ctx);
   const name = resource.metadata?.name ?? "?";
+  if (mapper.custom) {
+    return { kind: mapper.kind, name, deleted: await mapper.custom.delete(resource, ctx, http, signal) };
+  }
+  const plan = mapper.plan(resource, ctx);
   const res = await http("DELETE", plan.getUrl, undefined, signal);
   if (res.status === 404) {
     return { kind: mapper.kind, name, deleted: false };
@@ -870,7 +951,13 @@ export async function gcpDelete(
     }
     const base = (resolveGcpEndpoint(args) ?? mapper.defaultHost).replace(/\/$/, "");
     const project = args.project ?? resolveGcpProject(r);
-    const result = await deleteResource(mapper, r, { base, project }, http, signal);
+    const ctx: MapperCtx = { base, project, manifest: resources };
+    if (mapper.accepts && !mapper.accepts(r, ctx)) {
+      console.log(`skip: ${r.kind}/${r.metadata?.name ?? "?"} has nothing chant can delete it from`);
+      notAttempted.push({ kind: r.kind as string, name: r.metadata?.name ?? "?", reason: "unsupported-kind" });
+      continue;
+    }
+    const result = await deleteResource(mapper, r, ctx, http, signal);
     console.log(`${result.deleted ? "deleted" : "absent"}: ${result.kind}/${result.name} (${base})`);
     deleted.push(result);
   }

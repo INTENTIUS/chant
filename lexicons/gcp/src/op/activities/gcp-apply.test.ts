@@ -118,6 +118,13 @@ describe("mappers build correct plans (#706)", () => {
 
   test("registry keys match each mapper's kind", () => {
     expect(Object.keys(MAPPERS).sort()).toEqual([
+      "ComputeAddress",
+      "ComputeBackendService",
+      "ComputeForwardingRule",
+      "ComputeRegionNetworkEndpointGroup",
+      "ComputeTargetHTTPProxy",
+      "ComputeURLMap",
+      "IAMPolicyMember",
       "IAMServiceAccount",
       "PubSubSubscription",
       "PubSubTopic",
