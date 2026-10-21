@@ -185,6 +185,32 @@ describe("npm", () => {
     expect(readFakeNpmRegistry(log).packages["@acme/core"]!.distTags.next).toBeUndefined();
   });
 
+  test("tokenEnv: a package that can't authenticate publishes again with the token from a throwaway user config, then without provenance if the token path refuses it (#4040)", async () => {
+    const { dir, npm, log } = setup();
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "kit.tgz"], stage: false, tokenEnv: "NPM_TOKEN" })], { npm });
+    const env = { PATH: process.env.PATH, NPM_TOKEN: "npm_fallback99", FAKE_NPM_NEEDAUTH: "kit.tgz", FAKE_NPM_TOKEN_NO_PROVENANCE: "1" };
+    const ctx = context(dir, { env, provenance: OIDC });
+    await target!.stage(ctx);
+    const publishes = calls(log).filter((c) => c.args[0] === "publish") as Array<{ args: string[]; userconfig?: string }>;
+    expect(publishes.map((c) => [c.args[1], c.args.includes("--provenance"), Boolean(c.userconfig)])).toEqual([
+      [join(dir, "packages/core"), true, false],
+      [join(dir, "kit.tgz"), true, false],
+      [join(dir, "kit.tgz"), true, true],
+      [join(dir, "kit.tgz"), false, true],
+    ]);
+    expect(publishes[2]!.userconfig).toBe("//registry.npmjs.org/:_authToken=npm_fallback99\n");
+    expect(latest(log)["@acme/kit"]).toBe("1.4.0");
+    expect(ctx.lines.join("\n")).not.toContain("npm_fallback99");
+  });
+
+  test("tokenEnv: with the variable unset, or a failure that is not authentication, there is no retry", async () => {
+    const { dir, npm, log } = setup();
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["kit.tgz"], stage: false, tokenEnv: "NPM_TOKEN" })], { npm });
+    await expect(target!.stage(context(dir, { env: { PATH: process.env.PATH, FAKE_NPM_NEEDAUTH: "kit.tgz" } }))).rejects.toThrow(/exited 1/);
+    await expect(target!.stage(context(dir, { env: { PATH: process.env.PATH, NPM_TOKEN: "t", FAKE_NPM_FAIL: "kit.tgz" } }))).rejects.toThrow(/403/);
+    expect(calls(log).filter((c) => c.args[0] === "publish")).toHaveLength(2);
+  });
+
   test("a stage that failed part way names what it staged and, run again, publishes only the rest; a tag move that fails names what moved", async () => {
     const { dir, npm, log } = setup();
     const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "packages/cli", "packages/kit"] })], { npm });

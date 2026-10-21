@@ -11,7 +11,8 @@ import type { ChantConfig } from "@intentius/chant";
 //
 // stage: false publishes straight to latest. Moving a dist-tag over trusted
 // publishing needs a per-package setting on npmjs.com that chant's records
-// do not have (#3904).
+// do not have (#3904). tokenEnv keeps publish-packages.sh's fallback: a
+// package whose trusted-publisher record fails publishes with NPM_TOKEN.
 export default {
   environments: ["npm"],
   release: {
@@ -20,6 +21,7 @@ export default {
         type: "npm",
         access: "public",
         stage: false,
+        tokenEnv: "NPM_TOKEN",
         packages: [
           "../.release/packs/packages_core.tgz",
           "../.release/packs/packages_k8s-client.tgz",

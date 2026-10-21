@@ -195,3 +195,25 @@ release_apply_version() {
   done
   npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null
 }
+
+# release_lexicon_floor <name> <rev> prints the highest version lexicons/<name>
+# has anywhere (#4040): its package.json at <rev> and on main, its
+# lexicon-<name>-v* tags, the release/npm/* tags (`just release` publishes
+# every package at that label without moving package.json), and npm. So
+# `just release-lexicon` never picks a version at or below one npm has. A
+# package npm has never seen (E404) adds nothing; any other `npm view` failure
+# refuses, since the floor would then be a guess.
+release_lexicon_floor() {
+  local name="$1" rev="$2" file="lexicons/$1/package.json" pkg out t
+  local versions=("$(release_version_at "$rev" "$file")" "$(release_version_at "${RELEASE_MAIN:-origin/main}" "$file")")
+  while read -r t; do [ -n "$t" ] && versions+=("${t#"lexicon-$name-v"}"); done < <(git tag -l "lexicon-$name-v*")
+  while read -r t; do [ -n "$t" ] && versions+=("${t#release/npm/}"); done < <(git tag -l 'release/npm/*')
+  pkg=$(git show "$rev:$file" | jq -r .name)
+  if out=$(npm view "$pkg" version 2>&1); then
+    versions+=("$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')")
+  elif ! printf '%s' "$out" | grep -q 'E404'; then
+    echo "release: npm view $pkg version failed, so the version floor is unknown: $(printf '%s' "$out" | tail -1)" >&2
+    return 1
+  fi
+  release_max "${versions[@]}"
+}

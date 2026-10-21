@@ -45,8 +45,9 @@ describe("release/chant.config.ts (#4040)", () => {
   const npm = config.release.publish.find((t) => t.type === "npm");
   const listed = (npm?.packages ?? []).map((p) => p.replace(/^\.\.\/\.release\/packs\//, "").replace(/\.tgz$/, "").replace("_", "/"));
 
-  it("publishes straight to latest, core first", () => {
+  it("publishes straight to latest, core first, with NPM_TOKEN as the fallback", () => {
     expect(npm?.stage).toBe(false);
+    expect(npm?.tokenEnv).toBe("NPM_TOKEN");
     expect(listed[0]).toBe("packages/core");
   });
 

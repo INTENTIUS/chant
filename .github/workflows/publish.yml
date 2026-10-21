@@ -179,7 +179,9 @@ jobs:
   # with CHANT_RELEASE_GATE armed as above, then `chant release publish`
   # publishes the tarballs release/chant.config.ts names, core first, straight
   # to latest. No .npmrc, for the reason the publish job gives: each package
-  # publishes over its trusted-publisher record, with provenance. The publish
+  # publishes over its trusted-publisher record, with provenance. A package
+  # that fails to authenticate publishes again with NPM_TOKEN (tokenEnv in
+  # release/chant.config.ts), as the publish job's script does. The publish
   # pushes its record to chant/lifecycle, hence contents: write, and a run
   # again after a failure resumes from that record. The tag is never deleted.
   release-publish:
@@ -208,6 +210,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - name: Publish the release
         working-directory: release
+        env:
+          # Fallback only, for a package whose trusted-publisher record fails.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx tsx ../packages/core/src/cli/main.ts release publish "${GITHUB_REF_NAME#release/npm/}" --yes
 
   # #1481 — a failed release must not leave its tag behind. `just release`

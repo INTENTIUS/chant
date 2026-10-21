@@ -53,6 +53,13 @@ export const NpmPublishSchema = z
      * dist-tag" on the package's record (#3904). Default `true`.
      */
     stage: z.boolean().optional(),
+    /**
+     * A variable holding an npm token to retry with when a package's publish
+     * fails to authenticate (#4040), as chant's own publish-packages.sh does:
+     * a package whose trusted-publisher record is broken publishes with the
+     * token rather than failing the release. Unset or empty, there is no retry.
+     */
+    tokenEnv: envName.optional(),
   })
   .strict();
 

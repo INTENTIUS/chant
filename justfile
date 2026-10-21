@@ -484,8 +484,10 @@ release-lexicon name bump="patch" *args:
       echo "refusing to release: ${bump_files[0]} does not exist at $(git rev-parse --short "$sha")" >&2
       exit 1
     fi
-    # Floor on main too: it may already carry a later bump of this lexicon.
-    current=$(release_max "$(release_version_at "$sha" "${bump_files[0]}")" "$(release_version_at "$RELEASE_MAIN" "${bump_files[0]}")")
+    # Floor on main, on this lexicon's tags, on release/npm/* (which moves no
+    # package.json) and on npm, so the version is always past npm's (#4040).
+    git fetch --quiet origin 'refs/tags/lexicon-{{name}}-v*:refs/tags/lexicon-{{name}}-v*' 'refs/tags/release/*:refs/tags/release/*'
+    current=$(release_lexicon_floor {{name}} "$sha")
     next=$(release_next "$current" "$RELEASE_BUMP")
     tag="lexicon-{{name}}-v$next"
     if release_tag_exists "$tag"; then

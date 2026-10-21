@@ -168,7 +168,8 @@ const { execFileSync } = require("child_process");
 const args = process.argv.slice(2);
 const token = process.env.NODE_AUTH_TOKEN || "";
 const regFile = ${JSON.stringify(log)} + ".registry.json";
-fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, tokenSet: token !== "" }) + "\\n");
+const userconfig = process.env.NPM_CONFIG_USERCONFIG ? fs.readFileSync(process.env.NPM_CONFIG_USERCONFIG, "utf-8") : "";
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, tokenSet: token !== "", ...(userconfig ? { userconfig } : {}) }) + "\\n");
 console.log("npm notice using //registry.example/:_authToken=" + token);
 console.error("npm notice token " + token);
 const reg = fs.existsSync(regFile) ? JSON.parse(fs.readFileSync(regFile, "utf-8")) : { packages: {} };
@@ -177,6 +178,9 @@ const flag = (name) => { const i = args.indexOf(name); return i < 0 ? null : arg
 const split = (spec) => { const at = spec.lastIndexOf("@"); return [spec.slice(0, at), spec.slice(at + 1)]; };
 if (args[0] === "publish") {
   if (process.env.FAKE_NPM_FAIL && args[1] && args[1].includes(process.env.FAKE_NPM_FAIL)) { console.error("npm error 403 Forbidden"); process.exit(1); }
+  // A package whose trusted-publisher record is broken: only a token in the user config publishes it.
+  if (process.env.FAKE_NPM_NEEDAUTH && args[1] && args[1].includes(process.env.FAKE_NPM_NEEDAUTH) && !userconfig.includes("_authToken=")) { console.error("npm error code ENEEDAUTH"); process.exit(1); }
+  if (process.env.FAKE_NPM_TOKEN_NO_PROVENANCE && userconfig && args.includes("--provenance")) { console.error("npm error 422 Unprocessable Entity - provenance statement does not match the publisher"); process.exit(1); }
   const text = fs.statSync(args[1]).isDirectory() ? fs.readFileSync(path.join(args[1], "package.json"), "utf-8") : execFileSync("tar", ["-xzOf", args[1], "package/package.json"], { encoding: "utf-8" });
   const { name, version } = JSON.parse(text);
   const p = reg.packages[name] || (reg.packages[name] = { versions: [], distTags: {} });

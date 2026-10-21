@@ -42,10 +42,13 @@
  * npm makes the first version of a new package `latest` whatever tag it is
  * published under, so a package's first release is visible when it stages.
  *
- * Credentials are npm's own. chant reads no npm token and writes no `.npmrc`:
- * npm authenticates with the registry's `_authToken` in the user's or the
- * CI's npm config (`actions/setup-node` writes one that reads
- * `NODE_AUTH_TOKEN`), or by trusted publishing. npm runs with the run's
+ * Credentials are npm's own: npm authenticates with the registry's
+ * `_authToken` in the user's or the CI's npm config (`actions/setup-node`
+ * writes one that reads `NODE_AUTH_TOKEN`), or by trusted publishing. The one
+ * exception is `tokenEnv` (#4040): when a publish fails to authenticate, the
+ * package is published again with that variable's token in a throwaway npm
+ * user config, never on the command line, and without `--provenance` if the
+ * registry refuses the attestation on the token path. npm runs with the run's
  * environment, and everything it prints is redacted before chant prints it.
  */
 
@@ -57,6 +60,9 @@ import { packageSbom } from "./publish-attachments";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { NPM_STAGE_TAG, PublishTargetError, type PublishContext, type PublishDeps, type PublishItem, type PublishTarget } from "./release-publish";
+
+/** npm's output when a publish could not authenticate, as publish-packages.sh matches it. */
+const NPM_AUTH_FAILED = /ENEEDAUTH|E401|need auth/;
 
 interface NpmPackage {
   path: string;
@@ -133,9 +139,9 @@ export function npmAuditSignaturesArgs(decl: Pick<NpmPublishDeclaration, "regist
   return ["audit", "signatures", ...(decl.registry ? ["--registry", decl.registry] : [])];
 }
 
-function run(bin: string, args: string[], ctx: PublishContext, cwd: string = ctx.cwd): Promise<{ code: number; output: string[] }> {
+function run(bin: string, args: string[], ctx: PublishContext, cwd: string = ctx.cwd, env: NodeJS.ProcessEnv = ctx.env): Promise<{ code: number; output: string[] }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(bin, args, { cwd, env: ctx.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     const output: string[] = [];
     let partial = { out: "", err: "" };
     const take = (key: "out" | "err") => (chunk: Buffer) => {
@@ -162,9 +168,9 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
   // Under `stage: false` a package goes straight to the reveal tag, and the reveal moves no tag (#4040).
   const staging = decl.stage !== false;
   const stageTag = (ctx: PublishContext) => (staging ? NPM_STAGE_TAG : revealTag(ctx));
-  const npm = async (ctx: PublishContext, args: string[], cwd?: string): Promise<{ code: number; output: string[] }> => {
+  const npm = async (ctx: PublishContext, args: string[], cwd?: string, env?: NodeJS.ProcessEnv): Promise<{ code: number; output: string[] }> => {
     try {
-      return await run(bin, args, ctx, cwd);
+      return await run(bin, args, ctx, cwd, env);
     } catch (err) {
       throw new PublishTargetError("publish-npm-failed", ctx.redactor.redact(`npm could not be run: ${err instanceof Error ? err.message : String(err)}`), "Install npm, or put it on PATH.");
     }
@@ -173,6 +179,33 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
   const onRegistry = async (ctx: PublishContext, pkg: NpmPackage): Promise<boolean> => {
     const r = await npm(ctx, ["view", `${pkg.name}@${pkg.version}`, "version", ...(decl.registry ? ["--registry", decl.registry] : [])]);
     return r.code === 0 && r.output.some((l) => l.trim() === pkg.version || l.trim() === JSON.stringify(pkg.version));
+  };
+  /**
+   * The `tokenEnv` retry (#4040): a publish that failed to authenticate runs
+   * again with the token in a throwaway user config, and once more without
+   * `--provenance` when the token path refuses the attestation.
+   */
+  const withToken = async (ctx: PublishContext, pkg: NpmPackage, args: string[], failed: { code: number; output: string[] }) => {
+    const token = decl.tokenEnv ? ctx.env[decl.tokenEnv] : undefined;
+    if (!token || !failed.output.some((l) => NPM_AUTH_FAILED.test(l))) return failed;
+    ctx.log(`${pkg.name}@${pkg.version} could not authenticate; publishing again with ${decl.tokenEnv}`);
+    const dir = mkdtempSync(join(tmpdir(), "chant-npm-token-"));
+    try {
+      const userconfig = join(dir, ".npmrc");
+      const host = (decl.registry ?? "https://registry.npmjs.org/").replace(/^https?:/, "").replace(/\/?$/, "/");
+      writeFileSync(userconfig, `${host}:_authToken=${token}\n`, { mode: 0o600 });
+      const env = { ...ctx.env, NPM_CONFIG_USERCONFIG: userconfig };
+      let result = await npm(ctx, args, undefined, env);
+      for (const line of result.output) ctx.log(`  ${line}`);
+      if (result.code !== 0 && args.includes("--provenance") && result.output.some((l) => /^npm (error|ERR!).*(provenance|attestation)/i.test(l))) {
+        ctx.log(`${pkg.name}@${pkg.version}: the registry refused provenance on the token path; publishing without an attestation`);
+        result = await npm(ctx, args.filter((a) => a !== "--provenance"), undefined, env);
+        for (const line of result.output) ctx.log(`  ${line}`);
+      }
+      return result;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   };
   const read = (ctx: PublishContext) => decl.packages.map((p) => readPackage(ctx, p, decl.sbom));
   const extra = (pkg: NpmPackage) => ({ ...(pkg.digest ? { digest: pkg.digest } : {}), ...(pkg.sbom ? { sbom: pkg.sbom } : {}) });
@@ -223,8 +256,9 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
         }
         const args = npmPublishArgs(decl, pkg.abs, ctx, stageTag(ctx));
         ctx.log(`npm publish ${pkg.path} ${args.slice(2).join(" ")}`);
-        const result = await npm(ctx, args);
+        let result = await npm(ctx, args);
         for (const line of result.output) ctx.log(`  ${line}`);
+        if (result.code !== 0) result = await withToken(ctx, pkg, args, result);
         if (result.code !== 0) {
           const done = items.map((i) => i.name);
           throw new PublishTargetError(
