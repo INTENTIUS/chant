@@ -68,6 +68,21 @@ describe("parseArmSchema", () => {
     expect(result.resource.attributes.find((a) => a.name === "id")).toBeTruthy();
   });
 
+  it("gives a Container App its hostname attributes (#4179)", () => {
+    const schema = {
+      resourceType: "Microsoft.App/containerApps",
+      apiVersion: "2024-03-01",
+      provider: "Microsoft.App",
+      resourceName: "containerApps",
+      resourceDefinition: { properties: {} },
+      definitions: {},
+    };
+
+    const names = parseArmSchema(JSON.stringify(schema)).resource.attributes.map((a) => a.name);
+    expect(names).toContain("configuration.ingress.fqdn");
+    expect(names).toContain("latestRevisionFqdn");
+  });
+
   it("parses definitions into property types and enums", () => {
     const schema = {
       resourceType: "Microsoft.Test/resources",

@@ -4,7 +4,7 @@
  * Adapts the K8s CRD parser pattern for GCP-specific concerns:
  * - Type naming: GCP::{Service}::{Kind}
  * - resourceRef detection
- * - Status field skipping
+ * - Status fields skipped as props; scalar ones become attributes
  */
 
 import yaml from "js-yaml";
@@ -212,6 +212,7 @@ function parseCRDSpec(spec: CRDSpec): GcpParseResult[] {
         { name: "name", tsType: "string" },
         { name: "namespace", tsType: "string" },
         { name: "uid", tsType: "string" },
+        ...statusAttributes(schema?.properties?.status),
       ],
       deprecatedProperties: [],
     },
@@ -221,6 +222,21 @@ function parseCRDSpec(spec: CRDSpec): GcpParseResult[] {
   });
 
   return results;
+}
+
+/**
+ * The scalar top-level fields of a CRD's `status`, such as RunService's
+ * `status.uri` (#4179), as dotted attribute names. Config Connector fills them
+ * once the resource is ready, so they can't appear in the resource's own
+ * YAML, but another lexicon or an output can reference them.
+ */
+function statusAttributes(statusSchema: OpenAPISchema | undefined): ParsedAttribute[] {
+  const out: ParsedAttribute[] = [];
+  for (const [name, prop] of Object.entries(statusSchema?.properties ?? {})) {
+    if (prop.type !== "string" && prop.type !== "integer" && prop.type !== "number" && prop.type !== "boolean") continue;
+    out.push({ name: `status.${name}`, tsType: resolveSchemaType(prop) });
+  }
+  return out;
 }
 
 // ── Property extraction ─────────────────────────────────────────────

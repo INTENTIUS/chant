@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-23T20:56:21.709Z",
+  "generatedAt": "2026-10-21T04:33:19.549Z",
   "entries": {
     "ADCCatalogProperties": {
       "kind": "property",
@@ -25091,7 +25091,12 @@
       "kind": "resource",
       "resourceType": "Microsoft.App/containerApps",
       "attrs": [
-        "id"
+        "configuration_ingress_fqdn",
+        "id",
+        "latestRevisionFqdn",
+        "latestRevisionName",
+        "outboundIpAddresses",
+        "provisioningState"
       ],
       "props": [
         "extendedLocation:false",

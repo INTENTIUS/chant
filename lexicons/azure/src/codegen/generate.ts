@@ -95,7 +95,7 @@ function generateRuntimeIndex(
     // Build attrs map
     const attrs: Record<string, string> = {};
     for (const a of r.resource.attributes) {
-      attrs[a.name] = a.name;
+      attrs[a.name.replace(/\./g, "_")] = a.name;
     }
 
     resourceEntries.push({ tsName, resourceType: armType, attrs });

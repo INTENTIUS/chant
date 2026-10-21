@@ -31,6 +31,8 @@ export const nodeCount = new CoreParameter({
 });
 ```
 
+A resource's attributes are `AttrRef`s for the same `reference()` call. A dotted attribute reads a nested field, with dots written as underscores: a Container App's `configuration.ingress.fqdn` is `app.configuration_ingress_fqdn`, and its `latestRevisionFqdn` is `app.latestRevisionFqdn`. ARM schemas don't mark read-only fields, so the lexicon keeps a curated list per resource type, and a type that isn't on it has only `id`.
+
 ### Generated ARM output
 
 ```json
