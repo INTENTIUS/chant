@@ -90,7 +90,7 @@ interface StackTarget {
  * observed as the stack named after the environment (unchanged behavior). An
  * explicit `--src` always wins and forces a single scoped target.
  */
-function resolveStackTargets(args: ParsedArgs, config: ChantConfig): StackTarget[] {
+export function resolveStackTargets(args: ParsedArgs, config: ChantConfig): StackTarget[] {
   if (args.src) return [{ root: resolve(args.src) }];
   if (config.stacks && config.stacks.length > 0) {
     return config.stacks.map((s) => ({ stack: s.name, root: resolve(s.src), region: s.region }));

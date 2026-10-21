@@ -486,6 +486,14 @@ export const tags = defaultTags([
   /** The noise rules the deep pass applies to both the live and declared trees. */
   deepNormalizationHooks: azureDeepNormalizationHooks,
 
+  /** Runtime health (#4177): Container Apps. Implementation in ./health.ts. */
+  healthTypes: ["Microsoft.App/containerApps"],
+
+  async observeHealth(options) {
+    const { observeHealthAzure } = await import("./health");
+    return observeHealthAzure(options);
+  },
+
   async exportResources(options) {
     const { exportResources } = await import("./export-resources");
     return exportResources(options);

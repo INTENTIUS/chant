@@ -903,6 +903,10 @@ Lifecycle (alias: lc):
                             estate size rather than stack count (#2405)
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
+  lifecycle health <env>    Whether each declared service is up, separate from
+                            drift: ECS running vs desired, Route 53 health
+                            checks, Container Apps revisions, Cloud Run Ready.
+                            A failed read is "not read", never unhealthy (--json)
   lifecycle whoami <env>    Who chant would act as in each configured lexicon,
                             and what that principal is scoped to — read-only,
                             before anything acts (--json, --strict)
@@ -1522,6 +1526,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
   { name: "lifecycle whoami", requiresPlugins: true, handler: runLifecycleWhoami },
+  // #4177 — runtime health, separate from drift. Imported on first use.
+  { name: "lifecycle health", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/lifecycle-health")).runLifecycleHealth(ctx) },
   { name: "lifecycle teardown", requiresPlugins: true, handler: runLifecycleTeardown },
   { name: "lifecycle log", handler: runLifecycleLog },
   // #4036 — retention's garbage collection. Imported on first use.
