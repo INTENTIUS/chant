@@ -361,6 +361,8 @@ npx vitest run --project e2e      # the end-to-end tests only
 CHANT_UNIT_TEST_BUDGET_MS=0 npx vitest run path/to/file.test.ts   # no budget, for a debugger
 ```
 
+Before merging, run the e2e tests your change reaches with `just test-e2e-affected [base]` (base defaults to `origin/main`; `scripts/test-e2e-affected.ts`, #4217). It runs every changed `*.e2e.test.ts`, the e2e files in the same directory as a changed file, the e2e files vitest's import graph relates to the diff (`--no-related` skips them), and `examples/root-examples-gate`, `examples/sandbox-execution-boundary` and `examples/fold-differential` whenever the diff touches `examples/`, `lexicons/*/examples/`, `lexicons/*/src/serializer*` or `docs/`. `--list` prints the files without running them. Its last line is a one-line result for the pull request body. It is not behind `scripts/human-gate.sh`, so coding agents run it before they merge.
+
 A unit test over the budget either gets faster or moves out of the unit project. When only some tests in a file are slow, split them into a sibling `<name>.e2e.test.ts`. When the whole file is end to end, rename it. The 5 second budget comes from CI runs (#3793): in three runs every test left in the unit project took under 2 seconds on a loaded 4-core runner, and in the next runs some of those reached 3.7 seconds when a worker loaded a large module cold. 5 seconds leaves 2.5x headroom over the slowest typical time.
 
 ### What runs when

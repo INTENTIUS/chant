@@ -92,6 +92,15 @@ test-e2e:
     @just _ensure-gen
     npx vitest run --project e2e
 
+# The e2e files a change reaches, run before it merges (#4217): changed e2e
+# files, e2e files beside a changed file, what vitest's import graph relates to
+# the diff, and the three example gates when the diff touches an example, a
+# lexicon serializer or the docs. Not behind the human gate: this is the check
+# a person or an agent runs on their own change. `--no-related` skips the
+# import graph; `--list` prints the files without running them.
+test-e2e-affected base="origin/main" *args: _ensure-gen
+    npx tsx scripts/test-e2e-affected.ts {{base}} {{args}}
+
 # chant #1025 — the fold-vs-run differential corpus, standalone with its
 # per-source report (fold / run-fallback / drift). Part of the e2e project
 # (`just test-e2e`, and release-suites.yml before a release) since #3793; this
