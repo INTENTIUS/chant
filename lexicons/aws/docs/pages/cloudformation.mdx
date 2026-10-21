@@ -114,6 +114,10 @@ Reference parameters with `Ref`:
 
 {{file:docs-snippets/src/parameter-cross-file-ref.ts}}
 
+### Values from another lexicon
+
+A value read from a resource the template doesn't hold, such as an Azure Container App's `configuration_ingress_fqdn` used in a Route 53 record, can't be a `Fn::GetAtt`. The template takes it as a `String` parameter instead, named like the output the other lexicon writes for it (`appConfigurationIngressFqdn` for `app`'s `configuration.ingress.fqdn`), and the build prints a warning naming both. Deploy the other lexicon's resource first and pass its output in as that parameter. A `Ref` or `Fn::GetAtt` that still names nothing in the template fails the build (WAW070).
+
 ## Template description and metadata
 
 `templateDescription(text)` sets the template's top-level `Description`. `templateMetadata(entries)` adds entries to its top-level `Metadata`, such as `AWS::CloudFormation::Interface`. Several `templateMetadata` declarations merge.

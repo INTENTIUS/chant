@@ -156,4 +156,8 @@ export const awsAuditLineage: Record<string, Lineage[]> = {
   WAW069: [
     { tool: "cfn-lint", rule: "E8002", url: "https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E8002", relation: "equivalent" },
   ],
+  WAW070: [
+    { tool: "cfn-lint", rule: "E1012", url: "https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E1012", relation: "equivalent" },
+    { tool: "cfn-lint", rule: "E1010", url: "https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E1010", relation: "overlaps" },
+  ],
 };

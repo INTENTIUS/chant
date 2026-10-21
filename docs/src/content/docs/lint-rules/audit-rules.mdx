@@ -2059,6 +2059,16 @@ Declare the condition in the Conditions section (new Condition(...)), or fix the
 |---|---|
 | Prior art | [cfn-lint `E8002`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E8002) (equivalent) |
 
+### WAW070
+
+**Ref or Fn::GetAtt names something the template doesn't declare** (merge-worthy · guidance)
+
+Reference a resource or parameter in this template. A value from another lexicon's resource arrives as a parameter.
+
+| | |
+|---|---|
+| Prior art | [cfn-lint `E1012`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E1012) (equivalent) · [cfn-lint `E1010`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E1010) (overlaps) |
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
@@ -3570,11 +3580,11 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [KubeLinter](https://github.com/stackrox/kube-linter) | scanner | Apache-2.0 | 17 |
 | [kube-score](https://github.com/zegl/kube-score) | scanner | MIT | 15 |
 | [PSRule for Azure](https://azure.github.io/PSRule.Rules.Azure/) | scanner | MIT | 13 |
+| [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) | scanner | MIT-0 | 12 |
 | [Google Cloud Policy Library](https://github.com/GoogleCloudPlatform/policy-library) | scanner | Apache-2.0 | 12 |
 | [poutine](https://boostsecurityio.github.io/poutine/) | scanner | Apache-2.0 | 11 |
 | [OpenSSF Scorecard](https://github.com/ossf/scorecard) | scanner | Apache-2.0 | 11 |
 | [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 11 |
-| [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) | scanner | MIT-0 | 10 |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | scanner | MIT | 10 |
 | [octoscan](https://github.com/synacktiv/octoscan) | scanner | GPL-3.0 | 10 |
 | [detect-secrets](https://github.com/Yelp/detect-secrets) | scanner | Apache-2.0 | 9 |
