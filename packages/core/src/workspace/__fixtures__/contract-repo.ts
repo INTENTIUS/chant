@@ -27,7 +27,7 @@ export function scratchDir(prefix = "chant-contract-"): string {
 }
 
 export function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], {
+  return execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args], {
     cwd,
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -67,7 +67,16 @@ export function repoFixture(build: () => string, prefix = "chant-contract-copy-"
   return () => {
     if (template === undefined || !existsSync(template)) template = build();
     const root = scratchDir(prefix);
-    cpSync(template, root, { recursive: true });
+    // A commit can leave a detached `git gc --auto` or maintenance run moving
+    // the template's objects, and a copy that meets it fails with ENOENT on
+    // .git/objects. Copy once more after it settles.
+    try {
+      cpSync(template, root, { recursive: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      rmSync(root, { recursive: true, force: true });
+      cpSync(template, root, { recursive: true });
+    }
     return root;
   };
 }

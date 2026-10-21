@@ -44,6 +44,8 @@ const repoTemplate = repoFixture(() => {
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
   git(root, "config", "user.name", "t");
   git(root, "config", "user.email", "t@example.com");
+  git(root, "config", "gc.auto", "0");
+  git(root, "config", "maintenance.auto", "false");
   writeFiles(root, { "chant.workspace.json": declaration(MEMBERS), ".gitignore": ".chant/pr/\n", "app/a.txt": "a\n" });
   const commit = (msg: string) => {
     execFileSync("git", ["-c", "commit.gpgsign=false", "add", "-A"], { cwd: root, stdio: "ignore" });
@@ -77,10 +79,13 @@ async function cli(cwd: string, argv: string[], run: (ctx: CommandContext) => Pr
   return { code, out: out.join("\n"), err: err.join("\n") };
 }
 
+// A job image of its own, so the job gets no setup lines: the default image's
+// OpenTofu install downloads from the network on a runner without tofu, as
+// in ci-run.test.ts.
 const runPlan = (w: ReturnType<typeof workspace>, extra: string[] = []) =>
   cli(
     w.app,
-    ["ci", "run", "plan", "--env", "prod", "--base", w.base, "--pr", "7", "--forge", "forgejo", "--no-status", "--chant", w.chant, "-o", join(scratchDir("chant-report-url-out-"), "pr"), ...extra],
+    ["ci", "run", "plan", "--image", "chant-ci-report-url-test:local", "--env", "prod", "--base", w.base, "--pr", "7", "--forge", "forgejo", "--no-status", "--chant", w.chant, "-o", join(scratchDir("chant-report-url-out-"), "pr"), ...extra],
     runCiRun,
   );
 
