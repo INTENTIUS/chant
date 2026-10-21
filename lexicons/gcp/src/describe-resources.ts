@@ -40,7 +40,7 @@ import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@int
 import { observation } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, readOwnership, type ChannelKeys } from "@intentius/chant/ownership";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
-import { NO_PROJECT, parseManifest, projectRefProject } from "./op/activities/gcp-apply";
+import { NO_PROJECT, parseManifest, projectRefProject, type GcpResource } from "./op/activities/gcp-apply";
 import { cnrmNameOf, resolveCnrmRefs, resolveGVK } from "./serializer";
 
 /**
@@ -167,6 +167,26 @@ export function readTargets(
   return out;
 }
 
+/**
+ * The declared resources as the applier's manifest holds them (kind, CNRM
+ * name, spec), for a read that needs another declared resource: an
+ * IAMPolicyMember on a RunService takes the service's region from it (#4251).
+ */
+export function readManifest(
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>,
+  targets: Map<string, { name: string; props: Record<string, unknown> }>,
+): GcpResource[] {
+  const out: GcpResource[] = [];
+  for (const [logical, { entityType }] of entities) {
+    const gvk = deriveGVK(entityType);
+    const target = targets.get(logical);
+    if (!gvk || !target) continue;
+    const spec = (target.props.spec as Record<string, unknown> | undefined) ?? target.props;
+    out.push({ kind: gvk.kind, metadata: { name: target.name }, spec });
+  }
+  return out;
+}
+
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -223,6 +243,7 @@ export async function describeResources(options: {
 
   const manifestProjects = manifestProjectAnnotations(options.buildOutput);
   const targets = readTargets(options.entities);
+  const manifest = readManifest(options.entities, targets);
 
   const reads = [...options.entities].map(async ([entityName, { entityType }]) => {
     const gvk = deriveGVK(entityType);
@@ -253,6 +274,7 @@ export async function describeResources(options: {
       client = {
         project: resolveReadProject(gvk.kind, name, metadata, manifestProjects, props),
         ...(endpoint ? { endpoint } : {}),
+        manifest,
       };
     } catch (err) {
       // No project resolvable — nothing was queried, so nothing is known.

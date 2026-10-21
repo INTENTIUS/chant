@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { describeResources } from "./describe-resources";
+import { CloudRunServiceComposite } from "./composites/cloud-run-service";
 import {
   BackendService,
   CloudRunService,
@@ -132,4 +133,63 @@ describe("gcp live read resolves .name references as the build does (#4251)", ()
     expect(out.resources.publicIam).toBeUndefined();
     expect(out.unobserved?.publicIam).toBeUndefined();
   });
+});
+
+/**
+ * #4251, the IAM binding behold saw as pending: the public IAMPolicyMember of a
+ * CloudRunServiceComposite whose service runs outside us-central1. The binding
+ * names its service by `name`, so the read has to take the service's region from
+ * the declared service, as apply does, or it asks a region where the service
+ * isn't, gets a 404 and reports the binding absent.
+ */
+describe("the public binding of a service outside us-central1 reads as observed (#4251)", () => {
+  const policyUrl = "/v2/projects/three-cloud/locations/asia-northeast1/services/three-cloud-site:getIamPolicy";
+
+  function composite() {
+    const { service, publicIam } = CloudRunServiceComposite({
+      name: "three-cloud-site",
+      image: "gcr.io/p/site:1",
+      projectId: "three-cloud",
+      location: "asia-northeast1",
+      publicAccess: true,
+    }) as unknown as Record<string, { entityType: string; props: Record<string, unknown> }>;
+    return [
+      ["webService", { entityType: service.entityType, props: service.props }],
+      ["webPublicIam", { entityType: publicIam.entityType, props: publicIam.props }],
+    ] as Array<[string, { entityType: string; props: Record<string, unknown> }]>;
+  }
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.GCP_ENDPOINT_URL = "http://localhost:4588";
+    process.env.GCP_PROJECT_ID = "three-cloud";
+    delete process.env.GCP_REGION;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes(":getIamPolicy")) {
+        return url.includes(policyUrl)
+          ? reply(200, { bindings: [{ role: "roles/run.invoker", members: ["allUsers"] }] })
+          : reply(404, { error: { code: 404 } });
+      }
+      return reply(200, { name: url.split("?")[0].split("/").slice(-6).join("/") });
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.GCP_ENDPOINT_URL;
+    delete process.env.GCP_PROJECT_ID;
+  });
+
+  for (const order of ["service first", "binding first"]) {
+    test(`webPublicIam is observed with a physical id, ${order}`, async () => {
+      const pairs = composite();
+      const entities = new Map(order === "service first" ? pairs : [...pairs].reverse());
+      const out = await describeResources({ environment: "local", buildOutput: "", entityNames: [...entities.keys()], entities });
+      expect(out.unobserved?.webPublicIam).toBeUndefined();
+      expect(out.resources.webPublicIam?.physicalId).toBe(
+        "projects/three-cloud/locations/asia-northeast1/services/three-cloud-site#roles/run.invoker#allUsers",
+      );
+    });
+  }
 });

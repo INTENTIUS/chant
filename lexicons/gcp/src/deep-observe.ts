@@ -61,7 +61,7 @@ import type {
 } from "@intentius/chant/lexicon";
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
 import { hasOwnershipMarker, type ChannelKeys } from "@intentius/chant/ownership";
-import { deriveGVK, manifestProjectAnnotations, readTargets, resolveReadProject } from "./describe-resources";
+import { deriveGVK, manifestProjectAnnotations, readManifest, readTargets, resolveReadProject } from "./describe-resources";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 
@@ -388,6 +388,7 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
   const endpoint = process.env.GCP_ENDPOINT_URL;
   const manifestProjects = manifestProjectAnnotations(options.buildOutput);
   const targets = readTargets(options.entities);
+  const manifest = readManifest(options.entities, targets);
 
   const reads = [...options.entities].map(async ([entityName, { entityType }]) => {
     const gvk = deriveGVK(entityType);
@@ -410,6 +411,7 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
       client = {
         project: resolveReadProject(gvk.kind, name, metadata, manifestProjects, props),
         ...(endpoint ? { endpoint } : {}),
+        manifest,
       };
     } catch (err) {
       unobserved[entityName] = {
