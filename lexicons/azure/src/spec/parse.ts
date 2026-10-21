@@ -168,6 +168,16 @@ const CURATED_ATTRIBUTES: Record<string, Array<{ name: string; tsType: string }>
     { name: "id", tsType: "string" },
     { name: "provisioningState", tsType: "string" },
   ],
+  // The app's hostname, for DNS in front of it (#4179). Dotted names read a
+  // nested field of reference()'s properties, as AWS's Endpoint.Address does.
+  "Microsoft.App/containerApps": [
+    { name: "id", tsType: "string" },
+    { name: "configuration.ingress.fqdn", tsType: "string" },
+    { name: "latestRevisionFqdn", tsType: "string" },
+    { name: "latestRevisionName", tsType: "string" },
+    { name: "outboundIpAddresses", tsType: "string[]" },
+    { name: "provisioningState", tsType: "string" },
+  ],
 };
 
 /**

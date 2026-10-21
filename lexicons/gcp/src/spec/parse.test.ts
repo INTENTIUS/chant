@@ -50,6 +50,47 @@ describe("gcpShortName", () => {
 });
 
 describe("parseGcpCRD", () => {
+  test("turns the scalar fields of status into attributes (#4179)", () => {
+    const crd = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: runservices.run.cnrm.cloud.google.com
+spec:
+  group: run.cnrm.cloud.google.com
+  names:
+    kind: RunService
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          properties:
+            spec:
+              type: object
+              properties:
+                location:
+                  type: string
+            status:
+              type: object
+              properties:
+                uri:
+                  type: string
+                observedGeneration:
+                  type: integer
+                conditions:
+                  type: array
+                  items:
+                    type: object
+`;
+    const [result] = parseGcpCRD(crd);
+    const attrs = Object.fromEntries(result.resource.attributes.map((a) => [a.name, a.tsType]));
+    expect(attrs["status.uri"]).toBe("string");
+    expect(attrs["status.observedGeneration"]).toBe("number");
+    expect(attrs["status.conditions"]).toBeUndefined();
+    expect(attrs.name).toBe("string");
+  });
+
   test("parses ComputeInstance CRD", () => {
     const content = readFileSync(join(testdata, "compute-instance.yaml"), "utf-8");
     const results = parseGcpCRD(content);
@@ -80,8 +121,7 @@ describe("parseGcpCRD", () => {
     expect(netRef!.isResourceRef).toBe(true);
 
     // Check attributes
-    expect(result.resource.attributes).toHaveLength(3);
-    expect(result.resource.attributes[0].name).toBe("name");
+    expect(result.resource.attributes.map((a) => a.name)).toEqual(["name", "namespace", "uid", "status.instanceId", "status.selfLink"]);
   });
 
   test("parses StorageBucket CRD", () => {
