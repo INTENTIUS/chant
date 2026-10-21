@@ -208,6 +208,12 @@ export interface PrLoopJob {
   /** With `waveGate` (#4003): the wave a generated apply job runs, 1-based. */
   wave?: number;
   /**
+   * The branch an apply job takes its green commit from (#4168 step 9). A
+   * wave after the first checks out the commit wave 1 took, which the job
+   * receives as `GREEN_SHA` (#4221).
+   */
+  greenBranch?: string;
+  /**
    * What the generated job runs in place of `command` (#4156): `chant ci run
    * <job> --in-place` with the same environment, gate, forge, events and
    * report URL, which runs `command` and records the run. `env` is the
@@ -261,6 +267,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const planEnv = github
     ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
     : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv };
+  const greenBranch = github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
   const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
   return [
     {
@@ -281,7 +288,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
         "--resume", PR_APPLY_RECORD,
       ].join(" "),
       env: jobEnv,
-      checkout: [greenCheckout(github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH")],
+      checkout: [greenCheckout(greenBranch)],
+      greenBranch,
       ...build,
       run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
     },
@@ -343,6 +351,8 @@ export function prLoopWaveJobs(components: DriverComponent[], apply: PrLoopJob):
     ...apply,
     command: `${apply.command} --wave ${i + 1}`,
     wave: i + 1,
+    // #4221: every wave after the first applies the commit wave 1 took.
+    ...(i > 0 && apply.greenBranch !== undefined ? { checkout: [pinnedGreenCheckout(apply.greenBranch)] } : {}),
     // #4156: the job runs it through chant ci run, which appends the same --wave to pr-apply.
     run: { ...apply.run, command: `${apply.run.command} --wave ${i + 1}` },
   }));
@@ -404,7 +414,22 @@ function pushBaseFallback(target: string, commit: string, diffBase?: string): st
  * last-green` exits 1 when no commit is green, which fails the job.
  */
 export function greenCheckout(branch: string): string {
-  return `git fetch --quiet --tags origin "+refs/heads/${branch.replace(/^"|"$/g, "")}:refs/remotes/origin/${branch.replace(/^"|"$/g, "")}" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"`;
+  return `${fetchBranch(branch)} && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"`;
+}
+
+/**
+ * The line a wave after the first runs in place of {@link greenCheckout}
+ * (#4221): it checks out `GREEN_SHA`, the commit wave 1 took, so a commit
+ * that goes green while the waves run waits for a run of its own. An empty
+ * `GREEN_SHA` fails the job.
+ */
+export function pinnedGreenCheckout(branch: string): string {
+  return `test -n "$GREEN_SHA" && ${fetchBranch(branch)} && git checkout --quiet --detach "$GREEN_SHA"`;
+}
+
+function fetchBranch(branch: string): string {
+  const name = branch.replace(/^"|"$/g, "");
+  return `git fetch --quiet --tags origin "+refs/heads/${name}:refs/remotes/origin/${name}"`;
 }
 
 /**

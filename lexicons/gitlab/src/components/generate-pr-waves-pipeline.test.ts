@@ -42,6 +42,17 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
+  test("wave 1 takes the newest green commit, and each later wave applies the one wave 1 took (#4221)", () => {
+    for (const k of [1, 2, 3]) {
+      const job = doc[`apply-wave-${k}`] as { script: string[]; artifacts: { reports?: { dotenv?: string } } };
+      expect(job.artifacts.reports).toEqual({ dotenv: "chant-green.env" });
+      expect(job.script).toContain('echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/chant-green.env"');
+      const lastGreen = job.script.some((l) => l.includes("chant ci last-green"));
+      expect(lastGreen).toBe(k === 1);
+      if (k > 1) expect(job.script.some((l) => l.startsWith('test -n "$GREEN_SHA"'))).toBe(true);
+    }
+  });
+
   test("validates against the vendored GitLab CI schema", () => {
     const req = createRequire(import.meta.url);
     const mod = req("ajv") as { default?: unknown };

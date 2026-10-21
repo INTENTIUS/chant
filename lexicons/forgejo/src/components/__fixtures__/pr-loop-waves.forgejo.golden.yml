@@ -71,6 +71,8 @@ jobs:
     concurrency:
       group: chant-apply-prod
       cancel-in-progress: false
+    outputs:
+      green-sha: '${{ steps.apply.outputs.green-sha }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
@@ -83,11 +85,13 @@ jobs:
           key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-1
           restore-keys: chant-apply-prod-${{ github.sha }}-
       - name: Apply wave 1 of the newest green commit, under the approval its plan has
+        id: apply
         env:
           GITHUB_TOKEN: '${{ github.token }}'
           CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
         run: |
           git fetch --quiet --tags origin "+refs/heads/main:refs/remotes/origin/main" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"
+          echo "green-sha=$GREEN_SHA" >> "$GITHUB_OUTPUT"
           chant ci run apply --in-place --env prod --gate pr-apply --forge forgejo --wave-gate release --wave 1
       - name: Keep the record for the next wave and a re-run
         if: always()
@@ -111,6 +115,8 @@ jobs:
     concurrency:
       group: chant-apply-prod
       cancel-in-progress: false
+    outputs:
+      green-sha: '${{ steps.apply.outputs.green-sha }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
@@ -122,12 +128,15 @@ jobs:
           path: .chant/pr-resume/pr-apply.json
           key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-wave-2
           restore-keys: chant-apply-prod-${{ github.sha }}-
-      - name: Apply wave 2 of the newest green commit, under the approval its plan has
+      - name: Apply wave 2 of the green commit wave 1 took, under the approval its plan has
+        id: apply
         env:
           GITHUB_TOKEN: '${{ github.token }}'
           CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
+          GREEN_SHA: '${{ needs.apply-wave-1.outputs.green-sha }}'
         run: |
-          git fetch --quiet --tags origin "+refs/heads/main:refs/remotes/origin/main" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"
+          test -n "$GREEN_SHA" && git fetch --quiet --tags origin "+refs/heads/main:refs/remotes/origin/main" && git checkout --quiet --detach "$GREEN_SHA"
+          echo "green-sha=$GREEN_SHA" >> "$GITHUB_OUTPUT"
           chant ci run apply --in-place --env prod --gate pr-apply --forge forgejo --wave-gate release --wave 2
       - name: Keep the record for the next wave and a re-run
         if: always()
