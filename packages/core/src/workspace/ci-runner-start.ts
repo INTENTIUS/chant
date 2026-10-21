@@ -65,7 +65,8 @@ export function checkRunnerStart(input: { top: string; base: string; env?: Recor
 
 /** One thing a repository lacks before it can require runner-start statements. */
 export interface RunnerStartGap {
-  code: "runner-start-no-runner-key" | "runner-start-no-runner-role" | "runner-start-trust-unreadable";
+  /** Not a read-contract reason code: the isolated-runners group (#4168) maps each to its own security code. */
+  gap: "no-runner-key" | "no-runner-role" | "trust-unreadable";
   reason: string;
 }
 
@@ -78,15 +79,15 @@ export interface RunnerStartGap {
 export function runnerStartReadiness(policy: TrustPolicy): { configured: boolean; gaps: RunnerStartGap[] } {
   const gaps: RunnerStartGap[] = [];
   if (policy.problems.length > 0) {
-    gaps.push({ code: "runner-start-trust-unreadable", reason: `.chant/trust.json cannot be read: ${policy.problems.join("; ")}` });
+    gaps.push({ gap: "trust-unreadable", reason: `.chant/trust.json cannot be read: ${policy.problems.join("; ")}` });
     return { configured: false, gaps };
   }
   if (policy.runners.length === 0) {
-    gaps.push({ code: "runner-start-no-runner-key", reason: ".chant/trust.json lists no key under runners for a provisioner to sign with: chant workspace trust runner add <principal> --key <ssh-ed25519 line>" });
+    gaps.push({ gap: "no-runner-key", reason: ".chant/trust.json lists no key under runners for a provisioner to sign with: chant workspace trust runner add <principal> --key <ssh-ed25519 line>" });
   } else {
     const holders = new Set((policy.roles[RUNNER_START_SIGNER_ROLE] ?? []).map((p) => p.normalize("NFKC").trim().toLowerCase()));
     if (!policy.runners.some((r) => holders.has(r.principal.normalize("NFKC").trim().toLowerCase()))) {
-      gaps.push({ code: "runner-start-no-runner-role", reason: `no principal under runners holds the ${RUNNER_START_SIGNER_ROLE} role in .chant/trust.json: "roles": { "${RUNNER_START_SIGNER_ROLE}": ["<principal>"] }` });
+      gaps.push({ gap: "no-runner-role", reason: `no principal under runners holds the ${RUNNER_START_SIGNER_ROLE} role in .chant/trust.json: "roles": { "${RUNNER_START_SIGNER_ROLE}": ["<principal>"] }` });
     }
   }
   return { configured: gaps.length === 0, gaps };

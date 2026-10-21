@@ -93,10 +93,10 @@ describe("runnerStartReadiness, for the isolated-runners group", () => {
   });
 
   test("no runner key, a key with no runner role, and an unreadable policy each name their gap", () => {
-    expect(runnerStartReadiness(emptyPolicy("x")).gaps.map((g) => g.code)).toEqual(["runner-start-no-runner-key"]);
+    expect(runnerStartReadiness(emptyPolicy("x")).gaps.map((g) => g.gap)).toEqual(["no-runner-key"]);
     const noRole = { ...emptyPolicy("x"), runners: [{ principal: "p", class: "runner" as const, key: PROVISIONER.ssh }] };
-    expect(runnerStartReadiness(noRole)).toMatchObject({ configured: false, gaps: [{ code: "runner-start-no-runner-role" }] });
-    expect(runnerStartReadiness(emptyPolicy("x", ["bad json"])).gaps.map((g) => g.code)).toEqual(["runner-start-trust-unreadable"]);
+    expect(runnerStartReadiness(noRole)).toMatchObject({ configured: false, gaps: [{ gap: "no-runner-role" }] });
+    expect(runnerStartReadiness(emptyPolicy("x", ["bad json"])).gaps.map((g) => g.gap)).toEqual(["trust-unreadable"]);
   });
 });
 
