@@ -1,6 +1,11 @@
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { gcpSerializer } from "@intentius/chant-lexicon-gcp";
 
+// cloud-function, cloud-run and cloud-sql read GCP.ProjectId and GCP.Region,
+// which a build resolves from these variables (#4200).
+process.env.GCP_PROJECT_ID ??= "example-project";
+process.env.GCP_REGION ??= "us-central1";
+
 describeAllExamples(
   {
     lexicon: "gcp",

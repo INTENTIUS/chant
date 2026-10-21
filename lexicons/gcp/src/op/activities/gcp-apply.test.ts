@@ -234,6 +234,22 @@ describe("resolveGcpProject (#711)", () => {
     expect(() => resolveGcpProject({ metadata: { name: "b" } }, {} as NodeJS.ProcessEnv))
       .toThrow(/no GCP project/);
   });
+
+  test("spec.projectRef.external wins over env and the annotation (#4201)", () => {
+    const run = { ...BUCKET, spec: { projectRef: { external: "ref-project" } } };
+    expect(resolveGcpProject(run, { GOOGLE_CLOUD_PROJECT: "env-project" } as NodeJS.ProcessEnv)).toBe("ref-project");
+  });
+
+  test("projectRef.external may be projects/<id>", () => {
+    const run = { metadata: { name: "r" }, spec: { projectRef: { external: "projects/three-cloud" } } };
+    expect(resolveGcpProject(run, {} as NodeJS.ProcessEnv)).toBe("three-cloud");
+  });
+
+  test("an unresolved GCP.ProjectId in projectRef reads GCP_PROJECT_ID, else falls through", () => {
+    const run = { ...BUCKET, spec: { projectRef: { external: { Ref: "GCP::ProjectId" } } } };
+    expect(resolveGcpProject(run, { GCP_PROJECT_ID: "pseudo-project" } as NodeJS.ProcessEnv)).toBe("pseudo-project");
+    expect(resolveGcpProject(run, {} as NodeJS.ProcessEnv)).toBe("annotated-project");
+  });
 });
 
 describe("resolveGcpEndpoint (#1449)", () => {

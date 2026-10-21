@@ -162,6 +162,7 @@ export const gcpSerializer: Serializer = {
     }
 
     const documents: string[] = [];
+    const unresolved: UnresolvedPseudo[] = [];
 
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
@@ -171,9 +172,10 @@ export const gcpSerializer: Serializer = {
       const gvk = resolveGVK(entityType);
       if (!gvk) continue;
 
-      const props = toYAMLValue(
-        isResourceDeclarable(entity) ? entity.props : undefined,
-        entityNames,
+      const props = resolvePseudoParameters(
+        toYAMLValue(isResourceDeclarable(entity) ? entity.props : undefined, entityNames),
+        name,
+        unresolved,
       ) as Record<string, unknown> | undefined;
 
       if (!props) continue;
@@ -223,6 +225,8 @@ export const gcpSerializer: Serializer = {
       documents.push(yamlDoc);
     }
 
+    if (unresolved.length > 0) throw new Error(unresolvedMessage(unresolved));
+
     const primary = documents.join("\n---\n");
     const warnings = unwritableOutputWarnings(outputs);
     return warnings.length > 0 ? { primary, warnings } : primary;
@@ -239,6 +243,42 @@ const PSEUDO_ENV_MAP: Record<string, { envVar: string; fallback: string }> = {
   "GCP::Region": { envVar: "GCP_REGION", fallback: "us-central1" },
   "GCP::Zone": { envVar: "GCP_ZONE", fallback: "us-central1-a" },
 };
+
+interface UnresolvedPseudo {
+  entity: string;
+  ref: string;
+  envVar: string;
+}
+
+/**
+ * Replace each GCP pseudo-parameter (`{ Ref: "GCP::Region" }`) in a
+ * serialized resource with its environment variable's value (#4200).
+ * Config Connector has no parameters, so a `Ref` left in the YAML reaches
+ * the API as an object. A variable that isn't set is recorded, and the
+ * build refuses with every one named.
+ */
+function resolvePseudoParameters(value: unknown, entity: string, unresolved: UnresolvedPseudo[]): unknown {
+  if (Array.isArray(value)) return value.map((v) => resolvePseudoParameters(v, entity, unresolved));
+  if (value === null || typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 1 && keys[0] === "Ref" && typeof obj.Ref === "string" && obj.Ref in PSEUDO_ENV_MAP) {
+    const { envVar } = PSEUDO_ENV_MAP[obj.Ref];
+    const resolved = process.env[envVar];
+    if (resolved) return resolved;
+    unresolved.push({ entity, ref: obj.Ref, envVar });
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) out[k] = resolvePseudoParameters(v, entity, unresolved);
+  return out;
+}
+
+function unresolvedMessage(unresolved: UnresolvedPseudo[]): string {
+  const vars = [...new Set(unresolved.map((u) => u.envVar))];
+  const lines = unresolved.map((u) => `  ${u.entity}: ${u.ref} needs ${u.envVar}`);
+  return `gcp: ${vars.join(", ")} ${vars.length === 1 ? "is" : "are"} not set, and Config Connector YAML can't carry a pseudo-parameter. Set ${vars.length === 1 ? "it" : "them"} at build, or pass the value explicitly:\n${lines.join("\n")}`;
+}
 
 /**
  * Resolve an annotation value to a plain string.
