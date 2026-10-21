@@ -14,13 +14,20 @@
  * backend service can point at a regional NEG.
  *
  * Inserts return a compute `Operation`, polled at its `selfLink` (rebased onto
- * the endpoint override, so floci-gcp answers). These kinds reconcile by
- * existence only: an existing resource is left as it is, since compute updates
- * need the live `fingerprint` and most of these fields are immutable.
+ * the endpoint override, so floci-gcp answers).
+ *
+ * An existing load balancer resource is compared with its desired body and
+ * updated in place where compute allows it (#4238): a backend service or URL
+ * map by PATCH with the live `fingerprint`, a proxy's URL map by `setUrlMap`,
+ * a forwarding rule's target by `setTarget`, labels by `setLabels` with the
+ * live `labelFingerprint`. A difference on a field compute can't change in
+ * place (anything on a serverless NEG, an address's IP) is reported as
+ * "replace required" and left alone. A network and a subnetwork still
+ * reconcile by existence only.
  */
 import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
 import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
-import type { GcpResource, OperationSpec, ResourceMapper } from "./gcp-apply";
+import type { GcpHttp, GcpResource, OperationSpec, ReconcileStep, ResourceMapper } from "./gcp-apply";
 
 export const COMPUTE_HOST = "https://compute.googleapis.com";
 
@@ -324,12 +331,103 @@ export const computeOperation: OperationSpec = {
   },
 };
 
+/** A compute reference with everything before `projects/` dropped, so a full URL and a partial one compare equal. */
+function refTail(v: string): string {
+  const at = v.indexOf("projects/");
+  return at >= 0 ? v.slice(at) : v;
+}
+
+/**
+ * True when the live value holds the desired one: every desired key is set
+ * live to an equal value, arrays element by element, and a compute URL
+ * equals its partial form. Fields only the live side has (defaults, server
+ * ids) don't count. Pure.
+ */
+export function holds(desired: unknown, live: unknown): boolean {
+  if (typeof desired === "string" && typeof live === "string") {
+    return desired === live || (desired.includes("projects/") && refTail(desired) === refTail(live));
+  }
+  if (Array.isArray(desired)) {
+    return Array.isArray(live) && desired.length === live.length && desired.every((d, i) => holds(d, live[i]));
+  }
+  if (isObj(desired)) {
+    return isObj(live) && Object.entries(desired).every(([k, v]) => holds(v, live[k]));
+  }
+  return desired === live;
+}
+
+/** The desired body's top-level fields the live resource doesn't hold, `name` aside. Pure. */
+export function changedFields(desired: Obj, live: Obj): string[] {
+  return Object.keys(desired).filter((k) => k !== "name" && !holds(desired[k], live[k]));
+}
+
+type Reconcile = (args: {
+  url: string;
+  desired: Obj;
+  live: Obj;
+  changed: string[];
+  ctx: ComputeCtx;
+  http: GcpHttp;
+  signal?: AbortSignal;
+}) => Promise<ReconcileStep>;
+
+const replace = (kind: string, fields: readonly string[]): ReconcileStep => ({
+  replace: `${fields.join(", ")} differ${fields.length === 1 ? "s" : ""}, and compute can't change ${fields.length === 1 ? "it" : "them"} on a ${kind} in place`,
+});
+
+/** `labels` by `setLabels` with the live `labelFingerprint`; anything else changed is a replace. */
+function labelsOnly(kind: string): Reconcile {
+  return async ({ url, desired, live, changed }) => {
+    const other = changed.filter((f) => f !== "labels");
+    if (other.length) return replace(kind, other);
+    if (!changed.length) return { requests: [] };
+    return { requests: [{ method: "POST", url: `${url}/setLabels`, body: { labels: desired.labels, labelFingerprint: live.labelFingerprint } }] };
+  };
+}
+
+/** Every changed field by one PATCH carrying the live `fingerprint` (backend services, URL maps). */
+const patchWithFingerprint: Reconcile = async ({ url, desired, live, changed }) =>
+  changed.length ? { requests: [{ method: "PATCH", url, body: { ...desired, fingerprint: live.fingerprint } }] } : { requests: [] };
+
+const reconcileProxy: Reconcile = async ({ url, desired, changed }) => {
+  const other = changed.filter((f) => f !== "urlMap");
+  if (other.length) return replace("ComputeTargetHTTPProxy", other);
+  return changed.length ? { requests: [{ method: "POST", url: `${url}/setUrlMap`, body: { urlMap: desired.urlMap } }] } : { requests: [] };
+};
+
+/**
+ * A forwarding rule's `IPAddress` is a declared address's partial URL, where
+ * the live rule holds the IP itself, so the address is read and its IP
+ * compared. The target changes by `setTarget`, labels by `setLabels`; any
+ * other field is a replace.
+ */
+const reconcileForwardingRule: Reconcile = async ({ url, desired, live, changed, ctx, http, signal }) => {
+  let fields = changed;
+  const ip = desired.IPAddress;
+  if (fields.includes("IPAddress") && typeof ip === "string" && ip.includes("/addresses/")) {
+    const res = await http("GET", `${ctx.base}/compute/v1/${refTail(ip)}`, undefined, signal);
+    const address = res.status === 200 ? (JSON.parse(res.text) as Obj).address : undefined;
+    if (address !== undefined && address === live.IPAddress) fields = fields.filter((f) => f !== "IPAddress");
+  }
+  const other = fields.filter((f) => f !== "target" && f !== "labels");
+  if (other.length) return replace("ComputeForwardingRule", other);
+  const requests: Array<{ method: "POST"; url: string; body: unknown }> = [];
+  if (fields.includes("target")) requests.push({ method: "POST", url: `${url}/setTarget`, body: { target: desired.target } });
+  if (fields.includes("labels")) {
+    requests.push({ method: "POST", url: `${url}/setLabels`, body: { labels: desired.labels, labelFingerprint: live.labelFingerprint } });
+  }
+  return { requests };
+};
+
+const replaceOnAnyChange = (kind: string): Reconcile => async ({ changed }) => (changed.length ? replace(kind, changed) : { requests: [] });
+
 function computeMapper(
   kind: string,
   collection: string,
   build: (resource: GcpResource, ctx: ComputeCtx) => Obj,
   regionalCollection = collection,
   scopeFor: (spec: Obj | undefined) => string = (spec) => scopeOf(spec),
+  reconcile?: Reconcile,
 ): ResourceMapper {
   return {
     kind,
@@ -339,16 +437,36 @@ function computeMapper(
       const scope = scopeFor(resource.spec as Obj | undefined);
       const coll = `${ctx.base}/compute/v1/${scopePath(ctx.project, scope)}/${scope === "global" ? collection : regionalCollection}`;
       const name = computeName(resource);
-      return { getUrl: `${coll}/${enc(name)}`, create: { method: "POST", url: coll, body: build(resource, ctx) } };
+      const url = `${coll}/${enc(name)}`;
+      const desired = build(resource, ctx);
+      return {
+        getUrl: url,
+        create: { method: "POST", url: coll, body: desired },
+        ...(reconcile
+          ? {
+              reconcile: (live: unknown, http: GcpHttp, signal?: AbortSignal) => {
+                const l = isObj(live) ? live : {};
+                return reconcile({ url, desired, live: l, changed: changedFields(desired, l), ctx, http, signal });
+              },
+            }
+          : {}),
+      };
     },
   };
 }
 
-export const computeAddressMapper = computeMapper("ComputeAddress", "addresses", addressBody);
-export const regionNetworkEndpointGroupMapper = computeMapper("ComputeRegionNetworkEndpointGroup", "networkEndpointGroups", negBody);
-export const backendServiceMapper = computeMapper("ComputeBackendService", "backendServices", backendServiceBody);
-export const urlMapMapper = computeMapper("ComputeURLMap", "urlMaps", urlMapBody);
-export const targetHttpProxyMapper = computeMapper("ComputeTargetHTTPProxy", "targetHttpProxies", targetHttpProxyBody);
-export const forwardingRuleMapper = computeMapper("ComputeForwardingRule", "forwardingRules", forwardingRuleBody);
+export const computeAddressMapper = computeMapper("ComputeAddress", "addresses", addressBody, undefined, undefined, labelsOnly("ComputeAddress"));
+export const regionNetworkEndpointGroupMapper = computeMapper(
+  "ComputeRegionNetworkEndpointGroup",
+  "networkEndpointGroups",
+  negBody,
+  undefined,
+  undefined,
+  replaceOnAnyChange("ComputeRegionNetworkEndpointGroup"),
+);
+export const backendServiceMapper = computeMapper("ComputeBackendService", "backendServices", backendServiceBody, undefined, undefined, patchWithFingerprint);
+export const urlMapMapper = computeMapper("ComputeURLMap", "urlMaps", urlMapBody, undefined, undefined, patchWithFingerprint);
+export const targetHttpProxyMapper = computeMapper("ComputeTargetHTTPProxy", "targetHttpProxies", targetHttpProxyBody, undefined, undefined, reconcileProxy);
+export const forwardingRuleMapper = computeMapper("ComputeForwardingRule", "forwardingRules", forwardingRuleBody, undefined, undefined, reconcileForwardingRule);
 export const networkMapper = computeMapper("ComputeNetwork", "networks", networkBody, "networks", () => "global");
 export const subnetworkMapper = computeMapper("ComputeSubnetwork", "subnetworks", subnetworkBody);

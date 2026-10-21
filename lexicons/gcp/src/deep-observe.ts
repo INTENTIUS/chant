@@ -122,6 +122,8 @@ function propertiesTreeOf(obj: Record<string, unknown>): Record<string, unknown>
 interface RefineContext {
   project: string;
   restName?: string;
+  /** A forwarding rule's declared `ipAddress.addressRef` and that address's live IP (#4238). */
+  address?: { ip: string; ref: unknown };
 }
 
 type CnrmTree = Record<string, unknown> & { metadata?: Record<string, unknown> };
@@ -316,8 +318,14 @@ const CNRM_REFINERS: Record<string, (tree: CnrmTree, ctx: RefineContext) => void
     delete tree.gatewayAddress;
     delete tree.fingerprint;
   },
-  ComputeForwardingRule(tree) {
+  ComputeForwardingRule(tree, ctx) {
     computeLocation(tree);
+    // Compute returns the IP; CNRM writes `ipAddress: { addressRef }` or `{ ip }`.
+    // The IP is the declared address's own when the read found it so (#4238).
+    if (typeof tree.IPAddress === "string") {
+      tree.ipAddress = ctx.address && ctx.address.ip === tree.IPAddress ? { addressRef: ctx.address.ref } : { ip: tree.IPAddress };
+      delete tree.IPAddress;
+    }
     if (tree.IPProtocol !== undefined) {
       tree.ipProtocol = tree.IPProtocol;
       delete tree.IPProtocol;
@@ -375,6 +383,33 @@ export function toCnrmTree(kind: string, body: Record<string, unknown>, ctx: Ref
 }
 
 /**
+ * The live IP of the address a forwarding rule declares in
+ * `ipAddress.addressRef`, read with the address's own declaration when the
+ * manifest holds it, so the rule's `IPAddress` can be matched to the ref
+ * rather than read as drift (#4238). Undefined when there is no ref or the
+ * read fails; the rule then shows the IP as it is.
+ */
+async function declaredAddressIp(
+  client: GcpReadClientOptions,
+  props: Record<string, unknown>,
+  manifest: readonly { kind?: string; metadata?: { name?: string }; spec?: Record<string, unknown> }[],
+): Promise<{ ip: string; ref: unknown } | undefined> {
+  const spec = (props.spec as Record<string, unknown> | undefined) ?? props;
+  const ref = (spec.ipAddress as { addressRef?: { name?: unknown; external?: unknown } } | undefined)?.addressRef;
+  if (!ref) return undefined;
+  const raw = typeof ref.name === "string" ? ref.name : typeof ref.external === "string" ? ref.external : undefined;
+  if (!raw) return undefined;
+  const name = raw.slice(raw.lastIndexOf("/") + 1);
+  const declared = manifest.find((r) => r.kind === "ComputeAddress" && r.metadata?.name === name);
+  try {
+    const body = await getResource(client, "ComputeAddress", name, declared?.spec ?? { location: spec.location });
+    return typeof body.address === "string" ? { ip: body.address, ref } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Read the live property tree for each declared entity over the applier's
  * REST transport, normalized into the declared CNRM shape (see the module
  * doc). A connect failure becomes NOT-OBSERVED for every declared entity
@@ -425,6 +460,7 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
     try {
       const obj = await getResource(client, gvk.kind, name, props);
       const labels = obj.labels as Record<string, string> | null | undefined;
+      const address = gvk.kind === "ComputeForwardingRule" ? await declaredAddressIp(client, props, manifest) : undefined;
 
       // owned filter: withhold what does not carry chant's marker. Withheld is
       // not absent (#1089). Where the payload has no labels at all there is
@@ -443,7 +479,7 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
         type: entityType,
         physicalId:
           (obj.id as string | undefined) ?? (obj.selfLink as string | undefined) ?? (obj.name as string | undefined),
-        properties: normalizeDeepProperties(toCnrmTree(gvk.kind, obj, { project: client.project }), {
+        properties: normalizeDeepProperties(toCnrmTree(gvk.kind, obj, { project: client.project, ...(address ? { address } : {}) }), {
           entityType,
           side: "live",
           // The static table is the whole prune here — there is no per-resource

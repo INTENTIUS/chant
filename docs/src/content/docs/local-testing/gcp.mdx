@@ -63,6 +63,7 @@ Config Connector normally reconciles a CRD on a cluster into Google API calls. `
 - **Orders resources** by their references so a dependency applies before its dependent.
 - **Turns Config Connector refs into API fields** where the API takes something else: a Cloud Run service's `serviceAccountRef` becomes the account's email, and its `vpcAccess` `networkRef` and `subnetworkRef` become network and subnetwork paths.
 - **Drives full CRUD**, following long-running operations to completion where the API returns one.
+- **Updates an existing load balancer resource in place** where compute allows it. A backend service or URL map takes a `PATCH` with the live `fingerprint`. A proxy changes its URL map through `setUrlMap`, and a forwarding rule its target through `setTarget`. Labels go through `setLabels`. A change compute can't make in place is printed as `replace required` and left for you; that covers any change to a serverless NEG and a forwarding rule's IP.
 - **Prunes orphans** it owns — resources carrying the `managed-by: chant` label that are no longer in the manifest — and leaves everything else alone.
 
 Every call is the real GCS/PubSub/IAM shape, pointed at the emulator.

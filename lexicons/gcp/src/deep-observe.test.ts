@@ -352,3 +352,49 @@ describe("observeResourcesDeepGcp — over REST (#1209)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("a forwarding rule's IP read back as its declared addressRef (#4238)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.GOOGLE_CLOUD_PROJECT = "my-project";
+    process.env.GCP_ENDPOINT_URL = "http://localhost:4588";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.GCP_ENDPOINT_URL;
+    delete process.env.GOOGLE_CLOUD_PROJECT;
+  });
+
+  test("toCnrmTree: the declared address's IP becomes the addressRef; any other IP stays an ip", () => {
+    const ref = { name: "web-ip" };
+    expect(toCnrmTree("ComputeForwardingRule", { name: "fr", IPAddress: "34.1.2.3" }, { project: "p", address: { ip: "34.1.2.3", ref } })).toMatchObject({
+      ipAddress: { addressRef: ref },
+    });
+    const other = toCnrmTree("ComputeForwardingRule", { name: "fr", IPAddress: "10.0.0.9" }, { project: "p", address: { ip: "34.1.2.3", ref } });
+    expect(other).toMatchObject({ ipAddress: { ip: "10.0.0.9" } });
+    expect(other).not.toHaveProperty("IPAddress");
+  });
+
+  test("observe reads the declared address and reports the rule's ipAddress as declared", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/global/forwardingRules/web-fr")) {
+        return reply(200, { name: "web-fr", IPAddress: "34.1.2.3", portRange: "80", target: "projects/my-project/global/targetHttpProxies/web-proxy" });
+      }
+      if (url.endsWith("/global/addresses/web-ip")) return reply(200, { name: "web-ip", address: "34.1.2.3" });
+      return reply(404, {});
+    });
+    const result = await observe(
+      entities([
+        [
+          "rule",
+          "GCP::Compute::ForwardingRule",
+          { metadata: { name: "web-fr" }, location: "global", portRange: "80", ipAddress: { addressRef: { name: "web-ip" } }, target: { targetHTTPProxyRef: { name: "web-proxy" } } },
+        ],
+        ["ip", "GCP::Compute::Address", { metadata: { name: "web-ip" }, location: "global" }],
+      ]),
+    );
+    expect(result.resources.rule?.properties).toMatchObject({ ipAddress: { addressRef: { name: "web-ip" } } });
+    expect(result.resources.rule?.properties).not.toHaveProperty("IPAddress");
+  });
+});
