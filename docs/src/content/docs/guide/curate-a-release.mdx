@@ -28,7 +28,7 @@ Run the list for the environment you are releasing to. The walk stops at what th
 chant release candidates --env prod
 ```
 
-Each candidate is a green sha. Under it are the changes since the previous candidate, each with its pull request and work items, and any flag whose record changed. Anything not green yet is counted at the top, and a revoked one is listed as skipped, so its changes ride with the next candidate. The newest candidate is not always the one to ship.
+Each candidate is a green sha. Under it are the changes since the previous candidate, grouped by work item and then by pull request. Any flag whose record changed is listed after them. Anything not green yet is counted at the top, and a revoked one is listed as skipped, so its changes ride with the next candidate. The newest candidate is not always the one to ship.
 
 ## Keep a change out
 

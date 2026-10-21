@@ -539,9 +539,14 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
   for (const c of doc.candidates) {
     const tags = [...(c.newFor.length > 0 ? [`new for ${c.newFor.join(", ")}`] : []), ...(c.cut.length > 0 ? [`cut as ${c.cut.join(", ")}`] : [])];
     console.log(`${c.commit.slice(0, 12)}  ${c.subject}${tags.length > 0 ? `  (${tags.join("; ")})` : ""}`);
-    for (const ch of c.changes) {
-      const links = [...(ch.pr !== null ? [`#${ch.pr}`] : []), ...ch.work.map((w) => `work:${w}`)];
-      console.log(`    ${ch.commit.slice(0, 12)}  ${ch.subject}${links.length > 0 ? `  [${links.join(", ")}]` : ""}`);
+    // #4168 4.4: by work item, then pull request, then commit.
+    const subjectOf = new Map(c.changes.map((ch) => [ch.commit, ch.subject]));
+    for (const g of c.groups) {
+      console.log(`    ${g.work !== null ? `work:${g.work}` : "no work item"}`);
+      for (const p of g.pullRequests) {
+        console.log(`      ${p.pr !== null ? `#${p.pr}` : "no pull request"}`);
+        for (const sha of p.commits) console.log(`        ${sha.slice(0, 12)}  ${subjectOf.get(sha) ?? ""}`);
+      }
     }
     for (const f of c.flags) console.log(`    flag ${f.id} (${f.member} ${f.param}) changed`);
   }

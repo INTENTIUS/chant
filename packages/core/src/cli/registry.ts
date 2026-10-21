@@ -339,6 +339,8 @@ export interface ParsedArgs {
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */
   ciBuildCommand?: string;
+  /** `chant ci serve --land` (#4168 4.4) — fast-forward the target branch to each pushed `chant/land/<name>` branch whose `ci.green.preMerge` phases pass on it. */
+  ciLand?: boolean;
   /** `chant build --pr-loop --pr-build-command <line>` (#4088) — the build line to run in place of `chant build --env <env>`. */
   prBuildCommand?: string;
   /**

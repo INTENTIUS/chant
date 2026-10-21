@@ -11,7 +11,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { contract } from "./__fixtures__/contract-repo";
 import candidatesSchema from "./release-candidates.schema.json";
-import { prFromSubject, recordTrailers, releaseCandidatesDocument, RELEASE_CANDIDATES_SCHEMA_ID } from "./release-candidates";
+import { groupChanges, mergeRecordPr, prFromSubject, recordTrailers, releaseCandidatesDocument, RELEASE_CANDIDATES_SCHEMA_ID, type CandidateChange } from "./release-candidates";
 import { appendCut, makeRelease, persistRelease } from "../lifecycle/release-store";
 import { appendReleaseRecord } from "../lifecycle/release-ledger";
 import { writeLedgerFiles } from "../lifecycle/git";
@@ -46,6 +46,33 @@ describe("recordTrailers and prFromSubject", () => {
   });
 });
 
+describe("groupChanges (#4168 4.4)", () => {
+  const change = (commit: string, work: string[], pr: number | null): CandidateChange => ({ commit, subject: commit, date: "", work, records: work.map((w) => `work:${w}`), pr, merge: null });
+
+  test("groups by work item, then pull request, then commit, with the ungrouped last", () => {
+    // Newest first, as a candidate's changes are.
+    const groups = groupChanges([
+      change("f", [], null),
+      change("e", ["w-2"], null),
+      change("d", ["w-1"], 4),
+      change("c", [], 3),
+      change("b", ["w-1", "w-2"], 2),
+      change("a", ["w-1"], 2),
+    ]);
+    expect(groups).toEqual([
+      { work: "w-1", pullRequests: [{ pr: 2, commits: ["b", "a"] }, { pr: 4, commits: ["d"] }] },
+      { work: "w-2", pullRequests: [{ pr: 2, commits: ["b"] }, { pr: null, commits: ["e"] }] },
+      { work: null, pullRequests: [{ pr: 3, commits: ["c"] }, { pr: null, commits: ["f"] }] },
+    ]);
+  });
+
+  test("a merge record names its pull request in source", () => {
+    expect(mergeRecordPr({ source: { kind: "pull-request", pr: 12 } })).toBe(12);
+    expect(mergeRecordPr({ source: { kind: "direct-push" } })).toBeNull();
+    expect(mergeRecordPr(null)).toBeNull();
+  });
+});
+
 describe("releaseCandidatesDocument", () => {
   test("partitions the walk at green commits, skips revoked ones, and says which environments each is new for", async () => {
     await withTestDir(async (dir) => {
@@ -63,7 +90,7 @@ describe("releaseCandidatesDocument", () => {
         { cwd: dir },
       );
       // A merge record for d names its pull request.
-      await writeLedgerFiles([{ path: `_merges/${d}.json`, content: JSON.stringify({ pr: 40, approvedDigest: "sha256:x" }) }], "merge record", { cwd: dir });
+      await writeLedgerFiles([{ path: `_merges/${d}.json`, content: JSON.stringify({ source: { kind: "pull-request", pr: 40 }, approvedDigest: "sha256:x" }) }], "merge record", { cwd: dir });
 
       const doc = await releaseCandidatesDocument({ cwd: dir });
       expectValid(doc);
@@ -78,7 +105,7 @@ describe("releaseCandidatesDocument", () => {
       expect(doc.candidates.map((x) => x.commit)).toEqual([d, b, init]);
       expect(doc.candidates[0]).toMatchObject({ newFor: ["staging", "prod"], cut: [] });
       expect(doc.candidates[0].changes.map((x) => x.commit)).toEqual([d, c]);
-      expect(doc.candidates[0].changes[0]).toMatchObject({ pr: 40, merge: { pr: 40, approvedDigest: "sha256:x" } });
+      expect(doc.candidates[0].changes[0]).toMatchObject({ pr: 40, merge: { source: { kind: "pull-request", pr: 40 }, approvedDigest: "sha256:x" } });
       expect(doc.candidates[1].changes.map((x) => x.commit)).toEqual([b, a]);
       expect(doc.candidates[1].changes[0].work).toEqual(["w-7"]);
       expect(doc.candidates[1].changes[1].pr).toBe(1);

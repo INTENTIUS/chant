@@ -423,6 +423,12 @@ export interface CiRunRequest {
   /** `--env`: the environment the pipeline is for. */
   env: string;
   forge: ForgeKind;
+  /**
+   * Run the job's command without `--forge` (#4016 gap 6): `ci serve --forge
+   * git` reads a plain git server, which has no API for the command to ask.
+   * `forge` then only shapes the job's variables.
+   */
+  noForge?: boolean;
   /** `--base`, `--pr` and `--commit` (default `HEAD`). */
   base?: string;
   pr?: number;
@@ -668,7 +674,8 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const isolated = !req.requireRunnerStart && !req.local && req.job === "apply" && securityGroupsAt(cwd).has("isolated-runners");
   const started = req.requireRunnerStart || isolated ? runnerStartFor(req, { top, commit, hostEnv }) : undefined;
   // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
-  const command = `${found.command}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${req.local ? " --no-status" : ""}`;
+  const forgeCommand = req.noForge ? found.command.replace(` --forge ${req.forge}`, "") : found.command;
+  const command = `${forgeCommand}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${req.local ? " --no-status" : ""}`;
   const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
   const own = ciJobEnv(job, {
     forge: req.forge,
