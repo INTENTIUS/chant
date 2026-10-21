@@ -384,6 +384,12 @@ release bump="patch" *args:
     fi
     echo "Released $next: publish.yml runs on release/npm/$next"
 
+# Bring main's head (or <commit>) to green and cut it (#4218): start the missing
+# phases, wait for them and the tick, run `just release`, wait on the publish
+# (just release-when-green [major|minor|patch] [<commit>] [--dry-run])
+release-when-green bump="patch" *args:
+    bash scripts/release-when-green.sh {{bump}} {{args}}
+
 # The release path before #4040, kept until two releases have gone through
 # `just release`. It releases the newest commit on main whose `chant` run
 # succeeded, or <commit>, not HEAD (#2816). The bump is committed on top of
