@@ -145,7 +145,7 @@ const envFile = (dir: string, stage: string): Record<string, string> =>
 
 describe("the job as an Op (#4094)", () => {
   test("the job's variables come from flags, literals and the runner's tokens, and nothing else of the runner's", () => {
-    const [plan, apply] = prLoopJobs("forgejo", "prod", { events: true });
+    const [plan, apply, record] = prLoopJobs("forgejo", "prod", { events: true });
     const env = ciJobEnv(plan!, { forge: "forgejo", env: "prod", values: { base: "b".repeat(40), pr: 7, commit: "c".repeat(40) }, hostEnv: HOST, passEnv: ["AWS_ACCESS_KEY_ID"] });
     expect(env).toMatchObject({
       BASE_SHA: "b".repeat(40),
@@ -162,10 +162,12 @@ describe("the job as an Op (#4094)", () => {
     expect(Object.values(env).some((v) => v.includes("${{"))).toBe(false);
 
     expect(() => ciJobEnv(plan!, { forge: "forgejo", env: "prod", values: { base: "b".repeat(40), commit: "c".repeat(40) }, hostEnv: {} })).toThrow(CiRunError);
-    expect(() => ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { commit: "c".repeat(40) }, hostEnv: {} })).toThrow(/pass --base <sha>/);
+    expect(() => ciJobEnv(record!, { forge: "forgejo", env: "prod", values: { commit: "c".repeat(40) }, hostEnv: {} })).toThrow(/pass --base <sha>/);
+    // #4168 step 9: the apply measures from the last applied green commit, so it needs no --base.
+    expect(ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { commit: "c".repeat(40) }, hostEnv: {} })).not.toHaveProperty("BASE_SHA");
 
-    const [, gitlabApply] = prLoopJobs("gitlab", "prod");
-    const gl = ciJobEnv(gitlabApply!, { forge: "gitlab", env: "prod", values: { base: "b".repeat(40), commit: "c".repeat(40) }, hostEnv: {} });
+    const [, , gitlabRecord] = prLoopJobs("gitlab", "prod");
+    const gl = ciJobEnv(gitlabRecord!, { forge: "gitlab", env: "prod", values: { base: "b".repeat(40), commit: "c".repeat(40) }, hostEnv: {} });
     expect(gl).toEqual({ BASE_SHA: "b".repeat(40), CHANT_ENV: "prod", CI_COMMIT_SHA: "c".repeat(40) });
   });
 
@@ -180,11 +182,13 @@ describe("the job as an Op (#4094)", () => {
     expect(last.args).toEqual({ cmd: `npx chant${plan!.command.slice("chant".length)}`, cwd: "/w/app", env: { BASE_SHA: "b" }, inheritEnv: false });
     expect(plan!.command).toContain("--member app");
 
-    // No setup or build lines: the job's phase alone. GitLab's apply keeps its base fallback in the command's shell.
-    const [, gitlabApply] = prLoopJobs("gitlab", "prod");
-    const bare = ciJobOp({ job: gitlabApply!, env: "prod", cwd: "/w", jobEnv: {}, setup: [], build: [] });
-    expect(bare.phases.map((p) => p.name)).toEqual(["apply"]);
-    expect(ciJobCommand(gitlabApply!)).toBe(`${gitlabApply!.setup![0]}\n${gitlabApply!.command}`);
+    // No setup or build lines: the job's phase alone. GitLab's record keeps its base fallback in the command's shell.
+    const [, gitlabApply, gitlabRecord] = prLoopJobs("gitlab", "prod");
+    const bare = ciJobOp({ job: gitlabRecord!, env: "prod", cwd: "/w", jobEnv: {}, setup: [], build: [] });
+    expect(bare.phases.map((p) => p.name)).toEqual(["record"]);
+    expect(ciJobCommand(gitlabRecord!)).toBe(`${gitlabRecord!.setup![0]}\n${gitlabRecord!.command}`);
+    // #4168 step 9: the apply's green checkout is the generated job's, never ci run's: it runs at the commit it was given.
+    expect(ciJobCommand(gitlabApply!)).toBe(gitlabApply!.command);
 
     // #4088's build and lint lines follow --before-script, with chant replaced in each.
     const [built] = prLoopJobs("forgejo", "prod", { build: true });
@@ -298,7 +302,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
 
     expect(apply.status).toBe("ok");
     const applyArgs = readFileSync(join(reports, "apply", "pr-apply.args"), "utf-8").trimEnd().split("\n");
-    expect(applyArgs).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--resume", ".chant/pr-resume/pr-apply.json"]);
+    expect(applyArgs).toEqual(["components", "pr-apply", "--green", "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--resume", ".chant/pr-resume/pr-apply.json"]);
     expect(formatCiRun(apply)).toContain("signed by chant-runner");
   });
 
@@ -671,7 +675,8 @@ describe("the job's secrets from the host (#4096)", () => {
     const applyEnv = ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, secrets: ciSecretsFor(secrets, "apply") });
     expect(applyEnv).toMatchObject({ DB_PASSWORD: "hunter22-db", DEPLOY_KEY: "deploy-key-value" });
     // A secret can replace a forge token, and never the variables the runner sets.
-    const over = ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, secrets: { GITHUB_TOKEN: "from-file", BASE_SHA: "x", CHANT_RUNNER_KEY: "k" } });
+    const [, , record] = prLoopJobs("forgejo", "prod");
+    const over = ciJobEnv(record!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, secrets: { GITHUB_TOKEN: "from-file", BASE_SHA: "x", CHANT_RUNNER_KEY: "k" } });
     expect(over).toMatchObject({ GITHUB_TOKEN: "from-file", BASE_SHA: base });
     expect(over).not.toHaveProperty("CHANT_RUNNER_KEY");
     expect(() => ciJobEnv(apply!, { forge: "forgejo", env: "prod", values: { base, commit: base }, hostEnv: HOST, passEnv: ["CHANT_RUNNER_KEY"] })).toThrow(/never passed to a job/);
@@ -791,10 +796,10 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
     expect(r.report).toBe(join(realpathSync(app), ".chant/pr"));
     expect(r.record.phases.map((p) => p.name)).toEqual(["apply"]);
     const argv = readFileSync(join(app, ".chant/pr/pr-apply.args"), "utf-8").trimEnd().split("\n");
-    expect(argv).toEqual(["components", "pr-apply", "--base", base, "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--resume", ".chant/pr-resume/pr-apply.json"]);
+    expect(argv).toEqual(["components", "pr-apply", "--green", "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--resume", ".chant/pr-resume/pr-apply.json"]);
     // The forge job's whole environment reaches the step, but never the runner key.
     const env = envFile(join(app, ".chant/pr"), "pr-apply");
-    expect(env).toMatchObject({ NOT_FOR_JOBS: "leak", GITHUB_RUN_ID: "4242", BASE_SHA: base, GITHUB_SHA: sha });
+    expect(env).toMatchObject({ NOT_FOR_JOBS: "leak", GITHUB_RUN_ID: "4242", GITHUB_SHA: sha });
     expect(env).not.toHaveProperty("CHANT_RUNNER_KEY");
 
     // The record: the forge's run, job and attempt as runOrigin, signed, and it verifies against trust.json.

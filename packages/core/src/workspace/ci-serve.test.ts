@@ -143,8 +143,8 @@ function serve(app: string, client: CiServeForge, extra: Partial<CiServeOptions>
       client,
       stateDir: state,
       holder: "serve-test",
-      // Most tests here cover the apply on merge, which #4168 made opt-in; the record tests pass false.
-      applyOnMerge: true,
+      // #4168: a merge gets the record job; the apply-on-merge tests pass true and tag a commit green.
+      applyOnMerge: false,
       // A job image of its own, so no setup line downloads OpenTofu.
       job: { image: "chant-ci-serve-test:local", chant: fakeChant(), hostEnv: env, passEnv: Object.keys(hostEnv ?? {}) },
       log: (e) => events.push(e),
@@ -154,6 +154,23 @@ function serve(app: string, client: CiServeForge, extra: Partial<CiServeOptions>
 }
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/** A workspace that declares `ci.green`, so a `ci/green/<sha>` tag counts (#4168 step 9), with that commit pushed as main. */
+function greenWorkspace(): ReturnType<typeof workspace> {
+  const w = workspace();
+  writeFiles(w.root, {
+    "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { green: { branch: "main", phases: { test: ["test"] }, require: ["test"], source: "runs" } } }),
+  });
+  const main = commit(w.root, "app/green.txt", "declare ci.green");
+  git(w.root, "push", "-q", "origin", "main");
+  return { ...w, main };
+}
+
+/** Tag `sha` green on the forge, as the tick does. */
+function tagGreen(root: string, sha: string): void {
+  git(root, "tag", "-f", `ci/green/${sha}`, sha);
+  git(root, "push", "-q", "-f", "origin", `refs/tags/ci/green/${sha}`);
+}
 
 /** A commit on no branch, with `parent` when given, as a ledger commit stands in. */
 const ledgerCommit = (root: string, message: string, parent?: string): string => git(root, "commit-tree", EMPTY_TREE, ...(parent ? ["-p", parent] : []), "-m", message);
@@ -183,7 +200,7 @@ describe("ci serve records each merge unless apply on merge is opted in (#4168)"
   test("a merge to the target branch gets the record job, measured from the head before it, and no resume record", async () => {
     const { root, app, main } = workspace();
     const forge = fakeForge(main);
-    const { opts, events, state } = serve(app, forge, { applyOnMerge: false });
+    const { opts, events, state } = serve(app, forge);
     await ciServePass(opts);
     const merged = commit(root, "app/merged.txt");
     git(root, "push", "-q", "origin", "main");
@@ -209,7 +226,6 @@ describe("ci serve records each merge unless apply on merge is opted in (#4168)"
     const ticks: string[] = [];
     let fail = false;
     const { opts, events } = serve(app, forge, {
-      applyOnMerge: false,
       tick: async () => {
         ticks.push("tick");
         if (fail) throw new Error("forge said no");
@@ -267,28 +283,49 @@ describe("chant ci serve (#4095)", () => {
     expect(forge.polls).toBe(2);
   });
 
-  test("a merge to the target branch applies the new commit, measured from the head before it", async () => {
-    const { root, app, main } = workspace();
+  test("under apply on merge a merge gets the record job, and the newest green commit the apply, once (#4168 step 9)", async () => {
+    const { root, app, main } = greenWorkspace();
     const forge = fakeForge(main);
-    const { opts, events } = serve(app, forge);
+    const { opts, events } = serve(app, forge, { applyOnMerge: true });
     expect((await ciServePass(opts)).jobs).toEqual([]);
     expect(ofType(events, "baseline")).toHaveLength(1);
 
     const merged = commit(root, "app/merged.txt");
     git(root, "push", "-q", "origin", "main");
     forge.head = merged;
+    // Not green yet: the merge is recorded, and nothing applies.
+    const recorded = await ciServePass(opts);
+    expect(recorded.jobs).toEqual([expect.objectContaining({ job: "record", commit: merged, base: main, status: "ok" })]);
+
+    tagGreen(root, merged);
     const pass = await ciServePass(opts);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, base: main, status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, status: "ok" })]);
+    expect(pass.jobs[0]!.pr).toBeUndefined();
     const argv = argsOf(pass.jobs[0]!.report!, "pr-apply");
-    expect(argv.slice(0, 4)).toEqual(["components", "pr-apply", "--base", main]);
+    expect(argv.slice(0, 3)).toEqual(["components", "pr-apply", "--green"]);
+    expect(argv).not.toContain("--base");
     expect(argv.slice(-2)).toEqual(["--resume", ".chant/pr-resume/pr-apply.json"]);
     // The run was recorded on chant/lifecycle and pushed.
     expect(git(root, "ls-remote", "origin", "chant/lifecycle")).toContain(git(root, "rev-parse", "chant/lifecycle"));
-
+    // The green commit is applied once, and the branch head the serve tracks stays the merge's.
     expect((await ciServePass(opts)).jobs).toEqual([]);
+    const saved = readCiServeState(join(opts.stateDir!, `${prApplyGroup("prod", "app")}.json`), { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" });
+    expect(saved.target).toBe(merged);
   });
 
-  test("an apply gets the number of the pull request whose merge commit it is (#4112)", async () => {
+  test("without ci.green apply on merge has nothing to apply, and the merge is recorded", async () => {
+    const { root, app, main } = workspace();
+    const forge = fakeForge(main);
+    const { opts } = serve(app, forge, { applyOnMerge: true });
+    await ciServePass(opts);
+    const merged = commit(root, "app/merged.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = merged;
+    tagGreen(root, merged);
+    expect((await ciServePass(opts)).jobs).toEqual([expect.objectContaining({ job: "record", commit: merged, status: "ok" })]);
+  });
+
+  test("a record gets the number of the pull request whose merge commit it is (#4112)", async () => {
     const { root, app, main } = workspace();
     const forge = fakeForge(main);
     const seen: Array<number | undefined> = [];
@@ -301,7 +338,7 @@ describe("chant ci serve (#4095)", () => {
 
     const pass = await ciServePass(opts);
     expect(forge.asked).toEqual([merged]);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, pr: 17, status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: merged, pr: 17, status: "ok" })]);
     expect(seen).toEqual([17]);
   });
 
@@ -315,25 +352,25 @@ describe("chant ci serve (#4095)", () => {
     return { root, forge, seen, opts };
   }
 
-  test("an apply with no pull request found runs without --pr (#4112)", async () => {
+  test("a record with no pull request found runs without --pr (#4112)", async () => {
     const { root, forge, seen, opts } = await mergeWithoutPr();
     const direct = commit(root, "app/direct.txt");
     git(root, "push", "-q", "origin", "main");
     forge.head = direct;
     const pass = await ciServePass(opts);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: direct, status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: direct, status: "ok" })]);
     expect(pass.jobs[0]!.pr).toBeUndefined();
     expect(seen).toEqual([undefined]);
   });
 
-  test("an apply whose pull request lookup fails runs without --pr (#4112)", async () => {
+  test("a record whose pull request lookup fails runs without --pr (#4112)", async () => {
     const { root, forge, seen, opts } = await mergeWithoutPr();
     const broken = commit(root, "app/broken.txt");
     git(root, "push", "-q", "origin", "main");
     forge.head = broken;
     forge.merges.set(broken, "throw");
     const pass = await ciServePass(opts);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: broken, status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: broken, status: "ok" })]);
     expect(pass.jobs[0]!.pr).toBeUndefined();
     expect(seen).toEqual([undefined]);
   });
@@ -353,13 +390,12 @@ describe("chant ci serve (#4095)", () => {
   });
 
   test("the group's lease held elsewhere holds the apply until it is released", async () => {
-    const { root, app, main } = workspace();
+    const { root, app, main } = greenWorkspace();
     const forge = fakeForge(main);
-    const { opts, events } = serve(app, forge);
-    await ciServePass(opts);
-    const merged = commit(root, "app/merged.txt");
-    git(root, "push", "-q", "origin", "main");
-    forge.head = merged;
+    // The branch head is the green commit from the first poll, so only the apply is due.
+    const merged = main;
+    tagGreen(root, merged);
+    const { opts, events } = serve(app, forge, { applyOnMerge: true });
 
     const group = prApplyGroup("prod", "app");
     const other = await acquireLease(group, "other-host", { cwd: app, mode: "claim", requirePush: true });
@@ -371,7 +407,7 @@ describe("chant ci serve (#4095)", () => {
 
     expect(await releaseLease(group, "other-host", other.lease!.token, { cwd: app })).toBe(true);
     const ran = await ciServePass(opts);
-    expect(ran.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, base: main, status: "ok" })]);
+    expect(ran.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, status: "ok" })]);
     // The serve released its own lease after the apply.
     expect((await acquireLease(group, "after", { cwd: app, mode: "claim" })).acquired).toBe(true);
   });
@@ -387,13 +423,11 @@ describe("chant ci serve (#4095)", () => {
     let record: string;
 
     beforeAll(async () => {
-      w = workspace();
+      w = greenWorkspace();
       forge = fakeForge(w.main);
-      failing = serve(w.app, forge, { hostEnv: { FAKE_EXIT: "3", FAKE_ATTEMPT: "1" } });
-      await ciServePass(failing.opts);
-      merged = commit(w.root, "app/merged.txt");
-      git(w.root, "push", "-q", "origin", "main");
-      forge.head = merged;
+      merged = w.main;
+      tagGreen(w.root, merged);
+      failing = serve(w.app, forge, { applyOnMerge: true, hostEnv: { FAKE_EXIT: "3", FAKE_ATTEMPT: "1" } });
       failed = await ciServePass(failing.opts);
       record = join(failing.state, "resume", `${prApplyRecordKey("prod", merged, "app")}.json`);
     });
@@ -408,9 +442,9 @@ describe("chant ci serve (#4095)", () => {
     });
 
     test("--rerun-failed runs it again with its resume record", async () => {
-      const retry = serve(w.app, forge, { stateDir: failing.state, rerunFailed: true, hostEnv: { FAKE_EXIT: "0", FAKE_ATTEMPT: "2" } });
+      const retry = serve(w.app, forge, { applyOnMerge: true, stateDir: failing.state, rerunFailed: true, hostEnv: { FAKE_EXIT: "0", FAKE_ATTEMPT: "2" } });
       const again = await ciServePass(retry.opts);
-      expect(again.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, base: w.main, status: "ok", attempts: 2 })]);
+      expect(again.jobs).toEqual([expect.objectContaining({ job: "apply", commit: merged, status: "ok", attempts: 2 })]);
       expect(ofType(retry.events, "started")[0]).toMatchObject({ attempt: 2, resume: record });
       // The job read the first attempt's record, and left its own.
       expect(JSON.parse(readFileSync(join(again.jobs[0]!.report!, "resume-in.json"), "utf-8"))).toEqual({ attempt: "1" });
@@ -450,7 +484,7 @@ describe("chant ci serve (#4095)", () => {
 });
 
 describe("ci serve follows the forge's chant/lifecycle (#4121)", () => {
-  /** A serve past its baseline pass, with one merge waiting to apply, and each run's result in `results`. */
+  /** A serve past its baseline pass, with one merge waiting to be recorded, and each run's result in `results`. */
   async function mergeWaiting() {
     const w = workspace();
     const seed = seedLedger(w.root);
@@ -464,14 +498,14 @@ describe("ci serve follows the forge's chant/lifecycle (#4121)", () => {
     return { ...w, seed, opts, events, results };
   }
 
-  test("a ledger the forge deleted is deleted here, and the next apply runs clean", async () => {
+  test("a ledger the forge deleted is deleted here, and the next job runs clean", async () => {
     const { root, origin, seed, opts, events, results } = await mergeWaiting();
     git(origin, "update-ref", "-d", "refs/heads/chant/lifecycle");
 
     const pass = await ciServePass(opts);
     expect(ofType(events, "ledger")).toEqual([{ type: "ledger", action: "deleted", local: seed }]);
     expect(formatCiServeEvent(ofType(events, "ledger")[0]!)).toContain("was deleted");
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", status: "ok" })]);
     expect(results[0]).toMatchObject({ pushed: true });
     const tip = git(origin, "rev-parse", "refs/heads/chant/lifecycle");
     expect(git(root, "rev-parse", "chant/lifecycle")).toBe(tip);
@@ -486,28 +520,28 @@ describe("ci serve follows the forge's chant/lifecycle (#4121)", () => {
 
     const pass = await ciServePass(opts);
     expect(ofType(events, "ledger")).toEqual([{ type: "ledger", action: "reset", local: seed, forge: rewritten }]);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", status: "ok" })]);
     expect(results[0]).toMatchObject({ pushed: true });
     const tip = git(origin, "rev-parse", "refs/heads/chant/lifecycle");
     expect(isAncestor(origin, rewritten, tip)).toBe(true);
     expect(isAncestor(root, seed, tip)).toBe(false);
   });
 
-  test("a ledger ahead of the forge's keeps its facts, and the apply pushes them", async () => {
+  test("a ledger ahead of the forge's keeps its facts, and the job pushes them", async () => {
     const { root, origin, seed, opts, events, results } = await mergeWaiting();
     const ahead = ledgerCommit(root, "unpushed fact", seed);
     git(root, "update-ref", "refs/heads/chant/lifecycle", ahead);
 
     const pass = await ciServePass(opts);
     expect(ofType(events, "ledger")).toEqual([]);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", status: "ok" })]);
     expect(results[0]).toMatchObject({ pushed: true });
     expect(isAncestor(origin, ahead, git(origin, "rev-parse", "refs/heads/chant/lifecycle"))).toBe(true);
   });
 });
 
-describe("ci serve applies fast-forwards only, and honours [skip ci] (#4122)", () => {
-  test("a force push back to an older commit is recorded as seen and not applied, and the next fast-forward applies", async () => {
+describe("ci serve runs fast-forwards only, and honours [skip ci] (#4122)", () => {
+  test("a force push back to an older commit is recorded as seen and not run, and the next fast-forward is recorded", async () => {
     const { root, app, main } = workspace();
     const later = commit(root, "app/later.txt");
     git(root, "push", "-q", "origin", "main");
@@ -521,7 +555,7 @@ describe("ci serve applies fast-forwards only, and honours [skip ci] (#4122)", (
     forge.head = main;
     const back = await ciServePass(opts);
     expect(back.jobs).toEqual([]);
-    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "apply", commit: main, reason: "not-fast-forward", branch: "main", from: later }]);
+    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "record", commit: main, reason: "not-fast-forward", branch: "main", from: later }]);
     expect(formatCiServeEvent(ofType(events, "not-run")[0]!)).toContain("not a fast-forward");
     const file = join(state, `${prApplyGroup("prod", "app")}.json`);
     expect(readCiServeState(file, { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" }).target).toBe(main);
@@ -530,10 +564,10 @@ describe("ci serve applies fast-forwards only, and honours [skip ci] (#4122)", (
     git(root, "push", "-q", "origin", "main");
     forge.head = next;
     const pass = await ciServePass(opts);
-    expect(pass.jobs).toEqual([expect.objectContaining({ job: "apply", commit: next, base: main, status: "ok" })]);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: next, base: main, status: "ok" })]);
   });
 
-  test("a target head whose message says [skip ci] is recorded as seen and not applied", async () => {
+  test("a target head whose message says [skip ci] is recorded as seen and not run", async () => {
     const { root, app, main } = workspace();
     const forge = fakeForge(main);
     const { opts, events, state } = serve(app, forge);
@@ -543,7 +577,7 @@ describe("ci serve applies fast-forwards only, and honours [skip ci] (#4122)", (
     forge.head = skip;
 
     expect((await ciServePass(opts)).jobs).toEqual([]);
-    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "apply", commit: skip, reason: "skip-ci" }]);
+    expect(ofType(events, "not-run")).toEqual([{ type: "not-run", job: "record", commit: skip, reason: "skip-ci" }]);
     expect(formatCiServeEvent(ofType(events, "not-run")[0]!)).toContain("says [skip ci]");
     const file = join(state, `${prApplyGroup("prod", "app")}.json`);
     expect(readCiServeState(file, { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" }).target).toBe(skip);

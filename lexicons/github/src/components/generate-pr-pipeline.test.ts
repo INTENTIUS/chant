@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
-import { githubBaseFallback, prApplyGroup, prApplyRecordKey, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
+import { githubBaseFallback, greenCheckout, prApplyGroup, prApplyRecordKey, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 import { generateGithubPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -54,12 +54,15 @@ describe("the GitHub pull-request workflow", () => {
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
-  test("plans on a pull request into main and applies on a push to it", () => {
+  test("plans on a pull request into main, records on a push to it, and applies once the tick ran (#4168 step 9)", () => {
     expect(doc.name).toBe("chant-pr-prod");
-    expect(doc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] } });
+    // A tag the tick pushes with the job token starts no workflow, so the apply follows the tick's workflow instead.
+    expect(doc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] }, workflow_run: { workflows: ["chant-ci-green"], types: ["completed"] }, workflow_dispatch: {} });
     expect(doc.jobs.plan.if).toBe("github.event_name == 'pull_request'");
-    expect(doc.jobs.apply.if).toBe("github.event_name == 'push'");
-    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "apply"]);
+    expect(doc.jobs.record.if).toBe("github.event_name == 'push'");
+    expect(doc.jobs.apply.if).toBe("github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'");
+    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "record", "apply"]);
+    expect(result.jobs.find((j) => j.jobName === "apply")!.needs).toEqual([]);
   });
 
   test("the plan job measures from the pull request's base and cannot push; the apply job can, one at a time", () => {
@@ -75,24 +78,33 @@ describe("the GitHub pull-request workflow", () => {
     // #4168: ci run builds pr-apply without --require-review unless the pipeline asks for it.
     expect(apply.run).not.toContain("--require-review");
     expect(apply.run).not.toContain("--no-push");
-    expect(apply.env).toMatchObject({ BASE_SHA: "${{ github.event.before }}", CHANT_RUNNER_KEY: "${{ secrets.CHANT_RUNNER_KEY }}" });
+    // #4168 step 9: the apply measures from the last applied green commit, so it reads no push base.
+    expect(apply.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}", CHANT_RUNNER_KEY: "${{ secrets.CHANT_RUNNER_KEY }}" });
     expect(doc.jobs.apply.permissions.contents).toBe("write");
     expect(doc.jobs.apply.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
     for (const job of Object.values(doc.jobs)) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
   });
 
-  test("a first push's all-zero github.event.before is settled in the apply's own shell, before pr-apply reads it (#4004)", () => {
-    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
-    const lines = apply.run!.trimEnd().split("\n");
+  test("a first push's all-zero github.event.before is settled in the record's own shell, before pr-record reads it (#4004)", () => {
+    const record = doc.jobs.record.steps.find((s) => s.run?.includes("ci run record"))!;
+    const lines = record.run!.trimEnd().split("\n");
     expect(lines).toHaveLength(2);
     expect(lines[0]).toBe(githubBaseFallback());
     expect(lines[0]).toContain('[ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]');
     expect(lines[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
-    expect(lines[1]).toMatch(/^chant ci run apply --in-place --base "\$BASE_SHA"/);
-    const trunk = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, branch: "trunk" } }).yaml) as { jobs: Record<string, Job> };
-    expect(trunk.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!.run).toContain('git fetch origin "trunk"');
+    expect(lines[1]).toMatch(/^chant ci run record --in-place --base "\$BASE_SHA"/);
     const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
     expect(plan.run).not.toContain("0000000000000000000000000000000000000000");
+  });
+
+  test("the apply checks out the newest green commit of the branch before it runs (#4168 step 9)", () => {
+    const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
+    const lines = apply.run!.trimEnd().split("\n");
+    expect(lines).toEqual([greenCheckout('"main"'), "chant ci run apply --in-place --env prod --gate pr-apply --forge github"]);
+    expect(lines[0]).toContain('GREEN_SHA="$(chant ci last-green)"');
+    const trunk = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, branch: "trunk" } }).yaml) as { jobs: Record<string, Job> };
+    expect(trunk.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!.run).toContain('"+refs/heads/trunk:refs/remotes/origin/trunk"');
+    expect(prLoopJobs("github", "prod")[1]!.command).toMatch(/^chant components pr-apply --green /);
   });
 
   test("the apply resumes from a record the cache keeps for the pushed commit across a re-run (#3543)", () => {
@@ -130,7 +142,7 @@ describe("the GitHub pull-request workflow", () => {
     const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, gate: "infra-apply", branch: "trunk", requireReview: true } }).yaml;
     expect(yaml).toContain("--gate infra-apply");
     expect(yaml).toContain("- trunk");
-    expect(yaml).toContain("ci run apply --in-place --base \"$BASE_SHA\" --env prod --gate infra-apply --forge github --branch \"trunk\" --require-review");
+    expect(yaml).toContain("ci run apply --in-place --env prod --gate infra-apply --forge github --branch \"trunk\" --require-review");
     expect(yaml).toContain('--branch "trunk"');
   });
 
@@ -163,7 +175,7 @@ describe("the GitHub pull-request workflow", () => {
     };
     expect(mdoc.name).toBe("chant-pr.network.prod");
     // No path filter: a change outside the member can reach it.
-    expect(mdoc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] } });
+    expect(mdoc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] }, workflow_run: { workflows: ["chant-ci-green"], types: ["completed"] }, workflow_dispatch: {} });
     expect(mdoc.defaults).toEqual({ run: { "working-directory": "infra/network" } });
     const plan = mdoc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
     // ci run finds the member from the directory it runs in and passes --member to pr-plan and pr-apply.

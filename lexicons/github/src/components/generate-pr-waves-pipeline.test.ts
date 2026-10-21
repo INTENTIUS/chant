@@ -59,10 +59,11 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
-  test("keeps the plan job, and writes one apply job per wave, each needing the one before", () => {
-    expect(Object.keys(doc.jobs)).toEqual(["plan", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
+  test("keeps the plan and record jobs, and writes one apply job per wave, each needing the one before", () => {
+    expect(Object.keys(doc.jobs)).toEqual(["plan", "record", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
     expect(result.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["plan", []],
+      ["record", []],
       ["apply-wave-1", []],
       ["apply-wave-2", ["apply-wave-1"]],
       ["apply-wave-3", ["apply-wave-2"]],
@@ -74,12 +75,13 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
     expect(plan.run).not.toContain("--wave ");
     for (const k of [1, 2, 3]) {
       const job = doc.jobs[`apply-wave-${k}`]!;
-      expect(job.if).toBe("github.event_name == 'push'");
+      // #4168 step 9: the waves apply the newest green commit once the tick ran.
+      expect(job.if).toBe("github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'");
       expect(job.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
       expect(job.permissions.contents).toBe("write");
       const run = job.steps.find((s) => s.run?.includes("ci run apply"))!.run!;
       // #4156: through chant ci run, which runs pr-apply --wave-gate release (no --require-review since #4168) --resume ... --wave <k>.
-      expect(run).toContain(`chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github --wave-gate release --wave ${k}`);
+      expect(run).toContain(`chant ci run apply --in-place --env prod --gate pr-apply --forge github --wave-gate release --wave ${k}`);
       expect(job.steps.find((s) => s.run?.includes("ci run apply"))!.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
     }
   });
@@ -99,7 +101,7 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
 
   test("without --wave-gate the workflow is the one apply job it was", () => {
     const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
-    expect(plain.jobs.map((j) => j.jobName)).toEqual(["plan", "apply"]);
+    expect(plain.jobs.map((j) => j.jobName)).toEqual(["plan", "record", "apply"]);
     expect(plain.yaml).not.toContain("--wave");
   });
 

@@ -47,7 +47,7 @@ describe("fan-out-estate chant-pr.yml", () => {
     }
   }, 20000);
 
-  test("plans and applies the estate with build, lint, then ci run plan or ci run apply and nothing else", () => {
+  test("plans, records and applies the estate with build, lint, then ci run plan, record or apply and nothing else", () => {
     const text = readFileSync(committed, "utf8");
     expect(text).toContain("run: npm run build");
     expect(text).toContain("run: chant lint");
@@ -55,8 +55,9 @@ describe("fan-out-estate chant-pr.yml", () => {
     expect(text).toContain("chant ci run plan --in-place");
     expect(text).toContain("chant ci run apply --in-place");
     expect(text).not.toContain("chant components pr-");
-    // One job per direction: the 15 stacks are the members of one pr-plan and one pr-apply.
-    expect(text.split("\njobs:\n")[1].match(/^ {2}[a-z-]+:$/gm)).toEqual(["  plan:", "  apply:"]);
+    expect(text).toContain("chant ci run record --in-place");
+    // One job per stage: the 15 stacks are the members of one pr-plan, one pr-record and one pr-apply (#4168 step 9).
+    expect(text.split("\njobs:\n")[1].match(/^ {2}[a-z-]+:$/gm)).toEqual(["  plan:", "  record:", "  apply:"]);
     expect(text).not.toContain("fan-out ");
   });
 });

@@ -1010,6 +1010,10 @@ Component release ledger + status:
                             planned after the one before applied, a moved
                             wave waiting at <name>-wave-<k>, with --wave <k>
                             for one wave per CI job;
+                            --green: apply the green commit at HEAD, measured
+                            from the one last applied to --env, under the
+                            approved plans of the merges since, else at gate
+                            op green-<sha>;
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set

@@ -27,8 +27,8 @@ The table is printed from `CI_WORKFLOW_REQUIREMENTS` in `packages/core/src/works
 | `ci-workflow-no-components` | the member declares a component (`*.component.ts`) | each member | `chant ci init` writes a stub |
 | `ci-workflow-no-environments` | the member's `chant.config.ts` declares `environments`, the promotion order | each member | `environments` in `chant.config.ts` |
 | `ci-workflow-ungated-env` | each component has a gate, so a promote to the last environment waits on an approval | each member | a `gate()` step in the component |
-| `ci-workflow-pipeline-missing` | a pipeline file runs the plan job, the merge job (`ci run record`, or `ci run apply` under apply on merge) and `chant ci tick` | the workspace | `chant build --components --generate <forge> --pr-loop` and `chant ci workflow` |
-| `ci-workflow-pipeline-differs` | the merge job matches the workflow: it records under `trunk-curated` and applies under `trunk-curated+apply-on-merge` | the workspace | regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge |
+| `ci-workflow-pipeline-missing` | a pipeline file runs the plan job, the record job (`ci run record`) and `chant ci tick` | the workspace | `chant build --components --generate <forge> --pr-loop` and `chant ci workflow` |
+| `ci-workflow-pipeline-differs` | the pipeline matches the workflow: no apply job under `trunk-curated`, and under `trunk-curated+apply-on-merge` an apply job that applies the newest green commit, not each merge | the workspace | regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge |
 | `ci-workflow-publish-missing` | a pipeline file runs `chant release publish` | the workspace | `chant release workflow` |
 
 The check reads files and never runs them. Environments are the literal `environments` of `chant.config.ts`; a config that builds them some other way is not checked for `ci-workflow-no-environments`. A pipeline file that differs from what its generator writes is reported by `WSP101` to `WSP106`, not here.

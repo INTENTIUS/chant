@@ -501,7 +501,7 @@ export function signedRunsRequired(cwd: string): string | null {
 }
 
 /** The declaration's `ci.green`, read where `cwd` is, and the git top. */
-function readGreen(cwd: string): { green: CiGreen; top: string; workspace: { name: string; root: string; file: string } } {
+export function readGreen(cwd: string): { green: CiGreen; top: string; workspace: { name: string; root: string; file: string } } {
   const located = locateWorkspace(cwd);
   const declaration = readDeclaration(located.tree);
   const green = declaration.ci?.green ?? null;

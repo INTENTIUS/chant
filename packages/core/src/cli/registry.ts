@@ -335,6 +335,12 @@ export interface ParsedArgs {
    * #4168, in place of recording it. Opt-in: a merge deploys nothing without it.
    */
   applyOnMerge?: boolean;
+  /**
+   * `chant components pr-apply --green` (#4168 step 9): apply the green commit
+   * at HEAD, measured from the one last applied to the environment, under the
+   * approved plans of the merges between or a gate of its own.
+   */
+  green?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */

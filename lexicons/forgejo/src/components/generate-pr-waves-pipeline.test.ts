@@ -30,7 +30,7 @@ describe("the Forgejo pull-request workflow with a gate per wave (#4003)", () =>
   });
 
   test("an apply job per wave on Forgejo's runner, each passing its wave and talking to Forgejo", () => {
-    expect(Object.keys(doc.jobs)).toEqual(["plan", "apply-wave-1", "apply-wave-2"]);
+    expect(Object.keys(doc.jobs)).toEqual(["plan", "record", "apply-wave-1", "apply-wave-2"]);
     expect(doc.jobs["apply-wave-2"]!.needs).toEqual(["apply-wave-1"]);
     for (const k of [1, 2]) {
       const job = doc.jobs[`apply-wave-${k}`]!;

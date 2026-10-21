@@ -79,12 +79,17 @@ Never edit the file by hand. To change it, change the flags or the components
 and run the command again. `chant-pr-workflow.test.ts` regenerates it in
 process and compares bytes with the committed file, so a hand edit or a stale
 file fails the unit suite. The `plan` job (a pull request) runs `npm run build`,
-`chant lint`, then `chant components pr-plan`; the `apply` job (a push to main)
-runs the same build and lint, then `chant components pr-apply`. Each covers all
-fifteen stacks, because the stacks are the members of one plan and one apply.
+`chant lint`, then `chant components pr-plan`; the `record` job (a push to main)
+runs the same build and lint, then `chant components pr-record`; the `apply`
+job (a pushed `ci/green/` tag) runs them before `chant components pr-apply
+--green`, which applies the newest green commit (#4168 step 9). Each covers all
+fifteen stacks, because the stacks are the members of one plan, one record and
+one apply.
 
 The demo opts into apply on merge with `--apply-on-merge`, since its story is a
-merge that applies. Without the flag a push to main runs a `record` job that
+merge that applies. The demo's runner pins chant 0.124.31
+(`demo/stack/src/job-image.ts`), which applies each merge from `chant ci serve`
+with no flag; this workflow file is what a later chant writes. Without the flag a push to main runs a `record` job that
 writes the merge record and applies nothing, and a release deploys the change
 (#4168).
 
