@@ -421,6 +421,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       const line = args[++i];
       if (line === undefined || line === "") throw new Error("--build-command needs a shell line: --build-command '<line>'");
       result.ciBuildCommand = line;
+    } else if (arg === "--land") {
+      // `chant ci serve --land` (#4168 4.4): fast-forward the target to a chant/land/<name> branch once its pre-merge phases pass.
+      result.ciLand = true;
     } else if (arg === "--pr-build-command") {
       const line = args[++i];
       if (line === undefined || line === "") throw new Error("--pr-build-command needs a shell line: --pr-build-command '<line>'");

@@ -21,9 +21,9 @@ chant ci runner-start sign --key <runner key.pem> --principal <name> --job <json
 chant ci runner-start verify [--base <rev>] [--commit <sha>] [--json]
 chant ci run --at <sha>
 chant ci runs [--report-url <url>] [--json]
-chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
+chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [--apply-on-merge]
-                  [--build-command <line>] [ci run's job flags]
+                  [--build-command <line> [--land]] [ci run's job flags]
 chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
@@ -408,6 +408,32 @@ The state lives in `--state <dir>`, by default `chant/ci-serve` in the repositor
 Before each job, `ci serve` makes its clone's `chant/lifecycle` follow the forge's ([#4121](https://github.com/INTENTIUS/chant/issues/4121)). The clone's branch is deleted if the forge has none, and reset to the forge's if neither contains the other, as after a rewrite. Either way `ci serve` warns on stderr and never pushes the old ledger back. A clone's branch ahead of the forge's keeps its facts for the next apply to push.
 
 `--build-command <line>` serves build requests ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). Each poll fetches the `ci/build/*` tags and runs `<line>` once for each tag it has not served, oldest first, in a fresh detached worktree of the tag's commit, with `CHANT_BUILD_COMMIT`, `CHANT_BUILD_PHASES` (comma-separated) and `CHANT_BUILD_REASON` (`bisect`, `retry` or `requested`) set. The line runs the phases' Ops, such as `npm ci && npx chant build && npx chant run suites`, and their run records are what the tick reads. A build counts against `--max-jobs`, and the state file keeps it under `build:<sha>` with how it ended. A failed build is not run again. Without the flag, the tags are left alone.
+
+### Land branches
+
+`--land` lets a change reach the target branch without a pull request ([#4168](https://github.com/INTENTIUS/chant/issues/4168) 4.4). It needs `--build-command` and a `ci.green.preMerge` list in the workspace declaration, and `ci serve` refuses to start without either. Each poll lists the `chant/land/<name>` branches on `origin` and takes each head it has not seen:
+
+1. A head that does not descend from the target's head is refused and left on the remote. Rebase it and push again.
+2. `<line>` runs in a fresh worktree of the head, as for a build request. `CHANT_BUILD_PHASES` holds the `preMerge` phases and `CHANT_BUILD_REASON` is `land`.
+3. The phases are judged from the Op run records on the head, as `ci tick --source runs` judges them, with the trust config read at the target's head. An unsigned run counts unless `ci.green.signedSince` is set, so a land needs no runner key.
+4. When `<line>` exits 0 and every phase passes, `ci serve` pushes the head to the target branch. The push is a plain one, so the remote refuses it if the target moved meanwhile. Then it deletes the land branch.
+
+A land that exits non-zero, fails a phase, or records no finished run for one is refused, and the target and the land branch stay as they were. The state file keeps each head under `land:<name>:<sha>`, so the same head is never tried twice and a new push to the branch is. The next poll sees the target's new head and runs the record job, whose merge record names the work items the head's `Chant-Record` trailers name, or a direct push. A land counts against `--max-jobs`.
+
+```bash
+chant ci serve --forge github --repo acme/app --env prod --land \
+  --build-command 'npm ci && npx chant run check'
+```
+
+### Any git server
+
+`--forge git` serves a repository on a git server with no forge API, such as plain sshd, Soft Serve or a bare repository ([#4016](https://github.com/INTENTIUS/chant/issues/4016) gap 6). The target's head comes from `git ls-remote origin`. There are no pull requests to plan, so the target moves only through land branches and direct pushes. No commit status is set, and `ci serve` says so once on stderr. The jobs run without `--forge`. `--repo` is optional and only names the state file's repository, by default `origin`'s URL. The remote should protect the `ci/*` and `release/*` tags itself, with a pre-receive hook where it has no rule for them.
+
+```bash
+chant ci serve --forge git --env prod --land --build-command 'npm ci && npx chant run check'
+```
+
+### Re-runs and polling
 
 A failed job stays failed. `--rerun-failed` runs again the failed record or apply at the target's head and the failed plan of each open pull request head, as a forge's re-run button does: after you approve a plan the apply refused, run `chant ci serve --once --rerun-failed`. With `--wave-gate`, the same re-run carries on from a wave that waited on its own gate, once that wave's plan is approved, since the resume record keeps the waves that applied. `--interval` sets the time between polls, in seconds or as a duration such as `2m`, 30 seconds by default. `--once` runs one poll, waits for the jobs it started and exits 1 when one failed. Without it `ci serve` polls until it is stopped and waits for its running jobs on SIGINT or SIGTERM.
 

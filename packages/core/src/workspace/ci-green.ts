@@ -965,6 +965,23 @@ export async function readOpRunSource(cwd: string, top: string, base: string, si
 }
 
 /**
+ * Judge `ci.green.preMerge` on `commit` from the Op run records on the ledger
+ * (#4168 4.4), as `ci serve --land` does before it moves the target. The
+ * trust policy is read at `base`, the target's head. An unsigned run counts
+ * as the tick counts one: always, unless `ci.green.signedSince` asks for a
+ * signature. Throws {@link CiGreenError} when the declaration has no
+ * `ci.green` or names no pre-merge phase.
+ */
+export async function judgePreMerge(req: { cwd: string; commit: string; base: string }): Promise<CommitVerdict> {
+  const { green, top } = readGreen(req.cwd);
+  const pre = green.preMerge ?? [];
+  if (pre.length === 0) throw new CiGreenError("ci-green-undeclared", "ci.green.preMerge names no phase, so nothing says which checks must pass before the branch moves");
+  const runs = await readOpRunSource(req.cwd, top, req.base, green.signedSince);
+  const latest = latestAttempts(runs.checkRuns(req.commit));
+  return commitVerdictOf(pre.map((name) => evaluatePhase(green.phases.find((p) => p.name === name)!, latest)));
+}
+
+/**
  * What `chant run <op> --key` signs a run's record with (#4044): the runner
  * key `.chant/trust.json` at the checkout's `HEAD` lists for a principal
  * holding the `runner` role. Throws when the key is not one, or `cwd` is in

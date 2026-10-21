@@ -1,0 +1,96 @@
+---
+title: Land Without a Pull Request
+description: Put a change on trunk through a land branch that ci serve checks and fast-forwards, and the other ways to run the pre-merge phases first.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/land-without-a-pull-request/.
+  Check that the workspace declaration's `ci.green` names `preMerge` phases, and tell me which ones and what each runs.
+  Commit my change with a `Chant-Record: work:<id>` trailer for the work item I name, then run those phases on this machine with `npx chant run <op> --no-record` and show me the results.
+  If they pass, show me the `git push origin HEAD:chant/land/<name>` command for the change; do not run it.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This page puts a change on trunk without opening a pull request. A merge deploys nothing on the trunk-curated workflow, so a pull request's job is to keep broken commits off trunk, and the pre-merge phases do that job wherever they run. The flags are in the [`chant ci serve`](/chant/cli/ci/#land-branches) reference, and [Trunk and Releases](/chant/concepts/trunk-and-releases/#why-merge-never-deploys) explains why a merge deploys nothing.
+
+## Before you start
+
+The workspace declaration names the pre-merge phases in `ci.green.preMerge`. They should be the quick checks, since the full suites run on trunk after the change lands ([Tag Green Commits](/chant/guide/green-commits/)).
+
+```json
+{
+  "ci": {
+    "green": {
+      "branch": "main",
+      "phases": { "check": ["check"], "suites": { "runs": ["suites"], "build": "newest" } },
+      "require": ["check", "suites"],
+      "preMerge": ["check"],
+      "source": "runs"
+    }
+  }
+}
+```
+
+## Pick where the phases run
+
+Any one of these keeps a red commit off trunk:
+
+| Where | What checks the phases |
+|---|---|
+| A pull request | The forge's required checks, named after the `preMerge` phases' runs. |
+| A merge queue | The same required checks, run by the queue on the queued commit before it merges. |
+| A land branch | `ci serve --land`, which runs the phases on the branch's head and moves trunk only when they pass. |
+| Your machine | You, with `chant run` or `chant ci run --local` before you push. Nothing on the server checks it. |
+
+The rest of this page sets up a land branch.
+
+## Serve land branches
+
+Run `ci serve` with `--land` and a build command that runs the pre-merge phases' Ops. The command runs in a fresh worktree of each land branch's head, and `CHANT_BUILD_PHASES` names the phases to run.
+
+```bash
+chant ci serve --forge github --repo acme/app --env prod --land \
+  --build-command 'npm ci && npx chant run check'
+```
+
+On a git server with no forge API, use `--forge git` and leave out `--repo`. `ci serve` then reads refs through `git ls-remote` and sets no commit status.
+
+```bash
+chant ci serve --forge git --env prod --land \
+  --build-command 'npm ci && npx chant run check'
+```
+
+No runner key is needed. Runs are judged unsigned unless the declaration sets `ci.green.signedSince`.
+
+## Land a change
+
+Commit the change on top of trunk's head. A `Chant-Record` trailer ties it to a work item, so its merge record and the release candidates name the work item.
+
+```bash
+git fetch origin main
+git rebase origin/main
+git commit --amend --trailer 'Chant-Record: work:w-42'
+git push origin HEAD:chant/land/w-42
+```
+
+On its next poll `ci serve` runs the phases on the branch's head. When they pass, it fast-forwards `main` to that head and deletes `chant/land/w-42`. The poll after that runs the record job, which writes `_merges/<sha>.json` with the work item as its source.
+
+## When a land is refused
+
+`ci serve` leaves the land branch and trunk as they were, and prints why on stderr:
+
+- The head does not descend from trunk's head. Rebase onto `origin/main` and push the branch again.
+- A phase failed, or the build recorded no finished run for it. Fix the change and push again.
+- The push to trunk was refused because trunk moved while the phases ran. Rebase and push again.
+
+A new push to the same land branch is tried on the next poll. The same head is never tried twice.
+
+## Run the phases on your machine
+
+Without a server, run each pre-merge phase's Op before you push to trunk:
+
+```bash
+npx chant run check --no-record
+git push origin HEAD:main
+```
+
+`--no-record` keeps the run off `chant/lifecycle`. Without it, `chant run` records the run and pushes the ledger, and `ci tick` counts that record toward the commit's green tag unless `ci.green.signedSince` asks for a runner's signature. `chant ci run plan --local` runs the pull-request plan job on your machine, and `ci tick` never counts its record, which says `runOrigin.forge` `local`.

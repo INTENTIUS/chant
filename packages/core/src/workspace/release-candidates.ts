@@ -24,6 +24,11 @@
  * flags whose record files changed in its range, from the declared flag kinds
  * (#4024).
  *
+ * Each candidate also groups its changes (#4168 4.4) by work item, then by
+ * pull request, then by commit: a change lands under every work item its
+ * trailers name, or under no work item, and within that under its pull
+ * request, or under none for a commit that landed without one.
+ *
  * It reads local refs and tags only and never fetches. Git is read through a
  * local `git` subprocess.
  */
@@ -76,6 +81,20 @@ export interface CandidateChange {
   merge: Record<string, unknown> | null;
 }
 
+/** A candidate's changes under one pull request, or under none (`pr: null`) for commits that landed without one. */
+export interface CandidatePullRequestGroup {
+  pr: number | null;
+  /** Newest first. */
+  commits: string[];
+}
+
+/** A candidate's changes under one work item, or under none (`work: null`). Work items come first, in the order the oldest change names them. */
+export interface CandidateGroup {
+  work: string | null;
+  /** Pull requests in the order their oldest commit landed, then `pr: null`. */
+  pullRequests: CandidatePullRequestGroup[];
+}
+
 export interface CandidateFlag {
   id: string;
   member: string;
@@ -95,6 +114,8 @@ export interface Candidate {
   /** The labels of releases already cut from it. */
   cut: string[];
   changes: CandidateChange[];
+  /** The same changes by work item, then pull request, then commit (#4168 4.4). */
+  groups: CandidateGroup[];
   flags: CandidateFlag[];
 }
 
@@ -154,6 +175,34 @@ export function recordTrailers(trailers: Record<string, string[]>): { work: stri
 export function prFromSubject(subject: string): number | null {
   const m = PR_IN_SUBJECT.exec(subject);
   return m ? Number(m[1]) : null;
+}
+
+/** The pull request a merge record names in its `source`, or null. */
+export function mergeRecordPr(merge: Record<string, unknown> | null): number | null {
+  const source = merge?.source as { kind?: unknown; pr?: unknown } | undefined;
+  return source?.kind === "pull-request" && typeof source.pr === "number" ? source.pr : null;
+}
+
+/**
+ * Group changes, given newest first, by work item, then pull request, then
+ * commit. A change with work items lands in each one's group; the rest land
+ * in the `work: null` group, last. Within a group, pull requests come in the
+ * order their oldest commit landed, and commits without one last.
+ */
+export function groupChanges(changes: readonly CandidateChange[]): CandidateGroup[] {
+  const oldestFirst = [...changes].reverse();
+  const groups = new Map<string | null, Map<number | null, string[]>>();
+  const add = (work: string | null, pr: number | null, commit: string): void => {
+    const byPr = groups.get(work) ?? new Map<number | null, string[]>();
+    groups.set(work, byPr);
+    byPr.set(pr, [commit, ...(byPr.get(pr) ?? [])]);
+  };
+  for (const c of oldestFirst) for (const work of c.work.length > 0 ? c.work : [null]) add(work, c.pr, c.commit);
+  const nullLast = <K>(keys: K[]): K[] => [...keys.filter((k) => k !== null), ...keys.filter((k) => k === null)];
+  return nullLast([...groups.keys()]).map((work) => {
+    const byPr = groups.get(work)!;
+    return { work, pullRequests: nullLast([...byPr.keys()]).map((pr) => ({ pr, commits: byPr.get(pr)! })) };
+  });
 }
 
 /** Read the release candidates of the member at `query.cwd`. */
@@ -240,7 +289,8 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
       const d = details.get(sha);
       const { work, records } = recordTrailers(d?.trailers ?? {});
       const merge = merges.get(sha) ?? null;
-      const mergePr = merge && typeof merge.pr === "number" ? merge.pr : null;
+      // The merge record names its pull request in `source` (../lifecycle/merge-record.ts).
+      const mergePr = mergeRecordPr(merge);
       const subject = d?.subject ?? "";
       return { commit: sha, subject, date: d?.date ?? "", work, records, pr: mergePr ?? prFromSubject(subject), merge };
     };
@@ -265,13 +315,15 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
       }
       if (!tags.green.has(sha)) continue;
       const own = change(sha);
+      const changes = open.map(change).reverse();
       candidates.push({
         commit: sha,
         subject: own.subject,
         date: own.date,
         newFor: environments.filter((e) => i < newestRun.get(e.env)!).map((e) => e.env),
         cut: cutLabels.get(sha) ?? [],
-        changes: open.map(change).reverse(),
+        changes,
+        groups: groupChanges(changes),
         flags: flagReader(open),
       });
       open = [];

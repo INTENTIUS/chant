@@ -212,6 +212,7 @@
         "newFor",
         "cut",
         "changes",
+        "groups",
         "flags"
       ],
       "properties": {
@@ -245,12 +246,62 @@
           },
           "description": "The first-parent commits after the previous candidate, up to and including this one, newest first."
         },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/group"
+          },
+          "description": "The same changes by work item, then pull request, then commit (#4168 4.4). Work items come first, in the order the oldest change names them, then `work: null` for changes that name none. A change with two work items is under both."
+        },
         "flags": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/flag"
           },
           "description": "The flags of the declared flag kinds whose record files those commits change."
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": [
+        "work",
+        "pullRequests"
+      ],
+      "properties": {
+        "work": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The work item id a `Chant-Record: work:<id>` trailer names, or null."
+        },
+        "pullRequests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "pr",
+              "commits"
+            ],
+            "properties": {
+              "pr": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "The pull request, or null for commits that landed without one."
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Newest first."
+              }
+            }
+          },
+          "description": "Pull requests in the order their oldest commit landed, then `pr: null`."
         }
       }
     },

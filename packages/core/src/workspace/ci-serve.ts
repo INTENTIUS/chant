@@ -56,6 +56,24 @@
  *   forge's keeps its facts, and the job's push sends them. Nothing here
  *   pushes the ledger.
  *
+ * - Land branches (#4168 4.4). With `land`, each `chant/land/<name>` branch
+ *   pushed to the remote is a change asking to land without a pull request.
+ *   A head that does not descend from the target's is refused and left for
+ *   its author to rebase. Otherwise `buildCommand` runs on it with
+ *   `CHANT_BUILD_PHASES` set to `ci.green.preMerge` and `CHANT_BUILD_REASON`
+ *   `land`, and the phases are judged from the Op run records on its head
+ *   ({@link judgePreMerge}). When the command exits 0 and every phase
+ *   passes, the target is pushed to the head, a fast-forward the remote
+ *   refuses if the target moved, and the land branch is deleted. The next
+ *   poll sees the new head and runs the record job, whose merge record
+ *   names a work item or a direct push. A refused land stays in the state
+ *   file under `land:<name>:<sha>`, so a new push to the branch is tried
+ *   again and the same head is not.
+ * - The `git` forge kind (#4016 gap 6). With `forge: "git"` the serve reads
+ *   only refs, through `git ls-remote` against `origin`, so any git server
+ *   that takes pushes will do. It lists no pull requests and sets no commit
+ *   status, and the jobs run without `--forge`.
+ *
  * Host mode only: each job runs in a fresh worktree on this host as this
  * user, with the clean environment `ciRun` gives it. A pull request from a
  * fork is never planned, and with `authors` only those people's pull requests
@@ -70,7 +88,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { CI_BUILD_TAG_PREFIX, readBuildRequests, type BuildRequest } from "./ci-builds";
+import { CI_BUILD_TAG_PREFIX, readBuildRequests, type BuildRequestReason } from "./ci-builds";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
 import { forgeFromEnv, type OpenPullRequest } from "../pr-forge";
 import type { CommandContext } from "../cli/registry";
@@ -79,12 +97,14 @@ import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type
 import { parseDuration } from "../op/duration";
 import { reportUrlOf } from "./ci-report-url";
 import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
-import { CiGreenError, ciTick, RUNNER_KEY_ENV, signedRunsRequired } from "./ci-green";
+import { CiGreenError, ciTick, judgePreMerge, RUNNER_KEY_ENV, signedRunsRequired, type CommitVerdict } from "./ci-green";
 import { gitTop } from "./tree";
+import { readDeclaration } from "./declaration";
+import { locateWorkspace } from "./which-chant";
 import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
 
-/** The forges `ci serve` polls. GitLab is later. */
-export type CiServeForgeKind = "github" | "forgejo";
+/** The forges `ci serve` polls. GitLab is later. `git` is any git server, read through refs alone (#4016 gap 6). */
+export type CiServeForgeKind = "github" | "forgejo" | "git";
 
 /** What `ci serve` reads from the forge: the two calls GitHub's and Forgejo's clients have (../pr-forge.ts). */
 export interface CiServeForge {
@@ -102,6 +122,44 @@ export interface CiServeForge {
 export type CiServeTrigger =
   | { job: "plan"; commit: string; base: string; pr: number; rerun?: boolean }
   | { job: "apply" | "record"; commit: string; base: string; rerun?: boolean };
+
+/**
+ * The `git` forge kind (#4016 gap 6): the branch head from `git ls-remote`
+ * against `remote`, and no pull requests. A remote that can't be reached is
+ * an error for the pass, as a forge API's would be.
+ */
+export function gitCiServeForge(top: string, remote = "origin"): CiServeForge {
+  return {
+    openPullRequests: async () => [],
+    async branchHead(branch) {
+      const r = gitStatus(top, ["ls-remote", "--exit-code", remote, `refs/heads/${branch}`]);
+      if (r.code === 2) return undefined;
+      if (r.code !== 0) throw new CiRunError(`git ls-remote ${remote} could not read refs/heads/${branch}`);
+      return r.out.split(/\s+/)[0] || undefined;
+    },
+  };
+}
+
+/** What a build runs: a `ci/build/<sha>` request (#4169), or a land branch's pre-merge phases (#4168 4.4). */
+export interface CiServeBuildInput {
+  commit: string;
+  phases: string[];
+  reason: BuildRequestReason | "land";
+}
+
+/** Where pushed land branches live on the remote (#4168 4.4). */
+export const LAND_BRANCH_PREFIX = "chant/land/";
+
+/** One land branch head in the state file, by `land:<name>:<sha>`. */
+export interface CiServeLandState {
+  branch: string;
+  commit: string;
+  status: "running" | "landed" | "refused";
+  /** Why it was refused, in a line. */
+  reason?: string;
+  startedAt: string;
+  settledAt?: string;
+}
 
 /** One job in the state file. */
 export interface CiServeJobState {
@@ -136,6 +194,8 @@ export interface CiServeState {
   skipped?: Record<string, "skip-ci">;
   /** The build requests served (#4169), by `build:<sha>`, with how each ended. */
   builds?: Record<string, { tag: string; status: "running" | "ok" | "fail"; startedAt: string; settledAt?: string }>;
+  /** The land branch heads seen (#4168 4.4), by `land:<name>:<sha>`. */
+  lands?: Record<string, CiServeLandState>;
 }
 
 /** What a pass did, in order, for the log. */
@@ -149,6 +209,8 @@ export type CiServeEvent =
   | { type: "not-run"; job: CiJobName; commit: string; pr?: number; reason: "not-fast-forward" | "skip-ci"; branch?: string; from?: string }
   | { type: "ledger"; action: "deleted" | "reset"; local: string; forge?: string }
   | { type: "build"; commit: string; phases: string[]; status: "started" | "ok" | "fail" | "held"; exitCode?: number }
+  /** A land branch (#4168 4.4): its pre-merge phases started, the target moved to it, or it was refused and left. */
+  | { type: "land"; branch: string; commit: string; status: "started" | "landed" | "refused" | "held"; reason?: string; warning?: string }
   /** `ci tick` after the pass (#4168): the tags it made from the runs. */
   | { type: "tick"; made: string[] }
   | { type: "error"; message: string };
@@ -199,7 +261,14 @@ export interface CiServeOptions {
    */
   buildCommand?: string;
   /** Runs a build. Default: `sh -c <buildCommand>` in a detached worktree of the commit. */
-  build?: (input: { top: string; request: BuildRequest; command: string }) => Promise<number>;
+  build?: (input: { top: string; request: CiServeBuildInput; command: string }) => Promise<number>;
+  /**
+   * Land `chant/land/<name>` branches (#4168 4.4): the `ci.green.preMerge`
+   * phases each must pass first. Needs `buildCommand`, which runs them.
+   */
+  land?: { phases: string[] };
+  /** Judges a land head's phases. Default {@link judgePreMerge} from the Op run records. */
+  judgeLand?: (input: { commit: string; base: string }) => Promise<CommitVerdict>;
 }
 
 /** The jobs this process runs now, by state key, shared by every pass of one loop. */
@@ -549,7 +618,8 @@ async function runJob(
       cwd: opts.cwd,
       job: t.job,
       env: opts.env,
-      forge: opts.forge,
+      // #4016 gap 6: a plain git server has no API, so the job runs without --forge, shaped as a GitHub job.
+      ...(opts.forge === "git" ? { forge: "github" as const, noForge: true } : { forge: opts.forge }),
       base: t.base,
       ...(t.job === "plan" ? { pr: t.pr } : merged !== undefined ? { pr: merged } : {}),
       commit: t.commit,
@@ -573,9 +643,10 @@ export async function ciServePass(opts: CiServeOptions, rt: CiServeRuntime = new
   for (const e of observed.events) opts.log?.(e);
   const scheduled = await ciServeSchedule(opts, observed.triggers, rt);
   const builds = opts.buildCommand ? ciServeBuilds(opts, rt) : { started: [], events: [] };
+  const lands = opts.land && opts.buildCommand ? await ciServeLands(opts, rt) : { started: [], events: [] };
   const jobs = wait ? await Promise.all(scheduled.started) : [];
-  if (wait) await Promise.all(builds.started);
-  return { events: [...observed.events, ...scheduled.events, ...builds.events], jobs };
+  if (wait) await Promise.all([...builds.started, ...lands.started]);
+  return { events: [...observed.events, ...scheduled.events, ...builds.events, ...lands.events], jobs };
 }
 
 /**
@@ -630,8 +701,107 @@ export function ciServeBuilds(opts: CiServeOptions, rt: CiServeRuntime): { start
   return { started, events };
 }
 
+/** The land branches on `origin`, by name, with their heads (#4168 4.4). */
+function landBranches(top: string): { name: string; head: string }[] {
+  const r = gitStatus(top, ["ls-remote", "origin", `refs/heads/${LAND_BRANCH_PREFIX}*`]);
+  if (r.code !== 0) return [];
+  return r.out
+    .split("\n")
+    .map((line) => line.split(/\s+/))
+    .filter(([sha, ref]) => sha && ref?.startsWith(`refs/heads/${LAND_BRANCH_PREFIX}`))
+    .map(([head, ref]) => ({ name: ref!.slice(`refs/heads/${LAND_BRANCH_PREFIX}`.length), head: head! }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Why a land's phases don't let it land, or undefined when every one passed. */
+function landRefusal(verdict: CommitVerdict): string | undefined {
+  if (verdict.verdict === "pass") return undefined;
+  const failed = verdict.phases.filter((p) => p.verdict === "fail").map((p) => p.phase);
+  if (failed.length > 0) return `the pre-merge phase${failed.length > 1 ? "s" : ""} ${failed.join(", ")} failed`;
+  const open = verdict.phases.filter((p) => p.verdict !== "pass").map((p) => p.phase);
+  return `the build recorded no finished run for ${open.join(", ")}`;
+}
+
+/**
+ * Serve the land branches (#4168 4.4): for each `chant/land/<name>` head not
+ * in the state file, refuse it unless it descends from the target's head,
+ * else run `buildCommand` on it with the pre-merge phases, judge them, and
+ * when they pass push the target to it and delete the branch. At most
+ * `maxJobs` builds and jobs run at once.
+ */
+export async function ciServeLands(opts: CiServeOptions, rt: CiServeRuntime): Promise<{ started: Promise<void>[]; events: CiServeEvent[] }> {
+  const place = servePlace(opts);
+  const fresh = { forge: opts.forge, repo: opts.repo, env: opts.env, branch: place.branch, ...(place.member ? { member: place.member } : {}) };
+  const update = (fn: (s: CiServeState) => void): void => {
+    const st = readCiServeState(place.stateFile, fresh);
+    fn(st);
+    writeState(place.stateFile, st);
+  };
+  const events: CiServeEvent[] = [];
+  const started: Promise<void>[] = [];
+  const now = opts.now ?? (() => new Date());
+  const log = (e: CiServeEvent): void => {
+    events.push(e);
+    opts.log?.(e);
+  };
+  const phases = opts.land!.phases;
+  const seen = readCiServeState(place.stateFile, fresh).lands ?? {};
+  for (const { name, head } of landBranches(place.top)) {
+    const key = `land:${name}:${head}`;
+    const branch = `${LAND_BRANCH_PREFIX}${name}`;
+    if (seen[key] || rt.inflight.has(key)) continue;
+    if (rt.inflight.size >= (opts.maxJobs ?? 1)) {
+      log({ type: "land", branch, commit: head, status: "held", reason: "--max-jobs jobs run" });
+      continue;
+    }
+    const settle = (status: "landed" | "refused", reason?: string, warning?: string): void => {
+      update((st) => {
+        st.lands = { ...st.lands, [key]: { branch, commit: head, status, ...(reason ? { reason } : {}), startedAt: st.lands?.[key]?.startedAt ?? now().toISOString(), settledAt: now().toISOString() } };
+      });
+      log({ type: "land", branch, commit: head, status, ...(reason ? { reason } : {}), ...(warning ? { warning } : {}) });
+    };
+    const target = await opts.client.branchHead(place.branch);
+    if (target === undefined) {
+      log({ type: "error", message: `${branch} waits: the remote has no branch ${place.branch} to land it on` });
+      continue;
+    }
+    tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", place.branch, `+refs/heads/${branch}:refs/chant/ci-serve/land/${name}`]);
+    // #4168 4.4: a land only ever fast-forwards the target, so its head must descend from the target's.
+    if (gitStatus(place.top, ["merge-base", "--is-ancestor", target, head]).code !== 0) {
+      settle("refused", `${head.slice(0, 12)} does not descend from ${place.branch} at ${target.slice(0, 12)}; rebase ${branch} onto it and push again`);
+      continue;
+    }
+    update((st) => {
+      st.lands = { ...st.lands, [key]: { branch, commit: head, status: "running", startedAt: now().toISOString() } };
+    });
+    log({ type: "land", branch, commit: head, status: "started" });
+    const build = opts.build ?? runBuild;
+    const judge = opts.judgeLand ?? ((input: { commit: string; base: string }) => judgePreMerge({ cwd: opts.cwd, ...input }));
+    const job = (async () => {
+      const code = await build({ top: place.top, request: { commit: head, phases, reason: "land" }, command: opts.buildCommand! }).catch(() => 1);
+      if (code !== 0) return settle("refused", `the build of ${phases.join(", ")} exited ${code}`);
+      let refusal: string | undefined;
+      try {
+        refusal = landRefusal(await judge({ commit: head, base: target }));
+      } catch (err) {
+        refusal = `the pre-merge phases could not be judged: ${message(err)}`;
+      }
+      if (refusal) return settle("refused", refusal);
+      // A plain push: the remote refuses it unless it fast-forwards the target, so a target that moved meanwhile refuses the land.
+      const pushed = spawnSync("git", ["push", "--quiet", "origin", `${head}:refs/heads/${place.branch}`], { cwd: place.top, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+      if (pushed.status !== 0) return settle("refused", `the push to ${place.branch} was refused: ${(pushed.stderr ?? "").trim().split("\n").pop() ?? ""}`);
+      const deleted = gitStatus(place.top, ["push", "--quiet", "origin", "--delete", `refs/heads/${branch}`]);
+      tryGit(place.top, ["update-ref", "-d", `refs/chant/ci-serve/land/${name}`]);
+      settle("landed", undefined, deleted.code === 0 ? undefined : `${branch} could not be deleted on the remote; delete it by hand`);
+    })().finally(() => rt.inflight.delete(key));
+    rt.inflight.set(key, job);
+    started.push(job);
+  }
+  return { started, events };
+}
+
 /** `sh -c <command>` in a fresh detached worktree of the request's commit, removed after. Resolves to the exit code. */
-async function runBuild(input: { top: string; request: BuildRequest; command: string }): Promise<number> {
+async function runBuild(input: { top: string; request: CiServeBuildInput; command: string }): Promise<number> {
   const dir = mkdtempSync(join(tmpdir(), "chant-ci-build-"));
   try {
     execFileSync("git", ["worktree", "add", "--quiet", "--detach", dir, input.request.commit], { cwd: input.top, stdio: ["ignore", "pipe", "pipe"] });
@@ -717,6 +887,13 @@ export function formatCiServeEvent(e: CiServeEvent): string {
       if (e.status === "held") return `${what} waits: --max-jobs jobs run`;
       return e.status === "started" ? `${what} started` : e.status === "ok" ? `${what} passed` : `${what} failed${e.exitCode !== undefined ? ` with exit code ${e.exitCode}` : ""}`;
     }
+    case "land": {
+      const what = `${e.branch} at ${e.commit.slice(0, 12)}`;
+      if (e.status === "started") return `${what}: the pre-merge phases started`;
+      if (e.status === "held") return `${what} waits: ${e.reason ?? "--max-jobs jobs run"}`;
+      if (e.status === "refused") return `${what} was refused and left on the remote: ${e.reason ?? "no reason given"}`;
+      return `${what} landed${e.warning ? `; ${e.warning}` : ", and the land branch was deleted"}`;
+    }
     case "tick":
       return e.made.length > 0 ? `ci tick made ${e.made.join(", ")}` : "ci tick: no tag due";
     case "error":
@@ -754,8 +931,8 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
 
 const USAGE =
   "chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
-  "chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
-  "[--author <login>]... [--once] [--rerun-failed] [--build-command <line>] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
+  "chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
+  "[--author <login>]... [--once] [--rerun-failed] [--build-command <line>] [--land] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
   "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [--unsigned]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -768,14 +945,29 @@ export function ciServeInterval(value: string | undefined): number {
   return ms;
 }
 
+/** `ci.green.preMerge` where `cwd` is, for `--land` (#4168 4.4). Throws when the declaration names none. */
+function preMergeOf(cwd: string): string[] {
+  let pre: string[] | undefined;
+  try {
+    pre = readDeclaration(locateWorkspace(cwd).tree).ci?.green?.preMerge;
+  } catch (err) {
+    throw new CiRunError(`--land reads ci.green.preMerge from the workspace declaration, which could not be read: ${message(err)}`);
+  }
+  if (!pre || pre.length === 0) throw new CiRunError("--land runs the ci.green.preMerge phases on each land branch, and the declaration names none; add them to ci.green");
+  return pre;
+}
+
 /** `chant ci serve` (#4095). */
 export async function runCiServe(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   try {
     if (args.setupKey) return runnerKeySetupCommand(ctx);
     const forge = args.forge;
-    if (forge !== "forgejo" && forge !== "github") throw new CiRunError(`--forge names the forge ci serve polls: --forge forgejo|github${forge ? `, not ${JSON.stringify(forge)}` : ""}`);
-    if (!args.ciRepo) throw new CiRunError("--repo names the repository whose pull requests ci serve polls: --repo <owner/repo>");
+    if (forge !== "forgejo" && forge !== "github" && forge !== "git") throw new CiRunError(`--forge names the forge ci serve polls: --forge forgejo|github|git${forge ? `, not ${JSON.stringify(forge)}` : ""}`);
+    // #4016 gap 6: a plain git server has no repository name to ask an API for, so --repo only labels the state file.
+    if (!args.ciRepo && forge !== "git") throw new CiRunError("--repo names the repository whose pull requests ci serve polls: --repo <owner/repo>");
+    // #4168 4.4: landing runs the pre-merge phases through the build command.
+    if (args.ciLand && !args.ciBuildCommand) throw new CiRunError("--land runs each land branch's pre-merge phases with --build-command, so it needs one: --build-command '<line>'");
     if (!args.env) throw new CiRunError("--env names the environment the pipeline is for: --env <env>");
     for (const name of args.passEnv ?? []) if (!ENV_NAME.test(name)) throw new CiRunError(`--pass-env takes a variable's name, not ${JSON.stringify(name)}`);
     // #4168: a gate per wave gates the apply on merge, which a merge runs only when opted in.
@@ -786,6 +978,8 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     if (!top) throw new CiRunError("ci serve runs in a clone of the repository it serves, and this directory is not in a git repository");
     const stateDir = args.statePath ? resolve(args.statePath) : defaultCiServeStateDir(cwd);
     const branch = args.branch ?? "main";
+    const repo = args.ciRepo ?? (tryGit(top, ["remote", "get-url", "origin"]) || "origin");
+    const landPhases = args.ciLand ? preMergeOf(cwd) : undefined;
     // #4099: the host's key, checked against .chant/trust.json at the target's head before the first poll.
     // #4156: signing is opt-in. Without ci.green.signedSince no key is quiet, and an untrusted one warns once and serves unsigned.
     const keyed = ciServeRunnerKey({
@@ -807,25 +1001,36 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     // #4160: without --report-url, the declaration's ci.reportUrl.
     const reportUrl = await reportUrlOf(args.reportUrl, cwd);
     if (reportUrl && !args.reportUrl) console.error(`ci serve: reports and the run index go to ${reportUrl}, the declaration's ci.reportUrl`);
-    const hostEnv = { ...process.env, GITHUB_REPOSITORY: args.ciRepo };
-    const client = forgeFromEnv(forge, hostEnv);
-    const { status, warning } = ciStatusFromEnv({ forge, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
-    if (warning) console.error(formatWarning({ message: warning }));
-    if (!client.openPullRequests || !client.branchHead) throw new CiRunError(`the ${forge} client cannot list pull requests`);
+    const hostEnv = { ...process.env, GITHUB_REPOSITORY: repo };
+    let client: CiServeForge;
+    let status: ReturnType<typeof ciStatusFromEnv>["status"];
+    if (forge === "git") {
+      // #4016 gap 6: refs only, and no commit status to set.
+      client = gitCiServeForge(top);
+      if (!args.noStatus) console.error(formatWarning({ message: "the git forge kind has no API, so no commit status is set; each job's result is in the state file and its report" }));
+    } else {
+      const api = forgeFromEnv(forge, hostEnv);
+      const fromEnv = ciStatusFromEnv({ forge, hostEnv, noStatus: args.noStatus, statusUrl: args.statusUrl });
+      if (fromEnv.warning) console.error(formatWarning({ message: fromEnv.warning }));
+      status = fromEnv.status;
+      if (!api.openPullRequests || !api.branchHead) throw new CiRunError(`the ${forge} client cannot list pull requests`);
+      client = { openPullRequests: api.openPullRequests.bind(api), branchHead: api.branchHead.bind(api), pullRequestFor: api.pullRequestFor.bind(api) };
+    }
     // #4168: a host that applied each merge before the upgrade hears that it no longer does.
     if (!args.applyOnMerge) console.error("ci serve: each new commit on the target branch gets the record job, which applies nothing (#4168); --apply-on-merge applies it");
     const opts: CiServeOptions = {
       cwd,
       forge,
-      repo: args.ciRepo,
+      repo,
       env: args.env,
-      client: { openPullRequests: client.openPullRequests.bind(client), branchHead: client.branchHead.bind(client), pullRequestFor: client.pullRequestFor.bind(client) },
+      client,
       stateDir,
       ...(args.maxJobs ? { maxJobs: args.maxJobs } : {}),
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
       ...(args.rerunFailed ? { rerunFailed: true } : {}),
       ...(args.ciBuildCommand ? { buildCommand: args.ciBuildCommand } : {}),
       ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
+      ...(landPhases ? { land: { phases: landPhases } } : {}),
       // #4168: the tick from the runs the jobs recorded, signed with the runs' key. No ci.green, no tick.
       tick: async () => {
         try {
