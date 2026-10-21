@@ -51,9 +51,9 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 225 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 242 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 52 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 57 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
@@ -336,6 +336,23 @@ Each row follows, in the order of the table above.
 | reason code | `diagram-source-missing` | chant | check.schema.json | A declared diagram names a source, and it does not exist in the tree read. |
 | reason code | `diagram-render-missing` | chant | check.schema.json | A declared diagram's render does not exist in the tree read. |
 | reason code | `diagram-render-drift` | chant | check.schema.json | A declared diagram records a sourceHash, and the source's bytes now hash to something else: the render is stale for its source. |
+| reason code | `security-signers-missing` | chant | check.schema.json | The workspace opts into verified-releases, and there is no .chant/allowed_signers to verify a release's signature against. |
+| reason code | `security-release-gate-missing` | chant | check.schema.json | Under verified-releases, identity.gates has no release entry, or it names no class, so a cut is not held to a class of signers. |
+| reason code | `security-publish-allows-unsigned` | chant | check.schema.json | Under verified-releases, a pipeline file runs release publish with --allow-unsigned. |
+| reason code | `security-sbom-disabled` | chant | check.schema.json | Under supply-chain, a member's chant.config.ts sets sbom: false on a publish target. |
+| reason code | `security-sbom-unsourced` | chant | check.schema.json | Under supply-chain, a member publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock to write one from. |
+| reason code | `security-publish-no-provenance` | chant | check.schema.json | Under supply-chain, a pipeline file runs release publish without --require-provenance. |
+| reason code | `security-component-no-sbom` | chant | check.schema.json | Under supply-chain, a member's components have no generate-sbom step. |
+| reason code | `security-component-no-verify` | chant | check.schema.json | Under supply-chain, a member's components have no verify step. |
+| reason code | `security-signed-since-unset` | chant | check.schema.json | Under who-ran-it, ci.green sets no signedSince, or there is no ci.green block. |
+| reason code | `security-runner-untrusted` | chant | check.schema.json | Under who-ran-it, .chant/trust.json lists no runner key. |
+| reason code | `security-tick-no-key` | chant | check.schema.json | Under who-ran-it, a pipeline file runs ci tick with no runner key. |
+| reason code | `security-review-not-required` | chant | check.schema.json | Under review-rules, an apply job passes --no-require-review, which the group overrides. |
+| reason code | `security-attribution-any` | chant | check.schema.json | Under review-rules, identity.attribution is not identified. |
+| reason code | `security-gate-unsigned` | chant | check.schema.json | Under review-rules, an apply job names a gate identity.gates does not list, or identity.gates lists none. |
+| reason code | `security-runner-start-no-key` | chant | check.schema.json | Under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
+| reason code | `security-runner-start-no-role` | chant | check.schema.json | Under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
+| reason code | `security-trust-unreadable` | chant | check.schema.json | Under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
 | reason code | `box-fountain-callback-undeclared` | chant | check.schema.json | A box member builds a fountain Box, whose sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner. |
 | reason code | `box-intent-unknown` | chant | check.schema.json | A box block names an intent, and no record of a declared kind named decision has that id. |
 | reason code | `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory. |
@@ -488,6 +505,11 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP131` `diagram-source-missing` | chant | check.schema.json | A diagram's source file, when it names one, exists in the tree read. |
 | WSP check | `WSP132` `diagram-render-missing` | chant | check.schema.json | A diagram's render, when it names one, exists in the tree read. Only a mermaid or excalidraw diagram may name none. |
 | WSP check | `WSP133` `diagram-render-drift` | chant | check.schema.json | A diagram that records a sourceHash is unchanged since its render was made: the source's bytes still hash to it. Runs no renderer. |
+| WSP check | `WSP161` `security-verified-releases` | chant | check.schema.json | Under the verified-releases group: a signers file, a release gate naming a class, and no publish job that passes --allow-unsigned. |
+| WSP check | `WSP162` `security-supply-chain` | chant | check.schema.json | Under the supply-chain group: every publish target attaches an SBOM it has a source for, publish jobs require OIDC provenance, and components generate an SBOM and verify what they deploy. |
+| WSP check | `WSP163` `security-who-ran-it` | chant | check.schema.json | Under the who-ran-it group: ci.green.signedSince is set, .chant/trust.json lists a runner key, and the tick signs its tags. |
+| WSP check | `WSP164` `security-review-rules` | chant | check.schema.json | Under the review-rules group: no apply job turns forge review off, attribution is identified, and every gate an apply job names needs a signed approval. |
+| WSP check | `WSP165` `security-isolated-runners` | chant | check.schema.json | Under the isolated-runners group: .chant/trust.json lists a runner key whose principal holds the runner role, so an apply job can require a runner-start statement (#4147). |
 | WSP check | `WSP125` `box-fountain-callback-undeclared` | chant | check.schema.json | A box member that builds a fountain Box declares the callback token fountain gives its sandbox: the fountain-callback capability, brokered by fountain, with scope owner. |
 | WSP check | `WSP126` `box-intent-unknown` | chant | check.schema.json | The intent a box block names is the id of a record of a declared kind named decision, the record that says what the box is for. |
 | WSP check | `WSP127` `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains a member or path of this workspace, with member: and a declared member's name or a path: entry at, above or inside one's directory; not necessarily the box's own member. |
