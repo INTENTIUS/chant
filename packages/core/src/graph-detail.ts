@@ -127,27 +127,46 @@ function toDeclarables(ir: GraphIR): GraphIR {
 /** T1 — collapse each composite instance to one node; internal edges disappear.
  * Topology view: surviving plain nodes keep only overlay paint, not properties. */
 function toComposites(ir: GraphIR): GraphIR {
-  const idMap = new Map<string, string>();
-  for (const n of ir.nodes) idMap.set(n.id, n.compositeInstance ?? n.id);
-
+  // A composite instance is its export name plus the composite that made it:
+  // an AWS FargateAlb and a GCP CloudRunServiceComposite both exported as
+  // `web` are two instances (#4178). One composite whose members span
+  // lexicons stays one instance.
+  const instanceKey = (n: IRNode) => `${n.compositeInstance}\0${n.compositeParent ?? ""}`;
   const instances = new Map<string, IRNode[]>();
   const plain: IRNode[] = [];
   for (const n of ir.nodes) {
     if (n.compositeInstance) {
-      const arr = instances.get(n.compositeInstance) ?? [];
+      const key = instanceKey(n);
+      const arr = instances.get(key) ?? [];
       arr.push(n);
-      instances.set(n.compositeInstance, arr);
+      instances.set(key, arr);
     } else {
       plain.push({ ...n, attrs: paintAttrs(n.attrs) });
     }
   }
 
+  // The collapsed id is the instance name, or `<instance>@<composite>` when
+  // two composites share the name.
+  const sharing = new Map<string, number>();
+  for (const members of instances.values()) {
+    const inst = members[0].compositeInstance!;
+    sharing.set(inst, (sharing.get(inst) ?? 0) + 1);
+  }
+  const collapsedId = new Map<string, string>();
+  for (const [key, members] of instances) {
+    const { compositeInstance: inst, compositeParent: parent } = members[0];
+    collapsedId.set(key, sharing.get(inst!)! > 1 && parent ? `${inst}@${parent}` : inst!);
+  }
+
+  const idMap = new Map<string, string>();
+  for (const n of ir.nodes) idMap.set(n.id, n.compositeInstance ? collapsedId.get(instanceKey(n))! : n.id);
+
   const nodes: IRNode[] = [...plain];
-  for (const [inst, members] of instances) {
+  for (const [key, members] of instances) {
     const types = new Set(members.map((m) => m.compositeParent).filter(Boolean) as string[]);
     const lexicons = new Set(members.map((m) => m.lexicon));
     nodes.push({
-      id: inst,
+      id: collapsedId.get(key)!,
       kind: types.size === 1 ? [...types][0] : "Composite",
       lexicon: lexicons.size === 1 ? [...lexicons][0] : "multi",
       attrs: { members: members.length },
@@ -197,11 +216,18 @@ function toComposites(ir: GraphIR): GraphIR {
     }
     if (Object.keys(byPipeline).length) groups.byPipeline = byPipeline;
   }
+  // Exports (#4178) stay at this tier, each on the node that now holds its
+  // producer, so a viewer can still match another member's import to it.
+  const exports = ir.exports?.map((x) => (x.node ? { ...x, node: idMap.get(x.node) ?? x.node } : { ...x }));
   return {
+    ...(ir.version !== undefined ? { version: ir.version } : {}),
     nodes,
     edges: sortEdges([...seen.values()]),
     groups,
+    ...(ir.meta ? { meta: ir.meta } : {}),
+    ...(exports && exports.length ? { exports } : {}),
     ...(imports && imports.length ? { imports } : {}),
+    ...(ir.pipeline ? { pipeline: ir.pipeline } : {}),
     ...(dangling && dangling.length ? { dangling } : {}),
   };
 }
