@@ -84,15 +84,14 @@ function deriveGVKFromType(entityType: string): { apiVersion: string; kind: stri
  * GCP visitor for the generic serializer walker.
  */
 function gcpVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
+  // Config Connector resolves a `*Ref: { name }` by the target's metadata.name,
+  // which is its declared name or else the kebab-cased logical id (#4242).
+  const cnrmNames = new Map<string, string>();
+  for (const [entity, logical] of entityNames) cnrmNames.set(logical, cnrmName(logical, entity));
+  const resolve = (logical: string) => cnrmNames.get(logical) ?? logical;
   return {
-    attrRef: (name, _attr) => {
-      // For Config Connector, references resolve to metadata.name
-      return name;
-    },
-    resourceRef: (name) => {
-      // Config Connector uses resourceRef pattern: { name: "resource-name" }
-      return { name };
-    },
+    attrRef: (name, _attr) => resolve(name),
+    resourceRef: (name) => ({ name: resolve(name) }),
     propertyDeclarable: (entity, walk) => {
       if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
@@ -107,6 +106,20 @@ function gcpVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
       return Object.keys(result).length > 0 ? result : undefined;
     },
   };
+}
+
+/**
+ * The metadata.name a resource is written with: a string `metadata.name` in its
+ * props, else its logical id in kebab case.
+ */
+export function cnrmName(logical: string, entity: Declarable): string {
+  const props = isResourceDeclarable(entity) ? (entity.props as { metadata?: { name?: unknown } } | undefined) : undefined;
+  const declared = props?.metadata?.name;
+  return typeof declared === "string" && declared.length > 0 ? declared : kebabName(logical);
+}
+
+function kebabName(logical: string): string {
+  return logical.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
 /**
@@ -189,7 +202,7 @@ export const gcpSerializer: Serializer = {
       // Build metadata
       const metadata: Record<string, unknown> = props.metadata as Record<string, unknown> ?? {};
       if (!metadata.name) {
-        metadata.name = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+        metadata.name = kebabName(name);
       }
 
       // Merge default labels

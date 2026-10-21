@@ -293,3 +293,29 @@ describe("gcpSerializer", () => {
     expect(result).toContain("ComputeInstance");
   });
 });
+
+describe("a .name reference serializes as the target's metadata.name (#4242)", () => {
+  test("a declared metadata.name wins; without one, the kebab-cased logical id", async () => {
+    const { RegionNetworkEndpointGroup, BackendService, CloudRunService } = await import("./generated");
+    const web = new CloudRunService({ location: "us-central1", template: { containers: [{ image: "i" }] } } as any);
+    (web as any).name._setLogicalName("webService");
+    const neg = new RegionNetworkEndpointGroup({
+      metadata: { name: "three-cloud-neg" },
+      region: "us-central1",
+      networkEndpointType: "SERVERLESS",
+      cloudRun: { serviceRef: { name: (web as any).name } },
+    } as any);
+    (neg as any).name._setLogicalName("neg");
+    const backend = new BackendService({
+      metadata: { name: "three-cloud-backend" },
+      location: "global",
+      backend: [{ group: { networkEndpointGroupRef: { name: (neg as any).name } } }],
+    } as any);
+    const entities = new Map<string, any>([["webService", web], ["neg", neg], ["backend", backend]]);
+    const yaml = String(gcpSerializer.serialize(entities));
+    expect(yaml).toContain("name: three-cloud-neg");
+    expect(yaml).not.toMatch(/networkEndpointGroupRef:\s*\n\s*name: neg\b/);
+    expect(yaml).toMatch(/serviceRef:\s*\n\s*name: web-service/);
+    expect(yaml).toMatch(/networkEndpointGroupRef:\s*\n\s*name: three-cloud-neg/);
+  });
+});
