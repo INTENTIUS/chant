@@ -43,6 +43,7 @@ export function nestedArgv(dir: string, args: Partial<ParsedArgs>, at: string | 
     ...(args.live ? ["--live"] : []),
     ...(args.overlay ? ["--overlay"] : []),
     ...(args.traffic !== undefined ? ["--traffic", String(args.traffic)] : []),
+    ...(args.detail !== undefined ? ["--detail", String(args.detail)] : []),
     ...(args.noCache ? ["--no-cache"] : []),
   ];
 }

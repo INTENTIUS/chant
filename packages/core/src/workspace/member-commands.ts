@@ -305,6 +305,9 @@ export function memberArgv(verb: WorkspaceVerb, unit: RunUnit, args: ParsedArgs)
     if (args.live) argv.push("--live");
     if (args.overlay) argv.push("--overlay");
     if (args.traffic) argv.push("--traffic", args.traffic);
+    // The detail tier too, so `workspace graph --detail 1` composes collapsed
+    // composites with their rolled-up status (#4228).
+    if (args.detail !== undefined) argv.push("--detail", String(args.detail));
   }
   return argv;
 }

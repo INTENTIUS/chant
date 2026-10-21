@@ -69,6 +69,10 @@ describe("readNestedDocument", () => {
       "workspace", "graph", "/w/inner", "--at", "abc", "--env", "dev", "--live", "--overlay", "--traffic", "10 rps", "--no-cache",
     ]);
   });
+
+  test("passes the detail tier on (#4228)", () => {
+    expect(nestedArgv("/w/inner", { detail: 1 }, null)).toEqual(["workspace", "graph", "/w/inner", "--detail", "1"]);
+  });
 });
 
 describe("foldNested", () => {

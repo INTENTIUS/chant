@@ -164,6 +164,13 @@ describe("member command lines", () => {
     expect(memberArgv("graph", unit, args({ env: "prod" }))).toEqual(["graph", ".", "--format", "ir", "--env", "prod"]);
   });
 
+  test("graph hands each member the detail tier (#4228)", () => {
+    expect(memberArgv("graph", unit, args({ detail: 1, live: true, overlay: true, env: "local" }))).toEqual([
+      "graph", ".", "--format", "ir", "--env", "local", "--live", "--overlay", "--detail", "1",
+    ]);
+    expect(memberArgv("graph", unit, args({ detail: 0 }))).toEqual(["graph", ".", "--format", "ir", "--detail", "0"]);
+  });
+
   test("a reader unit takes --env only with --live, which needs one (#2874, #2875)", () => {
     const reader = { ...unit, reader: { lexicon: "terraform", config: {}, packageDir: "/p" } } as typeof unit;
     expect(memberArgv("graph", reader, args({ env: "prod" }))).toEqual(["graph", ".", "--format", "ir"]);
