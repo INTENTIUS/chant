@@ -28,7 +28,7 @@ type Job = {
   if?: string;
   permissions?: Record<string, string>;
 };
-type Workflow = { on: Record<string, unknown>; jobs: Record<string, Job> };
+type Workflow = { on: Record<string, unknown>; concurrency?: Record<string, unknown>; jobs: Record<string, Job> };
 
 const root = join(import.meta.dirname, "..");
 const workflow = (file: string): Workflow =>
