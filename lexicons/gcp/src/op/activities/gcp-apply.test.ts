@@ -5,6 +5,7 @@ import {
   bucketInsertBody,
   pubSubTopicBody,
   cloudRunServiceBody,
+  serviceAccountEmail,
   resolveGcpProject,
   resolveGcpEndpoint,
   applyResource,
@@ -141,6 +142,35 @@ describe("Cloud Run mapper + LRO (#706)", () => {
     expect(cloudRunServiceBody(RUN_SERVICE)).toEqual({
       template: { containers: [{ image: "gcr.io/x/hello" }] },
     });
+  });
+
+  test("cloudRunServiceBody sends serviceAccountRef as template.serviceAccount (#4240)", () => {
+    const withRef = (ref: Record<string, string>) => ({
+      ...RUN_SERVICE,
+      spec: { ...(RUN_SERVICE.spec as object), template: { containers: [{ image: "gcr.io/x/hello" }], serviceAccountRef: ref } },
+    });
+    expect(cloudRunServiceBody(withRef({ name: "run-sa" }), "p")).toEqual({
+      template: { containers: [{ image: "gcr.io/x/hello" }], serviceAccount: "run-sa@p.iam.gserviceaccount.com" },
+    });
+    expect(cloudRunServiceBody(withRef({ external: "x@other.iam.gserviceaccount.com" }), "p")).toEqual({
+      template: { containers: [{ image: "gcr.io/x/hello" }], serviceAccount: "x@other.iam.gserviceaccount.com" },
+    });
+  });
+
+  test("serviceAccountEmail: external as given or from a path, name in the project", () => {
+    expect(serviceAccountEmail({ external: "projects/o/serviceAccounts/x@o.iam.gserviceaccount.com" })).toBe("x@o.iam.gserviceaccount.com");
+    expect(serviceAccountEmail({ name: "run-sa" }, "p")).toBe("run-sa@p.iam.gserviceaccount.com");
+    expect(serviceAccountEmail(undefined, "p")).toBeUndefined();
+    expect(() => serviceAccountEmail({ name: "run-sa" })).toThrow(/needs a project/);
+  });
+
+  test("RunService plan sends the service account email on create and update", () => {
+    const resource = {
+      ...RUN_SERVICE,
+      spec: { ...(RUN_SERVICE.spec as object), template: { containers: [{ image: "i" }], serviceAccountRef: { name: "run-sa" } } },
+    };
+    const plan = cloudRunServiceMapper.plan(resource, { base: "http://x", project: "p" });
+    expect((plan.create.body as { template: { serviceAccount: string } }).template.serviceAccount).toBe("run-sa@p.iam.gserviceaccount.com");
   });
 
   test("RunService plan → POST v2 services?serviceId, async operation present", () => {
