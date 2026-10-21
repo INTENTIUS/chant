@@ -154,7 +154,9 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const sources = readWorkflowSources(repoRoot, fromRepo);
     const scan = workflowsHolding(green, sources);
     // #4169: the triggers and concurrency of the workflows holding a phase that sets build. Refused before anything is written.
-    const edits = buildTriggerEdits(green, sources);
+    // #4220: under a ci.workflow, composed releases' branches run the phases and tick too.
+    const compose = declaration.ci?.workflow !== undefined || declaration.members.some((m) => m.ciWorkflow !== null);
+    const edits = buildTriggerEdits(green, sources, { compose });
     const extra = ctx.args.ciWorkflows ?? [];
     const workflows = [...new Set([...scan.workflows, ...extra])].sort();
     for (const f of scan.unreadable) console.error(`warning: ${f} is not valid YAML, so its jobs were not read`);
@@ -180,10 +182,10 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
     // The install runs in the workspace root, so its lockfile there keys setup-node's npm cache.
     const npmLock = ctx.args.ciInstall && existsSync(join(root, "package-lock.json")) ? (workspaceRoot === "." ? "package-lock.json" : `${workspaceRoot}/package-lock.json`) : undefined;
-    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push, ...(runnerKeySecret ? { runnerKeySecret } : {}) });
+    const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push, ...(runnerKeySecret ? { runnerKeySecret } : {}), ...(compose ? { compose } : {}) });
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
-    console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}, and every 15 minutes.`);
+    console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}${compose ? " or a chant/compose/ branch" : ""}, and every 15 minutes.`);
     for (const e of edits) {
       if (!e.changed) continue;
       const path = writeWorkflowFile(join(repoRoot, e.path), e.text);

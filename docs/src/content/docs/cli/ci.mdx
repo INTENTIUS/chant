@@ -512,6 +512,8 @@ For each phase that sets `build` ([#4169](https://github.com/INTENTIUS/chant/iss
 
 A workflow holding a phase of each value is refused, since no one group serves both. The tick's workflow then also has `actions: write`, to re-run a failed job and start a workflow at a tag, and its `workflow_run` trigger listens on `ci/build/**` as well as the branch. With no phase setting `build`, every file comes out as before.
 
+When the workspace declares a `ci.workflow`, at the top level or on a member, composed releases live on `chant/compose/<name>` branches ([#4220](https://github.com/INTENTIUS/chant/issues/4220)). Under `newest`, pushes to `chant/compose/**` start a run too. For `every`, the filter joins a `push` that lists branches (a `push` that lists none already runs on all of them), and the concurrency group keys a compose branch's runs by commit, as the branch's. The tick's `workflow_run` lists `chant/compose/**` too. Without a `ci.workflow` the files come out as before.
+
 For chant runs, a push Op's trigger takes `build` too, in `chant run --generate` ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). On GitHub and Forgejo, `newest` runs on pushes to the branch, on `ci/build/**` tags and by hand, in a concurrency group per ref; `every` gets a group per commit. On GitLab, `newest` adds a rule for `ci/build/` tags, and the file's header says to keep the project's auto-cancel of redundant pipelines on for `newest` and off for `every`, since a waiting pipeline is dropped only by that setting.
 
 ## Pushing tags to commits that change workflows
