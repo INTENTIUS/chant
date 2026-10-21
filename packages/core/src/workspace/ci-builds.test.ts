@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { agedOut, BUILD_REQUEST_TTL_MS, planBuilds, recordOf, RETRY_TTL_MS, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
+import { agedOut, BUILD_REQUEST_TTL_MS, MISSING_RUN_GRACE_MS, planBuilds, recordOf, RETRY_TTL_MS, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
 import { evaluateCommit, type TickCommit } from "./ci-green";
 import type { CheckRun } from "./ci-green-forge";
 import type { CiGreen } from "./declaration";
@@ -170,5 +170,50 @@ describe("records (#4169)", () => {
   test("a pending record that left the window is rewritten unbuilt, aged out", () => {
     const pending: CiRecord = { schema: 1, commit: sha(1), branch: "main", state: "pending", at: ago(1), phases: { suites: { verdict: "pending", build: "newest", runs: [] } } };
     expect(agedOut(pending, NOW)).toMatchObject({ state: "unbuilt", phases: { suites: { verdict: "unbuilt", reason: "aged-out" } } });
+  });
+});
+
+describe("a missing every phase (#4216)", () => {
+  // The forge ran suites on the commit but never ran check: its push run was skipped.
+  const skipped = (committed: string) => {
+    const { commits, runs } = judged([[run("suites", "success")]]);
+    commits[0].committed = committed;
+    return { commits, runs };
+  };
+
+  test("half an hour after the commit landed, the tick asks for the every phase once, at a ci/build tag", () => {
+    const { commits, runs } = skipped(ago(MISSING_RUN_GRACE_MS + 60_000));
+    const p = plan(commits, runs);
+    expect(p.requests).toEqual([expect.objectContaining({ commit: commits[0].sha, phases: ["check"], reason: "missing", tag: `ci/build/${commits[0].sha}` })]);
+    expect(commits[0].verdict!.phases[0]).toMatchObject({ phase: "check", verdict: "pending", reason: "requested" });
+    // The record keeps it, so the next tick doesn't ask again.
+    const req = new Map(p.requests.map((r) => [r.commit, r] as const));
+    const record = recordOf({ green: GREEN, commit: commits[0], retries: [], requests: req, now: NOW });
+    expect(record.missing).toEqual({ phases: ["check"], at: p.requests[0].at });
+    const again = skipped(ago(MISSING_RUN_GRACE_MS + 60_000));
+    expect(plan(again.commits, again.runs, { records: new Map([[commits[0].sha, record]]) }).requests).toEqual([]);
+    const { request: _request, ...afterTagDeleted } = record;
+    const later = recordOf({ green: GREEN, commit: again.commits[0], previous: afterTagDeleted as CiRecord, retries: [], requests: new Map(), now: NOW });
+    expect(later.missing).toEqual(record.missing);
+  });
+
+  test("nothing is asked for inside the grace, for a newest phase, for a tagged commit, or while a request waits", () => {
+    expect(plan(...Object.values(skipped(ago(MISSING_RUN_GRACE_MS - 60_000))) as [TickCommit[], Map<string, CheckRun[]>]).requests).toEqual([]);
+    // suites missing is the newest phase's business (superseded or bisected), not a missing request.
+    const { commits, runs } = judged([[run("check", "success")]]);
+    commits[0].committed = ago(MISSING_RUN_GRACE_MS + 60_000);
+    expect(plan(commits, runs).requests).toEqual([]);
+    const tagged = skipped(ago(MISSING_RUN_GRACE_MS + 60_000));
+    tagged.commits[0].before = "green";
+    expect(plan(tagged.commits, tagged.runs).requests).toEqual([]);
+    const waiting = skipped(ago(MISSING_RUN_GRACE_MS + 60_000));
+    const r: BuildRequest = { schema: 1, tag: `ci/build/${waiting.commits[0].sha}`, commit: waiting.commits[0].sha, branch: "main", phases: ["suites"], reason: "requested", at: ago(60_000) };
+    expect(plan(waiting.commits, waiting.runs, { requests: new Map([[r.commit, r]]) }).requests).toEqual([]);
+  });
+
+  test("a phase that sets no build is never asked for", () => {
+    const green: CiGreen = { ...GREEN, phases: GREEN.phases.map((ph) => (ph.name === "check" ? { ...ph, build: undefined } : ph)) };
+    const { commits, runs } = skipped(ago(MISSING_RUN_GRACE_MS + 60_000));
+    expect(planBuilds({ green, commits, runs, requests: new Map(), records: new Map(), now: NOW, retryVia: null }).requests).toEqual([]);
   });
 });

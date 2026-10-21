@@ -26,6 +26,10 @@
  *   waits on is `pending`. A request no runner served in six hours leaves
  *   the phase `unbuilt`, and once its phases are decided the tick deletes
  *   the tag.
+ * - Missing. A phase that declares `build: "every"` and has no run on a
+ *   commit half an hour after it landed (the forge skipped the push run, as
+ *   on acc9b9dbd) gets one build request, `missing`, for those phases
+ *   (#4216). The record keeps `missing`, so a commit is asked for once.
  * - Records. Every first-parent commit the tick judged gets
  *   `_ci/<sha>.json` on `chant/lifecycle`, rewritten only when what it says
  *   changes: `green`, `red`, `unbuilt` or `pending`, with each required
@@ -47,12 +51,14 @@ const LEDGER_REF = "refs/heads/chant/lifecycle";
 
 /** How long a build request may wait for a runner before its phases count as unbuilt. */
 export const BUILD_REQUEST_TTL_MS = 6 * 3_600_000;
+/** How long an `every` phase may have no run on a commit before the tick asks for one (#4216). */
+export const MISSING_RUN_GRACE_MS = 30 * 60_000;
 /** How long a retry may take to start before the failure it was counts. */
 export const RETRY_TTL_MS = 3_600_000;
 /** Above this many unbuilt commits a bisect halves the range; at or below it, it steps back one commit at a time. */
 export const BISECT_HALVE_ABOVE = 4;
 
-export type BuildRequestReason = "bisect" | "retry" | "requested";
+export type BuildRequestReason = "bisect" | "retry" | "requested" | "missing";
 
 /** A `ci/build/<sha>` tag's record: the phases to build at the commit, and why. */
 export interface BuildRequest {
@@ -84,6 +90,8 @@ export interface CiRecord {
   retried?: Record<string, { run: number; at: string }>;
   /** The build request waiting on this commit, when there is one. */
   request?: { tag: string; reason: BuildRequestReason; phases: string[]; at: string; dispatched?: true };
+  /** The `every` phases a `missing` request asked for, and when (#4216). A commit is asked for once. */
+  missing?: { phases: string[]; at: string };
 }
 
 export interface CiRecordRun {
@@ -164,6 +172,20 @@ export function planBuilds(input: BuildsInput): BuildsPlan {
       if (!p || p.runs.length > 0) continue;
       setPhase(c, name, (q) => (live(c.sha, name) ? { ...q, verdict: "pending", reason: "requested" } : { ...q, verdict: "unbuilt", reason: "request-unserved" }));
     }
+  }
+
+  // Missing (#4216): an `every` phase the forge never ran on a commit, asked for once per commit.
+  for (const c of commits) {
+    if (c.before !== "none" || !c.verdict || age(c.committed, now) < MISSING_RUN_GRACE_MS) continue;
+    if (input.records.get(c.sha)?.missing || input.requests.has(c.sha) || plan.requests.some((q) => q.commit === c.sha)) continue;
+    const phases = green.require.filter((name) => {
+      if (phaseOf(green, name).build !== "every") return false;
+      const p = phaseIn(c, name);
+      return p !== undefined && p.verdict === "pending" && p.runs.length === 0 && p.reason === undefined;
+    });
+    if (phases.length === 0) continue;
+    plan.requests.push(request(green, c.sha, phases, "missing", now));
+    for (const name of phases) setPhase(c, name, (q) => ({ ...q, verdict: "pending", reason: "requested" }));
   }
 
   // Superseded: newest first, a newest phase with no run below a commit with one.
@@ -265,9 +287,11 @@ export function recordOf(input: { green: CiGreen; commit: TickCommit; previous?:
   const retried = { ...(previous?.retried ?? {}) };
   for (const r of input.retries) if (r.sha === c.sha) retried[r.run.name] = { run: r.run.id, at: iso(now) };
   const req = input.requests.get(c.sha);
+  const missing = req?.reason === "missing" ? { phases: req.phases, at: req.at } : previous?.missing;
   const extras = {
     ...(Object.keys(retried).length > 0 ? { retried } : {}),
     ...(req ? { request: { tag: req.tag, reason: req.reason, phases: req.phases, at: req.at } } : {}),
+    ...(missing ? { missing } : {}),
   };
   if (c.before === "revoked" || !c.verdict) {
     return { schema: 1, commit: c.sha, branch: green.branch, state: "red", at: iso(now), revoked: true, phases: previous?.phases ?? {}, ...(previous?.failure ? { failure: previous.failure } : {}), ...extras };

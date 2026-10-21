@@ -327,9 +327,11 @@ export interface BuildTriggerEdit {
  *   ref that never cancels a run in progress, so GitHub keeps the newest
  *   push waiting and drops the ones between, and each tag's build runs in a
  *   group of its own.
- * - `every`: the triggers stay, and the group is the commit itself on the
- *   branch, so no push cancels or replaces another's run; elsewhere, such as
- *   a pull request, a new push cancels the run it supersedes.
+ * - `every`: the triggers stay, with `workflow_dispatch` added so the tick
+ *   can start a run the forge never started on a commit (#4216), and the
+ *   group is the commit itself on the branch, so no push cancels or replaces
+ *   another's run; elsewhere, such as a pull request or a `ci/build/<sha>`
+ *   tag, a new push cancels the run it supersedes.
  *
  * With `compose` (#4220, a workspace declaring `ci.workflow`), both builds
  * also run on pushes to `chant/compose/**`: `newest` adds the filter to the
@@ -337,7 +339,7 @@ export interface BuildTriggerEdit {
  * and `every`'s group keys a compose branch's runs by commit, as the trunk
  * branch's.
  *
- * Only the top-level `on:` (for `newest`, or `every` with `compose`) and `concurrency:` blocks change,
+ * Only the top-level `on:` and `concurrency:` blocks change,
  * each under {@link BUILD_BLOCK_MARKER}; the rest of the file is kept as it
  * is. Throws when one workflow holds a phase of each build, which no one
  * concurrency group can serve.
@@ -375,12 +377,16 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       text = writeTopLevel(text, "concurrency", { group: `chant-build-${tag}-\${{ github.ref }}`, "cancel-in-progress": false });
     } else {
       const main = `refs/heads/${green.branch}`;
+      const on = triggersOf(isObject(doc) ? doc.on : undefined);
+      let next = on;
       // A push filter that lists branches gains the compose branches; one with no list already runs on every branch.
-      const on = isObject(doc) && isObject(doc.on) ? doc.on : undefined;
-      const pushOn = on && isObject(on.push) ? on.push : undefined;
-      if (compose && on && pushOn && Array.isArray(pushOn.branches) && !pushOn.branches.includes(COMPOSE_BRANCHES)) {
-        text = writeTopLevel(text, "on", { ...on, push: { ...pushOn, branches: [...pushOn.branches, COMPOSE_BRANCHES] } });
+      const pushOn = isObject(on.push) ? on.push : undefined;
+      if (compose && pushOn && Array.isArray(pushOn.branches) && !pushOn.branches.includes(COMPOSE_BRANCHES)) {
+        next = { ...next, push: { ...pushOn, branches: [...pushOn.branches, COMPOSE_BRANCHES] } };
       }
+      // #4216: the tick starts the workflow by hand at a ci/build/<sha> tag when the forge ran nothing on a commit.
+      if (!("workflow_dispatch" in next)) next = { ...next, workflow_dispatch: {} };
+      if (next !== on) text = writeTopLevel(text, "on", next);
       // #4220: a compose branch's commits each get a verdict, so its runs are keyed by commit, as the trunk branch's are.
       const keyed = compose ? `(github.ref == '${main}' || startsWith(github.ref, 'refs/heads/${COMPOSE_BRANCH_PREFIX}'))` : `github.ref == '${main}'`;
       const unkeyed = compose ? `!${keyed}` : `github.ref != '${main}'`;
@@ -394,6 +400,14 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
     out.push({ path: s.path, build, phases, text, changed: text !== s.text });
   }
   return out;
+}
+
+/** A workflow's `on:` as a map: `on: push` and `on: [push, pull_request]` name triggers with no settings. */
+function triggersOf(on: unknown): Record<string, unknown> {
+  if (isObject(on)) return on;
+  if (typeof on === "string") return { [on]: null };
+  if (Array.isArray(on)) return Object.fromEntries(on.filter((t): t is string => typeof t === "string").map((t) => [t, null]));
+  return {};
 }
 
 /**

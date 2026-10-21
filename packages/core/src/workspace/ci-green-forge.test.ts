@@ -64,3 +64,34 @@ describe("the GitHub check-run client (#3573)", () => {
     expect(() => ciForgeFromEnv("forgejo", {})).toThrow(/GitHub only/);
   });
 });
+
+describe("re-running a failed check run (#4219)", () => {
+  const run = (id: number) => ({ id, name: "suites", status: "completed", conclusion: "failure", completedAt: null, url: null });
+  const forgeWith = (jobs: Record<number, unknown>) => {
+    const calls: string[] = [];
+    const fetch: ForgeFetch = async (url, init) => {
+      calls.push(`${init.method} ${new URL(url).pathname}`);
+      const m = /\/actions\/jobs\/(\d+)$/.exec(new URL(url).pathname);
+      if (init.method === "GET" && m) return { ok: true, status: 200, text: async () => JSON.stringify(jobs[Number(m[1])] ?? {}) };
+      return { ok: true, status: 201, text: async () => "" };
+    };
+    return { forge: githubCiForge({ apiBase: "https://api.github.com", repo: "acme/app", token: "t", fetch }), calls };
+  };
+
+  test("re-runs the failed jobs of the job's workflow run, so an aggregate's shards go again with it, once per run", async () => {
+    const { forge, calls } = forgeWith({ 7: { id: 7, run_id: 500 }, 8: { id: 8, run_id: 500 } });
+    await forge.rerun!(run(7));
+    await forge.rerun!(run(8));
+    expect(calls).toEqual([
+      "GET /repos/acme/app/actions/jobs/7",
+      "POST /repos/acme/app/actions/runs/500/rerun-failed-jobs",
+      "GET /repos/acme/app/actions/jobs/8",
+    ]);
+  });
+
+  test("falls back to the job's own re-run when the job names no workflow run", async () => {
+    const { forge, calls } = forgeWith({ 9: { id: 9 } });
+    await forge.rerun!(run(9));
+    expect(calls).toEqual(["GET /repos/acme/app/actions/jobs/9", "POST /repos/acme/app/actions/jobs/9/rerun"]);
+  });
+});
