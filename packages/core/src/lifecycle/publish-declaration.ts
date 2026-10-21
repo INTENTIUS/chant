@@ -45,6 +45,14 @@ export const NpmPublishSchema = z
      * `sbom.cyclonedx.json` it holds. `false` publishes without one.
      */
     sbom: sbomField.optional(),
+    /**
+     * `false` publishes each package straight to the reveal tag (`latest`
+     * unless the publish names another), with no `next` stage and no
+     * `npm dist-tag` move (#4040). For credentials that may publish but not
+     * move a dist-tag, such as npm trusted publishing without "Allow npm
+     * dist-tag" on the package's record (#3904). Default `true`.
+     */
+    stage: z.boolean().optional(),
   })
   .strict();
 

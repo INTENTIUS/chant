@@ -166,6 +166,25 @@ describe("npm", () => {
     expect(readFakeNpmRegistry(log).packages["@acme/kit"]!.distTags).toEqual({ latest: "1.3.0", next: "1.4.0", beta: "1.4.0" });
   });
 
+  test("stage: false publishes each package straight to latest in the order declared and moves no dist-tag (#4040)", async () => {
+    const { dir, npm, log } = setup();
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "kit.tgz"], access: "public", stage: false })], { npm });
+    const ctx = context(dir, { env: { PATH: process.env.PATH }, provenance: OIDC });
+    expect((await target!.plan(ctx))[0]!.destination).toBe("the registry npm's config names, dist-tag latest");
+    const staged = await target!.stage(ctx);
+    expect(latest(log)).toEqual({ "@acme/core": "1.4.0", "@acme/cli": "1.3.0", "@acme/kit": "1.4.0" });
+    const before = calls(log).length;
+    const done = await target!.reveal(ctx, staged);
+    expect(calls(log).filter((c) => c.args[0] === "publish").map((c) => c.args)).toEqual([
+      ["publish", join(dir, "packages/core"), "--tag", "latest", "--access", "public", "--provenance"],
+      ["publish", join(dir, "kit.tgz"), "--tag", "latest", "--access", "public", "--provenance"],
+    ]);
+    // The reveal only audits.
+    expect(calls(log).slice(before).map((c) => c.args[0])).toEqual(["install", "audit"]);
+    expect(done.items.map((i) => i.destination)).toEqual(Array(2).fill("the registry npm's config names, dist-tag latest"));
+    expect(readFakeNpmRegistry(log).packages["@acme/core"]!.distTags.next).toBeUndefined();
+  });
+
   test("a stage that failed part way names what it staged and, run again, publishes only the rest; a tag move that fails names what moved", async () => {
     const { dir, npm, log } = setup();
     const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "packages/cli", "packages/kit"] })], { npm });

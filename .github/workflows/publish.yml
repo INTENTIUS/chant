@@ -9,7 +9,9 @@ on:
     #   nothing published. Either tag reaches the same publish job; the
     #   per-package skip-if-unchanged guard below means a single-lexicon tag
     #   publishes only the package whose version actually moved.
-    tags: ['chant-v*', 'lexicon-*-v*']
+    # release/npm/<label> — a release cut by `just release` (#4040), published
+    #   by the release-publish job below with `chant release publish`.
+    tags: ['chant-v*', 'lexicon-*-v*', 'release/npm/*']
     # GATED publish-on-merge (#528): uncomment to publish, on merge to main,
     # any package whose version changed. Only version-bumped packages publish
     # (per-package skip-if-unchanged in the publish job); the `test` gate is
@@ -103,7 +105,7 @@ jobs:
     # Run when the CI gate passed (a dispatch with verify_ci) or was skipped
     # (every tag push, and a dispatch without it), and every package has a
     # trusted-publisher record (#3191). Never runs if either actually failed.
-    if: ${{ always() && needs.audit.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    if: ${{ always() && !startsWith(github.ref, 'refs/tags/release/') && needs.audit.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       # What this run put on npm, name@version, space-separated. `untag`
@@ -171,6 +173,43 @@ jobs:
           CHANT_STAGED_PUBLISH: ${{ vars.CHANT_STAGED_PUBLISH }}
         run: bash scripts/publish-packages.sh
 
+  # #4040: a release cut with `just release` (`chant release cut --at`) on
+  # its release/npm/<label> tag. The cut made no version-bump commit, so
+  # scripts/release-pack.sh sets every package to the label and packs it,
+  # with CHANT_RELEASE_GATE armed as above, then `chant release publish`
+  # publishes the tarballs release/chant.config.ts names, core first, straight
+  # to latest. No .npmrc, for the reason the publish job gives: each package
+  # publishes over its trusted-publisher record, with provenance. The publish
+  # pushes its record to chant/lifecycle, hence contents: write, and a run
+  # again after a failure resumes from that record. The tag is never deleted.
+  release-publish:
+    needs: [audit]
+    if: ${{ startsWith(github.ref, 'refs/tags/release/npm/') && needs.audit.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - name: Pack every package at the release's label
+        env:
+          CHANT_RELEASE_GATE: "1"
+        run: bash scripts/release-pack.sh "${GITHUB_REF_NAME#release/npm/}"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*' chant/lifecycle:chant/lifecycle
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Publish the release
+        working-directory: release
+        run: npx tsx ../packages/core/src/cli/main.ts release publish "${GITHUB_REF_NAME#release/npm/}" --yes
+
   # #1481 — a failed release must not leave its tag behind. `just release`
   # pushes the bump commit and the tag before this workflow runs, so when the
   # gate, the audit or the publish fails, main is left claiming a version the
@@ -198,7 +237,7 @@ jobs:
   # the gate and publishes. A cancelled gate (no output) still untags.
   untag:
     needs: [test, audit, publish]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.audit.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/release/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.audit.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

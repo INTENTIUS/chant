@@ -524,6 +524,12 @@
       "because": "an npm workspace package with no chant project"
     },
     {
+      "name": "npm",
+      "dir": "release",
+      "kind": "chant",
+      "because": "chant's own npm release, cut by just release and published by publish.yml (#4040)"
+    },
+    {
       "name": "reference-workspace",
       "dir": "reference-workspace",
       "kind": "workspace"

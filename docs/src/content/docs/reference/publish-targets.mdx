@@ -37,6 +37,7 @@ A target never builds. It uploads the files that are there. A file that the rele
 | `registry` | The registry URL. Default: the one npm's own config names |
 | `access` | `public` or `restricted` for npm's `--access` |
 | `sbom` | The SBOM file each package carries at its root. Default: the first of `sbom.spdx.json`, `sbom.cdx.json` and `sbom.cyclonedx.json` it holds. `false` publishes without one |
+| `stage` | `false` publishes each package straight to `latest`, or the tag the publish names, with no `next` stage and no `npm dist-tag` move. Use it when the credentials may publish but not move a dist-tag, as with trusted publishing when the package's record does not allow `npm dist-tag`. Default `true` |
 
 The stage runs, for each package, `npm view <name>@<version> version` to ask whether the registry already holds the version. When it doesn't, it runs `npm publish <package> --tag next` with the declared `--registry` and `--access`, and `--provenance` when the run has an OIDC token. A publish from GitHub Actions with `id-token: write` gets npm provenance this way. So does one from GitLab CI with `SIGSTORE_ID_TOKEN`, and npm trusted publishing works in both. A version under `next` is not what `latest` or a range resolves to, so a consumer sees nothing yet. A version already on the registry is not published again. When one package fails, the error names the packages staged before it.
 

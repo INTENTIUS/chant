@@ -178,3 +178,20 @@ release_unship() {
   echo "release: $2" >&2
   echo "release: nothing was pushed; the local tag $1 is deleted." >&2
 }
+
+# release_apply_version <version> sets .version of every file in `bump_files`
+# to <version>, with the @intentius/* dependency, peer and optional ranges at
+# ^<version>, and refreshes package-lock.json, as `just release-legacy`'s
+# apply_bump does. scripts/release-pack.sh runs it before packing (#4040).
+release_apply_version() {
+  local v="$1" f
+  for f in "${bump_files[@]}"; do
+    jq --arg v "$v" '
+      .version = $v
+      | if .peerDependencies then .peerDependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
+      | if .optionalDependencies then .optionalDependencies |= with_entries(if ((.key | startswith("@intentius/")) and .value != "*") then .value = "^" + $v else . end) else . end
+      | if .dependencies then .dependencies |= with_entries(if (.key | startswith("@intentius/")) then .value = "^" + $v else . end) else . end
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
+  npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null
+}
