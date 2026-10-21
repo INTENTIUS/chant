@@ -47,6 +47,12 @@ export interface GcpReadClientOptions {
   project: string;
   /** Injectable HTTP, so tests never touch the network. */
   http?: GcpReadHttp;
+  /**
+   * The declared resources, refs resolved, as apply passes them (#4251): an
+   * IAMPolicyMember on a RunService named by `name` takes the service's region
+   * from its declaration, which a read otherwise can't know.
+   */
+  manifest?: readonly GcpResource[];
 }
 
 /** Injectable HTTP client — mirrors the applier's `GcpHttp`. A body is sent only for a POST read (`:getIamPolicy`). */
@@ -108,7 +114,7 @@ export async function getResource(
     spec: (declared?.spec as Record<string, unknown> | undefined) ?? declared ?? {},
   };
 
-  const ctx = { base, project: client.project };
+  const ctx = { base, project: client.project, ...(client.manifest ? { manifest: client.manifest } : {}) };
   if (mapper.accepts && !mapper.accepts(resource, ctx)) {
     throw new GcpReadError(`no REST read for ${kind}/${name}: its target has no endpoint chant can read`);
   }
