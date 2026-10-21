@@ -1,0 +1,55 @@
+---
+title: Curate a Release
+description: Pick the green sha a release ships from, keep a change out of it, and cut it from any checkout, with the version taken from the label.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/curate-a-release/.
+  Fetch the tags and the ledger branch, then run `npx chant release candidates --env <env>` in the member's directory for the environment I name, and show me each candidate with the pull requests and work items it would ship.
+  For the candidate I pick, run `npx chant release cut <label> --at <sha>` without `--yes` and show me the plan; do not cut it.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This page picks which green sha of trunk a release ships from. Trunk can carry work that is not ready, and the person cutting the release decides what goes out. The commands are in the [`chant release`](/chant/cli/release/#release-candidates) reference, and [Trunk and Releases](/chant/concepts/trunk-and-releases/#a-green-sha-not-the-tip) explains why a release comes from a green sha and not the tip.
+
+## Before you start
+
+The workspace tags green shas ([Tag Green Commits](/chant/guide/green-commits/)), and the member declares its `environments` in `chant.config.ts`. Fetch the tags and the ledger branch, so the list sees every green and revoked tag and what each environment runs now.
+
+```bash
+git fetch origin --tags
+git fetch origin chant/lifecycle:chant/lifecycle
+```
+
+## List the candidates
+
+Run the list for the environment you are releasing to. The walk stops at what that environment runs, so each line is something it doesn't have yet.
+
+```bash
+chant release candidates --env prod
+```
+
+Each candidate is a green sha. Under it are the changes since the previous candidate, each with its pull request and work items, and any flag whose record changed. Anything not green yet is counted at the top, and a revoked one is listed as skipped, so its changes ride with the next candidate. The newest candidate is not always the one to ship.
+
+## Keep a change out
+
+A change you don't want in this release stays out in one of two ways.
+
+- Leave its flag off for the environment. The code ships, the build reads the flag as a build-time parameter, and nothing it guards runs. [Feature Flags](/chant/guide/feature-flags/) sets one up. This is the usual way, since later candidates still carry the change.
+- Cut an earlier candidate: the newest one whose changes don't include it. Everything merged after it waits for the next release.
+
+If the change is already on trunk without a flag and every later candidate includes it, revert it on trunk and cut from the revert once it goes green.
+
+## Cut the candidate you picked
+
+Cut it with `--at`. The checkout you run it from need not be clean or at that sha, since the cut checks it out in a temporary worktree. It makes every check a cut at `HEAD` makes and tags the sha `release/<label>`. Without `--yes` it is a dry run.
+
+```bash
+chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build"
+chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build" --yes
+```
+
+The label reaches the build as `CHANT_RELEASE_LABEL`, so nothing has to bump the version on trunk first. A build-time parameter declared with `env: "CHANT_RELEASE_LABEL"` reads it, and so can a build tool. [The label in the build](/chant/cli/release/#the-label-in-the-build) shows a `chant.config.ts` parameter and a Cargo crate reading it.
+
+## Then
+
+[Release from Your Workstation](/chant/guide/release-from-workstation/) publishes the cut from CI, and [Promote a Release](/chant/guide/promote-a-release/) moves it through the environments.

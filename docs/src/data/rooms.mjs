@@ -379,6 +379,7 @@ export const ROOMS = [
 		tasks: [
 			{ label: 'Tag Green Commits', href: 'guide/green-commits' },
 			{ label: 'Link commits to work items', href: 'guide/work-items#link-commits-to-work-items' },
+			{ label: 'Curate a Release', href: 'guide/curate-a-release' },
 			{ label: 'Release from Your Workstation', href: 'guide/release-from-workstation' },
 			{ label: 'Promote a Release', href: 'guide/promote-a-release' },
 			{ label: 'Feature Flags', href: 'guide/feature-flags' },
