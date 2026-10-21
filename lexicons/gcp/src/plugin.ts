@@ -411,8 +411,12 @@ export const bucket = new StorageBucket({
 
   deepNormalizationHooks: gcpDeepNormalizationHooks,
 
-  /** Runtime health (#4177): Cloud Run services. Implementation in ./health.ts. */
-  healthTypes: ["GCP::Run::Service"],
+  /**
+   * Runtime health (#4177, #4239): Cloud Run services, backend services and IAM
+   * policy members. Implementation in ./health.ts, whose GCP_HEALTH_TYPES this
+   * list matches; written out so the build never imports the reader.
+   */
+  healthTypes: ["GCP::Run::Service", "GCP::Compute::BackendService", "GCP::Iam::PolicyMember"],
 
   async observeHealth(options) {
     const { observeHealthGcp } = await import("./health");

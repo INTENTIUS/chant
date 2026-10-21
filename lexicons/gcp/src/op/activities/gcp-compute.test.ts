@@ -60,7 +60,7 @@ describe("compute load balancer mappers (#4233)", () => {
   });
 
   test("a serverless NEG is regional and names its Cloud Run service", () => {
-    expect(plan("ComputeRegionNetworkEndpointGroup")).toEqual({
+    expect(plan("ComputeRegionNetworkEndpointGroup")).toMatchObject({
       getUrl: "https://compute.googleapis.com/compute/v1/projects/p1/regions/europe-west1/networkEndpointGroups/web",
       create: {
         method: "POST",
@@ -138,7 +138,9 @@ describe("compute operations (#4233)", () => {
     let exists = false;
     const http: GcpHttp = async (method, url) => {
       calls.push(`${method} ${url}`);
-      if (method === "GET" && url.endsWith("/addresses/web-ip")) return exists ? { status: 200, text: "{}" } : { status: 404, text: "" };
+      if (method === "GET" && url.endsWith("/addresses/web-ip")) {
+        return exists ? { status: 200, text: JSON.stringify({ name: "web-ip", labels: computeLabels(undefined) }) } : { status: 404, text: "" };
+      }
       if (method === "POST") {
         exists = true;
         return { status: 200, text: JSON.stringify({ kind: "compute#operation", selfLink: "https://compute.googleapis.com/compute/v1/projects/p1/global/operations/op-1", status: "PENDING" }) };

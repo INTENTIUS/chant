@@ -104,7 +104,20 @@ export interface ApplyPlan {
   getUrl: string;
   create: { method: "POST" | "PUT"; url: string; body: unknown };
   update?: { method: "PATCH" | "PUT"; url: string; body: unknown };
+  /**
+   * In place of `update`, for a resource whose update depends on the live body
+   * (#4238): compute updates carry the live `fingerprint`, and some fields only
+   * change through a setter (`setTarget`, `setLabels`). Returns the requests to
+   * send, none when the live resource already matches, or `replace` naming what
+   * differs on a field that can't change in place.
+   */
+  reconcile?(live: unknown, http: GcpHttp, signal?: AbortSignal): Promise<ReconcileStep>;
 }
+
+/** What {@link ApplyPlan.reconcile} decided for an existing resource. */
+export type ReconcileStep =
+  | { requests: Array<{ method: "POST" | "PATCH" | "PUT"; url: string; body: unknown }> }
+  | { replace: string };
 
 /**
  * Handles an async create whose response is a long-running operation. Present
@@ -637,7 +650,7 @@ export async function applyResource(
   ctx: MapperCtx,
   http: GcpHttp = defaultHttp,
   signal?: AbortSignal,
-): Promise<{ kind: string; name: string; created: boolean; updated: boolean }> {
+): Promise<{ kind: string; name: string; created: boolean; updated: boolean; replaceRequired?: string }> {
   const name = resource.metadata?.name ?? "?";
   if (mapper.custom) {
     const result = await mapper.custom.apply(resource, ctx, http, signal);
@@ -645,6 +658,23 @@ export async function applyResource(
   }
   const plan = mapper.plan(resource, ctx);
   const get = await http("GET", plan.getUrl, undefined, signal);
+
+  if (get.status === 200 && plan.reconcile) {
+    const step = await plan.reconcile(parseJson(get.text), http, signal);
+    if ("replace" in step) {
+      // Reported, not attempted: replacing deletes the resource, which apply never does on its own.
+      console.log(`replace required: ${mapper.kind}/${name}: ${step.replace}`);
+      return { kind: mapper.kind, name, created: false, updated: false, replaceRequired: step.replace };
+    }
+    for (const req of step.requests) {
+      const res = await http(req.method, req.url, req.body, signal);
+      if (res.status >= 300) {
+        throw new Error(`${mapper.kind} ${name} update failed (${res.status}): ${res.text}`);
+      }
+      await pollIfAsync(mapper, res.text, ctx, http, signal);
+    }
+    return { kind: mapper.kind, name, created: false, updated: step.requests.length > 0 };
+  }
 
   if (get.status === 200) {
     // Exists. Reconcile to desired if the mapper supports it; otherwise leave it.

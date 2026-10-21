@@ -98,6 +98,28 @@ export function mapperForKind(kind: string): ResourceMapper | undefined {
  * build a URL — the same input the applier hands it. Returns the parsed body,
  * or throws {@link GcpReadError} carrying the status.
  */
+/**
+ * The URL a read of this resource GETs: the applier's own `plan().getUrl`, so
+ * a health read's sub-calls (`getHealth`) land on the same resource path.
+ * Throws a {@link GcpReadError} when the declared spec can't produce one,
+ * which is a hole, never an absence.
+ */
+export function readUrl(client: GcpReadClientOptions, kind: string, name: string, declared?: Record<string, unknown>): string {
+  const mapper = mapperForKind(kind);
+  if (!mapper) throw new GcpReadError(`no REST mapper for kind ${kind}`);
+  const base = (client.endpoint ?? mapper.defaultHost).replace(/\/$/, "");
+  const resource: GcpResource = {
+    kind,
+    metadata: { name },
+    spec: (declared?.spec as Record<string, unknown> | undefined) ?? declared ?? {},
+  };
+  try {
+    return mapper.plan(resource, { base, project: client.project, ...(client.manifest ? { manifest: client.manifest } : {}) }).getUrl;
+  } catch (err) {
+    throw new GcpReadError(`could not build a read URL for ${kind}/${name}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function getResource(
   client: GcpReadClientOptions,
   kind: string,
@@ -128,14 +150,7 @@ export async function getResource(
       throw new GcpReadError(`could not read ${kind}/${name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
-    let getUrl: string;
-    try {
-      getUrl = mapper.plan(resource, ctx).getUrl;
-    } catch (err) {
-      // A mapper that cannot plan from the declared spec cannot produce a URL, so
-      // there is nothing to read — a hole, never an absence.
-      throw new GcpReadError(`could not build a read URL for ${kind}/${name}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const getUrl = readUrl(client, kind, name, declared);
     try {
       res = await http("GET", getUrl);
     } catch (err) {
