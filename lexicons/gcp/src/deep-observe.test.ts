@@ -235,7 +235,7 @@ describe("observeResourcesDeepGcp — over REST (#1209)", () => {
   });
 
   test("a kind the applier cannot write is unsupported-kind, and is never queried", async () => {
-    const out = await observe(entities([["e", "GCP::Compute::Address", { metadata: { name: "a" } }]]));
+    const out = await observe(entities([["e", "GCP::Compute::Network", { metadata: { name: "n" } }]]));
     expect(out.unobserved?.e?.reason).toBe("unsupported-kind");
     expect(fetchMock).not.toHaveBeenCalled();
   });
