@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { applyDetail, DETAIL, detailInertNotice } from "./graph-detail";
-import type { GraphIR } from "./graph-ir";
+import { overlayGraphs, sourceOverlayGraphs, type GraphIR } from "./graph-ir";
 
 // A small graph: a gcp vpc/subnet pair plus a k8s namespace and deployment that
 // came from one composite instance ("db"), with the deployment referencing the
@@ -292,5 +292,72 @@ describe("detailInertNotice (#1489)", () => {
     };
     const detailed = applyDetail(edgeless, DETAIL.ATTRIBUTES);
     expect(detailInertNotice(edgeless, detailed)).toContain("no edges at all");
+  });
+});
+
+describe("T1 rolls a composite's overlay status up from its members (#4227)", () => {
+  // Two stacks' worth of one FargateAlb, keyed `${stack}::${logicalId}` as a
+  // multi-stack live read keys them (#1162).
+  const member = (id: string, attrs: Record<string, unknown> = {}) => ({
+    id: `three-cloud-aws::${id}`,
+    kind: "Resource",
+    lexicon: "aws",
+    compositeParent: "FargateAlb",
+    compositeInstance: "web",
+    attrs,
+  });
+  const declared: GraphIR = {
+    nodes: [member("webAlb"), member("webService"), member("webTaskDef")],
+    edges: [],
+    groups: { byLexicon: {} },
+  };
+  const live = (ids: string[], extra: GraphIR["nodes"] = []): GraphIR => ({
+    nodes: [...ids.map((id) => ({ id: `three-cloud-aws::${id}`, kind: "Resource", lexicon: "aws", attrs: {} })), ...extra],
+    edges: [],
+    groups: { byLexicon: {} },
+  });
+  const web = (ir: GraphIR) => applyDetail(ir, DETAIL.COMPOSITES).nodes.find((n) => n.id === "web")!;
+  const all = ["webAlb", "webService", "webTaskDef"];
+
+  test("every member good gives good, on either anchor", () => {
+    for (const ir of [sourceOverlayGraphs(declared, live(all)), overlayGraphs(live(all), declared)]) {
+      expect(web(ir).attrs).toEqual({ members: 3, _status: "good" });
+    }
+  });
+
+  test("an absent member makes the composite pending, and is named", () => {
+    for (const ir of [sourceOverlayGraphs(declared, live(["webAlb", "webTaskDef"])), overlayGraphs(live(["webAlb", "webTaskDef"]), declared)]) {
+      expect(web(ir).attrs).toEqual({ members: 3, _status: "accent", _memberStatus: { accent: ["three-cloud-aws::webService"] } });
+    }
+  });
+
+  test("an unobserved member gives neutral, and an absent one outranks it", () => {
+    const unobserved = { "three-cloud-aws::webTaskDef": { reason: "unsupported-kind" } } as never;
+    expect(web(sourceOverlayGraphs(declared, live(["webAlb", "webService"]), { unobserved })).attrs).toEqual({
+      members: 3,
+      _status: "neutral",
+      _memberStatus: { neutral: ["three-cloud-aws::webTaskDef"] },
+    });
+    expect(web(sourceOverlayGraphs(declared, live(["webAlb"]), { unobserved })).attrs).toEqual({
+      members: 3,
+      _status: "accent",
+      _memberStatus: { accent: ["three-cloud-aws::webService"], neutral: ["three-cloud-aws::webTaskDef"] },
+    });
+  });
+
+  test("a foreign resource stays its own node and leaves the composite good", () => {
+    const foreign = { id: "three-cloud-aws::strayBucket", kind: "Bucket", lexicon: "aws", attrs: {} };
+    const ir = applyDetail(sourceOverlayGraphs(declared, live(all, [foreign])), DETAIL.COMPOSITES);
+    expect(ir.nodes.find((n) => n.id === "web")!.attrs).toEqual({ members: 3, _status: "good" });
+    expect(ir.nodes.find((n) => n.id === foreign.id)!.attrs).toEqual({ _status: "warn" });
+  });
+
+  test("a member painted with a status the rollup does not know is never hidden", () => {
+    const ir: GraphIR = { ...declared, nodes: [member("webAlb", { _status: "good" }), member("webService", { _status: "drifted" })] };
+    expect(web(ir).attrs).toEqual({ members: 2, _status: "drifted", _memberStatus: { drifted: ["three-cloud-aws::webService"] } });
+  });
+
+  test("a graph read without --overlay carries no _status on the composite", () => {
+    expect(web(declared).attrs).toEqual({ members: 3 });
   });
 });

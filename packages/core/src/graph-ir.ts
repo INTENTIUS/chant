@@ -1078,13 +1078,21 @@ function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: Unobserved
  * no live edges). Sorted; the live groups pass through unchanged.
  */
 export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOptions): GraphIR {
-  const declaredIds = new Set(declared.nodes.map((n) => n.id));
+  const declaredById = new Map(declared.nodes.map((n) => [n.id, n]));
   const liveIds = new Set(live.nodes.map((n) => n.id));
   const unobserved = opts?.unobserved ?? {};
 
-  const nodes: IRNode[] = live.nodes.map((n) =>
-    tagStatus(n, declaredIds.has(n.id) ? "good" : n.runtimeOwner ? "runtime" : "warn"),
-  );
+  const nodes: IRNode[] = live.nodes.map((n) => {
+    const d = declaredById.get(n.id);
+    if (!d) return tagStatus(n, n.runtimeOwner ? "runtime" : "warn");
+    // A managed node keeps the composite it was declared in, so `--detail 1`
+    // collapses it with its siblings and rolls their status up (#4227).
+    const membership = {
+      ...(d.compositeInstance ? { compositeInstance: d.compositeInstance } : {}),
+      ...(d.compositeParent ? { compositeParent: d.compositeParent } : {}),
+    };
+    return tagStatus({ ...n, ...membership }, "good");
+  });
   for (const n of declared.nodes) {
     if (liveIds.has(n.id)) continue;
     const u = unobserved[n.id];

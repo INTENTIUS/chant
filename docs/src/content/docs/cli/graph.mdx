@@ -65,6 +65,12 @@ chant graph --format ir --at latest --env prod
 chant graph --format ir --live --env prod --overlay
 ```
 
+At `--detail 1` a collapsed composite takes the `_status` of its members ([#4227](https://github.com/INTENTIUS/chant/issues/4227)). It is `good` when every member is managed. Otherwise a pending member (`accent`) outranks one chant could not read (`neutral`, with its reason on the member's `_unobserved`), and `_memberStatus` lists the ids of the members that are not `good` under their status. A foreign resource belongs to no composite, so it stays a node of its own. A composite in a graph read without `--overlay` has no `_status`.
+
+```json
+{ "id": "web", "kind": "FargateAlb", "attrs": { "members": 11, "_status": "accent", "_memberStatus": { "accent": ["three-cloud-aws::webService"] } } }
+```
+
 ##### `--overlay-anchor <source|live>` — which graph is the canvas
 
 The overlay merges two graphs; the anchor decides which one's **edges** survive.

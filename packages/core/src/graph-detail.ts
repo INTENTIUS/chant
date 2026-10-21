@@ -124,6 +124,34 @@ function toDeclarables(ir: GraphIR): GraphIR {
   return { ...ir, nodes: ir.nodes.map((n) => ({ ...n, attrs: resourceAttrs(n.attrs) })) };
 }
 
+/** Overlay statuses from the least to the most in need of attention: a
+ * composite takes its worst member's (#4227). An unknown status ranks above
+ * `warn`, so a status this list does not know yet is never hidden. */
+const STATUS_RANK = ["good", "runtime", "neutral", "accent", "warn"];
+
+function statusRank(status: string): number {
+  const i = STATUS_RANK.indexOf(status);
+  return i === -1 ? STATUS_RANK.length : i;
+}
+
+/** A collapsed composite's overlay paint, rolled up from its members (#4227):
+ * `_status` is the worst member status, and `_memberStatus` lists the members
+ * that are not `good` under their status. Nothing when no member carries a
+ * `_status`, as in a graph read without `--overlay`. */
+function rollupStatus(members: IRNode[]): Record<string, unknown> {
+  const painted = members.filter((m) => typeof m.attrs._status === "string");
+  if (painted.length === 0) return {};
+  let worst = "good";
+  const notGood: Record<string, string[]> = {};
+  for (const m of painted) {
+    const status = m.attrs._status as string;
+    if (statusRank(status) > statusRank(worst)) worst = status;
+    if (status !== "good") (notGood[status] ??= []).push(m.id);
+  }
+  for (const ids of Object.values(notGood)) ids.sort();
+  return { _status: worst, ...(Object.keys(notGood).length > 0 ? { _memberStatus: notGood } : {}) };
+}
+
 /** T1 — collapse each composite instance to one node; internal edges disappear.
  * Topology view: surviving plain nodes keep only overlay paint, not properties. */
 function toComposites(ir: GraphIR): GraphIR {
@@ -169,7 +197,7 @@ function toComposites(ir: GraphIR): GraphIR {
       id: collapsedId.get(key)!,
       kind: types.size === 1 ? [...types][0] : "Composite",
       lexicon: lexicons.size === 1 ? [...lexicons][0] : "multi",
-      attrs: { members: members.length },
+      attrs: { members: members.length, ...rollupStatus(members) },
     });
   }
 
