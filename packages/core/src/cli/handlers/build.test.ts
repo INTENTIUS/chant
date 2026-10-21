@@ -148,6 +148,37 @@ describe("runBuild --components --generate (chant #1108 build-time parameters)",
     vi.restoreAllMocks();
   });
 
+  test("--pr-loop asks for --require-review only under --require-review or the review-rules security group (#4168)", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFileSync } = await import("node:child_process");
+    const root = mkdtempSync(join(tmpdir(), "chant-build-review-rules-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: root });
+      mkdirSync(join(root, "app"));
+      const declare = (extra: Record<string, unknown>) =>
+        writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "acme", schema: 1, ...extra, members: [{ name: "app", dir: "app", kind: "chant", because: "the app" }] }));
+      generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "jobs: {}", stages: [], jobs: [] });
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const path = join(root, "app");
+      const output = join(root, "out.yml");
+
+      declare({});
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[0][2].prLoop).toEqual({});
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true, requireReview: true }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[1][2].prLoop).toEqual({ requireReview: true });
+
+      declare({ security: ["review-rules"] });
+      expect(await runBuild({ args: makeArgs({ path, output, generate: "github", prLoop: true }), plugins: [], serializers: [] })).toBe(0);
+      expect(generateComponentsPipelineMock.mock.calls[2][2].prLoop).toEqual({ requireReview: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      vi.restoreAllMocks();
+    }
+  });
+
   test("--pr-loop without --report-url bakes the workspace's ci.reportUrl into the jobs, and the flag wins (#4160)", async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

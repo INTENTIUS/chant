@@ -787,7 +787,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant ci run --no-push` (#4156): keep the run record on the local chant/lifecycle.
       result.noPush = true;
     } else if (arg === "--no-require-review") {
-      // `chant ci run apply --no-require-review` (#4156): the apply without pr-apply's --require-review.
+      // `chant ci run apply --no-require-review` (#4156): the apply without pr-apply's --require-review, the default since #4168.
       result.requireReview = false;
     } else if (arg === "--unsigned") {
       // `chant ci serve --unsigned` (#4099): serve without a runner key listed at the target's head.

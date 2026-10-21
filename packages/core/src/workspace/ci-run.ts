@@ -899,8 +899,8 @@ export function formatCiRun(r: CiRunResult): string {
  * The generator's options from `ci run`'s and `ci serve`'s flags, as `chant
  * build --components --generate <lexicon> --pr-loop` takes them: `--gate`,
  * `--branch`, `--events-json`, `--report-url`, `--pr-build`,
- * `--pr-build-command`, `--wave-gate` (#4003) and `--no-require-review`
- * (#4156).
+ * `--pr-build-command`, `--wave-gate` (#4003) and `--require-review`
+ * (#4168; `--no-require-review`, the default, is still accepted).
  */
 export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptions {
   return {
@@ -911,14 +911,14 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
     ...(args.prBuild ? { build: true } : {}),
     ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
     ...(args.waveGate ? { waveGate: args.waveGate } : {}),
-    ...(args.requireReview === false ? { requireReview: false } : {}),
+    ...(args.requireReview === true ? { requireReview: true } : {}),
   };
 }
 
 const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
-  "[--pr-build] [--pr-build-command <line>] [--no-require-review] [--no-status] [--status-url <url template>] " +
+  "[--pr-build] [--pr-build-command <line>] [--require-review] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

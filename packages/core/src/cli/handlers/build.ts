@@ -17,8 +17,10 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
  * flags the generated jobs pass to pr-plan and pr-apply. `--pr-build` and
  * `--pr-build-command` (#4088) add the build and lint steps before both.
  * `reportUrl` is `--report-url`, else the workspace's `ci.reportUrl` (#4160).
+ * `requireReview` is `--require-review`, or a workspace that opts into the
+ * `review-rules` security group (#4168); off otherwise.
  */
-function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined): PrLoopPipelineOptions {
+function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false): PrLoopPipelineOptions {
   return {
     ...(args.gate ? { gate: args.gate } : {}),
     ...(args.branch ? { branch: args.branch } : {}),
@@ -26,6 +28,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(reportUrl ? { reportUrl } : {}),
     ...(args.prBuild ? { build: true } : {}),
     ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
+    ...(args.requireReview === true || requireReview ? { requireReview: true } : {}),
   };
 }
 
@@ -102,6 +105,11 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  // #4168: the review-rules group turns on --require-review in the generated apply. Read only inside a workspace.
+  let reviewRules = false;
+  if (found && args.prLoop) {
+    reviewRules = (await import("../../workspace/security")).securityGroupsAt(resolve(args.path)).has("review-rules");
+  }
   if (found) {
     memberPipeline = await import("../../workspace/member-pipeline");
     try {
@@ -116,7 +124,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         params: args.param,
         paramsFile: args.paramsFile,
         ...(args.waveGate ? { waveGate: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } } : {}),
-        ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl) } : {}),
+        ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl, reviewRules) } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       });
@@ -146,7 +154,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
-      ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl) } : {}),
+      ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl, reviewRules) } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

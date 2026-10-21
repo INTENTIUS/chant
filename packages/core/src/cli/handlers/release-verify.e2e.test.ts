@@ -3,8 +3,10 @@
  * (#4049), in a temp repo with a temp bare remote and throwaway ssh keys. A
  * release cut signed with a key `.chant/allowed_signers` lists verifies, and a
  * publish takes it; an unsigned one and one signed by a key the file does not
- * list fail `release verify`, and a publish refuses them unless
- * `--allow-unsigned`. Nothing is published: the member declares no target.
+ * list fail `release verify`. With no release gate or verified-releases
+ * group a publish takes them and records their status (#4168);
+ * release-publish.test.ts covers the refusals under the group. Nothing is
+ * published: the member declares no target.
  */
 
 import { describe, expect, test } from "vitest";
@@ -42,7 +44,7 @@ const BUILD = `mkdir -p dist && printf '{"env":"%s"}' "$CHANT_ENV" > dist/api.te
 
 describe("chant release verify", () => {
   test.skipIf(!hasSshKeygen)(
-    "passes for a signed release, fails for an unsigned one and for one signed by an unlisted key; a publish refuses both unless --allow-unsigned",
+    "passes for a signed release, fails for an unsigned one and for one signed by an unlisted key; a publish with no security group takes both and records their status",
     () => {
       const root = mkdtempSync(join(tmpdir(), "chant-release-verify-"));
       try {
@@ -89,10 +91,10 @@ describe("chant release verify", () => {
         expect(unsigned.code).toBe(1);
         expect(unsigned.stderr).toMatch(/v2.* does not verify: no cut of the release carries a signature \[release-unsigned\]/);
         expect(JSON.parse(chant(dir, ["release", "verify", "v2", "--json"]).stdout)).toMatchObject({ status: "unsigned", error: { code: "release-unsigned" } });
-        const pubUnsigned = chant(dir, ["release", "publish", "v2"]);
-        expect(pubUnsigned.code).toBe(1);
-        expect(pubUnsigned.stderr).toMatch(/\[release-unsigned\]/);
-        expect(chant(dir, ["release", "publish", "v2", "--allow-unsigned"]).code).toBe(0);
+        // #4168: with no release gate or verified-releases group, a publish takes it and records it unsigned.
+        const pubUnsigned = chant(dir, ["release", "publish", "v2", "--json"]);
+        expect(pubUnsigned.code, pubUnsigned.stderr).toBe(0);
+        expect(JSON.parse(pubUnsigned.stdout)).toMatchObject({ signature: { status: "unsigned" }, warnings: [] });
 
         // v3: signed by mallory, whom the signers file does not list.
         next("v3");
@@ -101,9 +103,9 @@ describe("chant release verify", () => {
         const unlisted = chant(dir, ["release", "verify", "v3"]);
         expect(unlisted.code).toBe(1);
         expect(unlisted.stderr).toMatch(/mallory has no key in \.chant\/allowed_signers at [0-9a-f]{12}.*\[release-signature-unverified\]/);
-        const pubUnlisted = chant(dir, ["release", "publish", "v3"]);
-        expect(pubUnlisted.code).toBe(1);
-        expect(pubUnlisted.stderr).toMatch(/\[release-signature-unverified\]/);
+        const pubUnlisted = chant(dir, ["release", "publish", "v3", "--json"]);
+        expect(pubUnlisted.code, pubUnlisted.stderr).toBe(0);
+        expect(JSON.parse(pubUnlisted.stdout)).toMatchObject({ signature: { status: "unverified" }, warnings: [] });
 
         const missing = chant(dir, ["release", "verify", "v9"]);
         expect(missing.code).toBe(1);

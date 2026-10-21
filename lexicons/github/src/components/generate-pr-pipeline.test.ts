@@ -72,8 +72,8 @@ describe("the GitHub pull-request workflow", () => {
     expect(doc.jobs.plan.permissions).toEqual({ contents: "read", "pull-requests": "write", statuses: "write" });
 
     const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
-    // ci run builds pr-apply with --require-review unless told --no-require-review.
-    expect(apply.run).not.toContain("--no-require-review");
+    // #4168: ci run builds pr-apply without --require-review unless the pipeline asks for it.
+    expect(apply.run).not.toContain("--require-review");
     expect(apply.run).not.toContain("--no-push");
     expect(apply.env).toMatchObject({ BASE_SHA: "${{ github.event.before }}", CHANT_RUNNER_KEY: "${{ secrets.CHANT_RUNNER_KEY }}" });
     expect(doc.jobs.apply.permissions.contents).toBe("write");
@@ -127,10 +127,10 @@ describe("the GitHub pull-request workflow", () => {
   });
 
   test("the gate, branch and review requirement are options", () => {
-    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { gate: "infra-apply", branch: "trunk", requireReview: false } }).yaml;
+    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { gate: "infra-apply", branch: "trunk", requireReview: true } }).yaml;
     expect(yaml).toContain("--gate infra-apply");
     expect(yaml).toContain("- trunk");
-    expect(yaml).toContain("--no-require-review");
+    expect(yaml).toContain("ci run apply --in-place --base \"$BASE_SHA\" --env prod --gate infra-apply --forge github --branch \"trunk\" --require-review");
     expect(yaml).toContain('--branch "trunk"');
   });
 

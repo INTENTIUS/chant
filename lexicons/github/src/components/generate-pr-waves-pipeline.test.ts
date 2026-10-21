@@ -78,7 +78,7 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
       expect(job.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
       expect(job.permissions.contents).toBe("write");
       const run = job.steps.find((s) => s.run?.includes("ci run apply"))!.run!;
-      // #4156: through chant ci run, which runs pr-apply --require-review --wave-gate release --resume ... --wave <k>.
+      // #4156: through chant ci run, which runs pr-apply --wave-gate release (no --require-review since #4168) --resume ... --wave <k>.
       expect(run).toContain(`chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github --wave-gate release --wave ${k}`);
       expect(job.steps.find((s) => s.run?.includes("ci run apply"))!.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
     }

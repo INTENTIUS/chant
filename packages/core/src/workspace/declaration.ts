@@ -23,6 +23,7 @@ import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import type { ReasonCode } from "./reason-codes";
+import type { SecurityGroup } from "./security";
 import { joinPath, type WorkspaceTree } from "./tree";
 import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
@@ -624,6 +625,8 @@ export interface Declaration {
    * then uses 7.
    */
   metrics: { failureWindowDays?: number } | null;
+  /** The security groups the workspace opts into (#4168 section 8, ./security.ts), in file order; empty when the declaration has no `security` key. */
+  security: SecurityGroup[];
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -1002,6 +1005,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     ci,
     retention: retentionOf(obj.retention),
     metrics: metricsOf(obj.metrics),
+    security: [...((obj.security as SecurityGroup[] | undefined) ?? [])],
     file,
   };
   written.set(declaration, raw);

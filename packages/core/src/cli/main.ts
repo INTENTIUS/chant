@@ -256,7 +256,7 @@ CI:
               [--before-script <line>]... [--pr-build]
               [--pr-build-command <line>] [--chant <command>]
               [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]
-              [-o <dir>] [--wave <k>] [--no-require-review]
+              [-o <dir>] [--wave <k>] [--require-review]
               [--no-status] [--status-url <url template>]
               [--in-place | --local] [--no-push] [--verbose]
                         Run the pull-request pipeline's plan or apply job as
@@ -349,14 +349,16 @@ Releases:
                   [--require-provenance] [--json]
                         Publish a cut release to the targets release.publish
                         in chant.config.ts declares (npm, OCI registries,
-                        forge release assets), each with an SBOM and the
-                        release's provenance. A dry run without --yes.
-                        Refuses a revoked release, one whose signature does
-                        not verify against .chant/allowed_signers unless
-                        --allow-unsigned, and with a target a checkout that
-                        is not the release's commit. Warns first when the run
-                        has no OIDC token, so what it publishes carries no
-                        OIDC provenance; --require-provenance refuses instead.
+                        forge release assets), each with the release's
+                        provenance and an SBOM when it has a source. A dry
+                        run without --yes. Refuses a revoked release, and
+                        with a target a checkout that is not the release's
+                        commit. Under security verified-releases it refuses
+                        one whose signature does not verify against
+                        .chant/allowed_signers unless --allow-unsigned; under
+                        supply-chain it warns when the run has no OIDC token
+                        and refuses a target with no SBOM source.
+                        --require-provenance refuses a run with no OIDC.
   release verify <label|digest> [--json]
                         Check, offline, that the release was signed by a key
                         .chant/allowed_signers lists at the release's commit.

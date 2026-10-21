@@ -12,8 +12,9 @@
  * - The apply job runs `chant components pr-apply` against the commit the
  *   push replaced, finds the pull request that merged the pushed commit
  *   through the forge, and applies only when an approval stands for the
- *   digest it plans. With `requireReview` (the default) the approver must
- *   also have approved the pull request on the forge. It needs write access
+ *   digest it plans. With `requireReview` (off by default since #4168, on
+ *   under the `review-rules` security group) the approver must also have
+ *   approved the pull request on the forge. It needs write access
  *   to `chant/lifecycle`, to record the pending fact when the gate stops it.
  *   One apply runs at a time per environment.
  *
@@ -123,7 +124,7 @@ export interface PrLoopPipelineOptions {
    * GitHub and Forgejo; on GitLab, the project's default branch.
    */
   branch?: string;
-  /** Count an approval only from someone who approved the pull request on the forge. Default true. */
+  /** Count an approval only from someone who approved the pull request on the forge. Default false (#4168): review rules are opt-in. */
   requireReview?: boolean;
   /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
@@ -226,7 +227,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     "--env", env, "--gate", gate, "--forge", forge,
     ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job === "apply" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
-    ...(job === "apply" && options.requireReview === false ? ["--no-require-review"] : []),
+    ...(job === "apply" && options.requireReview === true ? ["--require-review"] : []),
     ...(options.events ? ["--events-json"] : []),
     ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
   ];
@@ -248,7 +249,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       jobName: "apply",
       command: [
         "chant", "components", "pr-apply", "--base", '"$BASE_SHA"', ...common,
-        ...(options.requireReview === false ? [] : ["--require-review"]),
+        ...(options.requireReview === true ? ["--require-review"] : []),
         ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
         "--resume", PR_APPLY_RECORD,
       ].join(" "),

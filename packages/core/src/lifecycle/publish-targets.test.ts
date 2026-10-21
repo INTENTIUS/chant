@@ -396,7 +396,7 @@ describe("forge release assets", () => {
 describe("SBOMs and provenance (#4049)", () => {
   const CUT = { actor: "alice", label: "v1.4.0", timestamp: "2026-10-17T10:00:00.000Z", runId: "local-1", signature: "-----BEGIN SSH SIGNATURE-----\nU1NIU0lH\n-----END SSH SIGNATURE-----\n" };
 
-  test("npm: a package carries its SBOM, one with none or with one that is not SPDX or CycloneDX is refused, and sbom: false publishes without", async () => {
+  test("npm: a package carries its SBOM; under supply-chain one with none is refused; one that is not SPDX or CycloneDX is refused; sbom: false publishes without", async () => {
     const dir = temp();
     writePackage(join(dir, "with"), "@acme/with", "1.0.0");
     writePackage(join(dir, "without"), "@acme/without", "1.0.0", false);
@@ -406,9 +406,11 @@ describe("SBOMs and provenance (#4049)", () => {
     writeFileSync(join(dir, "cdx", "package", "bom.json"), JSON.stringify({ bomFormat: "CycloneDX", specVersion: "1.5" }));
     execFileSync("tar", ["-czf", join(dir, "cdx.tgz"), "-C", join(dir, "cdx"), "package"], { stdio: "ignore" });
     const npm = writeFakeNpm(join(dir, "bin"), join(dir, "npm.log"));
-    const plan = async (d: Record<string, unknown>) => (await createPublishTargets([decl({ type: "npm", ...d })], { npm }))[0]!.plan(context(dir));
+    const plan = async (d: Record<string, unknown>, requireSbom = true) => (await createPublishTargets([decl({ type: "npm", ...d })], { npm }))[0]!.plan(context(dir, { requireSbom }));
 
     expect((await plan({ packages: ["with"] }))[0]!.sbom).toBe("sbom.spdx.json");
+    // #4168: outside supply-chain a package with none publishes without one, quietly.
+    expect((await plan({ packages: ["without"] }, false))[0]!.sbom).toBeUndefined();
     const missing = await refused(plan({ packages: ["without"] }));
     expect(missing.code).toBe("publish-sbom-missing");
     expect(missing.message).toBe("@acme/without (without) carries no SBOM: npm keeps no file beside a package, so its SBOM goes in it, and none of sbom.spdx.json, sbom.cdx.json, sbom.cyclonedx.json is at its root");
@@ -471,14 +473,15 @@ describe("SBOMs and provenance (#4049)", () => {
     }
   });
 
-  test("forge: with no declared SBOM and no lockfile the target is refused; a declared SBOM goes on the release by its own name", async () => {
+  test("forge: with no declared SBOM and no lockfile the target is refused under supply-chain and attaches none otherwise; a declared SBOM goes on the release by its own name", async () => {
     const dir = temp();
     writeFileSync(join(dir, "api.tar.gz"), "bytes");
     const api = "https://api.github.test";
     const forge = startFakeForge("github", api, "acme/api");
     const make = async (over: Record<string, unknown> = {}) => (await createPublishTargets([decl({ type: "forge", forge: "github", repo: "acme/api", api, assets: ["api.tar.gz"], ...over })], { fetch: forge.fetch }))[0]!;
     const ctx = context(dir, { env: { GITHUB_TOKEN: "ghs_x" }, cut: CUT });
-    const err = await refused((await make()).plan(ctx));
+    expect((await (await make()).plan(ctx)).map((i) => i.attachment ?? null)).not.toContain("sbom");
+    const err = await refused((await make()).plan({ ...ctx, requireSbom: true }));
     expect(err.code).toBe("publish-sbom-missing");
     expect(err.fix).toContain("sbom: false");
 

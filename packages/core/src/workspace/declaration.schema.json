@@ -236,6 +236,14 @@
           "description": "A deploy counts as failed when, within this many days after it, the commit it deployed is revoked or the environment is rolled back from it. The default is 7."
         }
       }
+    },
+    "security": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The security groups the workspace opts into (#4168). With none, a security feature the workspace has not turned on never refuses, warns or hides anything. verified-releases: release publish refuses a release with no verified signature. supply-chain: a publish without OIDC provenance warns, and a target with no SBOM source is refused. review-rules: a generated pull-request pipeline requires a forge review. who-ran-it and isolated-runners are accepted and not read yet. Added in schema 1 by chant 0.124.33, so a declaration that uses it sets minReader to 0.124.33 or newer.",
+      "items": {
+        "enum": ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners"]
+      }
     }
   },
   "patternProperties": {

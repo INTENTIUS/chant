@@ -35,8 +35,9 @@
  * Each package carries its SBOM (#4049): npm keeps no file beside a package,
  * so the SBOM is a file at the package's root, the one `sbom` names or the
  * first of `sbom.spdx.json`, `sbom.cdx.json`, `sbom.cyclonedx.json` it holds,
- * such as `npm sbom` writes. A package with none is refused
- * (`publish-sbom-missing`) unless the declaration says `sbom: false`. Moving a dist-tag over
+ * such as `npm sbom` writes. A package with none publishes without one,
+ * except under the `supply-chain` group (#4168) or when `sbom` names a file,
+ * where it is refused (`publish-sbom-missing`). Moving a dist-tag over
  * OIDC needs "Allow npm dist-tag" on the package's trusted-publisher record.
  * npm makes the first version of a new package `latest` whatever tag it is
  * published under, so a package's first release is visible when it stages.
@@ -100,7 +101,7 @@ function readPackage(ctx: PublishContext, path: string, sbom: NpmPublishDeclarat
   if (pkg.private === true) {
     throw new PublishTargetError("publish-npm-private", `${pkg.name} (${path}) is private, and npm refuses to publish it`, "Remove it from release.publish, or remove private: true.");
   }
-  const carried = packageSbom(abs, directory, path, pkg.name, sbom);
+  const carried = packageSbom(abs, directory, path, pkg.name, sbom, ctx.requireSbom === true);
   return { path, abs, name: pkg.name, version: pkg.version, ...(digest ? { digest } : {}), ...(carried ? { sbom: carried.file } : {}) };
 }
 

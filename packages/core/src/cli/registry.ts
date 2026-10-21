@@ -311,8 +311,10 @@ export interface ParsedArgs {
   /**
    * `chant components pr-apply --require-review` (#3183) — count an approval
    * only when its approver has a standing approving review on the pull
-   * request. Needs `--forge`. `chant ci run apply --no-require-review`
-   * (#4156) sets it false, for a pipeline generated with `requireReview: false`.
+   * request. Needs `--forge`. `chant ci run apply --require-review`
+   * passes it on, and `chant build --pr-loop --require-review` generates a
+   * pipeline that does (#4168); `--no-require-review` (#4156) sets it false,
+   * which is the default.
    */
   requireReview?: boolean;
   /**
