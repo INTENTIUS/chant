@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-e2b",
-  "version": "0.124.32",
+  "version": "0.124.33",
   "type": "module",
   "description": "e2b lexicon for chant — run Ops on a steward sandbox on E2B, or any API that speaks E2B's, and declare the template it is made from",
   "license": "Apache-2.0",
@@ -58,7 +58,7 @@
     "e2b": "^2.56.0"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.32",
+    "@intentius/chant": "^0.124.33",
     "zod": "^4.3.6"
   },
   "devDependencies": {
