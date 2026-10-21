@@ -21,6 +21,9 @@ export { GCP, ProjectId, Region, Zone } from "./pseudo";
 // Variables / annotation constants
 export { GcpAnnotations } from "./variables";
 
+// Outputs (#4181): the build warns that Config Connector YAML can't carry them.
+export { LexiconOutput, output, isLexiconOutput } from "@intentius/chant/lexicon-output";
+
 // Generated entities — export everything from generated index
 // After running `npm run generate`, this re-exports all Config Connector resource classes
 export * from "./generated/index";

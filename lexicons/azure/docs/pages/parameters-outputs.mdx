@@ -115,3 +115,7 @@ ARM supports these parameter types, mapped from `CoreParameter`:
 | `"object"` | `object` | JSON objects |
 | `"secureString"` | `secureString` | Passwords, keys (not logged) |
 | `"secureObject"` | `secureObject` | Sensitive objects |
+
+## Outputs that aren't attributes
+
+`output()` also takes a literal or an azure intrinsic. A string, an integer or a boolean is written with its ARM type, and an intrinsic such as `ResourceId(...)` is written as its `[...]` expression. A literal or intrinsic output has no resource behind it, so every lexicon in the build receives it; a CloudFormation intrinsic is left to the aws template. Anything else is not written, and the build prints a warning that names the output.
