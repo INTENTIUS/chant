@@ -139,8 +139,10 @@ export function diffDeepObservation(
 
   for (const [name, entity] of entities) {
     const liveEntity = live.resources[name];
-    const declaredRaw = entity.props ?? {};
-    const liveRaw = liveEntity?.properties ?? {};
+    const prepare = (tree: Record<string, unknown>, side: "declared" | "live") =>
+      hooks?.prepare ? hooks.prepare(tree, { entityType: entity.entityType, side }) : tree;
+    const declaredRaw = prepare(entity.props ?? {}, "declared");
+    const liveRaw = prepare(liveEntity?.properties ?? {}, "live");
     const declaredPaths = deepPathSet(declaredRaw);
     const livePaths = deepPathSet(liveRaw);
 

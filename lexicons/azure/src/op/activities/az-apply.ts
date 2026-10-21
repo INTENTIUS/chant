@@ -25,6 +25,11 @@ export interface ArmResource {
   sku?: unknown;
   kind?: unknown;
   tags?: Record<string, string>;
+  identity?: unknown;
+  zones?: unknown;
+  plan?: unknown;
+  extendedLocation?: unknown;
+  managedBy?: unknown;
   dependsOn?: unknown;
 }
 
@@ -71,13 +76,17 @@ export async function evalArmString(s: string, ctx: ArmEvalCtx): Promise<unknown
   return new ArmExpr(s.slice(1, -1), ctx).parse();
 }
 
-/** Recursively evaluate every string in a value against the ARM context. */
+/**
+ * Recursively evaluate every string in a value against the ARM context,
+ * object keys included: ARM evaluates a property name too, and
+ * `identity.userAssignedIdentities` is keyed by `[resourceId(...)]` (#4231).
+ */
 export async function evalArm(value: unknown, ctx: ArmEvalCtx): Promise<unknown> {
   if (typeof value === "string") return evalArmString(value, ctx);
   if (Array.isArray(value)) return Promise.all(value.map((v) => evalArm(v, ctx)));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = await evalArm(v, ctx);
+    for (const [k, v] of Object.entries(value)) out[String(await evalArmString(k, ctx))] = await evalArm(v, ctx);
     return out;
   }
   return value;
@@ -263,14 +272,20 @@ export async function armResourceUrl(resource: ArmResource, ctx: ArmEvalCtx): Pr
   return `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${resource.type}/${name}?api-version=${resource.apiVersion}`;
 }
 
-/** The ARM resource PUT body (location/properties/sku/kind/tags), expressions evaluated. */
+/**
+ * The top-level ARM resource fields a PUT takes beside `location` (#4231). A
+ * field missing here is dropped from the body, which is how a declared
+ * `identity` came back absent.
+ */
+const ARM_BODY_FIELDS = ["properties", "sku", "kind", "tags", "identity", "zones", "plan", "extendedLocation", "managedBy"] as const;
+
+/** The ARM resource PUT body: `location` and {@link ARM_BODY_FIELDS}, expressions evaluated. */
 export async function armResourceBody(resource: ArmResource, ctx: ArmEvalCtx): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (resource.location) body.location = await evalArmString(resource.location, ctx);
-  if (resource.properties !== undefined) body.properties = await evalArm(resource.properties, ctx);
-  if (resource.sku !== undefined) body.sku = await evalArm(resource.sku, ctx);
-  if (resource.kind !== undefined) body.kind = await evalArm(resource.kind, ctx);
-  if (resource.tags !== undefined) body.tags = await evalArm(resource.tags, ctx);
+  for (const field of ARM_BODY_FIELDS) {
+    if (resource[field] !== undefined) body[field] = await evalArm(resource[field], ctx);
+  }
   return body;
 }
 

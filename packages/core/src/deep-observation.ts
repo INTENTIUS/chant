@@ -334,6 +334,14 @@ export interface DeepNormalizationHooks {
    * or a value-derived hash.
    */
   mask?(node: DeepNode): boolean;
+  /**
+   * Rewrite one raw property tree before anything else reads it, on both
+   * sides. For a difference no per-node hook can reach, such as a map whose
+   * keys are references: an ARM `identity.userAssignedIdentities` is keyed by
+   * `[resourceId(...)]` in source and by the evaluated resource id live
+   * (#4231). Return the tree to compare; leave anything else as it was.
+   */
+  prepare?(tree: Record<string, unknown>, context: { entityType: string; side: DeepSide }): Record<string, unknown>;
 }
 
 /** Everything the pass needs besides the tree itself. */

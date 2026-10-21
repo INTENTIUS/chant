@@ -108,6 +108,26 @@ describe("diffDeepObservation", () => {
     expect(result.unchanged).toEqual(["r"]);
   });
 
+  test("prepare rewrites each raw tree, both sides, before paths are taken (#4231)", () => {
+    const seen: string[] = [];
+    const rekey: DeepNormalizationHooks = {
+      prepare(tree, { side }) {
+        seen.push(side);
+        const ids = tree.ids as Record<string, unknown> | undefined;
+        if (!ids) return tree;
+        return { ...tree, ids: Object.fromEntries(Object.entries(ids).map(([k, v]) => [k.toLowerCase(), v])) };
+      },
+    };
+    const result = diffDeepObservation(
+      entities({ r: { entityType: "T", props: { ids: { "A/B": {} } } } }),
+      { resources: { r: { type: "T", properties: { ids: { "a/b": {} } } } }, unobserved: {} },
+      rekey,
+    );
+    expect(seen.sort()).toEqual(["declared", "live"]);
+    expect(result.drifted).toEqual([]);
+    expect(result.unchanged).toEqual(["r"]);
+  });
+
   test("a declared property at its default is still compared", () => {
     const result = diffDeepObservation(
       entities({ r: { entityType: "AWS::IAM::Role", props: { Path: "/" } } }),

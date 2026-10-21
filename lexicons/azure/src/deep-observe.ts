@@ -241,6 +241,45 @@ function lastSegment(pattern: string): string {
 }
 
 /**
+ * The canonical key for one entry of `identity.userAssignedIdentities`
+ * (#4231): `<type>/<name>` lowercased, from either spelling. Source keys the
+ * map by `[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities',
+ * 'appId')]`; ARM answers with the evaluated id, `/subscriptions/.../providers/
+ * Microsoft.ManagedIdentity/userAssignedIdentities/appId`, in whatever case it
+ * stored. A key in neither form is left as it is.
+ */
+export function userAssignedIdentityKey(key: string): string {
+  const expr = /^\[\s*resourceId\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)\s*\]$/.exec(key);
+  if (expr) return `${expr[1]}/${expr[2]}`.toLowerCase();
+  const at = key.toLowerCase().lastIndexOf("/providers/");
+  if (at !== -1 && key.startsWith("/subscriptions/")) return key.slice(at + "/providers/".length).toLowerCase();
+  return key;
+}
+
+/**
+ * Rekey `identity.userAssignedIdentities` by {@link userAssignedIdentityKey},
+ * on a copy, and drop the `principalId` and `clientId` ARM fills in on each
+ * entry. Nobody declares them, and pruning them later would leave the live
+ * entry empty and gone, where source declares `{}`.
+ */
+function rekeyUserAssignedIdentities(tree: Record<string, unknown>): Record<string, unknown> {
+  const identity = tree.identity;
+  if (!identity || typeof identity !== "object" || Array.isArray(identity)) return tree;
+  const assigned = (identity as Record<string, unknown>).userAssignedIdentities;
+  if (!assigned || typeof assigned !== "object" || Array.isArray(assigned)) return tree;
+  const rekeyed: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(assigned)) {
+    let entry = v;
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const { principalId: _p, clientId: _c, ...rest } = entry as Record<string, unknown>;
+      entry = rest;
+    }
+    rekeyed[userAssignedIdentityKey(k)] = entry;
+  }
+  return { ...tree, identity: { ...(identity as Record<string, unknown>), userAssignedIdentities: rekeyed } };
+}
+
+/**
  * The azure lexicon's noise rules. Three classes, same as AWS: server-
  * populated fields (by name, unconditional), controller-injected boilerplate
  * (by name, unconditional), and ARM service defaults (gated on
@@ -250,6 +289,8 @@ function lastSegment(pattern: string): string {
  * since it is a plain object; only the *default empty map* needs a rule here).
  */
 export const azureDeepNormalizationHooks: DeepNormalizationHooks = {
+  prepare: (tree) => rekeyUserAssignedIdentities(tree),
+
   prune(node: DeepNode): boolean {
     const name = lastSegment(node.pattern);
     if (AZURE_READ_ONLY_NAMES.has(name) || AZURE_UNCONDITIONAL_PRUNE_NAMES.has(name)) return true;

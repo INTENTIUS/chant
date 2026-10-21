@@ -149,6 +149,38 @@ describe("armResourceUrl / armResourceBody (#707)", () => {
       tags: { "managed-by": "chant" },
     });
   });
+
+  test("body keeps identity, zones, plan, extendedLocation and managedBy, keys evaluated (#4231)", async () => {
+    const app: ArmResource = {
+      type: "Microsoft.App/containerApps",
+      apiVersion: "2024-03-01",
+      name: "web",
+      location: "[resourceGroup().location]",
+      identity: {
+        type: "UserAssigned",
+        userAssignedIdentities: { "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'appId')]": {} },
+      },
+      zones: ["1"],
+      plan: { name: "p1", publisher: "pub", product: "prod" },
+      extendedLocation: { type: "EdgeZone", name: "edge1" },
+      managedBy: "[resourceId('Microsoft.Web/sites', 'owner')]",
+      properties: {},
+    };
+    expect(await armResourceBody(app, ctx())).toEqual({
+      location: "eastus",
+      properties: {},
+      identity: {
+        type: "UserAssigned",
+        userAssignedIdentities: {
+          "/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/appId": {},
+        },
+      },
+      zones: ["1"],
+      plan: { name: "p1", publisher: "pub", product: "prod" },
+      extendedLocation: { type: "EdgeZone", name: "edge1" },
+      managedBy: "/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.Web/sites/owner",
+    });
+  });
 });
 
 describe("azApply flow (#707)", () => {
