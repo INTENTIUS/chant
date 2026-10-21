@@ -37,7 +37,6 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { canonicalJson } from "../effect-receipt";
-import { contentDigest } from "../content-digest";
 import { getHeadCommit } from "./git";
 import { resolveMemberLedger } from "./member-ledger";
 import { resolveCiRun } from "./release-ledger";
@@ -55,6 +54,7 @@ import {
   type ReleaseArtifact,
   type ReleaseCut,
   type ReleaseTarget,
+  templateBytesDigest,
   type TemplateContent,
 } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
@@ -322,18 +322,29 @@ async function prepare(req: CutRequest): Promise<Prepared> {
   };
 }
 
-/** The targets and template bytes of a compile, each template by its content digest. */
+/**
+ * The targets and template bytes of a compile, each template by its content
+ * digest. A compile of components names its directories in `trees` (#4155),
+ * an empty list when it has none, which marks the target as one that records
+ * every deploy input. A project with no components has no deploy step to
+ * name one, and its targets have no `trees`.
+ */
 function targetsOf(compiled: readonly CompiledTarget[]): { targets: ReleaseTarget[]; templates: TemplateContent[] } {
   const templates: TemplateContent[] = [];
-  const targets: ReleaseTarget[] = compiled.map((t) => ({
-    env: t.env,
-    params: t.params,
-    templates: t.templates.map((tpl) => {
-      const digest = contentDigest(tpl.content);
-      templates.push({ digest, content: tpl.content });
-      return { component: tpl.component, path: tpl.path, digest };
-    }),
-  }));
+  const targets: ReleaseTarget[] = compiled.map((t) => {
+    const seen = new Set<string>();
+    const recorded: ReleaseTarget["templates"] = [];
+    for (const tpl of t.templates) {
+      // A file named twice, as a values file inside a recorded chart, is recorded once.
+      const key = `${tpl.component ?? ""}\u0000${tpl.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const digest = templateBytesDigest(tpl.content, tpl.encoding);
+      templates.push({ digest, content: tpl.content, ...(tpl.encoding ? { encoding: tpl.encoding } : {}) });
+      recorded.push({ component: tpl.component, path: tpl.path, digest, ...(tpl.encoding ? { encoding: tpl.encoding } : {}) });
+    }
+    return { env: t.env, params: t.params, templates: recorded, ...(t.trees ? { trees: t.trees } : {}) };
+  });
   return { targets, templates };
 }
 

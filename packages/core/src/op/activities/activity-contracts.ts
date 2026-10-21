@@ -59,6 +59,9 @@ export const shellCmdContract = activityContract(
     gatedExit: z.number().optional(),
     gate: z.strictObject({ op: z.string(), gate: z.string() }).optional(),
     json: z.boolean().optional(),
+    image: z.string().optional(),
+    mounts: z.strictObject({ workspace: z.enum(["ro", "rw"]).optional() }).optional(),
+    outputs: z.array(z.string()).optional(),
   }),
   // `json` is stdout parsed, when the step sets `json` (#2787): whatever the
   // command printed, so its shape is the author's and only the whole value is

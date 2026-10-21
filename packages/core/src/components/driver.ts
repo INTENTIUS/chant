@@ -52,6 +52,7 @@ import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedg
 import { gateName } from "../op/gate-name";
 import { GateNotRecordableError } from "../lifecycle/no-record";
 import { componentPlanDigest } from "./gate-plan";
+import { componentDeployInputs } from "./deploy-inputs";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 import { isPlanMovedError, PLAN_MOVED_EXIT_CODE } from "./capability";
@@ -853,6 +854,13 @@ async function rollbackExecuted(
 
 // ── Per-component deploy ─────────────────────────────────────────────────
 
+/** Whether a component's composition has a gate step anywhere, nested phases and `rollback` included. */
+function hasGateStep(component: DriverComponent): boolean {
+  const walk = (steps: DriverPhase["steps"]): boolean =>
+    steps.some((step) => isGateStep(step) || (Array.isArray((step as DriverPhase).steps) && walk((step as DriverPhase).steps)));
+  return [...component.deploy, ...(component.rollback ?? [])].some((p) => walk(p.steps));
+}
+
 /**
  * Run one component's `deploy` composition. On terminal failure: unwind every
  * executed step in reverse via its capability's `rollback` (saga
@@ -900,6 +908,9 @@ export async function runComponentDeploy(
         component,
         ...(ctx.vars ? { vars: ctx.vars } : {}),
         ...(release !== undefined ? { release } : {}),
+        // #4155: the files the steps deploy from, read where the steps read
+        // them. Only a gate reads the digest, so a run with none skips the hashing.
+        ...(hasGateStep(component) ? { inputs: componentDeployInputs(component.deploy, process.cwd()).inputs } : {}),
       }),
   };
   const records: DriverStepRecord[] = [];

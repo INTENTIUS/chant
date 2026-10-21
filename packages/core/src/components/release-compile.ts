@@ -15,7 +15,14 @@
  * ./promote.ts: a literal path in a deploy step's `template`, `manifest` or
  * `values` field ({@link TEMPLATE_FIELDS}), read after the environment's build
  * command has run. A path with the `archive:` prefix names the file after it.
- * A path that names a directory, such as a chart, is not a template.
+ *
+ * Since #4155 a cut also records the other local paths a deploy step names
+ * ({@link recordedInputRefs}: a Helm chart, a kustomize directory, a sync's
+ * source tree, the fields `./deploy-inputs.ts` lists). A directory is
+ * recorded file by file and named in the target's `trees`; a file that is not
+ * UTF-8 is recorded as base64. Such a path that does not exist after the
+ * build, as a chart named from a repository, is not recorded, and the
+ * promote leaves it as written.
  *
  * A project with no components (#4046) is compiled the way `chant build --env
  * <env> -o <output>` builds it ({@link compileBuildOutput}): every file that
@@ -25,6 +32,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { isUtf8 } from "node:buffer";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { loadChantConfig, type ChantConfig } from "../config";
@@ -40,7 +48,8 @@ import { memoryGateLedgerPort } from "../op/gate";
 import type { ReleaseArtifact, ReleaseParam } from "../lifecycle/release-store";
 
 /** The deploy step fields whose literal file paths are a component's templates. */
-export const TEMPLATE_FIELDS: readonly string[] = ["template", "manifest", "values"];
+export { TEMPLATE_FIELDS } from "./deploy-inputs";
+import { DEPLOY_INPUT_FIELDS, directoryFiles, ignoredByGit, TEMPLATE_FIELDS, walkFiles } from "./deploy-inputs";
 
 /** The prefix a step may write before an archive-relative template path. */
 const ARCHIVE_PREFIX = "archive:";
@@ -61,7 +70,9 @@ export interface TemplateRef {
 export interface CompiledTemplate {
   component: string | null;
   path: string;
+  /** The text, or the base64 of the bytes under `encoding: "base64"`. */
   content: string;
+  encoding?: "base64";
 }
 
 /** What one environment compiles to. */
@@ -84,6 +95,8 @@ export interface CompiledTarget {
   /** For each component, the file that declares it, relative to the member's directory. */
   componentFiles: Record<string, string>;
   templates: CompiledTemplate[];
+  /** The directories recorded file by file in `templates` (#4155). Absent from a compiler written before #4155. */
+  trees?: Array<{ component: string | null; path: string }>;
 }
 
 /** Compiles a member for one environment, and builds its artifacts. The cut talks to a compiler only, so a test can hand it fixtures. */
@@ -132,6 +145,40 @@ export function templateRefs(component: DriverComponent): TemplateRef[] {
     }
   }
   return out;
+}
+
+/** A path a deploy step names that a cut records (#4155): a {@link TemplateRef}, and whether its field is a template field, which must exist. */
+export interface RecordedInputRef extends TemplateRef {
+  /** True for `template`, `manifest` and `values`, whose path must exist after the build. */
+  required: boolean;
+}
+
+/** Every literal path a component's deploy names that a cut records: {@link templateRefs}, plus each kind's own fields in `DEPLOY_INPUT_FIELDS`. */
+export function recordedInputRefs(component: DriverComponent): RecordedInputRef[] {
+  const out: RecordedInputRef[] = [];
+  for (const { phase, step } of stepsOf(component.deploy)) {
+    if (BUILD_STEP_KINDS.includes(step.kind) || PUBLISH_STEP_KINDS.includes(step.kind)) continue;
+    for (const field of recordedFields(step.kind)) {
+      const raw = step[field];
+      for (const value of Array.isArray(raw) ? raw : [raw]) {
+        if (!isLiteralPath(value)) continue;
+        const path = value.startsWith(ARCHIVE_PREFIX) ? value.slice(ARCHIVE_PREFIX.length) : value;
+        out.push({ component: component.name, phase, kind: step.kind, field, value, path, required: TEMPLATE_FIELDS.includes(field) });
+      }
+    }
+  }
+  return out;
+}
+
+/** The fields of a step of `kind` whose paths a cut records and a promote points at the recorded copy. */
+export function recordedFields(kind: string): string[] {
+  return [...TEMPLATE_FIELDS, ...(DEPLOY_INPUT_FIELDS[kind] ?? [])];
+}
+
+/** A file's bytes as a template: its text when it is UTF-8, else base64. */
+export function templateOf(component: string | null, path: string, file: string): CompiledTemplate {
+  const bytes = readFileSync(file);
+  return isUtf8(bytes) ? { component, path, content: bytes.toString("utf-8") } : { component, path, content: bytes.toString("base64"), encoding: "base64" };
 }
 
 /** A component's build-time steps ({@link BUILD_STEP_KINDS}), each as declared, in composition order. */
@@ -269,21 +316,33 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
   if (declared === 0) return compileBuildOutput(inputs, env, config);
   const rel = (p: string): string => (isAbsolute(p) ? relative(inputs.projectDir, p) : p);
   const templates: CompiledTemplate[] = [];
+  const trees: Array<{ component: string; path: string }> = [];
   const seen = new Set<string>();
   for (const { component } of components) {
-    for (const ref of templateRefs(component)) {
+    for (const ref of recordedInputRefs(component)) {
       const key = `${ref.component}\u0000${ref.path}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const file = resolve(inputs.projectDir, ref.path);
       if (!existsSync(file)) {
+        if (!ref.required) continue;
         throw new ReleaseCompileError(
           `component "${ref.component}": its ${ref.kind} step in phase "${ref.phase}" reads ${ref.field} "${ref.value}", ` +
             `and no such file exists after the build for "${env}"`,
         );
       }
-      if (!statSync(file).isFile()) continue;
-      templates.push({ component: ref.component, path: ref.path, content: readFileSync(file, "utf-8") });
+      if (statSync(file).isFile()) {
+        templates.push(templateOf(ref.component, ref.path, file));
+        continue;
+      }
+      // #4155: a directory, file by file. One git ignores is the build's output, recorded whole.
+      const files = ignoredByGit(inputs.projectDir, ref.path) ? walkFiles(inputs.projectDir, ref.path) : directoryFiles(inputs.projectDir, ref.path);
+      const dir = ref.path.replace(/\/+$/, "");
+      for (const f of files) {
+        const under = relative(resolve(inputs.projectDir, dir), resolve(inputs.projectDir, f)).split("\\").join("/");
+        templates.push(templateOf(ref.component, `${dir}/${under}`, resolve(inputs.projectDir, f)));
+      }
+      trees.push({ component: ref.component, path: dir });
     }
   }
   return {
@@ -295,6 +354,7 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
     buildInputs: Object.fromEntries(components.map(({ component }) => [component.name, buildInputPaths(component)])),
     componentFiles: Object.fromEntries(components.map(({ component, file }) => [component.name, rel(file)])),
     templates,
+    trees,
   };
 }
 

@@ -62,6 +62,8 @@ export interface OpRunStepRecord {
   gate?: { op: string; gate: string };
   /** The run whose checkpoint supplied this step's output, for a step a resumed run skipped (#3947). */
   resumed?: { run: string; gate: string };
+  /** The image a `shellCmd` step ran in (#4015), pinned by digest, for a step that ran in a container. */
+  image?: string;
 }
 
 /** One phase's steps and the verdict they add up to. */

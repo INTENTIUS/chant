@@ -179,6 +179,12 @@ describe("TerraformApplyOp compensation — total or refused (#2086)", () => {
       args: { cmd: "terraform apply -input=false rollback.tfplan" },
     });
   });
+
+  test("compensate: { command, image } runs the rollback in that image (#4015)", () => {
+    const image = `hashicorp/terraform:1.9@sha256:${"a".repeat(64)}`;
+    const op = props({ name: "a", root: "app", compensate: { command: "terraform apply rollback.tfplan", image } });
+    expect(op.onFailure![0].steps[0]).toMatchObject({ fn: "shellCmd", args: { cmd: "terraform apply rollback.tfplan", image } });
+  });
 });
 
 describe("TerraformApplyOp on the local executor (#2086, gate-as-fact #2119)", () => {
