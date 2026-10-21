@@ -117,13 +117,28 @@ function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unkn
 }
 
 /**
+ * A warning for each output of a gcp resource (#4181). Config Connector YAML
+ * has no outputs section, and a field such as `status.uri` exists only once
+ * the resource is applied, so the build cannot write the value anywhere. An
+ * output with no source lexicon (a literal or an intrinsic) is passed to
+ * every lexicon and is left to one that writes outputs.
+ */
+function unwritableOutputWarnings(outputs: LexiconOutput[] | undefined): string[] {
+  return (outputs ?? [])
+    .filter((o) => o.sourceLexicon === "gcp")
+    .map((o) =>
+      `gcp: output "${o.outputName}" (${o.sourceEntity || "?"}.${o.sourceAttribute}) is not written: Config Connector YAML has no outputs, so the value exists only after apply. Read it from the live resource instead.`,
+    );
+}
+
+/**
  * GCP Config Connector YAML serializer implementation.
  */
 export const gcpSerializer: Serializer = {
   name: "gcp",
   rulePrefix: "WGC",
 
-  serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[], context?: SerializeContext): string {
+  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[], context?: SerializeContext): string | SerializerResult {
     // Build reverse map: entity → name
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
@@ -208,7 +223,9 @@ export const gcpSerializer: Serializer = {
       documents.push(yamlDoc);
     }
 
-    return documents.join("\n---\n");
+    const primary = documents.join("\n---\n");
+    const warnings = unwritableOutputWarnings(outputs);
+    return warnings.length > 0 ? { primary, warnings } : primary;
   },
 };
 

@@ -235,6 +235,24 @@ function armVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
 /**
  * Convert a value to ARM-compatible JSON using the generic walker.
  */
+/** An ARM output for a literal, or for an azure intrinsic's `[...]` expression. */
+function armOutputValue(value: unknown): { type: string; value: unknown } | undefined {
+  if (typeof value === "string") return { type: "string", value };
+  if (typeof value === "number" && Number.isInteger(value)) return { type: "int", value };
+  if (typeof value === "boolean") return { type: "bool", value };
+  return undefined;
+}
+
+function isIntrinsicLike(value: unknown): value is { toJSON(): unknown } {
+  return typeof value === "object" && value !== null && typeof (value as { toJSON?: unknown }).toJSON === "function";
+}
+
+function isCloudFormationShaped(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 1 && (keys[0] === "Ref" || keys[0].startsWith("Fn::"));
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
@@ -252,6 +270,7 @@ function serializeToTemplate(
   entities: Map<string, Declarable>,
   outputs?: LexiconOutput[],
   ownership?: OwnershipMarker,
+  warnings: string[] = [],
 ): ArmTemplate {
   // Resolve the deployment scope from the resource types being emitted
   // (#1545): a template of tenant-only resources (management groups, policy
@@ -481,8 +500,7 @@ function serializeToTemplate(
       if (!template.outputs) template.outputs = {};
       const stackOutput = entity as StackOutput;
       // `unknown` so isAttrRefLike narrows cleanly across the workspace/published
-      // type boundary. An intrinsic-wrapped output (#517) has no bare ARM
-      // reference form, so skip it here (only aws/CFN emits those).
+      // type boundary.
       const ref: unknown = stackOutput.sourceRef;
       if (isAttrRefLike(ref)) {
         const logicalName = ref.getLogicalName();
@@ -492,6 +510,10 @@ function serializeToTemplate(
             value: armAttrExpression(entityNames, logicalName, ref.attribute),
           };
         }
+      } else {
+        const value = armOutputValue(isIntrinsicLike(ref) ? ref.toJSON() : ref);
+        if (value) template.outputs[name] = value;
+        else warnings.push(`azure: stack output "${name}" is not written: its value has no ARM form.`);
       }
     }
   }
@@ -500,11 +522,27 @@ function serializeToTemplate(
   if (outputs && outputs.length > 0) {
     template.outputs = template.outputs ?? {};
     for (const output of outputs) {
-      template.outputs[output.outputName] = {
-        type: "string",
-        value: `[reference('${output.sourceEntity}').${output.sourceAttribute}]`,
-      };
+      if (output.sourceAttribute !== null) {
+        if (output.sourceEntity) {
+          template.outputs[output.outputName] = {
+            type: "string",
+            value: armAttrExpression(entityNames, output.sourceEntity, output.sourceAttribute),
+          };
+        } else {
+          warnings.push(`azure: output "${output.outputName}" is not written: its resource has no name in this build.`);
+        }
+        continue;
+      }
+      // A literal or an intrinsic (#4181). It has no source lexicon, so every
+      // lexicon receives it; a CloudFormation-shaped value is aws's to write.
+      const raw = output.getOutputValue();
+      const value = armOutputValue(raw);
+      if (value) template.outputs[output.outputName] = value;
+      else if (!isCloudFormationShaped(raw)) {
+        warnings.push(`azure: output "${output.outputName}" is not written: its value has no ARM form.`);
+      }
     }
+    if (Object.keys(template.outputs).length === 0) delete template.outputs;
   }
 
   return template;
@@ -558,13 +596,18 @@ export const azureSerializer: Serializer = {
       }
     }
 
-    const template = serializeToTemplate(entities, outputs, context?.ownership);
+    const warnings: string[] = [];
+    const template = serializeToTemplate(entities, outputs, context?.ownership, warnings);
     const primary = JSON.stringify(template, null, 2);
 
-    if (!hasChildProjects) {
+    if (!hasChildProjects && warnings.length === 0) {
       return primary;
     }
 
-    return { primary, files: allFiles };
+    return {
+      primary,
+      ...(hasChildProjects ? { files: allFiles } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   },
 };

@@ -102,3 +102,7 @@ export const labels = defaultLabels({
 ```
 
 Explicit labels on individual resources take precedence over defaults.
+
+## Outputs
+
+Config Connector YAML has no outputs section. `output()` is exported so a gcp attribute can be named as an output, but the build can't write its value: a field such as `status.uri` exists only after the resource is applied. The build prints a warning for each such output instead of dropping it. Read the value from the live resource.
