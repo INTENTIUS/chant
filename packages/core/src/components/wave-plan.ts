@@ -13,6 +13,14 @@
  * (`componentPlanDigest`, ./gate-plan.ts, #2574), so a wave mixing roots and
  * other components still has one digest that moves when any of them does.
  *
+ * The files a step without a `plan` deploys from are bound too (#4155,
+ * ./deploy-inputs.ts). A component with no plannable step folds them into its
+ * composition digest. A component with one gets a member more,
+ * `<component>#inputs`, over its other steps' files, so a `lambda-deploy`
+ * source or a Helm chart beside a `cfn-deploy` moves the wave's digest. A step
+ * whose content chant can't name is a hole on that member, so the plan note
+ * lists it as unbound.
+ *
  * Known limit: a step input that reads an earlier step of the same
  * component (`@Phase.field`) has no value before the component runs, so it
  * plans as `undefined`. Cross-component wiring (`stackOutput()`,
@@ -21,6 +29,8 @@
 
 import { resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
+import { componentDeployInputs, type ComponentDeployInputs } from "./deploy-inputs";
+import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { CapabilityRegistry, DeployContext, PlannedOutputs } from "./capability";
 import type { WaveMember } from "../gated-waves";
 import type { ChangeSetPart } from "../change-set";
@@ -37,13 +47,17 @@ export type WaveComponentPlan =
   | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs }
   | { component: string; error: string };
 
-/** A part with no entries, for a member whose planner describes no changes. */
-function emptyPart(member: WaveMember): ChangeSetPart {
+/** A part with no entries, for a member whose planner describes no changes. `unbound` steps become its holes (#4155). */
+function emptyPart(member: WaveMember, unbound: ComponentDeployInputs["unbound"] = []): ChangeSetPart {
+  const holes = unbound.map((u) => ({ address: `${u.phase}/${u.kind}`, type: u.kind, reason: `unbound: ${u.reason}` }));
   return {
-    member: { member: member.member, lexicon: "chant", planner: "chant", status: "planned", planDigest: member.planDigest, holes: [] },
+    member: { member: member.member, lexicon: "chant", planner: "chant", status: "planned", planDigest: member.planDigest, holes },
     entries: [],
   };
 }
+
+/** The member a planning component's other steps add (#4155): their files, under the component's name. */
+export const inputsMemberName = (component: string): string => `${component}#inputs`;
 
 /** Every capability step in a composition, nested phases included, gates left out. */
 export function capabilitySteps(phases: readonly DriverPhase[]): DriverStep[] {
@@ -99,17 +113,31 @@ export async function planWaveComponent(
       if (planned.artifact !== undefined) plans[planned.member] = planned.artifact;
       if (planned.outputs) outputs = mergePlannedOutputs(outputs, planned.outputs);
     }
+    // #4155: the steps without a plan, which no member above covers.
+    const planless = (step: DriverStep): boolean => !registry.has(step.kind) || registry.resolve(step.kind).plan === undefined;
     if (members.length === 0) {
+      const read = componentDeployInputs(component.deploy, process.cwd());
       const member = {
         member: component.name,
         planDigest: componentPlanDigest({
           environment: ctx.env,
           component,
           ...(ctx.vars ? { vars: ctx.vars } : {}),
+          inputs: read.inputs,
         }),
       };
       members.push(member);
-      parts.push(emptyPart(member));
+      parts.push(emptyPart(member, read.unbound));
+    } else {
+      const read = componentDeployInputs(component.deploy, process.cwd(), planless);
+      if (read.inputs.length > 0 || read.unbound.length > 0) {
+        const member = {
+          member: inputsMemberName(component.name),
+          planDigest: computePlanDigest("component-inputs", { environment: ctx.env, component: component.name, inputs: read.inputs }),
+        };
+        members.push(member);
+        parts.push(emptyPart(member, read.unbound));
+      }
     }
     return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}) };
   } catch (err) {

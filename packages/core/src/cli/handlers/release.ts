@@ -540,7 +540,7 @@ export async function runReleaseExport(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: target.error }));
     return 1;
   }
-  const read = await targetFiles(found.release, target.target, (digest) => readReleaseTemplate(digest));
+  const read = await targetFiles(found.release, target.target, (digest, encoding) => readReleaseTemplate(digest, undefined, encoding));
   if ("errors" in read) {
     for (const e of read.errors) console.error(formatError({ message: e }));
     return 1;
