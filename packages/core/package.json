@@ -103,6 +103,12 @@
       "import": "./dist/notify-verify.js",
       "default": "./src/notify-verify.ts"
     },
+    "./runner-start": {
+      "development": "./src/runner-start.ts",
+      "types": "./dist/runner-start.d.ts",
+      "import": "./dist/runner-start.js",
+      "default": "./src/runner-start.ts"
+    },
     "./notify": {
       "development": "./src/notify.ts",
       "types": "./dist/notify.d.ts",

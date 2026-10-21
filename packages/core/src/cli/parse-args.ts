@@ -70,6 +70,7 @@ const BOOLEAN_FLAGS = new Set([
   "--trust",
   "--unsigned",
   "--in-place",
+  "--require-runner-start",
   "--no-push",
   "--no-require-review",
   "--expire",
@@ -783,6 +784,13 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--in-place") {
       // `chant ci run --in-place` (#4156): run the job in this checkout, as a generated forge job does.
       result.ciInPlace = true;
+    } else if (arg === "--require-runner-start") {
+      // `chant ci run --require-runner-start` (#4147): refuse the job unless a provisioner's runner-start statement names it.
+      result.requireRunnerStart = true;
+    } else if (arg === "--job") {
+      // `chant ci runner-start sign --job <json|@file>` (#4147): the CI job a runner was started for.
+      result.ciJob = args[++i];
+      if (!result.ciJob || result.ciJob.startsWith("-")) throw new Error("--job needs the job as JSON or @<file>: --job @job.json");
     } else if (arg === "--no-push") {
       // `chant ci run --no-push` (#4156): keep the run record on the local chant/lifecycle.
       result.noPush = true;
