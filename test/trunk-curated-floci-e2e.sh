@@ -3,9 +3,10 @@ set -euo pipefail
 
 # The "From zero to a promoted release" tutorial (#4168 step 6), driven end to
 # end against a local AWS emulator (Floci): examples/trunk-curated-floci in a
-# throwaway repository with a local bare remote, a green commit, a release cut
-# from it with --at, and each environment deployed from the release behind its
-# gate, staging then prod.
+# throwaway repository with a local bare remote, made a workspace with chant
+# workspace init and set up with chant ci init, then a green commit, a release
+# cut from it with --at, and each environment deployed from the release behind
+# its gate, staging then prod.
 #
 # The green tag is made by hand here, as the tutorial says, because the
 # throwaway repository has no CI. Everything after it is what a person runs.
@@ -59,26 +60,34 @@ git init -q --bare "$WORK/origin.git"
 mkdir -p "$WORK/repo"
 cp -R "$EXAMPLE/." "$WORK/repo/"
 cd "$WORK/repo"
+export GIT_AUTHOR_NAME=tutorial GIT_AUTHOR_EMAIL=tutorial@example.invalid GIT_COMMITTER_NAME=tutorial GIT_COMMITTER_EMAIL=tutorial@example.invalid
 git init -q -b main
+mkdir -p node_modules/@intentius
+ln -sfn "$ROOT/packages/core" node_modules/@intentius/chant
+ln -sfn "$ROOT/lexicons/aws" node_modules/@intentius/chant-lexicon-aws
+ln -sfn "$ROOT/lexicons/github" node_modules/@intentius/chant-lexicon-github
+printf 'node_modules/\n' >> .gitignore
 git add -A
-git -c user.name=tutorial -c user.email=tutorial@example.invalid commit -q -m "the stack, as a trunk-curated workspace"
+git commit -q -m "the stack"
 git remote add origin "$WORK/origin.git"
 git push -q origin main
-mkdir -p infra/node_modules/@intentius
-ln -sfn "$ROOT/packages/core" infra/node_modules/@intentius/chant
-ln -sfn "$ROOT/lexicons/aws" infra/node_modules/@intentius/chant-lexicon-aws
-export GIT_AUTHOR_NAME=tutorial GIT_AUTHOR_EMAIL=tutorial@example.invalid GIT_COMMITTER_NAME=tutorial GIT_COMMITTER_EMAIL=tutorial@example.invalid
 
-echo "=== The workspace check knows the workflow ==="
+echo "=== A workspace on the trunk-curated workflow ==="
+"$CHANT" workspace init --yes
+"$CHANT" ci init --workflow trunk-curated --forge github --yes
+grep -q '"workflow": "trunk-curated"' chant.workspace.json || { echo "ci init wrote no ci.workflow"; exit 1; }
+[ -f .github/workflows/chant-release.yml ] || { echo "ci init wrote no publish workflow"; exit 1; }
 "$CHANT" workspace check --format json > "$WORK/check.json" || true
-grep -q '"ruleId": *"WSP151"' "$WORK/check.json" || { echo "expected WSP151 findings for the pipelines the repository lacks"; exit 1; }
+grep -q 'ci-workflow-pipeline-missing' "$WORK/check.json" || { echo "expected WSP151 to report the tick this repository has no CI for"; exit 1; }
+git add -A
+git commit -q -m "set up trunk-curated with chant ci init"
+git push -q origin main
 
 echo "=== A green commit ==="
 SHA="$(git rev-parse HEAD)"
 git tag -a "ci/green/$SHA" -m "green, by hand: this repository has no CI"
 git push -q origin "ci/green/$SHA"
 
-cd infra
 echo "=== Cut v0.1.0 from it ==="
 "$CHANT" release cut v0.1.0 --at "$SHA" --build "$CHANT build src --lexicon aws -o template.json" --yes
 

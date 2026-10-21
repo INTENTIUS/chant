@@ -40,7 +40,7 @@ import type { WorkspaceDiagnostic } from "./checks";
 import { CI_WORKFLOWS, STUB_MARKER, appliesOnMerge } from "./ci-workflow";
 
 export { STUB_MARKER };
-import { jobCheckRuns, readWorkflowSources } from "./ci-green-workflow";
+import { CI_GREEN_WORKFLOW_FILE, jobCheckRuns, readWorkflowSources, workflowsHolding } from "./ci-green-workflow";
 import { findWorkspaceRoot } from "../project-root";
 import { parseDeclaration, readDeclaration, WorkspaceReadError, type CiWorkflow, type Declaration } from "./declaration";
 import { staticPromotionOrder } from "./promotion-order";
@@ -175,6 +175,7 @@ export function componentStub(member: string, lastEnvironment: string): string {
     `// ${STUB_MARKER}: say how ${member} is built and deployed, then delete this line.`,
     "// The gate makes a promote wait on an approval; a release gate decides it",
     `// for each environment, ${lastEnvironment} among them.`,
+    "// chant-disable COMP004 -- the release gate: the person promoting approves each environment with chant approve",
     'import { gate, phase, type Component } from "@intentius/chant/components/component";',
     "",
     `export const ${exportName(member)}: Component = {`,
@@ -281,11 +282,18 @@ export function proposeCiInit(root: string, options: CiInitOptions): CiInitPropo
         const env = firstEnv.get(m.name);
         commands.push({
           cwd: memberDir(m.dir) || ".",
-          args: ["build", "--components", "--generate", forge, "--pr-loop", ...(env ? ["--env", env] : []), ...(appliesOnMerge(m.ciWorkflow ?? proposed.ci!.workflow!) ? ["--apply-on-merge"] : [])],
+          // The root member builds alone: at a workspace root, chant build refuses without --root-only (WSP000).
+          args: ["build", "--components", "--generate", forge, "--pr-loop", ...(m.dir === "." ? ["--root-only"] : []), ...(env ? ["--env", env] : []), ...(appliesOnMerge(m.ciWorkflow ?? proposed.ci!.workflow!) ? ["--apply-on-merge"] : [])],
           why: `the pull-request pipeline for ${m.name}: plan on a pull request, ${appliesOnMerge(m.ciWorkflow ?? proposed.ci!.workflow!) ? "apply" : "record"} on merge`,
         });
       }
-      if (forge === "github") commands.push({ cwd: ".", args: ["ci", "workflow"], why: "the tick that tags green commits" });
+      if (forge === "github") {
+        // ci workflow refuses when no workflow holds a required phase's check run, so say so instead of running it.
+        const green = proposed.ci?.green;
+        const holding = green ? workflowsHolding(green, readWorkflowSources(repoRoot, CI_GREEN_WORKFLOW_FILE)).workflows : [];
+        if (holding.length > 0) commands.push({ cwd: ".", args: ["ci", "workflow"], why: "the tick that tags green commits" });
+        else notes.push("No workflow in .github/workflows runs a job of a required ci.green phase on the branch yet, so the tick is not generated; add your CI, name its jobs in ci.green.phases, then rerun chant ci init.");
+      }
       else notes.push(`${forge} has no check runs for ci tick to read; set ci.green.source to runs and run chant ci tick from a scheduled job (see the green-commits guide).`);
     }
     if (reported("ci-workflow-publish-missing")) commands.push({ cwd: ".", args: ["release", "workflow", "--forge", forge], why: "the publish job for release/** tags" });

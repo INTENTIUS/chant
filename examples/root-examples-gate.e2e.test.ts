@@ -79,13 +79,6 @@ const ALLOWLIST: Record<string, AllowEntry> = {
       "project to build; `chant carve` reads the estate that `demo.sh` stands up.",
   },
 
-  "trunk-curated-floci": {
-    kind: "no-config",
-    reason:
-      "A workspace whose one member, infra/, is the chant project. The tutorial's driver, " +
-      "test/trunk-curated-floci-e2e.sh, builds it, cuts a release and deploys it to Floci.",
-  },
-
   // ── Runs, and is expected to fail ──
   "fold-adversarial": {
     kind: "expected-failure",
