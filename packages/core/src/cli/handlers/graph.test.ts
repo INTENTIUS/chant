@@ -1138,6 +1138,7 @@ describe("runGraph", () => {
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
         owned: true,
+        config: {},
         stacks: [],
       });
     });
@@ -1260,6 +1261,7 @@ describe("runGraph", () => {
       expect(exit).toBe(0);
       expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
         owned: true,
+        config: {},
         stacks: [],
       });
       expect(stderrBuf.join("\n")).toMatch(/component discovery failed/i);
@@ -1447,6 +1449,21 @@ describe("runGraph", () => {
       expect(exit).toBe(0);
       const [, , , options] = buildMock.mock.calls[0] as [string, unknown, unknown, { buildRoots?: unknown[] }];
       expect(options.buildRoots).toHaveLength(1);
+    });
+
+    test("--live hands the project config to build() and observeResources() (#4252)", async () => {
+      // gcp.project reaches the live read only as the annotation the serializer
+      // writes from config, so a build without config left every read with no project.
+      resolveLexMock.mockResolvedValue(["k8s"]);
+      loadPluginsMock.mockResolvedValue([k8sPluginStub()]);
+      loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["gcp"], gcp: { project: "three-cloud" } } });
+      observeMock.mockResolvedValue({ observations: [], errors: [], warnings: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "kcheck" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const [, , , options] = buildMock.mock.calls[0] as [string, unknown, unknown, { config?: { gcp?: { project?: string } } }];
+      expect(options.config?.gcp?.project).toBe("three-cloud");
+      const [, , , observeOpts] = observeMock.mock.calls[0] as [string, unknown, unknown, { config?: { gcp?: { project?: string } } }];
+      expect(observeOpts.config?.gcp?.project).toBe("three-cloud");
     });
 
     test("--live --overlay classifies an observed rendered node as managed, not foreign", async () => {

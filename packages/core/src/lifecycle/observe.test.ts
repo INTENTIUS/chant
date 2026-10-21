@@ -9,8 +9,10 @@ import type { BuildResult } from "../build";
 // whose src is scoped reports BARE entity names, matching the deployed
 // LogicalResourceIds, not the whole-project build's disambiguated names.
 const scopedBuilds: Record<string, string[]> = {};
+const scopedBuildOptions: Array<{ src: string; options: unknown }> = [];
 vi.mock("../build", () => ({
-  build: async (src: string): Promise<BuildResult> => {
+  build: async (src: string, _serializers?: unknown, _x?: unknown, options?: unknown): Promise<BuildResult> => {
+    scopedBuildOptions.push({ src, options });
     const names = scopedBuilds[src] ?? [];
     return {
       outputs: new Map<string, string>([["aws", "{}"]]),
@@ -282,6 +284,17 @@ describe("observeResources", () => {
     expect(Object.keys(observations[0].resources).sort()).toEqual(["east::server", "west::server"]);
     expect(observations[0].resources["east::server"].physicalId).toBe("i-east");
     expect(observations[0].resources["west::server"].physicalId).toBe("i-west");
+  });
+
+  it("hands the project config to each stack's scoped build (#4252)", async () => {
+    scopedBuildOptions.length = 0;
+    const plugins = [awsPlugin(() => ({}))];
+    await observeResources("floci", plugins, mockBuild(), {
+      stacks: [{ name: "gcp-net", src: "gcp-net/src" }],
+      config: { gcp: { project: "three-cloud" } },
+    });
+    const call = scopedBuildOptions.find((c) => c.src.endsWith("gcp-net/src"));
+    expect(call?.options).toEqual({ config: { gcp: { project: "three-cloud" } } });
   });
 
   it("with an empty stacks array — falls back to the single unstacked call", async () => {

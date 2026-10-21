@@ -134,7 +134,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
-    const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer));
+    const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer), undefined, {
+      config: config as unknown as Record<string, unknown>,
+    });
     if (buildResult.errors.length > 0) {
       console.error(formatError({ message: "Build failed — fix errors before searching live state" }));
       return 1;

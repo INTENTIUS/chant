@@ -612,6 +612,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         if (!statusParams) return 1;
         const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), targetSerializers, undefined, {
           buildParams: statusParams,
+          config: config as unknown as Record<string, unknown>,
         });
         // Which deployed stack(s) to read the change set from (behold#100).
         //

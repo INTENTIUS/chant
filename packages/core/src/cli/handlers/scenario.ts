@@ -70,6 +70,7 @@ export async function runScenarioCheck(ctx: CommandContext): Promise<number> {
   const buildResult = await build(resolveBuildRoot(args, config), serializers, undefined, {
     buildParams: declaredParams,
     buildRoots: collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, resolve(".")),
+    config: config as unknown as Record<string, unknown>,
   });
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before checking scenarios" }));

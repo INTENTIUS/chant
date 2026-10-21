@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,9 +6,9 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { loadChantConfig } from "@intentius/chant/config";
 import { armSandboxConfigEvaluation, resetSandboxConfigEvaluationForTests } from "@intentius/chant/config-sandbox";
 import { gcpSerializer } from "./serializer";
-import { manifestProjectAnnotations, resolveReadProject } from "./describe-resources";
+import { describeResources, manifestProjectAnnotations, resolveReadProject } from "./describe-resources";
 import { parseManifest, resolveGcpProject } from "./op/activities/gcp-apply";
-import { CloudRunService, StorageBucket } from "./generated";
+import { CloudRunService, PubSubTopic, StorageBucket } from "./generated";
 import { defaultAnnotations } from "./default-labels";
 import { GCP } from "./pseudo";
 
@@ -115,5 +115,52 @@ describe("gcp.project under --sandbox (#4252)", () => {
     } finally {
       if (saved !== undefined) process.env.GCP_PROJECT_ID = saved;
     }
+  });
+});
+
+describe("the live read takes gcp.project with no project env var (#4252)", () => {
+  let saved: NodeJS.ProcessEnv;
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    saved = { ...process.env };
+    delete process.env.GCP_PROJECT_ID;
+    delete process.env.GOOGLE_CLOUD_PROJECT;
+    delete process.env.GCP_ENDPOINT_URL;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify({ name: "projects/p/topics/assets" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    process.env = saved;
+    vi.unstubAllGlobals();
+  });
+
+  async function read(config: Record<string, unknown> | undefined, props: Record<string, unknown>) {
+    const yaml = build({ assets: new PubSubTopic(props as never) }, config);
+    return describeResources({
+      environment: "local",
+      buildOutput: yaml,
+      entityNames: ["assets"],
+      entities: new Map([["assets", { entityType: "GCP::Pubsub::Topic", props }]]),
+    });
+  }
+
+  test("only gcp.project in config: the read targets that project", async () => {
+    const result = await read({ gcp: { project: "three-cloud" } }, { metadata: { name: "assets" } });
+    expect(result.unobserved?.assets).toBeUndefined();
+    expect(result.resources.assets).toBeDefined();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("three-cloud");
+  });
+
+  test("only a project-id annotation on the resource: the read targets that project", async () => {
+    const result = await read(undefined, { metadata: { name: "assets", annotations: { [ANNOTATION]: "annotated" } } });
+    expect(result.unobserved?.assets).toBeUndefined();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("annotated");
+  });
+
+  test("neither: no-binding, naming every place a project can come from", async () => {
+    const result = await read(undefined, { metadata: { name: "assets" } });
+    expect(result.unobserved?.assets?.reason).toBe("no-binding");
+    expect(result.unobserved?.assets?.detail).toMatch(/gcp\.project in chant\.config/);
   });
 });

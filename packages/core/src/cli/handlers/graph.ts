@@ -270,7 +270,9 @@ async function runGraphLive(
     resolve(args.src ?? config.sourceDir ?? "."),
     plugins.map((p) => p.serializer),
     undefined,
-    { buildParams: liveBuildParams, buildRoots },
+    // #4252: the serializers read lexicon settings from config (gcp.project
+    // becomes each resource's project annotation, which the live read takes).
+    { buildParams: liveBuildParams, buildRoots, config: config as unknown as Record<string, unknown> },
   );
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before graphing live state" }));
@@ -342,6 +344,7 @@ async function runGraphLive(
       } else {
       const observeResult = await observeResources(environment, observing, buildResult, {
         owned: true,
+        config: config as unknown as Record<string, unknown>,
         stacks: [...stacks],
         // `--namespace <ns>` (#1629): where to read entities that declare no
         // namespace. One project declaring the GitOps binding and another
