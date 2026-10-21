@@ -18,7 +18,7 @@ const stubArmFetch = (response: { status: number; text: string }): void => {
 };
 
 const { azurePlugin } = await import("./plugin");
-const { observeResourcesDeepAzure, azureDeepNormalizationHooks } = await import("./deep-observe");
+const { observeResourcesDeepAzure, azureDeepNormalizationHooks, userAssignedIdentityKey } = await import("./deep-observe");
 const { deepDiffForLexicon } = await import("@intentius/chant/lifecycle/deep-observe");
 const { normalizeDeepObservation, normalizeDeepProperties, UNRESOLVED } = await import("@intentius/chant/deep-observation");
 
@@ -597,5 +597,60 @@ describe("end to end: declared + mutated live + baseline (#1086)", () => {
     expect(
       result.unobserved.filter((u) => u.name !== "blobServices").every((u) => u.reason === "no-credentials"),
     ).toBe(true);
+  });
+});
+
+describe("user-assigned identities (#4231)", () => {
+  const identityId = (name: string) =>
+    `/subscriptions/sub/resourceGroups/Prod/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${name}`;
+  const declared = entities({
+    web: {
+      entityType: "Microsoft.App/containerApps",
+      props: {
+        name: "web",
+        location: "eastus",
+        identity: {
+          type: "UserAssigned",
+          userAssignedIdentities: { "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'appId')]": {} },
+        },
+      },
+    },
+  });
+  const liveWith = (name: string) =>
+    stubArmFetch(ok({
+      id: "/subscriptions/sub/resourceGroups/prod/providers/Microsoft.App/containerApps/web",
+      name: "web",
+      location: "eastus",
+      identity: {
+        type: "UserAssigned",
+        principalId: "p0",
+        tenantId: "t0",
+        userAssignedIdentities: { [identityId(name)]: { principalId: "p1", clientId: "c1" } },
+      },
+      properties: { provisioningState: "Succeeded" },
+    }));
+
+  test("both spellings of an identity's key are one key", () => {
+    expect(userAssignedIdentityKey("[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'appId')]")).toBe(
+      "microsoft.managedidentity/userassignedidentities/appid",
+    );
+    expect(userAssignedIdentityKey(identityId("appId"))).toBe("microsoft.managedidentity/userassignedidentities/appid");
+    expect(userAssignedIdentityKey("plain")).toBe("plain");
+  });
+
+  test("an applied identity is not drift", async () => {
+    liveWith("appId");
+    const result = await deepDiffForLexicon(azurePlugin, { environment: "prod", buildOutput: "", entities: declared });
+    expect(result.drifted).toEqual([]);
+    expect(result.unclaimed).toEqual([]);
+    expect(result.unchanged).toEqual(["web"]);
+  });
+
+  test("a different identity attached live is drift", async () => {
+    liveWith("otherId");
+    const result = await deepDiffForLexicon(azurePlugin, { environment: "prod", buildOutput: "", entities: declared });
+    expect(result.drifted.map((d) => d.changes.map((c) => `${c.kind} ${c.path}`))).toEqual([
+      ["absent identity.userAssignedIdentities.microsoft.managedidentity/userassignedidentities/appid"],
+    ]);
   });
 });

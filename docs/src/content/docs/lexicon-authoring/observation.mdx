@@ -199,7 +199,7 @@ observeResourcesDeep?(options: {
   stack?: string; region?: string; owned?: boolean;
 }): Promise<DeepObservationResult>;
 
-deepNormalizationHooks?: DeepNormalizationHooks;   // { prune, orderKey, unresolved, mask }
+deepNormalizationHooks?: DeepNormalizationHooks;   // { prune, orderKey, unresolved, mask, prepare }
 ```
 
 The result is the same tri-state contract, one level down. `deepObservation(resources, unobserved)` builds it; an entity whose *properties* could not be read gets an `unobserved` entry with a total reason, and throwing marks every declared entity `read-failed`. A deep read that fails is never allowed to arrive as a thin-but-clean tree, because a clean tree is a claim that nothing drifted.
@@ -227,12 +227,14 @@ Two things to get right:
 - **The hooks are data on the plugin, not steps inside the reader.** Core applies the identical rules to the *declared* property tree, which no reader ever touches. Bury them in the read and the two sides are normalized differently and everything is drift.
 - **`node.counterpart` is a tri-state** — `present` / `absent` / `unknown`. It says whether the same path exists on the other tree. Default subtraction is gated on `absent`, so a property somebody *did* declare is never pruned out from under the diff; `unknown` (a one-sided pass, e.g. a reader normalizing its own output) prunes nothing default-related.
 
-Two further hooks exist for the cases the pass cannot recognize on its own, both optional:
+Further hooks exist for the cases the pass cannot recognize on its own, all optional:
 
 | Hook | Return true when |
 |---|---|
 | `unresolved(node)` | the value cannot be known without deploying and is not a class-instance intrinsic the pass already collapses. An ARM `"[resourceId(...)]"` expression string is the motivating case (chant #1213); left alone it diffs against its evaluated live value forever. |
 | `mask(node)` | the value is secret material whose path is structural rather than name-shaped. A Kubernetes Secret's `data` carries arbitrary key names, so `isSensitiveKey` cannot find it. Masking runs on both trees, so presence and key set still classify while no value reaches a diff row. |
+
+A third, `prepare(tree, { entityType, side })`, returns a rewritten copy of one raw property tree, run on both sides before anything else reads them. It is for a difference no per-node hook can reach, a map whose keys are references. An ARM `identity.userAssignedIdentities` is keyed by `[resourceId(...)]` in source and by the evaluated resource id live, so the azure lexicon rekeys both to `<type>/<name>` (chant #4231).
 
 Core owns the rest of the pass and needs no hook for it: canonical key order, hook-driven array order, secret masking by property name, and non-JSON values (an unevaluated `Fn::Sub`) collapsed so an interpolated property never reads as permanent drift.
 
