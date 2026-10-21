@@ -16,6 +16,7 @@ import { ops014 } from "./ops014-converge-rule-refusals";
 import { ops015 } from "./ops015-gate-approval";
 import { ops016 } from "./ops016-gate-resume";
 import { ops017Check } from "./ops017-gate-alias";
+import { ops018 } from "./ops018-shell-image-digest";
 import { sys010Check } from "./sys010-key-over-plain-http";
 import type { DecideBackend } from "../../../op/decide-config";
 
@@ -25,6 +26,7 @@ export { ops014 } from "./ops014-converge-rule-refusals";
 export { ops015 } from "./ops015-gate-approval";
 export { ops016 } from "./ops016-gate-resume";
 export { ops017, ops017Check, workspaceIdentityGates } from "./ops017-gate-alias";
+export { ops018 } from "./ops018-shell-image-digest";
 export { sys010, sys010Check } from "./sys010-key-over-plain-http";
 
 export interface CoreOpCheckOptions {
@@ -36,9 +38,9 @@ export interface CoreOpCheckOptions {
 
 /**
  * Core's own post-synth checks over the Op model: OPS012, OPS013, OPS014,
- * OPS015, OPS016, OPS017 over the workspace's `identity.gates`, and SYS010
+ * OPS015, OPS016, OPS017 over the workspace's `identity.gates`, OPS018, and SYS010
  * over the `decide` steps and the configured decide backends.
  */
 export function coreOpChecks(opts: CoreOpCheckOptions = {}): PostSynthCheck[] {
-  return [ops012, ops013, ops014, ops015, ops016, ops017Check(opts.identityGates), sys010Check(opts.decideBackends)];
+  return [ops012, ops013, ops014, ops015, ops016, ops017Check(opts.identityGates), ops018, sys010Check(opts.decideBackends)];
 }

@@ -158,7 +158,11 @@ export interface TerraformApplyOpConfig {
    * rollback is already needed. Supply `compensate: { command: "..." }` with a
    * rollback of your own, or leave it unset.
    */
-  compensate?: boolean | { command?: string };
+  compensate?: boolean | {
+    command?: string;
+    /** Run the rollback command in a container pinned by digest (#4015), as `shell()`'s `image` does. */
+    image?: string;
+  };
 }
 
 export interface TerraformApplyOpResources {
@@ -174,6 +178,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
   // fails here, at build time, with the Op named — not as a warning when the
   // apply has already half-run. Same shape as ApplyOp's refusal (#1449).
   const compensateCommand = typeof config.compensate === "object" ? config.compensate.command : undefined;
+  const compensateImage = typeof config.compensate === "object" ? config.compensate.image : undefined;
   if (config.compensate !== undefined && config.compensate !== false && compensateCommand === undefined) {
     throw new Error(
       `TerraformApplyOp "${config.name}": compensate is enabled, but terraform has no automatic ` +
@@ -274,7 +279,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
     },
     phases,
     ...(compensateCommand
-      ? { onFailure: [phase("Rollback", [activity("shellCmd", { cmd: compensateCommand })])] }
+      ? { onFailure: [phase("Rollback", [activity("shellCmd", { cmd: compensateCommand, ...(compensateImage ? { image: compensateImage } : {}) })])] }
       : {}),
   });
 
