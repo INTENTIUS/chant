@@ -44,6 +44,8 @@ const repoTemplate = repoFixture(() => {
   git(root, "symbolic-ref", "HEAD", "refs/heads/main");
   git(root, "config", "user.name", "t");
   git(root, "config", "user.email", "t@example.com");
+  git(root, "config", "gc.auto", "0");
+  git(root, "config", "maintenance.auto", "false");
   writeFiles(root, { "chant.workspace.json": declaration(MEMBERS), ".gitignore": ".chant/pr/\n", "app/a.txt": "a\n" });
   const commit = (msg: string) => {
     execFileSync("git", ["-c", "commit.gpgsign=false", "add", "-A"], { cwd: root, stdio: "ignore" });
