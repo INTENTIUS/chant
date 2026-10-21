@@ -1,7 +1,9 @@
 /**
  * Compute Engine mappers for the Cloud Run load balancer (#4233): ComputeAddress,
  * ComputeRegionNetworkEndpointGroup (serverless NEGs), ComputeBackendService,
- * ComputeURLMap, ComputeTargetHTTPProxy and ComputeForwardingRule.
+ * ComputeURLMap, ComputeTargetHTTPProxy and ComputeForwardingRule; and for a
+ * declared network (#4248): ComputeNetwork (always global) and
+ * ComputeSubnetwork (regional, by its CNRM `region`).
  *
  * Each maps a CNRM spec onto the compute v1 insert body. A resource is global
  * or regional by its CNRM `location` (`"global"` or a region; a NEG has
@@ -168,6 +170,36 @@ export function negBody(resource: GcpResource, ctx: ComputeCtx): Obj {
   return body;
 }
 
+/**
+ * ComputeNetwork → networks.insert body. A network is global. CNRM's
+ * `autoCreateSubnetworks` defaults to false, where compute's default is true,
+ * so it is always sent. Pure.
+ */
+export function networkBody(resource: GcpResource): Obj {
+  const spec = (resource.spec ?? {}) as Obj;
+  const body: Obj = {
+    name: computeName(resource),
+    autoCreateSubnetworks: spec.autoCreateSubnetworks === true,
+    ...pick(spec, ["description", "mtu", "networkFirewallPolicyEnforcementOrder"]),
+  };
+  if (typeof spec.routingMode === "string") body.routingConfig = { routingMode: spec.routingMode };
+  return body;
+}
+
+/** ComputeSubnetwork → subnetworks.insert body. CNRM's `secondaryIpRange` and `logConfig` become compute's `secondaryIpRanges` and an enabled `logConfig`. Pure. */
+export function subnetworkBody(resource: GcpResource, ctx: ComputeCtx): Obj {
+  const spec = (resource.spec ?? {}) as Obj;
+  const scope = scopeOf(spec);
+  const body: Obj = {
+    name: computeName(resource),
+    ...pick(spec, ["ipCidrRange", "description", "privateIpGoogleAccess", "purpose", "role", "stackType"]),
+  };
+  if (isObj(spec.networkRef)) body.network = refUrl("networkRef", spec.networkRef as Ref, ctx, scope);
+  if (Array.isArray(spec.secondaryIpRange)) body.secondaryIpRanges = spec.secondaryIpRange;
+  if (isObj(spec.logConfig)) body.logConfig = { enable: true, ...spec.logConfig };
+  return body;
+}
+
 /** ComputeBackendService → backendServices.insert body. Pure. */
 export function backendServiceBody(resource: GcpResource, ctx: ComputeCtx): Obj {
   const spec = (resource.spec ?? {}) as Obj;
@@ -297,13 +329,14 @@ function computeMapper(
   collection: string,
   build: (resource: GcpResource, ctx: ComputeCtx) => Obj,
   regionalCollection = collection,
+  scopeFor: (spec: Obj | undefined) => string = (spec) => scopeOf(spec),
 ): ResourceMapper {
   return {
     kind,
     defaultHost: COMPUTE_HOST,
     operation: computeOperation,
     plan(resource, ctx) {
-      const scope = scopeOf(resource.spec as Obj | undefined);
+      const scope = scopeFor(resource.spec as Obj | undefined);
       const coll = `${ctx.base}/compute/v1/${scopePath(ctx.project, scope)}/${scope === "global" ? collection : regionalCollection}`;
       const name = computeName(resource);
       return { getUrl: `${coll}/${enc(name)}`, create: { method: "POST", url: coll, body: build(resource, ctx) } };
@@ -317,3 +350,5 @@ export const backendServiceMapper = computeMapper("ComputeBackendService", "back
 export const urlMapMapper = computeMapper("ComputeURLMap", "urlMaps", urlMapBody);
 export const targetHttpProxyMapper = computeMapper("ComputeTargetHTTPProxy", "targetHttpProxies", targetHttpProxyBody);
 export const forwardingRuleMapper = computeMapper("ComputeForwardingRule", "forwardingRules", forwardingRuleBody);
+export const networkMapper = computeMapper("ComputeNetwork", "networks", networkBody, "networks", () => "global");
+export const subnetworkMapper = computeMapper("ComputeSubnetwork", "subnetworks", subnetworkBody);

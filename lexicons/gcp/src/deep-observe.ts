@@ -191,6 +191,24 @@ const CNRM_REFINERS: Record<string, (tree: CnrmTree, ctx: RefineContext) => void
       template.serviceAccountRef = email.endsWith(suffix) ? { name: email.slice(0, -suffix.length) } : { external: email };
       delete template.serviceAccount;
     }
+    // #4249: Direct VPC egress paths back to CNRM's refs, `name` for the
+    // project's own network and subnetwork, `external` otherwise.
+    const vpcAccess = template?.vpcAccess as { networkInterfaces?: unknown } | undefined;
+    if (vpcAccess && Array.isArray(vpcAccess.networkInterfaces)) {
+      const own = (value: string, pattern: RegExp): { name: string } | { external: string } => {
+        if (!value.includes("/")) return { name: value };
+        const hit = pattern.exec(value);
+        return hit && hit[1] === ctx.project ? { name: hit[2] } : { external: value };
+      };
+      vpcAccess.networkInterfaces = (vpcAccess.networkInterfaces as Array<Record<string, unknown>>).map((i) => {
+        const { network, subnetwork, ...rest } = i;
+        return {
+          ...rest,
+          ...(typeof network === "string" ? { networkRef: own(network, /^projects\/([^/]+)\/global\/networks\/([^/]+)$/) } : {}),
+          ...(typeof subnetwork === "string" ? { subnetworkRef: own(subnetwork, /^projects\/([^/]+)\/regions\/[^/]+\/subnetworks\/([^/]+)$/) } : {}),
+        };
+      });
+    }
   },
   // #4233: the inverse of gcp-compute.ts's body builders. Compute returns refs
   // as full URLs and a region as a URL; CNRM writes `*Ref: { name }` and a
@@ -268,6 +286,35 @@ const CNRM_REFINERS: Record<string, (tree: CnrmTree, ctx: RefineContext) => void
       tree.urlMapRef = { name: lastSegment(tree.urlMap) };
       delete tree.urlMap;
     }
+  },
+  // #4248: a network is global and has no location; compute nests the routing
+  // mode and lists the subnetworks it holds, which CNRM declares separately.
+  ComputeNetwork(tree) {
+    const routing = tree.routingConfig as { routingMode?: unknown } | undefined;
+    if (routing) {
+      if (routing.routingMode !== undefined) tree.routingMode = routing.routingMode;
+      delete tree.routingConfig;
+    }
+    delete tree.subnetworks;
+    delete tree.gatewayIPv4;
+  },
+  ComputeSubnetwork(tree) {
+    if (typeof tree.region === "string") tree.region = lastSegment(tree.region);
+    if (typeof tree.network === "string") {
+      tree.networkRef = { name: lastSegment(tree.network) };
+      delete tree.network;
+    }
+    if (Array.isArray(tree.secondaryIpRanges)) {
+      tree.secondaryIpRange = tree.secondaryIpRanges;
+      delete tree.secondaryIpRanges;
+    }
+    const log = tree.logConfig as { enable?: unknown } | undefined;
+    if (log) {
+      if (log.enable === false) delete tree.logConfig;
+      else delete log.enable;
+    }
+    delete tree.gatewayAddress;
+    delete tree.fingerprint;
   },
   ComputeForwardingRule(tree) {
     computeLocation(tree);

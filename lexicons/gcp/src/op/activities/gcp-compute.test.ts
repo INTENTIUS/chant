@@ -210,3 +210,97 @@ describe("deep observe reads a load balancer back in the declared vocabulary (#4
     });
   });
 });
+
+describe("network and subnetwork mappers (#4248)", () => {
+  const net: GcpResource[] = [
+    {
+      kind: "ComputeSubnetwork",
+      metadata: { name: "apps" },
+      spec: {
+        region: "europe-west1",
+        ipCidrRange: "10.0.0.0/24",
+        networkRef: { name: "vpc" },
+        privateIpGoogleAccess: true,
+        secondaryIpRange: [{ rangeName: "pods", ipCidrRange: "10.4.0.0/14" }],
+      },
+    },
+    { kind: "ComputeNetwork", metadata: { name: "vpc" }, spec: { routingMode: "REGIONAL" } },
+    {
+      kind: "RunService",
+      metadata: { name: "web" },
+      spec: { location: "europe-west1", template: { vpcAccess: { networkInterfaces: [{ networkRef: { name: "vpc" }, subnetworkRef: { name: "apps" } }] } } },
+    },
+  ];
+  const nctx = { base: "https://compute.googleapis.com", project: "p1", manifest: net };
+  const find = (kind: string) => net.find((r) => r.kind === kind)!;
+
+  test("a network is global, with autoCreateSubnetworks false unless declared and the routing mode nested", () => {
+    process.env.GCP_REGION = "us-east1";
+    const plan = MAPPERS.ComputeNetwork.plan(find("ComputeNetwork"), nctx);
+    expect(plan.create.url).toBe("https://compute.googleapis.com/compute/v1/projects/p1/global/networks");
+    expect(plan.getUrl).toBe("https://compute.googleapis.com/compute/v1/projects/p1/global/networks/vpc");
+    expect(plan.create.body).toEqual({ name: "vpc", autoCreateSubnetworks: false, routingConfig: { routingMode: "REGIONAL" } });
+  });
+
+  test("a subnetwork is regional and names its network by partial URL", () => {
+    const plan = MAPPERS.ComputeSubnetwork.plan(find("ComputeSubnetwork"), nctx);
+    expect(plan.create.url).toBe("https://compute.googleapis.com/compute/v1/projects/p1/regions/europe-west1/subnetworks");
+    expect(plan.create.body).toEqual({
+      name: "apps",
+      ipCidrRange: "10.0.0.0/24",
+      privateIpGoogleAccess: true,
+      network: "projects/p1/global/networks/vpc",
+      secondaryIpRanges: [{ rangeName: "pods", ipCidrRange: "10.4.0.0/14" }],
+    });
+  });
+
+  test("apply order: network, then subnetwork, then the Cloud Run service that egresses into them", () => {
+    const order = orderByReferences(net).map((r) => r.kind);
+    expect(order.indexOf("ComputeNetwork")).toBeLessThan(order.indexOf("ComputeSubnetwork"));
+    expect(order.indexOf("ComputeSubnetwork")).toBeLessThan(order.indexOf("RunService"));
+  });
+
+  test("the reader reads a network at its global URL", async () => {
+    const http = async (_m: string, url: string) =>
+      url.endsWith("/global/networks/vpc") ? { status: 200, text: JSON.stringify({ name: "vpc" }) } : { status: 404, text: "" };
+    expect(await getResource({ project: "p1", http }, "ComputeNetwork", "vpc", {})).toEqual({ name: "vpc" });
+  });
+
+  test("deep observe inverts both body builders", async () => {
+    const { toCnrmTree } = await import("../../deep-observe");
+    const c = { project: "p1" };
+    expect(
+      toCnrmTree(
+        "ComputeNetwork",
+        {
+          name: "vpc",
+          autoCreateSubnetworks: false,
+          routingConfig: { routingMode: "REGIONAL" },
+          subnetworks: ["https://compute.googleapis.com/compute/v1/projects/p1/regions/europe-west1/subnetworks/apps"],
+        },
+        c,
+      ),
+    ).toEqual({ metadata: { name: "vpc" }, autoCreateSubnetworks: false, routingMode: "REGIONAL" });
+    expect(
+      toCnrmTree(
+        "ComputeSubnetwork",
+        {
+          name: "apps",
+          region: "https://compute.googleapis.com/compute/v1/projects/p1/regions/europe-west1",
+          network: "https://compute.googleapis.com/compute/v1/projects/p1/global/networks/vpc",
+          ipCidrRange: "10.0.0.0/24",
+          gatewayAddress: "10.0.0.1",
+          fingerprint: "abc",
+          secondaryIpRanges: [{ rangeName: "pods", ipCidrRange: "10.4.0.0/14" }],
+        },
+        c,
+      ),
+    ).toEqual({
+      metadata: { name: "apps" },
+      region: "europe-west1",
+      networkRef: { name: "vpc" },
+      ipCidrRange: "10.0.0.0/24",
+      secondaryIpRange: [{ rangeName: "pods", ipCidrRange: "10.4.0.0/14" }],
+    });
+  });
+});

@@ -58,9 +58,10 @@ export default Op({
 
 Config Connector normally reconciles a CRD on a cluster into Google API calls. `gcpApply` performs that reconciliation directly, no cluster involved:
 
-- **Maps each kind** to its REST resource via a dispatch table (`MAPPERS` in `lexicons/gcp/src/op/activities/gcp-apply.ts`), which covers the Cloud Run serverless load balancer beside the storage and IAM kinds.
+- **Maps each kind** to its REST resource via a dispatch table (`MAPPERS` in `lexicons/gcp/src/op/activities/gcp-apply.ts`), which covers a VPC network and its subnetworks and the Cloud Run serverless load balancer beside the storage and IAM kinds.
 - **Merges an IAM policy member** into its target's policy with `getIamPolicy` and then `setIamPolicy`, so the policy's other bindings stay as they were.
 - **Orders resources** by their references so a dependency applies before its dependent.
+- **Turns Config Connector refs into API fields** where the API takes something else: a Cloud Run service's `serviceAccountRef` becomes the account's email, and its `vpcAccess` `networkRef` and `subnetworkRef` become network and subnetwork paths.
 - **Drives full CRUD**, following long-running operations to completion where the API returns one.
 - **Prunes orphans** it owns — resources carrying the `managed-by: chant` label that are no longer in the manifest — and leaves everything else alone.
 
@@ -77,7 +78,7 @@ chant run gcp
 ```
 
 <Aside type="note">
-floci-gcp emulates a subset of GCP services, and `gcpApply` maps thirteen resource kinds. A kind outside that set comes back as not attempted, though synthesis and lint still validate it. A mapped kind can still fail locally when floci-gcp lacks its API, and the load balancer kinds wait on [floci-gcp#27](https://github.com/lex00/floci-gcp/issues/27).
+floci-gcp emulates a subset of GCP services, and `gcpApply` maps fifteen resource kinds. A kind outside that set comes back as not attempted, though synthesis and lint still validate it. A mapped kind can still fail locally when floci-gcp lacks its API, and the load balancer kinds wait on [floci-gcp#27](https://github.com/lex00/floci-gcp/issues/27).
 </Aside>
 
 ## From local to real cloud
