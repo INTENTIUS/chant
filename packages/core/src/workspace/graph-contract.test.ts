@@ -221,10 +221,11 @@ describe("chant workspace graph on the chant repo (#2557)", () => {
   // reference workspace runs its own chant workspace graph (#2551);
   // read-contract.test.ts covers that. Here both are left out, so nothing runs.
   const notRun = (JSON.parse(readFileSync(join(REPO, "chant.workspace.json"), "utf-8")) as { members: { name: string; kind: string }[] }).members
-    .filter((m) => m.kind !== "terraform" && m.kind !== "choudoufu" && m.kind !== "workspace")
+    // npm (release/, #4040) is the one kind chant member; leaving it out keeps this a read with nothing to build.
+    .filter((m) => m.kind !== "terraform" && m.kind !== "choudoufu" && m.kind !== "workspace" && m.kind !== "chant")
     .map((m) => m.name);
 
-  test("validates, and lists every member but the terraform one as skipped: none is kind chant", async () => {
+  test("validates, and lists every member but the terraform one and npm as skipped: no other is kind chant", async () => {
     const { doc, failed } = await workspaceGraph({ cwd: join(REPO, "packages", "core"), members: notRun });
     const g = result(doc);
     expectValid(g);

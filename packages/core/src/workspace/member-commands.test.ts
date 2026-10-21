@@ -112,22 +112,22 @@ describe("resolveToolchain", () => {
 });
 
 describe("the chant repo's own declaration (#2557)", () => {
-  test("declares no chant members, so build runs the example groups under one toolchain", () => {
+  test("build runs the one chant member, npm (release/, #4040), and the example groups under one toolchain", () => {
     const plan = planMembers("build", REPO);
     expect(plan.workspace.name).toBe("chant");
     expect(plan.unreadable).toEqual([]);
     expect(plan.groups).toHaveLength(1);
     const units = plan.groups[0].units;
-    expect(units.every((u) => u.group)).toBe(true);
+    expect(units.filter((u) => !u.group).map((u) => u.id)).toEqual(["npm"]);
     expect(units.map((u) => u.id)).toContain("fixtures:test/leftness");
     expect(plan.skipped.every((s) => s.reason.code === "kind-not-run")).toBe(true);
     expect(plan.skipped.map((s) => s.name)).toContain("core");
   });
 
-  test("graph and audit run nothing there: every member is kind other", () => {
+  test("graph and audit run only npm there: every other member is kind other", () => {
     for (const verb of ["graph", "audit"] as const) {
       const plan = planMembers(verb, REPO);
-      expect(plan.groups, verb).toEqual([]);
+      expect(plan.groups.flatMap((g) => g.units.map((u) => u.id)), verb).toEqual(["npm"]);
     }
   });
 

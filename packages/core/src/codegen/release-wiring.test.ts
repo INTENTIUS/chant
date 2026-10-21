@@ -44,6 +44,12 @@ function releaseTagShapes(): Array<{ recipe: string; example: string }> {
       .replace(/\$\{?next\}?/g, "9.9.9");
     shapes.push({ recipe: raw, example });
   }
+  // `just release` (#4040) tags nothing itself: the cut makes the tag, and the
+  // recipe pushes it as `git push origin "refs/tags/release/npm/$next"`.
+  for (const m of justfile.matchAll(/git push origin "refs\/tags\/([^"]+)"/g)) {
+    if (m[1] === "$rtag") continue;
+    shapes.push({ recipe: m[1], example: m[1].replace(/\$\{?next\}?/g, "9.9.9") });
+  }
   return shapes;
 }
 
@@ -79,6 +85,7 @@ describe("release wiring: justfile tags vs publish.yml trigger", () => {
     const examples = releaseTagShapes().map((s) => s.example);
     // Whole-repo release and single-lexicon patch. If a recipe stops
     // producing one of these, the assertion above would pass vacuously.
+    expect(examples).toContain("release/npm/9.9.9");
     expect(examples).toContain("chant-v9.9.9");
     expect(examples).toContain("lexicon-docker-v9.9.9");
   });
@@ -124,7 +131,7 @@ describe("release wiring: peer ranges stay in lockstep (#1255)", () => {
     // The rewrite is generic (`with_entries` over every `@intentius/*`
     // peer) rather than named keys — a hand-listed rewrite goes stale the
     // same way the hand-listed publish steps did.
-    const body = recipeBody("release");
+    const body = recipeBody("release-legacy");
     expect(body).toMatch(/\.peerDependencies\s*\|=\s*with_entries/);
     expect(body).toMatch(/startswith\("@intentius\/"\)/);
   });
@@ -150,7 +157,7 @@ describe("release wiring: peer ranges stay in lockstep (#1255)", () => {
   });
 
   it("both recipes keep the committed lockfile in step", () => {
-    for (const recipe of ["release", "release-lexicon"]) {
+    for (const recipe of ["release-legacy", "release-lexicon"]) {
       expect(recipeBody(recipe)).toMatch(/npm install --package-lock-only/);
     }
   });
@@ -162,7 +169,7 @@ describe("release wiring: peer ranges stay in lockstep (#1255)", () => {
  */
 describe("release wiring: preflight gates both recipes (#1255)", () => {
   it("every release recipe runs the preflight before tagging", () => {
-    for (const recipe of ["release", "release-lexicon"]) {
+    for (const recipe of ["release-legacy", "release-lexicon"]) {
       const body = recipeBody(recipe);
       expect(
         body.includes("scripts/release-preflight.sh"),
@@ -183,7 +190,7 @@ describe("release wiring: preflight gates both recipes (#1255)", () => {
  */
 describe("release wiring: release the newest green commit (#2816)", () => {
   it("both recipes tag the commit the preflight chose, not HEAD", () => {
-    for (const recipe of ["release", "release-lexicon"]) {
+    for (const recipe of ["release-legacy", "release-lexicon"]) {
       const body = recipeBody(recipe);
       expect(body).toMatch(/sha=\$\(bash scripts\/release-preflight\.sh/);
       expect(body).toMatch(/release_open "\$sha"/);
@@ -191,7 +198,7 @@ describe("release wiring: release the newest green commit (#2816)", () => {
   });
 
   it("both recipes merge the tag back into main instead of pushing HEAD", () => {
-    for (const recipe of ["release", "release-lexicon"]) {
+    for (const recipe of ["release-legacy", "release-lexicon"]) {
       const body = recipeBody(recipe);
       expect(body).toMatch(/release_ship "\$tag"/);
       expect(body).not.toMatch(/git push/);
@@ -205,16 +212,22 @@ describe("release wiring: release the newest green commit (#2816)", () => {
   });
 
   it("both recipes offer a dry run that stops before committing", () => {
-    for (const recipe of ["release", "release-lexicon"]) {
+    for (const recipe of ["release-legacy", "release-lexicon"]) {
       const body = recipeBody(recipe);
       expect(body.indexOf("RELEASE_DRY_RUN")).toBeGreaterThan(-1);
       expect(body.indexOf("RELEASE_DRY_RUN")).toBeLessThan(body.indexOf("git commit"));
     }
   });
 
-  it("the whole-repo floor reads main as well as the green commit", () => {
-    expect(recipeBody("release")).toMatch(/release_version_at "\$RELEASE_MAIN"/);
-    expect(recipeBody("release-lexicon")).toMatch(/release_version_at "\$RELEASE_MAIN"/);
+  it("the floor reads main as well as the green commit", () => {
+    expect(recipeBody("release-legacy")).toMatch(/release_version_at "\$RELEASE_MAIN"/);
+    // release-lexicon floors through release_lexicon_floor (#4040), which also reads tags and npm.
+    expect(recipeBody("release-lexicon")).toMatch(/release_lexicon_floor \{\{name\}\} "\$sha"/);
+    const lib = readFileSync(join(repoRoot, "scripts", "release-lib.sh"), "utf-8");
+    const floor = lib.slice(lib.indexOf("release_lexicon_floor() {"));
+    expect(floor).toMatch(/release_version_at "\$\{RELEASE_MAIN:-origin\/main\}"/);
+    expect(floor).toMatch(/git tag -l 'release\/npm\/\*'/);
+    expect(floor).toMatch(/npm view "\$pkg" version/);
   });
 
   it("a push to main does not cancel main's chant run; PR runs still cancel", () => {
@@ -224,5 +237,39 @@ describe("release wiring: release the newest green commit (#2816)", () => {
     // run nor replaces a queued one.
     expect(block).toMatch(/group:.*github\.ref == 'refs\/heads\/main' && github\.sha \|\| github\.ref/);
     expect(block).toMatch(/cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}/);
+  });
+});
+
+/**
+ * #4040 — `just release` cuts chant with its own release command: the
+ * preflight still picks the green commit, `chant release cut --at` cuts it
+ * with no bump commit and no signing, and the recipe pushes the tag the cut
+ * made. Its floor reads every tag, since package.json no longer moves.
+ */
+describe("release wiring: just release runs chant release cut (#4040)", () => {
+  const body = () => recipeBody("release");
+
+  it("cuts the commit the preflight chose, from the release/ member", () => {
+    expect(body()).toMatch(/sha=\$\(bash scripts\/release-preflight\.sh/);
+    expect(body()).toMatch(/cd release && .*release cut "\$next" --at "\$sha"/);
+    expect(body().indexOf("scripts/release-preflight.sh")).toBeLessThan(body().indexOf("release cut"));
+  });
+
+  it("makes no bump commit and signs nothing", () => {
+    expect(body()).not.toMatch(/git commit/);
+    expect(body()).not.toMatch(/--sign/);
+  });
+
+  it("a dry run cuts without --yes and stops before any push", () => {
+    expect(body()).toMatch(/\[ "\$RELEASE_DRY_RUN" = 1 \] \|\| yes=\(--yes\)/);
+    const dry = body().indexOf('if [ "$RELEASE_DRY_RUN" = 1 ]; then');
+    expect(dry).toBeGreaterThan(-1);
+    expect(dry).toBeLessThan(body().indexOf("git push"));
+  });
+
+  it("floors on package.json at the commit and on every chant-v and release/npm tag", () => {
+    expect(body()).toMatch(/release_version_at "\$sha"/);
+    expect(body()).toMatch(/git tag -l 'chant-v\*'/);
+    expect(body()).toMatch(/git tag -l 'release\/npm\/\*'/);
   });
 });
