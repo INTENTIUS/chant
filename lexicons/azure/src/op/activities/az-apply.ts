@@ -70,6 +70,29 @@ export interface ArmEvalCtx {
   signal?: AbortSignal;
 }
 
+/** The ARM resource id of a resource in the context's group. */
+export function armResourceIdOf(ctx: Pick<ArmEvalCtx, "subscriptionId" | "resourceGroup">, type: string, name: string): string {
+  return `/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${armResourcePath(type, name)}`;
+}
+
+/**
+ * Record an applied resource's response so `reference()` resolves it by name
+ * and by resource id (#4243). Ids are case-insensitive in ARM, so they are
+ * stored lowercased, under both the id chant derives and the one the
+ * response reports.
+ */
+export function rememberDeployed(ctx: ArmEvalCtx, type: string, name: string, body: unknown): void {
+  ctx.deployed.set(name, body);
+  ctx.deployed.set(armResourceIdOf(ctx, type, name).toLowerCase(), body);
+  const id = (body as { id?: unknown } | null)?.id;
+  if (typeof id === "string") ctx.deployed.set(id.toLowerCase(), body);
+}
+
+/** An applied resource by the name or the resource id a `reference()` names. */
+export function lookupDeployed(ctx: ArmEvalCtx, ref: string): unknown {
+  return ctx.deployed.get(ref) ?? (ref.startsWith("/") ? ctx.deployed.get(ref.toLowerCase()) : undefined);
+}
+
 /** Evaluate an ARM expression string (`"[...]"`); a plain string is returned as-is. */
 export async function evalArmString(s: string, ctx: ArmEvalCtx): Promise<unknown> {
   if (!(s.startsWith("[") && s.endsWith("]"))) return s;
@@ -161,10 +184,13 @@ class ArmExpr {
         return { subscriptionId: this.ctx.subscriptionId, id: `/subscriptions/${this.ctx.subscriptionId}` };
       case "resourceId":
         // resourceId('Microsoft.X/y', 'name'[, 'child']) → the resource-id path.
-        return `/subscriptions/${this.ctx.subscriptionId}/resourceGroups/${this.ctx.resourceGroup}/providers/${armResourcePath(String(args[0]), args.slice(1).map(String).join("/"))}`;
+        return armResourceIdOf(this.ctx, String(args[0]), args.slice(1).map(String).join("/"));
       case "reference": {
-        // reference('name') → the runtime `properties` of an already-applied resource.
-        const dep = this.ctx.deployed.get(String(args[0]));
+        // reference('name' | resourceId(...)[, apiVersion[, 'Full']]) → the
+        // runtime `properties` of an already-applied resource, or its whole
+        // body with 'Full' (#4243).
+        const dep = lookupDeployed(this.ctx, String(args[0]));
+        if (String(args[2] ?? "").toLowerCase() === "full") return dep;
         return (dep as { properties?: unknown } | undefined)?.properties ?? dep;
       }
       case "listKeys": {
@@ -362,7 +388,7 @@ export async function azApply(
     }
     // Capture the applied resource so later reference()/dependents resolve.
     try {
-      ctx.deployed.set(name, JSON.parse(res.text));
+      rememberDeployed(ctx, resource.type, name, JSON.parse(res.text));
     } catch {
       // non-JSON response — reference() to this resource resolves to undefined
     }
