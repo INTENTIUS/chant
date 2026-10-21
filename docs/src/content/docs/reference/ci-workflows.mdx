@@ -1,0 +1,45 @@
+---
+title: CI Workflows
+description: The delivery workflows ci.workflow prescribes and the workspace check codes that report what a member under one lacks.
+diataxis: reference
+---
+
+`ci.workflow` in `chant.workspace.json` names a prescribed delivery workflow ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). At the top level it covers every member that builds with chant, and a member's own `ci.workflow` wins over it. `chant ci init` writes it, and `chant workspace check` reports what a member under it still lacks as `WSP151` warnings. A declaration that names no workflow gets none.
+
+## Workflows
+
+| Workflow | On merge | Deploys |
+|---|---|---|
+| `trunk-curated` | records the plan and deploys nothing (`chant ci run record`) | a release cut from a green commit, promoted through the member's environments |
+| `trunk-curated+apply-on-merge` | applies the approved plan (`chant ci run apply`) | the merge, and releases as `trunk-curated` does |
+
+Neither turns on a security group. Those are opt-in on their own; see [Security Features](/chant/reference/security-features/).
+
+## Requirements
+
+The table is printed from `CI_WORKFLOW_REQUIREMENTS` in `packages/core/src/workspace/ci-workflow.ts`, and a test compares the two. Checked for says whether `WSP151` asks once for the workspace or once for each member under the workflow. A member counts as building with chant when its directory has a `chant.config.ts`; a member that names a workflow itself is held to it either way.
+
+| Code | Requirement | Checked for | Added by |
+|---|---|---|---|
+| `ci-workflow-green-undeclared` | `ci.green` is declared, so commits get a verdict and a release is cut only from a green one | the workspace | `chant ci init`, or a hand-written `ci.green` block |
+| `ci-workflow-no-pre-merge` | `ci.green.preMerge` names at least one phase, the quick checks that run before the branch moves | the workspace | `preMerge` in `ci.green` |
+| `ci-workflow-apply-in-green` | no phase in `ci.green.require` matches an apply job, which would wait on its own verdict | the workspace | drop the apply job's pattern from the required phases |
+| `ci-workflow-no-components` | the member declares a component (`*.component.ts`) | each member | `chant ci init` writes a stub |
+| `ci-workflow-no-environments` | the member's `chant.config.ts` declares `environments`, the promotion order | each member | `environments` in `chant.config.ts` |
+| `ci-workflow-ungated-env` | each component has a gate, so a promote to the last environment waits on an approval | each member | a `gate()` step in the component |
+| `ci-workflow-pipeline-missing` | a pipeline file runs the plan job, the merge job (`ci run record`, or `ci run apply` under apply on merge) and `chant ci tick` | the workspace | `chant build --components --generate <forge> --pr-loop` and `chant ci workflow` |
+| `ci-workflow-pipeline-differs` | the merge job matches the workflow: it records under `trunk-curated` and applies under `trunk-curated+apply-on-merge` | the workspace | regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge |
+| `ci-workflow-publish-missing` | a pipeline file runs `chant release publish` | the workspace | `chant release workflow` |
+
+The check reads files and never runs them. Environments are the literal `environments` of `chant.config.ts`; a config that builds them some other way is not checked for `ci-workflow-no-environments`. A pipeline file that differs from what its generator writes is reported by `WSP101` to `WSP106`, not here.
+
+## Pre-merge phases
+
+`ci.green.preMerge` names the phases that must pass before the branch moves. These are the quick checks, run by any of:
+
+- a pull request's checks;
+- a merge queue;
+- `chant ci serve` landing a branch;
+- `chant ci run --local` before a push.
+
+Each must be a phase `ci.green.phases` declares. The slow suites can stay out of it and run on the branch after the merge, with `build: "newest"` ([#4169](https://github.com/INTENTIUS/chant/issues/4169)).

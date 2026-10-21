@@ -178,6 +178,9 @@
         "green": {
           "$ref": "#/$defs/ciGreen"
         },
+        "workflow": {
+          "$ref": "#/$defs/ciWorkflow"
+        },
         "reportUrl": {
           "type": "string",
           "minLength": 1,
@@ -490,6 +493,19 @@
           "type": "string",
           "minLength": 1,
           "description": "Where an embedded member's files come from. Versions live in the lock."
+        },
+        "ci": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": true
+          },
+          "description": "This member's own CI settings (#4168 step 6). Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer.",
+          "properties": {
+            "workflow": {
+              "$ref": "#/$defs/ciWorkflow"
+            }
+          }
         },
         "travel": {
           "type": "boolean",
@@ -1536,6 +1552,14 @@
             "$ref": "#/$defs/ciPhaseName"
           }
         },
+        "preMerge": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The phases that must pass before the branch moves (#4168 4.4), by name: the quick checks a pull request's checks, a merge queue, chant ci serve landing a branch, or chant ci run --local give before a change lands. Each must be a declared phase. The trunk-curated workflow needs at least one. Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer.",
+          "items": {
+            "$ref": "#/$defs/ciPhaseName"
+          }
+        },
         "signedSince": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
@@ -1553,6 +1577,10 @@
         "^x-": true
       },
       "additionalProperties": false
+    },
+    "ciWorkflow": {
+      "enum": ["trunk-curated", "trunk-curated+apply-on-merge"],
+      "description": "A prescribed delivery workflow (#4168). trunk-curated: a merge records the plan and deploys nothing; releases are cut from green commits and promoted through each member's environments, gated in the last. trunk-curated+apply-on-merge: the same, with the apply on merge turned back on. chant workspace check reports what a member under one still lacks (WSP151), and chant ci init writes it. At the top level for every member, or on a member, which wins. Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer."
     },
     "ciPhaseName": {
       "type": "string",

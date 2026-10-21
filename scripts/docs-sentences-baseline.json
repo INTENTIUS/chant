@@ -926,6 +926,12 @@
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
+ "docs/src/content/docs/reference/ci-workflows.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3,
+  "anaphora/repeated-opening": 1
+ },
  "docs/src/content/docs/reference/decision-kind.mdx": {
   "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 2,

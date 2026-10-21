@@ -247,6 +247,16 @@ export const REASONS = {
   "security-runner-start-no-key": "Under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with.",
   "security-runner-start-no-role": "Under isolated-runners, no principal under runners in .chant/trust.json holds the runner role.",
   "security-trust-unreadable": "Under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked.",
+  // The ci.workflow requirements (check, #4168 step 6). Each is also a WSP151 finding.
+  "ci-workflow-green-undeclared": "Under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut.",
+  "ci-workflow-no-pre-merge": "Under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves.",
+  "ci-workflow-apply-in-green": "Under ci.workflow, a phase in ci.green.require matches an apply job, which would wait on its own verdict.",
+  "ci-workflow-no-components": "Under ci.workflow, a member declares no component, so nothing of it can be cut or promoted.",
+  "ci-workflow-no-environments": "Under ci.workflow, a member's chant.config.ts declares no environments, so a release has nowhere to be promoted to.",
+  "ci-workflow-ungated-env": "Under ci.workflow, a component has no gate, so a promote to the last environment waits on no approval.",
+  "ci-workflow-pipeline-missing": "Under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick.",
+  "ci-workflow-pipeline-differs": "Under ci.workflow, the merge job does not match the workflow: it applies under trunk-curated, or records under trunk-curated+apply-on-merge.",
+  "ci-workflow-publish-missing": "Under ci.workflow, no pipeline file runs chant release publish.",
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
   "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",

@@ -335,6 +335,15 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `security-runner-start-no-key` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
 | `security-runner-start-no-role` | finding, `check` | `WSP165`: under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
 | `security-trust-unreadable` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
+| `ci-workflow-green-undeclared` | finding, `check` | `WSP151`: under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut. |
+| `ci-workflow-no-pre-merge` | finding, `check` | `WSP151`: under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves. |
+| `ci-workflow-apply-in-green` | finding, `check` | `WSP151`: under ci.workflow, a phase in ci.green.require matches an apply job, which would wait on its own verdict. |
+| `ci-workflow-no-components` | finding, `check` | `WSP151`: under ci.workflow, a member declares no component, so nothing of it can be cut or promoted. |
+| `ci-workflow-no-environments` | finding, `check` | `WSP151`: under ci.workflow, a member's chant.config.ts declares no environments, so a release has nowhere to be promoted to. |
+| `ci-workflow-ungated-env` | finding, `check` | `WSP151`: under ci.workflow, a component has no gate, so a promote to the last environment waits on no approval. |
+| `ci-workflow-pipeline-missing` | finding, `check` | `WSP151`: under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick. |
+| `ci-workflow-pipeline-differs` | finding, `check` | `WSP151`: under ci.workflow, the merge job does not match the workflow: it applies under trunk-curated, or records under trunk-curated+apply-on-merge. |
+| `ci-workflow-publish-missing` | finding, `check` | `WSP151`: under ci.workflow, no pipeline file runs chant release publish. |
 | `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
 | `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |
 | `box-intent-unconstrained` | finding, `check` | `WSP127`: the decision record a box names as its intent constrains no member or path of this workspace at all. |

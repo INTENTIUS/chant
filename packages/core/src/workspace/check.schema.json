@@ -332,7 +332,16 @@
 
             "security-runner-start-no-role",
 
-            "security-trust-unreadable"
+            "security-trust-unreadable",
+            "ci-workflow-green-undeclared",
+            "ci-workflow-no-pre-merge",
+            "ci-workflow-apply-in-green",
+            "ci-workflow-no-components",
+            "ci-workflow-no-environments",
+            "ci-workflow-ungated-env",
+            "ci-workflow-pipeline-missing",
+            "ci-workflow-pipeline-differs",
+            "ci-workflow-publish-missing"
           ],
           "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP118, flag-stale (#4024). For WSP131 to WSP133, the diagram finding (#2764)."
         }
@@ -445,7 +454,16 @@
 
             "security-runner-start-no-role",
 
-            "security-trust-unreadable"
+            "security-trust-unreadable",
+            "ci-workflow-green-undeclared",
+            "ci-workflow-no-pre-merge",
+            "ci-workflow-apply-in-green",
+            "ci-workflow-no-components",
+            "ci-workflow-no-environments",
+            "ci-workflow-ungated-env",
+            "ci-workflow-pipeline-missing",
+            "ci-workflow-pipeline-differs",
+            "ci-workflow-publish-missing"
           ],
           "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP118, flag-stale (#4024). For WSP131 to WSP133, the diagram finding (#2764)."
         },
