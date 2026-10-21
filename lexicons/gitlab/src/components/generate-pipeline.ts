@@ -300,6 +300,9 @@ function gatedWaveGitlabPipeline(
  * k-1 pushed, and a retry of a wave that stopped at its gate pulls the one it
  * pushed itself.
  */
+/** The rule of a pipeline for a pushed `ci/green/` tag (#4168 step 9), which runs the apply under apply on merge. */
+const GITLAB_GREEN_TAG_RULE = '$CI_COMMIT_TAG =~ /^ci\\/green\\//';
+
 function prLoopGitlabPipeline(
   components: DriverComponent[],
   env: string,
@@ -316,23 +319,26 @@ function prLoopGitlabPipeline(
   const planJob = member ? `${member.name}-plan` : "plan";
   const named = (job: string) => (member ? `${member.name}-${job}` : job);
   const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
-  const applies = loop.waveGate
+  // #4168 step 9: a push to the branch records, and under apply on merge a ci/green/ tag pipeline applies.
+  const greens = loop.waveGate
     ? waveJobs.map((job) => ({ job, name: named(prApplyWaveJobName(job.wave!)), stage: prApplyWaveJobName(job.wave!) }))
     : loop.applyOnMerge
       ? [{ job: apply, name: named("apply"), stage: "apply" }]
-      : [{ job: record, name: named("record"), stage: "record" }];
+      : [];
+  const applies = [{ job: record, name: named("record"), stage: "record" }, ...greens];
   const onMergeRequest = GITLAB_MERGE_REQUEST_SOURCE;
   if (loop.branch !== undefined) assertGitlabBranch("The merge-request pipeline", loop.branch);
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
+  const onGreen = GITLAB_GREEN_TAG_RULE;
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
   // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY variable is set.
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
   const stages = ["plan", ...applies.map((a) => a.stage)];
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
-    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }] },
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, ...(greens.length > 0 ? [{ if: onGreen }] : [])] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
@@ -349,9 +355,9 @@ function prLoopGitlabPipeline(
         {
           stage,
           image,
-          ...(i > 0 ? { needs: [applies[i - 1]!.name] } : {}),
+          ...(i > 1 ? { needs: [applies[i - 1]!.name] } : {}),
           resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : prApplyGroup(env, member?.name),
-          rules: [{ if: onMerge }],
+          rules: [{ if: job.jobName === "record" ? onMerge : onGreen }],
           variables: job.run.env,
           script: script(job),
           // The attempt record (#3543), kept under the pushed commit even when
@@ -375,9 +381,9 @@ function prLoopGitlabPipeline(
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
-      component: job.wave ? `merge request apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : "merge request apply",
+      component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : "green apply",
       stage,
-      needs: i > 0 ? [applies[i - 1]!.name] : [],
+      needs: i > 1 ? [applies[i - 1]!.name] : [],
     })),
   ];
   const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, ...applies.map((a) => a.name)].map((key) => [key, doc[key]] as const));

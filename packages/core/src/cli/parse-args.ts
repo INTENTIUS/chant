@@ -410,6 +410,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.requireProvenance = true;
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
+    } else if (arg === "--green") {
+      // `chant components pr-apply --green` (#4168 step 9): apply the green commit at HEAD.
+      result.green = true;
     } else if (arg === "--apply-on-merge") {
       // `chant build --pr-loop --apply-on-merge` and `chant ci serve --apply-on-merge` (#4168): opt into applying on merge.
       result.applyOnMerge = true;

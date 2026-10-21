@@ -5,10 +5,13 @@
  * {@link ciRun} (./ci-run.ts): `plan` for each new pull request head, and
  * `record` for each new commit on the target branch (#4168), measured from
  * the head the previous poll saw (the push's `before`). The record applies
- * nothing; with `applyOnMerge` (`--apply-on-merge`) the commit gets `apply`
- * in its place, as before #4168. After each job settles it runs `ci tick`
- * from the runs the jobs recorded, when the declaration has `ci.green`.
- * What the list below says of the apply holds for it under `applyOnMerge`.
+ * nothing. With `applyOnMerge` (`--apply-on-merge`) the newest green commit
+ * of the branch, once no apply ran for it, gets `apply`: `pr-apply --green`
+ * at that commit, measured from the one last applied (#4168 step 9). After
+ * each job settles it runs `ci tick` from the runs the jobs recorded, when
+ * the declaration has `ci.green`, so a green commit follows the record that
+ * made its runs. What the list below says of the apply holds for it under
+ * `applyOnMerge`.
  *
  * - Dedupe. A state file in the state directory keeps every job it started,
  *   keyed by job and commit (`plan:<pr>:<sha>`, `record:<sha>`, `apply:<sha>`), with how it
@@ -19,10 +22,11 @@
  *   the one `chant operator` holds) named for `prApplyGroup`, renews it while
  *   it runs and releases it after. An apply that finds it held waits for a
  *   later poll, as a forge's concurrency group queues it.
- * - Merged pull request. An apply asks the forge for the pull request whose
- *   merge commit the new head is (`pullRequestFor`, as pr-apply does) and
+ * - Merged pull request. A record asks the forge for the pull request whose
+ *   merge commit the new head is (`pullRequestFor`, as pr-record does) and
  *   passes it as `--pr`, so its commit status link and run index use
- *   `<pr>/<commit>`. With none found it runs without `--pr`.
+ *   `<pr>/<commit>`. With none found it runs without `--pr`. An apply covers
+ *   every merge since the last applied green commit, so it passes none.
  * - Resume records. Each apply gets `<state>/resume/<prApplyRecordKey>.json`
  *   as its `--resume` record, so a re-run of a failed apply at the same
  *   commit finishes under the approval it has. This replaces the forge's CI
@@ -97,7 +101,7 @@ import { acquireLease, currentHolderId, releaseLease, DEFAULT_LEASE_TTL_MS, type
 import { parseDuration } from "../op/duration";
 import { reportUrlOf } from "./ci-report-url";
 import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFromEnv, CiRunError, type CiJobName, type CiRunRequest, type CiRunResult } from "./ci-run";
-import { CiGreenError, ciTick, judgePreMerge, RUNNER_KEY_ENV, signedRunsRequired, type CommitVerdict } from "./ci-green";
+import { CiGreenError, ciTick, judgePreMerge, lastGreen, RUNNER_KEY_ENV, signedRunsRequired, type CommitVerdict } from "./ci-green";
 import { gitTop } from "./tree";
 import { readDeclaration } from "./declaration";
 import { locateWorkspace } from "./which-chant";
@@ -116,8 +120,8 @@ export interface CiServeForge {
 
 /**
  * A job the forge's state calls for: the plan of a pull request's head, or
- * for a target-branch commit its record (#4168) or, with `applyOnMerge`,
- * its apply.
+ * for a target-branch commit its record (#4168), or with `applyOnMerge` the
+ * apply of the newest green commit (#4168 step 9).
  */
 export type CiServeTrigger =
   | { job: "plan"; commit: string; base: string; pr: number; rerun?: boolean }
@@ -436,8 +440,8 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
   const triggers: CiServeTrigger[] = [];
   const events: CiServeEvent[] = [];
   const [head, prs] = await Promise.all([opts.client.branchHead(place.branch), opts.client.openPullRequests(place.branch)]);
-  // #4168: a new target commit is recorded, and applied only with applyOnMerge.
-  const onMerge: "apply" | "record" = opts.applyOnMerge ? "apply" : "record";
+  // #4168: a new target commit is recorded. With applyOnMerge the newest green commit is applied, below.
+  const onMerge = "record" as const;
 
   if (head === undefined) {
     events.push({ type: "no-branch", branch: place.branch });
@@ -465,6 +469,16 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
     const key = ciServeKey({ job: onMerge, commit: head });
     const entry = state.jobs[key];
     if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true });
+  }
+
+  if (opts.applyOnMerge && head !== undefined) {
+    const green = newestGreen(place.top, opts.cwd, place.branch);
+    if (green) {
+      const key = ciServeKey({ job: "apply", commit: green });
+      const entry = state.jobs[key];
+      if (!entry) triggers.push({ job: "apply", commit: green, base: green });
+      else if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "apply", commit: green, base: entry.base, rerun: true });
+    }
   }
 
   const authors = opts.authors?.length ? new Set(opts.authors.map((a) => a.toLowerCase())) : undefined;
@@ -567,7 +581,7 @@ export async function ciServeSchedule(opts: CiServeOptions, triggers: readonly C
     const entry: CiServeJobState = { job: t.job, commit: t.commit, base: t.base, ...pr, status: "running", runId, attempts: attempt, startedAt: now().toISOString() };
     update((s) => {
       s.jobs[key] = entry;
-      if (t.job !== "plan" && !t.rerun) s.target = t.commit;
+      if (t.job === "record" && !t.rerun) s.target = t.commit;
     });
     emit({ type: "started", job: t.job, commit: t.commit, ...pr, base: t.base, runId, attempt, ...(resume && existsSync(resume) ? { resume } : {}) });
 
@@ -610,7 +624,7 @@ async function runJob(
     tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", t.job === "plan" ? `refs/pull/${t.pr}/head` : place.branch]);
     const hostEnv = { ...(opts.job?.hostEnv ?? process.env), GITHUB_REPOSITORY: opts.repo };
     // An apply is for a merge: pass the pull request whose merge commit it is, so the commit status link and the run index use `<pr>/<commit>`. None found, or a forge that errs, is today's behaviour.
-    if (t.job !== "plan" && opts.client.pullRequestFor) merged = (await opts.client.pullRequestFor(t.commit).catch(() => null)) ?? undefined;
+    if (t.job === "record" && opts.client.pullRequestFor) merged = (await opts.client.pullRequestFor(t.commit).catch(() => null)) ?? undefined;
     const run = opts.run ?? ciRun;
     const r = await run({
       ...opts.job,
@@ -634,6 +648,21 @@ async function runJob(
   } finally {
     if (renew) clearInterval(renew);
     if (held) await releaseLease(place.group, held.holder, held.lease.token, { cwd: opts.cwd }).catch(() => false);
+  }
+}
+
+/**
+ * The newest green commit of the target branch (#4168 step 9), after
+ * fetching the ci tags, or undefined when none is green or the workspace
+ * declares no `ci.green`.
+ */
+function newestGreen(top: string, cwd: string, branch: string): string | undefined {
+  tryGit(top, ["fetch", "--quiet", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`, "+refs/tags/ci/*:refs/tags/ci/*"]);
+  try {
+    const doc = lastGreen({ cwd });
+    return "commit" in doc && doc.commit ? doc.commit.sha : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -1017,7 +1046,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       client = { openPullRequests: api.openPullRequests.bind(api), branchHead: api.branchHead.bind(api), pullRequestFor: api.pullRequestFor.bind(api) };
     }
     // #4168: a host that applied each merge before the upgrade hears that it no longer does.
-    if (!args.applyOnMerge) console.error("ci serve: each new commit on the target branch gets the record job, which applies nothing (#4168); --apply-on-merge applies it");
+    if (!args.applyOnMerge) console.error("ci serve: each new commit on the target branch gets the record job, which applies nothing (#4168); --apply-on-merge also applies each newest green commit");
     const opts: CiServeOptions = {
       cwd,
       forge,

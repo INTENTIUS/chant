@@ -116,6 +116,7 @@ import { formatError, formatInfo, formatSuccess, formatWarning } from "../format
 import { reportUninstalledDependencies } from "../dependencies";
 import { findWorkspaceRoot } from "../../project-root";
 import { resolveChangedUnits } from "./fan-out";
+import { coverByMerges, greenOp, type GreenTarget } from "../../components/green-cover";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
@@ -494,18 +495,26 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   if (args.requireReview && !args.forge) return fail("--require-review reads the pull request's reviews, so it needs --forge <kind>");
   if (args.wave !== undefined && !args.waveGate) return fail("--wave runs one wave of a --wave-gate apply, so it needs --wave-gate <name>");
   if (args.wave !== undefined && args.wave < 1) return fail(`--wave counts from 1, not ${args.wave}`);
+  // #4168 step 9: apply on merge applies a green commit, measured from the one applied before it.
+  let green: GreenTarget | undefined;
+  if (args.green) {
+    const target = await greenTargetOf(ctx);
+    if (typeof target === "number") return target;
+    green = target;
+    ctx = { ...ctx, args: { ...ctx.args, base: green.base, head: green.commit } };
+  }
   const p = await prepare(ctx, "apply");
   if (typeof p === "number") return p;
 
   let pr: number | null = args.pr ?? null;
-  if (pr === null && p.forge && p.plan.order.length > 0) {
+  if (pr === null && !green && p.forge && p.plan.order.length > 0) {
     try {
       pr = await p.forge.pullRequestFor(p.head);
     } catch (err) {
       return fail(`could not ask ${p.forge.kind} which pull request merged ${p.head}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  const op = pr === null ? "pr-unknown" : prOp(pr, p.member);
+  const op = green ? greenOp(green.commit, p.member) : pr === null ? "pr-unknown" : prOp(pr, p.member);
   // The run id the release records carry, chosen before the run so that
   // `--events-json` (#4041, #4007) names the run by it too.
   const release = autoReleaseRun(`${op}-${Date.now()}`);
@@ -513,7 +522,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const events = await openCliRunEvents(args, { kind: "component", name: `pr-apply ${op}`, runId: release.runId, cwd: resolve(".") }, upload?.line);
   stage.stream = events;
   events?.emit({ type: "run-start", waves: p.plan.waves });
-  if (args.waveGate) return prApplyWaves(ctx, p, { pr, op, release, upload, events });
+  if (args.waveGate) return prApplyWaves(ctx, p, { pr, op, release, upload, events, ...(green ? { green } : {}) });
 
   // `--resume` (#3464): an earlier attempt at this change on this commit
   // applied part of an approved set. When the members left are covered by
@@ -551,7 +560,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   if (p.plan.order.length === 0) {
     return stop(prReport({ ...base, approval: { status: "pending" }, status: "nothing" }), 0);
   }
-  if (pr === null) {
+  if (pr === null && !green) {
     return stop(
       prReport({
         ...base,
@@ -581,41 +590,17 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   await storeChangeSetForGate(ctx, p, set.doc);
 
   let approval: PrApproval;
+  let via: "merges" | "gate" = "gate";
   if (resumed) {
     approval = resumed.approval;
   } else {
-    const check = await emitGateStep(
-      events?.emit,
-      { op, gate: p.gate },
-      () =>
-        decidePrGate(gitGateLedgerPort(), {
-          op,
-          gate: p.gate,
-          digest: set.doc.digest,
-          description: `pull request #${pr}: ${p.plan.order.join(", ")}`,
-        }),
-      (unapproved) => {
-        const a = approvalOf(unapproved);
-        return a.status === "changed"
-          ? describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval: a })
-          : `No approval stands for this plan. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}`;
-      },
-    );
-    approval = approvalOf(check);
-    if (!check.satisfied) {
-      const partial = { ...base, approval, status: "refused" as const };
-      const report = approval.status === "changed"
-        ? prReport({ ...partial, refusal: "plan-changed", message: describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval }) })
-        : prReport({
-            ...partial,
-            refusal: "not-approved",
-            message: `No approval stands for this plan, so nothing was applied. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}; then run the apply again.`,
-          });
-      return stop(report, GATED_EXIT_CODE);
-    }
+    const decided = await decideApplyGate(p, { op, pr, set, events, ...(green ? { green } : {}) });
+    approval = decided.approval;
+    if (!decided.satisfied) return stop(prReport({ ...base, approval, status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
+    via = decided.via;
   }
 
-  const reviewOf = reviewCheck(args, p, pr);
+  const reviewOf = reviewFor(args, p, pr, green);
   const review = await reviewOf(approval.approvedBy ?? [], "The plan");
   if (review && "error" in review) return fail(review.error);
   if (review) {
@@ -666,7 +651,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
       ...(roundLedger.approvalRule ? { approvalRule: (g: string, at?: { base?: string }) => roundLedger.approvalRule!(g === gate ? p.gate : g, at) } : {}),
     };
     const check = await emitGateStep(events?.emit, { op, gate }, () =>
-      decidePrGate(port, { op, gate, digest: planned.doc.digest, description: `pull request #${pr}, round ${round}: planned again after an upstream applied` }),
+      decidePrGate(port, { op, gate, digest: planned.doc.digest, description: `${changeLabel(pr, green)}, round ${round}: planned again after an upstream applied` }),
     );
     const roundApproval = approvalOf(check);
     if (!check.satisfied) return { satisfied: false, approval: roundApproval };
@@ -724,6 +709,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   // a person. A step that refused its plan because the target moved since
   // the approval exits 3, as a moved digest does before anything applies (#3997).
   const exit = applied.status === "applied" ? 0 : applied.status === "waiting" ? GATED_EXIT_CODE : failedRunExitCode(applied.run.results);
+  if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
@@ -846,6 +832,120 @@ async function prRecord(ctx: CommandContext, stage: StageEvents): Promise<number
   return stop(report, status === "plan-failed" ? 1 : 0);
 }
 
+/** What a gate's description and messages call the change: the pull request, or the green commit (#4168 step 9). */
+function changeLabel(pr: number | null, green: GreenTarget | undefined): string {
+  return green ? `green ${green.commit.slice(0, 12)}` : `pull request #${pr}`;
+}
+
+/**
+ * `pr-apply --green` (#4168 step 9): the green commit at HEAD, the last one
+ * applied to the environment, and the merges between with their approvals.
+ * Exits 0 when HEAD is the green commit last applied.
+ */
+async function greenTargetOf(ctx: CommandContext): Promise<GreenTarget | number> {
+  const { args } = ctx;
+  if (args.pr !== undefined) return fail("--green applies a green commit and every merge since the last one applied, so it takes no --pr; the merge records name the pull requests");
+  const { resolveGreenTarget } = await import("../../components/green-cover");
+  const env = args.env ?? "local";
+  const resolved = await resolveGreenTarget({ cwd: resolve("."), env, ...(args.base ? { base: args.base } : {}), gate: args.gate ?? PR_APPLY_GATE });
+  if (resolved.status === "error") return fail(resolved.message, resolved.hint);
+  if (resolved.status === "applied") {
+    console.error(formatInfo(`${resolved.commit.slice(0, 12)} is the green commit last applied to ${env}, so there is nothing to apply`));
+    return 0;
+  }
+  const t = resolved.target;
+  const from = { applied: "the green commit last applied", flag: "--base", "previous-green": "the green commit before it", parent: "its parent" }[t.baseFrom];
+  console.error(formatInfo(`applying green ${t.commit.slice(0, 12)}, measured from ${t.base.slice(0, 12)} (${from}): ${t.merges.length} commit${t.merges.length === 1 ? "" : "s"}, ${t.approved.length} with an approved plan`));
+  return t;
+}
+
+/**
+ * The first plan's gate. For one pull request, its gate on the plan's digest.
+ * For a green commit (#4168 step 9), the approved plans of the merges since
+ * the last applied green commit when they cover every member, and otherwise
+ * a gate of the green commit's own on the combined digest.
+ */
+async function decideApplyGate(
+  p: Prepared,
+  at: { op: string; pr: number | null; set: PrPlanSet; events?: RunEventStream; green?: GreenTarget },
+): Promise<{ approval: PrApproval; satisfied: true; via: "merges" | "gate" } | { approval: PrApproval; satisfied: false; refusal: "plan-changed" | "not-approved"; message: string }> {
+  const { op, pr, set, events, green } = at;
+  let uncovered: string[] = [];
+  if (green) {
+    const cover = coverByMerges(set.doc, green.approved);
+    if (cover.covered) {
+      console.error(formatInfo(`the approved plans of ${cover.coveredBy.length} merge${cover.coveredBy.length === 1 ? "" : "s"} cover the plan at ${green.commit.slice(0, 12)}, so it applies under them`));
+      return { approval: { status: "approved", approvedBy: cover.approvedBy }, satisfied: true, via: "merges" };
+    }
+    uncovered = cover.uncovered;
+    console.error(formatInfo(`the merged changes' approvals do not cover the plan at ${green.commit.slice(0, 12)}: ${uncovered.join("; ")}`));
+  }
+  const digest = set.doc.digest;
+  const check = await emitGateStep(
+    events?.emit,
+    { op, gate: p.gate },
+    () => decidePrGate(gitGateLedgerPort(), { op, gate: p.gate, digest, description: `${changeLabel(pr, green)}: ${p.plan.order.join(", ")}` }),
+    (unapproved) => {
+      const a = approvalOf(unapproved);
+      return a.status === "changed"
+        ? describePlanChanged({ op, gate: p.gate, digest, approval: a })
+        : `No approval stands for this plan. Approve it: ${prApproveCommand({ op, gate: p.gate, digest })}`;
+    },
+  );
+  const approval = approvalOf(check);
+  if (check.satisfied) return { approval, satisfied: true, via: "gate" };
+  if (approval.status === "changed") return { approval, satisfied: false, refusal: "plan-changed", message: describePlanChanged({ op, gate: p.gate, digest, approval }) };
+  const why = uncovered.length > 0 ? ` The approvals of the merges since the last applied green commit do not cover it: ${uncovered.join("; ")}.` : "";
+  return {
+    approval,
+    satisfied: false,
+    refusal: "not-approved",
+    message: `No approval stands for this plan, so nothing was applied.${why} Approve it: ${prApproveCommand({ op, gate: p.gate, digest })}; then run the apply again.`,
+  };
+}
+
+/**
+ * The `--require-review` check for the apply. A green commit (#4168 step 9)
+ * has no pull request of its own, so its approvers are checked against every
+ * pull request merged since the last applied green commit for authorship
+ * only: whoever wrote one of them never counts.
+ */
+function reviewFor(args: CommandContext["args"], p: Prepared, pr: number | null, green: GreenTarget | undefined): (approvedBy: readonly string[], what: string) => Promise<ReviewStop> {
+  if (!green) return reviewCheck(args, p, pr!);
+  const checks = green.prs.map((n) => reviewCheck(args, p, n, true));
+  return async (approvedBy, what) => {
+    for (const check of checks) {
+      const stop = await check(approvedBy, what);
+      if (stop) return stop;
+    }
+    return undefined;
+  };
+}
+
+/** Record the green commit as applied to the environment (#4168 step 9), and push `chant/lifecycle`. A failure warns. */
+async function recordGreenApplied(p: Prepared, green: GreenTarget, digest: string, approval: PrApproval, via: "merges" | "gate"): Promise<void> {
+  const { writeGreenApply, GREEN_APPLY_CONTRACT } = await import("../../lifecycle/green-apply");
+  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  try {
+    await writeGreenApply({
+      contract: GREEN_APPLY_CONTRACT,
+      env: p.env,
+      ...(p.member ? { member: p.member } : {}),
+      commit: green.commit,
+      base: green.base,
+      digest,
+      approval: via,
+      approvedBy: approval.approvedBy ?? [],
+      merges: green.merges,
+      appliedAt: new Date().toISOString(),
+    });
+    const pushed = await pushLifecycleReport();
+    if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
+  } catch (err) {
+    console.error(formatWarning({ message: `could not record ${green.commit.slice(0, 12)} as applied to ${p.env}: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+}
+
 /** How a stage stops: settle its events, write and publish the report, say how it ended, and return `code`. */
 function stopper(ctx: CommandContext, p: Prepared, events: RunEventStream | undefined, upload: PrReportUpload | undefined) {
   return async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
@@ -867,7 +967,7 @@ type ReviewStop = { refusal: "author-approved" | "not-a-reviewer"; message: stri
  * authors are read once, at the first call. Without `--require-review` every
  * approval counts.
  */
-function reviewCheck(args: CommandContext["args"], p: Prepared, pr: number): (approvedBy: readonly string[], what: string) => Promise<ReviewStop> {
+function reviewCheck(args: CommandContext["args"], p: Prepared, pr: number, authorsOnly = false): (approvedBy: readonly string[], what: string) => Promise<ReviewStop> {
   let read: Promise<{ reviewers: string[]; authors: string[] }> | undefined;
   return async (approvedBy, what) => {
     const forge = p.forge;
@@ -895,7 +995,7 @@ function reviewCheck(args: CommandContext["args"], p: Prepared, pr: number): (ap
           `Have someone else approve the pull request and the plan, then run the apply again.`,
       };
     }
-    const strangers = approversWithoutReview(approvedBy, reviewers);
+    const strangers = authorsOnly ? [] : approversWithoutReview(approvedBy, reviewers);
     if (strangers.length > 0) {
       return {
         refusal: "not-a-reviewer",
@@ -1127,10 +1227,10 @@ function inWave(body: RunEventBody, wave: number): RunEventBody {
 async function prApplyWaves(
   ctx: CommandContext,
   p: Prepared,
-  at: { pr: number | null; op: string; release: ReturnType<typeof autoReleaseRun>; upload?: PrReportUpload; events?: RunEventStream },
+  at: { pr: number | null; op: string; release: ReturnType<typeof autoReleaseRun>; upload?: PrReportUpload; events?: RunEventStream; green?: GreenTarget },
 ): Promise<number> {
   const { args } = ctx;
-  const { pr, op, events, upload } = at;
+  const { pr, op, events, upload, green } = at;
   const waveGate = args.waveGate!;
   const only = args.wave;
   const total = p.plan.waves.length;
@@ -1139,7 +1239,7 @@ async function prApplyWaves(
   log({ type: "run-start", waves: p.plan.waves });
   const reportBase = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, waveGate };
 
-  if (p.plan.order.length === 0 || pr === null) {
+  if (p.plan.order.length === 0 || (pr === null && !green)) {
     const set = await planAll(p, events?.emit);
     if (p.plan.order.length === 0) return stop(prReport({ ...reportBase, set, approval: { status: "pending" }, status: "nothing" }), 0);
     return stop(
@@ -1181,6 +1281,7 @@ async function prApplyWaves(
     ? { doc: carry.record.changeSet, members: carry.record.members, plans: {}, outputs: carry.record.planOutputs, failed: false }
     : undefined;
   let approval: PrApproval = carry?.approval ?? { status: "pending" };
+  let via: "merges" | "gate" = "gate";
   const report = (input: { status: PrReport["status"]; refusal?: PrReport["refusal"]; message?: string }) => {
     const set = approved ?? { doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: false };
     const members = set.members.map((m): PrMember => {
@@ -1224,35 +1325,15 @@ async function prApplyWaves(
       return stop(report({ status: "plan-failed", message: "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied." }), 1);
     }
     await storeChangeSetForGate(ctx, p, set.doc);
-    const check = await emitGateStep(
-      events?.emit,
-      { op, gate: p.gate },
-      () => decidePrGate(gitGateLedgerPort(), { op, gate: p.gate, digest: set.doc.digest, description: `pull request #${pr}: ${p.plan.order.join(", ")}` }),
-      (unapproved) => {
-        const a = approvalOf(unapproved);
-        return a.status === "changed"
-          ? describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval: a })
-          : `No approval stands for this plan. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}`;
-      },
-    );
-    approval = approvalOf(check);
-    if (!check.satisfied) {
-      return stop(
-        approval.status === "changed"
-          ? report({ status: "refused", refusal: "plan-changed", message: describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval }) })
-          : report({
-              status: "refused",
-              refusal: "not-approved",
-              message: `No approval stands for this plan, so nothing was applied. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}; then run the apply again.`,
-            }),
-        GATED_EXIT_CODE,
-      );
-    }
+    const decided = await decideApplyGate(p, { op, pr, set, events, ...(green ? { green } : {}) });
+    approval = decided.approval;
+    if (!decided.satisfied) return stop(report({ status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
+    via = decided.via;
     planned = set;
   }
   const approvedSet = approved!;
 
-  const review = reviewCheck(args, p, pr);
+  const review = reviewFor(args, p, pr, green);
   const prReview = await review(approval.approvedBy ?? [], "The plan");
   if (prReview && "error" in prReview) return fail(prReview.error);
   if (prReview) {
@@ -1336,7 +1417,7 @@ async function prApplyWaves(
         const check = await emitGateStep(
           events?.emit,
           { op, gate },
-          () => decidePrGate(gitGateLedgerPort(), { op, gate, digest, description: `pull request #${pr}, wave ${k} of ${total}: ${wavePlan.order.join(", ")}` }),
+          () => decidePrGate(gitGateLedgerPort(), { op, gate, digest, description: `${changeLabel(pr, green)}, wave ${k} of ${total}: ${wavePlan.order.join(", ")}` }),
           (unapproved) =>
             unapproved.mismatch
               ? `wave ${k}'s plan changed after its approval. Approve the plan now: ${approveLine}`
@@ -1412,6 +1493,7 @@ async function prApplyWaves(
   }
 
   const done = p.plan.order.every((name) => completed.has(name));
+  if (green && done) await recordGreenApplied(p, green, approvedSet.doc.digest, approval, via);
   return stop(report({ status: done ? "applied" : "wave-applied" }), 0);
 }
 

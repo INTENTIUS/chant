@@ -196,6 +196,13 @@ export interface PrLoopJob {
   env: Record<string, string>;
   /** Shell lines to run before the command, to settle values the forge may leave unusable. */
   setup?: string[];
+  /**
+   * Shell lines a generated job runs first, before `setup`, to check out the
+   * commit it works on (#4168 step 9): the apply checks out the newest green
+   * commit. `chant ci run` and `ci serve` already run the job at that commit,
+   * so they skip these.
+   */
+  checkout?: string[];
   /** With `build` (#4088): the build line and the lint line, run in this order before the command. */
   build?: string[];
   /** With `waveGate` (#4003): the wave a generated apply job runs, 1-based. */
@@ -241,7 +248,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   // #4156: the flags `chant ci run` rebuilds `command` from. It finds the member from the directory it runs in.
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
-    "--base", '"$BASE_SHA"', ...(job === "plan" ? ["--pr", '"$PR_NUMBER"'] : []),
+    ...(job === "apply" ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" ? ["--pr", '"$PR_NUMBER"'] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -265,17 +272,18 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       run: { command: ciRun("plan").join(" "), env: runEnv(planEnv) },
     },
     {
+      // #4168 step 9: the apply applies the newest green commit, measured from the one applied before it.
       jobName: "apply",
       command: [
-        "chant", "components", "pr-apply", "--base", '"$BASE_SHA"', ...common,
+        "chant", "components", "pr-apply", "--green", ...common,
         ...(options.requireReview === true ? ["--require-review"] : []),
         ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
         "--resume", PR_APPLY_RECORD,
       ].join(" "),
-      env: applyEnv,
-      setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
+      env: jobEnv,
+      checkout: [greenCheckout(github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH")],
       ...build,
-      run: { command: ciRun("apply").join(" "), env: runEnv(applyEnv) },
+      run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
     },
     {
       jobName: "record",
@@ -287,6 +295,15 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     },
   ];
 }
+
+/**
+ * What starts the apply under apply on merge (#4168 step 9): on GitHub the
+ * tick's workflow finishing (`workflow_run`, since tags its token pushes start
+ * no workflow), elsewhere a pushed `ci/green/*` tag. The name is
+ * `CI_GREEN_WORKFLOW_NAME` (../workspace/ci-green-workflow.ts).
+ */
+export const GREEN_TICK_WORKFLOW = "chant-ci-green";
+export const GREEN_TAG_PATTERN = "ci/green/**";
 
 /** The job a push to the target branch runs (#4168): `record`, or `apply` when the pipeline opts into apply on merge. */
 export function prLoopMergeJob(jobs: readonly PrLoopJob[], options: PrLoopPipelineOptions = {}): PrLoopJob {
@@ -379,6 +396,15 @@ function pushBaseFallback(target: string, commit: string, diffBase?: string): st
     (diffBase ? `BASE_SHA="\${${diffBase}:-}"; if [ -z "$BASE_SHA" ]; then ${fromBranch}fi; ` : fromBranch) +
     "fi; export BASE_SHA"
   );
+}
+
+/**
+ * The line that checks out the newest green commit of `branch` (#4168 step
+ * 9), after fetching the branch and its tags, for the apply job. `chant ci
+ * last-green` exits 1 when no commit is green, which fails the job.
+ */
+export function greenCheckout(branch: string): string {
+  return `git fetch --quiet --tags origin "+refs/heads/${branch.replace(/^"|"$/g, "")}:refs/remotes/origin/${branch.replace(/^"|"$/g, "")}" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"`;
 }
 
 /**

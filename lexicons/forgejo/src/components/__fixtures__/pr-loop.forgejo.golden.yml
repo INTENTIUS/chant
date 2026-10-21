@@ -7,6 +7,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - ci/green/**
 
 env:
   CHANT_ENV: prod
@@ -35,8 +37,35 @@ jobs:
           name: chant-pr-plan
           path: .chant/pr
           if-no-files-found: ignore
+  record:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+    runs-on: docker
+    container: node:22
+    concurrency:
+      group: chant-record-prod
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Record the plan on the merged commit; nothing applies
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
+          chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge forgejo
+      - name: Keep the record report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: chant-pr-record
+          path: .chant/pr
+          if-no-files-found: ignore
   apply:
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/ci/green/')
     runs-on: docker
     container: node:22
     concurrency:
@@ -53,14 +82,13 @@ jobs:
           path: .chant/pr-resume/pr-apply.json
           key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: chant-apply-prod-${{ github.sha }}-
-      - name: Apply the plan a reviewer approved
+      - name: Apply the newest green commit under the merged changes' approvals
         env:
-          BASE_SHA: '${{ github.event.before }}'
           GITHUB_TOKEN: '${{ github.token }}'
           CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
         run: |
-          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then git fetch origin "main" && BASE_SHA="$(git merge-base FETCH_HEAD "$GITHUB_SHA")"; if [ "$BASE_SHA" = "$GITHUB_SHA" ]; then BASE_SHA="$(git rev-parse --verify --quiet "$GITHUB_SHA^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"; fi; fi; export BASE_SHA
-          chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge forgejo
+          git fetch --quiet --tags origin "+refs/heads/main:refs/remotes/origin/main" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"
+          chant ci run apply --in-place --env prod --gate pr-apply --forge forgejo
       - name: Keep the record for a re-run
         if: always()
         uses: https://code.forgejo.org/actions/cache/save@v4

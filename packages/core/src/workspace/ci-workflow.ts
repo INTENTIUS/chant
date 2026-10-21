@@ -5,8 +5,8 @@
  * `trunk-curated`: a merge records the plan and deploys nothing (#4168 4.1),
  * the quick checks run before the branch moves (4.4), and a release is cut
  * from a green commit and promoted through the member's environments, gated
- * in the last (4.2). `trunk-curated+apply-on-merge` is the same with the apply
- * on merge turned back on (section 5).
+ * in the last (4.2). `trunk-curated+apply-on-merge` is the same, and each
+ * newest green commit is also applied (section 5, step 9).
  *
  * A workflow requires no security group: those are opt-in on their own
  * (./security.ts). `chant workspace check` reports what a member under a
@@ -55,8 +55,8 @@ export const CI_WORKFLOW_REQUIREMENTS = [
   { code: "ci-workflow-no-components", requirement: "the member declares a component (`*.component.ts`)", fix: "`chant ci init` writes a stub", perMember: true },
   { code: "ci-workflow-no-environments", requirement: "the member's `chant.config.ts` declares `environments`, the promotion order", fix: "`environments` in `chant.config.ts`", perMember: true },
   { code: "ci-workflow-ungated-env", requirement: "each component has a gate, so a promote to the last environment waits on an approval", fix: "a `gate()` step in the component", perMember: true },
-  { code: "ci-workflow-pipeline-missing", requirement: "a pipeline file runs the plan job, the merge job (`ci run record`, or `ci run apply` under apply on merge) and `chant ci tick`", fix: "`chant build --components --generate <forge> --pr-loop` and `chant ci workflow`", perMember: false },
-  { code: "ci-workflow-pipeline-differs", requirement: "the merge job matches the workflow: it records under `trunk-curated` and applies under `trunk-curated+apply-on-merge`", fix: "regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge", perMember: false },
+  { code: "ci-workflow-pipeline-missing", requirement: "a pipeline file runs the plan job, the record job (`ci run record`) and `chant ci tick`", fix: "`chant build --components --generate <forge> --pr-loop` and `chant ci workflow`", perMember: false },
+  { code: "ci-workflow-pipeline-differs", requirement: "the pipeline matches the workflow: no apply job under `trunk-curated`, and under `trunk-curated+apply-on-merge` an apply job that applies the newest green commit, not each merge", fix: "regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge", perMember: false },
   { code: "ci-workflow-publish-missing", requirement: "a pipeline file runs `chant release publish`", fix: "`chant release workflow`", perMember: false },
 ] as const satisfies readonly CiWorkflowRequirement[];
 

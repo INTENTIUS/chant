@@ -106,7 +106,8 @@ export const CI_WORKFLOW_CHECKS: readonly WorkspaceCheck[] = [
       const applyOnMerge = under.some((u) => appliesOnMerge(u.workflow)) || (d.ci?.workflow ? appliesOnMerge(d.ci.workflow) : false);
       const missing = [
         ...(has(PLAN) ? [] : ["a plan job (ci run plan)"]),
-        ...(has(RECORD) || has(APPLY) ? [] : [applyOnMerge ? "an apply job (ci run apply)" : "a record job (ci run record)"]),
+        // #4168 step 9: every merge is recorded, apply on merge or not, since the apply reads the merge records.
+        ...(has(RECORD) ? [] : ["a record job (ci run record)"]),
         ...(has(TICK) ? [] : ["chant ci tick"]),
       ];
       if (missing.length > 0) {
@@ -119,6 +120,11 @@ export const CI_WORKFLOW_CHECKS: readonly WorkspaceCheck[] = [
       } else if (!has(APPLY) && has(RECORD)) {
         const l = commandLines(ctx, RECORD)[0]!;
         finding("ci-workflow-pipeline-differs", `${l.path} records on merge, and the workflow is trunk-curated+apply-on-merge; regenerate with --apply-on-merge`, { treeFile: l.path, line: l.line });
+      } else {
+        // #4168 step 9: an apply measured from a push's base applies each merge; the workflow applies green commits.
+        for (const l of commandLines(ctx, APPLY).filter((c) => /--base\b/.test(c.text) || (/\bcomponents\s+pr-apply\b/.test(c.text) && !/--green\b/.test(c.text)))) {
+          finding("ci-workflow-pipeline-differs", `${l.path} applies each merge, and under trunk-curated+apply-on-merge the apply applies the newest green commit; regenerate with --apply-on-merge`, { treeFile: l.path, line: l.line });
+        }
       }
       if (!has(PUBLISH)) {
         finding("ci-workflow-publish-missing", "no pipeline file runs chant release publish, so a cut release is never published; generate one with chant release workflow");

@@ -47,6 +47,8 @@ const PIPELINE = [
   "      - run: chant ci run record --in-place --env prod --gate pr-apply --forge github",
   "",
 ].join("\n");
+/** #4168 step 9: under apply on merge a merge is recorded, and the apply applies the newest green commit, with no push base. */
+const APPLY_PIPELINE = `${PIPELINE}  apply:\n    steps:\n      - run: chant ci run apply --in-place --env prod --gate pr-apply --forge github\n`;
 const TICK = "jobs:\n  tick:\n    steps:\n      - run: npx --yes @intentius/chant@0.124.33 ci tick\n";
 const PUBLISH = "jobs:\n  publish:\n    steps:\n      - run: npx chant release publish \"$LABEL\"\n";
 
@@ -100,14 +102,22 @@ describe("ci.workflow (WSP151)", () => {
   });
 
   test("trunk-curated with an apply job on merge differs", async () => {
-    const root = repo(complete({ ".github/workflows/chant-pr.yml": PIPELINE.replace("ci run record", "ci run apply") }));
+    const root = repo(complete({ ".github/workflows/chant-pr.yml": APPLY_PIPELINE }));
     expect(await found(root)).toEqual([["ci-workflow-pipeline-differs", null]]);
   });
 
   test("trunk-curated+apply-on-merge with only a record job differs, and with an apply job passes", async () => {
     const decl = declaration({ ci: { workflow: "trunk-curated+apply-on-merge", green: green() } });
     expect(await found(repo(complete({ "chant.workspace.json": decl })))).toEqual([["ci-workflow-pipeline-differs", null]]);
-    expect(await found(repo(complete({ "chant.workspace.json": decl, ".github/workflows/chant-pr.yml": PIPELINE.replace("ci run record", "ci run apply") })))).toEqual([]);
+    expect(await found(repo(complete({ "chant.workspace.json": decl, ".github/workflows/chant-pr.yml": APPLY_PIPELINE })))).toEqual([]);
+  });
+
+  test("trunk-curated+apply-on-merge: an apply of each merge differs, and a pipeline with no record job is missing it (#4168 step 9)", async () => {
+    const decl = declaration({ ci: { workflow: "trunk-curated+apply-on-merge", green: green() } });
+    const perMerge = APPLY_PIPELINE.replace("ci run apply --in-place", 'ci run apply --in-place --base "$BASE_SHA"');
+    expect(await found(repo(complete({ "chant.workspace.json": decl, ".github/workflows/chant-pr.yml": perMerge })))).toEqual([["ci-workflow-pipeline-differs", null]]);
+    const noRecord = PIPELINE.replace("ci run record", "ci run apply");
+    expect(await found(repo(complete({ "chant.workspace.json": decl, ".github/workflows/chant-pr.yml": noRecord })))).toEqual([["ci-workflow-pipeline-missing", null]]);
   });
 
   test("a member's own workflow wins, and a top-level workflow skips members that don't build with chant", async () => {

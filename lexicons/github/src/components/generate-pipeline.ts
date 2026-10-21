@@ -61,6 +61,8 @@ import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
 import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
 import {
+  GREEN_TAG_PATTERN,
+  GREEN_TICK_WORKFLOW,
   PR_APPLY_RECORD,
   PR_LOOP_REPORT_DIR,
   prApplyGroup,
@@ -238,7 +240,7 @@ function prLoopGithubDoc(
     ...(job.jobName === "apply" ? [restoreRecord(job.wave)] : []),
     // The job's setup lines (#4004) run in the command's shell, so a value they settle reaches it.
     // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY secret is set.
-    { name, env: job.run.env, run: [...(job.setup ?? []), job.run.command].join("\n") },
+    { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), job.run.command].join("\n") },
     ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord(job.wave)] : []),
     {
@@ -248,8 +250,12 @@ function prLoopGithubDoc(
       with: { name: reportName(job), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true },
     },
   ];
+  // #4168 step 9: under apply on merge the apply runs on a green signal, and a push to the branch records.
+  const forgejo = loop.forge === "forgejo";
+  const onGreen = forgejo ? "startsWith(github.ref, 'refs/tags/ci/green/')" : "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'";
+  const onPush = loop.applyOnMerge && forgejo ? "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')" : "github.event_name == 'push'";
   const applyJob = (job: typeof plan, needs: string[], name: string) => ({
-    if: "github.event_name == 'push'",
+    if: job.jobName === "record" ? onPush : onGreen,
     "runs-on": GITHUB_RUNNER,
     ...(needs.length > 0 ? { needs } : {}),
     container: image,
@@ -258,14 +264,16 @@ function prLoopGithubDoc(
     steps: steps(job, name),
   });
   const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
-  const applyJobs: Array<[string, Record<string, unknown>]> = loop.waveGate
+  const recordJob: [string, Record<string, unknown>] = ["record", { ...applyJob(record, [], "Record the plan on the merged commit; nothing applies"), concurrency: concurrency(prRecordGroup(env, member?.name)) }];
+  const greenJobs: Array<[string, Record<string, unknown>]> = loop.waveGate
     ? waveJobs.map((job) => [
         prApplyWaveJobName(job.wave!),
-        applyJob(job, job.wave! > 1 ? [prApplyWaveJobName(job.wave! - 1)] : [], `Apply wave ${job.wave}, under the approval its plan has`),
+        applyJob(job, job.wave! > 1 ? [prApplyWaveJobName(job.wave! - 1)] : [], `Apply wave ${job.wave} of the newest green commit, under the approval its plan has`),
       ])
     : loop.applyOnMerge
-      ? [["apply", applyJob(apply, [], "Apply the plan a reviewer approved")]]
-      : [["record", { ...applyJob(record, [], "Record the plan on the merged commit; nothing applies"), concurrency: concurrency(prRecordGroup(env, member?.name)) }]];
+      ? [["apply", applyJob(apply, [], "Apply the newest green commit under the merged changes' approvals")]]
+      : [];
+  const applyJobs: Array<[string, Record<string, unknown>]> = [recordJob, ...greenJobs];
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: "github.event_name == 'pull_request'",
@@ -280,7 +288,11 @@ function prLoopGithubDoc(
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
-    on: { pull_request: { branches: [branch] }, push: { branches: [branch] } },
+    on: !loop.applyOnMerge
+      ? { pull_request: { branches: [branch] }, push: { branches: [branch] } }
+      : forgejo
+        ? { pull_request: { branches: [branch] }, push: { branches: [branch], tags: [GREEN_TAG_PATTERN] } }
+        : { pull_request: { branches: [branch] }, push: { branches: [branch] }, workflow_run: { workflows: [GREEN_TICK_WORKFLOW], types: ["completed"] }, workflow_dispatch: {} },
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
@@ -289,9 +301,10 @@ function prLoopGithubDoc(
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       ...applyNames.map((name, i) => ({
         jobName: name,
-        component: loop.waveGate ? `pull request apply, wave ${i + 1}` : loop.applyOnMerge ? "pull request apply" : "merge record",
+        component: name === "record" ? "merge record" : loop.waveGate ? `green apply, wave ${i}` : "green apply",
         stage: name,
-        needs: i > 0 ? [applyNames[i - 1]] : [],
+        // The record runs on a push and the apply on a green commit, so only the waves need each other.
+        needs: i > 1 ? [applyNames[i - 1]] : [],
       })),
     ],
   };

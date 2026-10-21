@@ -21,7 +21,7 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
 chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--member <name>]
                                 [--output <dir>] [--json] [--events-json] [--report-url <url>]
-chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
+chant components pr-apply (--base <ref> [--pr <n>] | --green [--base <ref>]) [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
                                 [--events-json] [--report-url <url>]
@@ -321,7 +321,7 @@ Progress and approval are bound to different things. The gate's approval is boun
 
 ### `components pr-plan` and `components pr-apply`
 
-The pull-request loop. `pr-plan` runs on a pull request, plans the components the change reaches and the ones that depend on them, and shows the plan. After the merge, `pr-record` plans the same members again and writes the merge record without applying anything ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With [apply on merge](/chant/guide/apply-on-merge/), `pr-apply` takes its place after the merge and applies the members only if a reviewer approved that plan. [Generated CI for pull requests](/chant/guide/pull-request-ci/) writes the pipeline that runs them on GitHub, GitLab and Forgejo.
+The pull-request loop. `pr-plan` runs on a pull request, plans the components the change reaches and the ones that depend on them, and shows the plan. After the merge, `pr-record` plans the same members again and writes the merge record without applying anything ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With [apply on merge](/chant/guide/apply-on-merge/), `pr-apply --green` runs once a commit goes green and applies it under the approvals of the merges it carries ([#4168](https://github.com/INTENTIUS/chant/issues/4168) step 9). [Generated CI for pull requests](/chant/guide/pull-request-ci/) writes the pipeline that runs them on GitHub, GitLab and Forgejo.
 
 ```bash
 chant components pr-plan --base origin/main --pr 12 --env prod
@@ -403,7 +403,8 @@ The [generated pull-request pipeline](/chant/guide/apply-on-merge/#finish-an-app
 
 | Flag | Meaning |
 |---|---|
-| `--base <ref>` | The commit the change is measured from. On a pull request, the target branch's commit. After a merge, the commit the push replaced. Required. |
+| `--base <ref>` | The commit the change is measured from. On a pull request, the target branch's commit. After a merge, the commit the push replaced. Required, except with `--green`, where it is the fallback for the first apply to an environment. |
+| `--green` | `pr-apply` only. Apply the green commit at `HEAD`, measured from the green commit last applied to `--env` (`_green-applies/<env>.json` on `chant/lifecycle`), under the approved plans of the merges between when they cover the plan, else at the gate under op `green-<sha>`. Takes no `--pr`. A `HEAD` with no counting `ci/green` tag is refused, and the commit last applied exits 0. See [which commit applies](/chant/guide/apply-on-merge/#which-commit-applies-and-under-whose-approval). |
 | `--pr <n>` | The pull or merge request. Required for `pr-plan`. |
 | `--env <env>` | Environment each member deploys into. Defaults to `local`. |
 | `--gate <name>` | The gate's name. Defaults to `pr-apply`. |

@@ -51,9 +51,10 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
   });
 
   test("one apply job and stage per wave, each needing the one before, on the merge, one at a time", () => {
-    expect(doc.stages).toEqual(["plan", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
+    expect(doc.stages).toEqual(["plan", "record", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
     expect(result.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["plan", []],
+      ["record", []],
       ["apply-wave-1", []],
       ["apply-wave-2", ["apply-wave-1"]],
       ["apply-wave-3", ["apply-wave-2"]],
@@ -64,7 +65,7 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
       expect(job.needs).toEqual(k > 1 ? [`apply-wave-${k - 1}`] : undefined);
       expect(job.resource_group).toBe("chant-apply-prod");
       // #4156: through chant ci run, which runs pr-apply --wave-gate release (no --require-review since #4168) --resume ... --wave <k>.
-      expect(job.script.at(-1)).toBe(`chant ci run apply --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab --wave-gate release --wave ${k}`);
+      expect(job.script.at(-1)).toBe(`chant ci run apply --in-place --env prod --gate pr-apply --forge gitlab --wave-gate release --wave ${k}`);
       // Every wave shares the commit's record, so wave k pulls what wave k-1 pushed.
       expect(job.cache).toEqual({ key: "chant-apply-prod-$CI_COMMIT_SHA", paths: [".chant/pr-resume/pr-apply.json"], when: "always" });
     }
@@ -77,12 +78,13 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
     const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, gatedWaves: { gate: "release" }, member });
     expect(scoped.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["network-plan", []],
+      ["network-record", []],
       ["network-apply-wave-1", []],
       ["network-apply-wave-2", ["network-apply-wave-1"]],
       ["network-apply-wave-3", ["network-apply-wave-2"]],
     ]);
     // ci run, started in the member's directory, passes --member network to pr-apply.
     expect(scoped.yaml).toContain("cd infra/network");
-    expect(scoped.yaml).toContain("chant ci run apply --in-place --base \"$BASE_SHA\" --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 3");
+    expect(scoped.yaml).toContain("chant ci run apply --in-place --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 3");
   });
 });

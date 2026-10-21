@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { EMPTY_TREE_SHA } from "./changed-files";
-import { githubBaseFallback, gitlabBaseFallback, prLoopJobs } from "./pr-pipeline";
+import { githubBaseFallback, gitlabBaseFallback, greenCheckout, GREEN_TICK_WORKFLOW, prLoopJobs } from "./pr-pipeline";
 
 const ZEROS = "0".repeat(40);
 const dir = mkdtempSync(join(tmpdir(), "chant-pr-base-"));
@@ -90,11 +90,21 @@ describe("gitlabBaseFallback", () => {
 });
 
 describe("prLoopJobs", () => {
-  test("every forge's apply settles its base first; no plan does", () => {
+  test("every forge's record settles its base first; no plan does, and the apply checks out the newest green commit (#4168 step 9)", () => {
     for (const forge of ["github", "forgejo", "gitlab"] as const) {
-      const [plan, apply] = prLoopJobs(forge, "prod", { branch: "trunk" });
+      const [plan, apply, record] = prLoopJobs(forge, "prod", { branch: "trunk" });
       expect(plan!.setup).toBeUndefined();
-      expect(apply!.setup).toEqual([forge === "gitlab" ? gitlabBaseFallback("trunk") : githubBaseFallback("trunk")]);
+      expect(record!.setup).toEqual([forge === "gitlab" ? gitlabBaseFallback("trunk") : githubBaseFallback("trunk")]);
+      expect(apply!.setup).toBeUndefined();
+      expect(apply!.checkout).toEqual([greenCheckout('"trunk"')]);
+      expect(apply!.env).not.toHaveProperty("BASE_SHA");
+      expect(apply!.command).toContain("pr-apply --green");
+      expect(apply!.run.command).not.toContain("--base");
     }
+  });
+
+  test("the green tick workflow's name is the one ci workflow writes", async () => {
+    const { CI_GREEN_WORKFLOW_NAME } = await import("../workspace/ci-green-workflow");
+    expect(GREEN_TICK_WORKFLOW).toBe(CI_GREEN_WORKFLOW_NAME);
   });
 });

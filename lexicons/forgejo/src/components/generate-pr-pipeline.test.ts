@@ -14,7 +14,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGithubPipeline } from "@intentius/chant-lexicon-github/components/generate-pipeline";
-import { githubBaseFallback } from "@intentius/chant/components/pr-pipeline";
+import { githubBaseFallback, greenCheckout } from "@intentius/chant/components/pr-pipeline";
 import { generateForgejoPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -43,7 +43,7 @@ describe("the Forgejo pull-request workflow", () => {
 
   test("both jobs run chant ci run with the runner key secret, as on GitHub (#4156)", () => {
     expect(result.yaml).toContain("chant ci run plan --in-place --no-push");
-    expect(result.yaml.match(/CHANT_RUNNER_KEY: '\$\{\{ secrets\.CHANT_RUNNER_KEY \}\}'/g)).toHaveLength(2);
+    expect(result.yaml.match(/CHANT_RUNNER_KEY: '\$\{\{ secrets\.CHANT_RUNNER_KEY \}\}'/g)).toHaveLength(3);
     expect(result.yaml).not.toContain("chant components pr-");
   });
 
@@ -54,37 +54,47 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).not.toMatch(/^\s*permissions:/m);
   });
 
-  test("a first push's all-zero github.event.before is settled before pr-apply reads it, as on GitHub (#4004)", () => {
+  test("a first push's all-zero github.event.before is settled before pr-record reads it, as on GitHub (#4004)", () => {
     const doc = parseYAML(result.yaml) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
-    const apply = doc.jobs.apply!.steps.find((s) => s.run?.includes("ci run apply"))!.run!.trimEnd().split("\n");
-    expect(apply[0]).toBe(githubBaseFallback());
-    expect(apply[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
-    expect(apply[1]).toMatch(/^chant ci run apply --in-place --base "\$BASE_SHA"/);
+    const record = doc.jobs.record!.steps.find((s) => s.run?.includes("ci run record"))!.run!.trimEnd().split("\n");
+    expect(record[0]).toBe(githubBaseFallback());
+    expect(record[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
+    expect(record[1]).toMatch(/^chant ci run record --in-place --base "\$BASE_SHA"/);
     expect(doc.jobs.plan!.steps.find((s) => s.run?.includes("ci run plan"))!.run).not.toContain("0000000000000000000000000000000000000000");
+  });
+
+  test("a pushed ci/green/ tag starts the apply, which checks out the newest green commit; a branch push records (#4168 step 9)", () => {
+    // Forgejo Actions has no workflow_run, so the apply follows the tag the tick pushes.
+    const doc = parseYAML(result.yaml) as { on: unknown; jobs: Record<string, { if?: string; steps: Array<{ run?: string }> }> };
+    expect(doc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"], tags: ["ci/green/**"] } });
+    expect(doc.jobs.record!.if).toBe("github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')");
+    expect(doc.jobs.apply!.if).toBe("startsWith(github.ref, 'refs/tags/ci/green/')");
+    const apply = doc.jobs.apply!.steps.find((s) => s.run?.includes("ci run apply"))!.run!.trimEnd().split("\n");
+    expect(apply).toEqual([greenCheckout('"main"'), "chant ci run apply --in-place --env prod --gate pr-apply --forge forgejo"]);
   });
 
   test("events and reportUrl reach Forgejo's jobs as they reach GitHub's (#4007)", () => {
     const yaml = generateForgejoPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, events: true, reportUrl: "file:///srv/chant-reports" } }).yaml;
-    expect(yaml.match(/--forge forgejo --events-json --report-url "file:\/\/\/srv\/chant-reports"/g)).toHaveLength(2);
-    expect(yaml.match(/CHANT_RUN_EVENTS_DIR: \.chant\/pr\/run-events/g)).toHaveLength(2);
+    expect(yaml.match(/--forge forgejo --events-json --report-url "file:\/\/\/srv\/chant-reports"/g)).toHaveLength(3);
+    expect(yaml.match(/CHANT_RUN_EVENTS_DIR: \.chant\/pr\/run-events/g)).toHaveLength(3);
   });
 
   test("the apply keeps its resume record in the runner's cache, through the Forgejo mirror of actions/cache (#3543)", () => {
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/restore@v4");
     expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/save@v4");
     // ci run's inner pr-apply resumes from it (#4156): the job runs in place, where the cache restored it.
-    expect(result.yaml).toContain("chant ci run apply --in-place --base");
+    expect(result.yaml).toContain("chant ci run apply --in-place --env prod");
   });
 
   test("keeps its reports with upload-artifact v3, the version a Forgejo runner runs, while GitHub keeps v4 (#4008)", () => {
     // v4 refuses a runner that reads as GitHub Enterprise Server, as Forgejo's does.
-    expect(result.yaml.match(/uses: https:\/\/code\.forgejo\.org\/actions\/upload-artifact@v3$/gm)).toHaveLength(2);
+    expect(result.yaml.match(/uses: https:\/\/code\.forgejo\.org\/actions\/upload-artifact@v3$/gm)).toHaveLength(3);
     expect(result.yaml).not.toMatch(/(upload|download)-artifact@v4/);
     // v3 uploads hidden files with no input asking for it, so .chant/pr is still kept.
     expect(result.yaml).not.toContain("include-hidden-files");
     expect(result.yaml).toContain("path: .chant/pr");
     const github = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } }).yaml;
-    expect(github.match(/uses: actions\/upload-artifact@v4$/gm)).toHaveLength(2);
+    expect(github.match(/uses: actions\/upload-artifact@v4$/gm)).toHaveLength(3);
     expect(github).toContain("include-hidden-files: true");
   });
 
