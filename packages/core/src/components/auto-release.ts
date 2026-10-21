@@ -103,6 +103,12 @@ export interface AutoReleaseRunInfo {
   inputDigest?: string;
   /** The release the deploy was made under (#4043), recorded as the release record's `releaseDigest`. Set only when the caller named a release; never inferred. */
   releaseDigest?: string;
+  /**
+   * The digest of the templates the release records for this component in
+   * this environment (#4222, `releaseTemplatesDigest`), recorded as `digest`
+   * when the run published no artifact. Set only with `releaseDigest`.
+   */
+  templatesDigest?: string;
 }
 
 /** Opt-out + field-override knobs for auto-release recording, threaded from CLI flags/config (#597: "opt-out-able (flag/config), documented default"). */
@@ -135,7 +141,8 @@ function resolveActor(override?: string): string | undefined {
  *  - `options.disabled` — the opt-out flag/config was set.
  *  - `run.success` false — defensive; callers should not reach here on failure.
  *  - no digest found in the run's records — a component with no publish step
- *    has nothing to bind a release record to.
+ *    has nothing to bind a release record to, unless the run was made under a
+ *    release that records its templates (`templatesDigest`, #4222).
  *  - no resolvable actor — mirrors `runComponentsReleaseRecord`'s hard
  *    requirement; an unattributed record defeats the ledger's purpose.
  *
@@ -159,7 +166,7 @@ export async function maybeRecordAutoRelease(
     return { recorded: false, reason: "run-not-successful" };
   }
 
-  const digest = run.digest ?? extractRunDigest(run.records ?? []);
+  const digest = run.digest ?? extractRunDigest(run.records ?? []) ?? (run.releaseDigest ? run.templatesDigest : undefined);
   if (!digest) {
     return { recorded: false, reason: "no-digest", detail: `component "${run.component}" published no digest-bearing artifact` };
   }

@@ -170,6 +170,28 @@ describe("maybeRecordAutoRelease", () => {
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
   });
 
+  test("#4222: no artifact under a release -> recorded with the release's templates digest", async () => {
+    appendReleaseRecordMock.mockResolvedValue({
+      commit: "c".repeat(40),
+      record: { version: 1, component: "infra", env: "staging", digest: "sha256:tpl", gitSha: "x", runId: "r", timestamp: "t", actor: "alice" },
+    });
+    const outcome = await maybeRecordAutoRelease(
+      { component: "infra", env: "staging", success: true, records: [applyRecord()], runId: "run-1", releaseDigest: "sha256:rel", templatesDigest: "sha256:tpl" },
+      { actor: "alice", gitSha: "a".repeat(40) },
+    );
+    expect(outcome).toMatchObject({ recorded: true });
+    const [input] = appendReleaseRecordMock.mock.calls[0];
+    expect(input).toMatchObject({ digest: "sha256:tpl", releaseDigest: "sha256:rel" });
+  });
+
+  test("#4222: a templates digest without a release is ignored", async () => {
+    const outcome = await maybeRecordAutoRelease(
+      { component: "infra", env: "staging", success: true, records: [applyRecord()], runId: "run-1", templatesDigest: "sha256:tpl" },
+      { actor: "alice" },
+    );
+    expect(outcome).toMatchObject({ recorded: false, reason: "no-digest" });
+  });
+
   test("no resolvable actor -> skipped, not an error", async () => {
     const outcome = await maybeRecordAutoRelease(
       { component: "svc", env: "prod", success: true, records: [publishRecord("sha256:abc")], runId: "run-1" },

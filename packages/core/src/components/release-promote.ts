@@ -31,6 +31,7 @@ import { templateBytesDigest, type Release, type ReleaseTarget } from "../lifecy
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
 import type { BuildArchiveManifest } from "./verbs/build-archive";
+import { contentDigest } from "../content-digest";
 
 /** Where a promote under a release writes the recorded templates, relative to the member's directory. */
 export const RELEASE_TEMPLATES_DIR = ".chant/release-templates";
@@ -54,6 +55,20 @@ export function targetFor(release: Release, env: string): { target: ReleaseTarge
   return {
     error: `release ${release.releaseDigest} has no target for "${env}"; it was compiled for ${release.targets.map((t) => t.env).join(", ") || "no environment"}`,
   };
+}
+
+/**
+ * The digest a release record carries for a component with no artifact
+ * (#4222): `sha256:` over the paths and digests of the templates `target`
+ * records for `component`, sorted by path. A template-only component (a
+ * `cfn-deploy` with no publish step) deployed under a release is recorded with
+ * it, so promote and rollback under a release find what the environment runs.
+ * Null when the target records no template for the component.
+ */
+export function releaseTemplatesDigest(target: ReleaseTarget, component: string): string | null {
+  const own = target.templates.filter((t) => t.component === component).map((t) => `${t.path}\t${t.digest}`).sort();
+  if (own.length === 0) return null;
+  return contentDigest(`${own.join("\n")}\n`);
 }
 
 /** Whether a release is of a project with no components (#4046): no artifact, and every template it records has `component: null`. */

@@ -11,6 +11,7 @@ import type { ReleaseRecord } from "../../lifecycle/release-ledger";
 import type { ParsedArgs } from "../registry";
 import { makeRelease } from "../../lifecycle/release-store";
 import { contentDigest } from "../../content-digest";
+import { releaseTemplatesDigest } from "../../components/release-promote";
 
 const appendReleaseRecordMock = vi.fn();
 const readReleaseLedgerMock = vi.fn();
@@ -245,6 +246,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // Promote, rollback and redeploy set CHANT_ENV to the environment they deploy (#4222).
+  delete process.env.CHANT_ENV;
 });
 
 describe("chant components promote", () => {
@@ -473,6 +476,37 @@ describe("chant components promote --release (#4026)", () => {
     expect(await runComponentsPromote(ctx({ release: "v1.0.0", migrateTo: "qa" }))).toBe(1);
     expect(errors.join("\n")).toMatch(/has no target for "qa"/);
     expect(ran).toEqual([]);
+  });
+
+  test("#4222: a component with no publish step deploys the release's template and records its templates digest", async () => {
+    const templateOnly: DriverComponent = { ...api, deploy: [{ phase: "Apply", steps: [{ kind: "apply", template: "dist/api.template.json" }] }] };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [templateOnly] });
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(ran).toEqual(["prod:apply"]);
+    const prodTarget = release.targets.find((t) => t.env === "prod")!;
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({
+      env: "prod",
+      digest: releaseTemplatesDigest(prodTarget, "api"),
+      releaseDigest: release.releaseDigest,
+    });
+  });
+
+  test("#4222: without --release a component with no publish step is still refused", async () => {
+    const templateOnly: DriverComponent = { ...api, deploy: [{ phase: "Apply", steps: [{ kind: "apply", template: "dist/api.template.json" }] }] };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [templateOnly] });
+    expect(await runComponentsPromote(ctx({}))).toBe(1);
+    expect(errors.join("\n")).toMatch(/no publish step/);
+    expect(ran).toEqual([]);
+  });
+
+  test("#4222: the components load with CHANT_ENV set to --to", async () => {
+    let seen: string | undefined;
+    resolveTargetsMock.mockImplementation(async () => {
+      seen = process.env.CHANT_ENV;
+      return { success: true, targets: [withTemplate] };
+    });
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(seen).toBe("prod");
   });
 
   test("a promote without --release reads the checkout's template as before", async () => {

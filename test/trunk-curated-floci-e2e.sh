@@ -5,8 +5,8 @@ set -euo pipefail
 # end against a local AWS emulator (Floci): examples/trunk-curated-floci in a
 # throwaway repository with a local bare remote, made a workspace with chant
 # workspace init and set up with chant ci init, then a green commit, a release
-# cut from it with --at, and each environment deployed from the release behind
-# its gate, staging then prod.
+# cut from it with --at, staging deployed from the release behind its gate, and
+# the release promoted to prod behind prod's gate.
 #
 # The green tag is made by hand here, as the tutorial says, because the
 # throwaway repository has no CI. Everything after it is what a person runs.
@@ -91,15 +91,27 @@ git push -q origin "ci/green/$SHA"
 echo "=== Cut v0.1.0 from it ==="
 "$CHANT" release cut v0.1.0 --at "$SHA" --build "$CHANT build src --lexicon aws -o template.json" --yes
 
-for ENV in staging prod; do
-  echo "=== Deploy $ENV from the release, behind its gate ==="
-  "$CHANT" release export v0.1.0 --env "$ENV"
-  "$CHANT" run --components all --env "$ENV" --release v0.1.0 2>&1 | tee "$WORK/run-$ENV.log" || true
-  grep -q 'gated on "release"' "$WORK/run-$ENV.log" || { echo "the first run in $ENV should stop at the gate"; exit 1; }
-  "$CHANT" approve infra release --env "$ENV"
-  "$CHANT" run --components all --env "$ENV" --release v0.1.0
-  STATUS="$(awsl cloudformation describe-stacks --stack-name "trunk-curated-$ENV" --query 'Stacks[0].StackStatus' --output text)"
-  [ "$STATUS" = "CREATE_COMPLETE" ] || { echo "stack trunk-curated-$ENV is '$STATUS', expected CREATE_COMPLETE"; exit 1; }
-done
+stack_created() {
+  STATUS="$(awsl cloudformation describe-stacks --stack-name "trunk-curated-$1" --query 'Stacks[0].StackStatus' --output text)"
+  [ "$STATUS" = "CREATE_COMPLETE" ] || { echo "stack trunk-curated-$1 is '$STATUS', expected CREATE_COMPLETE"; exit 1; }
+}
 
-echo "PASS: v0.1.0, cut from a green commit, runs in staging and prod, each deployed behind its gate."
+echo "=== Deploy staging from the release, behind its gate ==="
+"$CHANT" release export v0.1.0 --env staging
+"$CHANT" run --components all --env staging --release v0.1.0 2>&1 | tee "$WORK/run-staging.log" || true
+grep -q 'gated on "release"' "$WORK/run-staging.log" || { echo "the first run in staging should stop at the gate"; exit 1; }
+"$CHANT" approve infra release --env staging
+"$CHANT" run --components all --env staging --release v0.1.0 2>&1 | tee "$WORK/run-staging-2.log"
+# #4222: the template-only component is recorded under the release, so promote can read what staging runs.
+grep -q 'Recorded release: .*infra.*@staging' "$WORK/run-staging-2.log" || { echo "the staging run recorded no release for infra"; exit 1; }
+stack_created staging
+
+echo "=== Promote it to prod, behind prod's gate ==="
+"$CHANT" components promote --to prod --release v0.1.0 2>&1 | tee "$WORK/promote.log" && { echo "the first promote should stop at prod's gate"; exit 1; }
+APPROVE="$(sed 's/\x1b\[[0-9;]*m//g' "$WORK/promote.log" | grep -o 'chant approve .*' | head -1)"
+[ -n "$APPROVE" ] || { echo "the promote printed no approve line"; exit 1; }
+"$CHANT" ${APPROVE#chant }
+"$CHANT" components promote --to prod --release v0.1.0
+stack_created prod
+
+echo "PASS: v0.1.0, cut from a green commit, runs in staging and was promoted to prod, each behind its gate."

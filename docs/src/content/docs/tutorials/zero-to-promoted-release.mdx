@@ -1,18 +1,18 @@
 ---
 title: From Zero to a Promoted Release
-description: Cut a release from a green commit of a trunk-curated workspace and deploy it to staging and then prod, each behind a gate, offline against Floci.
+description: Cut a release from a green commit of a trunk-curated workspace, deploy it to staging and promote it to prod, each behind a gate, offline against Floci.
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/zero-to-promoted-release/.
   Start Floci on a port of its own as the page says, copy `examples/trunk-curated-floci` into a new directory, and make the repository and the workspace as the page says, with only the local endpoint and the test credentials it sets.
   Run `npx chant workspace check` and the cut without `--yes`, and show me both; I run the cut with `--yes`.
-  After the cut, run each environment's export and its run.
+  After the cut, run staging's export and its run, then the promote to prod.
   Stop at each gate and show me the `chant approve` line it prints; I approve it.
   Then show me the two stacks with `aws --endpoint-url "$AWS_ENDPOINT_URL" cloudformation describe-stacks`, and remove the Floci container with its volume.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-In this tutorial you take a small chant project from a fresh repository to a release running in two environments. You make it a workspace on the [`trunk-curated`](/chant/reference/ci-workflows/) workflow with `chant ci init`. Then you make a commit green, cut a release from it, and deploy that release to staging and then prod, approving a gate in each. Everything runs on your machine against [Floci](https://floci.io), a local AWS emulator, with no AWS account.
+In this tutorial you take a small chant project from a fresh repository to a release running in two environments. You make it a workspace on the [`trunk-curated`](/chant/reference/ci-workflows/) workflow with `chant ci init`. Then you make a commit green, cut a release from it, deploy that release to staging and promote it to prod, approving a gate in each. Everything runs on your machine against [Floci](https://floci.io), a local AWS emulator, with no AWS account.
 
 The project is [`examples/trunk-curated-floci`](https://github.com/INTENTIUS/chant/tree/main/examples/trunk-curated-floci). It synthesizes an S3 bucket and an SQS queue with the AWS lexicon and deploys them with `cfn-deploy`, one stack per environment, behind a gate. [`test/trunk-curated-floci-e2e.sh`](https://github.com/INTENTIUS/chant/blob/main/test/trunk-curated-floci-e2e.sh) runs every step on this page.
 
@@ -98,22 +98,26 @@ npx chant release export v0.1.0 --env staging
 npx chant run --components all --env staging --release v0.1.0
 ```
 
-The run stops at the component's `release` gate and prints the line that approves it. Approve it, as the person who signs off would, and run again.
+The run stops at the component's `release` gate and prints the line that approves it. Approve it, as the person who signs off would, and run again, which deploys staging and records that staging runs `infra` from that cut.
 
 ```bash
 npx chant approve infra release --env staging
 npx chant run --components all --env staging --release v0.1.0
 ```
 
-## Deploy prod
+## Promote to prod
 
-Prod is the same release, with its own template and its own gate.
+Promote the release to prod. The promote looks up what staging runs and deploys prod's copy from the release. It stops first at prod's gate, which binds the change set for prod.
 
 ```bash
-npx chant release export v0.1.0 --env prod
-npx chant run --components all --env prod --release v0.1.0
-npx chant approve infra release --env prod
-npx chant run --components all --env prod --release v0.1.0
+npx chant components promote --to prod --release v0.1.0
+```
+
+Approve it with the line it prints, and promote again.
+
+```bash
+npx chant approve release release --env prod
+npx chant components promote --to prod --release v0.1.0
 ```
 
 Both stacks now exist:
@@ -137,6 +141,6 @@ docker rm -f -v tutorial-floci
 
 ## What you did
 
-You cut one release from a green commit and ran it in two environments, approving each. Nothing you merged deployed anything. [Trunk and Releases](/chant/concepts/trunk-and-releases/#why-merge-never-deploys) explains why, and [Curate a Release](/chant/guide/curate-a-release/) picks which green commit to cut from.
+You cut one release from a green commit, ran it in staging and promoted it to prod, approving each. Nothing you merged deployed anything. [Trunk and Releases](/chant/concepts/trunk-and-releases/#why-merge-never-deploys) explains why, and [Curate a Release](/chant/guide/curate-a-release/) picks which green commit to cut from.
 
-A component with an artifact, such as an image, can go from staging to prod with [`chant components promote --release`](/chant/guide/promote-a-release/), which reads what staging runs. This member deploys only a template, and a run records what an environment runs only for a component that publishes an artifact, so each environment here is deployed from the release's export.
+`infra` publishes no artifact, so its release record carries the digest of the templates the release recorded for it (`releaseTemplatesDigest` in `packages/core/src/components/release-promote.ts`). [Promote a Release](/chant/guide/promote-a-release/) covers components with images and rolling an environment back.
