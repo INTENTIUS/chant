@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/health/v1/health.schema.json",
+  "title": "chant-health/v1",
+  "description": "What `chant lifecycle health <env> --json` prints (#4177): whether each declared resource that has a health read is up, read separately from drift. Every entity a read applies to lands in exactly one of `entities` (read, with a state), `unobserved` (the read failed, never folded into unhealthy) or `absent` (the provider says it is not deployed). Entity names are the graph's node ids. A single-stack project puts `lexicons` at the top level; a multi-stack one nests them under `stacks`. Written by the first chant release after 0.124.32. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": [
+    "schema",
+    "chantVersion",
+    "environment",
+    "observedAt",
+    "summary"
+  ],
+  "properties": {
+    "schema": {
+      "const": "chant-health/v1"
+    },
+    "chantVersion": {
+      "type": "string",
+      "description": "The chant that ran the read."
+    },
+    "environment": {
+      "type": "string",
+      "description": "The environment named on the command line."
+    },
+    "observedAt": {
+      "type": "string",
+      "description": "When the command started reading, ISO 8601 UTC."
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "healthy",
+        "unhealthy",
+        "unknown",
+        "unobserved",
+        "absent"
+      ],
+      "description": "Counts over every lexicon and stack.",
+      "properties": {
+        "healthy": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unhealthy": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unobserved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "absent": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "lexicons"
+      ],
+      "properties": {
+        "lexicons": {
+          "$ref": "#/$defs/byLexicon"
+        }
+      }
+    },
+    {
+      "required": [
+        "stacks"
+      ],
+      "properties": {
+        "stacks": {
+          "type": "object",
+          "description": "Per stack name, the same per-lexicon results.",
+          "additionalProperties": {
+            "$ref": "#/$defs/byLexicon"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "byLexicon": {
+      "type": "object",
+      "description": "Per lexicon name, that lexicon's read. A lexicon with no applicable entity is left out.",
+      "additionalProperties": {
+        "$ref": "#/$defs/read"
+      }
+    },
+    "read": {
+      "type": "object",
+      "required": [
+        "entities",
+        "unobserved",
+        "absent"
+      ],
+      "properties": {
+        "entities": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/entry"
+          }
+        },
+        "unobserved": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/hole"
+          }
+        },
+        "absent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Entity names the provider says are not deployed."
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "type",
+        "state",
+        "detail",
+        "observedAt"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Entity type, such as AWS::ECS::Service."
+        },
+        "state": {
+          "enum": [
+            "healthy",
+            "unhealthy",
+            "unknown"
+          ],
+          "description": "healthy and unhealthy are what the provider reported. unknown means the read succeeded and the answer decides neither way: a rollout in progress, a service scaled to zero, a condition pending."
+        },
+        "detail": {
+          "type": "string",
+          "description": "One short line saying why, in the provider's terms."
+        },
+        "observedAt": {
+          "type": "string",
+          "description": "When chant read it, ISO 8601."
+        },
+        "checkedAt": {
+          "type": "string",
+          "description": "When the provider last checked or changed the state, when it says, ISO 8601."
+        }
+      }
+    },
+    "hole": {
+      "type": "object",
+      "required": [
+        "reason"
+      ],
+      "description": "A read that failed. Never counted as unhealthy.",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "read-failed",
+            "no-credentials",
+            "no-binding",
+            "unsupported-kind",
+            "filtered"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "queried": {
+          "type": "string",
+          "description": "The address the read was issued against, when the lexicon reports it."
+        }
+      }
+    }
+  }
+}

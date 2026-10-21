@@ -23,8 +23,11 @@
 import type { UnobservedEntity, UnobservedReason } from "./observation";
 import { unobservedAll } from "./observation";
 
-/** The versioned shape `chant lifecycle health --json` prints. */
+/** The versioned shape `chant lifecycle health --json` prints. The JSON Schema is `./health.schema.json`. */
 export const HEALTH_SCHEMA = "chant-health/v1";
+
+/** The `$id` of `./health.schema.json`, which the package exports as `@intentius/chant/health.schema.json`. */
+export const HEALTH_SCHEMA_ID = "https://intentius.io/chant/schemas/health/v1/health.schema.json";
 
 /**
  * `healthy` and `unhealthy` are what the provider reported. `unknown` means the
