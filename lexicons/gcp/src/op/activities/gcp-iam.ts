@@ -271,6 +271,8 @@ export const iamPolicyMemberMapper: ResourceMapper = {
         status: 200,
         // `resourceRef` is the declared one: the policy read is that target's, so the binding is on it.
         text: JSON.stringify({
+          // The binding has no id of its own; this one names it, so a read reports a physical id (#4251).
+          selfLink: `${target.path}#${spec.role}#${spec.member}`,
           member: spec.member,
           role: spec.role,
           resource: target.path,

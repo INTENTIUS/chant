@@ -40,8 +40,8 @@ import type { ObservationResult, ResourceMetadata, UnobservedEntity } from "@int
 import { observation } from "@intentius/chant/observation";
 import { hasOwnershipMarker, classifyOwnership, readOwnership, type ChannelKeys } from "@intentius/chant/ownership";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
-import { resolveGcpProject, parseManifest, projectRefProject } from "./op/activities/gcp-apply";
-import { resolveGVK } from "./serializer";
+import { NO_PROJECT, parseManifest, projectRefProject } from "./op/activities/gcp-apply";
+import { cnrmNameOf, resolveCnrmRefs, resolveGVK } from "./serializer";
 
 /**
  * chant's ownership marker as GCP labels.
@@ -119,11 +119,12 @@ export function manifestProjectAnnotations(buildOutput: string | undefined): Map
 }
 
 /**
- * The project a read should target: the entity's `projectRef.external`,
- * `GOOGLE_CLOUD_PROJECT`, the entity's own annotation (via
- * `resolveGcpProject`, the applier's rule), then the built
- * manifest's merged annotation. Throws the applier's own error when nothing
- * resolves, so the `no-binding` detail names both knobs.
+ * The project a read should target, in apply's order (#4252): the entity's
+ * own literal `projectRef.external`, then the built manifest's project for it
+ * (its resolved projectRef, or the project-id annotation chant.config's
+ * `gcp.project` writes), then the entity's own annotation, then
+ * `GCP_PROJECT_ID`, then `GOOGLE_CLOUD_PROJECT`. Throws apply's own error when
+ * nothing resolves, so the `no-binding` detail names every knob.
  */
 export function resolveReadProject(
   kind: string,
@@ -131,14 +132,39 @@ export function resolveReadProject(
   metadata: { annotations?: Record<string, string> } | undefined,
   manifestProjects: Map<string, string>,
   props?: Record<string, unknown>,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  try {
-    return resolveGcpProject({ kind, metadata, ...(props ? { spec: props } : {}) });
-  } catch (err) {
-    const fromManifest = manifestProjects.get(`${kind}/${name}`);
-    if (fromManifest) return fromManifest;
-    throw err;
+  const project =
+    projectRefProject(props, {}) ||
+    manifestProjects.get(`${kind}/${name}`) ||
+    metadata?.annotations?.["cnrm.cloud.google.com/project-id"] ||
+    projectRefProject(props, env) ||
+    env.GCP_PROJECT_ID ||
+    env.GOOGLE_CLOUD_PROJECT;
+  if (!project) throw new Error(NO_PROJECT);
+  return project;
+}
+
+/**
+ * Each declared entity as a read sees it (#4251): the name the build writes
+ * (`metadata.name`, else the kebab-cased logical id) and its props with every
+ * reference to another resource resolved as the serializer resolves it, so a
+ * mapper building a read URL never meets an attribute reference.
+ */
+export function readTargets(
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>,
+): Map<string, { name: string; props: Record<string, unknown> }> {
+  const logicalByProps = new Map<unknown, string>();
+  for (const [logical, { props }] of entities) logicalByProps.set(props, logical);
+  const logicalOf = (props: unknown) => logicalByProps.get(props);
+  const out = new Map<string, { name: string; props: Record<string, unknown> }>();
+  for (const [logical, { props }] of entities) {
+    out.set(logical, {
+      name: cnrmNameOf(logical, props),
+      props: resolveCnrmRefs(props, logicalOf) as Record<string, unknown>,
+    });
   }
+  return out;
 }
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
@@ -196,8 +222,9 @@ export async function describeResources(options: {
   let warnedOwnership = false;
 
   const manifestProjects = manifestProjectAnnotations(options.buildOutput);
+  const targets = readTargets(options.entities);
 
-  const reads = [...options.entities].map(async ([entityName, { entityType, props }]) => {
+  const reads = [...options.entities].map(async ([entityName, { entityType }]) => {
     const gvk = deriveGVK(entityType);
     if (!gvk) {
       unobserved[entityName] = {
@@ -218,16 +245,8 @@ export async function describeResources(options: {
       return;
     }
 
-    const metadata = props.metadata as { name?: string; annotations?: Record<string, string> } | undefined;
-    const name = metadata?.name;
-    if (!name) {
-      unobserved[entityName] = {
-        type: entityType,
-        reason: "read-failed",
-        detail: "declared entity has no metadata.name to query by",
-      };
-      return;
-    }
+    const { name, props } = targets.get(entityName)!;
+    const metadata = props.metadata as { annotations?: Record<string, string> } | undefined;
 
     let client: GcpReadClientOptions;
     try {

@@ -81,6 +81,10 @@ chant run gcp
 floci-gcp emulates a subset of GCP services, and `gcpApply` maps fifteen resource kinds. A kind outside that set comes back as not attempted, though synthesis and lint still validate it. A mapped kind can still fail locally when floci-gcp lacks its API, and the load balancer kinds wait on [floci-gcp#27](https://github.com/lex00/floci-gcp/issues/27).
 </Aside>
 
+## The project
+
+Each resource is applied and read in one project, taken from its own `spec.projectRef.external`, then `gcp.project` in the member's `chant.config.ts`, then `GCP_PROJECT_ID`, then `GOOGLE_CLOUD_PROJECT`. With `gcp.project` set once, `chant graph --live` reads a load balancer or network resource that has no `projectRef` of its own without any variable set.
+
 ## From local to real cloud
 
 Drop the `endpoint` override and `gcpApply` targets the real Google APIs for the same project. The manifest and the reconciliation logic are unchanged — this is the same code path a live apply takes.

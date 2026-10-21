@@ -11,7 +11,7 @@
 
 import type { HealthEntry, HealthReadOptions, HealthReadResult, UnobservedEntity } from "@intentius/chant/lexicon";
 import { getResource, GcpReadError, isNotFound, type GcpReadHttp } from "./api/read-client";
-import { deriveGVK, manifestProjectAnnotations, resolveReadProject } from "./describe-resources";
+import { deriveGVK, manifestProjectAnnotations, readTargets, resolveReadProject } from "./describe-resources";
 
 export const GCP_HEALTH_TYPES = ["GCP::Run::Service"] as const;
 
@@ -75,18 +75,15 @@ export async function observeHealthGcp(options: GcpHealthOptions): Promise<Healt
   const entities: Record<string, HealthEntry> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const absent: string[] = [];
+  const targets = readTargets(options.entities);
 
   await Promise.all(
-    [...options.entities].map(async ([entityName, { entityType, props }]) => {
+    [...options.entities].map(async ([entityName, { entityType }]) => {
       const gvk = deriveGVK(entityType);
-      const metadata = props.metadata as { name?: string; annotations?: Record<string, string> } | undefined;
-      const name = metadata?.name;
-      if (!gvk || !name) {
-        unobserved[entityName] = {
-          type: entityType,
-          reason: "read-failed",
-          detail: gvk ? "declared entity has no metadata.name to query by" : `cannot derive a GCP kind from ${entityType}`,
-        };
+      const { name, props } = targets.get(entityName)!;
+      const metadata = props.metadata as { annotations?: Record<string, string> } | undefined;
+      if (!gvk) {
+        unobserved[entityName] = { type: entityType, reason: "read-failed", detail: `cannot derive a GCP kind from ${entityType}` };
         return;
       }
       let project: string;
