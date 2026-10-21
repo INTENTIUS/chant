@@ -39,6 +39,14 @@
  * planned by that capability, as a pull request's plan is. A plan that
  * returns no change-set part is a hole, since nothing says what it changes.
  *
+ * A dependency the promote also deploys is read from its plan, not from the
+ * estate (#4168 step 4, the rule #3999 gave a pull request): a dependent is
+ * planned against the outputs its upstream's plan says it will expose, and a
+ * reference the plan can't say is listed in `unknownInputs`. Any other
+ * dependency is read as it stands. What each component was planned against is
+ * kept in `reads`, so the promote can hold it back when an upstream applies
+ * as another value (`./promote-rounds.ts`).
+ *
  * Any other component is a `chant` member compared with what the
  * environment runs now: its latest deploy record and the release that record
  * names. The artifact digest, each template the release's target records for
@@ -52,8 +60,8 @@
  * recorded since (#4035): its record names what ran before that run.
  */
 
-import type { CapabilityRegistry } from "./capability";
-import { deployContext, resolveComponentGraph, resolveStepInput, type DriverComponent, type DriverGate, type DriverPhase, type DriverStep } from "./driver";
+import type { CapabilityRegistry, PlannedOutputs } from "./capability";
+import { deployContext, resolveComponentGraph, resolveStepInput, unresolvedWiringReferences, type DriverComponent, type DriverGate, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { gateName, RELEASE_GATE_OP } from "../op/gate-name";
 import { capabilitySteps, planContext, readComponentOutputs } from "./wave-plan";
@@ -123,6 +131,23 @@ export interface ReleaseChangeSetInput {
   seededOutputs?: Record<string, Record<string, unknown>>;
   /** The chant version to record in the document. */
   chant?: string;
+  /**
+   * Plan only these components (a later round or wave, ./promote-rounds.ts).
+   * The others are not planned; a dependency among them is read from
+   * `seededOutputs`, which then holds what the run left. Default: every one.
+   */
+  only?: ReadonlySet<string>;
+}
+
+/** A release's change set for an environment, and what each component was planned against. */
+export interface ReleasePlan {
+  doc: ChangeSetDocument;
+  /** Per planned component, the outputs of its dependencies as its plan read them. */
+  reads: Record<string, Record<string, Record<string, unknown>>>;
+  /** Per dependency read from its plan, the names of the outputs the plan knows, sorted. Absent when none. */
+  plannedOutputs?: Record<string, string[]>;
+  /** Per component, the references to a promoted upstream that no value stands for until it applies, sorted. Absent when none. */
+  unknownInputs?: Record<string, string[]>;
 }
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -240,65 +265,105 @@ export function chantComponentPart(input: {
  * that fails to plan: it becomes a failed member.
  */
 export async function planReleaseChangeSet(input: ReleaseChangeSetInput): Promise<ChangeSetDocument> {
+  return (await planReleaseSet(input)).doc;
+}
+
+/**
+ * {@link planReleaseChangeSet}, with what each component read. Components are
+ * planned a wave at a time, so a dependency the promote deploys has planned
+ * before its dependents read its outputs.
+ */
+export async function planReleaseSet(input: ReleaseChangeSetInput): Promise<ReleasePlan> {
   const { release, env, registry } = input;
   const components = [...input.components];
   const byName = new Map(components.map((c) => [c.name, c]));
   const outputs: Record<string, Record<string, unknown>> = { ...(input.seededOutputs ?? {}) };
   const read = new Set(Object.keys(outputs));
   const parts: ChangeSetPart[] = [];
-  const { order } = resolveComponentGraph(components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => byName.has(d)) })));
-  for (const name of order) {
-    const component = byName.get(name)!;
-    const digest = input.digests.get(name) ?? "";
-    const plannable = capabilitySteps(component.deploy).filter((s) => registry.has(s.kind) && registry.resolve(s.kind).plan !== undefined);
-    if (plannable.length === 0) {
-      parts.push(chantComponentPart({ component, release, env, digest, current: input.current.get(name), unsettled: input.unsettled?.get(name) }));
-      continue;
-    }
-    const ctx = deployContext({ env }, name);
-    try {
-      for (const dep of component.dependsOn ?? []) {
-        if (read.has(dep) || !byName.has(dep)) continue;
-        read.add(dep);
-        const found = await readComponentOutputs(byName.get(dep)!, registry, deployContext({ env }, dep), outputs);
-        if (found) outputs[dep] = found;
+  const plannedBy = new Map<string, PlannedOutputs | undefined>();
+  const planned: Record<string, string[]> = {};
+  const unknownInputs: Record<string, string[]> = {};
+  const reads: ReleasePlan["reads"] = {};
+  const inPlan = (name: string): boolean => input.only === undefined || input.only.has(name);
+  const isPlannable = (c: DriverComponent): boolean =>
+    capabilitySteps(c.deploy).some((s) => registry.has(s.kind) && registry.resolve(s.kind).plan !== undefined);
+  const { waves } = resolveComponentGraph(components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => byName.has(d)) })));
+  for (const wave of waves) {
+    const planning = wave.filter(inPlan);
+    for (const name of planning) {
+      const component = byName.get(name)!;
+      const digest = input.digests.get(name) ?? "";
+      const plannable = capabilitySteps(component.deploy).filter((s) => registry.has(s.kind) && registry.resolve(s.kind).plan !== undefined);
+      if (plannable.length === 0) {
+        parts.push(chantComponentPart({ component, release, env, digest, current: input.current.get(name), unsettled: input.unsettled?.get(name) }));
+        continue;
       }
-      for (const step of plannable) {
-        const { kind, ...rest } = step;
-        const planned = await registry.resolve(kind).plan!(planContext(ctx, rest, outputs), resolveStepInput(rest, {}, outputs) as never);
-        parts.push(
-          planned.changeSet ?? {
-            member: {
-              member: planned.member,
-              lexicon: "chant",
-              planner: "chant",
-              status: "planned",
-              planDigest: planned.planDigest,
-              holes: [{ address: planned.member, reason: `its ${kind} plan describes no changes, so what it changes is unknown` }],
+      const ctx = deployContext({ env }, name);
+      try {
+        for (const dep of component.dependsOn ?? []) {
+          if (read.has(dep) || !byName.has(dep)) continue;
+          read.add(dep);
+          // A dependency this promote plans exposes what its plan says (#3999).
+          if (plannedBy.has(dep) && isPlannable(byName.get(dep)!)) {
+            const known = plannedBy.get(dep)?.known ?? {};
+            outputs[dep] = { ...known };
+            planned[dep] = Object.keys(known).sort();
+            continue;
+          }
+          const found = await readComponentOutputs(byName.get(dep)!, registry, deployContext({ env }, dep), outputs);
+          if (found) outputs[dep] = found;
+        }
+        reads[name] = Object.fromEntries((component.dependsOn ?? []).filter((d) => d in outputs).map((d) => [d, structuredClone(outputs[d])]));
+        const unknown = new Set<string>();
+        let exposes: PlannedOutputs | undefined;
+        for (const step of plannable) {
+          const { kind, ...rest } = step;
+          for (const r of unresolvedWiringReferences(rest, outputs)) if (plannedBy.has(r.source) && !r.publish) unknown.add(r.ref);
+          const result = await registry.resolve(kind).plan!(planContext(ctx, rest, outputs), resolveStepInput(rest, {}, outputs) as never);
+          if (result.outputs) exposes = { known: { ...(exposes?.known ?? {}), ...result.outputs.known }, unknown: [...new Set([...(exposes?.unknown ?? []), ...result.outputs.unknown])].sort() };
+          parts.push(
+            result.changeSet ?? {
+              member: {
+                member: result.member,
+                lexicon: "chant",
+                planner: "chant",
+                status: "planned",
+                planDigest: result.planDigest,
+                holes: [{ address: result.member, reason: `its ${kind} plan describes no changes, so what it changes is unknown` }],
+              },
+              entries: [],
             },
-            entries: [],
+          );
+        }
+        plannedBy.set(name, exposes);
+        if (unknown.size > 0) unknownInputs[name] = [...unknown].sort();
+      } catch (err) {
+        plannedBy.set(name, undefined);
+        parts.push({
+          member: {
+            member: name,
+            lexicon: "chant",
+            planner: "chant",
+            status: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            planDigest: null,
+            holes: [],
           },
-        );
+          entries: [],
+        });
       }
-    } catch (err) {
-      parts.push({
-        member: {
-          member: name,
-          lexicon: "chant",
-          planner: "chant",
-          status: "failed",
-          error: err instanceof Error ? err.message : String(err),
-          planDigest: null,
-          holes: [],
-        },
-        entries: [],
-      });
     }
   }
-  return composeChangeSet(parts, {
+  const doc = composeChangeSet(parts, {
     ...(input.chant !== undefined ? { chant: input.chant } : {}),
     planned: { releaseDigest: release.releaseDigest, environment: env },
   });
+  return {
+    doc,
+    reads,
+    ...(Object.keys(planned).length > 0 ? { plannedOutputs: planned } : {}),
+    ...(Object.keys(unknownInputs).length > 0 ? { unknownInputs } : {}),
+  };
 }
 
 /** The members a release gate refuses: provisional ones, which no approval of the document covers (`change-set.mdx`). */

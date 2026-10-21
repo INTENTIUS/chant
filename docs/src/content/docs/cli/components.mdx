@@ -465,6 +465,39 @@ A component whose step can plan, such as `terraform-apply`, is planned by that s
 
 An environment whose change set is empty passes its gates without an approval. A change set is empty when every member planned with no hole, and no entry is anything but `no-op` or `read`. A failed or provisional member is never empty. The promote writes a resolution for each gate with `empty: true`, the actor running the promote in `resolvedBy`, and the release, environment and digest. The gate counts it only after it reads the stored change set back and finds it empty, and quorum and signing rules don't apply to it. The deploy record for each component then names the release, so a flag flip for prod alone moves through staging with no approval, and staging's ledger still says which release it runs. A promote whose compositions declare no gate plans and stores nothing.
 
+#### Planned outputs and rounds
+
+A merge deploys nothing ([#4168](https://github.com/INTENTIUS/chant/issues/4168)), so the rule a pull request's apply follows for a dependent ([#3999](https://github.com/INTENTIUS/chant/issues/3999)) is the promote's. When a promote under a release deploys a component and one that reads its output through `stackOutput()`, the release's change set plans the dependent against the value the upstream's plan says it will expose, not the value it has now. A reference the upstream's plan can't say is printed before the run as known only once it applies. A dependency the promote does not deploy is read as it stands, as before.
+
+The promote then runs a wave at a time. Before a wave runs, a component whose plan read an upstream value that the run left as another value is planned again against what stands. If the approved change set already covers the new plan (the check a pull request's resume makes), nothing more is needed. If not, the promote stops with exit 3 at `<gate>-round-<n>`, numbered from 2, which only an approval of the new plan's digest passes:
+
+```bash
+chant change-set show <digest>
+chant approve release prod-release-round-2 --env prod
+chant components promote --to prod --release v1.4.0
+```
+
+When a round's components declare no gate, nothing can approve the new plan, so the promote stops there. A round whose plan has a provisional member, or one that failed to plan, is refused the same way.
+
+#### A gate per wave (`--wave-gate`)
+
+`--wave-gate <gate>` checks every wave after the first ([#4157](https://github.com/INTENTIUS/chant/issues/4157)'s rule). Each one is planned again against what the waves before it left. A wave the approved change set covers applies under that approval. One it does not cover waits at `<gate>-wave-<k>`, one gate for the whole wave, bound to that wave's digest:
+
+```bash
+chant components promote --to prod --release v1.4.0 --wave-gate prod-release
+chant approve release prod-release-wave-2 --env prod
+```
+
+`--wave-gate` needs `--release` and a composition that declares a gate.
+
+#### Resuming
+
+A stop after anything applied leaves a resume record at `.chant/promote/<to>.resume.json` in the member's directory (or at `--resume <file>`). Those components are skipped next time, and what is left plans against the outputs the record kept. If the first approval covers that plan, it still holds. A finished promote deletes the record, and a record for another release or environment is ignored.
+
+#### Pull request approvals
+
+A promote under a release lists the pull requests the release carries into `--to`, from the [merge records](/chant/guide/pull-request-ci/) of the release commit's first-parent history since the commits `--to` runs (at most 200): for each, where it came from and how its plan stood against its approval. They are shown beside the release gate and never counted by it. With `--json` they are under `pullRequests`.
+
 Some compositions cannot be pinned to one recorded digest, and a promote refuses them before anything runs: a component with no publish step (nothing in its deploy carries the digest), one with more than one publish step (a release record carries one digest), and one whose remaining steps read an output of a removed build step, such as `@Build.archivePath`.
 
 A `dependsOn` edge to a component outside the promotion is dropped, as a single-component `chant run --components` drops it. `--seed-outputs <file>` loads the outputs such a dependency produced, for `stackOutput()` references into it.
@@ -498,8 +531,10 @@ When a promote fails partway, the component's in-run unwind undoes the steps it 
 | `--component <name>` | Promote only this component. |
 | `--digest <sha256:...>` | With `--component`, promote this recorded digest rather than the latest one. |
 | `--digest <component>=<sha256:...>` | Without `--component`, promote only the named components, each at this recorded digest. Repeatable. [`chant run --components --digest-file`](/chant/cli/run/#the-recorded-digest---digest-file) writes the value. |
+| `--wave-gate <gate>` | Under `--release`, check each wave after the first and wait at `<gate>-wave-<k>` for one the approval does not cover. See [A gate per wave](#a-gate-per-wave---wave-gate). |
+| `--resume <file>` | The resume record to read and write. Defaults to `.chant/promote/<to>.resume.json`. See [Resuming](#resuming). |
 | `--dry-run` | Print the plan (each component, its digest, the source release and the steps that will not run) and deploy nothing. |
-| `--json` | Emit the plan, the run result and the records written as one JSON document on stdout. |
+| `--json` | Emit the plan, the run result and the records written as one JSON document on stdout. A promote that ran in rounds adds `stages`, `plannedOutputs` and `unknownInputs`. |
 | `--seed-outputs <file>` | Load outputs from dependencies outside the promotion. Repeatable. |
 | `--run-id <id>` | Run id for the new records. Defaults as `components release` does. |
 | `--actor <name>` | Who ran the promote. Defaults as `components release` does, and must resolve before anything deploys. |

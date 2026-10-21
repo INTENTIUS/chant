@@ -13,6 +13,7 @@ import {
   emptyVerifier,
   gateNamesOf,
   planReleaseChangeSet,
+  planReleaseSet,
   provisionalMembers,
   RELEASE_GATE_OP,
 } from "./release-gate";
@@ -159,6 +160,52 @@ describe("planReleaseChangeSet", () => {
     const tf: DriverComponent = { name: "infra", deploy: [{ phase: "Apply", steps: [{ kind: "tf" }] }] };
     const doc = await planReleaseChangeSet({ release: r1, env: "prod", components: [tf], digests: new Map(), registry: reg, current: new Map() });
     expect(doc.members[0]).toMatchObject({ member: "infra", status: "failed", error: "no credentials" });
+  });
+});
+
+describe("planReleaseSet: a dependent plans against its upstream's planned outputs (#4168 step 4)", () => {
+  const r1 = release(sha("7"));
+  const reg = () => {
+    const r = registry();
+    r.register({
+      kind: "tf",
+      async run() { return {}; },
+      async plan(_ctx: unknown, input: { name: string; vpc?: unknown }) {
+        return {
+          member: input.name,
+          planDigest: sha(input.vpc === "vpc-new" ? "b" : input.vpc === undefined ? "c" : "a"),
+          outputs: input.name === "net" ? { known: { id: "vpc-new" }, unknown: ["arn"] } : undefined,
+        };
+      },
+      async outputs() { return { id: "vpc-old", arn: "arn:old" }; },
+    } as never);
+    return r;
+  };
+  const net: DriverComponent = { name: "net", deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "prod-release" }, { kind: "tf", name: "net" }] }] };
+  const svc = (ref: string): DriverComponent => ({
+    name: "svc",
+    dependsOn: ["net"],
+    deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "prod-release" }, { kind: "tf", name: "svc", vpc: { stackOutput: { stack: "net", name: ref } } }] }],
+  });
+
+  test("an upstream the promote plans is read from its plan, and the read is kept", async () => {
+    const set = await planReleaseSet({ release: r1, env: "prod", components: [svc("id"), net], digests: new Map(), registry: reg(), current: new Map() });
+    expect(set.doc.members.find((m) => m.member === "svc")?.planDigest).toBe(sha("b"));
+    expect(set.reads.svc).toEqual({ net: { id: "vpc-new" } });
+    expect(set.plannedOutputs).toEqual({ net: ["id"] });
+    expect(set.unknownInputs).toBeUndefined();
+  });
+
+  test("an output the upstream's plan can't say is an unknown input", async () => {
+    const set = await planReleaseSet({ release: r1, env: "prod", components: [svc("arn"), net], digests: new Map(), registry: reg(), current: new Map() });
+    expect(set.unknownInputs).toEqual({ svc: ["net.arn"] });
+  });
+
+  test("an upstream outside the promote is read as it stands", async () => {
+    const set = await planReleaseSet({ release: r1, env: "prod", components: [svc("id"), net], digests: new Map(), registry: reg(), current: new Map(), only: new Set(["svc"]), seededOutputs: { net: { id: "vpc-old" } } });
+    expect(set.doc.members.map((m) => m.member)).toEqual(["svc"]);
+    expect(set.reads.svc).toEqual({ net: { id: "vpc-old" } });
+    expect(set.plannedOutputs).toBeUndefined();
   });
 });
 
