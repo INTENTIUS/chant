@@ -15,12 +15,14 @@ import {
   parseTerragruntFind,
   terragruntFindArgs,
   terragruntVersionProblem,
+  unitPathFilter,
   type TerragruntFindOptions,
   type TerragruntUnit,
 } from "./units";
 import {
   describeMockRefusal,
   failMockedParts,
+  hasExpandedDependency,
   markProvisional,
   parseRenderedDependencies,
   parseTerragruntOutputs,
@@ -208,6 +210,11 @@ function dirsOf(dir: string): string[] {
   }
 }
 
+/** Arguments to `terragrunt` that list one unit and the units it depends on, expanded blocks included. */
+export function terragruntUnitDependenciesArgs(unit: string): string[] {
+  return ["find", "--json", "--dependencies", "--no-color", "--filter", unitPathFilter(unit)];
+}
+
 export interface TerragruntMockCheckInput extends TerragruntRunOptions {
   units: readonly string[];
   /** How many `render` and `output` calls run at once. Default 8. */
@@ -217,7 +224,8 @@ export interface TerragruntMockCheckInput extends TerragruntRunOptions {
 /**
  * Which dependencies of the wave's units would read `mock_outputs` at plan,
  * asked of Terragrunt: `render --json` in each unit for its evaluated
- * `dependency` blocks, then `output -json` in each upstream they read. Empty
+ * `dependency` blocks (and `find --dependencies` for a unit with an expanded
+ * one, #4225), then `output -json` in each upstream they read. Empty
  * when the wave would plan on real outputs only. Throws when Terragrunt
  * cannot render a unit or read an upstream's outputs, since then nobody
  * knows what the plan would read. A unit with no `terragrunt.hcl` in `dir`
@@ -232,13 +240,29 @@ export async function checkTerragruntWaveMocks(input: TerragruntMockCheckInput):
   // A unit this change removed has no terragrunt.hcl here: Terragrunt plans its destroy from the old checkout.
   // It is not rendered; the plan log check still covers it.
   const units = [...new Set(input.units)].sort().filter((u) => existsSync(join(resolve(input.dir), u, "terragrunt.hcl")));
+  const unitDependencies = async (unit: string): Promise<string[]> => {
+    const args = terragruntUnitDependenciesArgs(unit);
+    const r = await exec(tg, args, { cwd: input.dir, env });
+    if (r.code !== 0) throw new TerragruntError(`\`${tg} ${args.join(" ")}\` failed (exit ${r.code}), so ${unit}'s expanded dependencies are unknown: ${r.stderr.trim()}`);
+    let found: TerragruntUnit[];
+    try {
+      found = parseTerragruntFind(r.stdout);
+    } catch (err) {
+      throw new TerragruntError(`could not read \`terragrunt find\` output for ${unit}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return found.find((u) => u.path === unit)?.dependencies ?? [];
+  };
   const rendered = await pool(units, limit, async (unit): Promise<[string, RenderedDependency[]]> => {
     const args = terragruntRenderArgs(unit);
     const r = await exec(tg, args, { cwd: input.dir, env });
     if (r.code !== 0) throw new TerragruntError(`\`${tg} ${args.join(" ")}\` failed (exit ${r.code}), so the wave's dependencies are unknown: ${r.stderr.trim()}`);
+    let found: string[] | undefined;
     try {
-      return [unit, parseRenderedDependencies(unit, r.stdout, dirs)];
+      // An expanded dependency (#4225) names its instances only through find.
+      if (hasExpandedDependency(r.stdout)) found = await unitDependencies(unit);
+      return [unit, parseRenderedDependencies(unit, r.stdout, dirs, found)];
     } catch (err) {
+      if (err instanceof TerragruntError) throw err;
       throw new TerragruntError(`could not read \`terragrunt render --json\` for ${unit}: ${err instanceof Error ? err.message : String(err)}`);
     }
   });

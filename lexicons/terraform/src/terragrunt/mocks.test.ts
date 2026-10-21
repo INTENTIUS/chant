@@ -307,3 +307,116 @@ describe("a wave's plan with the mock check, Terragrunt stubbed", () => {
     await expect(checkTerragruntWaveMocks({ dir, units: ["live/dev/app"], exec })).rejects.toThrow(/could not read the outputs of live\/dev\/db.*backend not reachable/s);
   });
 });
+
+describe("expanded dependency blocks (Terragrunt 1.2, #4225)", () => {
+  /**
+   * `render --json` prints an expanded block's body as written
+   * (`pkg/config/config_as_cty.go:723-733` at v1.2.0), so `config_path`
+   * still holds `${count.index}` or `${each.value}`.
+   */
+  const RENDER_EXPANDED = JSON.stringify({
+    dependency: {
+      shard: {
+        config_path: "../shard-${count.index}",
+        count: 2,
+        mock_outputs: { id: "mock" },
+        mock_outputs_allowed_terraform_commands: ["plan"],
+        mock_outputs_merge_strategy_with_state: "shallow",
+        name: "shard",
+      },
+      region: {
+        config_path: "../regions/${each.value}",
+        for_each: ["eu", "us"],
+        mock_outputs: { id: "mock" },
+        skip: true,
+        name: "region",
+      },
+      vpc: { config_path: "../vpc", mock_outputs: { id: "mock" }, name: "vpc" },
+    },
+  });
+  /** The unit's `find --dependencies` paths: the expanded instances, the plain upstream and an ordering-only `dependencies` edge. */
+  const FOUND = ["live/dev/shard-0", "live/dev/shard-1", "live/dev/regions/eu", "live/dev/regions/us", "live/dev/vpc", "live/dev/ordering"];
+
+  it("expands each block to the found paths its config_path matches, keeping its settings", () => {
+    const deps = parseRenderedDependencies("live/dev/app", RENDER_EXPANDED, "/r", FOUND);
+    expect(deps.map((d) => [d.name, d.upstream])).toEqual([
+      ["region[live/dev/regions/eu]", "live/dev/regions/eu"],
+      ["region[live/dev/regions/us]", "live/dev/regions/us"],
+      ["shard[live/dev/shard-0]", "live/dev/shard-0"],
+      ["shard[live/dev/shard-1]", "live/dev/shard-1"],
+      ["vpc", "live/dev/vpc"],
+    ]);
+    expect(deps.find((d) => d.upstream === "live/dev/shard-1")).toMatchObject({ mockOutputs: { id: "mock" }, mockAllowed: ["plan"], mergeStrategy: "shallow" });
+    expect(deps.find((d) => d.upstream === "live/dev/regions/us")).toMatchObject({ skipOutputs: true });
+    // The ordering-only edge is not a data dependency.
+    expect(deps.some((d) => d.upstream === "live/dev/ordering")).toBe(false);
+  });
+
+  it("never takes the literal config_path as an upstream, and needs find to expand", () => {
+    expect(() => parseRenderedDependencies("live/dev/app", RENDER_EXPANDED, "/r")).toThrow(/expanded .*terragrunt find --dependencies/);
+    expect(() => parseRenderedDependencies("live/dev/app", RENDER_EXPANDED, "/r", ["live/dev/vpc"])).toThrow(/none of the unit's dependencies from terragrunt find matches it/);
+  });
+
+  it("a plain block's upstream is not claimed by an expanded one", () => {
+    const render = JSON.stringify({
+      dependency: {
+        any: { config_path: "../${each.value}", for_each: ["a", "b"], name: "any" },
+        a: { config_path: "../a", name: "a" },
+      },
+    });
+    const deps = parseRenderedDependencies("live/app", render, "/r", ["live/a", "live/b"]);
+    expect(deps.map((d) => [d.name, d.upstream])).toEqual([
+      ["a", "live/a"],
+      ["any[live/b]", "live/b"],
+    ]);
+  });
+
+  it("the wave check reads each expanded upstream's outputs, through find for that unit only", async () => {
+    const dir = tmp();
+    cpSync(fixture, dir, { recursive: true });
+    const seen: string[][] = [];
+    const exec: TerragruntExec = async (_f, args) => {
+      seen.push([...args]);
+      if (args[0] === "render") return { code: 0, stdout: RENDER_EXPANDED, stderr: "" };
+      if (args[0] === "find") {
+        const doc = [{ type: "unit", path: "live/dev/app", dependencies: FOUND.map((p) => `./${p}`) }];
+        return { code: 0, stdout: JSON.stringify(doc), stderr: "" };
+      }
+      const unit = args[args.indexOf("--working-dir") + 1]!;
+      return { code: 0, stdout: unit === "live/dev/shard-1" ? OUTPUT_NONE : OUTPUT_APPLIED, stderr: "" };
+    };
+    const reads = await checkTerragruntWaveMocks({ dir, units: ["live/dev/app"], exec });
+    expect(reads).toEqual([
+      { unit: "live/dev/app", dependency: "region[live/dev/regions/eu]", upstream: "live/dev/regions/eu", reason: "skip-outputs" },
+      { unit: "live/dev/app", dependency: "region[live/dev/regions/us]", upstream: "live/dev/regions/us", reason: "skip-outputs" },
+      { unit: "live/dev/app", dependency: "shard[live/dev/shard-1]", upstream: "live/dev/shard-1", reason: "no-outputs" },
+    ]);
+    expect(seen.find((a) => a[0] === "find")).toEqual(["find", "--json", "--dependencies", "--no-color", "--filter", "{./live/dev/app}"]);
+    const outputsRead = seen.filter((a) => a.includes("output")).map((a) => a[a.indexOf("--working-dir") + 1]).sort();
+    expect(outputsRead).toEqual(["live/dev/shard-0", "live/dev/shard-1", "live/dev/vpc"]);
+    expect(outputsRead.some((u) => u.includes("${"))).toBe(false);
+  });
+
+  it("a unit with plain blocks only never runs find", async () => {
+    const dir = tmp();
+    cpSync(fixture, dir, { recursive: true });
+    const seen: string[][] = [];
+    const exec: TerragruntExec = async (_f, args) => {
+      seen.push([...args]);
+      if (args[0] === "render") return { code: 0, stdout: RENDER_DEV_APP, stderr: "" };
+      return { code: 0, stdout: OUTPUT_APPLIED, stderr: "" };
+    };
+    await checkTerragruntWaveMocks({ dir, units: ["live/dev/app"], exec });
+    expect(seen.some((a) => a[0] === "find")).toBe(false);
+  });
+
+  it("reads Terragrunt 1.2's fallback warning beside the 1.1 one", () => {
+    const log =
+      "WARN   [live/dev/app] Failed to read outputs from /private/r/live/dev/shard-1/terragrunt.hcl referenced in /private/r/live/dev/app/terragrunt.hcl as shard, fallback to mock outputs. Error: no state\n" +
+      "WARN   [live/dev/db] Config /private/r/live/dev/vpc/terragrunt.hcl is a dependency of /private/r/live/dev/db/terragrunt.hcl that has no outputs, but mock outputs provided and returning those in dependency output.\n";
+    expect(terragruntMockWarnings(log + log, ["/r", "/private/r"])).toEqual([
+      { unit: "live/dev/app", upstream: "live/dev/shard-1" },
+      { unit: "live/dev/db", upstream: "live/dev/vpc" },
+    ]);
+  });
+});

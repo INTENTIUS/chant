@@ -26,6 +26,10 @@
  *
  * The blocks come from `terragrunt render --json`, so includes, locals and
  * expressions in `config_path` are Terragrunt's to evaluate, not chant's.
+ * A block with an `expansion` (`for_each` or `count`, Terragrunt 1.2) is the
+ * exception: render prints the block's body as written, `${count.index}` and
+ * all (`pkg/config/config_as_cty.go:723-733` at v1.2.0; #4225). Its instances are the unit's `find --dependencies` paths that
+ * match that path with each `${...}` read as one path segment.
  *
  * A provisional plan is the other side: a dependent planned at PR time
  * (`dependents: plan`), before its upstream applied. It may read mocks. Its
@@ -92,16 +96,67 @@ export function upstreamOfConfigPath(unit: string, configPath: string, dirs: str
   return abs;
 }
 
+/** Whether a rendered `dependency` block is expanded (`for_each` or `count`), so its `config_path` is not a path yet. */
+const isExpanded = (raw: Record<string, unknown>): boolean =>
+  raw.expansion !== undefined ||
+  raw.for_each !== undefined ||
+  raw.count !== undefined ||
+  (typeof raw.config_path === "string" && raw.config_path.includes("${"));
+
+function renderedDoc(output: string | unknown): Record<string, unknown> {
+  const doc = typeof output === "string" ? (JSON.parse(output) as unknown) : output;
+  if (!isObject(doc)) throw new Error("terragrunt render --json did not print an object");
+  return doc;
+}
+
+/** Whether `terragrunt render --json` output holds an expanded `dependency` block, which needs the unit's `find --dependencies` paths. */
+export function hasExpandedDependency(output: string | unknown): boolean {
+  const doc = renderedDoc(output);
+  const blocks = isObject(doc.dependency) ? doc.dependency : {};
+  return Object.values(blocks).some((raw) => isObject(raw) && isExpanded(raw));
+}
+
+const SEGMENT = "\u0000";
+
+/**
+ * The paths an expanded block's `config_path` can name, as a pattern over
+ * upstream paths: each `${...}` is one path segment, or part of one.
+ */
+function expandedPattern(unit: string, configPath: string, dirs: string | readonly string[]): RegExp {
+  const marked = upstreamOfConfigPath(unit, configPath.replace(/\$\{[^}]*\}/g, SEGMENT), dirs);
+  const source = marked
+    .split(SEGMENT)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]+");
+  return new RegExp(`^${source}$`);
+}
+
 /**
  * The `dependency` blocks of one unit, from `terragrunt render --json` run
  * in it. `unit` is the unit's path relative to where Terragrunt runs (`dirs`).
- * Throws when the output is not the rendered config.
+ *
+ * An expanded block (#4225) needs `found`, the unit's dependency paths from
+ * `terragrunt find --dependencies`, relative to `dirs`: it becomes one entry
+ * per found path that matches its `config_path` and that no plain block
+ * names, labelled `<label>[<upstream>]` and carrying the block's mocks,
+ * merge strategy and `skip_outputs`. `find` lists ordering-only
+ * `dependencies` edges too, which is why a path is matched, not assumed.
+ * Throws when the output is not the rendered config, when an expanded block
+ * comes without `found`, and when one matches no found path.
  */
-export function parseRenderedDependencies(unit: string, output: string | unknown, dirs: string | readonly string[]): RenderedDependency[] {
-  const doc = typeof output === "string" ? (JSON.parse(output) as unknown) : output;
-  if (!isObject(doc)) throw new Error("terragrunt render --json did not print an object");
+export function parseRenderedDependencies(
+  unit: string,
+  output: string | unknown,
+  dirs: string | readonly string[],
+  found?: readonly string[],
+): RenderedDependency[] {
+  const doc = renderedDoc(output);
   const blocks = isObject(doc.dependency) ? doc.dependency : {};
   const out: RenderedDependency[] = [];
+  const plain = new Set<string>();
+  for (const raw of Object.values(blocks)) {
+    if (isObject(raw) && typeof raw.config_path === "string" && !isExpanded(raw)) plain.add(upstreamOfConfigPath(unit, raw.config_path, dirs));
+  }
   for (const [label, raw] of Object.entries(blocks)) {
     if (!isObject(raw) || typeof raw.config_path !== "string") continue;
     const allowed = Array.isArray(raw.mock_outputs_allowed_terraform_commands)
@@ -113,16 +168,26 @@ export function parseRenderedDependencies(unit: string, output: string | unknown
         : raw.mock_outputs_merge_with_state === true
           ? "shallow"
           : undefined;
-    out.push({
-      name: typeof raw.name === "string" && raw.name ? raw.name : label,
-      upstream: upstreamOfConfigPath(unit, raw.config_path, dirs),
+    const name = typeof raw.name === "string" && raw.name ? raw.name : label;
+    const settings = {
       ...(isObject(raw.mock_outputs) ? { mockOutputs: raw.mock_outputs } : {}),
       ...(allowed ? { mockAllowed: allowed } : {}),
       ...(strategy && strategy !== "no_merge" ? { mergeStrategy: strategy } : {}),
       // render prints skip_outputs under `skip`.
       ...(raw.skip === true || raw.skip_outputs === true ? { skipOutputs: true } : {}),
       ...(raw.enabled === false ? { disabled: true } : {}),
-    });
+    };
+    if (!isExpanded(raw)) {
+      out.push({ name, upstream: upstreamOfConfigPath(unit, raw.config_path, dirs), ...settings });
+      continue;
+    }
+    if (!found) throw new Error(`dependency "${name}" is expanded (${raw.config_path}); its instances come from terragrunt find --dependencies`);
+    const pattern = expandedPattern(unit, raw.config_path, dirs);
+    const instances = [...new Set(found.map(normalize))].filter((p) => !plain.has(p) && pattern.test(p)).sort();
+    if (instances.length === 0) {
+      throw new Error(`dependency "${name}" is expanded (${raw.config_path}), and none of the unit's dependencies from terragrunt find matches it`);
+    }
+    for (const upstream of instances) out.push({ name: `${name}[${upstream}]`, upstream, ...settings });
   }
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
@@ -273,6 +338,14 @@ export function describeMockRefusal(reads: readonly TerragruntMockRead[]): strin
 const MOCK_WARNING = /Config (\S+?) is a dependency of (\S+?) that has no outputs, but mock outputs provided/g;
 
 /**
+ * The line Terragrunt 1.2 logs instead when it reads outputs straight from
+ * state and an upstream was never applied (`pkg/config/dependency.go:1166-1172`
+ * at v1.2.0): "Failed to read outputs from <upstream> referenced in <unit>
+ * as <name>, fallback to mock outputs. Error: ...".
+ */
+const MOCK_FALLBACK = /Failed to read outputs from (\S+?) referenced in (\S+?) as \S+?, fallback to mock outputs/g;
+
+/**
  * The units a plan log says read mocks, with the upstream each read,
  * relative to where Terragrunt ran (`dirs`, as for
  * {@link upstreamOfConfigPath}). This is the check after the fact: the check
@@ -282,14 +355,16 @@ const MOCK_WARNING = /Config (\S+?) is a dependency of (\S+?) that has no output
 export function terragruntMockWarnings(log: string, dirs: string | readonly string[]): Array<{ unit: string; upstream: string }> {
   const seen = new Set<string>();
   const out: Array<{ unit: string; upstream: string }> = [];
-  for (const m of log.matchAll(MOCK_WARNING)) {
-    const unit = upstreamOfConfigPath(".", m[2]!, dirs);
-    const upstream = upstreamOfConfigPath(".", m[1]!, dirs);
+  const add = (rawUnit: string, rawUpstream: string): void => {
+    const unit = upstreamOfConfigPath(".", rawUnit, dirs);
+    const upstream = upstreamOfConfigPath(".", rawUpstream, dirs);
     const key = `${unit}\u0000${upstream}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     out.push({ unit, upstream });
-  }
+  };
+  for (const m of log.matchAll(MOCK_WARNING)) add(m[2]!, m[1]!);
+  for (const m of log.matchAll(MOCK_FALLBACK)) add(m[2]!, m[1]!);
   return out.sort((a, b) => (a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : a.upstream < b.upstream ? -1 : 1));
 }
 
