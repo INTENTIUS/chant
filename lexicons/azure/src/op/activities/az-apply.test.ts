@@ -20,6 +20,7 @@ import {
   type ArmResource,
   type AzHttp,
   providerApiVersion,
+  rememberDeployed,
 } from "./az-apply";
 import { lookupApiVersion } from "../../serializer";
 
@@ -66,6 +67,54 @@ describe("evalArmString — reference() (#707)", () => {
     expect(await evalArmString("[reference('mystore').primaryEndpoints.blob]", ctx({ deployed }))).toBe(
       "http://mystore.blob/",
     );
+  });
+});
+
+describe("evalArmString — reference() by resource id (#4243)", () => {
+  test("reference(resourceId(...)).customerId resolves the resource applied by name", async () => {
+    const c = ctx();
+    rememberDeployed(c, "Microsoft.OperationalInsights/workspaces", "logs", { properties: { customerId: "cust-1" } });
+    expect(await evalArmString("[reference(resourceId('Microsoft.OperationalInsights/workspaces', 'logs')).customerId]", c)).toBe("cust-1");
+    expect(await evalArmString("[reference('logs').customerId]", c)).toBe("cust-1");
+  });
+
+  test("a child type, a full id in another case, and 'Full'", async () => {
+    const c = ctx();
+    rememberDeployed(c, "Microsoft.Network/virtualNetworks/subnets", "vnet/apps", {
+      id: "/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/apps",
+      properties: { addressPrefix: "10.0.1.0/24" },
+    });
+    expect(await evalArmString("[reference(resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet', 'apps')).addressPrefix]", c)).toBe("10.0.1.0/24");
+    expect(
+      await evalArmString("[reference('/SUBSCRIPTIONS/sub-1/resourceGroups/chant-rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/apps').addressPrefix]", c),
+    ).toBe("10.0.1.0/24");
+    expect(await evalArmString("[reference(resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet', 'apps'), '2023-04-01', 'Full').properties.addressPrefix]", c)).toBe("10.0.1.0/24");
+  });
+
+  test("azApply: a later resource reads an earlier one through reference(resourceId(...))", async () => {
+    const path = `/tmp/chant-4243-${process.pid}.json`;
+    writeFileSync(path, JSON.stringify({
+      resources: [
+        { type: "Microsoft.OperationalInsights/workspaces", apiVersion: "2022-10-01", name: "logs", location: "eastus", properties: {} },
+        {
+          type: "Microsoft.App/managedEnvironments", apiVersion: "2024-03-01", name: "env", location: "eastus",
+          dependsOn: ["[resourceId('Microsoft.OperationalInsights/workspaces', 'logs')]"],
+          properties: { appLogsConfiguration: { logAnalyticsConfiguration: { customerId: "[reference(resourceId('Microsoft.OperationalInsights/workspaces', 'logs')).customerId]" } } },
+        },
+      ],
+    }));
+    const bodies: Record<string, unknown> = {};
+    const http: AzHttp = async (method, url, body) => {
+      if (method === "PUT" && url.includes("/workspaces/logs")) return { status: 200, text: JSON.stringify({ properties: { customerId: "cust-1" } }) };
+      if (method === "PUT" && url.includes("/managedEnvironments/env")) bodies.env = body;
+      return { status: 200, text: "{}" };
+    };
+    try {
+      await azApply({ templatePath: path, resourceGroup: "chant-rg", subscriptionId: "sub-1", endpoint: "http://x" }, undefined, http);
+    } finally {
+      unlinkSync(path);
+    }
+    expect((bodies.env as { properties: { appLogsConfiguration: { logAnalyticsConfiguration: { customerId: string } } } }).properties.appLogsConfiguration.logAnalyticsConfiguration.customerId).toBe("cust-1");
   });
 });
 
