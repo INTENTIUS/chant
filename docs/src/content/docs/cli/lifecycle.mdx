@@ -581,7 +581,7 @@ Each entity lands in exactly one of three places. `entities` holds what was read
 
 The aws read maps logical ids to physical ids through the stack's resource list, so a stack that does not exist yet reports every entity absent. Endpoints follow the other live reads: `AWS_ENDPOINT_URL`, `AZURE_ENDPOINT_URL`, `GCP_ENDPOINT_URL`, or the environment's declared `endpoint`. Against an emulator, a Route 53 health check reports what the emulator's checkers report, which means nothing until the emulator probes the endpoint.
 
-With `--json` the output is a `chant-health/v1` document.
+With `--json` the output is a `chant-health/v1` document. Its JSON Schema ships in the package as `@intentius/chant/health.schema.json`, with `$id` `https://intentius.io/chant/schemas/health/v1/health.schema.json`. Readers ignore fields they do not know; a field is only ever added within a version.
 
 ```json
 {
