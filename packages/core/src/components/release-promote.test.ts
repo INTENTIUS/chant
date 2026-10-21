@@ -7,7 +7,7 @@ import { describe, test, expect } from "vitest";
 import { contentDigest } from "../content-digest";
 import { makeRelease, templateBytesDigest } from "../lifecycle/release-store";
 import type { DriverComponent } from "./driver";
-import { isImplicitRelease, pinReleaseTemplates, releaseArtifactMismatches, removePinnedTemplates, targetFiles, targetFor, writePinnedTemplates, RELEASE_TEMPLATES_DIR } from "./release-promote";
+import { isImplicitRelease, pinReleaseTemplates, releaseTemplatesDigest, releaseArtifactMismatches, removePinnedTemplates, targetFiles, targetFor, writePinnedTemplates, RELEASE_TEMPLATES_DIR } from "./release-promote";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
 import type { BuildArchiveManifest } from "./verbs/build-archive";
 import { withTestDir } from "@intentius/chant-test-utils";
@@ -208,5 +208,28 @@ describe("removePinnedTemplates (#4045)", () => {
       expect(existsSync(join(dir, RELEASE_TEMPLATES_DIR, "other", "x"))).toBe(true);
       expect(existsSync(join(dir, RELEASE_TEMPLATES_DIR, "sha256_ab"))).toBe(false);
     });
+  });
+});
+
+describe("releaseTemplatesDigest (#4222)", () => {
+  const target = {
+    env: "staging",
+    params: [],
+    templates: [
+      { component: "infra", path: "b.json", digest: "sha256:b" },
+      { component: "infra", path: "a.json", digest: "sha256:a" },
+      { component: "app", path: "c.json", digest: "sha256:c" },
+    ],
+  };
+
+  test("digests the component's templates sorted by path, whatever order the target lists them", () => {
+    const reordered = { ...target, templates: [target.templates[1], target.templates[2], target.templates[0]] };
+    expect(releaseTemplatesDigest(target, "infra")).toBe(contentDigest("a.json\tsha256:a\nb.json\tsha256:b\n"));
+    expect(releaseTemplatesDigest(reordered, "infra")).toBe(releaseTemplatesDigest(target, "infra"));
+    expect(releaseTemplatesDigest(target, "app")).not.toBe(releaseTemplatesDigest(target, "infra"));
+  });
+
+  test("is null for a component the target records no template for", () => {
+    expect(releaseTemplatesDigest(target, "worker")).toBeNull();
   });
 });

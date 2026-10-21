@@ -501,6 +501,10 @@ A promote under a release lists the pull requests the release carries into `--to
 
 Some compositions cannot be pinned to one recorded digest, and a promote refuses them before anything runs: a component with no publish step (nothing in its deploy carries the digest), one with more than one publish step (a release record carries one digest), and one whose remaining steps read an output of a removed build step, such as `@Build.archivePath`.
 
+Under `--release`, a component with no publish step is promoted when the release records its templates, since the deploy reads them from the release and not from the checkout (`templatesPinned` in `withoutBuildSteps`, `packages/core/src/components/promote.ts`). Its release record carries the digest of those templates. A `chant run --components --release` of it records the same digest, which is how promote and `rollback --release` find what an environment runs. A template-only `cfn-deploy` is the usual case.
+
+Promote, rollback and redeploy set `CHANT_ENV` to the environment they deploy before the components load, as `--env` does for `chant run`. A component that names its stack from it, such as `trunk-curated-${env}`, deploys to the target's stack.
+
 A `dependsOn` edge to a component outside the promotion is dropped, as a single-component `chant run --components` drops it. `--seed-outputs <file>` loads the outputs such a dependency produced, for `stackOutput()` references into it.
 
 The promote appends one record to the `--to` ledger for every component it deployed. The record carries the source release's digest, git sha and archive digests, a fresh run id and actor, the approver of any gate it passed, and `promotedFrom`, which names the source release:

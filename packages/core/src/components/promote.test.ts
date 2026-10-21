@@ -197,6 +197,13 @@ describe("taking the build out of a composition", () => {
     expect("error" in prepared && prepared.error).toMatch(/no publish step/);
   });
 
+  test("#4222: no publish step passes when a release records its templates, and says it is template-only", () => {
+    const c: DriverComponent = { name: "chart", deploy: [{ phase: "Apply", steps: [{ kind: "helm-upgrade" }] }] };
+    const prepared = withoutBuildSteps(c, { templatesPinned: true });
+    expect("error" in prepared).toBe(false);
+    expect("templateOnly" in prepared && prepared.templateOnly).toBe(true);
+  });
+
   test("two publish steps are refused", () => {
     const c = service("api");
     c.deploy[1].steps.push({ kind: "publish-artifact", from: "archive:x.jar" });

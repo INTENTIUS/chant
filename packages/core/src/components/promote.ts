@@ -23,7 +23,7 @@
  *
  * A composition the transform cannot pin to one recorded digest is refused
  * before anything runs: one with no publish step (nothing would carry the
- * digest), one with more than one (the ledger records one digest per
+ * digest) unless a release records its templates (#4222), one with more than one (the ledger records one digest per
  * component), and one whose remaining steps read an output of a removed build
  * step (it would resolve to nothing).
  *
@@ -402,6 +402,8 @@ export interface PromotableComponent {
   component: DriverComponent;
   /** The kinds removed, in composition order. */
   removed: string[];
+  /** #4222: the component has no publish step and deploys the templates a release records, so its record carries their digest. */
+  templateOnly?: boolean;
 }
 
 /**
@@ -433,7 +435,7 @@ export const recordedDigestCapability: Capability<{ digest: string }, { digest: 
  */
 export function withoutBuildSteps(
   component: DriverComponent,
-  opts: { pinDigest?: string; verb?: string } = {},
+  opts: { pinDigest?: string; verb?: string; templatesPinned?: boolean } = {},
 ): PromotableComponent | { error: string } {
   const verb = opts.verb ?? (opts.pinDigest === undefined ? "a promote" : "a rollback");
   const removed: string[] = [];
@@ -487,7 +489,10 @@ export function withoutBuildSteps(
 
   const deploy = component.deploy.map(strip).filter((p): p is DriverPhase => p !== undefined);
 
-  if (publishSteps === 0) {
+  // #4222: under a release that records this component's templates, the
+  // deploy reads them from the release (./release-promote.ts), so a component
+  // with no artifact deploys the release's content, not its current source.
+  if (publishSteps === 0 && !opts.templatesPinned) {
     return {
       error: `component "${component.name}" has no publish step, so nothing in its deploy carries a recorded digest; ` +
         `${verb} would deploy whatever its current source produces`,
@@ -519,7 +524,7 @@ export function withoutBuildSteps(
       }
     }
   }
-  return { component: { ...component, deploy }, removed };
+  return { component: { ...component, deploy }, removed, ...(publishSteps === 0 ? { templateOnly: true } : {}) };
 }
 
 /** Every same-project wiring reference anywhere in a step's fields (cross-stack `stackOutput` objects excluded). */

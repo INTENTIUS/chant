@@ -933,6 +933,8 @@ export async function recordAutoReleasesForRun(
   disabled: boolean,
   runOrigin: RunOrigin = { forge: "local" },
   releaseDigest?: string,
+  /** #4222: the digest of the templates the release records for a component in `env`, for one that publishes no artifact. */
+  templatesDigestOf?: (component: string) => string | null,
 ): Promise<ReleaseRecord[]> {
   const recorded: ReleaseRecord[] = [];
   for (const componentResult of results) {
@@ -951,6 +953,7 @@ export async function recordAutoReleasesForRun(
         ...(gateAdmission(componentResult) ? { admission: gateAdmission(componentResult) } : {}),
         // #4043: the release the deploy was made under, when `--release` named one.
         ...(releaseDigest !== undefined ? { releaseDigest } : {}),
+        ...(releaseDigest !== undefined && templatesDigestOf?.(componentResult.component) ? { templatesDigest: templatesDigestOf(componentResult.component)! } : {}),
       },
       { disabled },
     );
@@ -1083,6 +1086,13 @@ export async function resolveRunRelease(ref: string, env: string, cwd: string) {
 }
 
 /** A rebuilt image need not digest as the release's own did; say so, as promote does. Never fails the run. */
+/** #4222: a component's templates digest in the release's target for `env`, or null when the release has no such target. */
+async function releaseTemplatesDigestOf(release: import("../../lifecycle/release-store").Release, env: string): Promise<(component: string) => string | null> {
+  const { targetFor, releaseTemplatesDigest } = await import("../../components/release-promote");
+  const found = targetFor(release, env);
+  return (component) => ("target" in found ? releaseTemplatesDigest(found.target, component) : null);
+}
+
 async function warnOnArtifactMismatch(release: import("../../lifecycle/release-store").Release, recorded: readonly ReleaseRecord[]): Promise<void> {
   try {
     const { releaseArtifactMismatches } = await import("../../components/release-promote");
@@ -1270,7 +1280,8 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   if (result.success && result.run) {
     // #3955: a run that records nothing has no release to report either.
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
-    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest);
+    const templatesDigestOf = underRelease ? await releaseTemplatesDigestOf(underRelease.release, env) : undefined;
+    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest, templatesDigestOf);
     if (underRelease) await warnOnArtifactMismatch(underRelease.release, recorded);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote

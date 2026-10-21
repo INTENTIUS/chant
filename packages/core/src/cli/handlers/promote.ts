@@ -21,6 +21,7 @@
  * ran from it, through the release gate `promote --release` binds (#4045).
  */
 
+import { ENV_VAR } from "../../env";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadChantConfig, type ChantConfig } from "../../config";
@@ -116,9 +117,16 @@ function resolveActor(ctx: CommandContext): string | undefined {
   return ctx.args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
 }
 
-/** Config, params and the declared components, or the exit code of a refusal already printed. */
-async function loadProject(ctx: CommandContext, selector: string) {
+/**
+ * Config, params and the declared components, or the exit code of a refusal
+ * already printed. `env` is the environment being deployed: it is set as
+ * `CHANT_ENV` before the components load, as `--env` sets it for `chant run`
+ * (../main.ts), so a component that reads it (a stack name per environment)
+ * deploys to that environment and not to the one it was promoted from (#4222).
+ */
+async function loadProject(ctx: CommandContext, selector: string, env: string) {
   const { args } = ctx;
+  process.env[ENV_VAR] = env;
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
@@ -397,17 +405,22 @@ async function deployPlan(
   const prepared: DriverComponent[] = [];
   const removed = new Map<string, string[]>();
   const refusals: string[] = [];
+  // #4222: a component with no artifact, deployed from the templates the release records, and its record's digest.
+  const templateDigests = new Map<string, string>();
+  const { releaseTemplatesDigest } = await import("../../components/release-promote");
   for (const item of plan.items) {
+    const templates = under ? releaseTemplatesDigest(under.target, item.component) : null;
     // A rollback and a redeploy deploy a release this environment already
     // received, so neither runs the publish step.
     const result = withoutBuildSteps(
       byName.get(item.component)!,
-      verb === "promote" ? {} : { pinDigest: item.digest, verb: `a ${verb}` },
+      { ...(verb === "promote" ? {} : { pinDigest: item.digest, verb: `a ${verb}` }), templatesPinned: templates !== null },
     );
     if ("error" in result) refusals.push(result.error);
     else {
       prepared.push(result.component);
       removed.set(item.component, result.removed);
+      if (result.templateOnly && templates !== null) templateDigests.set(item.component, templates);
     }
   }
   if (refusals.length > 0) {
@@ -647,7 +660,8 @@ async function deployPlan(
         const approver = gateApprover(result);
         const admission = gateAdmission(result);
         const input = record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}) });
-        const { record: written } = await appendReleaseRecord(under ? { ...input, releaseDigest: under.release.releaseDigest } : input);
+        const templates = templateDigests.get(item.component);
+        const { record: written } = await appendReleaseRecord(under ? { ...input, ...(templates ? { digest: templates } : {}), releaseDigest: under.release.releaseDigest } : input);
         recorded.push(written);
       }
       if (outcome) await appendDeployOutcome(outcome);
@@ -872,7 +886,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   const who = actorOrRefuse(ctx);
   if (typeof who === "number") return who;
 
-  const project = await loadProject(ctx, args.component ?? "all");
+  const project = await loadProject(ctx, args.component ?? "all", to);
   if (typeof project === "number") return project;
 
   // The member's `environments` array is its promotion order (#4030). It
@@ -958,7 +972,7 @@ export async function runComponentsRollback(ctx: CommandContext): Promise<number
   if (typeof who === "number") return who;
   if (args.release) return runReleaseRollback(ctx, env, args.release, who.actor);
 
-  const project = await loadProject(ctx, args.component!);
+  const project = await loadProject(ctx, args.component!, env);
   if (typeof project === "number") return project;
 
   await fetchLifecycle().catch(() => false);
@@ -988,7 +1002,7 @@ export async function runComponentsRollback(ctx: CommandContext): Promise<number
  * runs now, as `promote --release` binds them (#4045).
  */
 async function runReleaseRollback(ctx: CommandContext, env: string, ref: string, actor: string | undefined): Promise<number> {
-  const project = await loadProject(ctx, "all");
+  const project = await loadProject(ctx, "all", env);
   if (typeof project === "number") return project;
   await fetchLifecycle().catch(() => false);
   const records = await readLedger(env);
@@ -1025,7 +1039,7 @@ export async function runComponentsRedeploy(ctx: CommandContext): Promise<number
   const who = actorOrRefuse(ctx);
   if (typeof who === "number") return who;
 
-  const project = await loadProject(ctx, args.component);
+  const project = await loadProject(ctx, args.component, env);
   if (typeof project === "number") return project;
 
   await fetchLifecycle().catch(() => false);
