@@ -143,6 +143,8 @@ function serve(app: string, client: CiServeForge, extra: Partial<CiServeOptions>
       client,
       stateDir: state,
       holder: "serve-test",
+      // Most tests here cover the apply on merge, which #4168 made opt-in; the record tests pass false.
+      applyOnMerge: true,
       // A job image of its own, so no setup line downloads OpenTofu.
       job: { image: "chant-ci-serve-test:local", chant: fakeChant(), hostEnv: env, passEnv: Object.keys(hostEnv ?? {}) },
       log: (e) => events.push(e),
@@ -176,6 +178,63 @@ const isAncestor = (cwd: string, a: string, b: string): boolean => {
 
 const argsOf = (report: string, stage: string): string[] => readFileSync(join(report, `${stage}.args`), "utf-8").trimEnd().split("\n");
 const ofType = <T extends CiServeEvent["type"]>(events: CiServeEvent[], type: T) => events.filter((e): e is Extract<CiServeEvent, { type: T }> => e.type === type);
+
+describe("ci serve records each merge unless apply on merge is opted in (#4168)", () => {
+  test("a merge to the target branch gets the record job, measured from the head before it, and no resume record", async () => {
+    const { root, app, main } = workspace();
+    const forge = fakeForge(main);
+    const { opts, events, state } = serve(app, forge, { applyOnMerge: false });
+    await ciServePass(opts);
+    const merged = commit(root, "app/merged.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = merged;
+    forge.merges.set(merged, 21);
+
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: merged, base: main, pr: 21, status: "ok" })]);
+    const argv = argsOf(pass.jobs[0]!.report!, "pr-record");
+    expect(argv.slice(0, 4)).toEqual(["components", "pr-record", "--base", main]);
+    expect(argv).not.toContain("--resume");
+    expect(ofType(events, "started")[0]).not.toHaveProperty("resume");
+    expect(existsSync(join(state, "resume"))).toBe(false);
+    const saved = readCiServeState(join(state, `${prApplyGroup("prod", "app")}.json`), { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" });
+    expect(saved.target).toBe(merged);
+    expect(saved.jobs[ciServeKey({ job: "record", commit: merged })]).toMatchObject({ status: "ok" });
+    expect((await ciServePass(opts)).jobs).toEqual([]);
+  });
+
+  test("each settled job runs the tick, and a tick that fails is an error event, never a failed job", async () => {
+    const { root, app, main } = workspace();
+    const forge = fakeForge(main);
+    const ticks: string[] = [];
+    let fail = false;
+    const { opts, events } = serve(app, forge, {
+      applyOnMerge: false,
+      tick: async () => {
+        ticks.push("tick");
+        if (fail) throw new Error("forge said no");
+        return ["ci/green/abc"];
+      },
+    });
+    await ciServePass(opts);
+    expect(ticks).toEqual([]);
+    const merged = commit(root, "app/merged.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = merged;
+    await ciServePass(opts);
+    expect(ticks).toEqual(["tick"]);
+    expect(ofType(events, "tick")).toEqual([{ type: "tick", made: ["ci/green/abc"] }]);
+    expect(formatCiServeEvent({ type: "tick", made: ["ci/green/abc"] })).toBe("ci tick made ci/green/abc");
+
+    fail = true;
+    const next = commit(root, "app/next.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.head = next;
+    const pass = await ciServePass(opts);
+    expect(pass.jobs[0]).toMatchObject({ job: "record", status: "ok" });
+    expect(ofType(events, "error").map((e) => e.message)).toContain("ci tick after a job settled: forge said no");
+  });
+});
 
 describe("chant ci serve (#4095)", () => {
   test("one poll plans a new pull request head once, and skips forks and authors not given", async () => {

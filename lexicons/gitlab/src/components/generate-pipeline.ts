@@ -48,6 +48,7 @@ import {
   PR_APPLY_RECORD,
   PR_LOOP_REPORT_DIR,
   prApplyGroup,
+  prRecordGroup,
   prApplyRecordKey,
   prApplyWaveJobName,
   prLoopJobs,
@@ -272,8 +273,8 @@ function gatedWaveGitlabPipeline(
 
 /**
  * The merge-request pipeline (#3183): `plan` in each merge request pipeline,
- * `apply` on each push to the target branch, one apply at a time per
- * environment (`resource_group`). `GIT_DEPTH: "0"` gives both the history
+ * and on each push to the target branch `record` (#4168), or `apply` with
+ * `applyOnMerge`, one at a time per environment (`resource_group`). `GIT_DEPTH: "0"` gives both the history
  * they measure the change with. The jobs talk to GitLab with
  * `CHANT_FORGE_TOKEN`, a project or group access token with the `api` scope
  * set as a masked CI/CD variable, since a job token cannot write notes.
@@ -310,14 +311,16 @@ function prLoopGitlabPipeline(
   const loop = options.prLoop!;
   const member = options.member;
   const rooted = !member || member.dir === "." || member.dir === "";
-  const [plan, apply] = prLoopJobs("gitlab", env, loop, member?.name);
+  const [plan, apply, record] = prLoopJobs("gitlab", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
   const planJob = member ? `${member.name}-plan` : "plan";
   const named = (job: string) => (member ? `${member.name}-${job}` : job);
   const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
   const applies = loop.waveGate
     ? waveJobs.map((job) => ({ job, name: named(prApplyWaveJobName(job.wave!)), stage: prApplyWaveJobName(job.wave!) }))
-    : [{ job: apply, name: named("apply"), stage: "apply" }];
+    : loop.applyOnMerge
+      ? [{ job: apply, name: named("apply"), stage: "apply" }]
+      : [{ job: record, name: named("record"), stage: "record" }];
   const onMergeRequest = GITLAB_MERGE_REQUEST_SOURCE;
   if (loop.branch !== undefined) assertGitlabBranch("The merge-request pipeline", loop.branch);
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
@@ -347,17 +350,22 @@ function prLoopGitlabPipeline(
           stage,
           image,
           ...(i > 0 ? { needs: [applies[i - 1]!.name] } : {}),
-          resource_group: prApplyGroup(env, member?.name),
+          resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : prApplyGroup(env, member?.name),
           rules: [{ if: onMerge }],
           variables: job.run.env,
           script: script(job),
           // The attempt record (#3543), kept under the pushed commit even when
           // the job fails, so a retry finishes the apply under the same approval.
-          cache: {
-            key: prApplyRecordKey(env, "$CI_COMMIT_SHA", member?.name),
-            paths: [member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD],
-            when: "always",
-          },
+          // The record job (#4168) applies nothing and keeps none.
+          ...(job.jobName === "record"
+            ? {}
+            : {
+                cache: {
+                  key: prApplyRecordKey(env, "$CI_COMMIT_SHA", member?.name),
+                  paths: [member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD],
+                  when: "always",
+                },
+              }),
           artifacts: { when: "always", paths: [reportPath] },
         },
       ]),
@@ -367,7 +375,7 @@ function prLoopGitlabPipeline(
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
-      component: job.wave ? `merge request apply, wave ${job.wave}` : "merge request apply",
+      component: job.wave ? `merge request apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : "merge request apply",
       stage,
       needs: i > 0 ? [applies[i - 1]!.name] : [],
     })),

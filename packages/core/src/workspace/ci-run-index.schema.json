@@ -23,7 +23,7 @@
       "if": { "properties": { "status": { "const": "fail" } } },
       "then": { "required": ["failure"], "properties": { "failure": { "type": "object" } } },
       "properties": {
-        "job": { "enum": ["plan", "apply"] },
+        "job": { "enum": ["plan", "apply", "record"], "description": "record (#4168, chant 0.124.33 and newer): the merge record job." },
         "pr": { "type": ["integer", "null"], "minimum": 1, "description": "The pull or merge request number: the one the job's report names, else --pr. null when neither has one." },
         "commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit the job ran at." },
         "status": { "enum": ["ok", "fail"] },

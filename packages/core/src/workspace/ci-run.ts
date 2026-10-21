@@ -1,5 +1,5 @@
 /**
- * `chant ci run plan|apply` (#4094, epic #4101): run one pull-request job as
+ * `chant ci run plan|record|apply` (#4094, epic #4101, record #4168): run one pull-request job as
  * a pipeline Op, the first slice of the chant runner.
  *
  * The job is the typed value `prLoopJobs` (../components/pr-pipeline.ts)
@@ -102,12 +102,19 @@ import { hostRunnerKey } from "./ci-runner-key";
 import { requireRunnerStart } from "./ci-runner-start";
 import { securityGroupsAt } from "./security";
 
-/** The two jobs a pull-request pipeline has. */
+/** The jobs a pull-request pipeline has: plan, and on merge record (#4168) or, opted in, apply. */
 export type CiJobName = PrLoopJob["jobName"];
-export const CI_JOB_NAMES: readonly CiJobName[] = ["plan", "apply"];
+export const CI_JOB_NAMES: readonly CiJobName[] = ["plan", "apply", "record"];
 
 /** The Op each job is recorded as, which `ci.green` phases match. */
-export const CI_JOB_OPS: Record<CiJobName, string> = { plan: "pr-plan", apply: "pr-apply" };
+export const CI_JOB_OPS: Record<CiJobName, string> = { plan: "pr-plan", apply: "pr-apply", record: "pr-record" };
+
+/** What each job's Op says it does. */
+const CI_JOB_OVERVIEWS: Record<CiJobName, string> = {
+  plan: "Plan the members this pull request reaches",
+  apply: "Apply the plan a reviewer approved",
+  record: "Record the plan on the merged commit; nothing applies",
+};
 
 /** Where a job the chant runner ran says it ran (#4094). */
 export const CHANT_RUNNER_ORIGIN: RunOrigin = { forge: "chant" };
@@ -257,7 +264,7 @@ export function ciJobOp(input: CiJobOpInput): OpConfig {
   const op = CI_JOB_OPS[input.job.jobName];
   return {
     name: op,
-    overview: input.job.jobName === "plan" ? "Plan the members this pull request reaches" : "Apply the plan a reviewer approved",
+    overview: CI_JOB_OVERVIEWS[input.job.jobName],
     labels: { Env: input.env, Pipeline: "pr", Job: input.job.jobName },
     phases,
   };
@@ -355,12 +362,12 @@ const STATUS_DESCRIPTION = 140;
 const cut = (text: string, max = STATUS_DESCRIPTION): string => (text.length > max ? `${text.slice(0, max - 3)}...` : text);
 
 /**
- * A job's status context: `chant/pr-plan` for the plan, and for the apply
+ * A job's status context: `chant/pr-plan` for the plan, `chant/pr-record` for the record (#4168), and for the apply
  * `chant/<gate>`, which is `chant/pr-apply` unless `--gate` renamed the gate.
  * pr-plan's own status is `chant/plan` (../pr-loop.ts), a different context.
  */
 export function ciStatusContext(job: CiJobName, gate?: string): string {
-  return job === "apply" ? `chant/${gate ?? PR_APPLY_GATE}` : `chant/${CI_JOB_OPS.plan}`;
+  return job === "apply" ? `chant/${gate ?? PR_APPLY_GATE}` : `chant/${CI_JOB_OPS[job]}`;
 }
 
 /**
@@ -945,7 +952,7 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
 }
 
 const USAGE =
-  "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
+  "chant ci run plan|record|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--require-review] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
@@ -995,14 +1002,14 @@ async function requestBuildCommand(at: string): Promise<number> {
   return 0;
 }
 
-/** `chant ci run plan|apply` (#4094). */
+/** `chant ci run plan|record|apply` (#4094, #4168). */
 export async function runCiRun(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   try {
     if (args.setupKey) return (await import("./ci-serve")).runnerKeySetupCommand(ctx);
     if (args.at !== undefined && args.extraPositional === undefined) return await requestBuildCommand(args.at);
     const job = args.extraPositional;
-    if (job !== "plan" && job !== "apply") throw new CiRunError(`ci run takes the job to run, plan or apply${job ? `, not ${JSON.stringify(job)}` : ""}`);
+    if (job !== "plan" && job !== "apply" && job !== "record") throw new CiRunError(`ci run takes the job to run, plan, record or apply${job ? `, not ${JSON.stringify(job)}` : ""}`);
     if (!args.env) throw new CiRunError("--env names the environment the pipeline is for, as chant build --components --generate <lexicon> --pr-loop took it: --env <env>");
     const forge = args.forge ?? detectForge(process.env);
     if (!forge) throw new CiRunError("--forge names the forge the job posts to: --forge github|gitlab|forgejo");

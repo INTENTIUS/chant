@@ -153,7 +153,7 @@ const fail = (message: string, hint?: string): number => {
 };
 
 /** Everything both stages share: the change and the derivation. Each stage plans the members itself. */
-async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Prepared | number> {
+async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"): Promise<Prepared | number> {
   const { args } = ctx;
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
@@ -297,6 +297,7 @@ function settleOf(status: PrReport["status"]): RunEventSettleStatus {
   switch (status) {
     case "nothing":
     case "planned":
+    case "recorded":
     case "applied":
       return "ok";
     case "refused":
@@ -405,7 +406,7 @@ async function withStageEvents(stage: string, ctx: CommandContext, run: (events:
  * Open the stage's `--report-url` upload under its pull request and commit,
  * when the flag was given. Its events are the lines `openCliRunEvents` writes.
  */
-function openUpload(events: StageEvents, stage: "plan" | "apply", pr: number | null, p: Prepared): PrReportUpload | undefined {
+function openUpload(events: StageEvents, stage: "plan" | "apply" | "record", pr: number | null, p: Prepared): PrReportUpload | undefined {
   if (!events.target) return undefined;
   events.upload = openPrReportUpload({
     target: events.target,
@@ -728,12 +729,129 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   return code;
 }
 
+/** chant components pr-record --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
+export function runComponentsPrRecord(ctx: CommandContext): Promise<number> {
+  if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
+  return withStageEvents("pr-record", ctx, (events) => prRecord(ctx, events));
+}
+
+/**
+ * The record stage (#4168 step 1): what a merge does unless apply on merge
+ * is opted in. It plans the members the change reaches on the merged
+ * commit, stores the change set, decides the pull request's gate against
+ * it without writing to the ledger, and writes the merge record
+ * (`../../lifecycle/merge-record.ts`). It applies nothing and refuses
+ * nothing. A plan that differs from the approved one is recorded, and the
+ * `chant/record` status fails (decision 1). It exits 1 only when a member
+ * failed to plan.
+ */
+async function prRecord(ctx: CommandContext, stage: StageEvents): Promise<number> {
+  const { args } = ctx;
+  const p = await prepare(ctx, "record");
+  if (typeof p === "number") return p;
+
+  let pr: number | null = args.pr ?? null;
+  if (pr === null && p.forge) {
+    try {
+      pr = await p.forge.pullRequestFor(p.head);
+    } catch (err) {
+      console.error(formatWarning({ message: `could not ask ${p.forge.kind} which pull request merged ${p.head}, so the record names none: ${err instanceof Error ? err.message : String(err)}` }));
+    }
+  }
+  const op = pr === null ? "pr-unknown" : prOp(pr, p.member);
+  const upload = openUpload(stage, "record", pr, p);
+  const events = await openCliRunEvents(args, { kind: "component", name: `pr-record ${op}`, cwd: resolve(".") }, upload?.line);
+  stage.stream = events;
+  events?.emit({ type: "run-start", waves: p.plan.waves });
+  const set = await planAll(p, events?.emit);
+  const nothing = p.plan.order.length === 0;
+
+  let approval: PrApproval = { status: "pending" };
+  if (!nothing && !set.failed) {
+    await storeChangeSetForGate(ctx, p, set.doc);
+    if (pr !== null) {
+      try {
+        const check = await emitGateStep(events?.emit, { op, gate: p.gate }, () =>
+          decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: set.doc.digest }),
+        );
+        approval = approvalOf(check);
+      } catch (err) {
+        console.error(formatWarning({ message: `could not read the gate ledger, so the record says no approval: ${err instanceof Error ? err.message : String(err)}` }));
+      }
+    }
+  }
+
+  // #4000: the record keeps an approval by someone who wrote the change, which review rules would not count.
+  let authorApproved: string[] | undefined;
+  if (pr !== null && p.forge && approval.status === "approved") {
+    try {
+      const authors = (await p.forge.authors(pr)).map((login) => p.forge!.principalOf(login));
+      authorApproved = approversWhoAuthored(approval.approvedBy ?? [], authors);
+    } catch (err) {
+      console.error(formatWarning({ message: `could not read the authors of #${pr}: ${err instanceof Error ? err.message : String(err)}` }));
+    }
+  }
+
+  const status = nothing ? "nothing" : set.failed ? "plan-failed" : "recorded";
+  const report = prReport({
+    stage: "record",
+    pr,
+    env: p.env,
+    ...(p.member ? { member: p.member } : {}),
+    base: p.base,
+    head: p.head,
+    op,
+    gate: p.gate,
+    plan: p.plan,
+    signal: p.signal,
+    set,
+    approval,
+    status,
+    ...(status === "plan-failed" ? { message: "A member failed to plan on the merged commit, so the record has no plan to compare with the approved one. Nothing was applied." } : {}),
+    ...(status === "recorded" && approval.status === "changed"
+      ? { message: `${describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval })} The merge stands and nothing was applied; the release gate decides before this deploys.` }
+      : {}),
+  });
+
+  const { mergeSourceOf, writeMergeRecord, MERGE_RECORD_SCHEMA_ID, MERGE_RECORD_CONTRACT } = await import("../../lifecycle/merge-record");
+  const { pushLifecycleReport } = await import("../../lifecycle/git");
+  try {
+    const written = await writeMergeRecord({
+      $schema: MERGE_RECORD_SCHEMA_ID,
+      contract: MERGE_RECORD_CONTRACT,
+      commit: p.head,
+      base: p.base,
+      env: p.env,
+      ...(p.member ? { member: p.member } : {}),
+      source: mergeSourceOf(resolve("."), p.head, pr),
+      op: pr === null ? null : op,
+      gate: p.gate,
+      digest: nothing ? null : set.doc.digest,
+      plan: nothing ? "nothing" : set.failed ? "plan-failed" : approval.status === "approved" ? "approved" : approval.status === "changed" ? "changed" : "unapproved",
+      ...(approval.status === "changed" && approval.approved ? { approvedDigest: approval.approved } : {}),
+      approvedBy: approval.status === "approved" ? (approval.approvedBy ?? []) : [],
+      ...(authorApproved && authorApproved.length > 0 ? { authorApproved } : {}),
+      components: p.plan.order,
+      recordedAt: new Date().toISOString(),
+    });
+    if (written.written) {
+      const pushed = await pushLifecycleReport();
+      if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
+    }
+  } catch (err) {
+    console.error(formatWarning({ message: `could not write the merge record for ${p.head}: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+
+  const stop = stopper(ctx, p, events, upload);
+  return stop(report, status === "plan-failed" ? 1 : 0);
+}
+
 /** How a stage stops: settle its events, write and publish the report, say how it ended, and return `code`. */
 function stopper(ctx: CommandContext, p: Prepared, events: RunEventStream | undefined, upload: PrReportUpload | undefined) {
   return async (report: PrReport, code: number, settle?: RunEventSettleStatus): Promise<number> => {
-    events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-apply ${report.status}` : undefined);
+    events?.settle(settle ?? settleOf(report.status), report.status === "plan-failed" || report.status === "failed" ? report.message ?? `pr-${report.stage} ${report.status}` : undefined);
     await finish(ctx, p, report, upload);
-    console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-apply: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
+    console.error((code === 0 ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-${report.stage}: ${report.status}${report.refusal ? ` (${report.refusal})` : ""}`));
     if (report.message) console.error(report.message);
     printMembers(report);
     return code;

@@ -229,6 +229,35 @@ describe("the note", () => {
   });
 });
 
+describe("the record stage (#4168)", () => {
+  const recorded: PrReport = { ...planReport, stage: "record", status: "recorded", approval: { status: "approved", approvedBy: ["github:rev"] } };
+  const moved: PrReport = { ...recorded, approval: { status: "changed", approved: changedDigest } };
+  const unapproved: PrReport = { ...recorded, approval: { status: "pending" } };
+
+  test("its reports validate", () => {
+    for (const report of [recorded, moved, unapproved]) expectValid(report);
+  });
+
+  test("a plan that differs from the approved one fails the chant/record status; an approved or unapproved one passes", () => {
+    expect(prStatusContext("record")).toBe("chant/record");
+    expect(prStatusContext("record", "net")).toBe("chant/record/net");
+    expect(prStatusState(recorded)).toBe("success");
+    expect(prStatusState(unapproved)).toBe("success");
+    expect(prStatusState(moved)).toBe("failure");
+    expect(prStatusDescription(recorded)).toMatch(/^recorded 2 members: the approved plan; plan [0-9a-f]{12}$/);
+    expect(prStatusDescription(moved)).toMatch(/^recorded 2 members: the plan differs from the approved one/);
+    expect(prStatusDescription(unapproved)).toMatch(/^recorded 2 members: no approval for this plan/);
+  });
+
+  test("the note says nothing applied and a release deploys it", () => {
+    const note = renderPrNote(unapproved);
+    expect(note).toContain("### chant record for `prod`");
+    expect(note).toContain("Recorded the plan of 2 members on merge. Nothing applied: a release that carries this commit deploys it.");
+    expect(note).toContain("No approval stands for this plan. The release gate decides before it deploys.");
+    expect(renderPrNote(moved)).toContain("the plan changed since it was approved");
+  });
+});
+
 describe("the status", () => {
   test("describes each stage in at most 140 characters", () => {
     expect(prStatusDescription(planReport)).toMatch(/^2 members: 1 to change, 0 to destroy or replace; plan [0-9a-f]{12}$/);

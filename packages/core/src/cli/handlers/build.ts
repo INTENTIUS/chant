@@ -19,7 +19,8 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
  * `reportUrl` is `--report-url`, else the workspace's `ci.reportUrl` (#4160).
  * `requireReview` is `--require-review`, or a workspace that opts into the
  * `review-rules` security group (#4168); off otherwise. `requireRunnerStart`
- * is `--require-runner-start`, or the `isolated-runners` group.
+ * is `--require-runner-start`, or the `isolated-runners` group. `--apply-on-merge`
+ * (#4168) writes the apply job on merge in place of the record job.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
   return {
@@ -31,6 +32,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
     ...(args.requireReview === true || requireReview ? { requireReview: true } : {}),
     ...(args.requireRunnerStart === true || requireRunnerStart ? { requireRunnerStart: true } : {}),
+    ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
   };
 }
 

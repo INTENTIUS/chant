@@ -21,6 +21,8 @@ export const GENERATE_ARGS = [
   "--generate",
   "forgejo",
   "--pr-loop",
+  // #4168: a merge records by default; the demo's story is a merge that applies.
+  "--apply-on-merge",
   "--env",
   "demo",
   "--events-json",

@@ -265,12 +265,12 @@ CI:
               [-o <dir>] [--wave <k>] [--require-review]
               [--no-status] [--status-url <url template>]
               [--in-place | --local] [--no-push] [--require-runner-start] [--verbose]
-                        Run the pull-request pipeline's plan or apply job as
+                        Run the pull-request pipeline's plan, record or apply job as
                         a pipeline Op in a fresh worktree of --commit (default
                         HEAD) with a clean environment. --base and --pr stand
                         in for the forge's event values. --pr-build runs
                         the job's build and lint lines first. Records the run as
-                        pr-plan or pr-apply on chant/lifecycle, which ci tick
+                        pr-plan, pr-record or pr-apply on chant/lifecycle, which ci tick
                         from runs counts, signed when --key or CHANT_RUNNER_KEY
                         gives a runner key, and copies the report to -o
                         (default .chant/pr). --in-place runs in this checkout
@@ -317,11 +317,14 @@ CI:
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
               [--author <login>]... [--once] [--rerun-failed] [--unsigned]
-              [--build-command <line>] [ci run's job flags]
+              [--apply-on-merge] [--build-command <line>] [ci run's job flags]
                         Poll the forge for open pull requests and the target
                         branch's head, and run ci run plan for each new pull
-                        request head and ci run apply for each new commit on
-                        the branch. Dedupes on job and commit in a state file
+                        request head and ci run record for each new commit on
+                        the branch, then ci tick from the runs when the
+                        workspace declares ci.green. A merge deploys nothing;
+                        --apply-on-merge runs ci run apply in place of the
+                        record, and --wave-gate needs it. Dedupes on job and commit in a state file
                         under --state, takes a lease per apply group, keeps
                         each apply's resume record there, and runs at most
                         --max-jobs (default 1) jobs at once. --once runs one
@@ -977,7 +980,12 @@ Component release ledger + status:
                             report and note (--base <ref> --pr <n>
                             [--forge github|gitlab|forgejo] posts them);
                             applies nothing
-  components pr-apply      On merge: plan the same members again and apply
+  components pr-record     On merge (#4168): plan the same members again,
+                            store the change set and write the merge record
+                            _merges/<commit>.json; applies and refuses
+                            nothing, and a plan that differs from the
+                            approved one sets a failing chant/record status
+  components pr-apply      With --apply-on-merge: plan the same members again and apply
                             them only if an approval stands for that digest
                             (chant approve pr-<n> pr-apply --plan <digest>);
                             a moved plan refuses with exit 3
@@ -1570,6 +1578,7 @@ export const commandRegistry: CommandDef[] = [
   // #3183 — the pull-request loop the generated CI runs. Imported on first use.
   { name: "components pr-plan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPlan(ctx) },
   { name: "components pr-apply", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrApply(ctx) },
+  { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },

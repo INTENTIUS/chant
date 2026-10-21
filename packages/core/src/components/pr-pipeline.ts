@@ -1,6 +1,7 @@
 /**
  * The jobs of a generated pull-request pipeline (#3183): a plan job on every
- * pull request and an apply job on every push to the target branch.
+ * pull request and, on every push to the target branch, a record job, or an
+ * apply job when the pipeline opts into apply on merge (#4168).
  *
  * Each forge's generator (the github, gitlab and forgejo lexicons) adds its
  * own triggers, permissions and artifact handling; the commands and the
@@ -9,7 +10,14 @@
  * - The plan job runs `chant components pr-plan` against the pull request's
  *   target commit. It posts the note and the `chant/plan` status and writes
  *   nothing to `chant/lifecycle`, since it runs the pull request's code.
- * - The apply job runs `chant components pr-apply` against the commit the
+ * - The record job (#4168 step 1, the default) runs `chant components
+ *   pr-record` against the commit the push replaced. It plans the same
+ *   members on the merged commit, stores the change set and writes the merge
+ *   record, `_merges/<commit>.json` on `chant/lifecycle`. It applies nothing:
+ *   a release that carries the commit deploys it. It needs write access to
+ *   `chant/lifecycle`. One record runs at a time per environment.
+ * - With `applyOnMerge` the apply job takes the record job's place. It runs
+ *   `chant components pr-apply` against the commit the
  *   push replaced, finds the pull request that merged the pushed commit
  *   through the forge, and applies only when an approval stands for the
  *   digest it plans. With `requireReview` (off by default since #4168, on
@@ -36,6 +44,7 @@
  * it too. With `reportUrl` both pass `--report-url`, which copies the report,
  * the change set and the events where a reader outside CI can fetch them;
  * the job's own environment brings the credentials an `s3://` URL needs.
+ * The record job passes the same flags as the apply.
  *
  * With `build` (#4088) both jobs run the project's build and `chant lint`
  * before their command, and fail on an error. A `cfn-deploy` member's plan
@@ -126,8 +135,14 @@ export interface PrLoopPipelineOptions {
   branch?: string;
   /** Count an approval only from someone who approved the pull request on the forge. Default false (#4168): review rules are opt-in. */
   requireReview?: boolean;
-  /** The apply job's `chant ci run` refuses to start without a runner-start statement for it (`--require-runner-start`, #4147), as under the `isolated-runners` security group (#4168). Default false. */
+  /** The job on merge (apply, or record since #4168) has `chant ci run` refuse to start without a runner-start statement for it (`--require-runner-start`, #4147), as under the `isolated-runners` security group (#4168). Default false. */
   requireRunnerStart?: boolean;
+  /**
+   * Apply the approved plan on merge (#4168), as every pull-request pipeline
+   * did before #4168: the apply job in place of the record job. Default
+   * false, so a merge deploys nothing. `waveGate` needs it.
+   */
+  applyOnMerge?: boolean;
   /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
@@ -169,8 +184,8 @@ export interface PrLoopPipelineOptions {
 
 /** One job's command and the forge values it reads, as environment variables for its step. */
 export interface PrLoopJob {
-  /** `plan` or `apply`. */
-  jobName: "plan" | "apply";
+  /** `plan`, `apply` or `record` (#4168). */
+  jobName: "plan" | "apply" | "record";
   /** The command line. Reads `$BASE_SHA` and, for the plan, `$PR_NUMBER`. */
   command: string;
   /**
@@ -203,9 +218,10 @@ export function prLoopBuildLines(env: string, options: PrLoopPipelineOptions = {
 }
 
 /**
- * The two jobs for `forge`. `member` is the workspace member the pipeline is
- * generated for; the commands then run in its directory, so `--output` is
- * relative to it.
+ * The jobs for `forge`: plan, apply and record, in that order. A generator
+ * writes the plan and, on merge, {@link prLoopMergeJob}'s choice of the
+ * other two. `member` is the workspace member the pipeline is generated for;
+ * the commands then run in its directory, so `--output` is relative to it.
  */
 export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}, member?: string): PrLoopJob[] {
   const gate = options.gate ?? PR_APPLY_GATE;
@@ -223,14 +239,14 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
   };
   // #4156: the flags `chant ci run` rebuilds `command` from. It finds the member from the directory it runs in.
-  const ciRun = (job: "plan" | "apply"): string[] => [
+  const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
     "--base", '"$BASE_SHA"', ...(job === "plan" ? ["--pr", '"$PR_NUMBER"'] : []),
     "--env", env, "--gate", gate, "--forge", forge,
-    ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
-    ...(job === "apply" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
+    ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
+    ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
     ...(job === "apply" && options.requireReview === true ? ["--require-review"] : []),
-    ...(job === "apply" && options.requireRunnerStart === true ? ["--require-runner-start"] : []),
+    ...(job !== "plan" && options.requireRunnerStart === true ? ["--require-runner-start"] : []),
     ...(options.events ? ["--events-json"] : []),
     ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
   ];
@@ -261,7 +277,20 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       ...build,
       run: { command: ciRun("apply").join(" "), env: runEnv(applyEnv) },
     },
+    {
+      jobName: "record",
+      command: ["chant", "components", "pr-record", "--base", '"$BASE_SHA"', ...common].join(" "),
+      env: applyEnv,
+      setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
+      ...build,
+      run: { command: ciRun("record").join(" "), env: runEnv(applyEnv) },
+    },
   ];
+}
+
+/** The job a push to the target branch runs (#4168): `record`, or `apply` when the pipeline opts into apply on merge. */
+export function prLoopMergeJob(jobs: readonly PrLoopJob[], options: PrLoopPipelineOptions = {}): PrLoopJob {
+  return jobs.find((j) => j.jobName === (options.applyOnMerge ? "apply" : "record"))!;
 }
 
 /**
@@ -272,6 +301,9 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
  */
 export function prLoopWithWaves(prLoop: PrLoopPipelineOptions, gatedWaves?: GatedWavePipelineOptions): PrLoopPipelineOptions {
   if (!gatedWaves) return prLoop;
+  if (!prLoop.applyOnMerge) {
+    throw new Error("--wave-gate beside --pr-loop gates the apply on merge, so it needs --apply-on-merge (#4168); without it a merge records the plan and a release deploys it");
+  }
   if (gatedWaves.canary?.length) throw new Error("a pull-request pipeline's waves are the change's derivation, so it takes no --canary; drop --canary");
   if (gatedWaves.base !== undefined) throw new Error("a pull-request pipeline measures each push from the commit before it, so it takes no --base; drop --base");
   return { ...prLoop, waveGate: gatedWaves.gate };
@@ -312,6 +344,11 @@ export function prLoopWaveJobs(components: DriverComponent[], apply: PrLoopJob):
  */
 export function prApplyGroup(env: string, member?: string): string {
   return member ? `chant-apply.${member}.${env}` : `chant-apply-${env}`;
+}
+
+/** The group that keeps one record job at a time per environment and member (#4168), named as {@link prApplyGroup} names the apply's. */
+export function prRecordGroup(env: string, member?: string): string {
+  return member ? `chant-record.${member}.${env}` : `chant-record-${env}`;
 }
 
 /**

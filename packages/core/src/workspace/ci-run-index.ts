@@ -44,7 +44,7 @@ export const CI_RUN_INDEX_LIMIT = 200;
 
 /** One job the runner ran. */
 export interface CiRunIndexEntry {
-  job: "plan" | "apply";
+  job: "plan" | "apply" | "record";
   /** The pull request, or null when the job found none. */
   pr: number | null;
   commit: string;

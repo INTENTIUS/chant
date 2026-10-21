@@ -68,7 +68,7 @@ provisions for real.
 it. It is the output of one command, run in this directory:
 
 ```
-chant build --components --generate forgejo --pr-loop --env demo --events-json \
+chant build --components --generate forgejo --pr-loop --apply-on-merge --env demo --events-json \
   --report-url s3://chant-demo/fan-out-estate/reports \
   --image chant-fan-out-demo-job:local \
   --pr-build-command 'npm run build' \
@@ -82,6 +82,11 @@ file fails the unit suite. The `plan` job (a pull request) runs `npm run build`,
 `chant lint`, then `chant components pr-plan`; the `apply` job (a push to main)
 runs the same build and lint, then `chant components pr-apply`. Each covers all
 fifteen stacks, because the stacks are the members of one plan and one apply.
+
+The demo opts into apply on merge with `--apply-on-merge`, since its story is a
+merge that applies. Without the flag a push to main runs a `record` job that
+writes the merge record and applies nothing, and a release deploys the change
+(#4168).
 
 ## Run it against a local AWS emulator
 

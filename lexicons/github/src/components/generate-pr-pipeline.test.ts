@@ -46,7 +46,7 @@ interface Job {
 }
 
 describe("the GitHub pull-request workflow", () => {
-  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} });
+  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
   const doc = parseYAML(result.yaml) as { name: string; on: Record<string, unknown>; jobs: Record<string, Job> };
 
   test("matches its golden", () => {
@@ -89,7 +89,7 @@ describe("the GitHub pull-request workflow", () => {
     expect(lines[0]).toContain('[ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]');
     expect(lines[0]).toContain('git merge-base FETCH_HEAD "$GITHUB_SHA"');
     expect(lines[1]).toMatch(/^chant ci run apply --in-place --base "\$BASE_SHA"/);
-    const trunk = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { branch: "trunk" } }).yaml) as { jobs: Record<string, Job> };
+    const trunk = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, branch: "trunk" } }).yaml) as { jobs: Record<string, Job> };
     expect(trunk.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!.run).toContain('git fetch origin "trunk"');
     const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
     expect(plan.run).not.toContain("0000000000000000000000000000000000000000");
@@ -121,13 +121,13 @@ describe("the GitHub pull-request workflow", () => {
 
   test("runs in an image with git and installs OpenTofu, unless the caller names an image", () => {
     expect(doc.jobs.plan.steps[1].run).toContain("install-opentofu");
-    const own = generateGithubPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: {} }).yaml;
+    const own = generateGithubPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: { applyOnMerge: true } }).yaml;
     expect(own).toContain("container: example/ci:1");
     expect(own).not.toContain("install-opentofu");
   });
 
   test("the gate, branch and review requirement are options", () => {
-    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { gate: "infra-apply", branch: "trunk", requireReview: true } }).yaml;
+    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, gate: "infra-apply", branch: "trunk", requireReview: true } }).yaml;
     expect(yaml).toContain("--gate infra-apply");
     expect(yaml).toContain("- trunk");
     expect(yaml).toContain("ci run apply --in-place --base \"$BASE_SHA\" --env prod --gate infra-apply --forge github --branch \"trunk\" --require-review");
@@ -135,13 +135,13 @@ describe("the GitHub pull-request workflow", () => {
   });
 
   test("refuses a promote job beside it, and a canary or a fixed base beside --wave-gate (#4003)", () => {
-    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no promote job/);
-    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g", canary: ["net"] } })).toThrow(/takes no --canary/);
-    expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g", base: "HEAD~1" } })).toThrow(/takes no --base/);
+    expect(() => generateGithubPipeline(ESTATE, { prLoop: { applyOnMerge: true }, promoteTo: "prod" })).toThrow(/pull-request pipeline has no promote job/);
+    expect(() => generateGithubPipeline(ESTATE, { prLoop: { applyOnMerge: true }, gatedWaves: { gate: "g", canary: ["net"] } })).toThrow(/takes no --canary/);
+    expect(() => generateGithubPipeline(ESTATE, { prLoop: { applyOnMerge: true }, gatedWaves: { gate: "g", base: "HEAD~1" } })).toThrow(/takes no --base/);
   });
 
   test("events and reportUrl stream the run's events into the report artifact and copy the reports out (#4007)", () => {
-    const loud = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { events: true, reportUrl: "s3://chant-reports/acme" } }).yaml) as { jobs: Record<string, Job> };
+    const loud = parseYAML(generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, events: true, reportUrl: "s3://chant-reports/acme" } }).yaml) as { jobs: Record<string, Job> };
     for (const job of ["plan", "apply"]) {
       const run = loud.jobs[job].steps.find((s) => s.run?.includes("chant ci run"))!;
       expect(run.run).toContain('--events-json --report-url "s3://chant-reports/acme"');
@@ -154,7 +154,7 @@ describe("the GitHub pull-request workflow", () => {
 
   test("inside a workspace member: runs in the member's directory and keeps its own gate, note and apply group (#3465)", () => {
     const member = { name: "network", dir: "infra/network", file: ".github/workflows/chant-pr.network.prod.yml" };
-    const scoped = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member });
+    const scoped = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, member });
     const mdoc = parseYAML(scoped.yaml) as {
       name: string;
       on: Record<string, unknown>;
@@ -192,7 +192,7 @@ describe("the GitHub pull-request workflow", () => {
   });
 
   test("a member at the workspace root keeps the root's paths but its own names", () => {
-    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member: { name: "root", dir: "." } }).yaml;
+    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, member: { name: "root", dir: "." } }).yaml;
     const mdoc = parseYAML(yaml) as { name: string; defaults?: unknown; jobs: Record<string, Job> };
     expect(mdoc.name).toBe("chant-pr.root.prod");
     expect(mdoc.defaults).toBeUndefined();
@@ -213,7 +213,7 @@ describe("the GitHub pull-request workflow", () => {
 });
 
 describe("the github pull-request pipeline with build (#4088)", () => {
-  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { build: true } });
+  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, build: true } });
   const doc = parseYAML(result.yaml) as Record<string, any>;
   const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-build.github.golden.yml");
 
@@ -231,14 +231,60 @@ describe("the github pull-request pipeline with build (#4088)", () => {
   });
 
   test("buildCommand replaces the build line and turns the option on", () => {
-    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { buildCommand: "npm run build" } }).yaml;
+    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true, buildCommand: "npm run build" } }).yaml;
     expect(yaml).toContain("npm run build");
     expect(yaml).not.toContain("chant build --env");
     expect(yaml).toContain("chant lint");
   });
 
   test("the default output carries neither line", () => {
-    const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} }).yaml;
+    const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } }).yaml;
     expect(plain).not.toContain("chant lint");
+  });
+});
+
+describe("the GitHub pull-request workflow records on merge by default (#4168)", () => {
+  const result = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {} });
+  const doc = parseYAML(result.yaml) as { jobs: Record<string, Job> };
+  const golden = join(import.meta.dirname, "__fixtures__", "pr-loop-record.github.golden.yml");
+
+  test("matches its golden", () => {
+    if (process.env.UPDATE_GOLDEN) writeFileSync(golden, result.yaml);
+    expect(result.yaml).toBe(readFileSync(golden, "utf-8"));
+  });
+
+  test("a push runs the record job, which applies nothing and keeps no resume record", () => {
+    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "record"]);
+    expect(doc.jobs.apply).toBeUndefined();
+    expect(doc.jobs.record.if).toBe("github.event_name == 'push'");
+    const run = doc.jobs.record.steps.find((s) => s.run?.includes("ci run record"))!;
+    expect(run.run!.trimEnd().split("\n")).toEqual([githubBaseFallback(), 'chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github']);
+    expect(doc.jobs.record.steps.some((s) => s.uses?.startsWith("actions/cache"))).toBe(false);
+    // It writes the merge record and the change set to chant/lifecycle, one at a time per environment.
+    expect(doc.jobs.record.permissions.contents).toBe("write");
+    expect(doc.jobs.record.concurrency).toEqual({ group: "chant-record-prod", "cancel-in-progress": false });
+    expect(result.yaml).not.toContain("ci run apply");
+  });
+
+  test("a gate per wave gates the apply, so it needs applyOnMerge", () => {
+    expect(() => generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, gatedWaves: { gate: "release" } })).toThrow(/needs --apply-on-merge/);
+  });
+
+  test("the record job runs pr-record with the apply's flags", () => {
+    const [, , record] = prLoopJobs("github", "prod", { events: true, reportUrl: "s3://r/acme", waveGate: "w", requireReview: true, branch: "trunk" });
+    expect(record.jobName).toBe("record");
+    expect(record.command).toBe('chant components pr-record --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge github --events-json --report-url "s3://r/acme"');
+    expect(record.run.command).toBe('chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github --branch "trunk" --events-json --report-url "s3://r/acme"');
+  });
+
+  test.skipIf(!hasActionlint())("passes actionlint", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-pr-record-"));
+    try {
+      mkdirSync(join(dir, ".github", "workflows"), { recursive: true });
+      writeFileSync(join(dir, ".github", "workflows", "chant-pr.yml"), result.yaml);
+      execFileSync("actionlint", [join(dir, ".github", "workflows", "chant-pr.yml")], { cwd: dir, stdio: "pipe" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

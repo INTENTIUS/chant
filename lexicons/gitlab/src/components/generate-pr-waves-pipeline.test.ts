@@ -34,7 +34,7 @@ interface Job {
 }
 
 describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () => {
-  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, gatedWaves: { gate: "release" } });
+  const result = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, gatedWaves: { gate: "release" } });
   const doc = parseYAML(result.yaml) as Record<string, unknown> & { stages: string[] };
 
   test("matches its golden", () => {
@@ -74,7 +74,7 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
 
   test("inside a workspace member the wave jobs carry the member's name", () => {
     const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr.network.prod.gitlab-ci.yml" };
-    const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, gatedWaves: { gate: "release" }, member });
+    const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, gatedWaves: { gate: "release" }, member });
     expect(scoped.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["network-plan", []],
       ["network-apply-wave-1", []],

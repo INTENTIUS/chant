@@ -1,0 +1,47 @@
+---
+title: Move off Apply on Merge
+description: "Switch a pull-request pipeline that applies on merge to the record job, so a release deploys each change through its own gate"
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/move-off-apply-on-merge/.
+  Add a `ci.green` block to `chant.workspace.json` and an `environments` array to `chant.config.ts` for the environments I name, and regenerate the pull-request pipeline without `--apply-on-merge`, keeping its other flags.
+  Open a pull request with those changes, and list in its description the first deploy and the release a person runs before it merges.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A pipeline generated with `--apply-on-merge` deploys every merge ([apply on merge](/chant/guide/apply-on-merge/)). This page moves it to the default ([#4168](https://github.com/INTENTIUS/chant/issues/4168)): the merge records the plan, and a release cut from a green commit deploys it. Do the steps in order, so no merge lands between the last apply and the first release with nothing to deploy it.
+
+## Before you start
+
+Find the command the pipeline was generated with. A generated workflow names it in its first line, and a workspace member's pipeline is a generated-file entry in `chant.workspace.json` with the command beside it.
+
+## Switch the pipeline
+
+1. Tag green commits. Declare the CI phases that make a trunk commit green, and generate the tick's workflow, as [Tag Green Commits](/chant/guide/green-commits/) shows. A release is cut only from a green commit, so this comes first. `chant ci serve` runs the tick itself after each job once `ci.green` is declared.
+
+2. Declare the promotion order. List the environments a release moves through in `chant.config.ts`, in order. That array is the member's [promotion order](/chant/configuration/config-file/#promotion-order-and-canary), and an estate that applied on merge to one environment lists that one:
+
+   ```typescript
+   export default {
+     environments: ["staging", "prod"],
+   };
+   ```
+
+3. Deploy the first environment from a release. [Release from Your Workstation](/chant/guide/release-from-workstation/) cuts one from the newest green commit, and [Promote a Release](/chant/guide/promote-a-release/#deploy-the-first-environment-then-promote) covers the first deploy. From here each environment runs a release, and the next promote reads the one before it.
+
+4. Regenerate without the flag. Run the generation command again without `--apply-on-merge`:
+
+   ```bash
+   chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
+   ```
+
+   The job on merge becomes `record`. It plans the merged commit and writes the merge record, and nothing applies. For a workspace member, drop the flag from the command in its generated-file entry too, or [`chant workspace check`](/chant/cli/workspace-check/) reports the file as one its command does not write. A host that runs `chant ci serve --apply-on-merge` restarts without the flag.
+
+Merge the pipeline change through a pull request. That merge is the first one the record job runs on.
+
+## What changes
+
+- A merge deploys nothing. The `chant/apply` status stops, and `chant/record` takes its place. A record whose plan differs from the approved one fails that status and leaves the merge in place.
+- An approval on the pull request is kept in the merge record. The [release gate](/chant/concepts/trunk-and-releases/#gates-and-promotion) decides what a promote deploys.
+- The apply's resume record and its cache entries are no longer written. Old ones expire with the cache.
+- `--wave-gate` and second approvals for dependents belong to the apply on merge. Drop `--wave-gate` from the command, since the generator refuses it without `--apply-on-merge`.

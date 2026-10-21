@@ -321,13 +321,23 @@ Progress and approval are bound to different things. The gate's approval is boun
 
 ### `components pr-plan` and `components pr-apply`
 
-The pull-request loop. `pr-plan` runs on a pull request. It plans the components the change reaches and the ones that depend on them, and shows the plan. `pr-apply` runs after the merge. It plans the same members again and applies them only if a reviewer approved that plan. [Generated CI for pull requests](/chant/guide/pull-request-ci/) writes the pipeline that runs both on GitHub, GitLab and Forgejo.
+The pull-request loop. `pr-plan` runs on a pull request, plans the components the change reaches and the ones that depend on them, and shows the plan. After the merge, `pr-record` plans the same members again and writes the merge record without applying anything ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With [apply on merge](/chant/guide/apply-on-merge/), `pr-apply` takes its place after the merge and applies the members only if a reviewer approved that plan. [Generated CI for pull requests](/chant/guide/pull-request-ci/) writes the pipeline that runs them on GitHub, GitLab and Forgejo.
 
 ```bash
 chant components pr-plan --base origin/main --pr 12 --env prod
 chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver github:alice --sign
+chant components pr-record --base "$BEFORE_SHA" --pr 12 --env prod
+# with apply on merge, in place of pr-record:
 chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod
 ```
+
+#### `components pr-record`
+
+`pr-record` takes `pr-apply`'s flags less `--resume`, `--wave-gate`, `--wave` and `--require-review`. Every selected member is planned on the merged commit, the change set is stored under its digest, and the pull request's gate is decided against it without a write to the gate ledger. Then it writes the merge record to `_merges/<commit>.json` on `chant/lifecycle` and pushes it. The record follows the `merge-record` schema of the [workspace read contract](/chant/reference/workspace-read-contract/).
+
+The merge record keeps where the change came from in `source`: the pull request, the work items its `Chant-Record: work:<id>` trailers name, or a direct push. `digest` is the planned change set, and `plan` compares it with the approval (`approved`, `changed`, `unapproved`, `nothing` or `plan-failed`). `approvedBy` lists who approved it, and `authorApproved` lists an approver who wrote the change. `components` lists the selection.
+
+`pr-record` refuses nothing and exits 0, unless a member failed to plan (exit 1). A plan that differs from the approved one still reports `recorded`. Its message names both digests, and the `chant/record` commit status fails. Without `--pr` the forge is asked which pull request merged `HEAD`, and a forge that errs leaves the record naming none. The report is `pr-record.json`, with `stage: "record"`.
 
 Both measure the change from the merge base of `--base` and `HEAD`, and select components the way `fan-out --base` does. Every selected member is planned before anything applies. A member that reads another's output through `stackOutput()` is planned with the value that output has now.
 
@@ -341,7 +351,7 @@ Before it decides the gate, `pr-apply` stores the change set it planned on `chan
 The plan changed after review, so nothing was applied. approved: jcs1-sha256:d181...; planned now: jcs1-sha256:cef9.... Read the new plan, and if it is right, approve it: chant approve pr-2 pr-apply --plan jcs1-sha256:cef9... --approver <you> --sign; then run the apply again.
 ```
 
-Each run writes three files under `--output` (default `.chant/pr`). `pr-plan.json` or `pr-apply.json` is the report, under the `pr-report` schema. `change-set.json` is the change-set document, which [`chant change-set summary`](/chant/cli/change-set/) reads. `pr-note.md` is the note rendered from the report. It shows a row per member and the digest, then the approve command and the grouped summary.
+Each run writes three files under `--output` (default `.chant/pr`). `pr-plan.json`, `pr-record.json` or `pr-apply.json` is the report, under the `pr-report` schema. `change-set.json` is the change-set document, which [`chant change-set summary`](/chant/cli/change-set/) reads. `pr-note.md` is the note rendered from the report. It shows a row per member and the digest, then the approve command and the grouped summary.
 
 `pr-apply` prints a line on stderr as each wave starts and as each component settles, with or without `--events-json`, so a job log shows the waves in order while they run:
 
@@ -358,7 +368,7 @@ wave 2/3: app, api
 
 With `--events-json` each stage also keeps its stream in a file on the host, as [`chant run events`](/chant/cli/run/#run-events-run) describes. In CI, set `CHANT_RUN_EVENTS_DIR` to a directory the job keeps as an artifact, such as `.chant/pr/run-events`, since a CI checkout's git directory is gone with the job.
 
-Pass `--forge` to post the note on the pull request and set the `chant/plan` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, it asks the forge which pull request merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
+Pass `--forge` to post the note on the pull request and set the `chant/plan`, `chant/record` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, the forge names the pull request that merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
 
 #### Finishing an apply that failed partway
 
@@ -389,7 +399,7 @@ chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --wave-gate re
 
 `--wave <k>` runs one wave, for a CI job per wave. It reads the approved set and the waves that applied from the `--resume` record, which carries only while the pull request's approval stands. It refuses with exit 1 while an earlier wave has work left or no record says the earlier waves applied. A wave past the change's last exits 0. Without `--wave` the waves run in order until one stops. The report's status is `wave-applied` when a wave applied and a later one is still to run. Its `waveGate` and `waves` say which wave applied under which approval. A wave that waits refuses as `wave-not-approved`, or as `wave-plan-changed` when an approval of its gate stands for another digest.
 
-The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) passes `--resume .chant/pr-resume/pr-apply.json` and keeps the file in the CI cache under the pushed commit, so re-running a failed apply job finishes it.
+The [generated pull-request pipeline](/chant/guide/apply-on-merge/#finish-an-apply-that-failed-partway) passes `--resume .chant/pr-resume/pr-apply.json` and keeps the file in the CI cache under the pushed commit, so re-running a failed apply job finishes it.
 
 | Flag | Meaning |
 |---|---|
