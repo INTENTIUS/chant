@@ -450,6 +450,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`chant lifecycle whoami` resolves an SSO profile as the AWS CLI does (#3954): it refreshes an expired cached session token through OIDC when it can, then trades the token for role credentials. A `credential_process` profile runs the configured command, which may reach whatever it reaches.",
   },
   {
+    file: "lexicons/aws/src/health.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Route 53 (GetHealthCheckStatus) and ECS (DescribeServices), or `AWS_ENDPOINT_URL`",
+    why: "`chant lifecycle health` (#4177) reads whether a declared health check passes and a service runs its desired count, signed with SigV4.",
+  },
+  {
     file: "lexicons/aws/src/op/activities/aws-apply.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -476,6 +483,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "Azure Resource Manager, or a declared endpoint override",
     why: "The azure lexicon's read transport for observation and live import.",
+  },
+  {
+    file: "lexicons/azure/src/health.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Azure Resource Manager (containerApps and their revisions), or a declared endpoint override",
+    why: "`chant lifecycle health` (#4177) reads a container app's active revisions and their running state.",
   },
   {
     file: "lexicons/azure/src/op/activities/az-apply.ts",
