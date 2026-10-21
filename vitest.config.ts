@@ -101,6 +101,10 @@ export const UNIT_INCLUDE = [
   // optional Kubernetes client package. No Docker, no cluster.
   "examples/k8s-client-boundary.test.ts",
   "examples/readme-counts.test.ts",
+  // chant #4215 — the example gates' static checks: the allowlist and the
+  // contributing page against examples/, and the fold lists against the corpus.
+  // Reads files only; the builds stay in the e2e gates.
+  "examples/static-gates.test.ts",
   // chant #1224 — the testing-harness worked example's survival fixture. It
   // is gated on the env vars the outer suite sets and skips cleanly in a
   // plain run. The worked example itself is in E2E_INCLUDE below.
