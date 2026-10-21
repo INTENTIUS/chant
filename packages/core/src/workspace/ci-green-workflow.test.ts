@@ -381,6 +381,58 @@ describe("the triggers of a phase that sets build (#4169)", () => {
     expect(before.on.workflow_run.branches).toEqual(["main"]);
   });
 
+  test("under a ci.workflow, both builds run on chant/compose/** pushes, a compose branch's every runs are keyed by commit, and the tick ticks on them (#4220)", () => {
+    const sources = [
+      { path: ".github/workflows/ci.yml", text: LINT_WF },
+      { path: ".github/workflows/suites.yml", text: SUITES_WF },
+    ];
+    const edits = buildTriggerEdits(green(), sources, { compose: true });
+    const ci = parseYAMLDocument(edits[0].text) as Yaml;
+    expect(ci.on).toEqual({ push: { branches: ["main", "chant/compose/**"] }, pull_request: null });
+    expect(ci.concurrency).toEqual({
+      group: "chant-build-lint-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/chant/compose/')) && github.sha || github.ref }}",
+      "cancel-in-progress": "${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/chant/compose/')) }}",
+    });
+    const suites = parseYAMLDocument(edits[1].text) as Yaml;
+    expect(suites.on).toEqual({ push: { branches: ["main", "chant/compose/**"] }, workflow_dispatch: {} });
+    // Writing again changes nothing.
+    expect(buildTriggerEdits(green(), edits.map((e) => ({ path: e.path, text: e.text })), { compose: true }).map((e) => e.changed)).toEqual([false, false]);
+    // A push with no branch list already runs on every branch, so its triggers stay.
+    const anyBranch = LINT_WF.replace("  push:\n    branches: [main]\n", "  push:\n");
+    expect((parseYAMLDocument(buildTriggerEdits(green(), [{ path: ".github/workflows/ci.yml", text: anyBranch }], { compose: true })[0].text) as Yaml).on).toEqual({ push: null, pull_request: null });
+    // Without compose the bytes are what #4169 wrote.
+    expect(buildTriggerEdits(green(), sources).map((e) => e.text)).toEqual(buildTriggerEdits(green(), sources, { compose: false }).map((e) => e.text));
+    const tick = parseYAMLDocument(renderCiGreenWorkflow({ green: green(), workflows: ["ci"], chantVersion: "0.124.33", workspaceRoot: ".", compose: true })) as Yaml;
+    expect(tick.on.workflow_run.branches).toEqual(["main", "ci/build/**", "chant/compose/**"]);
+  });
+
+  test("chant ci workflow writes the compose triggers only when the declaration names a ci.workflow (#4220)", async () => {
+    const run = async (ci: Record<string, unknown>) => {
+      const root = scratchDir();
+      git(root, "init", "-q");
+      writeFiles(root, {
+        "chant.workspace.json": declaration([{ name: "root", dir: ".", kind: "other", because: "x" }], { ci }),
+        ".github/workflows/ci.yml": LINT_WF,
+      });
+      const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(await runCiWorkflow({ args: {} } as unknown as CommandContext)).toBe(0);
+        return { tick: readFileSync(join(root, CI_GREEN_WORKFLOW_FILE), "utf-8"), ci: readFileSync(join(root, ".github/workflows/ci.yml"), "utf-8") };
+      } finally {
+        cwd.mockRestore();
+        log.mockRestore();
+      }
+    };
+    const lint = { branch: "main", phases: { lint: { runs: ["lint"], build: "every" } }, require: ["lint"] };
+    const without = await run({ green: lint });
+    expect(without.tick).not.toContain("chant/compose");
+    expect(without.ci).not.toContain("chant/compose");
+    const curated = await run({ green: lint, workflow: "trunk-curated" });
+    expect(curated.tick).toContain("chant/compose/**");
+    expect(curated.ci).toContain("chant/compose/**");
+  });
+
   test("the workflows a build request can start are the ones holding its phases with workflow_dispatch", () => {
     expect(dispatchableWorkflows(green(), ["lint", "suites"], [{ path: ".github/workflows/ci.yml", text: LINT_WF }, { path: ".github/workflows/suites.yml", text: SUITES_WF }])).toEqual({ dispatchable: ["suites.yml"], without: ["ci.yml"] });
   });

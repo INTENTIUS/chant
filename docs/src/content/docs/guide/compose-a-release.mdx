@@ -20,7 +20,7 @@ git fetch origin --tags
 git fetch origin chant/lifecycle:chant/lifecycle
 ```
 
-Your CI has to build the compose branch. On GitHub, add `chant/compose/**` to the `on: push: branches` of each workflow that holds a required phase. The tick workflow already runs every 15 minutes and judges composed commits on its next run.
+Your CI has to build the compose branch. On GitHub, run `chant ci workflow` again once the workspace declares a `ci.workflow`: it adds `chant/compose/**` to the push branches of each workflow holding a phase that sets `build`, and to the tick's `workflow_run` branches, so a composed commit's runs tick as they end ([#4220](https://github.com/INTENTIUS/chant/issues/4220)). Add the filter by hand to a workflow whose phase sets no `build`, since `ci workflow` leaves those files alone. The tick also runs every 15 minutes and judges composed commits then.
 
 ## Pick the changes and push the branch
 

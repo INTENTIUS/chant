@@ -52,6 +52,7 @@ import { emitYAMLEntry, parseYAMLDocument } from "../yaml";
 import type { CiBuild, CiGreen } from "./declaration";
 import { matchesCheckRun } from "./ci-green";
 import { githubSecretOrJobToken } from "../ci-jobs";
+import { COMPOSE_BRANCH_PREFIX } from "../lifecycle/compose-refs";
 
 /** Where the workflow goes, relative to the repository root. */
 export const CI_GREEN_WORKFLOW_FILE = ".github/workflows/chant-ci-green.yml";
@@ -194,7 +195,16 @@ export interface WorkflowInput {
    * The key's principal needs the `runner` role in `.chant/trust.json`.
    */
   runnerKeySecret?: string;
+  /**
+   * The workspace declares a `ci.workflow` (#4220), so composed releases
+   * live on `chant/compose/<name>` branches (#4168 4.3): the tick also runs
+   * when a phase workflow completes on one of them.
+   */
+  compose?: boolean;
 }
+
+/** The branch filter for composed releases' branches (#4220). */
+export const COMPOSE_BRANCHES = `${COMPOSE_BRANCH_PREFIX}**`;
 
 /**
  * A token the checkout persists for the tick's `git push`: a repository
@@ -240,6 +250,8 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     `      - ${q(green.branch)}`,
     // #4169: a build the tick asked for runs at a ci/build/<sha> tag, and its completion ticks too.
     ...(newestPhases(green) ? [`      - ${q("ci/build/**")}`] : []),
+    // #4220: a composed commit's phases run on its chant/compose/<name> branch, and their completion ticks too.
+    ...(input.compose ? [`      - ${q(COMPOSE_BRANCHES)}`] : []),
     "  schedule:",
     "    - cron: \"*/15 * * * *\"",
     "  workflow_dispatch: {}",
@@ -319,12 +331,19 @@ export interface BuildTriggerEdit {
  *   branch, so no push cancels or replaces another's run; elsewhere, such as
  *   a pull request, a new push cancels the run it supersedes.
  *
- * Only the top-level `on:` (for `newest`) and `concurrency:` blocks change,
+ * With `compose` (#4220, a workspace declaring `ci.workflow`), both builds
+ * also run on pushes to `chant/compose/**`: `newest` adds the filter to the
+ * branches it writes, `every` adds it to an existing `push.branches` list,
+ * and `every`'s group keys a compose branch's runs by commit, as the trunk
+ * branch's.
+ *
+ * Only the top-level `on:` (for `newest`, or `every` with `compose`) and `concurrency:` blocks change,
  * each under {@link BUILD_BLOCK_MARKER}; the rest of the file is kept as it
  * is. Throws when one workflow holds a phase of each build, which no one
  * concurrency group can serve.
  */
-export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSource[]): BuildTriggerEdit[] {
+export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSource[], options: { compose?: boolean } = {}): BuildTriggerEdit[] {
+  const compose = options.compose === true;
   const out: BuildTriggerEdit[] = [];
   for (const s of sources) {
     let doc: unknown;
@@ -349,17 +368,27 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       delete on.schedule;
       const push = isObject(on.push) ? { ...on.push } : {};
       const branches = Array.isArray(push.branches) ? push.branches.filter((b): b is string => typeof b === "string") : [];
-      push.branches = branches.includes(green.branch) ? branches : [...branches, green.branch];
+      const withBranch = branches.includes(green.branch) ? branches : [...branches, green.branch];
+      push.branches = compose && !withBranch.includes(COMPOSE_BRANCHES) ? [...withBranch, COMPOSE_BRANCHES] : withBranch;
       const { push: _push, workflow_dispatch: dispatch, ...rest } = on;
       text = writeTopLevel(text, "on", { push, workflow_dispatch: dispatch ?? {}, ...rest });
       text = writeTopLevel(text, "concurrency", { group: `chant-build-${tag}-\${{ github.ref }}`, "cancel-in-progress": false });
     } else {
       const main = `refs/heads/${green.branch}`;
+      // A push filter that lists branches gains the compose branches; one with no list already runs on every branch.
+      const on = isObject(doc) && isObject(doc.on) ? doc.on : undefined;
+      const pushOn = on && isObject(on.push) ? on.push : undefined;
+      if (compose && on && pushOn && Array.isArray(pushOn.branches) && !pushOn.branches.includes(COMPOSE_BRANCHES)) {
+        text = writeTopLevel(text, "on", { ...on, push: { ...pushOn, branches: [...pushOn.branches, COMPOSE_BRANCHES] } });
+      }
+      // #4220: a compose branch's commits each get a verdict, so its runs are keyed by commit, as the trunk branch's are.
+      const keyed = compose ? `(github.ref == '${main}' || startsWith(github.ref, 'refs/heads/${COMPOSE_BRANCH_PREFIX}'))` : `github.ref == '${main}'`;
+      const unkeyed = compose ? `!${keyed}` : `github.ref != '${main}'`;
       // Written as lines: the emitter would quote the expression, and GitHub reads it the same either way.
       text = writeTopLevel(text, "concurrency", [
         "concurrency:",
-        `  group: chant-build-${tag}-\${{ github.ref == '${main}' && github.sha || github.ref }}`,
-        `  cancel-in-progress: \${{ github.ref != '${main}' }}`,
+        `  group: chant-build-${tag}-\${{ ${keyed} && github.sha || github.ref }}`,
+        `  cancel-in-progress: \${{ ${unkeyed} }}`,
       ]);
     }
     out.push({ path: s.path, build, phases, text, changed: text !== s.text });
