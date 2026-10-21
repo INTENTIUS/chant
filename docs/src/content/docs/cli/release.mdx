@@ -12,6 +12,7 @@ chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <n
 chant release candidates [--env <env>] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
+chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
 ```
@@ -292,6 +293,30 @@ The document `--json` gives for a publish holds `dryRun` and the release's diges
 | `--allow-unsigned` | Under `verified-releases`, publish a release with no signature that verifies, with a warning. Never overrides a `release` gate. Without either it changes nothing. |
 | `--require-provenance` | Refuse a run with no OIDC token. A CI job that must give npm provenance passes it, so a misconfigured job fails instead of publishing without. |
 | `--json` | Print the document described above. |
+
+## release workflow
+
+Writes the publish workflow, the job that runs `chant release publish` for the release a `release/**` tag names ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). It is generated the way [`chant ci workflow`](/chant/cli/ci/#ci-workflow) writes the tick, with a header naming the command that regenerates it.
+
+```bash
+chant release workflow
+```
+
+| Forge | File |
+|---|---|
+| `github` | `.github/workflows/chant-release.yml` |
+| `forgejo` | `.forgejo/workflows/chant-release.yml` |
+| `gitlab` | `.gitlab/chant-release.yml`, which `.gitlab-ci.yml` includes |
+
+The job checks out the tag and builds what the targets upload. Then it fetches the ci tags and `chant/lifecycle` and publishes with `--yes`. It always has the OIDC permission, so what it uploads carries provenance when the token is there. The workspace's security groups add the rest: `supply-chain` adds `--require-provenance`, and `verified-releases` adds a `chant release verify` step before the publish. With neither, nothing refuses a run that lacks them.
+
+| Flag | Description |
+|---|---|
+| `--forge <forge>` | Inferred from the repository's pipeline files, `github` when there are none. |
+| `--install <command>` | The install step. Default `npm ci`. |
+| `--build <command>` | What builds the files the targets upload. Default `npm run build`. |
+| `--chant <command>` | What runs chant. Default `npx chant`. |
+| `--output <file>` | Write somewhere else. |
 
 ## release verify
 

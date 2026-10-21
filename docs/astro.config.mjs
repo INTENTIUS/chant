@@ -117,6 +117,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
+						{ label: 'From Zero to a Promoted Release', slug: 'tutorials/zero-to-promoted-release' },
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
 						{ label: 'Agent Observability on k3d', slug: 'tutorials/agent-observability' },
 						{ label: 'Carve out of Terraform', slug: 'tutorials/terraform-carve-out' },
@@ -210,6 +211,7 @@ export default defineConfig({
 							label: 'Trunk and releases',
 							collapsed: true,
 							items: [
+								{ label: 'Set Up Trunk with Curated Releases', slug: 'guide/trunk-curated-setup' },
 								{ label: 'Tag Green Commits', slug: 'guide/green-commits' },
 								{ label: 'Curate a Release', slug: 'guide/curate-a-release' },
 								{ label: 'Release from Your Workstation', slug: 'guide/release-from-workstation' },

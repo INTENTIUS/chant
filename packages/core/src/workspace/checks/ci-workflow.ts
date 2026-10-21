@@ -14,7 +14,7 @@
 
 import type { WorkspaceCheck, WorkspaceDiagnostic } from "../checks";
 import type { CiWorkflow, Member } from "../declaration";
-import { appliesOnMerge, workflowOf, type CiWorkflowCode } from "../ci-workflow";
+import { appliesOnMerge, STUB_MARKER, workflowOf, type CiWorkflowCode } from "../ci-workflow";
 import { matchesCheckRun } from "../ci-green";
 import { staticPromotionOrder } from "../promotion-order";
 import { joinPath } from "../tree";
@@ -83,6 +83,8 @@ export const CI_WORKFLOW_CHECKS: readonly WorkspaceCheck[] = [
         const components = componentFiles(ctx.tree, dir);
         if (components.length === 0) {
           finding("ci-workflow-no-components", `member ${member.name} declares no component, so nothing of it can be cut or promoted; chant ci init writes a stub`, { pointer: member.pointer, entity: member.name });
+        } else if (components.every((f) => (read(ctx.tree, f) ?? "").includes(STUB_MARKER))) {
+          finding("ci-workflow-no-components", `member ${member.name}'s only component is the stub chant ci init wrote (${components[0]}); say how it is built and deployed, then delete its ${STUB_MARKER} line`, { pointer: member.pointer, entity: member.name, treeFile: components[0] });
         }
         const configPath = joinPath(dir, "chant.config.ts");
         const config = read(ctx.tree, configPath);

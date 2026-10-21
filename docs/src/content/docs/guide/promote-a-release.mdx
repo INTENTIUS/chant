@@ -14,7 +14,7 @@ This page takes a release that [`chant release cut`](/chant/guide/release-from-w
 
 ## Before you start
 
-The member declares its `environments` in `chant.config.ts` in the order a release moves through them, and that array is its [promotion order](/chant/configuration/config-file/#promotion-order-and-canary). Fetch the tags and the ledger branch, so the promote sees revocations and what each environment runs now. Then list the releases. Each line gives a label and digest with the commit it was cut from, who signed the cut, and the environments that run it.
+The member declares its `environments` in `chant.config.ts` in the order a release moves through them, and that array is its [promotion order](/chant/configuration/config-file/#promotion-order-and-canary). [`chant ci init`](/chant/guide/trunk-curated-setup/) adds them, and a gate on each component, when a member has none. Fetch the tags and the ledger branch, so the promote sees revocations and what each environment runs now. Then list the releases. Each line gives a label and digest with the commit it was cut from, who signed the cut, and the environments that run it.
 
 ```bash
 git fetch origin --tags

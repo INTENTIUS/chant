@@ -48,7 +48,7 @@ export const TILES = [
 export const ROLES = [
 	{ id: 'agents', label: 'I work with a coding agent', room: 'agents' },
 	{ id: 'platform', label: 'I run a platform team', room: 'platform' },
-	{ id: 'releases', label: 'I ship releases from trunk', room: 'releases' },
+	{ id: 'releases', label: 'I merge to trunk and curate releases', room: 'releases' },
 	{ id: 'security', label: 'I review security', room: 'security' },
 	{ id: 'evaluate', label: 'I am evaluating', room: 'evaluate' },
 ];
@@ -354,9 +354,11 @@ export const ROOMS = [
 	},
 	{
 		id: 'releases',
-		title: 'chant for teams shipping from trunk',
-		lede: 'For a team that merges every change to one branch and ships from it: CI marks the commits that passed as git tags, a person cuts a release from one, and the release moves through each environment behind a gate bound to what changes there.',
+		title: 'chant for teams that merge to trunk and curate releases',
+		lede: 'For a team that merges every change to one branch without fear: a merge records the plan and deploys nothing, CI marks the commits that passed as git tags, a person cuts a release from the green commit they choose, and the release moves through each environment behind a gate bound to what changes there.',
 		works: [
+			'`chant ci init --workflow trunk-curated` sets the workspace up: `ci.workflow`, `ci.green`, environments, component stubs, and the plan, record, tick and publish jobs',
+			'A merge records the approved plan (`chant ci run record`) and deploys nothing; applying on merge is an opt-in',
 			'`chant ci tick` tags each trunk commit that passed the required CI phases `ci/green/<sha>`, and revokes the tag when a re-run fails',
 			'`chant release cut` compiles one green commit for every environment once, and `chant release publish` ships it from CI with provenance',
 			'`chant components promote --release` deploys the recorded templates and artifacts in promotion order, each environment behind a gate that binds the release, the environment and the change set',
@@ -368,17 +370,19 @@ export const ROOMS = [
 			forgejo: ['Forgejo has no check-run reader, so set `ci.green.source` to `runs`: each phase is a chant Op run with a runner key, and the tick goes in the pipeline after them.'],
 		},
 		first: {
-			note: 'Declare `ci.green` in `chant.workspace.json` first; the dry run then prints the tags the tick would make.',
-			command: { any: 'npx chant ci workflow\nnpx chant ci tick --dry-run\nnpx chant ci list --limit 10' },
-			link: { label: 'Tag Green Commits', href: 'guide/green-commits' },
+			note: 'Run it in a repository with a `chant.workspace.json`; without `--yes` it prints the diff and writes nothing.',
+			command: { any: 'npx chant ci init --workflow trunk-curated\nnpx chant workspace check' },
+			link: { label: 'Set Up Trunk with Curated Releases', href: 'guide/trunk-curated-setup' },
 			prompt: roomPrompt(
 				'releases',
-				`Following ${pageUrl('guide/green-commits')}, add a \`ci.green\` block to \`chant.workspace.json\` for the trunk branch and the CI phases I name, and generate the tick's workflow with \`npx chant ci workflow\`.`,
-				'Run `npx chant ci tick --dry-run` and `npx chant ci list`, show me what they print, and open a pull request with the declaration and the workflow.',
+				`Following ${pageUrl('guide/trunk-curated-setup')}, run \`npx chant ci init --workflow trunk-curated\`, show me the diff it prints, and once I agree run it again with \`--yes\`.`,
+				'Fill in the component stubs it writes from what this repository builds and deploys, run `npx chant workspace check` until it reports nothing for WSP151 but what needs me, and open a pull request with the changes.',
 			),
 		},
-		examples: ['examples/components-aws-e2e'],
+		examples: ['examples/trunk-curated-floci', 'examples/components-aws-e2e'],
 		tasks: [
+			{ label: 'Set Up Trunk with Curated Releases', href: 'guide/trunk-curated-setup' },
+			{ label: 'From Zero to a Promoted Release', href: 'tutorials/zero-to-promoted-release' },
 			{ label: 'Tag Green Commits', href: 'guide/green-commits' },
 			{ label: 'Link commits to work items', href: 'guide/work-items#link-commits-to-work-items' },
 			{ label: 'Curate a Release', href: 'guide/curate-a-release' },
@@ -402,6 +406,7 @@ export const ROOMS = [
 			{ label: 'chant workspace metrics', href: 'cli/workspace-metrics' },
 			{ label: 'chant lifecycle gc', href: 'cli/lifecycle#lifecycle-gc' },
 			{ label: 'Workspace Declaration: CI', href: 'reference/workspace-declaration#ci' },
+			{ label: 'CI Workflows', href: 'reference/ci-workflows' },
 		],
 	},
 	{

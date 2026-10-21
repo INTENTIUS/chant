@@ -689,6 +689,9 @@
   "repetition/near-duplicate": 1,
   "formatting/em-dash-density": 5
  },
+ "docs/src/content/docs/guide/trunk-curated-setup.mdx": {
+  "anaphora/repeated-opening": 2
+ },
  "docs/src/content/docs/guide/watching-lifecycle.mdx": {
   "anaphora/repeated-opening": 2,
   "claude/colon-reveal": 3,

@@ -26,6 +26,7 @@ chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interva
                   [--build-command <line>] [ci run's job flags]
 chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -433,6 +434,36 @@ chant ci serve --forge forgejo --repo demo/estate --env local
 `ci run` uses the host's key too when it is given no `--key` and no `CHANT_RUNNER_KEY`. As with the variable, a host key the commit's trust config doesn't list leaves the run unsigned, with a warning only under `signedSince`.
 
 `ci serve` takes no webhook yet. It polls, so the host needs no inbound port, and a webhook checked with an HMAC secret is a follow-up.
+
+## ci init
+
+Sets the workspace up for a prescribed delivery workflow ([#4168](https://github.com/INTENTIUS/chant/issues/4168)): `trunk-curated`, where a merge records the plan and deploys nothing, or `trunk-curated+apply-on-merge`. The workflows and what each requires are on [CI Workflows](/chant/reference/ci-workflows/), and [Set Up Trunk with Curated Releases](/chant/guide/trunk-curated-setup/) walks through it.
+
+```bash
+chant ci init --workflow trunk-curated
+chant ci init --workflow trunk-curated --yes
+```
+
+It runs `WSP151` over the workspace as it would be with `ci.workflow` set, and proposes what answers each finding:
+
+| Finding | What it proposes |
+|---|---|
+| no `ci.workflow` | `ci.workflow` in the declaration |
+| `ci-workflow-green-undeclared` | a `ci.green` block: on GitHub, one phase per workflow file with its jobs as the check runs, those a pull request runs as `preMerge`; elsewhere, one `check` phase to edit |
+| `ci-workflow-no-pre-merge` | `preMerge`, from the phases a pull request runs |
+| `ci-workflow-no-environments` | `environments: ["staging", "prod"]` after `export default {`, when the default export is a plain object |
+| `ci-workflow-no-components` | `<member>.component.ts`, a stub with a gate and a `TODO(chant ci init)` line, which `WSP151` reports until it is filled in |
+| `ci-workflow-pipeline-missing`, `-pipeline-differs` | runs `chant build --components --generate <forge> --pr-loop` in each member, with `--env` set to the first environment and `--apply-on-merge` under that workflow, then `chant ci workflow` on GitHub |
+| `ci-workflow-publish-missing` | runs [`chant release workflow`](/chant/cli/release/#release-workflow) |
+
+The proposal is printed first: each file as a diff, then each generator. Nothing is written without `--yes` or a yes at the prompt. A key the declaration lacks is added as text, so the rest of the file keeps its layout. A component someone wrote is never edited, and one with no gate gets a note instead. A JSONC declaration is refused, since its comments would be lost. A rerun proposes only what is still missing.
+
+| Flag | Description |
+|---|---|
+| `--workflow <name>` | `trunk-curated` or `trunk-curated+apply-on-merge`. Required. |
+| `--forge <forge>` | `github`, `gitlab` or `forgejo`. Inferred from `.github/workflows`, `.forgejo/workflows` or `.gitlab-ci.yml`. |
+| `--security <group>` | Add a security group to the top-level `security`, repeatable. Without it no group is turned on. |
+| `--yes` | Write and run without asking. |
 
 ## ci workflow
 

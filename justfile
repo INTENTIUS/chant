@@ -214,6 +214,11 @@ leftness-capture:
     @scripts/human-gate.sh leftness-capture
     bash test/leftness/capture.sh
 
+# Run the "From zero to a promoted release" tutorial against a local AWS emulator (Floci in Docker; on-demand, needs Docker + aws CLI)
+trunk-curated-floci-e2e:
+    @scripts/human-gate.sh trunk-curated-floci-e2e
+    bash test/trunk-curated-floci-e2e.sh
+
 # Deploy the components-aws-e2e example against a local AWS emulator (Floci in Docker; on-demand, needs Docker + aws CLI)
 components-aws-e2e:
     @scripts/human-gate.sh components-aws-e2e

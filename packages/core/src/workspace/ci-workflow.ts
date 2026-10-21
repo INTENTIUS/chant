@@ -16,6 +16,9 @@
  */
 import type { CiWorkflow, Declaration, Member } from "./declaration";
 
+/** The marker a component stub `chant ci init` writes carries until someone fills it in. WSP151 reports a member whose only components carry it. */
+export const STUB_MARKER = "TODO(chant ci init)";
+
 export const CI_WORKFLOWS = ["trunk-curated", "trunk-curated+apply-on-merge"] as const satisfies readonly CiWorkflow[];
 
 /** Whether `workflow` turns the apply on merge back on. */

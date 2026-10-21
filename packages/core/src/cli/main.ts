@@ -342,6 +342,12 @@ CI:
                         key. --trust commits its runner entry on a branch of its
                         own and pushes it for review; the target branch is never
                         written
+  ci init --workflow trunk-curated|trunk-curated+apply-on-merge
+              [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
+                        Set the workspace up for a prescribed delivery workflow:
+                        print what it would write as a diff, then write it on
+                        --yes or a yes at the prompt and run the generators. A
+                        rerun proposes only what workspace check still reports
   ci workflow [--workflow <name>]... [--output <file>]  Write
               [--chant <command>] [--install <command>]
               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
@@ -405,6 +411,11 @@ Releases:
   release verify <label|digest> [--json]
                         Check, offline, that the release was signed by a key
                         .chant/allowed_signers lists at the release's commit.
+  release workflow [--forge github|gitlab|forgejo] [--install <command>]
+              [--build <command>] [--chant <command>] [--output <file>]
+                        Write the publish workflow, run on a release/** tag.
+                        Under supply-chain it passes --require-provenance, and
+                        under verified-releases it runs release verify first
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
   release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -1441,6 +1452,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "ci list", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiList(ctx) },
   { name: "ci tick", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiTick(ctx) },
   { name: "ci workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-green-cli")).runCiWorkflow(ctx) },
+  { name: "ci init", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-init")).runCiInit(ctx) },
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
   // #4098: the run index at the report URL.
@@ -1454,6 +1466,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   // #4049: check a release's signature offline.
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
+  { name: "release workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-workflow")).runReleaseWorkflow(ctx) },
   { name: "release candidates", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCandidates(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },

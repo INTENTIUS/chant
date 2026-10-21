@@ -467,8 +467,10 @@ export interface ParsedArgs {
   label?: string;
   /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
   branch?: string;
-  /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. */
+  /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. Also `chant ci init --workflow <name>` (#4168 step 6), the prescribed workflow to set up. */
   ciWorkflows?: string[];
+  /** `chant ci init --security <group>`, repeatable (#4168 step 6): a security group to turn on. */
+  securityGroups?: string[];
   /** `chant ci run plan|apply --commit <sha>` (#4094): the commit the job runs at. Default `HEAD`. */
   commit?: string;
   /** `chant ci run --pass-env <NAME>`, repeatable (#4094): a variable of the runner's environment the job gets, beside the few it always gets. */

@@ -1,0 +1,76 @@
+---
+title: Set Up Trunk with Curated Releases
+description: Set a workspace up so a merge records the plan and deploys nothing, and a person cuts and promotes a release from the green commit they choose, with chant ci init.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/trunk-curated-setup/.
+  Run `npx chant ci init --workflow trunk-curated` in the workspace root and show me the diff it prints; do not pass `--yes` until I agree.
+  Once I agree, run it with `--yes`, fill in each component stub it wrote from what the member builds and deploys, and run `npx chant workspace check` until WSP151 reports only what needs a person.
+  Open a pull request with the changes and list what is left for me.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This page sets a workspace up for the `trunk-curated` workflow ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). People merge to trunk without fear, because a merge records the approved plan and deploys nothing. A person then cuts a release from the green commit they choose and promotes it through each environment behind a gate. The requirements are on [CI Workflows](/chant/reference/ci-workflows/), and [Trunk and Releases](/chant/concepts/trunk-and-releases/#why-merge-never-deploys) explains the choice.
+
+## Before you start
+
+The repository has a `chant.workspace.json` ([`chant workspace init`](/chant/cli/workspace-init/) proposes one) and is a JSON file, not JSONC. Each member that releases has a `chant.config.ts`. GitHub, GitLab and Forgejo are supported; on GitHub, `chant ci init` reads `.github/workflows/` to propose the CI phases.
+
+## See what it would write
+
+Run it without `--yes`. It prints each change as a diff, then the generators it would run, and writes nothing.
+
+```bash
+chant ci init --workflow trunk-curated
+```
+
+It proposes:
+
+- `ci.workflow` and, when the declaration has none, a `ci.green` block with one phase per workflow file. The phases a pull request runs become `preMerge`.
+- `environments: ["staging", "prod"]` in a `chant.config.ts` that declares none. Edit the order if yours differs.
+- A `<member>.component.ts` stub, with a gate, for a member that declares no component.
+- The pull-request pipeline (`chant build --components --generate <forge> --pr-loop`), the tick (`chant ci workflow`) and the publish job (`chant release workflow`).
+
+No security group is turned on. Each is opt-in; see [Security Features](/chant/reference/security-features/).
+
+## Write it
+
+```bash
+chant ci init --workflow trunk-curated --yes
+```
+
+Then open each stub. Replace the `TODO(chant ci init)` line with the steps that build and deploy the member, and keep the gate. `chant workspace check` reports a member whose only component is still the stub.
+
+```bash
+chant workspace check
+```
+
+A rerun of `chant ci init` proposes only what `WSP151` still reports, so run it again after you change something by hand.
+
+## What a person does
+
+`chant ci init` and an agent stop at a pull request. A person:
+
+- reviews and merges it, and sets the branch protection that requires the `preMerge` checks;
+- adds the repository secrets the jobs name, such as a runner key or a registry token;
+- deploys the first environment from the first release and approves each gate after it ([Promote a Release](/chant/guide/promote-a-release/));
+- cuts, publishes and pushes the `release/` tag ([Curate a Release](/chant/guide/curate-a-release/)).
+
+## Apply on merge instead
+
+A project that wants each merge applied, as before, sets up `trunk-curated+apply-on-merge`. The pull-request pipeline is then generated with `--apply-on-merge`, and `WSP151` reports a record job left in its place. See [Apply on Merge](/chant/guide/apply-on-merge/).
+
+```bash
+chant ci init --workflow trunk-curated+apply-on-merge
+```
+
+## Add a security group later
+
+`--security` adds a group to the declaration's top-level `security`, and `chant workspace check` then reports what it lacks.
+
+```bash
+chant ci init --workflow trunk-curated --security supply-chain --yes
+chant release workflow
+```
+
+The second line regenerates the publish job, which passes `--require-provenance` under `supply-chain`.

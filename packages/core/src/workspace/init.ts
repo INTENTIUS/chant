@@ -559,7 +559,7 @@ export async function runWorkspaceInit(ctx: CommandContext): Promise<number> {
     console.error(
       formatError({
         message: `${join(root, existing[0])} already exists`,
-        hint: "Edit it by hand, or run chant workspace ls to see what it declares.",
+        hint: "Edit it by hand, or run chant workspace ls to see what it declares. To set it up for a delivery workflow, run chant ci init --workflow trunk-curated.",
       }),
     );
     return 1;
@@ -612,7 +612,7 @@ export async function runWorkspaceInit(ctx: CommandContext): Promise<number> {
     return 0;
   }
   writeFileSync(target, text, { flag: "wx" });
-  console.log(formatSuccess(`Wrote ${target}. chant workspace ls lists what it declares.`));
+  console.log(formatSuccess(`Wrote ${target}. chant workspace ls lists what it declares, and chant ci init --workflow trunk-curated sets up merging and releases.`));
   return 0;
 }
 
