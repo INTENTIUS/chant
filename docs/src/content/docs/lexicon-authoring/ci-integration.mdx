@@ -162,6 +162,23 @@ label, one past the highest version in any `package.json` at the commit or in
 a `chant-v*` or `release/npm/*` tag. The cut pushes `chant/lifecycle`, and the
 recipe pushes the `release/npm/<version>` tag.
 
+`just release-when-green` runs the steps around it
+([#4218](https://github.com/INTENTIUS/chant/issues/4218)). For main's head,
+or a named commit, it starts each required `ci.green` phase that has no check
+run on the commit (`release-suites.yml`, and `chant.yml` when it takes a
+dispatch; a commit behind the head goes through `chant ci run --at`), waits on
+the check runs and stops on the first one that fails, starts the tick once
+every phase passed, waits for `ci/green/<sha>`, runs `just release`, and waits
+on `publish.yml` at the new tag. A run finishing, a job failing or a tag
+appearing ends each wait; nothing times out into a verdict. A commit that
+already has a `release/npm/*` tag is reported and left alone.
+
+```bash
+just release-when-green patch             # main's head
+just release-when-green patch <commit>    # a named commit on main
+just release-when-green patch --dry-run   # say what it would start; dispatch and cut nothing
+```
+
 On that tag, `publish.yml`'s `release-publish` job runs
 `scripts/release-pack.sh <version>`. It sets every package to the version, with
 the `@intentius/*` ranges at `^<version>`, packs each one into `.release/packs/`,
