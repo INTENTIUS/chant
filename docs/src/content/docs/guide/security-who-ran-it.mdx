@@ -1,0 +1,38 @@
+---
+title: Sign What the Runners Do
+description: Opt into the who-ran-it security group so the tick refuses to tag without a runner key, and fill the gaps workspace check reports: signedSince, a trusted runner and a keyed tick.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/security-who-ran-it/.
+  Add `who-ran-it` to `security` in `chant.workspace.json`, run `npx chant workspace check`, and list each `WSP163` finding with the command a person runs for it.
+  Open a pull request with the declaration change only.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Every security feature in chant is off until a workspace turns it on ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). A group turns on a set of them at once, and each feature still turns on alone; the [security features reference](/chant/reference/security-features/) lists them all.
+
+Under `who-ran-it`, `chant ci tick` refuses to run without a runner key (`--key` or `CHANT_RUNNER_KEY`), so every tag it makes is signed. `chant ci workflow` warns when it writes a tick workflow with no `--runner-key-secret`. A `--dry-run` tick still runs without a key.
+
+Without the group, unsigned tags and runs count, and a tick with no key says nothing.
+
+## Opt in
+
+Add the group to `security` in `chant.workspace.json`, at the top level for every member or on one member for that member only. A member's list adds to the top-level one.
+
+```json
+"security": ["who-ran-it"]
+```
+
+A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
+
+## Fill the gaps
+
+`chant workspace check` reports what the group still lacks as `WSP163` warnings:
+
+| Code | What to do |
+|---|---|
+| `security-signed-since-unset` | Set `ci.green.signedSince` to the first commit from which tags must be signed ([green commits](/chant/guide/green-commits/)). |
+| `security-runner-untrusted` | Make a runner key with `chant ci serve --setup-key --trust` and have a person merge the trust branch it pushes. |
+| `security-tick-no-key` | Regenerate the tick with `chant ci workflow --runner-key-secret <NAME>`, naming the repository secret that holds the key. |
+
+`chant workspace verify --require attested-runs` then checks that every run was signed by a trusted runner.

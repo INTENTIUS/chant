@@ -391,13 +391,6 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
  * twenty minutes, and keeps the profile's retries: `shell("./build.sh", {
  * timeout: "45m" })`. At most six hours (`MAX_STEP_TIMEOUT`).
  *
- * `image` runs the command in a container instead of on the host (#4015),
- * pinned by digest, with the working directory mounted read-only at
- * `/workspace` unless `mounts` says `rw`, and each `outputs` directory
- * mounted writable:
- * `shell("npm run build", { image: "node:24@sha256:<digest>", outputs: ["dist"] })`.
- * OPS018 refuses an image that is not pinned by digest.
- *
  * `cmd` stays a plain `string` and takes no references. A value spliced into
  * a command line is a quoting decision chant would then be making on the
  * author's behalf, and `env` carries the same value into the same command

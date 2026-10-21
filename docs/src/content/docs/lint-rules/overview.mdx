@@ -13,7 +13,7 @@ chant's lint rules check what your declarations mean as well as how they are str
 | **Evaluability** | EVL001–EVL005, EVL007, EVL009–EVL011 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
 | **Style** | COR001–COR009, COR012–COR015 | Single file | Structural and naming conventions |
 | **Cross-File** | COR010–COR011 | Multi-file | Unused exports and circular dependencies |
-| **Correctness** | COR003, COR004, COR007, COR008, COR017, COR021, COR022–COR026, OPS012–OPS018 | Single file / post-synth | Structural errors |
+| **Correctness** | COR003, COR004, COR007, COR008, COR017, COR021, COR022–COR026, OPS012–OPS017 | Single file / post-synth | Structural errors |
 | **Composite** | EVL009, EVL010, COR017, COR018 | Single file | Best practices for Composite() factories |
 | **Composition** | COMP001–COMP007 | Whole component graph | Semantic checks over the discovered `Component` graph (epic #551 Phase 2) |
 | **Decide backends** | SYS001, SYS010 | Single file / post-synth | A `decide` backend's key is never a literal, and never crosses plain HTTP to a remote host |
@@ -90,7 +90,7 @@ See [Disable Directives](/chant/lint-rules/disable-directives/) for details.
 - [Evaluability Rules](/chant/lint-rules/evaluability/) — EVL001–EVL005, EVL007
 - [Style Rules](/chant/lint-rules/style/) — COR001, COR002, COR005, etc.
 - [Cross-File Rules](/chant/lint-rules/cross-file/) — COR010, COR011
-- [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008, COR021, COR022–COR024 (effect-receipt guards), COR025 (stringified reference), COR026 (stale knowledge binding), OPS012–OPS018 (Op model: activity contracts, step-output references, ConvergeOp rule-table refusals, gate approval blocks, gates that resume, gate aliases, shell step images)
+- [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008, COR021, COR022–COR024 (effect-receipt guards), COR025 (stringified reference), COR026 (stale knowledge binding), OPS012–OPS017 (Op model: activity contracts, step-output references, ConvergeOp rule-table refusals, gate approval blocks, gates that resume, gate aliases)
 - [Composite Rules](/chant/lint-rules/composite/) — EVL009, EVL010, COR017, COR018
 - [Composition Rules](/chant/lint-rules/composition/) — COMP001–COMP007, over the discovered `Component` graph
 - [Decide backends](/chant/guide/decision-points/#lint-rules): SYS001 and SYS010, over the `decide` activity's backends

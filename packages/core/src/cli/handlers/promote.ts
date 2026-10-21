@@ -315,7 +315,7 @@ async function deployPlan(
   if (under) {
     const { pinReleaseTemplates } = await import("../../components/release-promote");
     const { readReleaseTemplate } = await import("../../lifecycle/release-store");
-    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest, encoding) => readReleaseTemplate(digest, undefined, encoding));
+    const pinned = await pinReleaseTemplates(prepared, under.release, under.target, (digest) => readReleaseTemplate(digest));
     if ("errors" in pinned) {
       for (const message of pinned.errors) console.error(formatError({ message }));
       console.error(formatError({ message: `nothing was deployed` }));
@@ -594,6 +594,21 @@ async function resolveUnderRelease(ref: string, env: string, verb: "promote" | "
   if (revocation) {
     console.error(formatError(revokedRefusal({ releaseDigest: found.release.releaseDigest, label: found.label }, revocation, await fix(found.release))));
     return 1;
+  }
+  // #4168: under verified-releases a release deploys only once `chant release verify` passes for it.
+  const { securityGroupsAt } = await import("../../workspace/security");
+  if (securityGroupsAt(process.cwd()).has("verified-releases")) {
+    const { verifyRelease, verificationCode } = await import("../../lifecycle/release-verify");
+    const name = found.label ?? found.release.releaseDigest;
+    const v = await verifyRelease({ cwd: process.cwd(), ref: found.release.releaseDigest });
+    const code = "error" in v ? v.error.code : verificationCode(v);
+    if (code) {
+      console.error(formatError({
+        message: `${code}: release ${name} does not verify (${"error" in v ? v.error.message : v.reason}), and the workspace opts into verified-releases, so ${verb} deploys only a verified release`,
+        hint: `Check it with: chant release verify ${name}`,
+      }));
+      return 1;
+    }
   }
   return { release: found.release, label: found.label, target: target.target };
 }

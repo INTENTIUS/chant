@@ -126,6 +126,8 @@ export interface PrLoopPipelineOptions {
   branch?: string;
   /** Count an approval only from someone who approved the pull request on the forge. Default false (#4168): review rules are opt-in. */
   requireReview?: boolean;
+  /** The apply job's `chant ci run` refuses to start without a runner-start statement for it (`--require-runner-start`, #4147), as under the `isolated-runners` security group (#4168). Default false. */
+  requireRunnerStart?: boolean;
   /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
@@ -228,6 +230,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job === "apply" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
     ...(job === "apply" && options.requireReview === true ? ["--require-review"] : []),
+    ...(job === "apply" && options.requireRunnerStart === true ? ["--require-runner-start"] : []),
     ...(options.events ? ["--events-json"] : []),
     ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
   ];

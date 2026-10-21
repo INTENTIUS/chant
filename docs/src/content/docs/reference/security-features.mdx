@@ -1,0 +1,41 @@
+---
+title: Security Features
+description: Each chant security feature with what it does when nothing is turned on and the security group that turns it on.
+diataxis: reference
+---
+
+Every security feature is off until a workspace turns it on ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The `security` list in `chant.workspace.json` names groups, at the top level or on a member, and a member's list adds to the top-level one. `chant workspace check` reports what a declared group still lacks, as `WSP161` to `WSP165` warnings, and says nothing about a group the declaration does not name.
+
+## Features
+
+The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/security.ts`, and a test compares the two. The Default column says what chant does when the workspace turns nothing on. The Turns it on alone column names the flag or setting for that one feature, and the Checked as column names the `workspace check` codes reported when the group is declared and the feature is still missing.
+
+| Feature | Default | Turns it on alone | Group | Checked as |
+|---|---|---|---|---|
+| Publish refuses an unsigned release | off: publishes and records `signature: unsigned` | `identity.gates.release` | `verified-releases` | `security-signers-missing`, `security-publish-allows-unsigned` |
+| Signed cut in the release gate's class | off | `identity.gates.release` with a `class` | `verified-releases` | `security-release-gate-missing` |
+| Promote verifies the release | off: `chant release verify` on demand | `chant release verify` | `verified-releases` | none |
+| SBOM on every target | off: a target with no SBOM source publishes without one | `sbom` on the target | `supply-chain` | `security-sbom-disabled`, `security-sbom-unsourced` |
+| OIDC provenance | off: a plan field | `--require-provenance` | `supply-chain` | `security-publish-no-provenance` |
+| SBOM and verify steps on components | off | a `generate-sbom` or `verify` step | `supply-chain` | `security-component-no-sbom`, `security-component-no-verify` |
+| Signed green tags and runs | off: every tag counts | `ci.green.signedSince` | `who-ran-it` | `security-signed-since-unset` |
+| Trusted runner keys | off | `.chant/trust.json` with a runner role | `who-ran-it` | `security-runner-untrusted` |
+| Tick signs its tags | off: unsigned tags | `--key` or `CHANT_RUNNER_KEY` | `who-ran-it` | `security-tick-no-key` |
+| Forge review required, authors never count | off | `--require-review`, `requireReview: true` | `review-rules` | `security-review-not-required` |
+| Identified attribution | off: `any` | `identity.attribution: "identified"` | `review-rules` | `security-attribution-any` |
+| Signed approvals | off | `identity.gates.<gate>` | `review-rules` | `security-gate-unsigned` |
+| Apply jobs require a runner-start statement | off | `--require-runner-start` | `isolated-runners` | `security-runner-start-no-key`, `security-runner-start-no-role`, `security-trust-unreadable` |
+| Secrets file | off | `--secrets` | none | none |
+| Env allowlist and log redaction | on: `ci run`'s contract, a listed exception | `--pass-env` | none | none |
+
+## Groups
+
+| Group | Check | How-to |
+|---|---|---|
+| `verified-releases` | `WSP161` | [Publish only verified releases](/chant/guide/security-verified-releases/) |
+| `supply-chain` | `WSP162` | [Require SBOMs and provenance](/chant/guide/security-supply-chain/) |
+| `who-ran-it` | `WSP163` | [Sign what the runners do](/chant/guide/security-who-ran-it/) |
+| `review-rules` | `WSP164` | [Require forge review for applies](/chant/guide/security-review-rules/) |
+| `isolated-runners` | `WSP165` | [Run applies only on started runners](/chant/guide/security-isolated-runners/) |
+
+Integrity checks are not on this list, since they are not features to turn on: a release is cut only from a green commit, and publish refuses a revoked release or a checkout other than the release's commit.

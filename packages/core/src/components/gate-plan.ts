@@ -17,11 +17,6 @@
  *   its publish output against a recorded digest that is not in the
  *   composition, so it passes that digest here.
  * - `vars`, the environment config the caller resolved ahead of the run.
- * - The content digests of the local files the steps deploy from (#4155,
- *   ./deploy-inputs.ts): a chart, a manifest, a site's tree, a build step's
- *   sources. A file changed after review moves the digest. The key is left
- *   out when no step names an existing file, so a composition that deploys
- *   none keeps the digest it had before #4155.
  *
  * ## What it leaves out
  *
@@ -33,7 +28,6 @@
  */
 
 import { computePlanDigest } from "../lifecycle/plan-digest";
-import type { DeployInputDigest } from "./deploy-inputs";
 import type { DriverComponent } from "./driver";
 
 /** What a component gate's plan digest is taken over. */
@@ -43,8 +37,6 @@ export interface ComponentGatePlan {
   vars?: Record<string, unknown>;
   /** The recorded digest a promote or rollback deploys, when the caller has one. */
   release?: string;
-  /** What the steps deploy from (`componentDeployInputs`), when the caller read it. */
-  inputs?: readonly DeployInputDigest[];
 }
 
 /** The plan digest a component gate records and approves. */
@@ -57,6 +49,5 @@ export function componentPlanDigest(plan: ComponentGatePlan): string {
     rollback: component.rollback ?? null,
     vars: plan.vars ?? null,
     release: plan.release ?? null,
-    ...(plan.inputs && plan.inputs.length > 0 ? { inputs: plan.inputs } : {}),
   });
 }

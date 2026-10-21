@@ -397,21 +397,21 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 
 ## Security
 
-Every security feature is opt-in ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With no `security` field, chant stays quiet about a feature the workspace has not turned on: no refusal and no warning. `security` lists groups, each turning on the features one use case needs:
+Every security feature is opt-in ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With no `security` field, chant stays quiet about a feature the workspace has not turned on: no refusal and no warning. `security` lists groups, each turning on the features one use case needs. It goes at the top level, for every member, or on a member entry, for that member; a member runs under both lists.
 
 ```json
 "security": ["verified-releases", "supply-chain"]
 ```
 
-| Group | What it turns on so far |
+| Group | What it turns on |
 |---|---|
-| `verified-releases` | [`chant release publish`](/chant/cli/release/#release-publish) refuses a release none of whose cuts carries a signature that verifies against `.chant/allowed_signers` at base, unless `--allow-unsigned`. |
+| `verified-releases` | [`chant release publish`](/chant/cli/release/#release-publish) refuses a release none of whose cuts carries a signature that verifies against `.chant/allowed_signers` at base, unless `--allow-unsigned`, and `chant components promote --release` and `rollback --release` refuse a release `chant release verify` does not pass. |
 | `supply-chain` | A publish with no OIDC token warns on stderr, and a [publish target](/chant/reference/publish-targets/#sboms-and-provenance) with no SBOM source is refused with `publish-sbom-missing`. |
-| `review-rules` | `chant build --pr-loop` writes an apply job that passes `--require-review`, so an approval counts only from someone who approved the pull request on the forge and never from its author. |
-| `who-ran-it` | Accepted. Nothing reads it yet. |
-| `isolated-runners` | Accepted. Nothing reads it yet. |
+| `who-ran-it` | `chant ci tick` refuses to run without a runner key, so every tag it makes is signed. |
+| `review-rules` | `chant components pr-apply` counts an approval only from someone who approved the pull request on the forge and never from its author, as `--require-review` does, and `chant build --pr-loop` writes the flag into the apply job. |
+| `isolated-runners` | `chant ci run apply`, and so `chant ci serve`, refuses to start without a provisioner's runner-start statement for the job, as `--require-runner-start` does. `chant build --pr-loop` writes the flag into the apply job. |
 
-Each feature also turns on alone: a `release` gate in [`identity.gates`](#identity), `--require-provenance`, `--require-review`. A group is read at base, as the release gate is. Each name may appear once, and an unknown name is refused. A chant older than 0.124.33 refuses `security`, so set `minReader` to at least that version when you use it.
+Each feature also turns on alone: a `release` gate in [`identity.gates`](#identity), `--require-provenance`, `--require-review`, `--require-runner-start`, `ci.green.signedSince`. A group is read at base, as the release gate is. Each name may appear once in a list, and an unknown name is refused. `chant workspace check` reports what a declared group still lacks as `WSP161` to `WSP165` warnings ([security features](/chant/reference/security-features/)). A chant older than 0.124.33 refuses `security`, so set `minReader` to at least that version when you use it.
 
 ## Diagrams
 

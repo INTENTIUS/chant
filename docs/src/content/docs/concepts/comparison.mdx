@@ -1,6 +1,6 @@
 ---
 title: How chant compares
-description: chant compared with other infrastructure-as-code tools and pipeline engines.
+description: chant compared with other infrastructure-as-code tools.
 diataxis: explanation
 ---
 
@@ -137,22 +137,6 @@ The most consequential design difference after execution model is the lifecycle 
 **CDK** optimizes for AWS-native development with familiar languages and high-level abstractions. L2/L3 constructs encode AWS best practices and reduce boilerplate. The trade-off: abstractions obscure what's actually deployed, and code execution means builds can be nondeterministic.
 
 **chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec. Deployment is a separate step. The output is the platform's native format, with no lock-in. The trade-off: the build path itself doesn't apply, so you deploy through a chant Op or hand the artifact to your own tool.
-
-## Pipeline engines
-
-The tools above are compared on infrastructure. A pipeline engine asks a different question: where does the pipeline itself run? chant answers at build time. It compiles a typed pipeline to each forge's own YAML. The forge runs that YAML with nothing extra installed, and its own tooling keeps working.
-
-| | Where the pipeline is defined | What runs in a CI job | Step isolation | Cache |
-|---|---|---|---|---|
-| **chant** | TypeScript, compiled to the forge's YAML | The forge's runner and the commands chant wrote | A `shell()` step can run in a container pinned by digest | The forge's |
-| **[Dagger](https://dagger.io)** | Functions in modules (Go, Python, TypeScript and others) | The Dagger engine, in every job | Each operation runs in a container | Content-addressed, kept by the engine |
-| **[Bazel](https://bazel.build)** | BUILD files in Starlark | Bazel, in every job | Sandboxed actions keyed by declared inputs | Local and remote, keyed by inputs |
-
-Dagger moves the pipeline to run time: the forge's job starts the engine, and the engine runs the graph. That buys the same pipeline locally and in CI and a cache that knows each step's inputs. The cost is an engine in each job and a pipeline the forge sees only as one opaque step. Dagger also changed engines in 2026: v0.21 began replacing BuildKit's solver with its own, and a new module format is still in development.
-
-Bazel is the reference for a hermetic step: an action runs in a sandbox and its cache key covers every input it declares. The price is declaring every input, which chant's steps don't do today.
-
-chant stays at build time on purpose. A generated pull-request pipeline's jobs are typed values that each forge's generator wraps, and `chant ci run --local` runs the same values without reading YAML. [github-warden](https://github.com/INTENTIUS/github-warden) reads the job names chant generates and requires them as checks, which works because the jobs are the forge's own. Where a step needs a pinned toolchain, give it an `image` ([A shell step in a container](/chant/guide/ops-reference/#a-shell-step-in-a-container)). A Dagger runtime for Ops could plug into the `opRuntime` hook as a lexicon without changing this.
 
 ## Trade-offs
 

@@ -240,7 +240,7 @@
     "security": {
       "type": "array",
       "uniqueItems": true,
-      "description": "The security groups the workspace opts into (#4168). With none, a security feature the workspace has not turned on never refuses, warns or hides anything. verified-releases: release publish refuses a release with no verified signature. supply-chain: a publish without OIDC provenance warns, and a target with no SBOM source is refused. review-rules: a generated pull-request pipeline requires a forge review. who-ran-it and isolated-runners are accepted and not read yet. Added in schema 1 by chant 0.124.33, so a declaration that uses it sets minReader to 0.124.33 or newer.",
+      "description": "The security groups the workspace opts into (#4168), for every member; a member's own security adds to them. With none, a security feature the workspace has not turned on never refuses, warns or hides anything. verified-releases: release publish and promote --release take only a verified release. supply-chain: a publish without OIDC provenance warns, and a target with no SBOM source is refused. who-ran-it: ci tick needs a runner key. review-rules: pr-apply requires a forge review. isolated-runners: an apply job requires a runner-start statement. workspace check reports what a declared group lacks (WSP161 to WSP165). Added in schema 1 by chant 0.124.33, so a declaration that uses it sets minReader to 0.124.33 or newer.",
       "items": {
         "enum": ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners"]
       }
@@ -494,6 +494,14 @@
         "travel": {
           "type": "boolean",
           "description": "Whether the member goes with an export (#2524 D10, #2552). chant workspace export writes only members that set travel to true into the export member, and refuses to name one that does not. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer."
+        },
+        "security": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The security groups this member opts into, added to the declaration's top-level security (#4168). A release, publish or pull-request job of this member runs under both lists. Added in schema 1 by chant 0.124.33, so a declaration that uses it sets minReader to 0.124.33 or newer.",
+          "items": {
+            "enum": ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners"]
+          }
         },
         "because": {
           "type": "string",

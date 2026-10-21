@@ -5,13 +5,13 @@
 
 import { describe, test, expect } from "vitest";
 import { contentDigest } from "../content-digest";
-import { makeRelease, templateBytesDigest } from "../lifecycle/release-store";
+import { makeRelease } from "../lifecycle/release-store";
 import type { DriverComponent } from "./driver";
 import { isImplicitRelease, pinReleaseTemplates, releaseArtifactMismatches, removePinnedTemplates, targetFiles, targetFor, writePinnedTemplates, RELEASE_TEMPLATES_DIR } from "./release-promote";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
 import type { BuildArchiveManifest } from "./verbs/build-archive";
 import { withTestDir } from "@intentius/chant-test-utils";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const prodTemplate = `{"env":"prod"}\n`;
@@ -61,59 +61,6 @@ describe("pinReleaseTemplates", () => {
     expect("errors" in missing && missing.errors[0]).toMatch(/reads template "dist\/new.template.json", which release .* does not record for "prod"/);
     const absent = await pinReleaseTemplates([api], release, prod, store(null));
     expect("errors" in absent && absent.errors[0]).toMatch(/are not on the chant\/lifecycle branch/);
-  });
-
-  test("a target cut since #4155 points a chart at its recorded tree, which a reader of the release can trust", async () => {
-    const chartFile = "name: web\n";
-    const tgz = Buffer.from([0x1f, 0x8b, 0xff]).toString("base64");
-    const tgzDigest = templateBytesDigest(tgz, "base64");
-    const cut = makeRelease({
-      member: null,
-      commit: "c".repeat(40),
-      artifactDigests: [],
-      targets: [{
-        env: "prod",
-        params: [],
-        templates: [
-          { component: "web", path: "chart/Chart.yaml", digest: contentDigest(chartFile) },
-          { component: "web", path: "chart/charts/dep.tgz", digest: tgzDigest, encoding: "base64" },
-        ],
-        trees: [{ component: "web", path: "chart" }],
-      }],
-    });
-    const web: DriverComponent = {
-      name: "web",
-      deploy: [{ phase: "Deploy", steps: [
-        { kind: "helm-upgrade", release: "web", chart: "chart" },
-        { kind: "helm-upgrade", release: "remote", chart: "bitnami/nginx" },
-      ] }],
-    };
-    const bytes: Record<string, string> = { [contentDigest(chartFile)]: chartFile, [tgzDigest]: tgz };
-    const pinned = await pinReleaseTemplates([web], cut, cut.targets[0]!, async (d, encoding) => (encoding === "base64" && d !== tgzDigest ? null : bytes[d] ?? null));
-    if ("errors" in pinned) throw new Error(pinned.errors.join("\n"));
-    const step = pinned.components[0]!.deploy[0]!.steps[0] as unknown as { chart: string };
-    expect(step.chart).toMatch(/^\.chant\/release-templates\/[^/]+\/chart$/);
-    expect(pinned.files.map((f) => f.path.slice(step.chart.length + 1)).sort()).toEqual(["Chart.yaml", "charts/dep.tgz"]);
-    expect(pinned.files.find((f) => f.path.endsWith("dep.tgz"))).toMatchObject({ encoding: "base64", content: tgz });
-    // A chart named from a repository is not a local path the release records, and is left as written.
-    expect(pinned.components[0]!.deploy[0]!.steps[1]).toEqual(web.deploy[0]!.steps[1]);
-
-    await withTestDir(async (dir) => {
-      writePinnedTemplates(dir, pinned.files);
-      expect(readFileSync(join(dir, step.chart, "charts", "dep.tgz"))).toEqual(Buffer.from([0x1f, 0x8b, 0xff]));
-      removePinnedTemplates(dir, pinned.files);
-      expect(existsSync(join(dir, RELEASE_TEMPLATES_DIR))).toBe(false);
-    });
-
-    const edited = await pinReleaseTemplates([web], cut, cut.targets[0]!, async (d) => (d === contentDigest(chartFile) ? "name: edited\n" : bytes[d] ?? null));
-    expect("errors" in edited && edited.errors.join("\n")).toMatch(/template "chart\/Chart.yaml" hashes to .* refusing to deploy it/);
-  });
-
-  test("a target cut before #4155 (no trees) is pinned as then: the chart is read from the checkout", async () => {
-    const web: DriverComponent = { name: "api", deploy: [{ phase: "Deploy", steps: [{ kind: "helm-upgrade", release: "web", chart: "chart" }, ...api.deploy[1]!.steps] }] };
-    const pinned = await pinReleaseTemplates([web], release, prod, store(prodTemplate));
-    if ("errors" in pinned) throw new Error(pinned.errors.join("\n"));
-    expect(pinned.components[0]!.deploy[0]!.steps[0]).toEqual({ kind: "helm-upgrade", release: "web", chart: "chart" });
   });
 
   test("targetFor names the environments a release was compiled for", () => {

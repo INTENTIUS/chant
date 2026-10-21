@@ -148,6 +148,44 @@ export function parsePomXml(content: string): BomPackage[] {
   return packages.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ── Cargo.lock (Rust, #4168 decision 12) ────────────────────────────────────
+
+/**
+ * Parse a `Cargo.lock` (version 3 or 4) into a flat `BomPackage[]`: one
+ * entry per `[[package]]` with a `source`, so the workspace's own crates,
+ * which have none, are left out as the npm parser leaves out the root.
+ * A dependency is named `name` or `name version` in the lock; only the name
+ * is kept. A small line reader, not a TOML parser: the lock is written by
+ * cargo in one fixed shape.
+ */
+export function parseCargoLock(content: string): BomPackage[] {
+  const seen = new Map<string, BomPackage>();
+  const blocks = content.split(/^\[\[package\]\]\s*$/m).slice(1);
+  for (const block of blocks) {
+    const body = block.split(/^\[/m)[0] ?? "";
+    const field = (key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body)?.[1];
+    const name = field("name");
+    const version = field("version");
+    if (!name || field("source") === undefined) continue;
+    const deps = /^dependencies\s*=\s*\[([\s\S]*?)\]/m.exec(body)?.[1];
+    const dependsOn = deps ? [...deps.matchAll(/"([^"\s]+)[^"]*"/g)].map((m) => m[1]!) : [];
+    const key = `${name}@${version ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.set(key, {
+      name,
+      version,
+      type: "cargo",
+      purl: version ? `pkg:cargo/${encodeURIComponent(name)}@${version}` : undefined,
+      dependsOn: dependsOn.length ? [...new Set(dependsOn)] : undefined,
+    });
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name) || (a.version ?? "").localeCompare(b.version ?? ""));
+}
+
+/** Each lockfile kind's parser and file name. */
+export const LOCKFILE_PARSERS = { npm: parseNpmPackageLock, maven: parsePomXml, cargo: parseCargoLock } as const;
+export const LOCKFILE_NAMES = { npm: "package-lock.json", maven: "pom.xml", cargo: "Cargo.lock" } as const;
+
 // ── hermetic SbomGenerator backend ───────────────────────────────────────────
 
 export interface LockfileSbomGeneratorOptions {
@@ -158,8 +196,8 @@ export interface LockfileSbomGeneratorOptions {
 }
 
 /** Locate the first readable lockfile/manifest under `dir` this generator knows how to parse, in preference order (npm before Maven — most chant components are Node-first). Returns `undefined` if none is found. */
-function findManifest(dir: string): { kind: "npm" | "maven"; path: string } | undefined {
-  for (const [kind, filename] of [["npm", "package-lock.json"], ["maven", "pom.xml"]] as const) {
+function findManifest(dir: string): { kind: "npm" | "maven" | "cargo"; path: string } | undefined {
+  for (const [kind, filename] of [["npm", "package-lock.json"], ["maven", "pom.xml"], ["cargo", "Cargo.lock"]] as const) {
     const candidate = join(dir, filename);
     try {
       readFileSync(candidate, "utf-8");
@@ -195,13 +233,13 @@ export function createLockfileSbomGenerator(options: LockfileSbomGeneratorOption
     const manifest = findManifest(dir);
     if (!manifest) {
       throw new Error(
-        `no supported lockfile/manifest found under "${dir}" (looked for package-lock.json, pom.xml) — ` +
+        `no supported lockfile/manifest found under "${dir}" (looked for package-lock.json, pom.xml, Cargo.lock) — ` +
           `the hermetic lockfile SBOM backend requires a lockfile on disk; use the deep-scan path (#610) for images with no lockfile`,
       );
     }
     const content = readFileSync(manifest.path, "utf-8");
-    const packages = manifest.kind === "npm" ? parseNpmPackageLock(content) : parsePomXml(content);
-    const generatorName = manifest.kind === "npm" ? "chant-lockfile-sbom/package-lock.json" : "chant-lockfile-sbom/pom.xml";
+    const packages = LOCKFILE_PARSERS[manifest.kind](content);
+    const generatorName = `chant-lockfile-sbom/${LOCKFILE_NAMES[manifest.kind]}`;
 
     const doc = writeBom(
       format,

@@ -558,6 +558,8 @@ export interface Member {
   because: string | null;
   /** Whether `chant workspace export` takes the member (#2552, D10). False when the entry does not say. */
   travel: boolean;
+  /** The security groups this member adds to the declaration's top-level `security` (#4168 step 7), in file order; empty when it names none. */
+  security: SecurityGroup[];
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -853,6 +855,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       travel: e.travel === true,
+      security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
       suppress,
       pointer,
     };

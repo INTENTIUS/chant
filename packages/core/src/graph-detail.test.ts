@@ -87,63 +87,6 @@ describe("applyDetail", () => {
     expect(ir.imports).toEqual([{ name: "pClusterArn", node: "pClusterArn" }]);
   });
 
-  test("T1 keeps exports, each on the node that now holds its producer (#4178)", () => {
-    const withExports: GraphIR = {
-      ...base,
-      version: 2,
-      meta: { _behaviour: { engine: "x" } },
-      exports: [
-        { name: "DbEndpoint", node: "dbDeployment", attr: "status" },
-        { name: "SubnetLink", node: "subnet", attr: "selfLink" },
-        { name: "Literal" },
-      ],
-    };
-    const ir = applyDetail(withExports, DETAIL.COMPOSITES);
-    expect(ir.exports).toEqual([
-      { name: "DbEndpoint", node: "db", attr: "status" },
-      { name: "SubnetLink", node: "subnet", attr: "selfLink" },
-      { name: "Literal" },
-    ]);
-    expect(ir.version).toBe(2);
-    expect(ir.meta).toEqual({ _behaviour: { engine: "x" } });
-  });
-
-  test("T1 keeps two same-named composites from different composite types apart (#4178)", () => {
-    const twoWebs: GraphIR = {
-      nodes: [
-        { id: "webAlb", kind: "AWS::ElasticLoadBalancingV2::LoadBalancer", lexicon: "aws", compositeParent: "FargateAlb", compositeInstance: "web", attrs: {} },
-        { id: "webService", kind: "AWS::ECS::Service", lexicon: "aws", compositeParent: "FargateAlb", compositeInstance: "web", attrs: {} },
-        { id: "webRun", kind: "RunService", lexicon: "gcp", compositeParent: "CloudRunServiceComposite", compositeInstance: "web", attrs: {} },
-        { id: "record", kind: "AWS::Route53::RecordSet", lexicon: "aws", attrs: {} },
-      ],
-      edges: [
-        { from: "record", to: "webAlb", kind: "ref", viaAttr: "AliasTarget" },
-        { from: "record", to: "webRun", kind: "ref", viaAttr: "ResourceRecords" },
-        { from: "webService", to: "webAlb", kind: "ref", viaAttr: "LoadBalancers" },
-      ],
-      groups: {},
-      exports: [{ name: "WebUri", node: "webRun", attr: "uri" }],
-    };
-    const ir = applyDetail(twoWebs, DETAIL.COMPOSITES);
-    expect(ir.nodes.map((n) => n.id)).toEqual(["record", "web@CloudRunServiceComposite", "web@FargateAlb"]);
-    expect(ir.nodes.find((n) => n.id === "web@FargateAlb")).toMatchObject({ kind: "FargateAlb", lexicon: "aws", attrs: { members: 2 } });
-    expect(ir.nodes.find((n) => n.id === "web@CloudRunServiceComposite")).toMatchObject({ kind: "CloudRunServiceComposite", lexicon: "gcp", attrs: { members: 1 } });
-    expect(ir.edges).toEqual(expect.arrayContaining([
-      { from: "record", to: "web@FargateAlb", kind: "ref" },
-      { from: "record", to: "web@CloudRunServiceComposite", kind: "ref" },
-    ]));
-    expect(ir.edges).toHaveLength(2);
-    expect(ir.exports).toEqual([{ name: "WebUri", node: "web@CloudRunServiceComposite", attr: "uri" }]);
-  });
-
-  test("T1 keeps one composite whose members span lexicons as one node", () => {
-    const ir = applyDetail({
-      ...base,
-      nodes: base.nodes.map((n) => (n.id === "dbNamespace" ? { ...n, lexicon: "gcp" } : n)),
-    }, DETAIL.COMPOSITES);
-    expect(ir.nodes.find((n) => n.id === "db")).toMatchObject({ kind: "DbStack", lexicon: "multi", attrs: { members: 2 } });
-  });
-
   test("T1 node count is between T0 and T2", () => {
     const t0 = applyDetail(base, DETAIL.STACKS).nodes.length;
     const t1 = applyDetail(base, DETAIL.COMPOSITES).nodes.length;

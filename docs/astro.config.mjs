@@ -215,6 +215,17 @@ export default defineConfig({
 							],
 						},
 						{
+							label: 'Security',
+							collapsed: true,
+							items: [
+								{ label: 'Publish Only Verified Releases', slug: 'guide/security-verified-releases' },
+								{ label: 'Require SBOMs and Provenance', slug: 'guide/security-supply-chain' },
+								{ label: 'Sign What the Runners Do', slug: 'guide/security-who-ran-it' },
+								{ label: 'Require Forge Review for Applies', slug: 'guide/security-review-rules' },
+								{ label: 'Run Applies Only on Started Runners', slug: 'guide/security-isolated-runners' },
+							],
+						},
+						{
 							label: 'Workspaces',
 							collapsed: true,
 							items: [
@@ -289,6 +300,7 @@ export default defineConfig({
 						{ label: 'Behaviour Coverage', slug: 'reference/behaviour-coverage' },
 						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
 						{ label: 'Publish Targets', slug: 'reference/publish-targets' },
+						{ label: 'Security Features', slug: 'reference/security-features' },
 						{ label: 'Change-Set Document', slug: 'reference/change-set' },
 						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },

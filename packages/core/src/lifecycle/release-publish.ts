@@ -303,7 +303,7 @@ export async function preparePublish(req: {
   const { scopeSource } = await import("../workspace/write-scope");
   const { releaseRuleFrom } = await import("../workspace/identity");
   const { checkReleaseSignature } = await import("../workspace/identity-gate-rule");
-  const { securityGroupsOf } = await import("../workspace/security");
+  const { securityGroupsIn } = await import("../workspace/security");
   const { cwd, ref } = req;
   const found = await resolveRelease(ref, { cwd });
   if (!found) return { refusal: { code: "release-not-found", message: `no release is labelled or digested "${ref}" in this member`, fix: "List them with: chant release list" } };
@@ -323,7 +323,7 @@ export async function preparePublish(req: {
 
   const source = scopeSource(cwd);
   const rule = releaseRuleFrom(source);
-  const groups = securityGroupsOf(source.declaration);
+  const groups = securityGroupsIn(source, cwd);
   const cuts = (await readCuts({ cwd })).cuts.filter((c) => c.releaseDigest === release.releaseDigest);
   const checks = cuts.map((c) => ({
     cut: c,

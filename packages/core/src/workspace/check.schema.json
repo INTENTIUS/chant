@@ -298,7 +298,41 @@
             "flag-stale",
             "diagram-source-missing",
             "diagram-render-missing",
-            "diagram-render-drift"
+            "diagram-render-drift",
+
+            "security-signers-missing",
+
+            "security-release-gate-missing",
+
+            "security-publish-allows-unsigned",
+
+            "security-sbom-disabled",
+
+            "security-sbom-unsourced",
+
+            "security-publish-no-provenance",
+
+            "security-component-no-sbom",
+
+            "security-component-no-verify",
+
+            "security-signed-since-unset",
+
+            "security-runner-untrusted",
+
+            "security-tick-no-key",
+
+            "security-review-not-required",
+
+            "security-attribution-any",
+
+            "security-gate-unsigned",
+
+            "security-runner-start-no-key",
+
+            "security-runner-start-no-role",
+
+            "security-trust-unreadable"
           ],
           "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP118, flag-stale (#4024). For WSP131 to WSP133, the diagram finding (#2764)."
         }
@@ -377,7 +411,41 @@
             "flag-stale",
             "diagram-source-missing",
             "diagram-render-missing",
-            "diagram-render-drift"
+            "diagram-render-drift",
+
+            "security-signers-missing",
+
+            "security-release-gate-missing",
+
+            "security-publish-allows-unsigned",
+
+            "security-sbom-disabled",
+
+            "security-sbom-unsourced",
+
+            "security-publish-no-provenance",
+
+            "security-component-no-sbom",
+
+            "security-component-no-verify",
+
+            "security-signed-since-unset",
+
+            "security-runner-untrusted",
+
+            "security-tick-no-key",
+
+            "security-review-not-required",
+
+            "security-attribution-any",
+
+            "security-gate-unsigned",
+
+            "security-runner-start-no-key",
+
+            "security-runner-start-no-role",
+
+            "security-trust-unreadable"
           ],
           "description": "For WSP001: why the declaration can't be read. For WSP121 to WSP127, the box finding (#2726, #2727, #2780, #2850). For WSP117, work-acceptance-unmet (#2772). For WSP118, flag-stale (#4024). For WSP131 to WSP133, the diagram finding (#2764)."
         },

@@ -314,6 +314,17 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     expect(record.phases.apply![0]).toMatchObject({ name: "pr-apply", opRun: { id: apply.record.id, signer: "chant-runner" } });
   });
 
+  test("under the isolated-runners security group an apply job requires a runner-start statement, and a plan job does not (#4168)", async () => {
+    const { root, app, base } = workspace();
+    writeFiles(root, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app", security: ["isolated-runners"] }], { ci: { green: GREEN } }) });
+    git(root, "commit", "-qam", "isolated-runners");
+    git(root, "push", "-q", "origin", "main");
+    const job = (j: "plan" | "apply") =>
+      ciRun({ image: JOB_IMAGE, cwd: app, job: j, env: "prod", forge: "github", base, ...(j === "plan" ? { pr: 7 } : {}), chant: fakeChant(), hostEnv: HOST, output: join(scratchDir("chant-ci-run-out-"), "pr"), push: false });
+    await expect(job("apply")).rejects.toThrow(/--require-runner-start needs a forge job to check/);
+    expect((await job("plan")).status).toBe("ok");
+  });
+
   test("a failing job is recorded failed, and a key from the environment that trust.json does not list leaves it unsigned, quietly", async () => {
     const { root, app, base } = workspace();
     const stranger = runnerKey();

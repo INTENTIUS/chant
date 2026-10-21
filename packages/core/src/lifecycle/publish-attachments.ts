@@ -30,7 +30,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { sortedJsonReplacer } from "../utils";
 import { writeBom } from "../components/verbs/bom-writer";
-import { parseNpmPackageLock, parsePomXml } from "../components/verbs/lockfile-sbom-generator";
+import { LOCKFILE_NAMES, LOCKFILE_PARSERS } from "../components/verbs/lockfile-sbom-generator";
 import { SBOM_MEDIA_TYPES } from "../components/verbs/sbom-generator";
 import { bytesDigest, checkReleaseDigest, memberFile } from "./publish-targets";
 import { PublishTargetError, type PublishContext } from "./release-publish";
@@ -104,18 +104,25 @@ function invalid(where: string): PublishTargetError {
   return new PublishTargetError("publish-sbom-invalid", `${where} is not an SPDX or CycloneDX JSON document`, "Point sbom at the SPDX or CycloneDX JSON the build writes.");
 }
 
-/** The lockfile nearest the member: `package-lock.json` or `pom.xml` in `cwd` or a directory above it inside its repository (only `cwd` outside one). */
-function nearestLockfile(cwd: string): { kind: "npm" | "maven"; path: string } | null {
+/**
+ * The lockfile nearest the member: `package-lock.json`, `pom.xml` or
+ * `Cargo.lock` in `cwd` or a directory above it inside its repository (only
+ * `cwd` outside one). A member whose directory holds a `Cargo.toml` is a
+ * Rust member, so its `Cargo.lock` comes first (#4168 decision 12); for any
+ * other, the order is npm, Maven, Cargo.
+ */
+function nearestLockfile(cwd: string): { kind: "npm" | "maven" | "cargo"; path: string } | null {
   let top: string | null = null;
   try {
     top = realpathSync(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim());
   } catch {
     top = null;
   }
+  const order = existsSync(join(cwd, "Cargo.toml")) ? (["cargo", "npm", "maven"] as const) : (["npm", "maven", "cargo"] as const);
   let dir = realpathSync(cwd);
   for (;;) {
-    for (const [kind, file] of [["npm", "package-lock.json"], ["maven", "pom.xml"]] as const) {
-      if (existsSync(join(dir, file))) return { kind, path: join(dir, file) };
+    for (const kind of order) {
+      if (existsSync(join(dir, LOCKFILE_NAMES[kind]))) return { kind, path: join(dir, LOCKFILE_NAMES[kind]) };
     }
     const up = dirname(dir);
     if (top === null || dir === top || up === dir || !up.startsWith(top)) return null;
@@ -146,16 +153,16 @@ export function memberSbom(ctx: PublishContext, declared: string | false | undef
     if (!ctx.requireSbom) return null;
     throw new PublishTargetError(
       "publish-sbom-missing",
-      `${target} attaches an SBOM to what it publishes, and its declaration names none and there is no package-lock.json or pom.xml in ${ctx.cwd} or above it to write one from`,
+      `${target} attaches an SBOM to what it publishes, and its declaration names none and there is no package-lock.json, pom.xml or Cargo.lock in ${ctx.cwd} or above it to write one from`,
       "Set sbom in the declaration to the SPDX or CycloneDX file the build writes, or sbom: false to publish without one.",
     );
   }
   const content = readFileSync(lock.path, "utf-8");
-  const packages = lock.kind === "npm" ? parseNpmPackageLock(content) : parsePomXml(content);
+  const packages = LOCKFILE_PARSERS[lock.kind](content);
   const at = new Date(ctx.cut?.timestamp ?? 0);
   const doc = writeBom(
     "spdx",
-    { subjectName: subject, subjectId: ctx.release.releaseDigest, packages, generator: `chant-lockfile-sbom/${lock.kind === "npm" ? "package-lock.json" : "pom.xml"}` },
+    { subjectName: subject, subjectId: ctx.release.releaseDigest, packages, generator: `chant-lockfile-sbom/${LOCKFILE_NAMES[lock.kind]}` },
     () => (Number.isNaN(at.getTime()) ? new Date(0) : at),
   );
   return attachment("sbom", GENERATED_SBOM_FILE, doc.mediaType, new Uint8Array(Buffer.from(doc.bytes, "utf-8")));

@@ -156,6 +156,12 @@ vi.mock("../../lifecycle/release-revocation", async () => {
   return { ...actual, readRevokedCommits: async () => revokedCommits };
 });
 
+// #4168: the security groups and the release verification, set per test.
+let groups: string[] = [];
+let verification: { status: "verified" | "unsigned" | "unverified"; digestMatches: boolean; reason: string } = { status: "unsigned", digestMatches: true, reason: "no cut of the release carries a signature" };
+vi.mock("../../workspace/security", async (original) => ({ ...(await original<typeof import("../../workspace/security")>()), securityGroupsAt: () => new Set(groups) }));
+vi.mock("../../lifecycle/release-verify", async (original) => ({ ...(await original<typeof import("../../lifecycle/release-verify")>()), verifyRelease: async () => verification }));
+
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
@@ -214,6 +220,8 @@ beforeEach(() => {
   knownLabels.clear();
   outcomes.length = 0;
   revokedCommits.clear();
+  groups = [];
+  verification = { status: "unsigned", digestMatches: true, reason: "no cut of the release carries a signature" };
   removedTemplates.length = 0;
   ran.length = 0;
   stepInputs.length = 0;
@@ -569,6 +577,15 @@ describe("chant components promote --release binds its gate (#4045)", () => {
     expect(said).toMatch(/chant ci last-green/);
     expect(ran).toEqual([]);
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("under verified-releases a release that does not verify is refused before anything runs, and one that does goes on to its gate (#4168)", async () => {
+    groups = ["verified-releases"];
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(1);
+    expect(errors.join("\n")).toMatch(/release-unsigned: release v1\.0\.0 does not verify \(no cut of the release carries a signature\), and the workspace opts into verified-releases/);
+    expect(ran).toEqual([]);
+    verification = { status: "verified", digestMatches: true, reason: "signed by alice" };
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
   });
 
   test("an approval for one release can't be used by another", async () => {
