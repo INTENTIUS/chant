@@ -363,6 +363,36 @@
               "type": "string"
             }
           }
+        },
+        "composed": {
+          "type": "object",
+          "required": [
+            "branch",
+            "base",
+            "sources"
+          ],
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "base": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Added by #4168 4.3, written by chant 0.124.35 and newer. On a cut of a composed commit only: its chant/compose/<name> branch, the trunk commit it was composed on, and the trunk commits picked onto that base, oldest first."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Added by #4168 4.3, written by chant 0.124.35 and newer. The tag release publish moves in place of latest (an npm dist-tag, an image tag), from release cut --channel. Absent for latest."
         }
       }
     },

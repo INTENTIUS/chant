@@ -83,6 +83,10 @@ A revoked tag also revokes every [release](/chant/cli/release/#revoked-releases)
 
 Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag. With [signed tags](#signed-tags), the tick signs each tag it makes and judges the tags already there as every other reader does, so a hand-pushed tag doesn't count. Since chant never moves or deletes a tag, a hand-pushed tag that holds the name of a tag the tick would make stops it, and the tick says which tag to delete. A commit that names no work item, or a wrong one, has `; why unknown:` and the reason at the end of its line, as in `ci list`.
 
+### Compose branches
+
+The tick also fetches every `chant/compose/<name>` branch on `origin` ([#4168](https://github.com/INTENTIUS/chant/issues/4168), mode b). It judges each branch's first-parent commits within `window` that trunk does not have, by the same phases, and makes their tags. A tag's record names the compose branch, and with [signed tags](#signed-tags) its statement does too, so readers check it against that branch. Its output lists each branch and its composed commits after trunk's. Builds, retries and `_ci` records are trunk's only. When the tick revokes a trunk commit that a composed commit carries in its `Chant-Composed-From` trailer, it warns and names the composed commit, whose own tags decide its releases. [`release compose`](/chant/cli/release/#release-compose) makes the branches.
+
 ### Builds and records
 
 A run that was cancelled leaves its commit unbuilt, not red ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). A commit with no tag whose failed run has one attempt is held pending while the tick runs the failed job again, once: through the forge's re-run on GitHub, which needs `actions: write`, or with a build request for chant runs. A retry that has not started within an hour counts as the failure it was. A green commit's failure is never retried, since it is already a second run.

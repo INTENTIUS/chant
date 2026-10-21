@@ -1,0 +1,60 @@
+---
+title: Compose a Release
+description: Ship chosen trunk changes on top of a running release when trunk carries work that is not ready, from a pushed chant/compose branch.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/compose-a-release/.
+  Fetch trunk, the tags and the ledger branch, then run `npx chant release compose <name> --base <label> --pr <n>` in the member's directory for the release and pull requests I name, without `--yes`, and show me what it would pick and any conflict it names.
+  Do not run it with `--yes`, since that pushes the compose branch.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This page ships a few chosen changes on top of a release that is already out, for when trunk has moved on with work that is not ready. [Curate a Release](/chant/guide/curate-a-release/) covers the usual case, where some green sha of trunk is the release you want. Compose is for when none is: every green sha after the running release carries something that must stay out, and no flag guards it. The commands are in the [`chant release compose`](/chant/cli/release/#release-compose) reference.
+
+## Before you start
+
+The workspace tags green shas ([Tag Green Commits](/chant/guide/green-commits/)), and the release you compose on was cut by `chant release cut`. Fetch trunk with its tags, and the ledger branch, so compose can find each change.
+
+```bash
+git fetch origin --tags
+git fetch origin chant/lifecycle:chant/lifecycle
+```
+
+Your CI has to build the compose branch. On GitHub, add `chant/compose/**` to the `on: push: branches` of each workflow that holds a required phase. The tick workflow already runs every 15 minutes and judges composed commits on its next run.
+
+## Pick the changes and push the branch
+
+Name the release to compose on with `--base`, and each change by its pull request or its work item. Without `--yes` it is a dry run. It makes the picks in a temporary worktree, so a conflict shows now.
+
+```bash
+chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache
+```
+
+A pull request is found by its merge record `_merges/<sha>.json` or by the `(#412)` a squash merge puts at the end of the subject. A work item is found by a `Chant-Record: work:<id>` trailer on the commit, or a merge record that names it. Every match on trunk's first-parent line after the base is picked, oldest first.
+
+When the picks are right, run it again with `--yes`. Each commit is cherry-picked onto the base with a `Chant-Composed-From: <sha>` trailer naming the trunk commit, and the branch `chant/compose/<name>` is pushed so CI builds it.
+
+```bash
+chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache --yes
+```
+
+To add a change later, run it again with the same name and the new `--pr` or `--work`. The branch keeps its base, and changes it already carries are skipped, so `--base` can be left off.
+
+## When a change does not apply
+
+A change that needs a commit the compose left out stops the compose with `compose-conflict`. The message names the change and the files it conflicts in, and nothing is written or pushed. Either compose without that change, or resolve the conflict by hand in a pull request to `chant/compose/<name>` that cherry-picks the change and fixes the files. A hand-made commit carries no trailer, and the cut still records the trunk changes the others name.
+
+## Cut the composed commit
+
+Once the tick has tagged the branch's tip green, cut it with `--at`. Pass `--channel` so the publish moves that tag, such as `hotfix`, instead of `latest`.
+
+```bash
+git fetch origin --tags
+chant release cut v1.4.1 --at "$(git rev-parse origin/chant/compose/hotfix-1-4)" --channel hotfix --build "npm run build" --yes
+```
+
+The cut records the compose branch, the base and the trunk commits it carries. Delivery metrics measure its lead time from the earliest of those trunk commits. If a trunk commit it carries is revoked later, the tick warns and names the composed commit. The composed commit keeps its own green tag until its own CI fails.
+
+## Then
+
+[Release from Your Workstation](/chant/guide/release-from-workstation/) publishes the cut, and [Promote a Release](/chant/guide/promote-a-release/) moves it through the environments.

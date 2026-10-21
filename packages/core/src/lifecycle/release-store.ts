@@ -149,6 +149,17 @@ export interface ReleaseCut {
    * unsigned cut, and on every cut written before 0.124.28.
    */
   signature: string | null;
+  /**
+   * A cut of a composed commit (#4168 4.3): its compose branch, the base it
+   * was composed on, and the trunk commits picked onto the base, oldest
+   * first. Absent on a cut of a trunk commit.
+   */
+  composed?: { branch: string; base: string; sources: string[] };
+  /**
+   * The channel the release publishes to (#4168 4.3): the npm dist-tag or
+   * image tag a publish moves in place of `latest`. Absent for `latest`.
+   */
+  channel?: string;
 }
 
 /** The parts of a release a digest is computed from. */
@@ -364,7 +375,9 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         typeof c.timestamp === "string" &&
         (c.runOrigin === null || (typeof c.runOrigin === "object" && typeof c.runOrigin?.forge === "string")) &&
         (c.signature === null || c.signature === undefined || typeof c.signature === "string") &&
-        (c.runId === null || c.runId === undefined || typeof c.runId === "string");
+        (c.runId === null || c.runId === undefined || typeof c.runId === "string") &&
+        (c.channel === undefined || typeof c.channel === "string") &&
+        (c.composed === undefined || (typeof c.composed === "object" && c.composed !== null && typeof c.composed.base === "string" && Array.isArray(c.composed.sources)));
       if (!ok) {
         malformed++;
         continue;
@@ -444,6 +457,8 @@ export async function appendCut(
       runId: input.runId ?? null,
       runOrigin: input.runOrigin,
       signature: input.signature ?? null,
+      ...(input.composed ? { composed: input.composed } : {}),
+      ...(input.channel ? { channel: input.channel } : {}),
     };
     const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${JSON.stringify(cut, sortedJsonReplacer)}\n`;
     try {

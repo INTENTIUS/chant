@@ -15,7 +15,9 @@
  *   resolutions, for a deploy that names its release only through its
  *   admission (`releaseOfDeploy`, #4043);
  * - the counted `ci/revoked/<sha>` tags, judged as `release cut` judges them
- *   (`readRevokedCommits`, #4033), and each commit's committer time from git.
+ *   (`readRevokedCommits`, #4033), and each commit's committer time from git;
+ *   a composed commit (#4168 4.3) takes the earliest time of the trunk
+ *   commits it carries.
  *
  * Outside a workspace the project's own ledger is read as one member, `null`.
  * It reads the local branch and the local tags, and never fetches.
@@ -139,11 +141,18 @@ export async function deliveryMetrics(query: MetricsQuery): Promise<DeliveryMetr
     const { readRevokedCommits } = await import("../lifecycle/release-revocation");
     const revoked = await readRevokedCommits(root);
 
+    const { compositionOf } = await import("../lifecycle/compose-refs");
     const commitTimes = new Map<string, number | null>();
+    const ownTime = (sha: string): number | null => {
+      const iso = tryGit(top, ["show", "-s", "--format=%cI", `${sha}^{commit}`]);
+      return iso ? Date.parse(iso) : null;
+    };
     const commitTime = (sha: string): number | null => {
       if (!commitTimes.has(sha)) {
-        const iso = tryGit(top, ["show", "-s", "--format=%cI", `${sha}^{commit}`]);
-        commitTimes.set(sha, iso ? Date.parse(iso) : null);
+        // #4168 4.3: a composed commit's lead time runs from the earliest trunk commit it carries.
+        const sources = compositionOf(top, sha)?.sources ?? [];
+        const times = sources.map(ownTime).filter((t): t is number => t !== null);
+        commitTimes.set(sha, times.length > 0 ? Math.min(...times) : ownTime(sha));
       }
       return commitTimes.get(sha)!;
     };

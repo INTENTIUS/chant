@@ -20,6 +20,11 @@
  *   release candidates [--env <env>] [--json]
  *       the green commits of trunk a release can be cut from, each with what it
  *       would ship, and what each environment runs (#4168 4.2)
+ *   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
+ *       pick chosen trunk changes onto a base, each with a Chant-Composed-From
+ *       trailer, on the pushed branch chant/compose/<name> (#4168 4.3); a dry
+ *       run unless --yes. `release cut` takes a green commit of that branch,
+ *       and `--channel <tag>` makes its publish move that tag, not latest
  *   release list [--json]
  *       every release of this member with its targets, its cuts and where it runs;
  *       `--json` prints the read contract's `releases` document
@@ -42,7 +47,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release candidates [--env <env>] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -155,6 +160,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     let trunk: import("../../lifecycle/release-workstation").Trunk | null = null;
     let signers: readonly import("../../workspace/trust/trust-files").Signer[] = [];
     let member: string | null = null;
+    let composed: { branch: string; base: string; sources: string[] } | undefined;
     if (args.at !== undefined && !top) {
       return fail("not-a-git-repository", "--at names a commit, and this directory is not in a git repository");
     }
@@ -169,7 +175,18 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const { releaseRuleFrom } = await import("../../workspace/identity");
       const source = scopeSource(cwd);
       trunk = ws.resolveTrunk(top, source.declaration?.ci?.green?.branch ?? null);
-      ws.checkOnTrunk(top, commit, trunk);
+      try {
+        ws.checkOnTrunk(top, commit, trunk);
+      } catch (err) {
+        // #4168 4.3: a commit of a pushed compose branch is cut too, and the cut records what it carries.
+        if (!(err instanceof ws.WorkstationCheckError) || err.code !== "release-commit-not-on-trunk") throw err;
+        const refs = await import("../../lifecycle/compose-refs");
+        const on = refs.composeBranchContaining(top, commit, trunk.remote);
+        const trunkRef = `refs/remotes/${trunk.remote}/${trunk.branch}`;
+        const composition = on ? refs.compositionOnTrunk(top, commit, trunkRef, on.branch) : null;
+        if (!on || !composition) throw err;
+        composed = { branch: on.branch, base: composition.base, sources: composition.sources };
+      }
       signers = releaseRuleFrom(source).rule.signers.signers;
       const { resolveMemberLedger } = await import("../../lifecycle/member-ledger");
       const ledger = await resolveMemberLedger(cwd);
@@ -206,7 +223,15 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
     const cutCwd = checkout?.memberDir ?? cwd;
     const compiler = spawnTargetCompiler(compileInputs(ctx, params, cutCwd, label));
-    const request = { cwd: cutCwd, compiler, label, actor, ...(args.sign !== undefined ? { sign: args.sign } : {}) };
+    const request = {
+      cwd: cutCwd,
+      compiler,
+      label,
+      actor,
+      ...(args.sign !== undefined ? { sign: args.sign } : {}),
+      ...(composed ? { composed } : {}),
+      ...(args.channel ? { channel: args.channel } : {}),
+    };
 
     if (dryRun) {
       const plan = await planRelease(request);
@@ -233,6 +258,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         actorSource: who.source,
         run: ci ? { runId: ci.runId, runOrigin: ci.runOrigin } : { runId: null, runOrigin: { forge: "local" as const } },
         trunk,
+        composed: composed ?? null,
+        channel: args.channel ?? null,
         at: args.at !== undefined ? { ref: args.at, commit } : null,
         sign: args.sign !== undefined ? { key: publicKey !== null ? publicKey.split(" ")[0] : null, readable: publicKey !== null } : null,
         tag: tag ? { name: tag.name, exists: tag.state === "present" } : null,
@@ -244,7 +271,13 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         return 0;
       }
       const name = plan.label ? formatBold(plan.label) : "an unlabelled release";
-      console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${trunk ? ` (on ${trunk.remote}/${trunk.branch}, green)` : ""}`);
+      const where = composed
+        ? ` (on ${trunk!.remote}/${composed.branch}, composed on ${composed.base.slice(0, 12)} from ${composed.sources.length} trunk commit(s), green)`
+        : trunk
+          ? ` (on ${trunk.remote}/${trunk.branch}, green)`
+          : "";
+      console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${where}`);
+      if (args.channel) console.log(`  channel ${args.channel}: a publish moves ${args.channel}, not latest`);
       if (plan.alreadyCut) console.log(`  already cut as ${plan.alreadyCut}: the cut would record nothing new`);
       console.log(`  actor ${actor} (from ${describeActorSource(who.source)})`);
       console.log(`  run ${ci ? `${ci.runId} (${ci.runOrigin.forge})` : "minted on this machine at the cut (local)"}`);
@@ -299,7 +332,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (args.json) {
       console.log(
         JSON.stringify(
-          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, actor, actorSource: who.source, tag: tagged, next },
+          { dryRun: false, release: result.release, label: result.label, cut: result.cut, stored: result.stored, reused: result.reused, actor, actorSource: who.source, tag: tagged, composed: composed ?? null, channel: args.channel ?? null, next },
           null,
           2,
         ),
@@ -308,7 +341,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const name = result.label ? formatBold(result.label) : "unlabelled release";
       if (result.cut) console.error(formatSuccess(`Cut ${name}: ${result.release.releaseDigest}`));
       else console.error(formatSuccess(`Already cut${result.label ? ` as ${formatBold(result.label)}` : ""}: ${result.release.releaseDigest}`));
-      console.error(`  commit ${result.release.commit}`);
+      console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}`);
+      if (args.channel) console.error(`  channel ${args.channel}`);
       if (result.cut) console.error(`  ${result.cut.signature ? `signed by ${result.cut.actor}` : `not signed; actor ${result.cut.actor}`}, run ${result.cut.runId}`);
       console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
       for (const r of result.reused) console.error(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
@@ -386,7 +420,8 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   // The warnings go to stderr with --json too, before any target runs.
   if (signatureWarning) console.error(formatWarning({ message: signatureWarning }));
   if (warning) console.error(formatWarning({ message: warning }));
-  const pctx = publishContext(prepared, { cwd, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
+  // #4168 4.3: a release cut with --channel moves that tag, not latest.
+  const pctx = publishContext(prepared, { cwd, tag: prepared.channel, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
 
   // Every target is planned before any publishes, so a missing file or credential stops the publish with nothing sent.
   const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
@@ -665,4 +700,66 @@ export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
 export async function runReleaseUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({ message: `Unknown release subcommand: ${ctx.args.path}`, hint: USAGE }));
   return 1;
+}
+
+/**
+ * `release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]`
+ * (#4168 4.3): pick the chosen trunk changes onto a base, on
+ * `chant/compose/<name>` (../../lifecycle/release-compose.ts). A dry run
+ * unless `--yes`, which moves the branch and pushes it so CI builds it.
+ */
+export async function runReleaseCompose(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const name = args.extraPositional;
+  if (!name) {
+    console.error(formatError({ message: "release compose needs a name for the compose branch", hint: USAGE }));
+    return 1;
+  }
+  const cwd = resolve(".");
+  const { composeRelease, ComposeError } = await import("../../lifecycle/release-compose");
+  const ws = await import("../../lifecycle/release-workstation");
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const top = (() => {
+    try {
+      return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      return null;
+    }
+  })();
+  if (!top) {
+    console.error(formatError({ message: "a compose picks commits, and this directory is not in a git repository [not-a-git-repository]" }));
+    return 1;
+  }
+  const trunk = ws.resolveTrunk(top, scopeSource(cwd).declaration?.ci?.green?.branch ?? null);
+  try {
+    const r = await composeRelease({
+      cwd,
+      name,
+      ...(args.base !== undefined ? { base: args.base } : {}),
+      prs: args.prs ?? [],
+      works: args.works ?? [],
+      yes: args.yes === true,
+      trunk,
+    });
+    if (args.json) {
+      console.log(JSON.stringify({ dryRun: args.yes !== true, ...r, next: r.written || r.pushed ? [`chant release cut <label> --at ${r.tip}`] : [sameWithYes(process.argv.slice(2))] }, null, 2));
+      return 0;
+    }
+    const verb = args.yes === true ? "Composed" : "Dry run: would compose";
+    console.log(`${verb} ${formatBold(r.branch)} on ${r.base.slice(0, 12)}${r.from ? `, after ${r.from.slice(0, 12)}` : ""}`);
+    for (const s of r.picked) console.log(`  pick ${s.commit.slice(0, 12)}  ${s.subject}  [${s.chosenBy.join(", ")}]`);
+    for (const s of r.already) console.log(`  carried already ${s.commit.slice(0, 12)}  ${s.subject}`);
+    if (r.picked.length === 0) console.log("  nothing new to pick");
+    console.log(`  tip ${r.tip.slice(0, 12)}${r.pushed ? `, pushed to ${trunk.remote}` : ""}`);
+    if (args.yes !== true) console.error(`Dry run: no branch was moved or pushed. Run again with --yes: ${sameWithYes(process.argv.slice(2))}`);
+    else console.error(`Next: once CI tags ${r.tip.slice(0, 12)} green, cut it: chant release cut <label> --at ${r.tip} --channel <channel>`);
+    return 0;
+  } catch (err) {
+    if (err instanceof ComposeError) {
+      if (args.json) console.log(JSON.stringify({ error: { code: err.code, message: err.message, ...(err.conflict ? { conflict: err.conflict } : {}) } }, null, 2));
+      console.error(formatError({ message: `${err.message} [${err.code}]`, ...(err.fix ? { hint: err.fix } : {}) }));
+      return 1;
+    }
+    throw err;
+  }
 }

@@ -102,6 +102,10 @@ export interface CutRequest {
    * must be the principal the signers file lists the key for.
    */
   sign?: string | true;
+  /** The composition of a composed commit (#4168 4.3), recorded on the cut. */
+  composed?: { branch: string; base: string; sources: string[] };
+  /** The publish channel recorded on the cut (#4168 4.3), in place of `latest`. */
+  channel?: string;
 }
 
 export interface CutResult {
@@ -501,6 +505,8 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       runId: ci?.runId ?? `local-${Date.parse(timestamp)}`,
       runOrigin: ci?.runOrigin ?? { forge: "local" },
       signature,
+      ...(req.composed ? { composed: req.composed } : {}),
+      ...(req.channel ? { channel: req.channel } : {}),
     },
     { cwd },
   );

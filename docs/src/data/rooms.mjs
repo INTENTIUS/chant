@@ -387,6 +387,7 @@ export const ROOMS = [
 			{ label: 'Link commits to work items', href: 'guide/work-items#link-commits-to-work-items' },
 			{ label: 'Curate a Release', href: 'guide/curate-a-release' },
 			{ label: 'Land Without a Pull Request', href: 'guide/land-without-a-pull-request' },
+			{ label: 'Compose a Release', href: 'guide/compose-a-release' },
 			{ label: 'Release from Your Workstation', href: 'guide/release-from-workstation' },
 			{ label: 'Promote a Release', href: 'guide/promote-a-release' },
 			{ label: 'Feature Flags', href: 'guide/feature-flags' },

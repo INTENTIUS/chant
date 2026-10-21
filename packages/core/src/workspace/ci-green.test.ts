@@ -531,3 +531,36 @@ describe("chant ci list (#4021)", () => {
     }
   });
 });
+
+describe("chant ci tick walks compose branches (#4168 4.3)", () => {
+  test("judges composed commits, names their branch in the tag, and warns when a source they carry is revoked", async () => {
+    const { root, origin } = workspace();
+    const a = commitAt(root, 5, "app/a.txt");
+    const b = commitAt(root, 4, "app/b.txt");
+    push(root);
+    // A composed commit on a, picking b.
+    git(root, "checkout", "-q", "-b", "chant/compose/hf", a);
+    writeFiles(root, { "app/b.txt": "app/b.txt 4\n" });
+    gitAt(root, hoursAgo(2), "add", "-A");
+    gitAt(root, hoursAgo(2), "commit", "-q", "-m", `app/b.txt\n\nChant-Composed-From: ${b}`);
+    const c = git(root, "rev-parse", "HEAD");
+    git(root, "push", "-q", "origin", "chant/compose/hf");
+    git(root, "checkout", "-q", "main");
+
+    const runs = new Map([
+      [a, PASSING],
+      [b, PASSING],
+      [c, PASSING],
+    ]);
+    const first = await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+    expect(first.composed.map((x) => [x.branch, x.commits.map((k) => k.sha)])).toEqual([["chant/compose/hf", [c]]]);
+    expect(first.made.sort()).toEqual([`ci/green/${a}`, `ci/green/${b}`, `ci/green/${c}`].sort());
+    const note = git(origin, "tag", "-l", "--format=%(contents)", `ci/green/${c}`);
+    expect(JSON.parse(note.slice(note.indexOf("{")))).toMatchObject({ tag: "green", commit: c, branch: "chant/compose/hf" });
+
+    runs.set(b, [...PASSING, run(9, "lint", "failure")]);
+    const revoke = await ciTick({ cwd: root, forge: fakeForge(runs), now: NOW });
+    expect(revoke.made).toEqual([`ci/revoked/${b}`]);
+    expect(revoke.warnings.join("\n")).toContain(`chant/compose/hf carries it as ${c.slice(0, 12)}`);
+  });
+});
