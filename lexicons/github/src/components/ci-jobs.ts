@@ -9,7 +9,7 @@
  */
 
 import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
-import { GITHUB_JOB_TOKEN, pushBranches } from "@intentius/chant/ci-jobs";
+import { BUILD_REQUEST_TAGS, GITHUB_JOB_TOKEN, pushBranches } from "@intentius/chant/ci-jobs";
 import type { OpTrigger } from "@intentius/chant/lexicon";
 import { actionRef } from "../action-pins";
 
@@ -70,8 +70,22 @@ export function onTrigger(trigger: OpTrigger): Record<string, unknown> {
     case "pull_request":
       return { pull_request: trigger.branches && trigger.branches.length > 0 ? { branches: trigger.branches } : {} };
     case "push":
-      return { push: { branches: pushBranches(trigger.branches) } };
+      // #4169: a newest build runs at each build request's tag too, and by hand.
+      return trigger.build === "newest"
+        ? { push: { branches: pushBranches(trigger.branches), tags: [BUILD_REQUEST_TAGS] }, workflow_dispatch: {} }
+        : { push: { branches: pushBranches(trigger.branches) } };
   }
+}
+
+/**
+ * A push Op's concurrency group (#4169): one per commit under `build:
+ * "every"`, so no push cancels or replaces another's run; one per ref under
+ * `newest`, so the newest push waits and each build request's tag runs on its
+ * own; and the Op's own name otherwise, one run at a time.
+ */
+export function opConcurrencyGroup(jobName: string, trigger: OpTrigger): string {
+  if (trigger.kind !== "push" || !trigger.build) return jobName;
+  return trigger.build === "every" ? `${jobName}-\${{ github.sha }}` : `${jobName}-\${{ github.ref }}`;
 }
 
 /**

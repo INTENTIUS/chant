@@ -32,18 +32,30 @@
       "branch": "main",
       "window": "24h",
       "phases": {
-        "check": [
-          "check"
-        ],
-        "test": [
-          "test"
-        ],
-        "validate": [
-          "validate"
-        ],
-        "suites": [
-          "suites"
-        ]
+        "check": {
+          "runs": [
+            "check"
+          ],
+          "build": "every"
+        },
+        "test": {
+          "runs": [
+            "test"
+          ],
+          "build": "every"
+        },
+        "validate": {
+          "runs": [
+            "validate"
+          ],
+          "build": "every"
+        },
+        "suites": {
+          "runs": [
+            "suites"
+          ],
+          "build": "newest"
+        }
       },
       "require": [
         "check",

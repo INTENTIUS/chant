@@ -208,6 +208,17 @@ describe("generateGithubOpPipeline: trigger kinds (#2084)", () => {
     expect(result.jobs[0].trigger).toEqual({ kind: "push", branches: ["release"] });
   });
 
+  test("a push trigger's build (#4169): newest runs at build request tags and by hand, one group per ref; every, one group per commit", () => {
+    const newest = parseFile(generateGithubOpPipeline([{ name: "suites", trigger: { kind: "push", build: "newest" } }]).files[0].yaml);
+    expect(newest.on).toEqual({ push: { branches: ["main"], tags: ["ci/build/**"] }, workflow_dispatch: {} });
+    expect(newest.concurrency).toEqual({ group: "suites-${{ github.ref }}", "cancel-in-progress": false });
+    const every = parseFile(generateGithubOpPipeline([{ name: "suites", trigger: { kind: "push", build: "every" } }]).files[0].yaml);
+    expect(every.on).toEqual({ push: { branches: ["main"] } });
+    expect(every.concurrency).toEqual({ group: "suites-${{ github.sha }}", "cancel-in-progress": false });
+    const plain = parseFile(generateGithubOpPipeline([{ name: "suites", trigger: { kind: "push" } }]).files[0].yaml);
+    expect(plain.concurrency).toEqual({ group: "suites", "cancel-in-progress": false });
+  });
+
   test("push trigger defaults to the repository default branch (main) when branches is omitted", () => {
     const result = generateGithubOpPipeline([{ name: "tf-apply", trigger: { kind: "push" } }]);
     const doc = parseFile(result.files[0].yaml);

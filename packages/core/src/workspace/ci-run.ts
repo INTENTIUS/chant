@@ -945,7 +945,7 @@ const USAGE =
   "chant ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--require-review] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -968,11 +968,36 @@ export function ciSecretsOf(flag: string | undefined, env: Record<string, string
   return file === undefined ? undefined : readCiSecrets(resolve(file));
 }
 
+/**
+ * `chant ci run --at <sha>` (#4169): ask for every required phase to be built
+ * at a commit of the green branch. On GitHub, with a token in the
+ * environment, the workflows holding the phases start at once.
+ */
+async function requestBuildCommand(at: string): Promise<number> {
+  const { requestBuild } = await import("./ci-green");
+  const { ciForgeFromEnv } = await import("./ci-green-forge");
+  let forge: Awaited<ReturnType<typeof ciForgeFromEnv>> | undefined;
+  try {
+    forge = process.env.GITHUB_REPOSITORY ? ciForgeFromEnv("github") : undefined;
+  } catch {
+    forge = undefined;
+  }
+  const r = await requestBuild({ cwd: process.cwd(), at, ...(forge ? { forge } : {}) });
+  for (const w of r.warnings) console.error(formatWarning({ message: w }));
+  const what = `${r.request.phases.join(", ")} at ${r.request.commit.slice(0, 12)}`;
+  console.log(
+    `${r.existed ? `${r.request.tag} already asks for a build` : `Asked for ${what}: ${r.request.tag}`}. ` +
+      (r.dispatched.length > 0 ? `Started ${r.dispatched.join(", ")}.` : "The next ci tick starts it on GitHub, and ci serve --build-command serves it for chant runs."),
+  );
+  return 0;
+}
+
 /** `chant ci run plan|apply` (#4094). */
 export async function runCiRun(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   try {
     if (args.setupKey) return (await import("./ci-serve")).runnerKeySetupCommand(ctx);
+    if (args.at !== undefined && args.extraPositional === undefined) return await requestBuildCommand(args.at);
     const job = args.extraPositional;
     if (job !== "plan" && job !== "apply") throw new CiRunError(`ci run takes the job to run, plan or apply${job ? `, not ${JSON.stringify(job)}` : ""}`);
     if (!args.env) throw new CiRunError("--env names the environment the pipeline is for, as chant build --components --generate <lexicon> --pr-loop took it: --env <env>");

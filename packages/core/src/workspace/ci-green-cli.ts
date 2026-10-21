@@ -8,7 +8,8 @@
  *                                        tag the commits that turned green, revoke the ones that turned red
  *   ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
  *               [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]
- *                                        write the root CI file that runs the tick
+ *                                        write the root CI file that runs the tick, and the triggers and
+ *                                        concurrency of the workflows holding a phase that sets build (#4169)
  *
  * The tick signs its tags with a runner key (#4031) from `--key <file>` or
  * the PEM in `CHANT_RUNNER_KEY`, which the generated workflow sets from the
@@ -30,7 +31,7 @@ import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
 import { ciList, ciTick, CiGreenError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
-import { ACTIONS_NAME, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
+import { ACTIONS_NAME, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
 import { readDeclaration, readerVersion, WorkspaceReadError, type CiSource } from "./declaration";
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
@@ -143,7 +144,10 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const target = ctx.args.output ? resolve(realpathSync(cwd), ctx.args.output) : join(repoRoot, CI_GREEN_WORKFLOW_FILE);
     const fromRepo = relative(repoRoot, target).split(sep).join("/");
 
-    const scan = workflowsHolding(green, readWorkflowSources(repoRoot, fromRepo));
+    const sources = readWorkflowSources(repoRoot, fromRepo);
+    const scan = workflowsHolding(green, sources);
+    // #4169: the triggers and concurrency of the workflows holding a phase that sets build. Refused before anything is written.
+    const edits = buildTriggerEdits(green, sources);
     const extra = ctx.args.ciWorkflows ?? [];
     const workflows = [...new Set([...scan.workflows, ...extra])].sort();
     for (const f of scan.unreadable) console.error(`warning: ${f} is not valid YAML, so its jobs were not read`);
@@ -172,6 +176,15 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
     console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}, and every 15 minutes.`);
+    for (const e of edits) {
+      if (!e.changed) continue;
+      const path = writeWorkflowFile(join(repoRoot, e.path), e.text);
+      console.log(
+        e.build === "newest"
+          ? `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} the newest commit on ${green.branch} when a run ends, and a ci/build/<sha> tag by hand.`
+          : `Wrote ${path}'s concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} every commit on ${green.branch}, none cancelled.`,
+      );
+    }
     return 0;
   } catch (err) {
     console.error(formatError({ message: `chant ci workflow: ${describe(err)}`, hint: USAGE }));

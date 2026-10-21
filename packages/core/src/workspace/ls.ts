@@ -142,7 +142,8 @@ export interface LsDiagram {
 export interface LsCiGreen {
   branch: string;
   window: string;
-  phases: { name: string; runs: string[]; skipped: "pass" | "fail" }[];
+  /** `build` is present only when the declaration sets it (#4169). */
+  phases: { name: string; runs: string[]; skipped: "pass" | "fail"; build?: "every" | "newest" }[];
   require: string[];
   /** The first commit whose ci tags need a signed statement (#4031). Present only when the declaration sets it. */
   signedSince?: string;
@@ -328,7 +329,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
               ? {
                   branch: declaration.ci.green.branch,
                   window: declaration.ci.green.window,
-                  phases: declaration.ci.green.phases.map((p) => ({ name: p.name, runs: p.runs, skipped: p.skipped })),
+                  phases: declaration.ci.green.phases.map((p) => ({ name: p.name, runs: p.runs, skipped: p.skipped, ...(p.build ? { build: p.build } : {}) })),
                   require: declaration.ci.green.require,
                   ...(declaration.ci.green.signedSince !== null ? { signedSince: declaration.ci.green.signedSince } : {}),
                   ...(declaration.ci.green.source === "runs" ? { source: "runs" as const } : {}),

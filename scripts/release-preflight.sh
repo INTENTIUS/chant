@@ -68,6 +68,16 @@ fi
 ci_branch=$(git show origin/main:chant.workspace.json 2>/dev/null | jq -r '.ci.green.branch // empty' 2>/dev/null || true)
 if [ "$ci_branch" = "main" ]; then
   git fetch --quiet --prune origin '+refs/tags/ci/*:refs/tags/ci/*' 2>/dev/null || fail "could not fetch the ci tags from origin."
+  # #4169: each commit's _ci/<sha>.json record says why it is not green. Optional: without the branch nothing is said.
+  git fetch --quiet origin '+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle' 2>/dev/null || true
+  why_not_green() { # <newest commit> <count> -> one line per commit above the released one, from its record
+    git rev-list --first-parent --max-count "$2" "$1" | head -n 10 | while read -r s; do
+      local why
+      why=$(git show "refs/remotes/origin/chant/lifecycle:_ci/$s.json" 2>/dev/null \
+        | jq -r '[.state] + ([.phases[]? | select(.reason or .culprit) | "\(.reason // "red")\(if .culprit then ", culprit \(.culprit[0:12])" else "" end)"] | unique) | join(", ")' 2>/dev/null || true)
+      echo "preflight:   $(short "$s") ${why:-has no record}" >&2
+    done
+  }
   signed_since=$(git show origin/main:chant.workspace.json 2>/dev/null | jq -r '.ci.green.signedSince // empty' 2>/dev/null || true)
   if [ -n "$signed_since" ]; then
     # #4031: chant judges each tag's statement against the runner keys on main.
@@ -86,7 +96,10 @@ if [ "$ci_branch" = "main" ]; then
     fi
     c=$(last_green "$main")
     [ -n "$c" ] || fail "no commit on main has a ci/green tag that counts without a ci/revoked one (ci.green.signedSince is $signed_since)."
-    [ "$c" != "$main" ] && echo "preflight: newer commit(s) on main are not tagged ci/green; releasing an older one" >&2
+    if [ "$c" != "$main" ]; then
+      echo "preflight: newer commit(s) on main are not tagged ci/green; releasing an older one" >&2
+      why_not_green "$main" "$(git rev-list --first-parent --count "$c..$main")"
+    fi
     echo "preflight: $(short "$c") is the newest commit on main tagged ci/green ✓" >&2
     echo "$c"
     exit 0
@@ -104,7 +117,10 @@ if [ "$ci_branch" = "main" ]; then
   skipped=0
   for c in $(git rev-list --first-parent --max-count 200 "$main"); do
     if ci_green "$c"; then
-      [ "$skipped" -gt 0 ] && echo "preflight: $skipped newer commit(s) on main are not tagged ci/green; releasing an older one" >&2
+      if [ "$skipped" -gt 0 ]; then
+        echo "preflight: $skipped newer commit(s) on main are not tagged ci/green; releasing an older one" >&2
+        why_not_green "$main" "$skipped"
+      fi
       echo "preflight: $(short "$c") is the newest commit on main tagged ci/green ✓" >&2
       echo "$c"
       exit 0

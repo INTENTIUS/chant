@@ -37,6 +37,14 @@
  * - `[skip ci]` (#4122). A target head or pull request head whose commit
  *   message says `[skip ci]` or `[ci skip]` is recorded as seen and not run,
  *   as Actions does.
+ * - Build requests (#4169). With `buildCommand`, each `ci/build/<sha>`
+ *   tag the tick or `ci run --at` pushed is served once: the command runs
+ *   in a fresh detached worktree of the commit, with `CHANT_BUILD_COMMIT`,
+ *   `CHANT_BUILD_PHASES` (comma-separated) and `CHANT_BUILD_REASON` set,
+ *   and is expected to run the phases' Ops (`chant run <op>`), whose
+ *   records the tick reads. A build counts against `maxJobs`, and the state
+ *   file keeps it under `build:<sha>`. Without `buildCommand` the tags are
+ *   left alone.
  * - The forge's ledger (#4121). Before each job, when no other job of this
  *   serve runs, the clone's `chant/lifecycle` follows the forge's: it is
  *   deleted when the forge has none, and reset to the forge's when neither
@@ -54,9 +62,11 @@
  * turn a checked payload into the same triggers and schedule them.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { CI_BUILD_TAG_PREFIX, readBuildRequests, type BuildRequest } from "./ci-builds";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
 import { forgeFromEnv, type OpenPullRequest } from "../pr-forge";
 import type { CommandContext } from "../cli/registry";
@@ -116,6 +126,8 @@ export interface CiServeState {
   jobs: Record<string, CiServeJobState>;
   /** Plans seen and not run, by state key, with why (#4122). */
   skipped?: Record<string, "skip-ci">;
+  /** The build requests served (#4169), by `build:<sha>`, with how each ended. */
+  builds?: Record<string, { tag: string; status: "running" | "ok" | "fail"; startedAt: string; settledAt?: string }>;
 }
 
 /** What a pass did, in order, for the log. */
@@ -128,6 +140,7 @@ export type CiServeEvent =
   | { type: "settled"; job: CiJobName; commit: string; pr?: number; status: "ok" | "fail"; failure?: string; report?: string }
   | { type: "not-run"; job: CiJobName; commit: string; pr?: number; reason: "not-fast-forward" | "skip-ci"; branch?: string; from?: string }
   | { type: "ledger"; action: "deleted" | "reset"; local: string; forge?: string }
+  | { type: "build"; commit: string; phases: string[]; status: "started" | "ok" | "fail" | "held"; exitCode?: number }
   | { type: "error"; message: string };
 
 /** The `ciRun` request fields `ci serve` passes through to every job: the generator's options and the runner's. */
@@ -158,11 +171,19 @@ export interface CiServeOptions {
   now?: () => Date;
   /** Runs a job. Default {@link ciRun}. */
   run?: (req: CiRunRequest) => Promise<CiRunResult>;
+  /**
+   * The shell line that builds a requested commit (#4169), run in a fresh
+   * worktree of it. Without it `ci/build/<sha>` tags are not served.
+   */
+  buildCommand?: string;
+  /** Runs a build. Default: `sh -c <buildCommand>` in a detached worktree of the commit. */
+  build?: (input: { top: string; request: BuildRequest; command: string }) => Promise<number>;
 }
 
 /** The jobs this process runs now, by state key, shared by every pass of one loop. */
 export interface CiServeRuntime {
-  inflight: Map<string, Promise<CiServeJobState>>;
+  /** Jobs and build requests (#4169) alike, by state key: they share `maxJobs`. */
+  inflight: Map<string, Promise<unknown>>;
 }
 
 export const newCiServeRuntime = (): CiServeRuntime => ({ inflight: new Map() });
@@ -522,13 +543,87 @@ async function runJob(
   }
 }
 
-/** One pass: observe, schedule, and with `wait` wait for the jobs it started. */
+/** One pass: observe, schedule, serve build requests, and with `wait` wait for the jobs it started. */
 export async function ciServePass(opts: CiServeOptions, rt: CiServeRuntime = newCiServeRuntime(), wait = true): Promise<{ events: CiServeEvent[]; jobs: CiServeJobState[] }> {
   const observed = await ciServeObserve(opts, rt);
   for (const e of observed.events) opts.log?.(e);
   const scheduled = await ciServeSchedule(opts, observed.triggers, rt);
+  const builds = opts.buildCommand ? ciServeBuilds(opts, rt) : { started: [], events: [] };
   const jobs = wait ? await Promise.all(scheduled.started) : [];
-  return { events: [...observed.events, ...scheduled.events], jobs };
+  if (wait) await Promise.all(builds.started);
+  return { events: [...observed.events, ...scheduled.events, ...builds.events], jobs };
+}
+
+/**
+ * Serve the build requests (#4169): fetch the `ci/build/*` tags, and start
+ * `buildCommand` for each one not in the state file yet, oldest first, while
+ * fewer than `maxJobs` jobs run. A build that fails is recorded and not run
+ * again; the tick decides what its phases say.
+ */
+export function ciServeBuilds(opts: CiServeOptions, rt: CiServeRuntime): { started: Promise<void>[]; events: CiServeEvent[] } {
+  const place = servePlace(opts);
+  const fresh = { forge: opts.forge, repo: opts.repo, env: opts.env, branch: place.branch, ...(place.member ? { member: place.member } : {}) };
+  const update = (fn: (s: CiServeState) => void): void => {
+    const st = readCiServeState(place.stateFile, fresh);
+    fn(st);
+    writeState(place.stateFile, st);
+  };
+  const events: CiServeEvent[] = [];
+  const started: Promise<void>[] = [];
+  tryGit(place.top, ["fetch", "--quiet", "--prune", "origin", `+refs/tags/${CI_BUILD_TAG_PREFIX}*:refs/tags/${CI_BUILD_TAG_PREFIX}*`]);
+  const served = readCiServeState(place.stateFile, fresh).builds ?? {};
+  const max = opts.maxJobs ?? 1;
+  const now = opts.now ?? (() => new Date());
+  const requests = [...readBuildRequests(place.top).values()].sort((a, b) => a.at.localeCompare(b.at));
+  for (const request of requests) {
+    const key = `build:${request.commit}`;
+    if (served[key]?.tag === request.tag || rt.inflight.has(key)) continue;
+    const log = (e: CiServeEvent) => {
+      events.push(e);
+      opts.log?.(e);
+    };
+    if (rt.inflight.size >= max) {
+      log({ type: "build", commit: request.commit, phases: request.phases, status: "held" });
+      continue;
+    }
+    update((st) => {
+      st.builds = { ...st.builds, [key]: { tag: request.tag, status: "running", startedAt: now().toISOString() } };
+    });
+    log({ type: "build", commit: request.commit, phases: request.phases, status: "started" });
+    const build = opts.build ?? runBuild;
+    const job = build({ top: place.top, request, command: opts.buildCommand! })
+      .catch(() => 1)
+      .then((code) => {
+        update((st) => {
+          st.builds = { ...st.builds, [key]: { tag: request.tag, status: code === 0 ? "ok" : "fail", startedAt: st.builds?.[key]?.startedAt ?? now().toISOString(), settledAt: now().toISOString() } };
+        });
+        opts.log?.({ type: "build", commit: request.commit, phases: request.phases, status: code === 0 ? "ok" : "fail", exitCode: code });
+      });
+    const tracked = job.finally(() => rt.inflight.delete(key));
+    rt.inflight.set(key, tracked);
+    started.push(tracked);
+  }
+  return { started, events };
+}
+
+/** `sh -c <command>` in a fresh detached worktree of the request's commit, removed after. Resolves to the exit code. */
+async function runBuild(input: { top: string; request: BuildRequest; command: string }): Promise<number> {
+  const dir = mkdtempSync(join(tmpdir(), "chant-ci-build-"));
+  try {
+    execFileSync("git", ["worktree", "add", "--quiet", "--detach", dir, input.request.commit], { cwd: input.top, stdio: ["ignore", "pipe", "pipe"] });
+    return await new Promise<number>((done) => {
+      const child = spawn("sh", ["-c", input.command], {
+        cwd: dir,
+        stdio: ["ignore", "inherit", "inherit"],
+        env: { ...process.env, CHANT_BUILD_COMMIT: input.request.commit, CHANT_BUILD_PHASES: input.request.phases.join(","), CHANT_BUILD_REASON: input.request.reason },
+      });
+      child.on("error", () => done(127));
+      child.on("close", (code) => done(code ?? 1));
+    });
+  } finally {
+    tryGit(input.top, ["worktree", "remove", "--force", dir]);
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -579,6 +674,11 @@ export function formatCiServeEvent(e: CiServeEvent): string {
       return e.action === "deleted"
         ? `the forge has no ${LEDGER}, so this clone's, at ${e.local.slice(0, 12)}, was deleted`
         : `the forge's ${LEDGER} at ${e.forge!.slice(0, 12)} does not contain this clone's at ${e.local.slice(0, 12)}, so this clone's was reset to the forge's and not pushed`;
+    case "build": {
+      const what = `the build of ${e.phases.join(", ")} at ${e.commit.slice(0, 12)}`;
+      if (e.status === "held") return `${what} waits: --max-jobs jobs run`;
+      return e.status === "started" ? `${what} started` : e.status === "ok" ? `${what} passed` : `${what} failed${e.exitCode !== undefined ? ` with exit code ${e.exitCode}` : ""}`;
+    }
     case "error":
       return `error: ${e.message}`;
   }
@@ -615,7 +715,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
 const USAGE =
   "chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
   "chant ci serve --forge forgejo|github --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
-  "[--author <login>]... [--once] [--rerun-failed] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
+  "[--author <login>]... [--once] [--rerun-failed] [--build-command <line>] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
   "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [--unsigned]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -680,6 +780,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       ...(args.maxJobs ? { maxJobs: args.maxJobs } : {}),
       ...(args.ciAuthors?.length ? { authors: args.ciAuthors } : {}),
       ...(args.rerunFailed ? { rerunFailed: true } : {}),
+      ...(args.ciBuildCommand ? { buildCommand: args.ciBuildCommand } : {}),
       job: {
         loop: ciLoopOptions(reportUrl ? { ...args, reportUrl } : args),
         ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),

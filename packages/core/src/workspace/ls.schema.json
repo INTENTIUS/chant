@@ -21,7 +21,8 @@
             "properties": {
               "name": { "type": "string" },
               "runs": { "type": "array", "items": { "type": "string" }, "description": "Check-run name patterns, * standing for any run of characters." },
-              "skipped": { "enum": ["pass", "fail"], "description": "What a run that finished as skipped counts as." }
+              "skipped": { "enum": ["pass", "fail"], "description": "What a run that finished as skipped counts as." },
+              "build": { "enum": ["every", "newest"], "description": "Added in contract 1 by #4169, written by chant 0.124.33 and newer, and only when the declaration sets it: whether the phase runs on every first-parent commit or only the newest one when a runner frees. Absent means every." }
             }
           }
         },

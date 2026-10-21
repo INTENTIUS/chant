@@ -249,7 +249,13 @@ CI:
                         chant/lifecycle; with ci.green.signedSince, the ones a
                         runner key signed. Pushes the
                         tags. --key, or the PEM in CHANT_RUNNER_KEY, signs
-                        each tag with a runner key.
+                        each tag with a runner key. A cancelled run leaves a
+                        commit unbuilt, not red, and a failed run is run
+                        again once. A phase with build: newest leaves the
+                        commits a newer run superseded unbuilt, and a red
+                        one starts a bisect: a ci/build/<sha> tag the tick
+                        starts the phase's workflow at. Each commit judged
+                        gets a _ci/<sha>.json record on chant/lifecycle.
   ci run plan|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>]
               [--forge github|gitlab|forgejo] [--gate <name>] [--wave-gate <name>]
               [--branch <name>] [--events-json] [--report-url <url>] [--image <image>]
@@ -300,13 +306,18 @@ CI:
                         /run/chant/runner-start.json), against the forge's
                         variables and .chant/trust.json at --base (default
                         origin/HEAD). Exits 1 unless it verifies.
+  ci run --at <sha>     Ask for every required phase at a commit of the
+                        green branch with a ci/build/<sha> tag, and start the
+                        workflows holding them there on GitHub when a token
+                        is set; otherwise the next tick, or ci serve
+                        --build-command, does.
   ci runs [--report-url <url>] [--json]
                         List the runs in the index at the report URL (default
                         the workspace's ci.reportUrl), newest first.
   ci serve --forge forgejo|github --repo <owner/repo> --env <env>
               [--interval <s>] [--max-jobs <n>] [--state <dir>]
               [--author <login>]... [--once] [--rerun-failed] [--unsigned]
-              [ci run's job flags]
+              [--build-command <line>] [ci run's job flags]
                         Poll the forge for open pull requests and the target
                         branch's head, and run ci run plan for each new pull
                         request head and ci run apply for each new commit on
@@ -318,7 +329,10 @@ CI:
                         failed apply or plan again. Signs runs with a runner
                         key when .chant/trust.json at the target's head lists
                         it, and serves unsigned otherwise; with
-                        ci.green.signedSince it refuses to start without one
+                        ci.green.signedSince it refuses to start without one.
+                        --build-command runs <line> once per ci/build/<sha>
+                        tag, in a fresh worktree of the commit, with
+                        CHANT_BUILD_COMMIT and CHANT_BUILD_PHASES set
   ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
                         Make the host's runner key (Ed25519, mode 0600) in the
                         state directory when there is none and print its public
@@ -336,7 +350,11 @@ CI:
                         or a GitHub App's id and key, pushes the tags with a
                         token that may tag commits changing workflow files.
                         --runner-key-secret hands the tick the runner key it
-                        signs its tags with.
+                        signs its tags with. For each phase that sets build,
+                        it also writes the triggers and concurrency of the
+                        workflows holding it: newest builds on pushes and by
+                        hand, one run at a time, and every gives each commit
+                        a run of its own.
 
 Releases:
   release cut [<label>] [--yes] [--build <command>] [--param <k=v>]

@@ -239,9 +239,16 @@ function headerLineFor(
     }
     case "push": {
       const branches = pushBranches(trigger.branches);
+      // #4169: GitLab cancels a waiting pipeline when a newer commit's starts, under the project's auto-cancel setting.
+      const build =
+        trigger.build === "newest"
+          ? "; builds the newest commit and each ci/build/<sha> tag: keep Settings > CI/CD > Auto-cancel redundant pipelines on"
+          : trigger.build === "every"
+            ? "; builds every commit: turn Settings > CI/CD > Auto-cancel redundant pipelines off"
+            : "";
       return (
         `#   ${jobName}: push to ${branches.join(", ")}, finding-mode ${mode}${tokenNote}` +
-        ` — a gated apply stays green, its pending gate in the log and in ${gateSummaryPath(jobName)}`
+        ` — a gated apply stays green, its pending gate in the log and in ${gateSummaryPath(jobName)}${build}`
       );
     }
   }

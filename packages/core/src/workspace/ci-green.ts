@@ -59,7 +59,10 @@ import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadErr
 import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
-import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees } from "../lifecycle/git";
+import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
+import { ledgerRecordingOff } from "../lifecycle/no-record";
+import { agedOut, buildRequestAnnotation, CI_BUILD_TAG_PREFIX, planBuilds, readBuildRequests, readCiRecords, recordOf, recordPath, requestedBuild, sameRecord, type BuildRequest, type CiRecord } from "./ci-builds";
+import { dispatchableWorkflows, readWorkflowSources } from "./ci-green-workflow";
 import { signOpRunRecord, verifyOpRunStatement } from "./trust/op-run-statement";
 import type { ReasonCode } from "./reason-codes";
 import { gitTop } from "./tree";
@@ -94,7 +97,15 @@ export class CiGreenError extends Error {
 
 // ── Judging check runs ───────────────────────────────────────────────────────
 
-export type Verdict = "pass" | "fail" | "pending";
+/**
+ * `unbuilt` (#4169): the phase's runs were cancelled, or, for a phase that
+ * builds only the newest commit, a newer commit's run superseded this one's.
+ * Neither is a failure, and neither is a pass.
+ */
+export type Verdict = "pass" | "fail" | "pending" | "unbuilt";
+
+/** Conclusions that say a run was stopped, or never started, rather than that it failed (#4169). */
+const UNBUILT_CONCLUSIONS = new Set(["cancelled", "stale"]);
 
 /** Whether a check run's name matches a pattern: the whole name, `*` standing for any run of characters. */
 export function matchesCheckRun(pattern: string, name: string): boolean {
@@ -132,12 +143,27 @@ export interface PhaseVerdict {
   runs: RunVerdict[];
   /** Patterns no check run matches yet, which leave the phase undecided. */
   unmatched: string[];
+  /**
+   * Why an `unbuilt` or held `pending` phase is so (#4169): its runs were
+   * `cancelled`, a newer commit's run `superseded` it, its retry or a
+   * requested build is still to come (`retrying`, `requested`), or a
+   * request no runner served (`request-unserved`).
+   */
+  reason?: PhaseReason;
+  /** For a superseded phase, the newer commit whose run covers it (#4169). */
+  coveredBy?: string;
+  /** The commit a bisect found broke this phase, on that commit and the commits after it (#4169). */
+  culprit?: string;
 }
+
+/** Why a phase is `unbuilt`, or held `pending` (#4169). */
+export type PhaseReason = "cancelled" | "superseded" | "retrying" | "requested" | "request-unserved";
 
 function runVerdict(phase: CiPhase, r: CheckRun): Verdict {
   if (r.status !== "completed") return "pending";
   if (r.conclusion === "success") return "pass";
   if (r.conclusion === "skipped") return phase.skipped === "pass" ? "pass" : "fail";
+  if (r.conclusion !== null && UNBUILT_CONCLUSIONS.has(r.conclusion)) return "unbuilt";
   return "fail";
 }
 
@@ -153,12 +179,15 @@ export function evaluatePhase(phase: CiPhase, latest: readonly CheckRun[]): Phas
       runs.push({ name: r.name, id: r.id, status: r.status, conclusion: r.conclusion, url: r.url, verdict: runVerdict(phase, r), ...(r.opRun ? { opRun: r.opRun } : {}), ...(r.failureCode ? { failureCode: r.failureCode } : {}) });
     }
   }
-  const verdict: Verdict = runs.some((r) => r.verdict === "fail")
-    ? "fail"
-    : runs.some((r) => r.verdict === "pending") || unmatched.length > 0
-      ? "pending"
-      : "pass";
-  return { phase: phase.name, verdict, runs, unmatched };
+  return { phase: phase.name, ...phaseVerdictOf(runs, unmatched), runs, unmatched };
+}
+
+/** A phase's verdict from its runs: a failure wins, then a run still going or a pattern no run matches, then a cancelled run. */
+export function phaseVerdictOf(runs: readonly RunVerdict[], unmatched: readonly string[]): { verdict: Verdict; reason?: PhaseReason } {
+  if (runs.some((r) => r.verdict === "fail")) return { verdict: "fail" };
+  if (runs.some((r) => r.verdict === "pending") || unmatched.length > 0) return { verdict: "pending" };
+  if (runs.some((r) => r.verdict === "unbuilt")) return { verdict: "unbuilt", reason: "cancelled" };
+  return { verdict: "pass" };
 }
 
 export interface CommitVerdict {
@@ -172,10 +201,19 @@ export interface CommitVerdict {
 /** Judge a commit: it fails when a required phase fails, and passes when every one passes. */
 export function evaluateCommit(green: CiGreen, runs: readonly CheckRun[]): CommitVerdict {
   const latest = latestAttempts(runs);
-  const phases = green.require.map((name) => evaluatePhase(green.phases.find((p) => p.name === name)!, latest));
+  return commitVerdictOf(green.require.map((name) => evaluatePhase(green.phases.find((p) => p.name === name)!, latest)));
+}
+
+/**
+ * A commit's verdict from its required phases: it fails when one fails, is
+ * pending while one is, is unbuilt when one is unbuilt (#4169), and passes
+ * when every one passes.
+ */
+export function commitVerdictOf(phases: PhaseVerdict[]): CommitVerdict {
   const failed = phases.find((p) => p.verdict === "fail");
   if (failed) return { verdict: "fail", phases, failure: { phase: failed.phase, run: failed.runs.find((r) => r.verdict === "fail")! } };
-  return { verdict: phases.some((p) => p.verdict === "pending") ? "pending" : "pass", phases, failure: null };
+  const verdict: Verdict = phases.some((p) => p.verdict === "pending") ? "pending" : phases.some((p) => p.verdict === "unbuilt") ? "unbuilt" : "pass";
+  return { verdict, phases, failure: null };
 }
 
 // ── The tick ─────────────────────────────────────────────────────────────────
@@ -505,6 +543,14 @@ export interface TickResult {
   commits: TickCommit[];
   /** The tags made and pushed, or that would be under `dryRun`. */
   made: string[];
+  /** The builds asked for (#4169), as `ci/build/<sha>` tags made and pushed, or that would be under `dryRun`. */
+  requested: BuildRequest[];
+  /** The failed runs asked to run again through the forge (#4169). */
+  retried: { sha: string; run: string }[];
+  /** The `_ci/<sha>.json` records written (#4169). Empty under `dryRun`, or when recording is off. */
+  recorded: string[];
+  /** What the tick could not do and carried on without: a retry, a request, a record. */
+  warnings: string[];
   /** The runner the tags were signed as (#4031), or null when they carry no statement. */
   signer: string | null;
   /** Where the phase results came from (#4044). */
@@ -575,22 +621,29 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
   const signer = req.runnerKey !== undefined ? ciTagSigner(top, base, req.runnerKey) : undefined;
   const links = await commitLinks(req.cwd, top, tracking, commits.map((c) => c.sha));
   const tags = readCiTags(top, green, base);
+  const warnings: string[] = [];
   let runs: OpRunSource | undefined;
-  if (green.source === "runs") {
-    // The runs live on chant/lifecycle, which a CI checkout may not have yet.
-    const fetched = await fetchLifecycleStatus({ cwd: top });
-    if (fetched.status === "diverged" || fetched.status === "unreachable") {
-      throw new Error(`could not fetch chant/lifecycle, where the Op runs are recorded, from ${fetched.remote}: ${fetched.status === "diverged" ? "the local branch and the remote's have diverged" : fetched.stderr}`);
-    }
-    runs = await readOpRunSource(req.cwd, top, base, green.signedSince);
+  // The runs and the records (#4169) live on chant/lifecycle, which a CI checkout may not have yet.
+  const fetched = await fetchLifecycleStatus({ cwd: top });
+  const ledgerOk = fetched.status !== "diverged" && fetched.status !== "unreachable";
+  if (!ledgerOk) {
+    const why = `could not fetch chant/lifecycle from ${fetched.remote}: ${fetched.status === "diverged" ? "the local branch and the remote's have diverged" : fetched.stderr}`;
+    if (green.source === "runs") throw new Error(why.replace("chant/lifecycle", "chant/lifecycle, where the Op runs are recorded,"));
+    warnings.push(`${why}; no _ci records were read or written`);
   }
+  if (green.source === "runs") runs = await readOpRunSource(req.cwd, top, base, green.signedSince);
+  const runsBy = new Map<string, CheckRun[]>();
   const planned = await planTick({
     green,
     commits,
     greenTags: new Set(tags.green.keys()),
     revokedTags: new Set(tags.revoked.keys()),
     ignored: tags.ignored,
-    checkRuns: async (sha) => (runs ? runs.checkRuns(sha) : forge!.checkRuns(sha)),
+    checkRuns: async (sha) => {
+      const got = runs ? runs.checkRuns(sha) : await forge!.checkRuns(sha);
+      runsBy.set(sha, got);
+      return got;
+    },
     now,
     signer,
   });
@@ -601,6 +654,10 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       if (ignored && ignored.length > 0) c.ignoredRuns = ignored;
     }
   }
+  const records = ledgerOk ? readCiRecords(top) : new Map<string, CiRecord>();
+  const requests = readBuildRequests(top);
+  const retryVia = green.source === "runs" ? "request" : forge?.rerun ? "forge" : null;
+  const builds = planBuilds({ green, commits: planned, runs: runsBy, requests, records, now, retryVia });
   const due = planned.filter((c) => c.made !== null);
   if (!req.dryRun && due.length > 0) {
     const ident = taggerConfig(top);
@@ -614,7 +671,227 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
       throw new Error(`could not push ${due.map((c) => c.made!.tag).join(", ")} to ${remote}: ${cause ? `${cause}\n` : ""}${stderr}`);
     }
   }
-  return { branch: green.branch, window: green.window, ref: tracking, commits: planned, made: due.map((c) => c.made!.tag), signer: signer?.principal ?? null, source: green.source };
+  const retried = builds.retries.map((r) => ({ sha: r.sha, run: r.run.name }));
+  let recorded: string[] = [];
+  if (!req.dryRun) {
+    const asked = await askForBuilds({ top, remote, green, forge, builds, requests, records, planned, warnings });
+    recorded = ledgerOk && !ledgerRecordingOff() ? await writeRecords({ top, green, planned, records, builds, requests: asked.live, dispatched: asked.dispatched, now, warnings }) : [];
+  }
+  return {
+    branch: green.branch,
+    window: green.window,
+    ref: tracking,
+    commits: planned,
+    made: due.map((c) => c.made!.tag),
+    requested: builds.requests,
+    retried,
+    recorded,
+    warnings,
+    signer: signer?.principal ?? null,
+    source: green.source,
+  };
+}
+
+/**
+ * Make what the plan asks for (#4169): push each new request tag and start
+ * the workflows holding its phases at it on GitHub, start any older request
+ * no tick has started yet, run the failed jobs again, and delete the tags of
+ * requests that are done. Each step that fails is a warning, never the
+ * tick's failure: the green tags are already pushed.
+ */
+async function askForBuilds(input: {
+  top: string;
+  remote: string;
+  green: CiGreen;
+  forge: CiForge | undefined;
+  builds: ReturnType<typeof planBuilds>;
+  requests: Map<string, BuildRequest>;
+  records: Map<string, CiRecord>;
+  planned: TickCommit[];
+  warnings: string[];
+}): Promise<{ live: Map<string, BuildRequest>; dispatched: Set<string> }> {
+  const { top, remote, green, forge, builds, warnings } = input;
+  const live = new Map(input.requests);
+  for (const tag of builds.resolved) live.delete(tag.slice(CI_BUILD_TAG_PREFIX.length));
+  if (builds.requests.length > 0) {
+    const ident = taggerConfig(top);
+    const made: BuildRequest[] = [];
+    for (const r of builds.requests) {
+      if (tryGit(top, [...ident, "tag", "-a", "-m", buildRequestAnnotation(r), r.tag, r.commit]) === null) warnings.push(`could not make ${r.tag}`);
+      else made.push(r);
+    }
+    if (made.length > 0) {
+      try {
+        git(top, ["push", "--quiet", remote, ...made.map((r) => `refs/tags/${r.tag}`)]);
+        for (const r of made) live.set(r.commit, r);
+      } catch (err) {
+        for (const r of made) tryGit(top, ["tag", "-d", r.tag]);
+        const stderr = stderrOf(err);
+        warnings.push(`could not push ${made.map((r) => r.tag).join(", ")} to ${remote}: ${pushRefusalCause(stderr) ?? stderr}`);
+      }
+    }
+  }
+  const dispatched = new Set<string>();
+  if (green.source === "checks" && forge?.dispatch) {
+    const sources = readWorkflowSources(top, "");
+    for (const r of live.values()) {
+      if (input.records.get(r.commit)?.request?.dispatched && input.records.get(r.commit)?.request?.tag === r.tag) continue;
+      // A run already going at the commit was started for it, by the tick before or by `ci run --at`.
+      const c = input.planned.find((x) => x.sha === r.commit);
+      if (c?.verdict?.phases.some((p) => r.phases.includes(p.phase) && p.runs.some((x) => x.status !== "completed"))) {
+        dispatched.add(r.commit);
+        continue;
+      }
+      const { dispatchable, without } = dispatchableWorkflows(green, r.phases, sources);
+      for (const w of without) warnings.push(`${w} holds a run of ${r.phases.join(", ")} and has no workflow_dispatch trigger, so ${r.tag} can't start it; regenerate it with chant ci workflow`);
+      let ok = dispatchable.length > 0;
+      for (const w of dispatchable) {
+        try {
+          await forge.dispatch(w, r.tag);
+        } catch (err) {
+          ok = false;
+          warnings.push(`could not start ${w} at ${r.tag}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (ok) dispatched.add(r.commit);
+    }
+  }
+  if (forge?.rerun) {
+    for (const r of builds.retries) {
+      try {
+        await forge.rerun(r.run);
+      } catch (err) {
+        warnings.push(`could not run ${r.run.name} at ${r.sha.slice(0, 12)} again, so its failure counts once the retry's hour is up: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  if (builds.resolved.length > 0) {
+    for (const tag of builds.resolved) tryGit(top, ["tag", "-d", tag]);
+    if (tryGit(top, ["push", "--quiet", remote, ...builds.resolved.map((t) => `:refs/tags/${t}`)]) === null) {
+      warnings.push(`could not delete ${builds.resolved.join(", ")} on ${remote}; a done request asks for nothing, so they can stay`);
+    }
+  }
+  return { live, dispatched };
+}
+
+/**
+ * Write each judged commit's record, and rewrite a record whose commit left
+ * the window still pending as unbuilt (#4169), in one commit on
+ * `chant/lifecycle`, and push it. Only records whose content changed are
+ * written. A push another writer beat is tried once more on the new tip.
+ */
+async function writeRecords(input: {
+  top: string;
+  green: CiGreen;
+  planned: TickCommit[];
+  records: Map<string, CiRecord>;
+  builds: ReturnType<typeof planBuilds>;
+  requests: Map<string, BuildRequest>;
+  dispatched: Set<string>;
+  now: Date;
+  warnings: string[];
+}): Promise<string[]> {
+  const { top, green, planned, records, builds, requests, now, warnings } = input;
+  const writes: { path: string; content: string }[] = [];
+  const inWindow = new Set(planned.map((c) => c.sha));
+  for (const c of planned) {
+    const previous = records.get(c.sha);
+    let record = recordOf({ green, commit: c, previous, retries: builds.retries, requests, now });
+    if (record.request) {
+      const started = input.dispatched.has(c.sha) || (previous?.request?.tag === record.request.tag && previous.request.dispatched === true);
+      if (started) record = { ...record, request: { ...record.request, dispatched: true } };
+    }
+    if (!sameRecord(previous, record)) writes.push({ path: recordPath(c.sha), content: `${JSON.stringify(record, null, 2)}\n` });
+  }
+  for (const [sha, r] of records) {
+    if (inWindow.has(sha) || r.state !== "pending") continue;
+    writes.push({ path: recordPath(sha), content: `${JSON.stringify(agedOut(r, now), null, 2)}\n` });
+  }
+  if (writes.length === 0) return [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await writeLedgerFiles(writes, `ci: ${writes.length} commit record${writes.length === 1 ? "" : "s"}`, { cwd: top });
+    } catch (err) {
+      warnings.push(`could not write the _ci records: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+    const pushed = await pushLifecycleStatus({ cwd: top });
+    if (pushed.status === "pushed" || pushed.status === "no-remote" || pushed.status === "not-recorded") return writes.map((w) => w.path);
+    if (pushed.status !== "stale" || attempt === 1) {
+      warnings.push(`could not push the _ci records: ${pushed.stderr}`);
+      return [];
+    }
+    // Another writer pushed first: drop this commit, follow the remote, and write again on its tip.
+    tryGit(top, ["update-ref", "refs/heads/chant/lifecycle", "refs/heads/chant/lifecycle^"]);
+    const again = await fetchLifecycleStatus({ cwd: top });
+    if (again.status === "diverged" || again.status === "unreachable") {
+      warnings.push(`could not push the _ci records: chant/lifecycle moved on the remote and could not be fetched again`);
+      return [];
+    }
+  }
+  return [];
+}
+
+// ── A build on demand (#4169) ────────────────────────────────────────────────
+
+export interface RequestBuildResult {
+  request: BuildRequest;
+  /** Whether a request tag for the commit was already there, in which case nothing was made. */
+  existed: boolean;
+  /** The workflows started at the tag now, on GitHub. Empty when the next tick or `ci serve` starts it. */
+  dispatched: string[];
+  warnings: string[];
+}
+
+/**
+ * `chant ci run --at <sha>`: ask for every required phase to be built at a
+ * commit of the branch, by pushing `ci/build/<sha>`. Given a forge that can
+ * start workflows, and with the source check runs, it starts the workflows
+ * holding the phases at the tag now; otherwise the next tick does, or `ci
+ * serve --build-command` for chant runs. Once the phases pass, the tick tags
+ * the commit green like any other, so it can be cut.
+ */
+export async function requestBuild(req: { cwd: string; at: string; remote?: string; forge?: CiForge; now?: Date }): Promise<RequestBuildResult> {
+  const read = readGreen(req.cwd);
+  const { green, top } = read;
+  const remote = req.remote ?? "origin";
+  const tracking = `refs/remotes/${remote}/${green.branch}`;
+  try {
+    git(top, ["fetch", "--quiet", "--no-tags", remote, `+refs/heads/${green.branch}:${tracking}`, `+refs/tags/${CI_BUILD_TAG_PREFIX}*:refs/tags/${CI_BUILD_TAG_PREFIX}*`]);
+  } catch (err) {
+    throw new Error(`could not fetch ${green.branch} and the build requests from ${remote}: ${stderrOf(err)}`);
+  }
+  if (req.at.startsWith("-") || tryGit(top, ["rev-parse", "--verify", "--quiet", `${req.at}^{commit}`]) === null) throw new WorkspaceReadError("revision-unknown", `--at ${req.at} names no commit in this repository`);
+  const sha = git(top, ["rev-parse", `${req.at}^{commit}`]);
+  const onBranch = git(top, ["rev-list", "--first-parent", tracking]).split("\n").includes(sha);
+  if (!onBranch) throw new Error(`${sha.slice(0, 12)} is not a first-parent commit of ${remote}/${green.branch}, and only those are judged green`);
+  const existing = readBuildRequests(top).get(sha);
+  const request = existing ?? requestedBuild(green, sha, green.require, req.now ?? new Date());
+  const warnings: string[] = [];
+  if (!existing) {
+    git(top, [...taggerConfig(top), "tag", "-a", "-m", buildRequestAnnotation(request), request.tag, sha]);
+    try {
+      git(top, ["push", "--quiet", remote, `refs/tags/${request.tag}`]);
+    } catch (err) {
+      tryGit(top, ["tag", "-d", request.tag]);
+      const stderr = stderrOf(err);
+      throw new Error(`could not push ${request.tag} to ${remote}: ${pushRefusalCause(stderr) ?? stderr}`);
+    }
+  }
+  const dispatched: string[] = [];
+  if (green.source === "checks" && req.forge?.dispatch) {
+    const { dispatchable, without } = dispatchableWorkflows(green, request.phases, readWorkflowSources(top, ""));
+    for (const w of without) warnings.push(`${w} holds a run of a required phase and has no workflow_dispatch trigger, so it can't be started at ${request.tag}`);
+    for (const w of dispatchable) {
+      try {
+        await req.forge.dispatch(w, request.tag);
+        dispatched.push(w);
+      } catch (err) {
+        warnings.push(`could not start ${w} at ${request.tag}: ${err instanceof Error ? err.message : String(err)}; the next tick tries again`);
+      }
+    }
+  }
+  return { request, existed: existing !== undefined, dispatched, warnings };
 }
 
 // ── Chant runs as the source (#4044) ─────────────────────────────────────────
@@ -766,8 +1043,18 @@ export function formatTick(r: TickResult, dryRun = false): string {
       lines.push(`  ${short}  revoked`);
     } else {
       const v = c.verdict!;
-      const waiting = v.phases.filter((p) => p.verdict === "pending").map((p) => p.phase);
-      const what = c.before === "green" ? "green" : v.verdict === "fail" ? `failed: phase ${v.failure!.phase}, ${v.failure!.run.name} ${v.failure!.run.conclusion}` : `undecided: ${waiting.join(", ")}`;
+      const why = (p: PhaseVerdict) => `${p.phase}${p.reason ? ` (${p.reason}${p.coveredBy ? `, covered by ${p.coveredBy.slice(0, 12)}` : ""})` : ""}`;
+      const waiting = v.phases.filter((p) => p.verdict === "pending").map(why);
+      const unbuilt = v.phases.filter((p) => p.verdict === "unbuilt").map(why);
+      const culprit = v.phases.find((p) => p.culprit)?.culprit;
+      const what =
+        c.before === "green"
+          ? "green"
+          : v.verdict === "fail"
+            ? `failed: phase ${v.failure!.phase}, ${v.failure!.run.name} ${v.failure!.run.conclusion}${culprit ? `; culprit ${culprit.slice(0, 12)}` : ""}`
+            : v.verdict === "unbuilt"
+              ? `unbuilt: ${unbuilt.join(", ")}`
+              : `undecided: ${waiting.join(", ")}`;
       lines.push(`  ${short}  ${what}`);
     }
     const why = whyWorkUnknown(c.work);
@@ -777,6 +1064,10 @@ export function formatTick(r: TickResult, dryRun = false): string {
     if (c.blocked) lines.push(`      did not make ${c.blocked}: an ignored tag holds the name. Delete it to let the tick tag the commit: git push origin :refs/tags/${c.blocked}`);
   }
   if (r.signer && r.made.length > 0) lines.push(`signed as ${r.signer}`);
+  for (const q of r.requested) lines.push(`${dryRun ? "would ask" : "asked"} for ${q.phases.join(", ")} at ${q.commit.slice(0, 12)} (${q.reason}): ${q.tag}`);
+  for (const x of r.retried) lines.push(`${dryRun ? "would run" : "ran"} ${x.run} at ${x.sha.slice(0, 12)} again`);
+  if (r.recorded.length > 0) lines.push(`recorded ${r.recorded.length} commit${r.recorded.length === 1 ? "" : "s"} on chant/lifecycle`);
+  for (const w of r.warnings) lines.push(`warning: ${w}`);
   return lines.join("\n");
 }
 
@@ -802,8 +1093,13 @@ export type LastGreenDocument =
       commit: { sha: string; tag: string; tagged: string | null; committed: string } | null;
       /** Tags on the commits walked, down to the one found, that were ignored for want of a valid statement (#4031). Newest first. */
       ignored: IgnoredCiTag[];
+      /** The commits walked past above the one found, newest first, each with its record (#4169). At most {@link LAST_GREEN_NEWER}. */
+      newer: { sha: string; record: CiRecordSummary | null }[];
     }
   | { $schema: string; contract: number; chant: string; error: { code: CiGreenErrorCode; message: string } };
+
+/** How many commits above the green one `ci last-green` reports with their records. */
+export const LAST_GREEN_NEWER = 50;
 
 /**
  * `chant ci last-green`: the newest first-parent commit of the branch with a
@@ -826,15 +1122,20 @@ export function lastGreen(req: { cwd: string; remote?: string; from?: string }):
     const tags = readCiTags(top, green, git(top, ["rev-parse", `${branchRef}^{commit}`]));
     let commit: Extract<LastGreenDocument, { branch: string }>["commit"] = null;
     const ignored: IgnoredCiTag[] = [];
-    if (tags.green.size > 0 || tags.ignored.size > 0) {
+    const newer: { sha: string; record: CiRecordSummary | null }[] = [];
+    const records = readCiRecords(top);
+    if (tags.green.size > 0 || tags.ignored.size > 0 || records.size > 0) {
       for (const sha of git(top, ["rev-list", "--first-parent", ref]).split("\n")) {
         ignored.push(...(tags.ignored.get(sha) ?? []));
-        if (!tags.green.has(sha) || tags.revoked.has(sha)) continue;
+        if (!tags.green.has(sha) || tags.revoked.has(sha)) {
+          if (newer.length < LAST_GREEN_NEWER) newer.push({ sha, record: recordSummary(green, records.get(sha)) });
+          continue;
+        }
         commit = { sha, tag: `${CI_GREEN_TAG_PREFIX}${sha}`, tagged: tags.green.get(sha)!.tagged, committed: git(top, ["show", "-s", "--format=%cI", sha]) };
         break;
       }
     }
-    return { ...head, workspace, branch: green.branch, ref, commit, ignored };
+    return { ...head, workspace, branch: green.branch, ref, commit, ignored, newer: commit ? newer : [] };
   } catch (err) {
     if (err instanceof CiGreenError || err instanceof WorkspaceReadError) return { ...head, error: { code: err.code, message: err instanceof WorkspaceReadError ? err.describe() : err.message } };
     throw err;
@@ -852,10 +1153,11 @@ export type CiCommitState = "green" | "revoked" | "undecided";
 /**
  * One required phase's result on a commit. `pass` and `fail` are what a tag
  * recorded or a live read found, `pending` is a live read with runs still
- * going or not yet reported, and `unrecorded` means no tag holds the result
- * and the forge was not asked.
+ * going or not yet reported, `unbuilt` (#4169) is a live read whose runs
+ * were cancelled, and `unrecorded` means no tag holds the result and the
+ * forge was not asked.
  */
-export type CiPhaseResult = "pass" | "fail" | "pending" | "unrecorded";
+export type CiPhaseResult = "pass" | "fail" | "pending" | "unbuilt" | "unrecorded";
 
 export interface CiListRun {
   name: string;
@@ -896,6 +1198,27 @@ export interface CiListCommit {
   work: CommitLink | null;
   /** The Op runs on the commit that do not count, each for want of a valid statement (#4044). Present only when the source is chant runs. */
   ignoredRuns?: IgnoredOpRun[];
+  /** What the commit's `_ci/<sha>.json` record says (#4169), or null when it has none. */
+  record: CiRecordSummary | null;
+}
+
+/** A commit's record (#4169), as `ci list` and `ci last-green` show it: its state, and the first phase's reason, covering commit and culprit. */
+export interface CiRecordSummary {
+  state: CiRecord["state"];
+  reason?: string;
+  coveredBy?: string;
+  culprit?: string;
+}
+
+/** The summary of a record, from its required phases in `require` order. */
+export function recordSummary(green: CiGreen, r: CiRecord | undefined): CiRecordSummary | null {
+  if (!r) return null;
+  const phases = green.require.map((name) => r.phases[name]).filter((p) => p !== undefined);
+  const first = <K extends "reason" | "coveredBy" | "culprit">(k: K) => phases.find((p) => p[k] !== undefined)?.[k];
+  const reason = first("reason");
+  const coveredBy = first("coveredBy");
+  const culprit = first("culprit");
+  return { state: r.state, ...(reason ? { reason } : {}), ...(coveredBy ? { coveredBy } : {}), ...(culprit ? { culprit } : {}) };
 }
 
 export type CiListDocument =
@@ -1002,6 +1325,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
     const source = req.source ?? green.source;
     if (source === "runs" && req.forge) throw new Error("--forge reads check runs, and the source is chant runs (ci.green.source or --source runs); drop one");
     const runs = source === "runs" ? await readOpRunSource(req.cwd, top, base, green.signedSince) : undefined;
+    const records = readCiRecords(top);
     const out: CiListCommit[] = [];
     for (const c of commits) {
       const g = tags.green.get(c.sha);
@@ -1026,6 +1350,7 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
         work: links?.get(c.sha) ?? null,
         ignored: tags.ignored.get(c.sha) ?? [],
         ...(runs ? { ignoredRuns: runs.ignored.get(c.sha) ?? [] } : {}),
+        record: recordSummary(green, records.get(c.sha)),
       });
     }
     return { ...head, workspace, branch: green.branch, ref, window: req.since === undefined ? green.window : null, since: req.since ?? null, require: [...green.require], commits: out };
@@ -1035,6 +1360,12 @@ export async function ciList(req: ListRequest): Promise<CiListDocument> {
   }
 }
 
+/** A record summary in words, for `ci list` and the tick. */
+export function describeRecord(r: CiRecordSummary): string {
+  const parts = [r.state, ...(r.reason ? [r.reason] : []), ...(r.coveredBy ? [`covered by ${r.coveredBy.slice(0, 12)}`] : []), ...(r.culprit ? [`culprit ${r.culprit.slice(0, 12)}`] : [])];
+  return parts.join(", ");
+}
+
 /** The text `chant ci list` prints: one line per commit. */
 export function formatList(doc: Extract<CiListDocument, { branch: string }>): string {
   const lines = [`${doc.branch}, ${doc.since ? `commits after ${doc.since}` : `commits within ${doc.window}`}: ${doc.commits.length}`];
@@ -1042,6 +1373,7 @@ export function formatList(doc: Extract<CiListDocument, { branch: string }>): st
     const phases = c.phases.map((p) => `${p.phase}=${p.result}`).join(" ");
     const why = whyWorkUnknown(c.work);
     lines.push(`  ${c.sha.slice(0, 12)}  ${c.state.padEnd(9)}  ${phases}${why ? `; why unknown: ${why}` : ""}`);
+    if (c.record && c.state === "undecided") lines.push(`      recorded ${describeRecord(c.record)}`);
     for (const t of c.ignored) lines.push(`      ignored ${t.tag} (${t.status}): ${t.reason}`);
     for (const r of c.ignoredRuns ?? []) lines.push(`      ignored run ${r.run} of ${r.op} in ${r.env} (${r.status}): ${r.reason}`);
   }

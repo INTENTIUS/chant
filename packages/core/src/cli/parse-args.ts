@@ -413,6 +413,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--pr-build") {
       // `chant build --pr-loop --pr-build` (#4088), and `chant ci run --pr-build` (#4094).
       result.prBuild = true;
+    } else if (arg === "--build-command") {
+      // `chant ci serve --build-command <line>` (#4169): the line that builds a requested commit.
+      const line = args[++i];
+      if (line === undefined || line === "") throw new Error("--build-command needs a shell line: --build-command '<line>'");
+      result.ciBuildCommand = line;
     } else if (arg === "--pr-build-command") {
       const line = args[++i];
       if (line === undefined || line === "") throw new Error("--pr-build-command needs a shell line: --pr-build-command '<line>'");
