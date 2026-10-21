@@ -164,6 +164,10 @@ A lens keeps the members it keeps.
 
 Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. A consumer sees the same edge whichever way it was found.
 
+The azure lexicon does the same for references written as ARM expressions: `resourceId(...)`, `reference(...)` and `listKeys(...)`, in a value or an object key such as `identity.userAssignedIdentities`. It reads them with the same function the serializer uses to write `dependsOn` (`lexicons/azure/src/graph-edges.ts`), so the graph and the template name the same dependencies. A reference matches a declared resource by its ARM name, and a name nothing declares, an existing resource the template reads, makes no edge.
+
+These edges are on the declared side of `--live --overlay` too.
+
 ### CI edges
 
 A CI lexicon writes its dependencies as strings: `needs: ["build"]`, `uses: ./.github/workflows/ci.yml`, `include: ci/templates.yml`. The github, forgejo and gitlab lexicons resolve those strings against the project's declared entities, the way their serializers place jobs in workflows, and report each one as an edge with a `kind` saying what it means:

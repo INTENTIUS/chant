@@ -260,8 +260,22 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function toArmValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
+/** A prop value as the template writes it: references become bracket expressions. */
+export function toArmValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
   return walkValue(value, entityNames, armVisitor(entityNames));
+}
+
+/**
+ * The name a resource takes in the template: its `name` prop, or the entity
+ * key when it sets none. `findArmResourceRefs` reports references by this
+ * name, so the dependsOn inference below and the graph edges
+ * (./graph-edges.ts) both resolve a reference through it.
+ */
+export function armResourceName(entity: Declarable, key: string, entityNames: Map<Declarable, string>): unknown {
+  const props = isResourceDeclarable(entity) && typeof entity.props === "object" && entity.props !== null
+    ? entity.props as Record<string, unknown>
+    : undefined;
+  return props?.name !== undefined ? toArmValue(props.name, entityNames) : key;
 }
 
 /**
@@ -372,7 +386,7 @@ function serializeToTemplate(
       const resource: ArmResource = {
         type: armType(resourceType),
         apiVersion,
-        name: name,
+        name: armResourceName(entity, name, entityNames) as string,
       };
 
       // Extract all props
@@ -387,7 +401,7 @@ function serializeToTemplate(
             // Hoist to resource level
             (resource as unknown as Record<string, unknown>)[key] = toArmValue(value, entityNames);
           } else if (key === "name") {
-            resource.name = toArmValue(value, entityNames) as string;
+            // Set above by armResourceName.
           } else if (key === "properties" && isPlainObject(value)) {
             // The generated types take ARM's own `properties` object, so
             // merge it, not nest it (#4183).

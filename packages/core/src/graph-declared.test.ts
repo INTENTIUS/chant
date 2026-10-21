@@ -84,3 +84,21 @@ describe("buildDeclaredPerStack groups by declared stack (#1433)", () => {
     }
   });
 });
+
+describe("buildDeclaredPerStack takes edges from the lexicon hooks (#4232)", () => {
+  test("withEdges sees each stack's entities by bare key, and its edges are qualified with the stack", async () => {
+    const seen: string[][] = [];
+    const ir = await buildDeclaredPerStack(
+      [{ name: "network", src: "network/src" }, { name: "app", src: "app/src" }],
+      dir,
+      (g, entities) => {
+        seen.push([...entities.keys()].sort());
+        const [only] = g.nodes;
+        return only ? { ...g, edges: [...g.edges, { from: only.id, to: only.id, kind: "ref", viaAttr: "self" }] } : g;
+      },
+    );
+    expect(seen).toEqual([["vpc"], ["service"]]);
+    expect(ir.edges).toContainEqual({ from: "network::vpc", to: "network::vpc", kind: "ref", viaAttr: "self" });
+    expect(ir.edges).toContainEqual({ from: "app::service", to: "app::service", kind: "ref", viaAttr: "self" });
+  });
+});

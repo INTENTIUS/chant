@@ -15,6 +15,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { moduleSourceDir } from "@intentius/chant/module-source";
 import { azureSerializer } from "./serializer";
+import { azureGraphEdges } from "./graph-edges";
 import { hardcodedLocationRule } from "./lint/rules/hardcoded-location";
 import { storageHttpsRule } from "./lint/rules/storage-https";
 import { nsgWildcardRule } from "./lint/rules/nsg-wildcard";
@@ -37,6 +38,8 @@ export const azurePlugin: LexiconPlugin = {
   emulator: FLOCI_AZ_EMULATOR,
   auditCatalog: () => azureAuditCatalog,
   serializer: azureSerializer,
+  // References written as ARM expressions (resourceId, reference, listKeys) as graph edges (#4232).
+  graphEdges: (entities) => azureGraphEdges(entities),
 
   lintRules(): LintRule[] {
     return [hardcodedLocationRule, storageHttpsRule, nsgWildcardRule];
