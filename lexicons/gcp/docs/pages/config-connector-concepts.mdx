@@ -60,7 +60,15 @@ Nested and list fields, such as `status.conditions`, are not attributes.
 
 ## Project binding
 
-Bind resources to a GCP project via annotations:
+Set a member's project once in its `chant.config.ts`:
+
+```typescript
+export default { lexicons: ["gcp"], gcp: { project: "my-project" } };
+```
+
+The build writes it as every resource's `cnrm.cloud.google.com/project-id` annotation and resolves `GCP.ProjectId` from it, so apply and the live reads find the same project. It reaches the build as config data, so it also holds under `--sandbox`.
+
+You can also bind resources to a GCP project via annotations:
 
 ```typescript
 import { defaultAnnotations, GCP } from "@intentius/chant-lexicon-gcp";
@@ -72,9 +80,11 @@ export const annotations = defaultAnnotations({
 
 This injects the project annotation into every resource. Without it, Config Connector uses the namespace's default project.
 
-`GCP.ProjectId`, `GCP.Region` and `GCP.Zone` are read from `GCP_PROJECT_ID`, `GCP_REGION` and `GCP_ZONE` at build. Config Connector YAML has no parameters, so a pseudo-parameter in a resource's spec, such as `CloudRunServiceComposite`'s default `location` and `projectRef`, must resolve: a build with the variable unset fails and names each resource and variable. Set the variable, or pass the value explicitly.
+`GCP.ProjectId` is read from `gcp.project` in chant.config, else `GCP_PROJECT_ID`, and `GCP.Region` and `GCP.Zone` from `GCP_REGION` and `GCP_ZONE`, at build. Config Connector YAML has no parameters, so a pseudo-parameter in a resource's spec, such as `CloudRunServiceComposite`'s default `location` and `projectRef`, must resolve: a build with the variable unset fails and names each resource and variable. Set the variable, or pass the value explicitly.
 
-`gcpApply` and the live reads (health, drift) take a resource's project from `spec.projectRef.external` (an id or `projects/<id>`), then `GOOGLE_CLOUD_PROJECT`, then the project annotation.
+`gcpApply` and the live reads (observe, health, drift) take a resource's project from its own `spec.projectRef.external` (an id or `projects/<id>`), then the project annotation, which is where `gcp.project` lands, then `GCP_PROJECT_ID`, then `GOOGLE_CLOUD_PROJECT`.
+
+The live reads also resolve a reference to another resource the way the build does: `neg.name` is the target's `metadata.name`, or its logical id in kebab case when it sets none.
 
 ## Reconciliation lifecycle
 

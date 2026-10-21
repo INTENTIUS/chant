@@ -296,9 +296,16 @@ describe("Cloud Run mapper + LRO (#706)", () => {
 });
 
 describe("resolveGcpProject (#711)", () => {
-  test("env wins over the annotation", () => {
-    expect(resolveGcpProject(BUCKET, { GOOGLE_CLOUD_PROJECT: "env-project" } as NodeJS.ProcessEnv))
-      .toBe("env-project");
+  test("the annotation (where chant.config's gcp.project lands) wins over the env vars (#4252)", () => {
+    expect(resolveGcpProject(BUCKET, { GOOGLE_CLOUD_PROJECT: "env-project", GCP_PROJECT_ID: "id-project" } as NodeJS.ProcessEnv))
+      .toBe("annotated-project");
+  });
+
+  test("without an annotation, GCP_PROJECT_ID wins over GOOGLE_CLOUD_PROJECT, and projectRef over both (#4252)", () => {
+    const bare = { metadata: { name: "b" } };
+    expect(resolveGcpProject(bare, { GOOGLE_CLOUD_PROJECT: "g", GCP_PROJECT_ID: "p" } as NodeJS.ProcessEnv)).toBe("p");
+    expect(resolveGcpProject(bare, { GOOGLE_CLOUD_PROJECT: "g" } as NodeJS.ProcessEnv)).toBe("g");
+    expect(resolveGcpProject({ ...bare, spec: { projectRef: { external: "own" } } }, { GCP_PROJECT_ID: "p" } as NodeJS.ProcessEnv)).toBe("own");
   });
 
   test("falls back to the CNRM annotation", () => {

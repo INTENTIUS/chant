@@ -8,7 +8,8 @@
 import { createRequire } from "module";
 import { moduleSourceUrl } from "@intentius/chant/module-source";
 import type { Declarable } from "@intentius/chant/declarable";
-import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
+import { isDeclarable, isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
+import { AttrRef } from "@intentius/chant/attrref";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
@@ -113,9 +114,40 @@ function gcpVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
  * props, else its logical id in kebab case.
  */
 export function cnrmName(logical: string, entity: Declarable): string {
-  const props = isResourceDeclarable(entity) ? (entity.props as { metadata?: { name?: unknown } } | undefined) : undefined;
-  const declared = props?.metadata?.name;
+  return cnrmNameOf(logical, isResourceDeclarable(entity) ? entity.props : undefined);
+}
+
+/** {@link cnrmName} from a resource's props, for callers holding props rather than the declarable. */
+export function cnrmNameOf(logical: string, props: unknown): string {
+  const declared = (props as { metadata?: { name?: unknown } } | undefined)?.metadata?.name;
   return typeof declared === "string" && declared.length > 0 ? declared : kebabName(logical);
+}
+
+/**
+ * Declared props with each reference to another resource replaced as the
+ * serializer writes it (#4251): an attribute reference (`neg.name`) becomes the
+ * target's metadata.name, and a resource placed whole becomes `{ name }`.
+ * `logicalOf` maps a target's props object to its logical id, for a reference
+ * that does not carry one. Other values, pseudo-parameters included, are kept.
+ */
+export function resolveCnrmRefs(value: unknown, logicalOf: (props: unknown) => string | undefined): unknown {
+  if (value instanceof AttrRef) {
+    const parent = value.parent.deref() as Declarable | undefined;
+    const props = parent && isResourceDeclarable(parent) ? parent.props : undefined;
+    const logical = value.getLogicalName() ?? logicalOf(props);
+    return logical === undefined ? value : cnrmNameOf(logical, props);
+  }
+  if (Array.isArray(value)) return value.map((v) => resolveCnrmRefs(v, logicalOf));
+  if (value === null || typeof value !== "object") return value;
+  if (isDeclarable(value)) {
+    const props = isResourceDeclarable(value) ? value.props : undefined;
+    const logical = logicalOf(props);
+    return logical === undefined ? value : { name: cnrmNameOf(logical, props) };
+  }
+  if (INTRINSIC_MARKER in (value as object)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = resolveCnrmRefs(v, logicalOf);
+  return out;
 }
 
 function kebabName(logical: string): string {
@@ -163,7 +195,11 @@ export const gcpSerializer: Serializer = {
     let defaultLabelEntries: Record<string, unknown> = context?.ownership
       ? { ...ownershipEntries(LABEL_OWNERSHIP_KEYS, context.ownership) }
       : {};
-    let defaultAnnotationEntries: Record<string, unknown> = {};
+    // #4252: a member's project, once, in chant.config's `gcp.project`. It
+    // resolves GCP.ProjectId and is written as each resource's project-id
+    // annotation, which apply and the readers take ahead of the env vars.
+    const configProject = gcpConfigProject(context?.config);
+    let defaultAnnotationEntries: Record<string, unknown> = configProject ? { [PROJECT_ID_ANNOTATION]: configProject } : {};
 
     for (const [, entity] of entities) {
       if (isDefaultLabels(entity)) {
@@ -189,6 +225,7 @@ export const gcpSerializer: Serializer = {
         toYAMLValue(isResourceDeclarable(entity) ? entity.props : undefined, entityNames),
         name,
         unresolved,
+        configProject,
       ) as Record<string, unknown> | undefined;
 
       if (!props) continue;
@@ -246,6 +283,14 @@ export const gcpSerializer: Serializer = {
   },
 };
 
+const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
+
+/** The `gcp.project` a chant.config declares, if any (#4252). */
+export function gcpConfigProject(config: Record<string, unknown> | undefined): string | undefined {
+  const project = (config?.gcp as { project?: unknown } | undefined)?.project;
+  return typeof project === "string" && project.length > 0 ? project : undefined;
+}
+
 /**
  * Pseudo-parameter → environment variable mapping.
  * Config Connector annotations must be plain strings, so PseudoParameters
@@ -270,20 +315,20 @@ interface UnresolvedPseudo {
  * the API as an object. A variable that isn't set is recorded, and the
  * build refuses with every one named.
  */
-function resolvePseudoParameters(value: unknown, entity: string, unresolved: UnresolvedPseudo[]): unknown {
-  if (Array.isArray(value)) return value.map((v) => resolvePseudoParameters(v, entity, unresolved));
+function resolvePseudoParameters(value: unknown, entity: string, unresolved: UnresolvedPseudo[], project?: string): unknown {
+  if (Array.isArray(value)) return value.map((v) => resolvePseudoParameters(v, entity, unresolved, project));
   if (value === null || typeof value !== "object") return value;
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj);
   if (keys.length === 1 && keys[0] === "Ref" && typeof obj.Ref === "string" && obj.Ref in PSEUDO_ENV_MAP) {
     const { envVar } = PSEUDO_ENV_MAP[obj.Ref];
-    const resolved = process.env[envVar];
+    const resolved = (obj.Ref === "GCP::ProjectId" ? project : undefined) ?? process.env[envVar];
     if (resolved) return resolved;
     unresolved.push({ entity, ref: obj.Ref, envVar });
     return value;
   }
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) out[k] = resolvePseudoParameters(v, entity, unresolved);
+  for (const [k, v] of Object.entries(obj)) out[k] = resolvePseudoParameters(v, entity, unresolved, project);
   return out;
 }
 

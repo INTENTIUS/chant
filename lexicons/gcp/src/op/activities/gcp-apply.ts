@@ -568,7 +568,6 @@ export function resolveGcpEndpoint(
   return args.endpoint || env.GCP_ENDPOINT_URL || undefined;
 }
 
-/** Resolve the project: `GOOGLE_CLOUD_PROJECT` env, else the CNRM project-id annotation. Pure. */
 /**
  * The project a resource names in `spec.projectRef.external` (#4201): a
  * project id or `projects/<id>`. A `GCP.ProjectId` pseudo-parameter there
@@ -589,18 +588,24 @@ export function projectRefProject(spec: Record<string, unknown> | undefined, env
   return external.startsWith("projects/") ? external.slice("projects/".length).split("/")[0] : external;
 }
 
+/**
+ * The project a resource is applied in (#4252): its own `spec.projectRef.external`,
+ * else its project-id annotation (where chant.config's `gcp.project` is
+ * written at build), else `GCP_PROJECT_ID`, else `GOOGLE_CLOUD_PROJECT`. Pure.
+ */
 export function resolveGcpProject(resource: GcpResource, env: NodeJS.ProcessEnv = process.env): string {
   const project =
     projectRefProject(resource.spec, env) ||
-    env.GOOGLE_CLOUD_PROJECT ||
-    resource.metadata?.annotations?.[PROJECT_ID_ANNOTATION];
-  if (!project) {
-    throw new Error(
-      `no GCP project — set spec.projectRef.external, GOOGLE_CLOUD_PROJECT or the ${PROJECT_ID_ANNOTATION} annotation`,
-    );
-  }
+    resource.metadata?.annotations?.[PROJECT_ID_ANNOTATION] ||
+    env.GCP_PROJECT_ID ||
+    env.GOOGLE_CLOUD_PROJECT;
+  if (!project) throw new Error(NO_PROJECT);
   return project;
 }
+
+/** The error every stage gives when no project resolves. */
+export const NO_PROJECT =
+  `no GCP project — set gcp.project in chant.config, GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT, or the resource's spec.projectRef.external`;
 
 /** Injectable HTTP client — mirrors argo's injectable fetcher so tests avoid the network. */
 export type GcpHttp = (

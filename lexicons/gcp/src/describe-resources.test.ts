@@ -86,10 +86,11 @@ describe("gcp describeResources — direct REST (#1209)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("an entity with no metadata.name has nothing to query by", async () => {
-    const out = await read(makeEntities([{ name: "e", entityType: "GCP::Storage::Bucket", props: {} }]));
-    expect(out.unobserved?.e?.reason).toBe("read-failed");
-    expect(fetchMock).not.toHaveBeenCalled();
+  test("an entity with no metadata.name is read by the name the build gives it, the kebab-cased logical id (#4251)", async () => {
+    fetchMock.mockResolvedValue(reply(200, { name: "web-assets" }));
+    const out = await read(makeEntities([{ name: "webAssets", entityType: "GCP::Storage::Bucket", props: {} }]));
+    expect(out.resources.webAssets).toBeDefined();
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/b/web-assets");
   });
 
   test("kinds resolve through the serializer's GVK map, not naive recasing", async () => {

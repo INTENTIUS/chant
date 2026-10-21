@@ -61,7 +61,7 @@ import type {
 } from "@intentius/chant/lexicon";
 import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-observation";
 import { hasOwnershipMarker, type ChannelKeys } from "@intentius/chant/ownership";
-import { deriveGVK, manifestProjectAnnotations, resolveReadProject } from "./describe-resources";
+import { deriveGVK, manifestProjectAnnotations, readTargets, resolveReadProject } from "./describe-resources";
 import { getResource, mapperForKind, GcpReadError, isNotFound, type GcpReadClientOptions } from "./api/read-client";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 
@@ -387,8 +387,9 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
 
   const endpoint = process.env.GCP_ENDPOINT_URL;
   const manifestProjects = manifestProjectAnnotations(options.buildOutput);
+  const targets = readTargets(options.entities);
 
-  const reads = [...options.entities].map(async ([entityName, { entityType, props }]) => {
+  const reads = [...options.entities].map(async ([entityName, { entityType }]) => {
     const gvk = deriveGVK(entityType);
     if (!gvk || !mapperForKind(gvk.kind)) {
       unobserved[entityName] = {
@@ -401,16 +402,8 @@ export async function observeResourcesDeepGcp(options: GcpDeepObserveOptions): P
       return;
     }
 
-    const metadata = props.metadata as { name?: string; annotations?: Record<string, string> } | undefined;
-    const name = metadata?.name;
-    if (!name) {
-      unobserved[entityName] = {
-        type: entityType,
-        reason: "read-failed",
-        detail: "declared entity has no metadata.name to query by",
-      };
-      return;
-    }
+    const { name, props } = targets.get(entityName)!;
+    const metadata = props.metadata as { annotations?: Record<string, string> } | undefined;
 
     let client: GcpReadClientOptions;
     try {
