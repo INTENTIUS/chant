@@ -29,6 +29,26 @@ describe("the Forgejo pull-request workflow with a gate per wave (#4003)", () =>
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
+  test("wave 1 takes the newest green commit, and each later wave applies the one wave 1 took (#4221)", () => {
+    const jobs = doc.jobs as unknown as Record<string, { outputs?: Record<string, string>; steps: Array<{ id?: string; run?: string; env?: Record<string, string> }> }>;
+    const waves = Object.keys(jobs).filter((name) => name.startsWith("apply-wave-")).length;
+    expect(waves).toBeGreaterThan(1);
+    for (let k = 1; k <= waves; k++) {
+      const job = jobs[`apply-wave-${k}`]!;
+      expect(job.outputs).toEqual({ "green-sha": "${{ steps.apply.outputs.green-sha }}" });
+      const step = job.steps.find((s) => s.id === "apply")!;
+      expect(step.run).toContain('echo "green-sha=$GREEN_SHA" >> "$GITHUB_OUTPUT"');
+      if (k === 1) {
+        expect(step.run).toContain('GREEN_SHA="$(chant ci last-green)"');
+        expect(step.env?.GREEN_SHA).toBeUndefined();
+      } else {
+        expect(step.run).not.toContain("chant ci last-green");
+        expect(step.run).toContain('test -n "$GREEN_SHA"');
+        expect(step.env?.GREEN_SHA).toBe(`\${{ needs.apply-wave-${k - 1}.outputs.green-sha }}`);
+      }
+    }
+  });
+
   test("an apply job per wave on Forgejo's runner, each passing its wave and talking to Forgejo", () => {
     expect(Object.keys(doc.jobs)).toEqual(["plan", "record", "apply-wave-1", "apply-wave-2"]);
     expect(doc.jobs["apply-wave-2"]!.needs).toEqual(["apply-wave-1"]);

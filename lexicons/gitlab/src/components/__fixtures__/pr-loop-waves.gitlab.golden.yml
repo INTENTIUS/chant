@@ -59,6 +59,7 @@ apply-wave-1:
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
     - git fetch --quiet --tags origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"
+    - echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/chant-green.env"
     - chant ci run apply --in-place --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 1
   cache:
     key: chant-apply-prod-$CI_COMMIT_SHA
@@ -69,6 +70,8 @@ apply-wave-1:
     when: always
     paths:
       - .chant/pr
+    reports:
+      dotenv: chant-green.env
 
 apply-wave-2:
   stage: apply-wave-2
@@ -81,7 +84,8 @@ apply-wave-2:
   variables: {}
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
-    - git fetch --quiet --tags origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"
+    - test -n "$GREEN_SHA" && git fetch --quiet --tags origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH" && git checkout --quiet --detach "$GREEN_SHA"
+    - echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/chant-green.env"
     - chant ci run apply --in-place --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 2
   cache:
     key: chant-apply-prod-$CI_COMMIT_SHA
@@ -92,6 +96,8 @@ apply-wave-2:
     when: always
     paths:
       - .chant/pr
+    reports:
+      dotenv: chant-green.env
 
 apply-wave-3:
   stage: apply-wave-3
@@ -104,7 +110,8 @@ apply-wave-3:
   variables: {}
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
-    - git fetch --quiet --tags origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH" && GREEN_SHA="$(chant ci last-green)" && git checkout --quiet --detach "$GREEN_SHA"
+    - test -n "$GREEN_SHA" && git fetch --quiet --tags origin "+refs/heads/$CI_DEFAULT_BRANCH:refs/remotes/origin/$CI_DEFAULT_BRANCH" && git checkout --quiet --detach "$GREEN_SHA"
+    - echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/chant-green.env"
     - chant ci run apply --in-place --env prod --gate pr-apply --forge gitlab --wave-gate release --wave 3
   cache:
     key: chant-apply-prod-$CI_COMMIT_SHA
@@ -115,3 +122,5 @@ apply-wave-3:
     when: always
     paths:
       - .chant/pr
+    reports:
+      dotenv: chant-green.env

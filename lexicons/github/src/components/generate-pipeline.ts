@@ -122,6 +122,10 @@ export interface GithubPipelineDoc {
   jobs: GeneratedJob[];
 }
 
+/** The output a gated apply wave hands the green commit it applies through, and the step that sets it (#4221). */
+const WAVE_GREEN_OUTPUT = "green-sha";
+const WAVE_STEP_ID = "apply";
+
 /** The workflow artifact the gated-wave jobs hand their attempt record through, one per wave. */
 function waveRecordArtifact(wave: number): string {
   return `fan-out-record-wave-${wave}`;
@@ -240,7 +244,15 @@ function prLoopGithubDoc(
     ...(job.jobName === "apply" ? [restoreRecord(job.wave)] : []),
     // The job's setup lines (#4004) run in the command's shell, so a value they settle reaches it.
     // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY secret is set.
-    { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), job.run.command].join("\n") },
+    // #4221: a wave job hands the commit it applies to the next wave as the job output `green-sha`.
+    job.wave
+      ? {
+          name,
+          id: WAVE_STEP_ID,
+          env: { ...job.run.env, ...(job.wave > 1 ? { GREEN_SHA: `\${{ needs.${prApplyWaveJobName(job.wave - 1)}.outputs.${WAVE_GREEN_OUTPUT} }}` } : {}) },
+          run: [...(job.checkout ?? []), `echo "${WAVE_GREEN_OUTPUT}=$GREEN_SHA" >> "$GITHUB_OUTPUT"`, ...(job.setup ?? []), job.run.command].join("\n"),
+        }
+      : { name, env: job.run.env, run: [...(job.checkout ?? []), ...(job.setup ?? []), job.run.command].join("\n") },
     ...runSteps(extraScript),
     ...(job.jobName === "apply" ? [saveRecord(job.wave)] : []),
     {
@@ -261,6 +273,7 @@ function prLoopGithubDoc(
     container: image,
     concurrency: concurrency(prApplyGroup(env, member?.name)),
     permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
+    ...(job.wave ? { outputs: { [WAVE_GREEN_OUTPUT]: `\${{ steps.${WAVE_STEP_ID}.outputs.${WAVE_GREEN_OUTPUT} }}` } } : {}),
     steps: steps(job, name),
   });
   const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
@@ -268,7 +281,7 @@ function prLoopGithubDoc(
   const greenJobs: Array<[string, Record<string, unknown>]> = loop.waveGate
     ? waveJobs.map((job) => [
         prApplyWaveJobName(job.wave!),
-        applyJob(job, job.wave! > 1 ? [prApplyWaveJobName(job.wave! - 1)] : [], `Apply wave ${job.wave} of the newest green commit, under the approval its plan has`),
+        applyJob(job, job.wave! > 1 ? [prApplyWaveJobName(job.wave! - 1)] : [], job.wave === 1 ? "Apply wave 1 of the newest green commit, under the approval its plan has" : `Apply wave ${job.wave} of the green commit wave 1 took, under the approval its plan has`),
       ])
     : loop.applyOnMerge
       ? [["apply", applyJob(apply, [], "Apply the newest green commit under the merged changes' approvals")]]

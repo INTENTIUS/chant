@@ -300,6 +300,9 @@ function gatedWaveGitlabPipeline(
  * k-1 pushed, and a retry of a wave that stopped at its gate pulls the one it
  * pushed itself.
  */
+/** The dotenv report a gated apply wave hands the green commit it applies through (#4221). */
+const WAVE_GREEN_DOTENV = "chant-green.env";
+
 /** The rule of a pipeline for a pushed `ci/green/` tag (#4168 step 9), which runs the apply under apply on merge. */
 const GITLAB_GREEN_TAG_RULE = '$CI_COMMIT_TAG =~ /^ci\\/green\\//';
 
@@ -333,7 +336,9 @@ function prLoopGitlabPipeline(
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
   // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY variable is set.
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
+  // #4221: a wave job hands the commit it applies to the next wave as GREEN_SHA, through a dotenv report.
+  const handOff = (job: typeof plan): string[] => (job.wave ? [`echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/${WAVE_GREEN_DOTENV}"`] : []);
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
   const stages = ["plan", ...applies.map((a) => a.stage)];
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
@@ -372,7 +377,7 @@ function prLoopGitlabPipeline(
                   when: "always",
                 },
               }),
-          artifacts: { when: "always", paths: [reportPath] },
+          artifacts: { when: "always", paths: [reportPath], ...(job.wave ? { reports: { dotenv: WAVE_GREEN_DOTENV } } : {}) },
         },
       ]),
     ),
