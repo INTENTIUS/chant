@@ -104,6 +104,9 @@ export async function observeResources(
      * Passed through to every lexicon's `describeResources`; one that has no
      * namespace-like scope ignores it. */
     namespace?: string;
+    /** The project configuration, handed to a stack's scoped build so its
+     * serializers see lexicon settings such as gcp's `gcp.project` (#4252). */
+    config?: Record<string, unknown>;
   },
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
@@ -119,7 +122,7 @@ export async function observeResources(
     const key = resolvePath(src);
     let r = scopedBuildCache.get(key);
     if (!r) {
-      r = await buildProject(key, serializers);
+      r = await buildProject(key, serializers, undefined, opts?.config ? { config: opts.config } : undefined);
       scopedBuildCache.set(key, r);
     }
     return r;
