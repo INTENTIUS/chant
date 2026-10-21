@@ -281,12 +281,35 @@ export const pubSubTopicMapper: ResourceMapper = {
   },
 };
 
-/** Map a CNRM RunService to a Cloud Run v2 Service body. Pure. */
-export function cloudRunServiceBody(resource: GcpResource): { template?: unknown } {
-  const spec = (resource.spec ?? {}) as { template?: unknown };
+/**
+ * Map a CNRM RunService to a Cloud Run v2 Service body. Pure. CNRM names the
+ * service account with `template.serviceAccountRef`; v2 takes
+ * `template.serviceAccount` as an email (#4240).
+ */
+export function cloudRunServiceBody(resource: GcpResource, project?: string): { template?: unknown } {
+  const spec = (resource.spec ?? {}) as { template?: Record<string, unknown> };
   const body: { template?: unknown } = {};
-  if (spec.template) body.template = spec.template;
+  if (!spec.template) return body;
+  const { serviceAccountRef, ...template } = spec.template as { serviceAccountRef?: { name?: string; external?: string } };
+  const email = serviceAccountEmail(serviceAccountRef, project);
+  body.template = email ? { ...template, serviceAccount: email } : template;
   return body;
+}
+
+/**
+ * The email a CNRM `serviceAccountRef` names: `external` as given (an email,
+ * or a `projects/<p>/serviceAccounts/<email>` path), `name` as an account id
+ * in the project.
+ */
+export function serviceAccountEmail(ref: { name?: string; external?: string } | undefined, project?: string): string | undefined {
+  if (!ref) return undefined;
+  if (ref.external) return ref.external.split("/").pop();
+  if (ref.name) {
+    if (ref.name.includes("@")) return ref.name;
+    if (!project) throw new Error(`serviceAccountRef { name: "${ref.name}" } needs a project to form the account's email`);
+    return `${ref.name}@${project}.iam.gserviceaccount.com`;
+  }
+  return undefined;
 }
 
 export const cloudRunServiceMapper: ResourceMapper = {
@@ -305,11 +328,11 @@ export const cloudRunServiceMapper: ResourceMapper = {
       create: {
         method: "POST",
         url: `${services}?serviceId=${encodeURIComponent(name)}`,
-        body: cloudRunServiceBody(resource),
+        body: cloudRunServiceBody(resource, project),
       },
       // Cloud Run reconciles with a PATCH of the service; like create it returns
       // a long-running operation, polled via the mapper's `operation`.
-      update: { method: "PATCH", url, body: cloudRunServiceBody(resource) },
+      update: { method: "PATCH", url, body: cloudRunServiceBody(resource, project) },
     };
   },
 };

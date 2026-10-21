@@ -182,6 +182,15 @@ const CNRM_REFINERS: Record<string, (tree: CnrmTree, ctx: RefineContext) => void
     // name. The declared side writes it as `location`.
     const m = ctx.restName ? /\/locations\/([^/]+)\//.exec(ctx.restName) : null;
     if (m) tree.location = m[1];
+    // #4240: v2 returns the account as an email; the declared side writes a
+    // `serviceAccountRef`, `name` for an account in the project.
+    const template = tree.template as Record<string, unknown> | undefined;
+    if (template && typeof template.serviceAccount === "string") {
+      const email = template.serviceAccount;
+      const suffix = `@${ctx.project}.iam.gserviceaccount.com`;
+      template.serviceAccountRef = email.endsWith(suffix) ? { name: email.slice(0, -suffix.length) } : { external: email };
+      delete template.serviceAccount;
+    }
   },
   // #4233: the inverse of gcp-compute.ts's body builders. Compute returns refs
   // as full URLs and a region as a URL; CNRM writes `*Ref: { name }` and a

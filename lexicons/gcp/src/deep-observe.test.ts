@@ -124,6 +124,21 @@ describe("toCnrmTree — each REST shape in the declared vocabulary (#1210)", ()
     expect(tree).toEqual({ metadata: { name: "t" }, messageRetentionDuration: "86400s" });
   });
 
+  test("run service: the v2 serviceAccount email maps back to the declared serviceAccountRef (#4240)", () => {
+    const same = toCnrmTree(
+      "RunService",
+      { name: "projects/my-project/locations/us-central1/services/web", template: { serviceAccount: "run-sa@my-project.iam.gserviceaccount.com" } },
+      ctx,
+    ) as { template: Record<string, unknown> };
+    expect(same.template).toEqual({ serviceAccountRef: { name: "run-sa" } });
+    const other = toCnrmTree(
+      "RunService",
+      { name: "projects/my-project/locations/us-central1/services/web", template: { serviceAccount: "x@other.iam.gserviceaccount.com" } },
+      ctx,
+    ) as { template: Record<string, unknown> };
+    expect(other.template).toEqual({ serviceAccountRef: { external: "x@other.iam.gserviceaccount.com" } });
+  });
+
   test("bucket: GCS's iamConfiguration and lifecycle map onto the CNRM field names", () => {
     const tree = toCnrmTree(
       "StorageBucket",

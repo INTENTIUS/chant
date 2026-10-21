@@ -34,6 +34,8 @@ export interface CloudRunServiceProps {
   publicAccess?: boolean;
   /** Environment variables. */
   env?: Array<{ name: string; value: string }>;
+  /** Service account the service runs as: an email, or the account id of an IAMServiceAccount in the project. */
+  serviceAccount?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
   /** Namespace for all resources. */
@@ -75,6 +77,7 @@ export const CloudRunServiceComposite = Composite((props: CloudRunServiceProps) 
     maxInstanceCount = 100,
     publicAccess = false,
     env,
+    serviceAccount,
     labels: extraLabels = {},
     namespace,
     defaults: defs,
@@ -112,6 +115,9 @@ export const CloudRunServiceComposite = Composite((props: CloudRunServiceProps) 
         maxInstanceCount,
       },
       containers,
+      ...(serviceAccount && {
+        serviceAccountRef: serviceAccount.includes("@") ? { external: serviceAccount } : { name: serviceAccount },
+      }),
     },
   }, defs?.service));
 

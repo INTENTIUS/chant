@@ -83,6 +83,13 @@ describe("CloudRunServiceComposite", () => {
     expect(result.service).toBeDefined();
   });
 
+  test("serviceAccount sets serviceAccountRef: an account id by name, an email as external (#4240)", () => {
+    const byName = CloudRunServiceComposite({ name: "api", image: "i", serviceAccount: "run-sa" });
+    expect((p(byName.service).template as Record<string, unknown>).serviceAccountRef).toEqual({ name: "run-sa" });
+    const byEmail = CloudRunServiceComposite({ name: "api", image: "i", serviceAccount: "x@o.iam.gserviceaccount.com" });
+    expect((p(byEmail.service).template as Record<string, unknown>).serviceAccountRef).toEqual({ external: "x@o.iam.gserviceaccount.com" });
+  });
+
   test("sets projectRef and location, which the RunService CRD requires", () => {
     const result = CloudRunServiceComposite({
       name: "api",
