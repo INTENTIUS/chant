@@ -258,7 +258,7 @@ CI:
               [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>]
               [-o <dir>] [--wave <k>] [--require-review]
               [--no-status] [--status-url <url template>]
-              [--in-place | --local] [--no-push] [--verbose]
+              [--in-place | --local] [--no-push] [--require-runner-start] [--verbose]
                         Run the pull-request pipeline's plan or apply job as
                         a pipeline Op in a fresh worktree of --commit (default
                         HEAD) with a clean environment. --base and --pr stand
@@ -286,6 +286,20 @@ CI:
                         kept on the local chant/lifecycle with runOrigin
                         local and is never pushed, no status is set, nothing
                         goes under a report URL, and ci tick does not count it.
+                        --require-runner-start refuses the job before its
+                        first step unless a runner-start statement, signed by
+                        a runner key .chant/trust.json at --base lists, names
+                        this forge job.
+  ci runner-start sign --key <runner key.pem> --principal <name> --job <json|@file> [-o <file>]
+                        For the provisioner that starts a runner for one job:
+                        sign the job's system, repo, run, attempt, job,
+                        commit and runner name, and print the envelope.
+  ci runner-start verify [--base <rev>] [--commit <sha>] [--json]
+                        In the job: check the statement in CHANT_RUNNER_START,
+                        or the file CHANT_RUNNER_START_FILE names (default
+                        /run/chant/runner-start.json), against the forge's
+                        variables and .chant/trust.json at --base (default
+                        origin/HEAD). Exits 1 unless it verifies.
   ci runs [--report-url <url>] [--json]
                         List the runs in the index at the report URL (default
                         the workspace's ci.reportUrl), newest first.
@@ -1388,6 +1402,8 @@ export const commandRegistry: CommandDef[] = [
   // #4094: one pull-request job as a pipeline Op in a fresh checkout, the chant runner's first slice.
   { name: "ci run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run")).runCiRun(ctx) },
   // #4098: the run index at the report URL.
+  // #4147: a provisioner's signed word that it started a runner for one job, signed and checked.
+  { name: "ci runner-start", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-runner-start")).runCiRunnerStart(ctx) },
   { name: "ci runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-run-index")).runCiRuns(ctx) },
   { name: "ci serve", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/ci-serve")).runCiServe(ctx) },
   // #4026: the release cut from a green commit (ws-104). Imported on first use.

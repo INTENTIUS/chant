@@ -513,6 +513,10 @@ export interface ParsedArgs {
   unsigned?: boolean;
   /** `chant ci run --in-place` (#4156): run the job in this checkout at HEAD, as a generated forge job does. */
   ciInPlace?: boolean;
+  /** `chant ci run --require-runner-start` (#4147): refuse the job unless a runner-start statement names it. */
+  requireRunnerStart?: boolean;
+  /** `chant ci runner-start sign --job <json|@file>` (#4147): the CI job a runner was started for. */
+  ciJob?: string;
   /** `chant ci run --no-push` (#4156): write the run record on the local chant/lifecycle and push nothing. */
   noPush?: boolean;
   /** `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the principal the runner key is listed for. */

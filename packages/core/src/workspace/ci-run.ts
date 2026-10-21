@@ -99,6 +99,7 @@ import { resolveMemberContext } from "./member-pipeline";
 import { signOpRunRecord } from "./trust/op-run-statement";
 import { gitTop } from "./tree";
 import { hostRunnerKey } from "./ci-runner-key";
+import { requireRunnerStart } from "./ci-runner-start";
 
 /** The two jobs a pull-request pipeline has. */
 export type CiJobName = PrLoopJob["jobName"];
@@ -484,6 +485,12 @@ export interface CiRunRequest {
    */
   local?: boolean;
   /**
+   * `--require-runner-start` (#4147): refuse the job before its first step
+   * unless a runner-start statement, signed by a runner key
+   * `.chant/trust.json` at `base` lists, names this forge job.
+   */
+  requireRunnerStart?: boolean;
+  /**
    * `--wave <k>` (#4003, #4156): the one wave a generated apply job runs, as
    * `pr-apply --wave <k>`. Needs `--wave-gate`.
    */
@@ -648,6 +655,8 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const found = jobs.find((j) => j.jobName === req.job);
   if (!found) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
   if (req.wave !== undefined && (req.job !== "apply" || !req.loop?.waveGate)) throw new CiRunError("--wave names the one wave an apply runs, and takes --wave-gate: ci run apply --wave-gate <gate> --wave <k>");
+  // #4147: before anything runs or any secret reaches a step, the provisioner's word that this runner was started for this job.
+  const started = req.requireRunnerStart ? runnerStartFor(req, { top, commit, hostEnv }) : undefined;
   // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
   const command = `${found.command}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${req.local ? " --no-status" : ""}`;
   const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
@@ -666,11 +675,28 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   // In place the forge's own variables come too; one whose value is short, such as a flag, is left out, so it can't blank common words.
   const redact = ciRedactor(req.inPlace ? { ...longValues(jobEnv), ...own } : jobEnv, req.secrets);
   try {
-    const result = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
+    const ran = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
+    const result = started ? { ...ran, notes: [started, ...ran.notes] } : ran;
     return redact ? { ...result, warnings: result.warnings.map(redact), notes: result.notes.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result;
   } catch (err) {
     if (redact && err instanceof Error) err.message = redact(err.message);
     throw err;
+  }
+}
+
+/**
+ * `--require-runner-start` (#4147): the runner-start statement for this
+ * forge job, checked against `.chant/trust.json` at `--base` (the commit
+ * before the change, as a push's `before` is), or at the job's commit
+ * without one. Throws {@link CiRunError} unless it verifies.
+ */
+function runnerStartFor(req: CiRunRequest, at: { top: string; commit: string; hostEnv: Record<string, string | undefined> }): string {
+  if (req.local) throw new CiRunError("--require-runner-start checks a forge job's runner, and --local runs the job on this machine");
+  const base = req.base ? resolveJobCommit(at.top, req.base) : at.commit;
+  try {
+    return requireRunnerStart({ top: at.top, base, commit: at.commit, env: at.hostEnv }).reason;
+  } catch (err) {
+    throw new CiRunError(message(err));
   }
 }
 
@@ -980,6 +1006,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       ...(args.local ? { local: true } : {}),
       ...(args.noPush ? { push: false } : {}),
       ...(args.wave !== undefined ? { wave: args.wave } : {}),
+      ...(args.requireRunnerStart ? { requireRunnerStart: true } : {}),
       ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
