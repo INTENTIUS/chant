@@ -19,6 +19,7 @@
  * token acquisition lands here.
  */
 
+import { armResourcePath } from "../arm-type";
 import { type AzHttp } from "../op/activities/az-apply";
 
 /** Default ARM host, matching the applier's. */
@@ -78,7 +79,7 @@ export function armResourceReadUrl(
 ): string {
   const base = (options.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
   const subscription = options.subscriptionId ?? DEFAULT_SUBSCRIPTION;
-  return `${base}/subscriptions/${subscription}/resourceGroups/${options.resourceGroup}/providers/${type}/${name}?api-version=${apiVersion}`;
+  return `${base}/subscriptions/${subscription}/resourceGroups/${options.resourceGroup}/providers/${armResourcePath(type, name)}?api-version=${apiVersion}`;
 }
 
 /**

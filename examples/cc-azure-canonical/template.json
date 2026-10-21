@@ -3,7 +3,7 @@
   "contentVersion": "1.0.0.0",
   "resources": [
     {
-      "apiVersion": "2023-01-01",
+      "apiVersion": "2024-07-01",
       "location": "[resourceGroup().location]",
       "name": "cc-aks",
       "properties": {
@@ -94,7 +94,7 @@
           "id": "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
         }
       },
-      "type": "Microsoft.Network/virtualNetworks_subnets"
+      "type": "Microsoft.Network/virtualNetworks/subnets"
     },
     {
       "apiVersion": "2023-05-01",
@@ -114,7 +114,7 @@
           "id": "[resourceId('Microsoft.Network/routeTables', 'cc-vnet-rt')]"
         }
       },
-      "type": "Microsoft.Network/virtualNetworks_subnets"
+      "type": "Microsoft.Network/virtualNetworks/subnets"
     },
     {
       "apiVersion": "2023-05-01",
