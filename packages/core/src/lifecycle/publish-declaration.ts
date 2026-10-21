@@ -45,6 +45,21 @@ export const NpmPublishSchema = z
      * `sbom.cyclonedx.json` it holds. `false` publishes without one.
      */
     sbom: sbomField.optional(),
+    /**
+     * `false` publishes each package straight to the reveal tag (`latest`
+     * unless the publish names another), with no `next` stage and no
+     * `npm dist-tag` move (#4040). For credentials that may publish but not
+     * move a dist-tag, such as npm trusted publishing without "Allow npm
+     * dist-tag" on the package's record (#3904). Default `true`.
+     */
+    stage: z.boolean().optional(),
+    /**
+     * A variable holding an npm token to retry with when a package's publish
+     * fails to authenticate (#4040), as chant's own publish-packages.sh does:
+     * a package whose trusted-publisher record is broken publishes with the
+     * token rather than failing the release. Unset or empty, there is no retry.
+     */
+    tokenEnv: envName.optional(),
   })
   .strict();
 

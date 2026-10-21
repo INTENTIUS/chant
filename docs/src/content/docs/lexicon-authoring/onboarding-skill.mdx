@@ -168,12 +168,12 @@ is versioned in lockstep with core.
    ```
 
    Never hand-roll the tag. `.github/workflows/publish.yml` triggers on
-   `chant-v*` and `lexicon-*-v*` only; a bare `v0.57.0` tag matches nothing and
-   the release silently never happens.
+   `release/npm/*`, `chant-v*` and `lexicon-*-v*` only; a bare `v0.57.0` tag
+   matches nothing and the release silently never happens.
 
-   Publishing itself is `scripts/publish-packages.sh`, which enumerates every
-   non-private workspace package. No workflow edit is needed for a new
-   lexicon.
+   `just release` publishes the tarballs `release/chant.config.ts` lists, so a
+   new lexicon adds its line there, after the lexicons it depends on.
+   `scripts/release-member.test.ts` fails until it does (#4040).
 
 8. **Confirm it actually published**
 

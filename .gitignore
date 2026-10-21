@@ -40,3 +40,6 @@ lexicons/fountain/.init-template-*/
 # check from, until @intentius/tsad-conformance is on npm.
 .tsad/
 .import-roundtrip-tmp/
+
+# chant release tarballs (scripts/release-pack.sh, #4040)
+.release/

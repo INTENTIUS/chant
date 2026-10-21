@@ -329,11 +329,59 @@ ext-vscode-build:
 ext-vscode-package:
     cd editors/vscode && npm install && npm run build && npm run package
 
-# Releases the newest commit on main whose `chant` run succeeded, or <commit>,
-# not HEAD (#2816). The bump is committed on top of that commit and tagged,
-# then merged back into main. --dry-run says what it would tag and stops.
-# Bump every package, tag the newest green main commit, publish (just release [major|minor|patch] [<commit>] [--dry-run])
+# Releases the newest green commit on main, or <commit>, with `chant release
+# cut --at` from release/ (#4040). No version-bump commit: the label is the
+# version, and scripts/release-pack.sh writes it into the packages publish.yml
+# packs. The cut pushes chant/lifecycle; this pushes the release/npm/<label>
+# tag, which publish.yml publishes with `chant release publish`. --dry-run
+# runs the cut without --yes, which cuts, tags and pushes nothing.
+# Cut the newest green main commit as chant's next release (just release [major|minor|patch] [<commit>] [--dry-run])
 release bump="patch" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source scripts/release-lib.sh
+    release_args {{bump}} {{args}}
+    # The cut's trunk check reads origin/main as fetched (release-workstation.ts).
+    git fetch --quiet origin main
+    git fetch --quiet origin 'refs/tags/ci/*:refs/tags/ci/*' 'refs/tags/release/*:refs/tags/release/*' 'refs/tags/chant-v*:refs/tags/chant-v*'
+    sha=$(bash scripts/release-preflight.sh ${RELEASE_COMMIT:+"$RELEASE_COMMIT"})
+    # The next version floors on every package.json at the commit and every
+    # version already tagged, since package.json no longer moves with a release.
+    versions=()
+    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
+      versions+=("$(release_version_at "$sha" "$f")")
+    done
+    while read -r t; do
+      [ -n "$t" ] && versions+=("${t#chant-v}")
+    done < <(git tag -l 'chant-v*')
+    while read -r t; do
+      [ -n "$t" ] && versions+=("${t#release/npm/}")
+    done < <(git tag -l 'release/npm/*')
+    next=$(release_next "$(release_max "${versions[@]}")" "$RELEASE_BUMP")
+    rtag=$(release_reference_tag "$next")
+    echo "Release $next from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
+    yes=()
+    [ "$RELEASE_DRY_RUN" = 1 ] || yes=(--yes)
+    (cd release && npx tsx ../packages/core/src/cli/main.ts release cut "$next" --at "$sha" "${yes[@]}")
+    if [ "$RELEASE_DRY_RUN" = 1 ]; then
+      echo "Dry run: nothing cut, tagged or pushed.${rtag:+ It would also tag $rtag.}"
+      exit 0
+    fi
+    # chant never pushes the release tag; publish.yml runs on it.
+    git push origin "refs/tags/release/npm/$next"
+    if [ -n "$rtag" ]; then
+      git tag "$rtag" "$sha"
+      git push origin "refs/tags/$rtag"
+    fi
+    echo "Released $next: publish.yml runs on release/npm/$next"
+
+# The release path before #4040, kept until two releases have gone through
+# `just release`. It releases the newest commit on main whose `chant` run
+# succeeded, or <commit>, not HEAD (#2816). The bump is committed on top of
+# that commit and tagged, then merged back into main. --dry-run says what it
+# would tag and stops.
+# Bump every package, tag the newest green main commit, publish (just release-legacy [major|minor|patch] [<commit>] [--dry-run])
+release-legacy bump="patch" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     source scripts/release-lib.sh
@@ -436,8 +484,10 @@ release-lexicon name bump="patch" *args:
       echo "refusing to release: ${bump_files[0]} does not exist at $(git rev-parse --short "$sha")" >&2
       exit 1
     fi
-    # Floor on main too: it may already carry a later bump of this lexicon.
-    current=$(release_max "$(release_version_at "$sha" "${bump_files[0]}")" "$(release_version_at "$RELEASE_MAIN" "${bump_files[0]}")")
+    # Floor on main, on this lexicon's tags, on release/npm/* (which moves no
+    # package.json) and on npm, so the version is always past npm's (#4040).
+    git fetch --quiet origin 'refs/tags/lexicon-{{name}}-v*:refs/tags/lexicon-{{name}}-v*' 'refs/tags/release/*:refs/tags/release/*'
+    current=$(release_lexicon_floor {{name}} "$sha")
     next=$(release_next "$current" "$RELEASE_BUMP")
     tag="lexicon-{{name}}-v$next"
     if release_tag_exists "$tag"; then

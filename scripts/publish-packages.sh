@@ -90,6 +90,8 @@
 #   DRY_RUN=plan   print the plan and exit, building nothing
 #   DRY_RUN=1      pack everything (real prepacks), print the plan, publish nothing
 #   PACK_JOBS      parallel prepacks per layer (default 4)
+#   PACK_ALL=1     with DRY_RUN=1, pack every package, published or not
+#   CHANT_PUBLISH_WORK  the work directory, kept after the run (default: a new temp dir)
 #   PUBLISH_JOBS   staged: parallel publishes and tag moves (default 24)
 #   WAIT_TIMEOUT   seconds to wait for a version's metadata, a staged version,
 #                  or a moved tag, to show (default 1800)
@@ -623,7 +625,9 @@ wait_latest() {
 
 # ---------------------------------------------------------------------------
 
-WORK=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chant-publish.XXXXXX")
+# CHANT_PUBLISH_WORK names the directory instead (scripts/release-pack.sh reads the tarballs from it).
+WORK="${CHANT_PUBLISH_WORK:-$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chant-publish.XXXXXX")}"
+mkdir -p "$WORK"
 
 declare -A LAYER NAME VERSION DEPS NEEDED LISTED LATEST STATE TGZ NOTE PROBE WAVE TAG TAGNOTE
 ORDER=()
@@ -744,6 +748,9 @@ for dir in "${ORDER[@]}"; do
   LATEST[$dir]=""
   [ "$(bg_rc "latest-$s")" = "0" ] && LATEST[$dir]=$(tr -d '[:space:]' < "$WORK/latest-$s.log" 2>/dev/null)
   [ -z "$STAGED" ] && [ "${LATEST[$dir]}" = "${VERSION[$dir]}" ] && LISTED[$dir]=1
+  # PACK_ALL=1 packs a package even when its version is on npm, so
+  # scripts/release-pack.sh has every tarball for a publish run again (#4040).
+  [ "${PACK_ALL:-}" = "1" ] && LISTED[$dir]=""
 done
 
 print_plan_layered() {

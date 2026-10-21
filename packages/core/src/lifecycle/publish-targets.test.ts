@@ -166,6 +166,51 @@ describe("npm", () => {
     expect(readFakeNpmRegistry(log).packages["@acme/kit"]!.distTags).toEqual({ latest: "1.3.0", next: "1.4.0", beta: "1.4.0" });
   });
 
+  test("stage: false publishes each package straight to latest in the order declared and moves no dist-tag (#4040)", async () => {
+    const { dir, npm, log } = setup();
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "kit.tgz"], access: "public", stage: false })], { npm });
+    const ctx = context(dir, { env: { PATH: process.env.PATH }, provenance: OIDC });
+    expect((await target!.plan(ctx))[0]!.destination).toBe("the registry npm's config names, dist-tag latest");
+    const staged = await target!.stage(ctx);
+    expect(latest(log)).toEqual({ "@acme/core": "1.4.0", "@acme/cli": "1.3.0", "@acme/kit": "1.4.0" });
+    const before = calls(log).length;
+    const done = await target!.reveal(ctx, staged);
+    expect(calls(log).filter((c) => c.args[0] === "publish").map((c) => c.args)).toEqual([
+      ["publish", join(dir, "packages/core"), "--tag", "latest", "--access", "public", "--provenance"],
+      ["publish", join(dir, "kit.tgz"), "--tag", "latest", "--access", "public", "--provenance"],
+    ]);
+    // The reveal only audits.
+    expect(calls(log).slice(before).map((c) => c.args[0])).toEqual(["install", "audit"]);
+    expect(done.items.map((i) => i.destination)).toEqual(Array(2).fill("the registry npm's config names, dist-tag latest"));
+    expect(readFakeNpmRegistry(log).packages["@acme/core"]!.distTags.next).toBeUndefined();
+  });
+
+  test("tokenEnv: a package that can't authenticate publishes again with the token from a throwaway user config, then without provenance if the token path refuses it (#4040)", async () => {
+    const { dir, npm, log } = setup();
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "kit.tgz"], stage: false, tokenEnv: "NPM_TOKEN" })], { npm });
+    const env = { PATH: process.env.PATH, NPM_TOKEN: "npm_fallback99", FAKE_NPM_NEEDAUTH: "kit.tgz", FAKE_NPM_TOKEN_NO_PROVENANCE: "1" };
+    const ctx = context(dir, { env, provenance: OIDC });
+    await target!.stage(ctx);
+    const publishes = calls(log).filter((c) => c.args[0] === "publish") as Array<{ args: string[]; userconfig?: string }>;
+    expect(publishes.map((c) => [c.args[1], c.args.includes("--provenance"), Boolean(c.userconfig)])).toEqual([
+      [join(dir, "packages/core"), true, false],
+      [join(dir, "kit.tgz"), true, false],
+      [join(dir, "kit.tgz"), true, true],
+      [join(dir, "kit.tgz"), false, true],
+    ]);
+    expect(publishes[2]!.userconfig).toBe("//registry.npmjs.org/:_authToken=npm_fallback99\n");
+    expect(latest(log)["@acme/kit"]).toBe("1.4.0");
+    expect(ctx.lines.join("\n")).not.toContain("npm_fallback99");
+  });
+
+  test("tokenEnv: with the variable unset, or a failure that is not authentication, there is no retry", async () => {
+    const { dir, npm, log } = setup();
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["kit.tgz"], stage: false, tokenEnv: "NPM_TOKEN" })], { npm });
+    await expect(target!.stage(context(dir, { env: { PATH: process.env.PATH, FAKE_NPM_NEEDAUTH: "kit.tgz" } }))).rejects.toThrow(/exited 1/);
+    await expect(target!.stage(context(dir, { env: { PATH: process.env.PATH, NPM_TOKEN: "t", FAKE_NPM_FAIL: "kit.tgz" } }))).rejects.toThrow(/403/);
+    expect(calls(log).filter((c) => c.args[0] === "publish")).toHaveLength(2);
+  });
+
   test("a stage that failed part way names what it staged and, run again, publishes only the rest; a tag move that fails names what moved", async () => {
     const { dir, npm, log } = setup();
     const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "packages/cli", "packages/kit"] })], { npm });
