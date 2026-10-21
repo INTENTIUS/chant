@@ -154,6 +154,12 @@ interface PolicyRow {
 const policyReport: PolicyRow[] = [];
 
 describe("under --sandbox, no project module is executed in the CLI process (chant #1093, #1113)", () => {
+  // The gcp examples set GCP_PROJECT_ID and GCP_REGION from their chant.config.ts
+  // (#4200). Under --sandbox that config runs in a child, so its assignments never
+  // reach this process, where the gcp serializer reads them. Set the same defaults here.
+  process.env.GCP_PROJECT_ID ??= "example-project";
+  process.env.GCP_REGION ??= "us-central1";
+
   test(`corpus is non-empty (found ${CORPUS.length} source directories)`, () => {
     expect(CORPUS.length).toBeGreaterThan(0);
   });
