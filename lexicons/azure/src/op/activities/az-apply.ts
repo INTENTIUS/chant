@@ -270,7 +270,7 @@ export function orderArmResources(resources: ArmResource[]): ArmResource[] {
 /** The ARM resource-ID PUT URL for a resource (name expression evaluated). */
 export async function armResourceUrl(resource: ArmResource, ctx: ArmEvalCtx): Promise<string> {
   const name = await evalArmString(resource.name, ctx);
-  return `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${armResourcePath(resource.type, name)}?api-version=${resource.apiVersion}`;
+  return `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${armResourcePath(resource.type, String(name))}?api-version=${resource.apiVersion}`;
 }
 
 /**
