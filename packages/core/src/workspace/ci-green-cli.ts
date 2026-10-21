@@ -192,7 +192,7 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
       console.log(
         e.build === "newest"
           ? `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} the newest commit on ${green.branch} when a run ends, and a ci/build/<sha> tag by hand.`
-          : `Wrote ${path}'s concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} every commit on ${green.branch}, none cancelled.`,
+          : `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} every commit on ${green.branch}, none cancelled, and a ci/build/<sha> tag by hand when the forge ran nothing.`,
       );
     }
     return 0;

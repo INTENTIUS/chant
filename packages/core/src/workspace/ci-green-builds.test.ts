@@ -158,6 +158,32 @@ describe("the tick for a newest phase (#4169)", () => {
   });
 });
 
+describe("the tick for a missing every phase (#4216)", () => {
+  const CHECK_WORKFLOW = "name: ci\non:\n  push:\n    branches: [main]\n  workflow_dispatch: {}\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n";
+
+  test("a commit the forge never ran check on gets one request, started at its ci/build tag, and the record keeps it", async () => {
+    const { root, origin } = workspace();
+    writeFiles(root, { ".github/workflows/ci.yml": CHECK_WORKFLOW });
+    const a = commitAt(root, 2, "app/a.txt");
+    git(root, "push", "-q", "origin", "main");
+    // GitHub skipped a's push run of ci.yml; release-suites ran.
+    const runs = new Map([[a, [run("suites", "success")]]]);
+    const forge = fakeForge(runs);
+    const tick = await ciTick({ cwd: root, forge, now: NOW });
+    expect(tick.requested.map((r) => [r.commit, r.phases, r.reason])).toEqual([[a, ["check"], "missing"]]);
+    expect(forge.dispatched).toEqual([`ci.yml@ci/build/${a}`]);
+    expect(remoteTags(origin)).toEqual([`ci/build/${a}`]);
+    expect(remoteRecord(origin, a)).toMatchObject({ state: "pending", missing: { phases: ["check"] }, request: { reason: "missing", dispatched: true }, phases: { check: { reason: "requested" } } });
+
+    // The started run passes: the commit goes green and the request is done.
+    runs.set(a, [run("suites", "success"), run("check", "success")]);
+    const second = await ciTick({ cwd: root, forge, now: NOW });
+    expect(second.made).toEqual([`ci/green/${a}`]);
+    expect(second.requested).toEqual([]);
+    expect(forge.dispatched).toHaveLength(1);
+  });
+});
+
 describe("chant ci run --at (#4169)", () => {
   test("pushes a request for every required phase and starts the workflows holding them", async () => {
     const { root, origin } = workspace();

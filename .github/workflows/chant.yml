@@ -20,10 +20,13 @@ run-name: chant — ${{ github.head_ref || github.ref_name }}
 # Run once per commit: on PRs (pull_request) and on pushes to main
 # (post-merge validation). Without scoping `push` to main, a commit on a
 # branch that has an open PR triggers two identical runs.
+# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches:
+      - main
+  pull_request: null
+  workflow_dispatch: {}
 
 # A new push to a PR cancels that PR's superseded run. main's runs are never
 # cancelled (#2816, and ci.green's `build: "every"` since #4169, which

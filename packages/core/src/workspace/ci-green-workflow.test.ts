@@ -346,8 +346,8 @@ describe("the triggers of a phase that sets build (#4169)", () => {
       [".github/workflows/suites.yml", "newest", ["suites"], true],
     ]);
     const ci = parseYAMLDocument(edits[0].text) as Yaml;
-    // The triggers of an every phase stay, pull requests included.
-    expect(ci.on).toEqual({ push: { branches: ["main"] }, pull_request: null });
+    // The triggers of an every phase stay, pull requests included, and it can be started by hand (#4216).
+    expect(ci.on).toEqual({ push: { branches: ["main"] }, pull_request: null, workflow_dispatch: {} });
     expect(ci.concurrency).toEqual({ group: "chant-build-lint-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}", "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}" });
     expect(edits[0].text).toContain(`# Comments above a block stay.\n${BUILD_BLOCK_MARKER}\nconcurrency:`);
     const suites = parseYAMLDocument(edits[1].text) as Yaml;
@@ -388,7 +388,7 @@ describe("the triggers of a phase that sets build (#4169)", () => {
     ];
     const edits = buildTriggerEdits(green(), sources, { compose: true });
     const ci = parseYAMLDocument(edits[0].text) as Yaml;
-    expect(ci.on).toEqual({ push: { branches: ["main", "chant/compose/**"] }, pull_request: null });
+    expect(ci.on).toEqual({ push: { branches: ["main", "chant/compose/**"] }, pull_request: null, workflow_dispatch: {} });
     expect(ci.concurrency).toEqual({
       group: "chant-build-lint-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/chant/compose/')) && github.sha || github.ref }}",
       "cancel-in-progress": "${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/chant/compose/')) }}",
@@ -399,7 +399,7 @@ describe("the triggers of a phase that sets build (#4169)", () => {
     expect(buildTriggerEdits(green(), edits.map((e) => ({ path: e.path, text: e.text })), { compose: true }).map((e) => e.changed)).toEqual([false, false]);
     // A push with no branch list already runs on every branch, so its triggers stay.
     const anyBranch = LINT_WF.replace("  push:\n    branches: [main]\n", "  push:\n");
-    expect((parseYAMLDocument(buildTriggerEdits(green(), [{ path: ".github/workflows/ci.yml", text: anyBranch }], { compose: true })[0].text) as Yaml).on).toEqual({ push: null, pull_request: null });
+    expect((parseYAMLDocument(buildTriggerEdits(green(), [{ path: ".github/workflows/ci.yml", text: anyBranch }], { compose: true })[0].text) as Yaml).on).toEqual({ push: null, pull_request: null, workflow_dispatch: {} });
     // Without compose the bytes are what #4169 wrote.
     expect(buildTriggerEdits(green(), sources).map((e) => e.text)).toEqual(buildTriggerEdits(green(), sources, { compose: false }).map((e) => e.text));
     const tick = parseYAMLDocument(renderCiGreenWorkflow({ green: green(), workflows: ["ci"], chantVersion: "0.124.33", workspaceRoot: ".", compose: true })) as Yaml;

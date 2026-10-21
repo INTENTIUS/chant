@@ -37,6 +37,8 @@ interface Run {
 }
 
 /** The fake GitHub: runs per commit, and what dispatching the suites at a commit concludes. */
+const RUN_BASE = 100_000;
+
 class FakeGithub {
   runs = new Map<string, Run[]>();
   dispatched: string[] = [];
@@ -74,9 +76,12 @@ class FakeGithub {
       const runs = this.runs.get(m[1]) ?? [];
       return send(200, { total_count: runs.length, check_runs: runs.map((r) => ({ ...r, completed_at: null, html_url: null })) });
     }
-    m = /^\/repos\/acme\/app\/actions\/jobs\/(\d+)\/rerun$/.exec(url.pathname);
+    // Each job is its own workflow run here, numbered RUN_BASE above the job's id.
+    m = /^\/repos\/acme\/app\/actions\/jobs\/(\d+)$/.exec(url.pathname);
+    if (req.method === "GET" && m) return send(200, { id: Number(m[1]), run_id: RUN_BASE + Number(m[1]) });
+    m = /^\/repos\/acme\/app\/actions\/runs\/(\d+)\/rerun-failed-jobs$/.exec(url.pathname);
     if (req.method === "POST" && m) {
-      const id = Number(m[1]);
+      const id = Number(m[1]) - RUN_BASE;
       this.reruns.push(id);
       // The job runs again and fails the same way.
       for (const [sha, runs] of this.runs) {

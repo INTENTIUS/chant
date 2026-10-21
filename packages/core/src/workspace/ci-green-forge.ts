@@ -57,7 +57,9 @@ export interface CiForge {
   checkRuns(sha: string): Promise<CheckRun[]>;
   /**
    * Run a failed check run's job again (#4169), so a flake costs one more
-   * run before the commit counts red. Absent on a forge chant can't ask.
+   * run before the commit counts red: on GitHub, every failed job of its
+   * workflow run, so the jobs an aggregate needs go again with it (#4219).
+   * Absent on a forge chant can't ask.
    */
   rerun?(run: CheckRun): Promise<void>;
   /**
@@ -86,6 +88,7 @@ export function githubCiForge(opts: GithubCiForgeOptions): CiForge {
   const root = opts.apiBase.replace(/\/+$/, "");
   const fetchImpl = opts.fetch ?? (globalThis.fetch as unknown as ForgeFetch);
   const headers = { Authorization: `Bearer ${opts.token}`, Accept: "application/vnd.github+json" };
+  const rerunRuns = new Set<number>();
   return {
     kind: "github",
     async checkRuns(sha) {
@@ -115,9 +118,24 @@ export function githubCiForge(opts: GithubCiForgeOptions): CiForge {
       }
       return out;
     },
-    // An Actions job's check run has the job's id, so the job is re-run by it. Both need `actions: write`.
+    // An Actions job's check run has the job's id. Re-running only that job
+    // would re-run an aggregate such as `suites` against the shards' old
+    // results, so the failed jobs of its workflow run go again together,
+    // each run once per tick (#4219). Both calls need `actions: write`.
     async rerun(run) {
-      await post(`${root}/repos/${opts.repo}/actions/jobs/${run.id}/rerun`, {});
+      const jobUrl = `${root}/repos/${opts.repo}/actions/jobs/${run.id}`;
+      const res = await fetchImpl(jobUrl, { method: "GET", headers });
+      const text = await res.text();
+      if (!res.ok) throw new ForgeApiError("GET", jobUrl, res.status, text);
+      const job: unknown = text ? JSON.parse(text) : null;
+      const runId = isObject(job) && typeof job.run_id === "number" ? job.run_id : null;
+      if (runId === null) {
+        await post(`${jobUrl}/rerun`, {});
+        return;
+      }
+      if (rerunRuns.has(runId)) return;
+      rerunRuns.add(runId);
+      await post(`${root}/repos/${opts.repo}/actions/runs/${runId}/rerun-failed-jobs`, {});
     },
     async dispatch(workflow, ref) {
       await post(`${root}/repos/${opts.repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { ref });
