@@ -1022,7 +1022,11 @@ Component release ledger + status:
                              [--component <name> [--digest <sha256:...>]];
                              --from defaults to the environment before --to
                              in the config's environments; --dry-run prints
-                             the plan; the target's gates still apply)
+                             the plan; the target's gates still apply. Under
+                             --release a dependent plans against its
+                             upstream's planned outputs and plans again once
+                             it applies; --wave-gate <gate> checks each wave
+                             at <gate>-wave-<k>; a stop writes --resume <file>)
   components rollback <env> Redeploy an earlier release of an environment
                             from its recorded digest (--component <name>
                             [--digest <sha256:...>]; defaults to the release

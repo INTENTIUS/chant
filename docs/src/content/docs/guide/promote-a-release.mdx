@@ -52,6 +52,18 @@ chant components promote --to prod --release v1.4.0
 
 An approval counts only for the release, environment and change set it names. An approval for staging does not pass prod, and one for this release does not pass the next. An environment whose change set is empty passes without an approval, and the promote records the pass. Once the last environment in the order is through, `chant release list` lists each one under the release.
 
+## Pass a later round
+
+A dependent is planned against what its upstream's plan says it will expose. If the upstream applies as another value, the dependent is planned again. A new plan the approval covers goes ahead. One it doesn't cover stops at `<gate>-round-2` with its own digest and writes a resume record. Read that change set, approve the round, and run the same command again:
+
+```bash
+chant change-set show <digest>
+chant approve release prod-release-round-2 --env prod
+chant components promote --to prod --release v1.4.0
+```
+
+The rerun reads the record, skips what applied and starts from the wave it stopped at. `--wave-gate <gate>` checks every wave after the first instead of only what moved, and a wave the approval doesn't cover waits at `<gate>-wave-<k>`. The output also lists the pull requests going out and how each was approved on merge; the gate never counts those. [Planned outputs and rounds](/chant/cli/components/#planned-outputs-and-rounds) has the details.
+
 ## Roll an environment back
 
 To put an earlier release back in an environment, roll back to its label. Every component of that release is restored at the digest the environment ran from it, through the same gate.
