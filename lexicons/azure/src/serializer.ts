@@ -10,6 +10,7 @@
  * - parameters, outputs sections
  */
 
+import { armType } from "./arm-type";
 import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
@@ -194,7 +195,7 @@ function entityNamed(entityNames: Map<Declarable, string>, name: string): Declar
 function armResourceId(entityNames: Map<Declarable, string>, name: string): string {
   const entity = entityNamed(entityNames, name);
   const { args } = armNameArgs(entity, name);
-  return entity ? `resourceId('${entity.entityType}', ${args})` : `resourceId(${args})`;
+  return entity ? `resourceId('${armType(entity.entityType)}', ${args})` : `resourceId(${args})`;
 }
 
 /**
@@ -291,7 +292,7 @@ function serializeToTemplate(
     } else if (isChildProject(entity)) {
       emittedTypes.push("Microsoft.Resources/deployments");
     } else if (!isPropertyDeclarable(entity)) {
-      emittedTypes.push(entity.entityType);
+      emittedTypes.push(armType(entity.entityType));
     }
   }
   const templateScope = pinnedScope ?? resolveTemplateScope(emittedTypes);
@@ -369,7 +370,7 @@ function serializeToTemplate(
       const apiVersion = (typeof attrs0?.apiVersion === "string") ? attrs0.apiVersion : getApiVersion(resourceType);
 
       const resource: ArmResource = {
-        type: resourceType,
+        type: armType(resourceType),
         apiVersion,
         name: name,
       };

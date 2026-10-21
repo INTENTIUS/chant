@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { armResourcePath } from "../../arm-type";
 import { createHash } from "node:crypto";
 import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { AZURE_TAG_OWNERSHIP_KEYS } from "../../ownership";
@@ -160,7 +161,7 @@ class ArmExpr {
         return { subscriptionId: this.ctx.subscriptionId, id: `/subscriptions/${this.ctx.subscriptionId}` };
       case "resourceId":
         // resourceId('Microsoft.X/y', 'name'[, 'child']) → the resource-id path.
-        return `/subscriptions/${this.ctx.subscriptionId}/resourceGroups/${this.ctx.resourceGroup}/providers/${args.map(String).join("/")}`;
+        return `/subscriptions/${this.ctx.subscriptionId}/resourceGroups/${this.ctx.resourceGroup}/providers/${armResourcePath(String(args[0]), args.slice(1).map(String).join("/"))}`;
       case "reference": {
         // reference('name') → the runtime `properties` of an already-applied resource.
         const dep = this.ctx.deployed.get(String(args[0]));
@@ -269,7 +270,7 @@ export function orderArmResources(resources: ArmResource[]): ArmResource[] {
 /** The ARM resource-ID PUT URL for a resource (name expression evaluated). */
 export async function armResourceUrl(resource: ArmResource, ctx: ArmEvalCtx): Promise<string> {
   const name = await evalArmString(resource.name, ctx);
-  return `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${resource.type}/${name}?api-version=${resource.apiVersion}`;
+  return `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${armResourcePath(resource.type, name)}?api-version=${resource.apiVersion}`;
 }
 
 /**
@@ -469,7 +470,7 @@ export async function deleteArmResource(
   http: AzHttp = defaultHttp,
   signal?: AbortSignal,
 ): Promise<{ type: string; name: string; deleted: boolean }> {
-  const url = `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${type}/${name}?api-version=${apiVersion}`;
+  const url = `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${armResourcePath(type, name)}?api-version=${apiVersion}`;
   const res = await http("DELETE", url, undefined, signal);
   if (res.status === 404) return { type, name, deleted: false };
   if (res.status >= 300) throw new Error(`${type} ${name} delete failed (${res.status}): ${res.text}`);
