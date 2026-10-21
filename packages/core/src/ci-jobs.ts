@@ -417,6 +417,12 @@ export const GITLAB_SCHEDULE_SOURCE = '$CI_PIPELINE_SOURCE == "schedule"';
 /** A job variable that makes the runner clone the whole history, which a job reading the base commit needs. */
 export const GITLAB_FULL_HISTORY = { GIT_DEPTH: "0" } as const;
 
+/** The tags a build request is pushed as (#4169), as a glob for a trigger. */
+export const BUILD_REQUEST_TAGS = "ci/build/**";
+
+/** The `rules:` if-expression for a build request's tag (#4169). */
+export const GITLAB_BUILD_REQUEST_RULE = "$CI_COMMIT_TAG =~ /^ci\\/build\\//";
+
 /** The `rules:` if-expression for a push to `branch`, a quoted name or an expression such as `$CI_DEFAULT_BRANCH`. */
 export function gitlabPushRule(branch: string): string {
   return `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == ${branch}`;
@@ -462,11 +468,14 @@ export function gitlabRules(subject: string, trigger: OpTrigger, selector: { var
         return { if: `${GITLAB_MERGE_REQUEST_SOURCE} && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "${branch}"` };
       });
     }
-    case "push":
-      return pushBranches(trigger.branches).map((branch) => {
+    case "push": {
+      const rules = pushBranches(trigger.branches).map((branch) => {
         assertGitlabBranch(subject, branch);
         return { if: gitlabPushRule(JSON.stringify(branch)) };
       });
+      // #4169: a newest build also runs at each build request's tag.
+      return trigger.build === "newest" ? [...rules, { if: GITLAB_BUILD_REQUEST_RULE }] : rules;
+    }
   }
 }
 

@@ -335,12 +335,20 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 |---|---|---|
 | `branch` | yes | The branch whose first-parent commits are tagged. |
 | `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
-| `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. |
+| `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass", "build": "newest" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. `build` is `every` or `newest`, described below; read by chant 0.124.33 and newer, so set `minReader` with it. |
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
 | `signedSince` | no | The full sha of the first commit on `branch` whose tags must be signed. A tag on it or on any commit that is not a strict first-parent ancestor of it counts only with a statement signed by a runner key; a tag on an ancestor counts unsigned. A sha that names no commit in the clone is refused with `declaration-invalid`. Absent, every tag counts. See [signed tags](/chant/cli/ci/#signed-tags). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 | `source` | no | Where the tick reads each phase's results: `checks`, the default, reads the forge's check runs, and `runs` reads chant's own Op runs on `chant/lifecycle` ([#4044](https://github.com/INTENTIUS/chant/issues/4044)). With `runs`, a phase's patterns match Op names, a run counts for the commit its record names as `gitSha`, and only a run signed by a runner key counts. See [chant runs as the status source](/chant/cli/ci/#chant-runs-as-the-status-source). Read by chant 0.124.28 and newer, so set `minReader` with it. |
 
-With `"source": "runs"`, read each check run below as the latest signed run of an Op the pattern matches, which passes when it ended `ok`. A phase passes when every check run its patterns match finished with `success`, judged by each run's latest attempt. A run that finished as `skipped` passes only in a phase with `"skipped": "pass"`, which suits a job that a path filter runs on some commits only. The default, `fail`, never lets a skipped run pass. A run still queued or in progress, or a pattern that no run matches yet, leaves the commit undecided. A commit is green when every required phase passes, and it fails as soon as one of them fails.
+With `"source": "runs"`, read each check run below as the latest signed run of an Op the pattern matches, which passes when it ended `ok`. A phase passes when every check run its patterns match finished with `success`, judged by each run's latest attempt. A run that finished as `skipped` passes only in a phase with `"skipped": "pass"`, which suits a job that a path filter runs on some commits only. The default, `fail`, never lets a skipped run pass. A run still queued or in progress, or a pattern that no run matches yet, leaves the commit undecided. A run that was `cancelled` or went `stale` leaves its phase unbuilt, which is neither a pass nor a failure ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). A commit is green when every required phase passes, and it fails as soon as one of them fails.
+
+A phase's `build` says which commits it runs on ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). `every`, the default, runs it on each first-parent commit. `newest` runs it on the newest commit when a runner frees, so a merge does not have to start it. Under `newest`:
+
+- A commit with no run of the phase, below a newer commit that has one, is unbuilt, covered by the newer commit.
+- When the newest commit the phase ran on is red, the tick bisects the unbuilt commits back to the last one the phase passed on. It asks for one build per tick with a `ci/build/<sha>` tag: the commit halfway when more than four are left, otherwise the one just below the red. The first red commit found is the culprit, and it and every commit after it name it.
+- Only a commit the phase ran on can go green, so a release is cut from a built commit. [`chant ci run --at <sha>`](/chant/cli/ci/#ci-run---at) asks for a build of a commit you choose.
+
+Under either value, a failed run is run again once before the commit counts red, and [`chant ci workflow`](/chant/cli/ci/#ci-workflow) writes the triggers and concurrency of the workflows holding a phase that sets `build`. A phase without `build` leaves its workflows as they are.
 
 The result is kept as two kinds of annotated tag. chant makes each one once, and never moves or deletes either.
 
@@ -352,6 +360,18 @@ The result is kept as two kinds of annotated tag. chant makes each one once, and
 A revoked commit doesn't go green again by itself. Deleting its `ci/revoked/<sha>` tag by hand makes it count as green again, since its green tag is still there.
 
 With `signedSince`, the annotation also holds the statement a runner key signed, and every reader ignores and reports a tag outside the ancestry of `signedSince` without a valid one ([#4031](https://github.com/INTENTIUS/chant/issues/4031)).
+
+The tick also keeps one record per commit it judges, `_ci/<sha>.json` on `chant/lifecycle` ([#4169](https://github.com/INTENTIUS/chant/issues/4169)), so a commit with no tag still says what happened to it. It rewrites a record only when what it says changes.
+
+| Field | Value |
+|---|---|
+| `state` | `green` or `red`, following the tags and the failed phases, else `unbuilt` or `pending` |
+| `phases` | each required phase's `verdict`, `build` and runs, with `reason` (`cancelled`, `superseded`, `retrying`, `requested`, `request-unserved` or `aged-out`), `coveredBy` for a superseded phase and `culprit` once a bisect finds one |
+| `failure` | the first required phase that failed, and its run |
+| `retried` | the runs asked to run again, so each is asked once |
+| `request` | the `ci/build/<sha>` tag waiting on the commit, and whether a workflow was started at it |
+
+A commit that leaves the window still pending is rewritten `unbuilt`, for the reason `aged-out`. [`ci list`](/chant/cli/ci/#ci-list) and [`ci last-green`](/chant/cli/ci/#ci-last-green) show the records, and the release preflight says why each newer commit was passed over.
 
 ### Report URL
 

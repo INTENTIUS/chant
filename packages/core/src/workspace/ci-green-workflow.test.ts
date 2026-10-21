@@ -11,7 +11,7 @@ import { GENERATED_MARKER } from "../discovery/files";
 import type { CommandContext } from "../cli/registry";
 import { parseYAMLDocument } from "../yaml";
 import { runCiWorkflow } from "./ci-green-cli";
-import { CI_GREEN_WORKFLOW_FILE, jobCheckRuns, renderCiGreenWorkflow, workflowsHolding } from "./ci-green-workflow";
+import { BUILD_BLOCK_MARKER, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, dispatchableWorkflows, jobCheckRuns, renderCiGreenWorkflow, workflowsHolding, writeTopLevel } from "./ci-green-workflow";
 import { parseDeclaration } from "./declaration";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 
@@ -300,5 +300,88 @@ describe("chant ci workflow (#3573)", () => {
       cwd.mockRestore();
       error.mockRestore();
     }
+  });
+});
+
+// ── A phase's triggers (#4169) ───────────────────────────────────────────────
+
+const BUILD_GREEN = { branch: "main", phases: { lint: { runs: ["lint"], build: "every" }, suites: { runs: ["suites"], build: "newest" } }, require: ["lint", "suites"] };
+const LINT_WF = `name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Comments above a block stay.
+concurrency:
+  group: ci-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+`;
+const SUITES_WF = `name: suites
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+`;
+
+describe("the triggers of a phase that sets build (#4169)", () => {
+  const green = () => parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: BUILD_GREEN } }), "chant.workspace.json").ci!.green!;
+
+  test("newest: pushes to the branch and by hand, no schedule, one group per ref that never cancels; every: the commit's own group on the branch", () => {
+    const edits = buildTriggerEdits(green(), [
+      { path: ".github/workflows/ci.yml", text: LINT_WF },
+      { path: ".github/workflows/suites.yml", text: SUITES_WF },
+    ]);
+    expect(edits.map((e) => [e.path, e.build, e.phases, e.changed])).toEqual([
+      [".github/workflows/ci.yml", "every", ["lint"], true],
+      [".github/workflows/suites.yml", "newest", ["suites"], true],
+    ]);
+    const ci = parseYAMLDocument(edits[0].text) as Yaml;
+    // The triggers of an every phase stay, pull requests included.
+    expect(ci.on).toEqual({ push: { branches: ["main"] }, pull_request: null });
+    expect(ci.concurrency).toEqual({ group: "chant-build-lint-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}", "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}" });
+    expect(edits[0].text).toContain(`# Comments above a block stay.\n${BUILD_BLOCK_MARKER}\nconcurrency:`);
+    const suites = parseYAMLDocument(edits[1].text) as Yaml;
+    expect(suites.on).toEqual({ push: { branches: ["main"] }, workflow_dispatch: {} });
+    expect(suites.concurrency).toEqual({ group: "chant-build-suites-${{ github.ref }}", "cancel-in-progress": false });
+    // A file without the block gets it before permissions:, and writing again changes nothing.
+    expect(edits[1].text.indexOf("concurrency:")).toBeLessThan(edits[1].text.indexOf("permissions:"));
+    const again = buildTriggerEdits(green(), edits.map((e) => ({ path: e.path, text: e.text })));
+    expect(again.map((e) => e.changed)).toEqual([false, false]);
+  });
+
+  test("a phase without build leaves its workflow alone, and one workflow holding both builds is refused", () => {
+    const plain = parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: { branch: "main", phases: { lint: ["lint"] }, require: ["lint"] } } }), "chant.workspace.json").ci!.green!;
+    expect(buildTriggerEdits(plain, [{ path: ".github/workflows/ci.yml", text: LINT_WF }])).toEqual([]);
+    const both = LINT_WF.replace("jobs:\n", "jobs:\n  suites:\n    runs-on: ubuntu-latest\n");
+    expect(() => buildTriggerEdits(green(), [{ path: ".github/workflows/ci.yml", text: both }])).toThrow(/holds runs of lint \(build: every\) and suites \(build: newest\)/);
+  });
+
+  test("writeTopLevel replaces a block up to the next top-level line, or adds one before jobs", () => {
+    expect(writeTopLevel("a: 1\nconcurrency:\n  group: x\n\njobs: {}\n", "concurrency", { group: "y" })).toBe(`a: 1\n${BUILD_BLOCK_MARKER}\nconcurrency:\n  group: y\n\njobs: {}\n`);
+    expect(writeTopLevel("a: 1\njobs: {}\n", "concurrency", { group: "y" })).toBe(`a: 1\n${BUILD_BLOCK_MARKER}\nconcurrency:\n  group: y\n\njobs: {}\n`);
+  });
+
+  test("the tick may re-run jobs and start workflows, and ticks on a build tag's runs, only when a phase sets build", () => {
+    const tick = parseYAMLDocument(renderCiGreenWorkflow({ green: green(), workflows: ["ci"], chantVersion: "0.124.33", workspaceRoot: "." })) as Yaml;
+    expect(tick.permissions).toEqual({ contents: "write", checks: "read", actions: "write" });
+    expect(tick.on.workflow_run.branches).toEqual(["main", "ci/build/**"]);
+    const plain = parseDeclaration(JSON.stringify({ name: "w", schema: 1, members: [], ci: { green: { branch: "main", phases: { lint: ["lint"] }, require: ["lint"] } } }), "chant.workspace.json").ci!.green!;
+    const before = parseYAMLDocument(renderCiGreenWorkflow({ green: plain, workflows: ["ci"], chantVersion: "0.124.33", workspaceRoot: "." })) as Yaml;
+    expect(before.permissions).toEqual({ contents: "write", checks: "read" });
+    expect(before.on.workflow_run.branches).toEqual(["main"]);
+  });
+
+  test("the workflows a build request can start are the ones holding its phases with workflow_dispatch", () => {
+    expect(dispatchableWorkflows(green(), ["lint", "suites"], [{ path: ".github/workflows/ci.yml", text: LINT_WF }, { path: ".github/workflows/suites.yml", text: SUITES_WF }])).toEqual({ dispatchable: ["suites.yml"], without: ["ci.yml"] });
   });
 });

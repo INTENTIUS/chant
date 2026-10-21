@@ -700,7 +700,19 @@ export type OpFindingMode = "report" | "issue" | "comment" | "pull-request" | "m
 export type OpTrigger =
   | { kind: "cron"; schedule: string }
   | { kind: "pull_request"; branches?: string[] }
-  | { kind: "push"; branches?: string[] };
+  | {
+      kind: "push";
+      branches?: string[];
+      /**
+       * Which pushes run the Op (#4169), for an Op a `ci.green` phase names
+       * with `build` and the tick reads from chant runs. `every`: each
+       * commit, in a run of its own that no later push cancels. `newest`:
+       * one run at a time, the newest push waiting and the ones between
+       * dropped, plus a run at each `ci/build/<sha>` tag the tick or `ci run
+       * --at` pushes. Absent: one run at a time per Op, as before.
+       */
+      build?: "every" | "newest";
+    };
 
 /**
  * One step a generated Op job runs between the checkout and the

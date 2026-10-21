@@ -95,7 +95,7 @@ import type {
   PipelineMember,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
-import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, runSteps } from "./ci-jobs";
+import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps } from "./ci-jobs";
 
 export type { GenerateGithubOpOptions, GenerateGithubOpResult };
 
@@ -455,8 +455,8 @@ export function buildGithubOpPipelineDocs(
       on: onTrigger(trigger),
       ...nonEmpty("env", options.variables),
       // One run at a time per Op — a slow audit must not overlap its own next
-      // scheduled trigger.
-      concurrency: concurrency(jobName),
+      // scheduled trigger. A push Op's `build` (#4169) widens the group.
+      concurrency: concurrency(opConcurrencyGroup(jobName, trigger)),
       permissions: mergePermissions(
         spec.name,
         permissionsFor(findingMode, trigger),

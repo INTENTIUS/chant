@@ -26,11 +26,13 @@ on:
   pull_request:
 
 # A new push to a PR cancels that PR's superseded run. main's runs are never
-# cancelled (#2816): every main commit gets a verdict, so `just release` always
+# cancelled (#2816, and ci.green's `build: "every"` since #4169, which
+# `chant ci workflow` writes this block from): every main commit gets a verdict, so `just release` always
 # has a recent green commit to tag. On main the group is the commit itself, so
 # a later push neither cancels a run in progress nor replaces a queued one.
+# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 concurrency:
-  group: chant-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: chant-build-check-test-validate-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:

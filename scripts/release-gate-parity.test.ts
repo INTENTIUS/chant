@@ -28,7 +28,7 @@ type Job = {
   if?: string;
   permissions?: Record<string, string>;
 };
-type Workflow = { on: Record<string, unknown>; jobs: Record<string, Job> };
+type Workflow = { on: Record<string, unknown>; concurrency?: Record<string, unknown>; jobs: Record<string, Job> };
 
 const root = join(import.meta.dirname, "..");
 const workflow = (file: string): Workflow =>
@@ -146,17 +146,20 @@ describe("large suites stay out of pull request CI", () => {
     expect(chant.jobs.test.needs).toEqual(["test-shard"]);
   });
 
-  it("release-suites runs the e2e project on main, never on a push or pull request, and the release requires its suites check", () => {
+  it("release-suites runs the e2e project on main's newest commit and by hand, never on a pull request, and the release requires its suites check", () => {
     const suites = workflow("release-suites.yml");
-    expect(Object.keys(suites.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    // #4169: suites builds the newest commit, so a push to main queues one run and GitHub keeps only the newest waiting.
+    expect(Object.keys(suites.on).sort()).toEqual(["push", "workflow_dispatch"]);
+    expect(suites.on.push).toEqual({ branches: ["main"] });
+    expect(suites.concurrency).toEqual({ group: "chant-build-suites-${{ github.ref }}", "cancel-in-progress": false });
     expect(stepsRunning(suites.jobs.e2e, /npx vitest run --project e2e/)).toHaveLength(1);
     expect(suites.jobs.suites.needs).toEqual(["e2e"]);
     expect(suites.jobs.suites.if).toMatch(/always\(\)/);
     const declaration = JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf8")) as {
-      ci: { green: { branch: string; phases: Record<string, string[]>; require: string[] } };
+      ci: { green: { branch: string; phases: Record<string, { runs: string[]; build?: string }>; require: string[] } };
     };
     expect(declaration.ci.green.branch).toBe("main");
-    expect(declaration.ci.green.phases.suites).toEqual(["suites"]);
+    expect(declaration.ci.green.phases.suites).toEqual({ runs: ["suites"], build: "newest" });
     expect(declaration.ci.green.require).toEqual(expect.arrayContaining(["check", "test", "validate", "suites"]));
     // The tick runs when release-suites completes, not only on its 15-minute schedule.
     const tick = workflow("chant-ci-green.yml").on.workflow_run as { workflows: string[] };

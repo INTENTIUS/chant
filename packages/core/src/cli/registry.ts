@@ -331,6 +331,8 @@ export interface ParsedArgs {
   prLoop?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
+  /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */
+  ciBuildCommand?: string;
   /** `chant build --pr-loop --pr-build-command <line>` (#4088) — the build line to run in place of `chant build --env <env>`. */
   prBuildCommand?: string;
   /**

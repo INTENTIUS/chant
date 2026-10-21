@@ -185,6 +185,13 @@ export interface AgentDeclaration {
 /** What a check run that finished as skipped counts as in a CI phase (#3573). */
 export type CiSkipped = "pass" | "fail";
 
+/**
+ * Which commits a phase runs on (#4169): `every` first-parent commit of the
+ * branch, or only the `newest` one when a runner frees, the commits between
+ * left unbuilt and a red one bisected.
+ */
+export type CiBuild = "every" | "newest";
+
 /** One phase of `ci.green`: the check runs that make it up (#3573, ws-103). */
 export interface CiPhase {
   name: string;
@@ -192,6 +199,12 @@ export interface CiPhase {
   runs: string[];
   /** `fail` (the default): a skipped run never passes. `pass`: it passes, for a job a path filter runs only on some commits. */
   skipped: CiSkipped;
+  /**
+   * Which commits the phase runs on (#4169), when the declaration says.
+   * Absent means `every`, and `ci workflow` then leaves the phase's
+   * workflows as they are.
+   */
+  build?: CiBuild;
   pointer: string;
 }
 
@@ -1100,7 +1113,7 @@ function retentionOf(raw: unknown): RetentionOverride | null {
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped }>; require: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; signedSince?: string; source?: CiSource } };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {
     // #4160: refused here as pr-plan and ci run refuse the flag, so a reader never gets a URL no job can write to.
@@ -1114,6 +1127,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     name,
     runs: [...(Array.isArray(p) ? p : p.runs)],
     skipped: Array.isArray(p) ? "fail" : (p.skipped ?? "fail"),
+    ...(!Array.isArray(p) && p.build !== undefined ? { build: p.build } : {}),
     pointer: `/ci/green/phases/${pointerToken(name)}`,
   }));
   for (const [i, name] of g.require.entries()) {

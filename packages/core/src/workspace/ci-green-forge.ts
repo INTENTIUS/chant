@@ -55,6 +55,18 @@ export interface CiForge {
   kind: ForgeKind;
   /** Every check run on `sha`, every attempt. */
   checkRuns(sha: string): Promise<CheckRun[]>;
+  /**
+   * Run a failed check run's job again (#4169), so a flake costs one more
+   * run before the commit counts red. Absent on a forge chant can't ask.
+   */
+  rerun?(run: CheckRun): Promise<void>;
+  /**
+   * Start a workflow at a ref (#4169), for a build the tick asks for: a
+   * bisect step, or `chant ci run --at`. `workflow` is the file's name in
+   * `.github/workflows/`, and `ref` a branch or tag. Absent on a forge chant
+   * can't ask.
+   */
+  dispatch?(workflow: string, ref: string): Promise<void>;
 }
 
 export interface GithubCiForgeOptions {
@@ -103,7 +115,19 @@ export function githubCiForge(opts: GithubCiForgeOptions): CiForge {
       }
       return out;
     },
+    // An Actions job's check run has the job's id, so the job is re-run by it. Both need `actions: write`.
+    async rerun(run) {
+      await post(`${root}/repos/${opts.repo}/actions/jobs/${run.id}/rerun`, {});
+    },
+    async dispatch(workflow, ref) {
+      await post(`${root}/repos/${opts.repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, { ref });
+    },
   };
+
+  async function post(url: string, body: unknown): Promise<void> {
+    const res = await fetchImpl(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new ForgeApiError("POST", url, res.status, await res.text());
+  }
 }
 
 /** Thrown for a forge `chant ci tick` has no check-run client for yet. */

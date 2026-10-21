@@ -42,6 +42,29 @@ chant ci list --forge github --limit 10
 
 `chant ci list` prints each recent sha with its state and every phase's result. Before any tag exists, all of them are `undecided`. With `--forge github` it reads their phases from the forge, and a phase that no check run matches yet shows up as `pending`. Put the workflow and the declaration in one pull request.
 
+## Build only the newest commit
+
+A long suite does not have to run on every merge ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). Declare its phase `build: "newest"` and the fast checks `build: "every"`, then run `ci workflow` again.
+
+```json
+"phases": {
+  "lint": { "runs": ["lint"], "build": "every" },
+  "suites": { "runs": ["suites"], "build": "newest" }
+}
+```
+
+```bash
+chant ci workflow --token-secret CI_GREEN_TOKEN
+```
+
+`ci workflow` then writes the `on:` and `concurrency:` of the file holding `suites`, so one run goes at a time and GitHub keeps only the newest push waiting. The fast checks get a run per commit that no push cancels. Keep the suites in a file of their own, since one file can't do both. The tick gains `actions: write`, which it needs to run a failed job again and to start the suites at an older commit.
+
+The commits the suites skipped show as unbuilt, each covered by the newer commit that ran them. When a run goes red, the tick bisects back to the last commit the suites passed on and names the commit that broke them. It asks for one build per tick with a `ci/build/<sha>` tag. `chant ci list` shows each commit's record, and `chant ci last-green --json` lists why the newer commits were passed over. To make a commit you choose releasable, ask for a build there:
+
+```bash
+chant ci run --at <sha>
+```
+
 ## Read the tags
 
 Once the workflow has run on trunk, the tags are in the remote. Fetch them, then read the newest green sha or the recent history.

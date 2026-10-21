@@ -185,6 +185,16 @@ describe("generateGitlabOpPipeline: the merge_request and push triggers (#2084, 
     ]);
   });
 
+  test("a newest push build also runs at a build request's tag, and the header says how auto-cancel must be set (#4169)", () => {
+    const newest = generateGitlabOpPipeline([{ name: "suites", trigger: { kind: "push", build: "newest" } }]);
+    const job = parseYAML(newest.files[0].yaml)["suites"] as { rules: Array<{ if: string }> };
+    expect(job.rules.map((r) => r.if)).toEqual(['$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"', "$CI_COMMIT_TAG =~ /^ci\\/build\\//"]);
+    expect(newest.files[0].yaml).toContain("Auto-cancel redundant pipelines on");
+    const every = generateGitlabOpPipeline([{ name: "suites", trigger: { kind: "push", build: "every" } }]);
+    expect((parseYAML(every.files[0].yaml)["suites"] as { rules: unknown[] }).rules).toHaveLength(1);
+    expect(every.files[0].yaml).toContain("Auto-cancel redundant pipelines off");
+  });
+
   test("an unfiltered push trigger defaults to main, the same branch github's generator assumes", () => {
     const result = generateGitlabOpPipeline([{ name: "tf-apply", trigger: { kind: "push" } }]);
     const job = parseYAML(result.files[0].yaml)["tf-apply"] as { rules: Array<{ if: string }> };

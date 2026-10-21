@@ -284,9 +284,10 @@
                         "pass",
                         "fail",
                         "pending",
+                        "unbuilt",
                         "unrecorded"
                       ],
-                      "description": "pass and fail come from the tags (a green tag records the phases that passed, a revoked tag the one that failed) or, for an undecided commit, from the forge under --forge, or from the signed Op runs on the local chant/lifecycle when the source is chant runs (#4044). pending is such a read with runs still going or not yet reported. unrecorded means no tag holds the result and nothing was read."
+                      "description": "pass and fail come from the tags (a green tag records the phases that passed, a revoked tag the one that failed) or, for an undecided commit, from the forge under --forge, or from the signed Op runs on the local chant/lifecycle when the source is chant runs (#4044). pending is such a read with runs still going or not yet reported. unbuilt (#4169, chant 0.124.33 and newer) is such a read whose runs were cancelled. unrecorded means no tag holds the result and nothing was read."
                     },
                     "runs": {
                       "type": "array",
@@ -401,6 +402,39 @@
                             }
                           }
                         }
+                      }
+                    }
+                  }
+                ]
+              },
+              "record": {
+                "description": "Added within contract version 1 by #4169, written by chant 0.124.33 and newer. What the commit's _ci/<sha>.json record on the local chant/lifecycle says, the tick's last word on it, or null when it has none. state is green, red, unbuilt or pending. reason, coveredBy and culprit come from the required phases: why a phase is unbuilt or still pending (cancelled, superseded, retrying, requested, request-unserved or aged-out), the newer commit whose run covers a superseded phase, and the commit a bisect found broke a phase. Each is absent when no phase has one.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "state"
+                    ],
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "green",
+                          "red",
+                          "unbuilt",
+                          "pending"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "coveredBy": {
+                        "type": "string"
+                      },
+                      "culprit": {
+                        "type": "string"
                       }
                     }
                   }

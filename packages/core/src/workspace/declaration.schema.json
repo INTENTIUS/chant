@@ -1570,6 +1570,13 @@
                 "fail"
               ],
               "description": "What a check run that finished as skipped counts as. fail (the default): it never passes. pass: it passes, for a job a path filter runs only on some commits."
+            },
+            "build": {
+              "enum": [
+                "every",
+                "newest"
+              ],
+              "description": "Added by #4169, read by chant 0.124.33 and newer. Which first-parent commits of the branch the phase runs on. every (the default): each one. newest: only the newest commit when a runner frees. Under either, a run that was cancelled leaves the commit unbuilt rather than red. Under newest, a commit a newer run superseded is unbuilt too, and a red commit starts a bisect over the unbuilt commits back to the last one the phase passed on. chant ci workflow writes the triggers and concurrency of the workflows holding a phase that sets build, and leaves them alone for a phase that does not."
             }
           },
           "patternProperties": {

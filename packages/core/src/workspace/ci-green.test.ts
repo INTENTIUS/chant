@@ -117,9 +117,12 @@ describe("judging a phase from check runs (#3573)", () => {
     const runs = [run(1, "macos (test)", "skipped")];
     expect(evaluatePhase(phase(["macos (test)"]), runs).verdict).toBe("fail");
     expect(evaluatePhase(phase(["macos (test)"], "pass"), runs).verdict).toBe("pass");
-    // Neither counts any other conclusion as a pass.
-    for (const c of ["neutral", "cancelled", "timed_out", "action_required", "stale"]) {
+    // Neither counts any other conclusion as a pass, and a stopped run is no failure either (#4169).
+    for (const c of ["neutral", "timed_out", "action_required"]) {
       expect(evaluatePhase(phase(["x"], "pass"), [run(1, "x", c)]).verdict, c).toBe("fail");
+    }
+    for (const c of ["cancelled", "stale"]) {
+      expect(evaluatePhase(phase(["x"], "pass"), [run(1, "x", c)]), c).toMatchObject({ verdict: "unbuilt", reason: "cancelled" });
     }
   });
 

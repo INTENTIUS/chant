@@ -48,8 +48,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { GENERATED_MARKER } from "../discovery/files";
-import { parseYAMLDocument } from "../yaml";
-import type { CiGreen } from "./declaration";
+import { emitYAMLEntry, parseYAMLDocument } from "../yaml";
+import type { CiBuild, CiGreen } from "./declaration";
 import { matchesCheckRun } from "./ci-green";
 import { githubSecretOrJobToken } from "../ci-jobs";
 
@@ -127,6 +127,31 @@ export function workflowsHolding(green: CiGreen, sources: readonly WorkflowSourc
     unmatched: patterns.filter((p) => !met.has(`${p.phase}\0${p.pattern}`)),
     unreadable,
   };
+}
+
+/**
+ * The workflow files that hold a check run of one of `phases` and can be
+ * started by hand (`workflow_dispatch`), by file name, for a build the tick
+ * asks for (#4169). Files that can't be parsed are left out.
+ */
+export function dispatchableWorkflows(green: CiGreen, phases: readonly string[], sources: readonly WorkflowSource[]): { dispatchable: string[]; without: string[] } {
+  const patterns = phases.flatMap((name) => green.phases.find((p) => p.name === name)?.runs ?? []);
+  const dispatchable: string[] = [];
+  const without: string[] = [];
+  for (const s of sources) {
+    let doc: unknown;
+    try {
+      doc = parseYAMLDocument(s.text);
+    } catch {
+      continue;
+    }
+    const runs = jobCheckRuns(doc);
+    if (!patterns.some((p) => runs.some((r) => meet(p, r)))) continue;
+    const on = isObject(doc) ? doc.on : undefined;
+    const file = s.path.slice(s.path.lastIndexOf("/") + 1);
+    (isObject(on) && "workflow_dispatch" in on ? dispatchable : without).push(file);
+  }
+  return { dispatchable: dispatchable.sort(), without: without.sort() };
 }
 
 /** The repository's GitHub workflow files, other than `skip`. */
@@ -213,6 +238,8 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "      - completed",
     "    branches:",
     `      - ${q(green.branch)}`,
+    // #4169: a build the tick asked for runs at a ci/build/<sha> tag, and its completion ticks too.
+    ...(newestPhases(green) ? [`      - ${q("ci/build/**")}`] : []),
     "  schedule:",
     "    - cron: \"*/15 * * * *\"",
     "  workflow_dispatch: {}",
@@ -225,6 +252,8 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "permissions:",
     "  contents: write",
     "  checks: read",
+    // #4169: re-running a failed job and starting a workflow at a ci/build/<sha> tag.
+    ...(declaresBuild(green) ? ["  actions: write"] : []),
     "",
     "jobs:",
     "  tick:",
@@ -252,6 +281,114 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     `        run: ${tick}`,
   ];
   return lines.join("\n") + "\n";
+}
+
+/** Whether any phase sets `build` (#4169): then the tick may re-run jobs and start workflows. */
+export const declaresBuild = (green: CiGreen) => green.phases.some((p) => p.build !== undefined);
+/** Whether a required phase builds only the newest commit (#4169). */
+export const newestPhases = (green: CiGreen) => green.phases.some((p) => p.build === "newest" && green.require.includes(p.name));
+
+// ── A phase's triggers (#4169) ───────────────────────────────────────────────
+
+/** The comment line above each top-level block `ci workflow` writes into a phase's workflow. */
+export const BUILD_BLOCK_MARKER = "# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.";
+
+/** What `ci workflow` writes into one workflow holding a phase that sets `build`. */
+export interface BuildTriggerEdit {
+  /** Relative to the repository root. */
+  path: string;
+  build: CiBuild;
+  phases: string[];
+  /** The file with its triggers and concurrency written. */
+  text: string;
+  changed: boolean;
+}
+
+/**
+ * The workflows holding the check runs of phases that set `build`, each with
+ * its triggers and concurrency written for that build (#4169):
+ *
+ * - `newest`: on pushes to the branch, and by hand (`workflow_dispatch`),
+ *   which is how the tick starts a bisect step or a requested build at a
+ *   `ci/build/<sha>` tag. A `schedule` goes: a runner freeing up, not a
+ *   clock, picks the commit. Other triggers stay. One concurrency group per
+ *   ref that never cancels a run in progress, so GitHub keeps the newest
+ *   push waiting and drops the ones between, and each tag's build runs in a
+ *   group of its own.
+ * - `every`: the triggers stay, and the group is the commit itself on the
+ *   branch, so no push cancels or replaces another's run; elsewhere, such as
+ *   a pull request, a new push cancels the run it supersedes.
+ *
+ * Only the top-level `on:` (for `newest`) and `concurrency:` blocks change,
+ * each under {@link BUILD_BLOCK_MARKER}; the rest of the file is kept as it
+ * is. Throws when one workflow holds a phase of each build, which no one
+ * concurrency group can serve.
+ */
+export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSource[]): BuildTriggerEdit[] {
+  const out: BuildTriggerEdit[] = [];
+  for (const s of sources) {
+    let doc: unknown;
+    try {
+      doc = parseYAMLDocument(s.text);
+    } catch {
+      continue;
+    }
+    const runs = jobCheckRuns(doc);
+    const held = green.phases.filter((p) => p.build !== undefined && p.runs.some((pattern) => runs.some((r) => meet(pattern, r))));
+    if (held.length === 0) continue;
+    const builds = [...new Set(held.map((p) => p.build!))];
+    if (builds.length > 1) {
+      throw new Error(`${s.path} holds runs of ${held.map((p) => `${p.name} (build: ${p.build})`).join(" and ")}, and one workflow can't run on every commit and only the newest; move the jobs into a workflow per build`);
+    }
+    const build = builds[0];
+    const phases = held.map((p) => p.name);
+    const tag = phases.map((p) => p.replace(/[^A-Za-z0-9_-]/g, "-")).join("-");
+    let text = s.text;
+    if (build === "newest") {
+      const on = isObject(doc) && isObject(doc.on) ? { ...doc.on } : {};
+      delete on.schedule;
+      const push = isObject(on.push) ? { ...on.push } : {};
+      const branches = Array.isArray(push.branches) ? push.branches.filter((b): b is string => typeof b === "string") : [];
+      push.branches = branches.includes(green.branch) ? branches : [...branches, green.branch];
+      const { push: _push, workflow_dispatch: dispatch, ...rest } = on;
+      text = writeTopLevel(text, "on", { push, workflow_dispatch: dispatch ?? {}, ...rest });
+      text = writeTopLevel(text, "concurrency", { group: `chant-build-${tag}-\${{ github.ref }}`, "cancel-in-progress": false });
+    } else {
+      const main = `refs/heads/${green.branch}`;
+      // Written as lines: the emitter would quote the expression, and GitHub reads it the same either way.
+      text = writeTopLevel(text, "concurrency", [
+        "concurrency:",
+        `  group: chant-build-${tag}-\${{ github.ref == '${main}' && github.sha || github.ref }}`,
+        `  cancel-in-progress: \${{ github.ref != '${main}' }}`,
+      ]);
+    }
+    out.push({ path: s.path, build, phases, text, changed: text !== s.text });
+  }
+  return out;
+}
+
+/**
+ * Replace the top-level `key:` block of a YAML file with `value` (or with
+ * `value`'s lines, the key's own line first), under
+ * {@link BUILD_BLOCK_MARKER}, or add it before `permissions:` or `jobs:`
+ * when the file has none. The block runs from its key's line to the next
+ * line at column 0 that is not blank; comments above the key stay.
+ */
+export function writeTopLevel(text: string, key: string, value: Record<string, unknown> | string[]): string {
+  const lines = text.split("\n");
+  const block = [BUILD_BLOCK_MARKER, ...(Array.isArray(value) ? value : emitYAMLEntry(key, value).split("\n"))];
+  const at = lines.findIndex((l) => l === `${key}:` || l.startsWith(`${key}: `) || l.startsWith(`${key}:#`));
+  if (at < 0) {
+    const before = lines.findIndex((l) => /^(permissions|jobs):/.test(l));
+    const where = before < 0 ? lines.length : before;
+    return [...lines.slice(0, where), ...block, "", ...lines.slice(where)].join("\n");
+  }
+  let end = at + 1;
+  while (end < lines.length && (lines[end] === "" || /^\s/.test(lines[end]))) end++;
+  // A blank line ending the block belongs to what follows it.
+  while (end > at + 1 && lines[end - 1] === "") end--;
+  const start = at > 0 && lines[at - 1] === BUILD_BLOCK_MARKER ? at - 1 : at;
+  return [...lines.slice(0, start), ...block, ...lines.slice(end)].join("\n");
 }
 
 /** The header line naming the command that regenerates the file, and where to run it. */

@@ -10,22 +10,29 @@ name: release-suites
 # (chant-ci-green.yml) tags a main commit ci/green/<sha> only when all four
 # passed on it, and `just release` (scripts/release-preflight.sh) tags the
 # newest commit with a ci/green tag. So a release only ships a commit these
-# suites passed. A commit this workflow never ran on is never green; it waits
-# for the next scheduled run, which covers main's head at that time.
+# suites passed.
 #
-# Every three hours on main, and whenever a person starts it (Actions, then
-# release-suites, then "Run workflow") to make the current head releasable
-# sooner. Locally the same suite is `just test-e2e`.
+# ci.green declares suites `build: "newest"` (#4169), and `chant ci workflow`
+# writes the triggers and concurrency below from it. Each push to main queues
+# a run; one runs at a time, and GitHub keeps only the newest waiting, so the
+# commits between are never built. The tick records those as unbuilt, covered
+# by the newer commit. When a run goes red the tick bisects: it pushes a
+# ci/build/<sha> tag on an unbuilt commit and starts this workflow there by
+# hand (workflow_dispatch), each tag in a concurrency group of its own. `chant
+# ci run --at <sha>` asks for the same to make a chosen commit releasable.
+# Locally the same suite is `just test-e2e`.
 run-name: release-suites — ${{ github.ref_name }}
 
+# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 on:
-  schedule:
-    - cron: "23 */3 * * *"
+  push:
+    branches:
+      - main
   workflow_dispatch: {}
 
-# One run per ref at a time; a scheduled run never cancels one in progress.
+# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 concurrency:
-  group: release-suites-${{ github.ref }}
+  group: chant-build-suites-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:

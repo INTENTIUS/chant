@@ -104,6 +104,55 @@
             }
           ]
         },
+        "newer": {
+          "type": "array",
+          "description": "Added within contract version 1 by #4169, written by chant 0.124.33 and newer. The first-parent commits walked past, newest first and above the one found, each with what its _ci/<sha>.json record on the local chant/lifecycle says (null when it has none), so a reader can say why the newest commits are not green. At most 50.",
+          "items": {
+            "type": "object",
+            "required": [
+              "sha",
+              "record"
+            ],
+            "properties": {
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "record": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "state"
+                    ],
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "green",
+                          "red",
+                          "unbuilt",
+                          "pending"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "coveredBy": {
+                        "type": "string"
+                      },
+                      "culprit": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
         "ignored": {
           "type": "array",
           "description": "Added within contract version 1 by #4031, written by chant 0.124.28 and newer. The tags on the commits walked, newest first and down to the one found, that do not count for want of a valid statement. Empty when ci.green.signedSince is not set.",
