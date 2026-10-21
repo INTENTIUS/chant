@@ -36,6 +36,8 @@ A deploy binds to a green sha, never to a branch tip. The tip is wherever trunk 
 
 That changes what a red tip costs. A merge that breaks the build leaves the tip red, and the newest green sha is still there to cut from while someone fixes it. [`chant release candidates`](/chant/cli/release/#release-candidates) lists every green sha since what each environment runs, with the changes each would ship, and [`chant release cut --at <sha>`](/chant/cli/release/#cutting-a-chosen-commit) cuts any of them without checking it out. Choosing an older candidate is how a change that is not ready stays out, when it has no flag. [Curate a Release](/chant/guide/curate-a-release/) walks through it.
 
+When every green sha after the running release carries work that must stay out, no candidate will do. Then [`chant release compose`](/chant/cli/release/#release-compose) cherry-picks the chosen changes onto the running release's commit, on a pushed `chant/compose/<name>` branch. Each composed commit names its trunk commit in a `Chant-Composed-From` trailer. The composed commit goes green through its own CI, and the cut records its base and sources. The steps are on [Compose a Release](/chant/guide/compose-a-release/).
+
 ## Releases
 
 A release is one green sha compiled for every environment the member declares. It holds the sha, the digest of each artifact built once from it, and one target per environment with that environment's template digests and build parameters. All of that is hashed into one digest, and a label such as `v1.4.0` names it. Because the artifacts are built once, the bytes prod runs are the bytes staging tested.

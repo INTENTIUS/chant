@@ -385,6 +385,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       const pr = Number(raw);
       if (!Number.isInteger(pr) || pr < 1) throw new Error(`--pr needs a pull or merge request number: got "${raw ?? ""}"`);
       result.pr = pr;
+      // `chant release compose --pr <n>...` (#4168 4.3) reads every one.
+      (result.prs ??= []).push(pr);
+    } else if (arg === "--channel") {
+      // `chant release cut --channel <tag>` (#4168 4.3): the tag a publish moves in place of latest.
+      result.channel = args[++i];
+      if (!result.channel || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(result.channel)) throw new Error(`--channel needs a channel name, such as next or hotfix: got "${result.channel ?? ""}"`);
     } else if (arg === "--forge") {
       result.forge = args[++i];
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
@@ -825,6 +831,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error("--work needs a work item id: --work <id>");
       result.work = value;
+      (result.works ??= []).push(value);
     } else if (arg === "--holder" || arg === "--ttl" || arg === "--token" || arg === "--outcome") {
       // `chant workspace work claim|renew|release <id>` (#2732)
       const value = args[++i];

@@ -278,6 +278,8 @@ export interface PublishPlan {
   redactor: Redactor;
   /** Whether a target with no SBOM source is refused (`publish-sbom-missing`): the workspace opts into `supply-chain` (#4168). Otherwise it publishes without one. */
   requireSbom: boolean;
+  /** The channel a cut of the release names (#4168 4.3), the tag moved in place of `latest`, or null. */
+  channel: string | null;
 }
 
 /**
@@ -399,7 +401,8 @@ export async function preparePublish(req: {
   const member = ledger.members.length > 0 ? ledger.members.join("/") : null;
   const releaseTag = label !== null ? releaseTagName(member, label) : null;
   const redactor = createRedactor(env, targets.flatMap((t) => t.credentialEnv));
-  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, targets, redactor, requireSbom: groups.has("supply-chain") };
+  const channel = [...cuts].reverse().find((c) => c.channel)?.channel ?? null;
+  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, targets, redactor, requireSbom: groups.has("supply-chain"), channel };
 }
 
 /**

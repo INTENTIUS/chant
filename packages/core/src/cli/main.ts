@@ -368,7 +368,7 @@ CI:
 Releases:
   release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
-              [--actor <name>] [--sign [<key file>]] [--json]
+              [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json]
                         A dry run of a cut of this member from HEAD, which
                         must be clean, on trunk and pushed, and carry a
                         ci/green tag: compile every environment in the
@@ -389,6 +389,18 @@ Releases:
                         trunk from a temporary worktree instead of HEAD, so
                         the checkout need not be clean. The label reaches
                         every compile and build as CHANT_RELEASE_LABEL.
+                        A green commit of a pushed chant/compose/<name>
+                        branch is cut too, recording its base and sources.
+                        --channel <tag> records the tag a publish moves in
+                        place of latest.
+  release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)...
+                  [--yes] [--json]
+                        Cherry-pick the chosen trunk changes, in trunk order,
+                        onto the base, each with a Chant-Composed-From
+                        trailer, on chant/compose/<name>. Appends to a branch
+                        that exists; stops on a conflict, naming the change
+                        and files, and writes nothing. A dry run unless --yes,
+                        which moves the branch and pushes it.
   release candidates [--env <env>] [--json]
                         The green commits of trunk a release can be cut from,
                         newest first, each with the commits, work items, pull
@@ -1467,6 +1479,8 @@ export const commandRegistry: CommandDef[] = [
   // #4049: check a release's signature offline.
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
   { name: "release workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-workflow")).runReleaseWorkflow(ctx) },
+  // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
+  { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },
   { name: "release candidates", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCandidates(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
