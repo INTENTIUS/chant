@@ -15,7 +15,7 @@ import {
   RECEIPT_UNRESOLVED_VALUE_NOTE,
   receiptParameterName,
 } from "./effect-receipt-row";
-import type { LexiconOutput } from "@intentius/chant/lexicon-output";
+import { sanitizeLogicalId, type LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
@@ -105,11 +105,46 @@ interface CFOutput {
 }
 
 /**
+ * An attribute of a resource this template doesn't hold (#4180): another
+ * lexicon's, such as an Azure Container App's hostname read by a Route 53
+ * record. `Fn::GetAtt` can't name it, so the template takes the value as a
+ * parameter, named as the source lexicon's output for it is
+ * (`LexiconOutput.auto`), and whoever deploys passes that output in.
+ */
+interface ForeignAttr {
+  entity: string;
+  attribute: string;
+}
+
+/** Per template (keyed by its entity map): the foreign attributes its values read, by parameter name. */
+const foreignAttrs = new WeakMap<Map<Declarable, string>, Map<string, ForeignAttr>>();
+const namesIn = new WeakMap<Map<Declarable, string>, Set<string>>();
+
+function holds(entityNames: Map<Declarable, string>, name: string): boolean {
+  let names = namesIn.get(entityNames);
+  if (!names) {
+    names = new Set(entityNames.values());
+    namesIn.set(entityNames, names);
+  }
+  return names.has(name);
+}
+
+/**
  * CloudFormation-specific visitor for the generic serializer walker.
  */
 function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
   return {
-    attrRef: (name, attr) => ({ "Fn::GetAtt": [name, attr] }),
+    attrRef: (name, attr) => {
+      if (holds(entityNames, name)) return { "Fn::GetAtt": [name, attr] };
+      const param = sanitizeLogicalId(name, attr);
+      let foreign = foreignAttrs.get(entityNames);
+      if (!foreign) {
+        foreign = new Map();
+        foreignAttrs.set(entityNames, foreign);
+      }
+      foreign.set(param, { entity: name, attribute: attr });
+      return { Ref: param };
+    },
     resourceRef: (name) => ({ Ref: name }),
     propertyDeclarable: (entity, walk) => {
       if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
@@ -267,6 +302,7 @@ function serializeToTemplate(
   extraOutputs?: Record<string, CFOutput>,
   ownership?: OwnershipMarker,
   receiptRows?: Record<string, ReceiptRow>,
+  warnings: string[] = [],
 ): CFTemplate {
   const template: CFTemplate = {
     AWSTemplateFormatVersion: "2010-09-09",
@@ -560,6 +596,19 @@ function serializeToTemplate(
     template.Outputs = { ...template.Outputs, ...extraOutputs };
   }
 
+  // Values read from resources this template doesn't hold become parameters.
+  for (const [param, ref] of foreignAttrs.get(entityNames) ?? []) {
+    if (template.Resources[param] || template.Parameters?.[param]) continue;
+    template.Parameters = template.Parameters ?? {};
+    template.Parameters[param] = {
+      Type: "String",
+      Description: `${ref.entity}.${ref.attribute}, from another lexicon's output "${param}"`,
+    };
+    warnings.push(
+      `aws: "${ref.entity}" is not in this template, so its ${ref.attribute} is the parameter "${param}". Deploy "${ref.entity}" first and pass its output "${param}" in.`,
+    );
+  }
+
   refuseImportEnvelopes(template);
   return template;
 }
@@ -616,8 +665,10 @@ export const awsSerializer: Serializer = {
 
     // No nested stacks — use the simple path
     if (!hasChildProjects) {
-      const template = serializeToTemplate(entities, outputs, undefined, undefined, ownership, receiptRows);
-      return JSON.stringify(template, null, 2);
+      const warnings: string[] = [];
+      const template = serializeToTemplate(entities, outputs, undefined, undefined, ownership, receiptRows, warnings);
+      const primary = JSON.stringify(template, null, 2);
+      return warnings.length > 0 ? { primary, warnings } : primary;
     }
 
     // Has child projects — produce multi-file output
@@ -656,12 +707,14 @@ export const awsSerializer: Serializer = {
     }
 
     // Serialize the parent template (ChildProjectInstance entities become CF::Stack resources)
-    const parentTemplate = serializeToTemplate(entities, outputs, parentParams, undefined, ownership, receiptRows);
+    const warnings: string[] = [];
+    const parentTemplate = serializeToTemplate(entities, outputs, parentParams, undefined, ownership, receiptRows, warnings);
     const primary = JSON.stringify(parentTemplate, null, 2);
 
     return {
       primary,
       files: allFiles,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   },
 };
