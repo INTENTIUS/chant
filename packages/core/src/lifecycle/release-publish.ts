@@ -129,6 +129,10 @@ export interface PublishDeps {
   fetch?: PublishFetch;
   /** The npm executable. Default: `npm` on `PATH`. */
   npm?: string;
+  /** How a target waits between polls of a registry (#4244). Default: a timer. */
+  sleep?: (ms: number) => Promise<void>;
+  /** The clock a target's wait reads (#4244). Default: `Date.now`. */
+  now?: () => number;
 }
 
 /** The subset of the WHATWG `fetch` the targets use. */

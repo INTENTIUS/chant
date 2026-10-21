@@ -160,6 +160,9 @@ describe("chant release publish with targets", () => {
         ["publish", join(dir, "packages/cli"), "--tag", "next", "--access", "public", "--provenance"],
         ["dist-tag", "add", "@acme/core@1.0.0", "latest"],
         ["dist-tag", "add", "@acme/cli@1.0.0", "latest"],
+        // #4244: the reveal waits until the registry serves each version it published.
+        ["view", "@acme/core@1.0.0", "version"],
+        ["view", "@acme/cli@1.0.0", "version"],
         // #4049: in CI, what was published is installed in an empty directory and its signatures and attestations audited.
         ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
         ["audit", "signatures"],
@@ -212,7 +215,7 @@ describe("chant release publish with targets", () => {
       const moved = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(moved.code).toBe(1);
       expect(moved.stderr).toMatch(/\[release-head-mismatch\]/);
-      expect(calls()).toHaveLength(8);
+      expect(calls()).toHaveLength(10);
     },
     240_000,
   );

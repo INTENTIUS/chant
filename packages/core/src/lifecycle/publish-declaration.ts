@@ -60,6 +60,12 @@ export const NpmPublishSchema = z
      * token rather than failing the release. Unset or empty, there is no retry.
      */
     tokenEnv: envName.optional(),
+    /**
+     * Seconds the reveal waits for the registry to serve every version it
+     * published before installing them to audit (#4244). A registry accepts a
+     * publish before it serves it. Default 600.
+     */
+    registryWait: z.number().int().min(0).optional(),
   })
   .strict();
 
