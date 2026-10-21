@@ -118,13 +118,15 @@ describe("a quiet step says it is still running (#3956)", () => {
 
   test("a step printing output is not interrupted by the still-running line", async () => {
     const out = recorder();
-    const chatty = `node -e "let n = 0; const t = setInterval(() => { console.log('tick ' + n); if (++n === 6) clearInterval(t); }, 40)"`;
+    // sh, not node: node's start can outlast the heartbeat on a loaded runner,
+    // and the gap before the first line is what the heartbeat measures.
+    const chatty = `sh -c 'for n in 0 1 2 3 4 5; do echo "tick $n"; sleep 0.04; done'`;
     await runOpLocally(
       { name: "chatty", overview: "", phases: [phase("Go", [shell(chatty, { id: "ticks" })])] },
       new Map([["shellCmd", shellFn]]),
       ACTIVITY_PROFILES,
       undefined,
-      { gates: memoryGateLedgerPort(), stepOutput: out.write, stepHeartbeatMs: 100 },
+      { gates: memoryGateLedgerPort(), stepOutput: out.write, stepHeartbeatMs: 400 },
     );
     expect(out.lines.filter((l) => l.text.includes("still running"))).toEqual([]);
     expect(out.lines.map((l) => l.text)).toContain("[Go] ticks | tick 5");
