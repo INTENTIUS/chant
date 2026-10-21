@@ -432,7 +432,7 @@ async function runGraphLive(
     // no stack carries a `src`.
     const scopedStacks = stacks.filter((s) => s.src);
     if (scopedStacks.length > 0) {
-      const declaredIr = await buildDeclaredPerStack(scopedStacks, projectPath);
+      const declaredIr = await buildDeclaredPerStack(scopedStacks, projectPath, (g, entities) => withLexiconEdges(g, plugins, entities));
       ir =
         args.overlayAnchor === "live"
           ? overlayGraphs(ir, declaredIr, overlayOpts)
@@ -455,7 +455,7 @@ async function runGraphLive(
         console.error(formatWarning({ message: "overlay: a build root failed to render — showing the provisioned graph without the declared overlay" }));
       } else {
         await mergeGraphOps(declared.entities, declared.sourceFiles, projectPath);
-        const declaredIr = buildGraphIr(declared.entities, projectPath);
+        const declaredIr = withLexiconEdges(buildGraphIr(declared.entities, projectPath), plugins, declared.entities);
         ir =
           args.overlayAnchor === "live"
             ? overlayGraphs(ir, declaredIr, overlayOpts)

@@ -56,6 +56,8 @@ export function parseArmTemplate(output: string | { primary: string }): ArmTempl
  * - [reference('myStorage')]
  * - [reference('myStorage').primaryEndpoints.blob]
  *
+ * Object keys are read as well as values.
+ *
  * Returns the set of resource names found in these references.
  */
 export function findArmResourceRefs(value: unknown): Set<string> {
@@ -121,7 +123,10 @@ function walkArmValue(value: unknown, refs: Set<string>): void {
 
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    for (const val of Object.values(obj)) {
+    for (const [key, val] of Object.entries(obj)) {
+      // A key can be an expression too: a user-assigned identity is named by
+      // its resource ID as the key of identity.userAssignedIdentities.
+      walkArmValue(key, refs);
       walkArmValue(val, refs);
     }
   }

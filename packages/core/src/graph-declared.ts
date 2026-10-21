@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { discover } from "./discovery/index";
+import type { Declarable } from "./declarable";
 import { buildGraphIr, type GraphIR, type IRNode } from "./graph-ir";
 
 /**
@@ -19,10 +20,14 @@ import { buildGraphIr, type GraphIR, type IRNode } from "./graph-ir";
  *
  * A stack without `src` contributes nothing here — it has no declared source to
  * scope to (its live nodes still show as foreign in the overlay).
+ *
+ * `withEdges` adds what the lexicons' `graphEdges` hooks resolve to each
+ * stack's graph before its ids are qualified (#4232).
  */
 export async function buildDeclaredPerStack(
   stacks: Array<{ name: string; src?: string }>,
   projectPath: string,
+  withEdges?: (ir: GraphIR, entities: Map<string, Declarable>) => GraphIR,
 ): Promise<GraphIR> {
   const nodes: IRNode[] = [];
   const edges: GraphIR["edges"] = [];
@@ -36,7 +41,9 @@ export async function buildDeclaredPerStack(
   const byStack: Record<string, string[]> = {};
   for (const st of stacks) {
     if (!st.src) continue;
-    const g = buildGraphIr((await discover(resolve(projectPath, st.src))).entities, projectPath);
+    const { entities } = await discover(resolve(projectPath, st.src));
+    const built = buildGraphIr(entities, projectPath);
+    const g = withEdges ? withEdges(built, entities) : built;
     const q = (id: string) => `${st.name}::${id}`;
     for (const n of g.nodes) {
       const id = q(n.id);
