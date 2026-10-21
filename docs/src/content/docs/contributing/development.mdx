@@ -33,6 +33,7 @@ just              # list all commands
 just install      # install all dependencies (including docs)
 just build        # type-check packages/core on TypeScript 7
 just test         # run all tests
+just test-e2e-affected  # run the e2e tests your change reaches
 just lint         # run eslint on packages/
 just check        # run build + lint + test
 just docs         # start the docs dev server
@@ -58,6 +59,17 @@ npx vitest run --project e2e      # end-to-end tests only
 ```
 
 A unit test over the budget either gets faster or moves into a `*.e2e.test.ts` file, and so does a test that runs the CLI or tsc over whole projects, or builds the example corpus. `CHANT_UNIT_TEST_BUDGET_MS` sets a different budget for a local run, and `0` turns it off.
+
+### Before you merge
+
+Pull requests don't run the e2e tests, so run the ones your change reaches yourself:
+
+```bash
+just test-e2e-affected            # against origin/main
+just test-e2e-affected main --list   # print the files without running them
+```
+
+It runs every changed `*.e2e.test.ts`, the e2e files in the same directory as a changed file, and the e2e files vitest's import graph relates to the diff (`--no-related` leaves those out). When the change touches `examples/`, a lexicon's `examples/` or `src/serializer*`, or `docs/`, it also runs the three example gates: `root-examples-gate`, `sandbox-execution-boundary` and `fold-differential`. The last line is a one-line result to paste into the pull request. Unlike `just test-e2e`, it doesn't wait for a person to type `run`, so coding agents run it too.
 
 ### Lexicon artifacts on a fresh clone
 
