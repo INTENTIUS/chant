@@ -125,7 +125,7 @@ function generateLexiconJSON(results: GcpParseResult[], naming: NamingStrategy):
         required: r.resource.properties.filter((p) => p.required).map((p) => p.name),
       },
       attrs: Object.fromEntries(
-        r.resource.attributes.map((a) => [a.name, a.tsType]),
+        r.resource.attributes.map((a) => [attrKey(a.name), a.tsType]),
       ),
     };
 
