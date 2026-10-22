@@ -176,6 +176,12 @@ export const compositeCatalog: CompositeEntry[] = [
         "description": "Environment variables."
       },
       {
+        "name": "serviceAccount",
+        "type": "string",
+        "required": false,
+        "description": "Service account the service runs as: an email, or the account id of an IAMServiceAccount in the project."
+      },
+      {
         "name": "labels",
         "type": "Record<string, string>",
         "required": false,
@@ -956,6 +962,59 @@ export const compositeCatalog: CompositeEntry[] = [
     ]
   },
   {
+    "name": "PrivateEgressNetwork",
+    "lexicon": "gcp",
+    "description": "Create a PrivateEgressNetwork composite.",
+    "bundles": [
+      "Subnetwork",
+      "VPCNetwork"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "Name prefix: the network is `<name>-vpc`, its subnet `<name>-apps`."
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "required": true,
+        "description": "GCP region of the subnet."
+      },
+      {
+        "name": "subnetCidr",
+        "type": "string",
+        "required": true,
+        "description": "IP CIDR range of the subnet."
+      },
+      {
+        "name": "privateIpGoogleAccess",
+        "type": "boolean",
+        "required": false,
+        "description": "Enable private Google access on the subnet (default: true)."
+      },
+      {
+        "name": "labels",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "Additional labels."
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "required": false,
+        "description": "Namespace for all resources."
+      },
+      {
+        "name": "defaults",
+        "type": "{ vpc?: Partial<ConstructorParameters<typeof VPCNetwork>[0]>; subnet?: Partial<ConstructorParameters<typeof Subnetwor...",
+        "required": false,
+        "description": "Per-member defaults for customizing individual resources."
+      }
+    ]
+  },
+  {
     "name": "PrivateService",
     "lexicon": "gcp",
     "description": "PrivateService composite — GlobalAddress + ServiceNetworkingConnection + optional DNS.",
@@ -1028,6 +1087,134 @@ export const compositeCatalog: CompositeEntry[] = [
       {
         "name": "defaults",
         "type": "{ globalAddress?: Partial<ConstructorParameters<typeof ComputeAddress>[0]>; serviceConnection?: Partial<ConstructorPa...",
+        "required": false,
+        "description": "Per-member defaults for customizing individual resources."
+      }
+    ]
+  },
+  {
+    "name": "PublicCloudRun",
+    "lexicon": "gcp",
+    "description": "Create a PublicCloudRun composite.",
+    "bundles": [
+      "BackendService",
+      "CloudRunService",
+      "ComputeAddress",
+      "ForwardingRule",
+      "GCPServiceAccount",
+      "IAMPolicyMember",
+      "ManagedSSLCertificate",
+      "RegionNetworkEndpointGroup",
+      "TargetHTTPProxy",
+      "TargetHTTPSProxy",
+      "URLMap"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "Name prefix every resource is named with."
+      },
+      {
+        "name": "image",
+        "type": "string",
+        "required": true,
+        "description": "Container image."
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "required": true,
+        "description": "GCP region of the service and its network endpoint group."
+      },
+      {
+        "name": "projectId",
+        "type": "string",
+        "required": false,
+        "description": "GCP project, as `projectRef.external` (default: GCP.ProjectId, resolved from GCP_PROJECT_ID at build)."
+      },
+      {
+        "name": "vpc",
+        "type": "{ name: string }",
+        "required": true,
+        "description": "VPC the service's egress goes into, such as a PrivateEgressNetwork's `vpc`."
+      },
+      {
+        "name": "subnet",
+        "type": "{ name: string }",
+        "required": true,
+        "description": "Subnet the service's egress goes into, such as a PrivateEgressNetwork's `subnet`."
+      },
+      {
+        "name": "vpcEgress",
+        "type": "string",
+        "required": false,
+        "description": "Egress sent through the VPC: \"PRIVATE_RANGES_ONLY\" or \"ALL_TRAFFIC\" (default: \"PRIVATE_RANGES_ONLY\")."
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": false,
+        "description": "Port the container listens on (default: 8080)."
+      },
+      {
+        "name": "frontendPort",
+        "type": "number",
+        "required": false,
+        "description": "Port the HTTP forwarding rule listens on (default: 80)."
+      },
+      {
+        "name": "minInstanceCount",
+        "type": "number",
+        "required": false,
+        "description": "Minimum instances (default: 0)."
+      },
+      {
+        "name": "maxInstanceCount",
+        "type": "number",
+        "required": false,
+        "description": "Maximum instances (default: 100)."
+      },
+      {
+        "name": "env",
+        "type": "Array<{ name: string; value: string }>",
+        "required": false,
+        "description": "Environment variables."
+      },
+      {
+        "name": "serviceAccount",
+        "type": "string",
+        "required": false,
+        "description": "An existing service account to run as: an email, or the account id of an IAMServiceAccount in the project."
+      },
+      {
+        "name": "domains",
+        "type": "string[]",
+        "required": false,
+        "description": "Domains for a Google-managed certificate."
+      },
+      {
+        "name": "securityPolicy",
+        "type": "string",
+        "required": false,
+        "description": "Name of a ComputeSecurityPolicy (Cloud Armor) attached to the backend service."
+      },
+      {
+        "name": "labels",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "Additional labels."
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "required": false,
+        "description": "Namespace for all resources."
+      },
+      {
+        "name": "defaults",
+        "type": "{ runtime?: Partial<ConstructorParameters<typeof GCPServiceAccount>[0]>; service?: Record<string, unknown>; publicAcc...",
         "required": false,
         "description": "Per-member defaults for customizing individual resources."
       }

@@ -32,7 +32,7 @@ export * from "./generated/index";
 export {
   GkeCluster, CloudRunServiceComposite, CloudSqlInstance, GcsBucket, VpcNetwork,
   PubSubPipeline, CloudFunctionWithTrigger, PrivateService, ManagedCertificate, SecureProject,
-  MemorystoreRedis, MultiRegionVpc, GkeCrdbRegion, GpuNodePool,
+  MemorystoreRedis, MultiRegionVpc, GkeCrdbRegion, GpuNodePool, PrivateEgressNetwork, PublicCloudRun,
   GovernanceFoundation, LocationRestriction, OrganizationAuditConfig,
 } from "./composites/index";
 export type {
@@ -50,6 +50,7 @@ export type {
   MultiRegionVpcConfig, MultiRegionVpcRegion,
   GkeCrdbRegionConfig, GkeCrdbRegionNodeConfig,
   GpuNodePoolProps, GpuNodePoolTaint,
+  PrivateEgressNetworkProps, PublicCloudRunProps,
   GovernanceFoundationProps, LocationRestrictionProps, OrganizationAuditConfigProps,
 } from "./composites/index";
 

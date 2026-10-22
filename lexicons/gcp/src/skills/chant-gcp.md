@@ -202,6 +202,8 @@ Composites group related Config Connector resources with secure defaults. Each r
 | `ManagedCertificate` | ComputeManagedSslCertificate | Auto-renewal via Google-managed cert |
 | `SecureProject` | Project + IAMAuditConfig + essential Service resources | Audit logging, required APIs enabled, org policy constraints |
 | `GpuNodePool` | ContainerNodePool with GPU accelerators | Scale-to-zero, nvidia.com/gpu taint, GKE metadata workload identity |
+| `PrivateEgressNetwork` | ComputeNetwork + ComputeSubnetwork | Custom mode, regional routing, Private Google Access |
+| `PublicCloudRun` | IAMServiceAccount + RunService + serverless NEG + global external Application Load Balancer | Own service account, Direct VPC egress for private ranges, optional managed certificate with HTTP to HTTPS redirect, optional Cloud Armor policy |
 
 ### Example: GKE cluster with secure defaults
 

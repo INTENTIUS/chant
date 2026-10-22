@@ -1,6 +1,6 @@
 ---
 title: "Examples: Composites"
-description: "All 10 GCP composites with full code and deployment workflow"
+description: "All 12 GCP composites with full code and deployment workflow"
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/lexicons/gcp/composite-examples/.
@@ -192,6 +192,32 @@ const { project, auditConfig, services, ownerIam, loggingSink } = SecureProject(
 });
 
 export { project, auditConfig, services, ownerIam, loggingSink };
+```
+
+## PublicCloudRun
+
+Cloud Run behind a global external Application Load Balancer, with Direct VPC egress into a PrivateEgressNetwork's subnet. The composite creates a service account `<name>-run` unless `serviceAccount` names an existing one. Setting `domains` adds a Google-managed certificate, an HTTPS proxy and a rule on 443, and the HTTP rule then redirects to HTTPS. `securityPolicy` attaches a Cloud Armor policy to the backend service.
+
+```typescript
+import { PrivateEgressNetwork, PublicCloudRun } from "@intentius/chant-lexicon-gcp";
+
+export const network = PrivateEgressNetwork({
+  name: "web",
+  region: "us-central1",
+  subnetCidr: "10.10.0.0/24",
+});
+
+export const web = PublicCloudRun({
+  name: "web",
+  projectId: "my-project",
+  region: "us-central1",
+  vpc: network.vpc,
+  subnet: network.subnet,
+  image: "us-docker.pkg.dev/my-project/web/site:1",
+  minInstanceCount: 1,
+  maxInstanceCount: 3,
+  domains: ["example.com"],
+});
 ```
 
 ## Deploying composites
