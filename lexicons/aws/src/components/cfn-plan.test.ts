@@ -435,6 +435,6 @@ describe("cfn-deploy plans nested stacks (#3997)", () => {
 describe("cfn-deploy targets (#4300)", () => {
   it("refuses targets by name: a change set covers the whole stack", async () => {
     const { targetRefusal } = await import("@intentius/chant/components/capability");
-    expect(targetRefusal(createCfnDeployCapability(createMockCloudExecutor()))).toMatch(/cfn-deploy can't narrow/);
+    expect(targetRefusal(createCfnDeployCapability(createMockCloudExecutor().executor))).toMatch(/cfn-deploy can't narrow/);
   });
 });
