@@ -43,6 +43,7 @@ const BOOLEAN_FLAGS = new Set([
   "--stacks",
   "--components",
   "--pr-build",
+  "--pr-env",
   "--up",
   "--down",
   "--include-dependents",
@@ -438,6 +439,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--apply-on-merge") {
       // `chant build --pr-loop --apply-on-merge` and `chant ci serve --apply-on-merge` (#4168): opt into applying on merge.
       result.applyOnMerge = true;
+    } else if (arg === "--pr-env") {
+      // `chant build --pr-loop --pr-env` (#4298): add the pull request environment's jobs.
+      result.prEnv = true;
     } else if (arg === "--pr-build") {
       // `chant build --pr-loop --pr-build` (#4088), and `chant ci run --pr-build` (#4094).
       result.prBuild = true;

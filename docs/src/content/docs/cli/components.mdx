@@ -28,6 +28,11 @@ chant components pr-apply (--base <ref> [--pr <n>] | --green [--base <ref>]) [--
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
                                 [--events-json] [--report-url <url>]
                                 [--wave-gate <name> [--wave <k>]]
+chant components pr-env up --base <ref> --pr <n> [--forge github|gitlab|forgejo]
+                                [--member <name>] [--output <dir>] [--no-push] [--json]
+chant components pr-env down --pr <n> [--reason closed|expired] [--forge <kind>]
+                                [--member <name>] [--output <dir>] [--no-push] [--json]
+chant components pr-env sweep [--forge <kind>] [--member <name>] [--output <dir>] [--no-push]
 chant components promote --to <env> [--from <env>] [--allow-skip]
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
@@ -452,6 +457,29 @@ The [generated pull-request pipeline](/chant/guide/apply-on-merge/#finish-an-app
 | `--report-url <url>` | Copy the report, the change set and, with `--events-json`, the events to `<url>/<pr>/<commit>/`, an `s3://` or `file://` URL. See above. |
 | `--json` | Print the report on stdout. |
 
+### `components pr-env`
+
+An environment per open pull request, `pr-<n>`, derived from `ci.prEnvironment.template` in the workspace declaration at `--base` ([#4298](https://github.com/INTENTIUS/chant/issues/4298)). See [an environment per pull request](/chant/guide/pr-environments/) for the setup.
+
+`pr-env up` measures the change as `pr-plan` does and plans it into `pr-<n>`, with the build parameter `ownership.env` reads set to `pr-<n>`. An empty plan applies at once. Any other applies once an approval of its digest stands under gate `pr-env` on op `pr-<n>`, and until then the command exits 3. A project whose ownership marker could not name `pr-<n>` is refused, as is a config that does not declare the template or cover `pr-<n>`. Each apply appends an `up` record to `_pr-envs/records.jsonl` on `chant/lifecycle`, which names the marker and the expiry.
+
+`pr-env down` tears down what carries the marker `{ stack, env: "pr-<n>" }` that the environment's record names, after checking the record is this pull request's. It drops any candidate with another marker before anything is deleted, and appends a `down` record. An environment whose teardown left something stays live. With no live record it exits 0.
+
+`pr-env sweep` runs `down` for each live environment whose TTL passed. With `--forge` it also runs `down` where the pull request is no longer open.
+
+The report goes to `pr-env-<stage>.json` under `--output`, beside `pr-env-note.md`. Given `--forge`, the note is posted on the pull request too, with a `chant/pr-env` commit status.
+
+| Flag | Meaning |
+|---|---|
+| `--base <ref>` | `up` only. The pull request's target commit, where `ci.prEnvironment` is read. Required. |
+| `--pr <n>` | The pull or merge request. Required for `up` and `down`. |
+| `--reason closed\|expired` | `down` only. Why, as the record says. Defaults to `closed`. |
+| `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status; `sweep` also reads whether each pull request is open. |
+| `--member <name>` | A workspace member's environment, run in the member's directory. The op is `pr-<n>-<member>`. |
+| `--output <dir>` | Where the report and the note go. Defaults to `.chant/pr-env`. |
+| `--no-push` | Write the record to the local `chant/lifecycle` and do not push it. |
+| `--json` | Print the report on stdout. |
+
 ### `components promote`
 
 Deploy the artifact digests one environment's release ledger records to another environment, without a build.
@@ -699,7 +727,7 @@ A redeploy that fails writes no release record, like any other deploy, and can b
 |------|---------|
 | 0 | Success (for `fan-out` and `pr-apply`, every selected component applied; `pr-plan` exits 0 whenever every member planned) |
 | 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, `rollback` and `redeploy`, a digest missing from the ledger or not current, a composition that cannot be pinned, or a failed deploy) |
-| 3 | `pr-apply`: refused, and nothing applied. No approval stands for the plan, the plan changed after review, the approver has not approved the pull request, or no pull request merged the commit. `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` with `--gate` nothing ran, and with `--wave-gate` nothing in the gated wave or after it ran; for the others the steps before the gate ran, and only components that finished were recorded. `pr-apply`: a member was planned again after an upstream applied, and no approval stands for that plan; the rest applied ([#3999](https://github.com/INTENTIUS/chant/issues/3999)). `fan-out`, `pr-apply`, `promote`, `rollback` and `redeploy`: a step refused a plan that moved since it was approved, and applied nothing. The components before it applied and are recorded ([#3997](https://github.com/INTENTIUS/chant/issues/3997)). |
+| 3 | `pr-env up`: no approval stands for the environment's plan, so nothing applied. `pr-apply`: refused, and nothing applied. No approval stands for the plan, the plan changed after review, the approver has not approved the pull request, or no pull request merged the commit. `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` with `--gate` nothing ran, and with `--wave-gate` nothing in the gated wave or after it ran; for the others the steps before the gate ran, and only components that finished were recorded. `pr-apply`: a member was planned again after an upstream applied, and no approval stands for that plan; the rest applied ([#3999](https://github.com/INTENTIUS/chant/issues/3999)). `fan-out`, `pr-apply`, `promote`, `rollback` and `redeploy`: a step refused a plan that moved since it was approved, and applied nothing. The components before it applied and are recorded ([#3997](https://github.com/INTENTIUS/chant/issues/3997)). |
 
 ## See Also
 

@@ -77,6 +77,9 @@ import {
   PR_PLAN_NOTE_JOB,
   prLoopWaveJobs,
   prLoopWithWaves,
+  prEnvJobs,
+  PR_ENV_REPORT_DIR,
+  PR_ENV_SWEEP_CRON,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
@@ -362,9 +365,11 @@ function prLoopGithubDoc(
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
     { name: "Post the plan note and chant/plan", if: "always()", env: post.env, run: post.command },
   ];
+  // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
+  const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
   const jobsDoc: Record<string, unknown> = {
     plan: {
-      if: "github.event_name == 'pull_request'",
+      if: prEnv ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
       "runs-on": GITHUB_RUNNER,
       container: image,
       permissions: withIdToken({ contents: "read" }),
@@ -381,20 +386,26 @@ function prLoopGithubDoc(
       steps: noteSteps,
     },
     ...Object.fromEntries(applyJobs),
+    ...(prEnv ? prEnv.jobs : {}),
   };
   const applyNames = applyJobs.map(([name]) => name);
+  const on: Record<string, unknown> = !loop.applyOnMerge
+    ? { pull_request: { branches: [branch] }, push: { branches: [branch] } }
+    : forgejo
+      ? { pull_request: { branches: [branch] }, push: { branches: [branch], tags: [GREEN_TAG_PATTERN] } }
+      : { pull_request: { branches: [branch] }, push: { branches: [branch] }, workflow_run: { workflows: [GREEN_TICK_WORKFLOW], types: ["completed"] }, workflow_dispatch: {} };
+  if (prEnv) {
+    on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
+    on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
+  }
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
-    on: !loop.applyOnMerge
-      ? { pull_request: { branches: [branch] }, push: { branches: [branch] } }
-      : forgejo
-        ? { pull_request: { branches: [branch] }, push: { branches: [branch], tags: [GREEN_TAG_PATTERN] } }
-        : { pull_request: { branches: [branch] }, push: { branches: [branch] }, workflow_run: { workflows: [GREEN_TICK_WORKFLOW], types: ["completed"] }, workflow_dispatch: {} },
+    on,
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...applyNames],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...applyNames, ...(prEnv ? ["env-up", "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -405,6 +416,61 @@ function prLoopGithubDoc(
         // The record runs on a push and the apply on a green commit, so only the waves need each other.
         needs: i > 1 ? [applyNames[i - 1]] : [],
       })),
+      ...(prEnv ? prEnv.listed : []),
+    ],
+  };
+}
+
+/**
+ * The jobs of a pull request's environment (#4298): `env-up` on an opened,
+ * updated or reopened pull request, `env-down` when it closes, `env-sweep`
+ * on the schedule. `env-down` checks out the base branch, since a closed
+ * pull request's merge ref may be gone, and its teardown reads markers off
+ * the live resources rather than building the pull request's code. One run
+ * at a time per pull request, and a close waits for an apply still running
+ * rather than cancelling it.
+ */
+function prEnvGithubJobs(
+  forge: "github" | "forgejo",
+  image: string,
+  beforeScript: string[],
+  extraScript: string[],
+  loop: NonNullable<GenerateGithubOptions["prLoop"]>,
+  member: GenerateGithubOptions["member"],
+): { jobs: Record<string, unknown>; listed: GeneratedJob[] } {
+  const [up, down, sweep] = prEnvJobs(forge, loop, member?.name);
+  const reportPath = member ? memberRepoPath(member, PR_ENV_REPORT_DIR) : PR_ENV_REPORT_DIR;
+  const group = `chant-pr-env-${member ? `${member.name}-` : ""}\${{ github.event.pull_request.number }}`;
+  const permissions = { contents: "write", "pull-requests": "write", statuses: "write" };
+  const keep = (name: string) => ({ name: `Keep the ${name} report`, if: "always()", uses: UPLOAD_ARTIFACT, with: { name: `chant-pr-${name}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } });
+  const job = (j: typeof up, condition: string, checkout: Record<string, unknown>, name: string, groupName: string) => ({
+    if: condition,
+    "runs-on": GITHUB_RUNNER,
+    container: image,
+    concurrency: concurrency(groupName),
+    permissions,
+    steps: [
+      checkout,
+      ...runSteps(prLoopSetup(image)),
+      ...runSteps(beforeScript),
+      ...(j.build ? [{ name: "Build the templates", env: { CHANT_ENV: j.env.CHANT_ENV }, run: j.build[0] }, { name: "Lint the project", run: j.build[1] }] : []),
+      { name, env: j.env, run: j.command },
+      ...runSteps(extraScript),
+      keep(j.jobName),
+    ],
+  });
+  const full = checkoutStep(true) as { uses: string; with: Record<string, unknown> };
+  const baseCheckout = { ...full, with: { ...full.with, ref: "${{ github.event.pull_request.base.ref }}" } };
+  return {
+    jobs: {
+      "env-up": job(up, "github.event_name == 'pull_request' && github.event.action != 'closed'", full, "Apply this pull request's environment once its plan is approved", group),
+      "env-down": job(down, "github.event_name == 'pull_request' && github.event.action == 'closed'", baseCheckout, "Tear down what this pull request's environment owns", group),
+      "env-sweep": job(sweep, "github.event_name == 'schedule'", full, "Tear down the environments whose TTL passed or whose pull request closed", `chant-pr-env-sweep${member ? `-${member.name}` : ""}`),
+    },
+    listed: [
+      { jobName: "env-up", component: "pull request environment", stage: "env-up", needs: [] },
+      { jobName: "env-down", component: "pull request environment teardown", stage: "env-down", needs: [] },
+      { jobName: "env-sweep", component: "pull request environment sweep", stage: "env-sweep", needs: [] },
     ],
   };
 }

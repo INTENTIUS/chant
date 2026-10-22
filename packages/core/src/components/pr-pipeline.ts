@@ -194,6 +194,13 @@ export interface PrLoopPipelineOptions {
    * generator, which reuses the github one; a caller never needs to.
    */
   forge?: "github" | "forgejo";
+  /**
+   * An environment per open pull request (#4298, `ci.prEnvironment`): an
+   * `env-up` job on each opened, updated or reopened pull request, an
+   * `env-down` job when it closes, and an `env-sweep` job on a schedule
+   * ({@link prEnvJobs}). Set from `--pr-env` beside `--pr-loop`. Default false.
+   */
+  prEnvironment?: boolean;
 }
 
 /** One job's command and the forge values it reads, as environment variables for its step. */
@@ -494,4 +501,55 @@ export function gitlabBaseFallback(branch?: string): string {
  */
 export function githubBaseFallback(branch?: string): string {
   return pushBaseFallback(JSON.stringify(branch ?? "main"), "$GITHUB_SHA");
+}
+
+/** Where the pull request environment jobs (#4298) write their reports, kept as a CI artifact. */
+export const PR_ENV_REPORT_DIR = ".chant/pr-env";
+
+/** The cron the generated `env-sweep` job runs on (#4298): hourly, at a minute off the hour. */
+export const PR_ENV_SWEEP_CRON = "17 * * * *";
+
+/** One job of a pull request's environment (#4298): its command and the forge values it reads. */
+export interface PrEnvJob {
+  jobName: "env-up" | "env-down" | "env-sweep";
+  /** The command line. `env-up` reads `$BASE_SHA` and `$PR_NUMBER`, `env-down` `$PR_NUMBER`. */
+  command: string;
+  /** Values the command reads, as the forge spells them. `CHANT_ENV` is the pull request's environment. */
+  env: Record<string, string>;
+  /** With `build`: the build and lint lines, run before the command. */
+  build?: string[];
+}
+
+/**
+ * The jobs of a pull request's environment (#4298), when `prEnvironment` is
+ * on: `env-up` runs `chant components pr-env up`, `env-down` runs `pr-env
+ * down --reason closed`, and `env-sweep` runs `pr-env sweep`. Each passes
+ * `--forge`, so the note and the `chant/pr-env` status are posted, and
+ * writes its report under {@link PR_ENV_REPORT_DIR}.
+ */
+export function prEnvJobs(forge: ForgeKind, options: PrLoopPipelineOptions = {}, member?: string): PrEnvJob[] {
+  const github = forge !== "gitlab";
+  const common = ["--forge", forge, "--output", PR_ENV_REPORT_DIR, ...(member ? ["--member", member] : [])];
+  const token: Record<string, string> = github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {};
+  const prNumber = github ? "${{ github.event.pull_request.number }}" : "$CI_MERGE_REQUEST_IID";
+  const prEnv = { CHANT_ENV: `pr-${prNumber}` };
+  const buildLines = prLoopBuildLines('"$CHANT_ENV"', options);
+  return [
+    {
+      jobName: "env-up",
+      command: ["chant", "components", "pr-env", "up", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common].join(" "),
+      env: { BASE_SHA: github ? "${{ github.event.pull_request.base.sha }}" : "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: prNumber, ...prEnv, ...token },
+      ...(buildLines.length > 0 ? { build: buildLines } : {}),
+    },
+    {
+      jobName: "env-down",
+      command: ["chant", "components", "pr-env", "down", "--pr", '"$PR_NUMBER"', "--reason", "closed", ...common].join(" "),
+      env: { PR_NUMBER: prNumber, ...prEnv, ...token },
+    },
+    {
+      jobName: "env-sweep",
+      command: ["chant", "components", "pr-env", "sweep", ...common].join(" "),
+      env: { ...token },
+    },
+  ];
 }

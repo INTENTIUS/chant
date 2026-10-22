@@ -137,7 +137,7 @@ import type { PrHookOutcome } from "../../pr-loop";
 /** Where the reports land unless `--output` says. */
 export const PR_REPORT_DIR = ".chant/pr";
 
-interface Prepared {
+export interface Prepared {
   config: ChantConfig;
   env: string;
   /** The workspace member, with `--member` (#3465). */
@@ -180,8 +180,8 @@ const fail = (message: string, hint?: string): number => {
   return 1;
 };
 
-/** Everything both stages share: the change and the derivation. Each stage plans the members itself. */
-async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"): Promise<Prepared | number> {
+/** Everything both stages share: the change and the derivation. Each stage plans the members itself. `pr-env up` (#4298) prepares as the plan does. */
+export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"): Promise<Prepared | number> {
   const { args } = ctx;
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
@@ -405,7 +405,7 @@ function planAll(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
   return hookedPlan(p, p.plan.order, () => planBare(p, onRunEvent));
 }
 
-function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
+export function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
   return planPrSet({
     components: p.components,
     plan: p.plan,
