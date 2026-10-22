@@ -187,6 +187,7 @@ export default defineConfig({
 								{ label: 'Watch Mode', slug: 'configuration/watch' },
 								{ label: 'Ops', slug: 'guide/ops' },
 								{ label: 'Watching Lifecycle', slug: 'guide/watching-lifecycle' },
+								{ label: 'Catch a Stopped Watch Schedule', slug: 'guide/overdue-scheduled-ops' },
 								{ label: 'Drift Back to Source', slug: 'guide/drift-to-source' },
 								{ label: 'Checking Health', slug: 'guide/checking-health' },
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },

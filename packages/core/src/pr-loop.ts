@@ -74,6 +74,9 @@ export const PR_REPORT_RECORD_FLOOR = "0.124.33";
 /** The first chant whose report can carry `hooks` (#4288). */
 export const PR_REPORT_HOOKS_FLOOR = "0.124.35";
 
+/** The first chant whose plan report can carry `overdue` (#4289). */
+export const PR_REPORT_OVERDUE_FLOOR = "0.124.35";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -294,6 +297,16 @@ export interface PrWave {
   moved?: string[];
 }
 
+/** A scheduled watch or reconcile Op that stopped running (#4289, `op/schedule-overdue.ts`). */
+export interface PrOverdue {
+  op: string;
+  cron: string;
+  /** The job's last run, or the pipeline file's first commit when `neverRan` (ISO 8601). */
+  since: string;
+  neverRan?: boolean;
+  message: string;
+}
+
 /**
  * One stage hook a pull-request job ran (#4288), from `ci.hooks` in the
  * workspace declaration at base. The shape of an Op waves hook outcome.
@@ -370,6 +383,14 @@ export interface PrReport {
   waveGate?: string;
   /** With `waveGate`: each wave reached so far, in order. */
   waves?: PrWave[];
+  /**
+   * Plan stage (#4289): the scheduled watch and reconcile Ops whose cron has
+   * fired at least twice since their job last ran, or since their pipeline
+   * file was added when no run is on record. Absent when none is overdue or
+   * the forge was not asked. Added within contract 1 by chant
+   * {@link PR_REPORT_OVERDUE_FLOOR}.
+   */
+  overdue?: PrOverdue[];
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
     changed: string[];
@@ -560,6 +581,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     `${headline(report)} Head ${code(short(report.head))}, measured from ${code(short(report.base))}.`,
   ];
   if (report.message) out.push("", `> ${report.message.split("\n").join("\n> ")}`);
+  for (const o of report.overdue ?? []) out.push("", `Warning: ${o.message}`);
   if (report.resumed && report.resumed.applied.length > 0) {
     out.push("", `Resumed under the same approval: ${report.resumed.applied.map(code).join(", ")} applied in an earlier attempt and did not run again.`);
   }

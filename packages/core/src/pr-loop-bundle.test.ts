@@ -41,7 +41,7 @@ describe("the pull-request loop bundle", () => {
       "packages/core/src/pr-forge.ts",
       "packages/core/src/pr-loop.ts",
     ]);
-    // About 74 KB today, after the hooks line (#4288) and the blocked set (#4291) in the note.
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(76 * 1024);
+    // About 76 KB today, after the hooks line (#4288), the blocked set (#4291) and the scheduled-run reads (#4289).
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(80 * 1024);
   });
 });

@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     container: node:22
     permissions:
+      actions: read
       contents: read
       pull-requests: write
       statuses: write

@@ -147,3 +147,47 @@ export function cronDueBetween(expr: string, after: Date, upTo: Date): boolean {
   }
   return false;
 }
+
+/**
+ * The minutes `expr` fires at in `(after, upTo]`, read in UTC as GitHub,
+ * GitLab and Forgejo read a CI cron, at most `max` of them (#4289). The
+ * plan job counts these to tell a schedule that stopped from one that ran
+ * late. A 6-field expression drops its seconds field, as {@link cronMatches}
+ * does, and an expression that is not 5 or 6 fields fires never.
+ */
+export function cronFiresUtc(expr: string, after: Date, upTo: Date, max: number): Date[] {
+  const fields = expr.trim().split(/\s+/);
+  const five = fields.length === 6 ? fields.slice(1) : fields;
+  if (five.length !== 5) return [];
+  const minute = parseField(five[0], 0, 59);
+  const hour = parseField(five[1], 0, 23);
+  const dom = parseField(five[2], 1, 31);
+  const month = parseField(five[3], 1, 12);
+  const dow = parseField(five[4], 0, 7);
+  const dayMatches = (d: Date): boolean => {
+    const weekday = d.getUTCDay();
+    const domOk = fieldMatches(dom, d.getUTCDate());
+    const dowOk = fieldMatches(dow, weekday) || (weekday === 0 && fieldMatches(dow, 7));
+    if (dom.any && dow.any) return true;
+    if (dom.any) return dowOk;
+    if (dow.any) return domOk;
+    return domOk || dowOk;
+  };
+  const out: Date[] = [];
+  const t = new Date(Math.floor(after.getTime() / 60_000) * 60_000 + 60_000);
+  while (t <= upTo && out.length < max) {
+    if (!fieldMatches(month, t.getUTCMonth() + 1)) {
+      t.setUTCMonth(t.getUTCMonth() + 1, 1);
+      t.setUTCHours(0, 0, 0, 0);
+    } else if (!dayMatches(t)) {
+      t.setUTCDate(t.getUTCDate() + 1);
+      t.setUTCHours(0, 0, 0, 0);
+    } else if (!fieldMatches(hour, t.getUTCHours())) {
+      t.setUTCHours(t.getUTCHours() + 1, 0, 0, 0);
+    } else {
+      if (fieldMatches(minute, t.getUTCMinutes())) out.push(new Date(t));
+      t.setTime(t.getTime() + 60_000);
+    }
+  }
+  return out;
+}
