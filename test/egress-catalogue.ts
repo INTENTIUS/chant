@@ -485,6 +485,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The azure lexicon's read transport for observation and live import.",
   },
   {
+    file: "lexicons/azure/src/components/arm-deploy.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Azure Resource Manager, or the environment's declared endpoint",
+    why: "The `arm-deploy` component step (#4273) reads each template resource to plan it and applies through `azApply`; its HTTP is injectable for tests.",
+  },
+  {
     file: "lexicons/azure/src/health.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -511,6 +518,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "Google Cloud REST APIs, or a declared endpoint override",
     why: "`gcpApply` performs the REST calls a Config Connector manifest implies.",
+  },
+  {
+    file: "lexicons/gcp/src/components/gcp-apply.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Google Cloud REST APIs, or the environment's declared endpoint",
+    why: "The `gcp-apply` component step (#4273) reads each declared resource to plan it and applies through `gcpApply`; its HTTP is injectable for tests.",
   },
   {
     file: "lexicons/gcp/src/health.ts",

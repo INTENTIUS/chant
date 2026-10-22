@@ -72,10 +72,12 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `lexicons/aws/src/receipt-store.ts` | `fetch` | AWS SSM Parameter Store, or `AWS_ENDPOINT_URL_SSM` | Effect receipts are read before an effect step and written after it succeeds; the store is the aws implementation of core's injectable receipt seam. |
 | `lexicons/aws/src/agentcore/trace-fetch.ts` | `fetch` | Bedrock AgentCore | `awsAgentCoreFetchTrace` pulls a session history and renders it as replay-trace text for a later cedar policy replay. |
 | `lexicons/azure/src/api/read-client.ts` | `fetch` | Azure Resource Manager, or a declared endpoint override | The azure lexicon's read transport for observation and live import. |
+| `lexicons/azure/src/components/arm-deploy.ts` | `fetch` | Azure Resource Manager, or the environment's declared endpoint | The `arm-deploy` component step (#4273) reads each template resource to plan it and applies through `azApply`; its HTTP is injectable for tests. |
 | `lexicons/azure/src/health.ts` | `fetch` | Azure Resource Manager (containerApps and their revisions), or a declared endpoint override | `chant lifecycle health` (#4177) reads a container app's active revisions and their running state. |
 | `lexicons/azure/src/op/activities/az-apply.ts` | `fetch` | Azure Resource Manager, or a declared endpoint override | `azApply` performs ARM resource CRUD for the native local applier and for real subscriptions alike. |
 | `lexicons/gcp/src/api/read-client.ts` | `fetch` | Google Cloud REST APIs, or a declared endpoint override | The gcp lexicon's read transport, resolving Config Connector kinds to their underlying REST resources. |
 | `lexicons/gcp/src/op/activities/gcp-apply.ts` | `fetch` | Google Cloud REST APIs, or a declared endpoint override | `gcpApply` performs the REST calls a Config Connector manifest implies. |
+| `lexicons/gcp/src/components/gcp-apply.ts` | `fetch` | Google Cloud REST APIs, or the environment's declared endpoint | The `gcp-apply` component step (#4273) reads each declared resource to plan it and applies through `gcpApply`; its HTTP is injectable for tests. |
 | `lexicons/gcp/src/health.ts` | `fetch` | Google Cloud REST APIs (backend service health, IAM policies), or a declared endpoint override | `chant lifecycle health` (#4239) reads a backend service's group health and whether an IAM member holds its role. |
 | `lexicons/cpln/src/api.ts` | `fetch` | the Control Plane API, or a declared endpoint | The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network. |
 | `lexicons/grafana/src/api/client.ts` | `fetch` | the Grafana HTTP API named by `grafana.profiles.<env>` or `GRAFANA_URL` | The grafana lexicon's transport for `lifecycle diff --live` and `import --from`, injectable through `GrafanaHttp` so tests need no network. |
@@ -217,7 +219,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**72 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
+**74 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 
