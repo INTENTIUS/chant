@@ -477,7 +477,7 @@ export interface ParsedArgs {
   records?: boolean;
   /** `chant workspace wip save --label <text>` (#3172): what the caller calls the snapshot, such as a turn id. */
   label?: string;
-  /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
+  /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. `chant components pr-apply|pr-record --branch <branch>` (#4292): the branch pushed, which `ci.branches` routes members by; default the forge's GITHUB_REF_NAME or CI_COMMIT_BRANCH. */
   branch?: string;
   /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. Also `chant ci init --workflow <name>` (#4168 step 6), the prescribed workflow to set up. */
   ciWorkflows?: string[];

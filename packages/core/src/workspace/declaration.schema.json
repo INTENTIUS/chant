@@ -188,6 +188,24 @@
           "type": "string",
           "minLength": 1,
           "description": "Where the pull-request jobs copy their reports and events, and where chant ci run keeps the run index, <reportUrl>/runs/index.json (#4160): an s3://<bucket>/<prefix> or file://<directory> URL, as --report-url takes. chant build --pr-loop, chant ci run, chant ci serve and chant ci runs use it when --report-url is not given, and the flag wins. Readers find it in chant workspace ls --json as ci.reportUrl. Added in schema 1 by chant 0.124.32, so a declaration that uses it sets minReader to 0.124.32 or newer."
+        },
+        "branches": {
+          "type": "object",
+          "description": "Branch routing (#4292): a branch name to member-name globs. A member a glob matches applies from that branch alone: chant build --pr-loop targets its pipeline at the branch, and its record and apply jobs plan nothing on a push to any other branch. A member no glob matches applies from every branch the map does not name. One member may not be matched by two branches. Added in schema 1 by chant 0.124.36, so a declaration that uses it sets minReader to 0.124.36 or newer.",
+          "patternProperties": {
+            "^x-": true,
+            "^(?!x-)[^\\s]+$": { "$ref": "#/$defs/ciMemberGlobs" }
+          },
+          "additionalProperties": false
+        },
+        "labels": {
+          "type": "object",
+          "description": "Label filters (#4292): a pull request label to member-name globs. When a pull request carries one of these labels, its plan jobs plan only the members those labels match. A label never gates: the record and apply jobs never read labels, and an apply still needs an approval of the digest it plans. Added in schema 1 by chant 0.124.36, so a declaration that uses it sets minReader to 0.124.36 or newer.",
+          "patternProperties": {
+            "^x-": true,
+            "^(?!x-).+$": { "$ref": "#/$defs/ciMemberGlobs" }
+          },
+          "additionalProperties": false
         }
       }
     },
@@ -257,6 +275,13 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "ciMemberGlobs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9*?\\[\\]{},!-]+$" },
+      "description": "Globs over member names, such as prod-* or [\"api\", \"web\"]: * and ? within the name, [...] classes, {a,b} alternatives."
+    },
     "retentionDays": {
       "type": "integer",
       "minimum": 0,

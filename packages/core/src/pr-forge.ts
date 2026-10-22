@@ -377,6 +377,8 @@ export interface PrForge {
   editPullRequest(pr: number, change: { title?: string; body?: string }): Promise<PullRequest | undefined>;
   /** Add labels to a pull request by name. Forgejo needs them to exist; GitHub and GitLab make them. */
   addLabels(pr: number, labels: readonly string[]): Promise<void>;
+  /** The names of the labels pull request `pr` carries (#4292), for `ci.labels`. */
+  labels?(pr: number): Promise<string[]>;
   /**
    * Merge pull request `pr` only if its head is still `opts.sha`. A moved
    * head, a conflict or a branch rule the forge enforces comes back as
@@ -784,6 +786,10 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       if (labels.length === 0) return;
       await api.call("POST", `${repo}/issues/${pr}/labels`, { labels: [...labels] });
     },
+    async labels(pr) {
+      const listed = await api.list(`${repo}/issues/${pr}/labels`, pageParams, pageSize);
+      return listed.map((l) => (isObject(l) ? str(l.name) : undefined)).filter((n): n is string => n !== undefined);
+    },
     async mergePullRequest(pr, m) {
       const method = m.method ?? "merge";
       let res: unknown;
@@ -990,6 +996,10 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async addLabels(mr, labels) {
       if (labels.length === 0) return;
       await api.call("PUT", `${notes}/${mr}`, { add_labels: labels.join(",") });
+    },
+    async labels(mr) {
+      const m = await api.call("GET", `${notes}/${mr}`);
+      return isObject(m) && Array.isArray(m.labels) ? m.labels.filter((l): l is string => typeof l === "string") : [];
     },
     async mergePullRequest(mr, m) {
       const method = m.method ?? "merge";

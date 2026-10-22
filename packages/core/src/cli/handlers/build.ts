@@ -161,7 +161,8 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
-      ...(args.prLoop ? { prLoop: prLoopOption(args, reportUrl, reviewRules, isolatedRunners) } : {}),
+      // #4292: on the branch ci.branches routes the member to, when it routes it.
+      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}) } } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),

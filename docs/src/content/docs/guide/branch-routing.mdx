@@ -1,0 +1,66 @@
+---
+title: Route Members to Branches
+description: "Apply some workspace members from a branch of their own with ci.branches, and narrow what a labelled pull request plans with ci.labels"
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/branch-routing/.
+  Add a ci.branches entry to this workspace's chant.workspace.json for the members named in the request, regenerate each routed member's pull-request pipeline, and open a pull request with the declaration and the pipelines.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A workspace member's [pull-request pipeline](/chant/guide/pull-request-ci/) plans pull requests into one target and records or applies each push to it. By default every member shares that target. `ci.branches` gives some members a target of their own, so a push to `main` leaves them alone and a push to `release` touches only them ([#4292](https://github.com/INTENTIUS/chant/issues/4292)).
+
+## Route members to a branch
+
+Map a target to globs over member names in `chant.workspace.json`:
+
+```json
+"ci": {
+  "branches": {
+    "release": ["prod-*"]
+  }
+}
+```
+
+A member a glob matches applies from that target alone. A member no glob matches applies from every target the map leaves out, `main` included (`packages/core/src/workspace/ci-branches.ts:48`). A member matched by two entries is refused with `declaration-invalid` at the second entry (`packages/core/src/workspace/declaration.ts:1041`).
+
+The globs take `*`, `?`, `[...]` and `{a,b}` over the member's name. Set `minReader` to 0.124.36 or newer with the field.
+
+## Regenerate the routed members' pipelines
+
+Run the generator in each routed member's directory, as you would for any member:
+
+```sh
+cd envs/prod-eu
+chant build --components --generate github --pr-loop
+```
+
+The pipeline targets `release` without `--branch` (`packages/core/src/cli/handlers/build.ts:165`). The regenerate command it records carries no `--branch`, so it stays right if the route changes. A `--branch` that disagrees with the route is refused, and so is a `--branch` naming a mapped target for a member its globs leave out (`packages/core/src/workspace/member-pipeline.ts:294`).
+
+## What the jobs do on a push
+
+The record and apply jobs read `ci.branches` from the declaration at base (`packages/core/src/cli/handlers/pr.ts:336`). They take the pushed ref from `--branch`, else from `GITHUB_REF_NAME` on GitHub and Forgejo or `CI_COMMIT_BRANCH` on GitLab (`packages/core/src/workspace/ci-branches.ts:77`). A member routed elsewhere plans nothing and reports `nothing`, with the reason as the report's message (`packages/core/src/cli/handlers/pr.ts:278`). The record job writes no merge record for it (`packages/core/src/cli/handlers/pr.ts:933`).
+
+A release is still one green commit (ws-104), so each mapped target has to produce a green commit of its own. [`ci.green`](/chant/reference/workspace-declaration/#ci) judges only the ref it names, and a mapped target gets no verdict from it today.
+
+## Narrow what a labelled pull request plans
+
+`ci.labels` maps a pull request label to member-name globs:
+
+```json
+"ci": {
+  "labels": {
+    "plan:prod": ["prod-*"]
+  }
+}
+```
+
+When a pull request carries one of these labels, each member's plan job plans that member only if one of the labels matches it (`packages/core/src/workspace/ci-branches.ts:67`). The others report `nothing`. A pull request with none of the labels plans every member. The plan job needs `--forge` to read the labels, and a forge that cannot answer leaves every member planning (`packages/core/src/cli/handlers/pr.ts:350`).
+
+A label never gates. Anyone with triage access can set one, so only the plan job reads labels. The record and apply jobs plan every member the change reaches, and an apply still waits for an approval of the digest it plans. The stages on a push return before the label read (`packages/core/src/cli/handlers/pr.ts:337`). A member a label left out of the pull request plan is planned at merge, and its approval is asked for then.
+
+## Related
+
+- [Pull-request CI](/chant/guide/pull-request-ci/)
+- [Workspace declaration: CI](/chant/reference/workspace-declaration/#ci)
+- [Apply on merge](/chant/guide/apply-on-merge/)

@@ -178,3 +178,32 @@ describe("the generated-file record", () => {
     expect(readGeneratedRecord(dir).files.map((f) => f.path)).toEqual(["a.yml", "b.yml"]);
   });
 });
+
+describe("ci.branches routes a member's pull-request pipeline (#4292)", () => {
+  const routed = () => {
+    rmSync(repo, { recursive: true, force: true });
+    repo = twoMemberWorkspace({ extra: { ci: { branches: { release: ["api"] } } } });
+  };
+  const plan = (dir: string, branch?: string) =>
+    planMemberComponentPipeline({ projectDir: dir, found: findWorkspaceRoot(dir)!, lexicon: "github", env: "staging", prLoop: branch ? { branch } : {} })!;
+
+  test("a routed member's pipeline targets its branch, with or without --branch naming it", () => {
+    routed();
+    const dir = join(repo, "services/api");
+    expect(plan(dir).branch).toBe("release");
+    expect(plan(dir, "release").branch).toBe("release");
+    expect(plan(dir).command).toBe("chant build --components --generate github --env staging --pr-loop");
+  });
+
+  test("--branch may not move a routed member, nor put another member on a routed branch", () => {
+    routed();
+    expect(() => plan(join(repo, "services/api"), "main")).toThrow("--branch main: ci.branches routes member api to release, so its pull-request pipeline targets release");
+    expect(() => plan(join(repo, "apps/web"), "release")).toThrow("--branch release: ci.branches applies only the members its globs match from release, and member web is not one");
+  });
+
+  test("an unrouted member keeps --branch, or the generator's default", () => {
+    routed();
+    expect(plan(join(repo, "apps/web")).branch).toBeUndefined();
+    expect(plan(join(repo, "apps/web"), "trunk").branch).toBe("trunk");
+  });
+});

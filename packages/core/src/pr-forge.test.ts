@@ -891,6 +891,13 @@ describe("pull requests over REST (#3798)", () => {
     expect(l.calls.map((c) => c.body)).toEqual([{ description: "d" }, { add_labels: "minor,breaking" }]);
   });
 
+  test("labels reads the names a pull request carries on each forge (#4292)", async () => {
+    const f = fakeFetch({ "GET /api/v1/repos/acme/infra/issues/10/labels": [{ name: "plan:prod" }, { name: "bug" }, { id: 3 }] });
+    expect(await forgejoForge({ ...fjOpts, fetch: f.fetch }).labels!(10)).toEqual(["plan:prod", "bug"]);
+    const l = fakeFetch({ "GET /api/v4/projects/group%2Finfra/merge_requests/7": { iid: 7, labels: ["plan:prod", 4] } });
+    expect(await gitlabForge({ ...gl, fetch: l.fetch }).labels!(7)).toEqual(["plan:prod"]);
+  });
+
   test("Forgejo's 404 on the pull list of a just-pushed empty repository is no pull request (#3845)", async () => {
     const empty = fakeFetch({ "GET /api/v1/repos/acme/infra": { default_branch: "main" } });
     expect(await forgejoForge({ ...fjOpts, fetch: empty.fetch }).findPullRequest("chant/x")).toBeUndefined();

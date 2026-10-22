@@ -208,6 +208,7 @@ export default defineConfig({
 								{ label: 'Apply on Merge (opt-in)', slug: 'guide/apply-on-merge' },
 								{ label: 'Keep Going Past a Failed Member', slug: 'guide/failed-member-blocks' },
 								{ label: 'Move off Apply on Merge', slug: 'guide/move-off-apply-on-merge' },
+								{ label: 'Route Members to Branches', slug: 'guide/branch-routing' },
 							],
 						},
 						{

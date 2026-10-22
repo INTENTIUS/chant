@@ -390,6 +390,24 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 
 `ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `after.gate` and `apply.runBy` are refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1149`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.35 or newer to read it.
 
+### Branches and labels
+
+`ci.branches` maps a branch to globs over member names, and `ci.labels` maps a pull request label the same way ([#4292](https://github.com/INTENTIUS/chant/issues/4292)). See [route members to branches](/chant/guide/branch-routing/).
+
+```json
+"ci": {
+  "branches": { "release": ["prod-*"] },
+  "labels": { "plan:prod": ["prod-*"] }
+}
+```
+
+| Field | Value |
+|---|---|
+| `branches` | A member a branch's globs match applies from that branch alone: its pull-request pipeline targets it, and its record and apply jobs plan nothing on a push to another branch. A member no glob matches applies from every branch the map leaves out. A member two branches match is refused with `declaration-invalid`. |
+| `labels` | When a pull request carries one of the labels, its plan jobs plan only the members those labels match. The record and apply jobs never read labels, so a label never gates. |
+
+Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.36 is the first reader of both fields; set `minReader` to it when you use one.
+
 ## Retention
 
 `retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.
