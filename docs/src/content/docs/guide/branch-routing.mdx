@@ -5,8 +5,7 @@ diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/branch-routing/.
   Add a ci.branches entry to this workspace's chant.workspace.json for the members named in the request, regenerate each routed member's pull-request pipeline, and open a pull request with the declaration and the pipelines.
-  Never deploy to a real cloud account or shared environment.
-  Never approve or merge, and never touch chant/lifecycle.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A workspace member's [pull-request pipeline](/chant/guide/pull-request-ci/) plans pull requests into one target and records or applies each push to it. By default every member shares that target. `ci.branches` gives some members a target of their own, so a push to `main` leaves them alone and a push to `release` touches only them ([#4292](https://github.com/INTENTIUS/chant/issues/4292)).
