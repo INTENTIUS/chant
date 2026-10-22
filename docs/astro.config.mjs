@@ -214,6 +214,7 @@ export default defineConfig({
 								{ label: 'Route Members to Branches', slug: 'guide/branch-routing' },
 								{ label: 'Lock the Targets a Pull Request Reaches', slug: 'guide/target-locks' },
 								{ label: 'An Environment per Pull Request', slug: 'guide/pr-environments' },
+								{ label: 'Plan and Apply a Few Resources', slug: 'guide/resource-targeting' },
 							],
 						},
 						{

@@ -45,6 +45,8 @@ export interface ComponentGatePlan {
   release?: string;
   /** What the steps deploy from (`componentDeployInputs`), when the caller read it. */
   inputs?: readonly DeployInputDigest[];
+  /** The addresses the component narrows to (#4300), sorted. A gate's approval then covers that narrowing alone. */
+  targets?: readonly string[];
 }
 
 /** The plan digest a component gate records and approves. */
@@ -58,5 +60,6 @@ export function componentPlanDigest(plan: ComponentGatePlan): string {
     vars: plan.vars ?? null,
     release: plan.release ?? null,
     ...(plan.inputs && plan.inputs.length > 0 ? { inputs: plan.inputs } : {}),
+    ...(plan.targets && plan.targets.length > 0 ? { targets: [...plan.targets].sort() } : {}),
   });
 }

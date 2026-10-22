@@ -113,10 +113,14 @@ function requireRoot(input: TerraformApplyStepInput): void {
   }
 }
 
-async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
+async function planRoot(input: TerraformApplyStepInput, targets?: string[]): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
   requireRoot(input);
   await terraformInit(rootArgs(input));
-  const planned = await terraformPlan({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
+  const planned = await terraformPlan({
+    ...rootArgs(input),
+    ...(input.vars ? { vars: input.vars } : {}),
+    ...(targets && targets.length > 0 ? { targets } : {}),
+  });
   return {
     planFile: planned.planFile,
     planDigest: planned.planDigest,
@@ -178,7 +182,7 @@ function waitingRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresol
     },
     entries: [],
   };
-  return { member: input.root, planDigest, changeSet };
+  return { member: input.root, planDigest, changeSet, ...(ctx.targets?.length ? { targets: ctx.targets } : {}) };
 }
 
 /**
@@ -246,11 +250,15 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   // A root's apply has no undo short of applying the previous configuration,
   // which is a change of its own. COMP003 asks the component to say so.
   rollbackPolicy: "needs-opt-out",
+  // #4300: `--target` passes through as `-target`, and the saved plan holds those addresses alone.
+  targets: "accept",
   async plan(ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
     requireRoot(input);
     const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
     if (unresolved.length > 0) return waitingRoot(ctx, input, unresolved);
-    const wave = await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
+    const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
+    // A targeted root plans with `plan -target`, never as a choudoufu one-root set.
+    const wave = targets ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
     if (wave.wave) {
       const set = await choudoufuPlanSet(rootArgs(input));
       const artifact: ChoudoufuWavePlannedRoot = {
@@ -259,13 +267,14 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       };
       return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json) };
     }
-    const { changeSet, json, ...planned } = await planRoot(input);
+    const { changeSet, json, ...planned } = await planRoot(input, targets);
     return {
       member: input.root,
       planDigest: planned.planDigest,
       artifact: planned,
       ...(changeSet ? { changeSet } : {}),
       outputs: terraformPlannedOutputs(json),
+      ...(targets ? { targets } : {}),
     };
   },
   // The root's outputs as its state holds them now (#3183): what a dependent
@@ -278,7 +287,9 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
     if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
-    const planned: PlannedRoot = isPlannedRoot(fromWave) ? fromWave : await planRoot(input).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
+    const planned: PlannedRoot = isPlannedRoot(fromWave)
+      ? fromWave
+      : await planRoot(input, ctx.targets).then(({ planFile, planDigest }) => ({ planFile, planDigest }));
     const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile });
     if (!applied.applied) {
       const message =

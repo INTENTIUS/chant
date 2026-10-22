@@ -338,6 +338,41 @@ async function readOutputs(read: LiveReader, refs: Map<string, AppliedRef>, inpu
   return out;
 }
 
+/**
+ * The documents `targets` name (#4300), each `Kind/namespace/name` or
+ * `Kind/name` as {@link addressOf} writes it, in manifest order. Throws for
+ * a target the manifest does not declare.
+ */
+export function targetedDocuments(member: string, manifest: string, documents: Record<string, unknown>[], targets: readonly string[]): Record<string, unknown>[] {
+  const addressOfDoc = (doc: Record<string, unknown>): string => {
+    const metadata = (doc.metadata ?? {}) as { name?: unknown; namespace?: unknown };
+    return addressOf({
+      apiVersion: String(doc.apiVersion ?? ""),
+      kind: String(doc.kind ?? ""),
+      name: String(metadata.name ?? ""),
+      ...(metadata.namespace !== undefined ? { namespace: String(metadata.namespace) } : {}),
+    });
+  };
+  const declared = new Set(documents.map(addressOfDoc));
+  const missing = targets.filter((t) => !declared.has(t));
+  if (missing.length > 0) {
+    throw new Error(
+      `kubectl-apply "${member}": --target ${missing.join(", ")} names no object ${manifest} declares ` +
+        `(it declares ${[...declared].join(", ") || "nothing"})`,
+    );
+  }
+  const wanted = new Set(targets);
+  return documents.filter((d) => wanted.has(addressOfDoc(d)));
+}
+
+/**
+ * The input a targeted step plans and applies with (#4300): the same, with no
+ * prune. A prune over a narrowed set would delete every owned object the
+ * targets leave out.
+ */
+const narrowedInput = (ctx: DeployContext, input: KubectlApplyInput): KubectlApplyInput =>
+  ctx.targets && ctx.targets.length > 0 ? { ...input, delete: "never" } : input;
+
 /** Factory with an injectable applier, so tests assert the delegation without
  * a cluster — the same seam `createGenerateSbomCapability` uses. The default
  * applier is resolved by dynamic import on first run, keeping the API-client
@@ -389,27 +424,66 @@ export function createKubectlApplyCapability(
     }
     return { known, unknown: unknown.sort() };
   };
+  /**
+   * {@link plannedOutputs} for a targeted plan (#4300): an output of a
+   * targeted object as the plan says, and one of an object the targets leave
+   * out as the cluster holds it now, since the apply leaves that object alone.
+   */
+  const targetedPlannedOutputs = async (
+    ctx: DeployContext,
+    input: KubectlApplyInput,
+    member: string,
+    documents: Record<string, unknown>[],
+    dry: KubectlApplyDryRun,
+    targets: readonly string[] | undefined,
+    declared: Record<string, unknown>[],
+  ): Promise<PlannedOutputs> => {
+    if (!targets) return plannedOutputs(ctx, input, member, documents, dry);
+    const wanted = new Set(targets);
+    const all = Object.entries(input.outputs ?? {});
+    const inside = Object.fromEntries(all.filter(([, spec]) => wanted.has(spec.object)));
+    const outside = Object.fromEntries(all.filter(([, spec]) => !wanted.has(spec.object)));
+    const planned = Object.keys(inside).length > 0 ? await plannedOutputs(ctx, { ...input, outputs: inside }, member, documents, dry) : { known: {}, unknown: [] };
+    if (Object.keys(outside).length === 0) return planned;
+    const rest = { ...input, outputs: outside };
+    const live = await readOutputs(await liveReader(), outputRefs(member, rest, declared), rest, where(ctx, input));
+    const known = { ...planned.known, ...live };
+    const unknown = [...planned.unknown, ...Object.keys(outside).filter((n) => !(n in live))].sort();
+    return { known, unknown };
+  };
   return {
     kind: "kubectl-apply",
     // A server-side apply has no native undo (the previous object state is not
     // kept by the API server), so COMP003 requires the component to acknowledge
     // the compensation gap — the same posture as s3-sync/run-migration.
     rollbackPolicy: "needs-opt-out",
+    // #4300: a target names one object, `Kind/namespace/name`; the plan and the apply send those alone.
+    targets: "accept",
     /**
      * Dry-run the manifest against the cluster (#3998): the documents `run`
      * would apply, release attributes set, server-side applied with
      * `dryRun=All` as the same field manager, each compared with its live
      * object. The member is the step's `stack`, or the component.
      */
-    async plan(ctx: DeployContext, input: KubectlApplyInput): Promise<CapabilityPlan> {
+    async plan(ctx: DeployContext, stepInput: KubectlApplyInput): Promise<CapabilityPlan> {
+      const input = narrowedInput(ctx, stepInput);
       const member = input.stack ?? ctx.component;
-      const documents = (read ?? (await activities()).readManifestDocuments)(input.manifest);
+      const read_ = (read ?? (await activities()).readManifestDocuments)(input.manifest);
+      const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
+      const documents = targets ? targetedDocuments(member, input.manifest, read_, targets) : read_;
       const suffix = releaseAttributesSuffix(ctx.release);
       if (suffix !== "") annotateRelease(documents, suffix);
       const { result, planDigest } = await dryRunOf(ctx, input, member, documents);
       const artifact: KubectlApplyPlanArtifact = { kind: "kubectl-apply-plan", planDigest, documents };
-      const outputs = input.outputs ? await plannedOutputs(ctx, input, member, documents, result) : undefined;
-      return { member, planDigest, artifact, changeSet: changeSetPartOf(member, planDigest, result), ...(outputs ? { outputs } : {}) };
+      const outputs = input.outputs ? await targetedPlannedOutputs(ctx, input, member, documents, result, targets, read_) : undefined;
+      return {
+        member,
+        planDigest,
+        artifact,
+        changeSet: changeSetPartOf(member, planDigest, result),
+        ...(outputs ? { outputs } : {}),
+        ...(targets ? { targets } : {}),
+      };
     },
     /**
      * The fields the step names as outputs, as the cluster holds them now
@@ -421,7 +495,8 @@ export function createKubectlApplyCapability(
       const documents = (read ?? (await activities()).readManifestDocuments)(input.manifest);
       return liveOutputs(ctx, input, documents);
     },
-    async run(ctx: DeployContext, input: KubectlApplyInput): Promise<KubectlApplyOutcome> {
+    async run(ctx: DeployContext, stepInput: KubectlApplyInput): Promise<KubectlApplyOutcome> {
+      const input = narrowedInput(ctx, stepInput);
       const member = input.stack ?? ctx.component;
       const approved = ctx.plans?.[member];
       if (isPlanArtifact(approved)) {
@@ -439,7 +514,11 @@ export function createKubectlApplyCapability(
       // workload the build stamped, in what it applies; the committed manifest is not touched.
       const suffix = releaseAttributesSuffix(ctx.release);
       let documents: Record<string, unknown>[] | undefined;
-      if (suffix !== "") {
+      if (ctx.targets && ctx.targets.length > 0) {
+        // #4300: only the targeted objects, and no prune (`narrowedInput`).
+        documents = targetedDocuments(member, input.manifest, (read ?? loaded!.readManifestDocuments)(input.manifest), ctx.targets);
+        if (suffix !== "") annotateRelease(documents, suffix);
+      } else if (suffix !== "") {
         documents = (read ?? loaded!.readManifestDocuments)(input.manifest);
         if (annotateRelease(documents, suffix) === 0) documents = undefined;
       }

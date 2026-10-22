@@ -123,6 +123,8 @@ export function createHelmUpgradeCapability(
 ): Capability<HelmUpgradeInput, HelmUpgradeOutcome> {
   return {
     kind: "helm-upgrade",
+    // #4300: `helm upgrade` installs the whole release, so there is nothing to narrow.
+    targets: { refuse: "helm upgrade applies the whole release, so helm-upgrade can't narrow to some of its objects" },
     async run(ctx: DeployContext, input: HelmUpgradeInput): Promise<HelmUpgradeOutcome> {
       const context = await resolveContext(input, ctx.env);
       const { stdout } = await run(upgradeCommand(input, context));

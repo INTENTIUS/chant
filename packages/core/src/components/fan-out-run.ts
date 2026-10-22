@@ -54,6 +54,7 @@ import type { CapabilityRegistry } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
+import { computePlanDigest } from "../lifecycle/plan-digest";
 import { decideWaveGate, runWaveLoop, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
 
 /** The sink a fan-out emits to: run events, and the older stream through them. */
@@ -187,6 +188,8 @@ export interface FanOutGate {
 export interface FanOutRunOptions {
   env: string;
   vars?: Record<string, unknown>;
+  /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
+  targets?: Readonly<Record<string, readonly string[]>>;
   /** Outputs of components this run is not running: the ones the plan lists in `seeds`. */
   componentOutputs?: Record<string, Record<string, unknown>>;
   onProgress?: (event: RunProgressEvent) => void;
@@ -319,7 +322,7 @@ export async function runFanOut(
       evaluateGate(gates.port, {
         op: gate.op,
         gate: gate.gate,
-        planDigest: active.digest,
+        planDigest: fanOutGateDigest(active.digest, options.targets),
         ...(gate.description ? { description: gate.description } : {}),
         ...(gate.timeout ? { timeout: gate.timeout } : {}),
         ...(options.now ? { now: options.now } : {}),
@@ -453,6 +456,21 @@ export async function runFanOut(
     ...(gatedFact ? { gate: gatedFact } : {}),
     ...(held.size > 0 ? { held: active.order.filter((name) => held.has(name)).map((name) => held.get(name)!) } : {}),
   };
+}
+
+/**
+ * The digest a gate over the whole set binds: the derivation's digest, and,
+ * when the run narrows components to targets (#4300), the digest over it and
+ * every component's sorted targets. An approval of the whole set then covers
+ * no narrowed run, and one narrowed run's approval covers no other.
+ */
+export function fanOutGateDigest(digest: string, targets: FanOutRunOptions["targets"]): string {
+  const narrowed = Object.entries(targets ?? {})
+    .filter(([, t]) => t.length > 0)
+    .map(([component, t]) => [component, [...new Set(t)].sort()] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (narrowed.length === 0) return digest;
+  return computePlanDigest("fan-out-targets", { plan: digest, targets: Object.fromEntries(narrowed) });
 }
 
 /** The run's `deployContext`, with the carried state and the carry callback (#3459) when the caller gave them. */

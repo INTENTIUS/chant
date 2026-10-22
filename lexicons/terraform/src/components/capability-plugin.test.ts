@@ -13,6 +13,8 @@ let planJson: unknown;
 let waveRoot: { wave: true; root: string } | { wave: false; reason: string } = { wave: false, reason: "the root runs terraform" };
 let waveApply: Record<string, unknown> = { exitCode: 0, landed: true, message: "landed" };
 const waveApplyArgs: Array<Record<string, unknown>> = [];
+// #4300: the targets each plan was asked for.
+const planTargets: Array<string[] | undefined> = [];
 
 vi.mock("../op/activities/terraform", () => ({
   choudoufuWaveRoot: vi.fn(async () => waveRoot),
@@ -38,8 +40,9 @@ vi.mock("../op/activities/terraform", () => ({
     calls.push(`init ${args.root}`);
     return { dir: `/x/${args.root}` };
   }),
-  terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown> }) => {
+  terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown>; targets?: string[] }) => {
     calls.push(`plan ${args.root} ${JSON.stringify(args.vars ?? {})}`);
+    planTargets.push(args.targets);
     return { planFile: "chant.tfplan", planDigest: `jcs1-sha256:${args.root}`, json: planJson, ...(changeSet ? { changeSet } : {}) };
   }),
   terraformApply: vi.fn(async (args: { root: string; planFile: string }) => {
@@ -63,6 +66,35 @@ beforeEach(() => {
   waveRoot = { wave: false, reason: "the root runs terraform" };
   waveApply = { exitCode: 0, landed: true, message: "landed" };
   waveApplyArgs.length = 0;
+  planTargets.length = 0;
+});
+
+describe("terraform-apply targets (#4300)", () => {
+  test("accepts targets, plans with them, and gives them back", async () => {
+    expect(terraformApplyCapability.targets).toBe("accept");
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "e01", targets: ["aws_vpc.main"] }, { root: "e01" });
+    expect(planTargets).toEqual([["aws_vpc.main"]]);
+    expect(planned.targets).toEqual(["aws_vpc.main"]);
+  });
+
+  test("a targeted choudoufu root plans with plan -target, never as a one-root set", async () => {
+    waveRoot = { wave: true, root: "estates/e01" };
+    await terraformApplyCapability.plan!({ env: "test", component: "e01", targets: ["aws_vpc.main"] }, { root: "e01" });
+    expect(calls).toEqual(["init e01", "plan e01 {}"]);
+  });
+
+  test("run without a wave plan plans the targets before it applies", async () => {
+    await terraformApplyCapability.run({ env: "test", component: "e01", targets: ["aws_vpc.main"] }, { root: "e01" });
+    expect(planTargets).toEqual([["aws_vpc.main"]]);
+  });
+
+  test("a root waiting on inputs still gives the targets back", async () => {
+    const planned = await terraformApplyCapability.plan!(
+      { env: "test", component: "e01", targets: ["aws_vpc.main"], unresolvedInputs: ["net"] },
+      { root: "e01", vars: { vpc: undefined } },
+    );
+    expect(planned.targets).toEqual(["aws_vpc.main"]);
+  });
 });
 
 describe("terraform-apply on a choudoufu root in a gated wave (#3459)", () => {

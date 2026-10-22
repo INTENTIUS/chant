@@ -391,6 +391,12 @@ export interface RunComponentsOptions {
   /** Target environment name, threaded into every capability's `DeployContext.env` (default: "local"). */
   env?: string;
   /**
+   * The addresses each component's steps narrow to (#4300), by component
+   * (`--target <component>:<address>`). A name the run does not run refuses
+   * the run before anything starts.
+   */
+  targets?: Readonly<Record<string, readonly string[]>>;
+  /**
    * chant #1051 — opt-in: discover `*.component.ts` files in a sandboxed
    * child process (`chant run --components <name|all> --sandbox`) instead of
    * in the CLI's own process. See `discoverComponents`'s `sandbox` option
@@ -664,6 +670,12 @@ export async function runComponents(
     return { success: false, selected: [], error: resolved.error };
   }
   const targets = resolved.targets;
+  const narrowed = options.targets ?? {};
+  const outside = Object.keys(narrowed).filter((name) => !targets.some((c) => c.name === name));
+  if (outside.length > 0) {
+    return { success: false, selected: [], error: `--target names ${outside.join(", ")}, which this run does not run` };
+  }
+  const targeted = Object.keys(narrowed).length > 0 ? { targets: narrowed } : {};
 
   // (#629) Resolve `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` sections
   // and fill their defaults into every recognized step (`generate-sbom`,
@@ -712,6 +724,7 @@ export async function runComponents(
       const run = await runInterpretDriver(resolvedTargets, registry, {
         env,
         releaseIdentity,
+        ...targeted,
         componentOutputs: seedOutputs,
         ...(emit ? { onRunEvent: emit } : {}),
         ...(gates ? { gates } : {}),
@@ -755,7 +768,7 @@ export async function runComponents(
     emit?.({ type: "component-start", wave: 1, component: componentName });
     const componentResult = await runComponentDeploy(
       resolvedTargets[0],
-      deployContext({ env, releaseIdentity }, componentName),
+      deployContext({ env, releaseIdentity, ...targeted }, componentName),
       registry,
       componentOutputs,
       undefined,

@@ -16,6 +16,7 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                           | --from-affected <file>)
                                 [--env <env>] [--gate <name> | --wave-gate <name>
                                  [--canary <name>] [--wave <n>]] [--dry-run] [--json]
+                                [--target <component>:<address>]
                                 [--resume <file>] [--seed-outputs <file>]
                                 [--dump-outputs <file>] [--progress-json | --events-json]
 chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
@@ -320,6 +321,7 @@ Progress and approval are bound to different things. The gate's approval is boun
 | `--wave-gate <name>` | One approval per wave, each bound to its wave's set digest and answered by `chant approve fan-out <name>-wave-<n> --plan <digest>`. Not with `--gate`. |
 | `--canary <name>` | With `--wave-gate`, components that form wave 1. Repeatable, or comma-separated. |
 | `--wave <n>` | With `--wave-gate`, run wave `n` and no other: one CI job per wave. |
+| `--target <component>:<address>` | Plan and apply only this address of the component. Repeatable. The targets join the digest the gate binds. See [Plan and Apply a Few Resources](/chant/guide/resource-targeting/). |
 | `--dry-run` | Print the derivation and dispatch nothing. |
 | `--json` | Emit the plan (with `--dry-run`) or the run result on stdout, and nothing else on stdout. |
 | `--resume <file>` | Attempt record read before the run and written after it, so repeating the command finishes what stopped. |

@@ -27,11 +27,11 @@
  * `@<component>.publish.*`) resolves.
  */
 
-import { resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
+import { assertTargetsAccepted, resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { componentDeployInputs, type ComponentDeployInputs } from "./deploy-inputs";
 import { computePlanDigest } from "../lifecycle/plan-digest";
-import type { CapabilityRegistry, DeployContext, PlannedOutputs } from "./capability";
+import type { CapabilityPlan, CapabilityRegistry, DeployContext, PlannedOutputs } from "./capability";
 import type { WaveMember } from "../gated-waves";
 import type { ChangeSetPart } from "../change-set";
 
@@ -101,12 +101,13 @@ export async function planWaveComponent(
     const plans: Record<string, unknown> = {};
     const parts: ChangeSetPart[] = [];
     let outputs: PlannedOutputs | undefined;
+    assertTargetsAccepted(component, registry, ctx);
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
       if (!capability.plan) continue;
       const { kind: _kind, ...rest } = step;
       const input = resolveStepInput(rest, {}, componentOutputs);
-      const planned = await capability.plan(planContext(ctx, rest, componentOutputs), input as never);
+      const planned = bindTargets(step.kind, ctx, await capability.plan(planContext(ctx, rest, componentOutputs), input as never));
       const member = { member: planned.member, planDigest: planned.planDigest };
       members.push(member);
       parts.push(planned.changeSet ?? emptyPart(member));
@@ -124,6 +125,7 @@ export async function planWaveComponent(
           component,
           ...(ctx.vars ? { vars: ctx.vars } : {}),
           inputs: read.inputs,
+          ...(ctx.targets ? { targets: ctx.targets } : {}),
         }),
       };
       members.push(member);
@@ -143,6 +145,39 @@ export async function planWaveComponent(
   } catch (err) {
     return { component: component.name, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * A member's digest with its targets in it (#4300), the way terragucci's
+ * cone plan digest binds a cone: the digest over the plan's own digest and
+ * the sorted targets, so an approval of one narrowing covers no other.
+ */
+export function targetedPlanDigest(planDigest: string, targets: readonly string[]): string {
+  return computePlanDigest("capability-targets", { plan: planDigest, targets: [...new Set(targets)].sort() });
+}
+
+/**
+ * A step's plan made with `ctx.targets` (#4300), its digest bound to them.
+ * The plan must give back the targets it was asked for, which says it planned
+ * those alone; one that gives back others, or none, refuses. Without
+ * `ctx.targets`, the plan as it came.
+ */
+export function bindTargets(kind: string, ctx: DeployContext, planned: CapabilityPlan): CapabilityPlan {
+  const asked = ctx.targets;
+  if (!asked || asked.length === 0) return planned;
+  const want = [...new Set(asked)].sort();
+  const got = [...new Set(planned.targets ?? [])].sort();
+  if (got.length !== want.length || got.some((t, i) => t !== want[i])) {
+    throw new Error(
+      `component "${ctx.component}": ${kind} was asked to plan ${want.join(", ")} but its plan of ${planned.member} ` +
+        (got.length === 0 ? "names no targets" : `names ${got.join(", ")}`),
+    );
+  }
+  const planDigest = targetedPlanDigest(planned.planDigest, want);
+  const changeSet = planned.changeSet
+    ? { ...planned.changeSet, member: { ...planned.changeSet.member, planDigest } }
+    : undefined;
+  return { ...planned, planDigest, targets: want, ...(changeSet ? { changeSet } : {}) };
 }
 
 /** `next` over `prior`, as a later step's outputs win over an earlier one's in a run. */

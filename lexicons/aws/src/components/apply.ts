@@ -502,6 +502,8 @@ export function createCfnDeployCapability(
 ): Capability<CfnDeployInput, CfnDeployOutput> {
   return {
     kind: "cfn-deploy",
+    // #4300: a change set covers the whole template, so there is nothing to narrow.
+    targets: { refuse: "a CloudFormation change set covers the whole stack, so cfn-deploy can't narrow to some of its resources" },
     plan(ctx, input) {
       return planCfnDeploy(executor, ctx, input);
     },

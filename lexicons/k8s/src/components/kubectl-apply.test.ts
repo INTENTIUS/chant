@@ -388,3 +388,52 @@ describe("kubectl-apply outputs: the fields a step names (#3999)", () => {
     expect((await cap.plan!(ctx, { manifest: "k8s.yaml", stack: "web" })).outputs).toBeUndefined();
   });
 });
+
+describe("kubectl-apply targets: one object at a time (#4300)", () => {
+  type DryRun = import("./kubectl-apply").KubectlApplyDryRun;
+  const doc = (kind: string, name: string, namespace?: string) => ({
+    apiVersion: kind === "Deployment" ? "apps/v1" : "v1",
+    kind,
+    metadata: { name, ...(namespace ? { namespace } : {}) },
+  });
+  const docs = () => [doc("Deployment", "web", "prod"), doc("Service", "web", "prod"), doc("Namespace", "prod")];
+  const none = (): DryRun => ({ fieldManager: "chant:web", stack: "web", objects: [], deletes: [], retained: [] });
+  const noApply = async (): Promise<never> => {
+    throw new Error("applied");
+  };
+
+  test("accepts targets", () => {
+    expect(createKubectlApplyCapability().targets).toBe("accept");
+  });
+
+  test("plans the targeted objects alone, with no prune, and gives the targets back", async () => {
+    let seen: Record<string, unknown> = {};
+    const cap = createKubectlApplyCapability(noApply, docs, async (args) => {
+      seen = args as never;
+      return none();
+    });
+    const ctx = { env: "prod", component: "api", targets: ["Namespace/prod", "Service/prod/web"] };
+    const planned = await cap.plan!(ctx, { manifest: "k8s.yaml", stack: "web", delete: "owned-only" });
+    expect(seen).toMatchObject({ documents: [doc("Service", "web", "prod"), doc("Namespace", "prod")], deleteMode: "never" });
+    expect(planned.targets).toEqual(["Namespace/prod", "Service/prod/web"]);
+    const whole = await cap.plan!({ env: "prod", component: "api" }, { manifest: "k8s.yaml", stack: "web", delete: "owned-only" });
+    expect(whole.planDigest).not.toBe(planned.planDigest);
+  });
+
+  test("a target the manifest does not declare refuses and names what it declares", async () => {
+    const cap = createKubectlApplyCapability(noApply, docs, async () => none());
+    await expect(cap.plan!({ env: "prod", component: "api", targets: ["Deployment/prod/api"] }, { manifest: "k8s.yaml" })).rejects.toThrow(
+      /--target Deployment\/prod\/api names no object k8s\.yaml declares \(it declares Deployment\/prod\/web, Service\/prod\/web, Namespace\/prod\)/,
+    );
+  });
+
+  test("run without a plan applies the targeted objects alone, with no prune", async () => {
+    let seen: Record<string, unknown> = {};
+    const cap = createKubectlApplyCapability(async (args) => {
+      seen = args as never;
+      return { fieldManager: "chant:web", applied: [], pruned: [] };
+    }, docs);
+    await cap.run({ env: "prod", component: "api", targets: ["Deployment/prod/web"] }, { manifest: "k8s.yaml", stack: "web", delete: "owned-only" });
+    expect(seen).toMatchObject({ documents: [doc("Deployment", "web", "prod")], deleteMode: "never" });
+  });
+});
