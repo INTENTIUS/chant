@@ -55,6 +55,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `fly-release` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `fly-rollback` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `run-agent` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `gcp-apply` | gcp | yes | yes | a GET of each Config Connector resource on the applier's REST transport, decided the way `gcpApply` decides | a create, update, no-op or delete per resource, and each changed top-level field with its value before and after. See [gcp-apply](#gcp-apply) |
 | `helm-upgrade` | helm | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `argo-app` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `flux-reconcile` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
@@ -76,7 +77,7 @@ A component's members come from its steps that have `plan`, one member per such 
 
 ## Capabilities with plan
 
-Four capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
+Five capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
 
 ### `arm-deploy`
 
@@ -107,6 +108,20 @@ When a parameter reads another component's output that has no value yet, such as
 The plan's digest covers the environment and the stack. It also covers the template's path and bytes, the resolved parameters and the components whose outputs were missing. The plan also hands `run` a digest of the changes it read. On apply, `run` creates a new change set and executes it only when its changes have that digest. Otherwise it deletes the change set and fails with `refusing to apply`. A member with a hole hands `run` nothing to compare, so its change set is executed as created.
 
 `outputs` reads the stack's outputs with `describe-stacks`, and gives none for a stack that does not exist. The plan also says which outputs the stack keeps: all of them when the change set has nothing to apply, and otherwise each output whose template `Value` reads only resources the change set modifies in place. Every other output is known only after apply.
+
+### `gcp-apply`
+
+The plan is `planGcpApply` in `lexicons/gcp/src/components/gcp-apply.ts`, and it decides each resource with `decideResource` in `lexicons/gcp/src/op/activities/gcp-apply.ts`, the function the applier acts on.
+
+The step applies a built Config Connector manifest (`manifest`) through the `gcpApply` activity, the same REST mappers an Op and the floci-gcp path use. The member is the step's `stack`, and the component's name when the step has none. `GCP_ENDPOINT_URL`, or the step's `endpoint`, points the reads and the writes at floci-gcp. Each resource's project is the step's `project`, else its `spec.projectRef.external`, its `cnrm.cloud.google.com/project-id` annotation, `GCP_PROJECT_ID`, then `GOOGLE_CLOUD_PROJECT`.
+
+The plan reads each declared resource with a GET on the applier's own URL, or through its target's `getIamPolicy` for an `IAMPolicyMember`, and writes nothing. A 404 is a create. A resource that holds every field the manifest sets is a `no-op`, and so is one whose kind has no in-place update. One that differs is an update, with each changed top-level field and its value before and after. Apply sends that update only then, so it reports created, updated or unchanged as the plan said. With `prune: true` the plan adds a delete for each resource of a manifested kind that carries chant's `managed-by` label and the manifest no longer declares.
+
+Some resources get a hole instead of an entry: a kind with no REST mapper, which apply skips, a read that answers neither 200 nor 404, and a field compute can't change in place, which apply reports as `replace required` and leaves alone. A step whose inputs wait on another component's outputs reads nothing, and its hole says `inputs from <component>; re-checked on apply`.
+
+The digest covers the environment, the member, the manifest's path and bytes, the endpoint, the project override, the prune mode and the components whose outputs were missing. The plan hands `run` a digest of its entries, with each changed field's new value. On apply, `run` plans again and applies only when that digest matches. Otherwise it fails with `refusing to apply` and the command exits 3.
+
+`outputs` reads what the API reports for the applied resources: `<name>Uri` for a `RunService` (its `uri`), `<name>Address` for a `ComputeAddress` and `<name>IpAddress` for a `ComputeForwardingRule`. `run` returns them once it applied. The plan knows the value of each resource that stays, and a resource it creates has its output known only after apply.
 
 ### `kubectl-apply`
 
@@ -174,6 +189,6 @@ A component that has a step with `plan` beside steps without one, such as a `lam
 
 ## Outputs
 
-`arm-deploy`, `cfn-deploy`, `terraform-apply` and `kubectl-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member that the change does not plan, so a `stackOutput()` reference resolves to the value deployed now (`deployedOutputs` in the report). For a dependency the change plans too, it reads what that dependency's plan says it will expose (`plannedOutputs`, [#3999](https://github.com/INTENTIUS/chant/issues/3999)).
+`arm-deploy`, `cfn-deploy`, `gcp-apply`, `terraform-apply` and `kubectl-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member that the change does not plan, so a `stackOutput()` reference resolves to the value deployed now (`deployedOutputs` in the report). For a dependency the change plans too, it reads what that dependency's plan says it will expose (`plannedOutputs`, [#3999](https://github.com/INTENTIUS/chant/issues/3999)).
 
-A reference neither can answer stays unresolved, and `cfn-deploy` and `terraform-apply` report a hole for it. When the upstream is in the change, the member lists the reference under `unknownInputs`. The apply holds that member back until its upstream applied, plans it again, and asks for an approval of that plan at `pr-apply-round-<n>`. An artifact a build in the same change publishes, read as `@<component>.publish.*`, is listed under `buildInputs` instead. The build's provenance binds it, so the member applies with it without a second approval. `--seed-outputs <file>` supplies values instead of either read.
+A reference neither can answer stays unresolved, and `cfn-deploy`, `gcp-apply` and `terraform-apply` report a hole for it. When the upstream is in the change, the member lists the reference under `unknownInputs`. The apply holds that member back until its upstream applied, plans it again, and asks for an approval of that plan at `pr-apply-round-<n>`. An artifact a build in the same change publishes, read as `@<component>.publish.*`, is listed under `buildInputs` instead. The build's provenance binds it, so the member applies with it without a second approval. `--seed-outputs <file>` supplies values instead of either read.

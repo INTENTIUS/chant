@@ -5,6 +5,7 @@ import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant
 import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
 import { iamPolicyMemberMapper } from "./gcp-iam";
 import {
+  changedFields,
   backendServiceMapper,
   computeAddressMapper,
   forwardingRuleMapper,
@@ -639,10 +640,62 @@ const defaultHttp: GcpHttp = async (method, url, body, signal) => {
 };
 
 /**
- * Reconcile one resource via its mapper: `GET` it; if present, PATCH it to the
- * desired state (when the mapper supports `update`, else leave it); if absent,
- * create it. Async create/update return an operation that is polled to
- * completion. `http` is injectable for tests.
+ * What apply does to one existing-or-absent resource, decided from a read
+ * (#4273). `applyResource` acts on it and a `gcp-apply` plan reports it, so
+ * the two cannot disagree:
+ *
+ * - `create`: the GET did not answer 200 (`readStatus` says what it did).
+ * - `update`: the resource exists and the desired body holds a value the live
+ *   one does not. `fields` names those top-level fields, `requests` are what
+ *   apply sends.
+ * - `unchanged`: the resource exists and holds every desired value, or its
+ *   kind has no in-place update.
+ * - `replace-required`: a field differs that can't change in place. Apply
+ *   reports it and leaves the resource alone.
+ *
+ * `http` is only read through, except by a mapper's `reconcile`, which may GET
+ * a referenced resource. A kind with `custom` ops decides from its `read`.
+ */
+export type ResourceDecision =
+  | { action: "create"; readStatus: number }
+  | { action: "update"; fields: string[]; requests: Array<{ method: string; url: string; body: unknown }>; live: unknown }
+  | { action: "unchanged"; live: unknown }
+  | { action: "replace-required"; reason: string; live: unknown };
+
+export async function decideResource(
+  mapper: ResourceMapper,
+  resource: GcpResource,
+  ctx: MapperCtx,
+  http: GcpHttp = defaultHttp,
+  signal?: AbortSignal,
+): Promise<ResourceDecision> {
+  if (mapper.custom) {
+    const read = await mapper.custom.read(resource, ctx, http, signal);
+    return read.status === 200 ? { action: "unchanged", live: parseJson(read.text) } : { action: "create", readStatus: read.status };
+  }
+  const plan = mapper.plan(resource, ctx);
+  const get = await http("GET", plan.getUrl, undefined, signal);
+  if (get.status !== 200) return { action: "create", readStatus: get.status };
+  const live = parseJson(get.text);
+  const liveObj = live !== null && typeof live === "object" && !Array.isArray(live) ? (live as Record<string, unknown>) : {};
+  const desired = plan.create.body !== null && typeof plan.create.body === "object" ? (plan.create.body as Record<string, unknown>) : {};
+  const fields = changedFields(desired, liveObj);
+  if (plan.reconcile) {
+    const step = await plan.reconcile(live, http, signal);
+    if ("replace" in step) return { action: "replace-required", reason: step.replace, live };
+    return step.requests.length > 0 ? { action: "update", fields, requests: step.requests, live } : { action: "unchanged", live };
+  }
+  // A kind with an in-place update sends it only when a desired field differs:
+  // a PATCH that changes nothing still costs a Cloud Run revision.
+  if (!plan.update || fields.length === 0) return { action: "unchanged", live };
+  return { action: "update", fields, requests: [plan.update], live };
+}
+
+/**
+ * Reconcile one resource via its mapper: decide from a GET what it needs
+ * ({@link decideResource}), then create it, send its updates, or leave it.
+ * Async create/update return an operation that is polled to completion.
+ * `http` is injectable for tests.
  */
 export async function applyResource(
   mapper: ResourceMapper,
@@ -656,45 +709,33 @@ export async function applyResource(
     const result = await mapper.custom.apply(resource, ctx, http, signal);
     return { kind: mapper.kind, name, ...result };
   }
-  const plan = mapper.plan(resource, ctx);
-  const get = await http("GET", plan.getUrl, undefined, signal);
-
-  if (get.status === 200 && plan.reconcile) {
-    const step = await plan.reconcile(parseJson(get.text), http, signal);
-    if ("replace" in step) {
+  const decision = await decideResource(mapper, resource, ctx, http, signal);
+  switch (decision.action) {
+    case "replace-required":
       // Reported, not attempted: replacing deletes the resource, which apply never does on its own.
-      console.log(`replace required: ${mapper.kind}/${name}: ${step.replace}`);
-      return { kind: mapper.kind, name, created: false, updated: false, replaceRequired: step.replace };
-    }
-    for (const req of step.requests) {
-      const res = await http(req.method, req.url, req.body, signal);
+      console.log(`replace required: ${mapper.kind}/${name}: ${decision.reason}`);
+      return { kind: mapper.kind, name, created: false, updated: false, replaceRequired: decision.reason };
+    case "unchanged":
+      return { kind: mapper.kind, name, created: false, updated: false };
+    case "update":
+      for (const req of decision.requests) {
+        const res = await http(req.method, req.url, req.body, signal);
+        if (res.status >= 300) {
+          throw new Error(`${mapper.kind} ${name} update failed (${res.status}): ${res.text}`);
+        }
+        await pollIfAsync(mapper, res.text, ctx, http, signal);
+      }
+      return { kind: mapper.kind, name, created: false, updated: true };
+    case "create": {
+      const plan = mapper.plan(resource, ctx);
+      const res = await http(plan.create.method, plan.create.url, plan.create.body, signal);
       if (res.status >= 300) {
-        throw new Error(`${mapper.kind} ${name} update failed (${res.status}): ${res.text}`);
+        throw new Error(`${mapper.kind} ${name} create failed (${res.status}): ${res.text}`);
       }
       await pollIfAsync(mapper, res.text, ctx, http, signal);
+      return { kind: mapper.kind, name, created: true, updated: false };
     }
-    return { kind: mapper.kind, name, created: false, updated: step.requests.length > 0 };
   }
-
-  if (get.status === 200) {
-    // Exists. Reconcile to desired if the mapper supports it; otherwise leave it.
-    if (!plan.update) {
-      return { kind: mapper.kind, name, created: false, updated: false };
-    }
-    const res = await http(plan.update.method, plan.update.url, plan.update.body, signal);
-    if (res.status >= 300) {
-      throw new Error(`${mapper.kind} ${name} update failed (${res.status}): ${res.text}`);
-    }
-    await pollIfAsync(mapper, res.text, ctx, http, signal);
-    return { kind: mapper.kind, name, created: false, updated: true };
-  }
-
-  const res = await http(plan.create.method, plan.create.url, plan.create.body, signal);
-  if (res.status >= 300) {
-    throw new Error(`${mapper.kind} ${name} create failed (${res.status}): ${res.text}`);
-  }
-  await pollIfAsync(mapper, res.text, ctx, http, signal);
-  return { kind: mapper.kind, name, created: true, updated: false };
 }
 
 /**

@@ -78,3 +78,14 @@ export type { PackageOptions, PackageResult } from "./codegen/package";
 // LSP providers
 export { gcpCompletions } from "./lsp/completions";
 export { gcpHover } from "./lsp/hover";
+
+// Component capabilities (#4273): core loads `gcpCapabilityPlugin` when a
+// project's chant.config lists this lexicon, which registers `gcp-apply`.
+export { gcpCapabilityPlugin, GCP_VERB_FAMILIES } from "./components/capability-plugin";
+export {
+  gcpApplyCapability,
+  createGcpApplyCapability,
+  GcpPlanMovedError,
+  type GcpApplyStepInput,
+  type GcpApplyStepOutput,
+} from "./components/gcp-apply";
