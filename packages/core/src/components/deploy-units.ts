@@ -61,6 +61,9 @@ export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   { kind: "terraform-apply", field: "root", lexicon: "terraform" },
   // An ARM template applied into one resource group (#4273). Its unit is the group.
   { kind: "arm-deploy", field: "resourceGroup", lexicon: "azure" },
+  // A Config Connector manifest applied over REST (#4273). Its unit is the
+  // step's `stack`, the member its plan names.
+  { kind: "gcp-apply", field: "stack", lexicon: "gcp" },
 ];
 
 /** One resolved unit a component's deploy composition targets. */

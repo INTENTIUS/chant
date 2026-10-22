@@ -21,6 +21,7 @@ import { starterCapabilityPlugin } from "../packages/core/src/components/starter
 import { awsCapabilityPlugin } from "../lexicons/aws/src/components/capability-plugin";
 import { azureCapabilityPlugin } from "../lexicons/azure/src/components/capability-plugin";
 import { flyCapabilityPlugin } from "../lexicons/fly/src/components/capability-plugin";
+import { gcpCapabilityPlugin } from "../lexicons/gcp/src/components/capability-plugin";
 import { helmCapabilityPlugin } from "../lexicons/helm/src/components/capability-plugin";
 import { k8sCapabilityPlugin } from "../lexicons/k8s/src/components/capability-plugin";
 import { terraformCapabilityPlugin } from "../lexicons/terraform/src/components/capability-plugin";
@@ -35,6 +36,7 @@ export const PLUGINS: ReadonlyArray<{ lexicon: string; exportName: string; plugi
   { lexicon: "aws", exportName: "awsCapabilityPlugin", plugin: awsCapabilityPlugin },
   { lexicon: "azure", exportName: "azureCapabilityPlugin", plugin: azureCapabilityPlugin },
   { lexicon: "fly", exportName: "flyCapabilityPlugin", plugin: flyCapabilityPlugin },
+  { lexicon: "gcp", exportName: "gcpCapabilityPlugin", plugin: gcpCapabilityPlugin },
   { lexicon: "helm", exportName: "helmCapabilityPlugin", plugin: helmCapabilityPlugin },
   { lexicon: "k8s", exportName: "k8sCapabilityPlugin", plugin: k8sCapabilityPlugin },
   { lexicon: "terraform", exportName: "terraformCapabilityPlugin", plugin: terraformCapabilityPlugin },
@@ -64,6 +66,12 @@ export const PLANNERS: Record<string, PlannerNote> = {
     reads: "a CloudFormation change set for the template and parameters, deleted without executing it",
     shows: "a create, update, replace or delete per logical id, and the names of the properties a change touches, without values",
     anchor: "cfn-deploy",
+  },
+  "gcp-apply": {
+    source: "lexicons/gcp/src/components/gcp-apply.ts",
+    reads: "a GET of each Config Connector resource on the applier's REST transport, decided the way `gcpApply` decides",
+    shows: "a create, update, no-op or delete per resource, and each changed top-level field with its value before and after",
+    anchor: "gcp-apply",
   },
   "kubectl-apply": {
     source: "lexicons/k8s/src/components/kubectl-apply.ts",
