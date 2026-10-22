@@ -408,6 +408,22 @@ const { privateEndpoint, privateDnsZone, dnsZoneGroup, vnetLink } = PrivateEndpo
 export { storageAccount, privateEndpoint, privateDnsZone, dnsZoneGroup, vnetLink };
 ```
 
+### ContainerAppNetwork and ContainerAppSite
+A Container Apps site in its own delegated subnet; one network can carry several sites:
+
+```ts
+import { ContainerAppNetwork, ContainerAppSite } from "@intentius/chant-lexicon-azure";
+
+export const network = ContainerAppNetwork({ name: "web" });
+
+export const site = ContainerAppSite({
+  name: "web",
+  app: "frontend",
+  subnetId: network.subnet.id,
+  image: "nginx:1.27",
+});
+```
+
 ## ARM Template Intrinsic Reference
 
 | Function | Description | Example |

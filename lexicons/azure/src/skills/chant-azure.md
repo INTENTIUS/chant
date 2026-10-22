@@ -157,6 +157,8 @@ Composites group related Azure resources with secure defaults. Each returns an o
 | `ContainerInstance` | ContainerGroup | No public IP by default, resource limits set |
 | `RedisCache` | RedisCache | TLS 1.2 required, non-SSL port disabled |
 | `PrivateEndpoint` | PrivateEndpoint + PrivateDnsZone + VnetLink | DNS zone auto-registration, manual approval disabled |
+| `ContainerAppNetwork` | VirtualNetwork + Subnet | Subnet delegated to Container Apps, /23 by default |
+| `ContainerAppSite` | LogAnalyticsWorkspace + ManagedIdentity + ManagedEnvironment + ContainerApp | App logs to Log Analytics, user-assigned identity, Consumption profile |
 | `AksCluster` | ManagedCluster + AgentPool | RBAC enabled, network policy (calico), managed identity, Azure CNI |
 | `SqlDatabase` | SQLServer + Database + FirewallRule + AuditingSettings | TDE enabled, auditing enabled, TLS 1.2, no Azure-wide firewall rule |
 | `KeyVaultSecure` | KeyVault + AccessPolicy | Soft delete, purge protection, RBAC authorization, network ACLs |

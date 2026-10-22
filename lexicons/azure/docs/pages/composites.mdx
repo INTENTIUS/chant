@@ -211,3 +211,34 @@ export { virtualMachine, nic, nsg, publicIpAddress };
 - Ubuntu 22.04 LTS image
 - Premium managed disk
 - NSG with SSH inbound rule
+
+## ContainerAppNetwork and ContainerAppSite
+
+A website on Azure Container Apps, as two composites so several sites can share one network. `ContainerAppNetwork` makes the VNet and a subnet delegated to Container Apps; `ContainerAppSite` makes an environment in that subnet and one app in the environment.
+
+```typescript
+import { ContainerAppNetwork, ContainerAppSite } from "@intentius/chant-lexicon-azure";
+
+export const network = ContainerAppNetwork({
+  name: "web",
+  addressSpace: "10.0.0.0/16",   // default
+  subnetPrefix: "10.0.0.0/23",   // default; a /23 or larger
+});
+
+export const site = ContainerAppSite({
+  name: "web",
+  app: "frontend",
+  subnetId: network.subnet.id,
+  image: "nginx:1.27",
+  port: 80,                      // default
+  replicas: 2,                   // default: 1
+});
+```
+
+**Resources created:** 2 for the network (VNet `<name>-vnet`, subnet `apps`), 4 for the site (Log Analytics workspace `<name>-logs`, user-assigned identity `<name>-<app>`, managed environment `<name>`, container app `<app>`)
+
+**Defaults:**
+- The subnet is delegated to `Microsoft.App/environments` and also listed inline on the VNet, so redeploying the VNet keeps it
+- The environment runs on the Consumption workload profile and ships app logs to its workspace, reading the customer id with `reference()` and the shared key with `listKeys()`
+- The app runs as the user-assigned identity, with external ingress forwarding to `port` and a fixed replica count
+- `internal: true` makes the environment reachable only from its VNet

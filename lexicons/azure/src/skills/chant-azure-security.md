@@ -267,6 +267,7 @@ Use the secure composite variants which apply these patterns automatically:
 - `ContainerInstance` — Managed identity, no public IP by default
 - `RedisCache` — Non-SSL port disabled, TLS 1.2
 - `PrivateEndpoint` — Private connectivity pattern with DNS zone
+- `ContainerAppSite`: user-assigned identity, app logs to Log Analytics, optional VNet-only environment
 
 ## Post-Synth Check Reference
 

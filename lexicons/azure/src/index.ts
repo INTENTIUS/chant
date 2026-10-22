@@ -78,6 +78,8 @@ export {
   ContainerInstance, type ContainerInstanceProps, type ContainerInstanceResult,
   RedisCache, type RedisCacheProps, type RedisCacheResult,
   PrivateEndpoint, type PrivateEndpointProps, type PrivateEndpointResult,
+  ContainerAppNetwork, type ContainerAppNetworkProps, type ContainerAppNetworkResult,
+  ContainerAppSite, type ContainerAppSiteProps, type ContainerAppSiteResult,
   GovernanceFoundation, type GovernanceFoundationProps, type GovernanceFoundationResult,
   GovernanceBaseline, type GovernanceBaselineProps, type GovernanceBaselineResult,
   LocationRestriction, type LocationRestrictionProps, type LocationRestrictionResult,
