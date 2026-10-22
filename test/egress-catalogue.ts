@@ -513,6 +513,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`gcpApply` performs the REST calls a Config Connector manifest implies.",
   },
   {
+    file: "lexicons/gcp/src/health.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Google Cloud REST APIs (backend service health, IAM policies), or a declared endpoint override",
+    why: "`chant lifecycle health` (#4239) reads a backend service's group health and whether an IAM member holds its role.",
+  },
+  {
     file: "lexicons/cpln/src/api.ts",
     primitives: ["fetch"],
     phase: "apply",
