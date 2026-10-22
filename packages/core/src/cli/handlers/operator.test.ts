@@ -1278,7 +1278,9 @@ describe("runApprove — a gate with an approval policy (#2508)", () => {
     }));
     const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(out).toContain("log-only mode, so the decision is recorded and does not change the outcome");
-    expect(out).toContain("Quorum: 1 of 2 human approval(s) with role maintainer for this plan (alex)");
+    // #4290: a claimed role is recorded for the policy, and the quorum never counts it.
+    expect(out).toContain("Quorum: 0 of 2 human approval(s) with role maintainer for this plan (none yet)");
+    expect(out).toContain("its roles are read from .chant/trust.json at base");
     errSpy.mockRestore();
   });
 

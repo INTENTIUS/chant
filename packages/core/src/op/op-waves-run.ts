@@ -68,11 +68,16 @@ import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger"
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
 import { isApprovalSpent, type AppliedGateRecord } from "../lifecycle/gate-applied";
+import { samePlanDigest } from "../lifecycle/plan-digest";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../workspace/trust/gate-seal";
 import { ciRunIdFromEnv } from "./gate-run-locator";
+import {
+  quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, ruleNeedsProof, samePrincipal, trustQuorumJudge,
+  type GateQuorumRule, type GateQuorumRuleProgress,
+} from "./gate-quorum";
 import {
   OP_WAVE_DEFAULT_APPLY,
   OP_WAVE_GATE_POLICIES,
@@ -207,6 +212,10 @@ export interface OpWaveDecision {
   point?: OpWavePoint & { question?: WaitingPoint; answer?: GateAnswerRef };
   /** The review that approved the wave, or why the review did not, under `pr-review`. */
   review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
+  /** The approval rules at base the wave's targets take (#4290). Absent when it takes none. */
+  quorum?: GateQuorumRule[];
+  /** Where each of those rules stands (#4290), while the wave waits. */
+  quorumProgress?: GateQuorumRuleProgress[];
   /** The command that approves this digest, when waiting. */
   approve?: string;
   /** The hooks read at base (#3762), which a wide wave's share jobs run too. Absent when there are none. */
@@ -489,6 +498,10 @@ export interface OpWaveBaseRules {
   point?: OpWavePoint;
   /** Set when the point at base cannot be asked: the wave fails rather than fall back to the ledger (#3836). */
   pointRefused?: string;
+  /** The approval rules at base (#4290), `approvals.quorum`. */
+  quorum?: GateQuorumRule[];
+  /** Set when the rules at base cannot be read: the wave fails rather than wait on fewer approvers than they ask. */
+  quorumRefused?: string;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -521,7 +534,7 @@ export function readOpWavePolicy(
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
-  const asks = pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`);
+  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`) };
   const wave = spec.waves.find((w) => w.name === name);
   if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
@@ -538,6 +551,15 @@ export function readOpWavePolicy(
     rules.hooksRefused = `the hooks at base cannot be run (${err instanceof Error ? err.message : String(err)})`;
   }
   return rules;
+}
+
+/** The approval rules at base (#4290), or why they cannot be read. A spec at base with none has none. */
+function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "quorum" | "quorumRefused"> {
+  const raw = (spec as { approvals?: { quorum?: unknown } }).approvals?.quorum;
+  if (raw === undefined) return {};
+  const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true }) : ["`approvals.quorum` must be a list of rules"];
+  if (problems.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${problems.join("; ")})` };
+  return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[] } : {};
 }
 
 /** The point wave `name` asks at base (#3836), or why it cannot be asked. */
@@ -1415,6 +1437,12 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   noteHooksAtBase(ctx, rules);
   // #3836: a point at base that cannot be asked fails the wave; the ledger never stands in for it.
   if (rules.pointRefused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${rules.pointRefused}, so nothing in it was planned or applied`) };
+  // #4290: rules at base that cannot be read fail the wave; fewer approvers never stand in for them.
+  if (rules.quorumRefused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${rules.quorumRefused}, so nothing in it was planned or applied`) };
+  if (rules.quorum && rules.point) return { end: failed(ctx, `wave ${k} (${wave.name}): approvals.quorum and a decision point are both set at ${base.slice(0, 12)}; a gate that asks a point takes its deciders from the point, so nothing in it was planned or applied`) };
+  if (JSON.stringify(spec.approvals?.quorum ?? null) !== JSON.stringify(rules.quorum ?? null)) {
+    log(`wave ${k} (${wave.name}): its approval rules are read at ${base.slice(0, 12)}, and this change's differ; the ones at base hold`);
+  }
   const own = opWavePointAt(spec, wave.name);
   if (JSON.stringify(own) !== JSON.stringify(rules.point)) {
     log(`wave ${k} (${wave.name}): its gate's decision point is read at ${base.slice(0, 12)} (${rules.point?.name ?? "none"}), and this change's differs (${own?.name ?? "none"}); the one at base holds`);
@@ -1519,6 +1547,9 @@ async function decideOpWave(
   const { policy, source, base } = planned.rules;
   decision.digest = digest;
   decision.members = members;
+  // #4290: the rules at base whose targets glob matches one of the wave's runs.
+  const takes = planned.rules.quorum ? quorumRulesFor(planned.rules.quorum, members.map((m) => m.member)) : [];
+  if (takes.length > 0) decision.quorum = takes;
   if (extras) decision.extras = extras;
   if (pending) decision.pending = pending;
   const after = await runHooks(ctx, "after-plan", planned.rules.hooks["after-plan"], wave.runs, planned.planned, digest);
@@ -1779,6 +1810,7 @@ function failed(ctx: WaveContext, line: string): RunOpWaveResult {
  */
 async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision): Promise<void> {
   if (decision.point) return settlePointGate(options, ctx, decision, decision.point);
+  if (decision.quorum?.length) return settleQuorumGate(options, ctx, decision, decision.quorum);
   const { spec, k, wave, cwd } = ctx;
   const { gate, digest, approval, base, policy, members } = decision;
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
@@ -1831,6 +1863,116 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   }
   decision.status = "waiting";
   decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
+}
+
+/**
+ * Decide a gate under approval rules (#4290): the rules at base the wave's
+ * targets take, each met by distinct human approvers of the digest. Roles
+ * come from `.chant/trust.json` at base, for an approver a seal proves, or
+ * under `pr-review` the merged pull request's review read from the forge in
+ * this run. That review is written to the ledger once per approving
+ * reviewer, so each counts on their own. `notAuthor` reads the author from
+ * the same pull request; with none, no approver can show they are someone
+ * else and the rule waits.
+ */
+async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, rules: GateQuorumRule[]): Promise<void> {
+  const { spec, k, wave, cwd, log } = ctx;
+  const { gate, digest, approval, base, policy, members } = decision;
+  const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
+  const now = options.now ?? new Date().toISOString();
+  const spent: AppliedGateRecord[] | undefined = decision.spend === "base" ? ((await ledger.readApplied?.(spec.name)) ?? []).filter((a) => a.gate === gate) : undefined;
+  const review = await import("./gate-review");
+  const trust = (options.trust ?? ((b) => review.trustPolicyAt(cwd, b)))(base);
+  const label = `wave ${k} (${wave.name})`;
+
+  // The merged pull request: its author for notAuthor, and its review under pr-review.
+  let merged: MergedReview | null = null;
+  let unknown: string | undefined;
+  const asks = approval === "pr-review" || rules.some((r) => r.notAuthor);
+  const head = asks ? (options.head ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).trim()) : "";
+  if (asks) {
+    try {
+      merged = await (options.reviews ?? review.reviewSourceFromEnv()).mergedReview(head);
+      if (!merged) unknown = `no merged pull request produced ${head.slice(0, 12)}`;
+    } catch (err) {
+      unknown = `the forge's review could not be read: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  if (unknown && rules.some((r) => r.notAuthor)) log(`${label}: ${unknown}, so the change's author is not known`);
+  if (approval === "pr-review" && unknown) decision.review = { reason: unknown };
+
+  let reviewed: { head: string; approvers: string[] } | undefined;
+  if (approval === "pr-review" && merged) {
+    const plans = merged.approvers.length === 0 ? null : await (options.headPlans ?? ((name, h) => readHeadPlans(name, h, cwd)))(spec.name, merged.head);
+    const { reviewApproval } = await import("../gate-decision");
+    const outcome = reviewApproval(merged, plans?.waves.find((w) => w.wave === k)?.digest, digest);
+    decision.review = outcome.review;
+    const reviewSpent = spent !== undefined && isApprovalSpent(spent, { gate, planDigest: digest, review: { head: merged.head } });
+    if (reviewSpent) decision.review = { ...outcome.review, reason: `a wave already applied ${digest} under the review of #${merged.pr} at ${merged.head.slice(0, 12)}, so the review is spent` };
+    if (outcome.approved && !reviewSpent) {
+      reviewed = { head: merged.head, approvers: merged.approvers };
+      // Each approving reviewer once, so the rules count them one by one.
+      const had = (await ledger.read(spec.name)).resolutions.filter((r) => r.gate === gate && r.review?.head === merged!.head && samePlanDigest(r.planDigest, digest));
+      const note = `approved by the review of #${merged.pr} at ${merged.head.slice(0, 12)}: ${merged.approvers.join(", ")}`;
+      for (const who of merged.approvers) {
+        if (had.some((r) => samePrincipal(r.resolvedBy, who))) continue;
+        await ledger.appendResolution?.({
+          op: spec.name,
+          gate,
+          resolvedBy: who,
+          timestamp: now,
+          planDigest: digest,
+          approver: { kind: "human" },
+          gitSha: head,
+          ...(ciRunIdFromEnv() ? { runId: ciRunIdFromEnv()! } : {}),
+          note,
+          ...(merged.url ? { url: merged.url } : {}),
+          review: { pr: merged.pr, head: merged.head, approvers: merged.approvers },
+        });
+      }
+    }
+  }
+
+  const judge = trustQuorumJudge({
+    signers: trust,
+    roles: trust.roles,
+    ...(merged ? { authors: [merged.author] } : {}),
+    ...(reviewed ? { review: reviewed } : {}),
+  });
+  const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
+  const check = await decideWaveGate(port, {
+    op: spec.name,
+    gate,
+    digest,
+    description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
+    now,
+    ...(spent ? { spent } : {}),
+    fields: { ...decision.pending, approvalMode: approval },
+    ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
+    approval: { quorum: rules, mode: "log-only" },
+    judge,
+  });
+  if (check.satisfied) {
+    const by = (check.approvals ?? [check.resolution]).map((r) => r.resolvedBy);
+    decision.status = "approved";
+    decision.via = reviewed && check.resolution.review?.head === reviewed.head ? "pr-review" : "ledger";
+    decision.approvedBy = by.join(", ");
+    decision.approvedAt = check.resolution.timestamp;
+    log(`${label}: the approval rules at ${base.slice(0, 12)} are met by ${by.join(", ")}`);
+    return;
+  }
+  logRefused(log, label, check);
+  decision.pendingFact = check.pending;
+  decision.recorded = check.recorded;
+  decision.waitingSince = check.pending.timestamp;
+  if (check.mismatch) decision.mismatch = check.mismatch;
+  if (check.quorum?.rules) {
+    decision.quorumProgress = check.quorum.rules;
+    for (const p of check.quorum.rules) log(`${label}: approval rule ${quorumRuleLine(p)}`);
+    log(`${label}: the approval rules at ${base.slice(0, 12)} are not met (${quorumWaiting(check.quorum.rules)}), so it waits for more approvals of ${digest}`);
+  }
+  decision.status = "waiting";
+  decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed" || rules.some(ruleNeedsProof));
 }
 
 /**

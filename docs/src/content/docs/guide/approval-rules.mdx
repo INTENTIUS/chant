@@ -1,0 +1,127 @@
+---
+title: Approval Rules
+description: Ask for more approvers, or approvers with a role, on the waves and gates whose targets a glob names
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/approval-rules/.
+  Add an `approvals.quorum` list to this repository's Op waves spec with the target globs, counts and roles I give, and the role grants I name to `.chant/trust.json`.
+  Open a pull request. Explain in its description that the rules take effect only once the pull request is merged, because they are read at base.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This guide is for a team whose production waves need two people, or a person from a given team, before they apply. A gate passes on one human approval by default. Approval rules raise that for the targets you name.
+
+## Write the rules
+
+Add `approvals.quorum` to the [Op waves](/chant/guide/op-waves/) spec. Each rule has the targets it covers, how many people it needs, and optionally the roles that count and whether one of them must be someone other than the author.
+
+```json
+{
+  "name": "migrations",
+  "op": "migrate",
+  "plan": ["tool", "plan", "{target}", "--out", "{plan}"],
+  "approvals": {
+    "quorum": [
+      { "targets": ["prod-*"], "count": 2, "roles": ["platform"], "notAuthor": true },
+      { "targets": ["staging"], "count": 1 }
+    ]
+  },
+  "waves": [
+    { "name": "staging", "runs": [{ "target": "staging" }] },
+    { "name": "prod", "runs": [{ "target": "prod-eu" }, { "target": "prod-us" }], "approval": "pr-review" }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `targets` | Globs over the wave's run targets. `*` matches within a `/` segment, `**` across segments, `?` one character. Leave it out to cover every wave. |
+| `count` | Distinct people the rule needs, at least 1. |
+| `roles` | Only a person `.chant/trust.json` at base gives one of these roles counts. |
+| `notAuthor` | One of the counted people is not the merged pull request's author. |
+
+A wave takes every rule with a glob that matches one of its targets (`packages/core/src/op/gate-quorum.ts:110`). It applies once each of those rules is met by distinct people who approved its set digest (`packages/core/src/op/gate.ts:855`). A wave that takes no rule needs one approval. A person counts once, however many times they approve. An agent never counts (`packages/core/src/op/gate.ts:574`).
+
+The rules only hold a wave that needs an approval. A wave whose `gate` is `never`, or `on-destructive` with nothing destructive, applies without asking.
+
+## Grant the roles
+
+Roles come from `.chant/trust.json` at the base commit, in its `roles` block. Each role names the principals that hold it.
+
+```json
+{
+  "roles": {
+    "platform": ["github:alice", "github:bob"]
+  }
+}
+```
+
+A role counts only when the approval proves who made it (`packages/core/src/op/gate-quorum.ts:178`). Two things prove it (`packages/core/src/op/gate-quorum.ts:241`):
+
+- A seal from `chant approve --sign` that verifies against the signers file at base.
+- Under `pr-review`, the merged pull request's approving review, read from the forge in the same job.
+
+`notAuthor` needs a proven approver too (`packages/core/src/op/gate-quorum.ts:182`). The author is the merged pull request's author (`packages/core/src/op/op-waves-run.ts:1939`). When the job cannot find that pull request, nobody can show they are someone else, and the rule waits.
+
+Under `pr-review`, each approving reviewer is written to the ledger on their own line (`packages/core/src/op/op-waves-run.ts:1917`). Two reviewers on the pull request meet a `count` of 2.
+
+## Approve a waiting wave
+
+A wave that waits logs each rule it takes and what it still needs:
+
+```text
+wave 2 (prod): approval rule prod-*: 1 of 2 approvals (github:alice), needs 1 more from platform, one of them not the author
+```
+
+Approve with a seal so the role and the author check can count you:
+
+```bash
+chant approve migrations migrations-wave-2 --plan <digest> --sign
+```
+
+`chant approve` prints the same lines after it records the approval. The wave's decision record lists the rules under `quorum` and where each stood under `quorumProgress`.
+
+## Where the rules are read from
+
+The rules are read from the spec file at the wave's base commit (`packages/core/src/op/op-waves-run.ts:557`), and so are the role grants. A change cannot drop or loosen the rules its own wave is judged by. When the change's own rules differ, the job logs that the ones at base hold. Rules at base that are not valid fail the wave, and it applies nothing (`packages/core/src/op/op-waves-run.ts:1441`).
+
+A spec with both `approvals.quorum` and a decision `point` is refused (`packages/core/src/op/op-waves.ts:580`). A point takes its deciders and quorum from the point.
+
+## On an Op gate
+
+An Op's `gate` step takes the same list in `approval.quorum`. A rule's `targets` match the run's environment (`packages/core/src/op/local-executor.ts:759`), so a rule with targets never covers a run without one. `notAuthor` is refused there, since an Op run has no pull request to read the author from (`packages/core/src/op/gate-quorum.ts:144`).
+
+```typescript
+gate("ship", {
+  plan: plan.out.planDigest,
+  approval: {
+    quorum: [
+      { targets: ["prod"], count: 2, roles: ["maintainer"] },
+      { count: 1 },
+    ],
+  },
+});
+```
+
+The roles come from `.chant/trust.json` at base here too (`packages/core/src/op/gate.ts:167`). The Op gate's block itself is part of the Op's build, so it is read from the change being run.
+
+## In your own tool
+
+`@intentius/chant/gate-decision` exports the rule functions, so a tool that bundles chant judges by the same code. Read the grants with `trustRolesAt(repo, base)` and the signers with `gateSignersAt(repo, base)` (`packages/core/src/gate-decision.ts:208`). Pass both to `trustQuorumJudge`, then call `quorumRulesFor`, `quorumRuleProgress` and `quorumRuleLine`.
+
+## Migrating from claimed roles
+
+Before chant#4290, a gate's `approval.quorum.roles` counted whatever roles the approver passed with `chant approve --role`. That is gone. A quorum now reads roles from `.chant/trust.json` at base, and only for a proven approver.
+
+If a gate of yours names `roles`:
+
+1. Add a `roles` block to `.chant/trust.json` that grants each role to the principals who hold it, and merge it.
+2. List each approver's key in `.chant/allowed_signers`, the signers file `chant approve --sign` seals against.
+3. Approve with `chant approve ... --sign`. `--role` is still recorded, and a gate policy still sees it. The quorum never counts it.
+
+A gate whose quorum has no `roles` sees no change. An approval with a claimed role that does not count says why: `chant approve` prints that its roles are read from `.chant/trust.json` at base, and only for a sealed approval.
+
+## See also
+
+- [Op Waves](/chant/guide/op-waves/#which-approvals-count) for the approval modes.
+- [Ops](/chant/guide/ops/) for the `gate` step's `approval` block.

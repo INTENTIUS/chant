@@ -45,6 +45,7 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/notify-verify.ts",
       "packages/core/src/notify.ts",
       "packages/core/src/op/gate-point.ts",
+      "packages/core/src/op/gate-quorum.ts",
       "packages/core/src/op/op-waves.ts",
       "packages/core/src/wave-layout.ts",
       "packages/core/src/workspace/class-data.ts",
@@ -53,8 +54,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/workspace/trust/gate-seal.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
-    // About 43 KB unminified today, 7 KB of it the pinned classes read as data (#3888).
+    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290).
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
-    expect(bytes).toBeLessThan(48 * 1024);
+    expect(bytes).toBeLessThan(54 * 1024);
   });
 });

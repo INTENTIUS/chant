@@ -12,6 +12,7 @@ import { describeApprovalProgress } from "../cli/handlers/operator";
 import { gate } from "./builders";
 import { gateApprovalProblems, gateContextDigest, gatePolicyRequest, gatePolicyVersion, type GatePolicyRef, type ResolvedGateApproval } from "./gate-approval";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
+import { rolesOf, type GateQuorumJudge } from "./gate-quorum";
 
 const PLAN_A = `sha256:${"a".repeat(64)}`;
 const PLAN_B = `sha256:${"b".repeat(64)}`;
@@ -33,9 +34,16 @@ function allow(mode: "log-only" | "enforce" = "enforce", context: Record<string,
   return { policy: "ship", version: POLICY.version, mode, contextDigest: gateContextDigest(context), decision: "allow", determining: ["ship-0"], errors: [] };
 }
 
-async function decide(resolutions: GateResolutionRecord[], approvalBlock: ResolvedGateApproval, planDigest = PLAN_A) {
+/**
+ * #4290: roles come from .chant/trust.json at base, for a proven approver.
+ * The tests' judge proves everyone and grants these roles.
+ */
+const ROLES: Record<string, string[]> = { maintainer: ["alex", "sam"], sre: ["sam"], viewer: ["pat"] };
+const provenJudge: GateQuorumJudge = (r) => ({ proven: true, roles: rolesOf(r.resolvedBy, ROLES) });
+
+async function decide(resolutions: GateResolutionRecord[], approvalBlock: ResolvedGateApproval, planDigest = PLAN_A, judge: GateQuorumJudge = provenJudge) {
   const port = memoryGateLedgerPort({ resolutions, pending: [{ ...PENDING, approval: approvalBlock, planDigest }] });
-  const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest, approval: approvalBlock, now: NOW });
+  const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest, approval: approvalBlock, now: NOW, judge });
   return { check, port };
 }
 
@@ -49,7 +57,7 @@ describe("gate approval — quorum (#2508)", () => {
     );
     expect(check.satisfied).toBe(false);
     if (check.satisfied) return;
-    expect(check.quorum).toEqual({ approvers: ["alex"], need: 2 });
+    expect(check.quorum).toMatchObject({ approvers: ["alex"], need: 2 });
     // The standing fact still describes this gate, so nothing new is appended.
     expect(check.recorded).toBe(false);
     expect(port.appended).toHaveLength(0);
@@ -107,8 +115,21 @@ describe("gate approval — quorum (#2508)", () => {
     if (check.satisfied) return;
     expect(check.mismatch?.approved).toBe(PLAN_A);
     expect(check.mismatch?.planned).toBe(PLAN_B);
-    expect(check.quorum).toEqual({ approvers: [], need: 2 });
+    expect(check.quorum).toMatchObject({ approvers: [], need: 2 });
     expect(port.appended).toHaveLength(0);
+  });
+
+  test("#4290: a role the approver claims never counts; only trust.json's grant to a proven approver does", async () => {
+    const claimed = [
+      approval({ resolvedBy: "pat", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "human", roles: ["maintainer"] } }),
+      approval({ resolvedBy: "kim", timestamp: "2026-09-01T02:00:00.000Z", approver: { kind: "human", roles: ["maintainer"] } }),
+    ];
+    expect((await decide(claimed, twoMaintainers)).check.satisfied).toBe(false);
+    // alex and sam hold the role at base, and nothing proves them.
+    const unproven: GateQuorumJudge = (r) => ({ proven: false, roles: rolesOf(r.resolvedBy, ROLES) });
+    const granted = [approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z" }), approval({ resolvedBy: "sam", timestamp: "2026-09-01T02:00:00.000Z" })];
+    expect((await decide(granted, twoMaintainers, PLAN_A, unproven)).check.satisfied).toBe(false);
+    expect((await decide(granted, twoMaintainers)).check.satisfied).toBe(true);
   });
 
   // #2547: a gate still pending, and an approval given, under the bare sha256: prefix
@@ -153,7 +174,7 @@ describe("gate approval — policy decisions (#2508)", () => {
     );
     expect(check.satisfied).toBe(false);
     if (check.satisfied) return;
-    expect(check.quorum).toEqual({ approvers: [], need: 1 });
+    expect(check.quorum).toMatchObject({ approvers: [], need: 1 });
   });
 
   test("log-only: a human's approval passes even when the policy recorded a deny", async () => {
@@ -339,7 +360,7 @@ describe("gate approval — a re-recorded pending fact keeps a partly filled quo
     expect(first.satisfied).toBe(false);
     if (first.satisfied) return;
     expect(first.recorded).toBe(true);
-    expect(first.quorum).toEqual({ approvers: ["alex"], need: 2 });
+    expect(first.quorum).toMatchObject({ approvers: ["alex"], need: 2 });
 
     expect(after.satisfied).toBe(true);
     if (!after.satisfied) return;
@@ -356,7 +377,7 @@ describe("gate approval — a re-recorded pending fact keeps a partly filled quo
     const { after } = await switchThenApprove(twoLogOnly, twoEnforce, []);
     expect(after.satisfied).toBe(false);
     if (after.satisfied) return;
-    expect(after.quorum).toEqual({ approvers: ["alex"], need: 2 });
+    expect(after.quorum).toMatchObject({ approvers: ["alex"], need: 2 });
   });
 
   test("a changed policy version starts the count again", async () => {
@@ -365,7 +386,7 @@ describe("gate approval — a re-recorded pending fact keeps a partly filled quo
     const { after } = await switchThenApprove(twoLogOnly, { ...twoLogOnly, policy: edited }, [sam]);
     expect(after.satisfied).toBe(false);
     if (after.satisfied) return;
-    expect(after.quorum).toEqual({ approvers: ["sam"], need: 2 });
+    expect(after.quorum).toMatchObject({ approvers: ["sam"], need: 2 });
   });
 
   test("a fact for another plan in between starts the count again", async () => {
@@ -497,7 +518,7 @@ describe("gate approval — the request a policy is asked (#2508)", () => {
 describe("gate approval — the approval block is checked where it is written (#2508)", () => {
   test("a well-formed block passes, and lands on the step", () => {
     const step = gate("ship", { approval: { quorum: { count: 2, roles: ["maintainer"] }, policy: POLICY, mode: "enforce", context: { risk: "low" } } });
-    expect(step.approval?.quorum?.count).toBe(2);
+    expect((step.approval?.quorum as { count: number } | undefined)?.count).toBe(2);
     expect(gateApprovalProblems(step.approval)).toEqual([]);
   });
 

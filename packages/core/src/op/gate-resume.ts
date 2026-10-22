@@ -11,6 +11,7 @@
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { latestResolutionForPlan } from "../lifecycle/gate-ledger";
 import { humanQuorumSince, tallyGateApprovals } from "./gate";
+import type { GateQuorumJudge } from "./gate-quorum";
 
 export {
   isGateRunLocator,
@@ -28,19 +29,21 @@ export {
  * gate ledger's pending facts, which place the human quorum's anchor (#3206);
  * without them it is `standing` itself. A workspace's
  * `identity.gates` rule is not applied here: the resumed job applies it, and
- * waits again when the approval does not count.
+ * waits again when the approval does not count. `judge` proves approvers
+ * for approval rules that name roles (#4290); absent, none is proven.
  */
 export function resolutionAnswering(
   resolutions: readonly GateResolutionRecord[],
   standing: PendingGateRecord,
   pending: readonly PendingGateRecord[] = [standing],
+  judge?: GateQuorumJudge,
 ): GateResolutionRecord | undefined {
   const env = standing.environment;
   const mine = resolutions.filter((r) => env === undefined || r.environment === env);
   if (standing.approval) {
-    const tally = tallyGateApprovals(mine, standing.gate, standing.timestamp, standing.planDigest, standing.approval, humanQuorumSince(pending, standing));
+    const tally = tallyGateApprovals(mine, standing.gate, standing.timestamp, standing.planDigest, standing.approval, humanQuorumSince(pending, standing), judge);
     if (tally.permit) return tally.permit;
-    return tally.counted.length >= tally.need ? tally.counted[tally.counted.length - 1] : undefined;
+    return tally.met ? tally.counted[tally.counted.length - 1] : undefined;
   }
   return latestResolutionForPlan(mine, standing.gate, standing.timestamp, standing.planDigest).resolution;
 }

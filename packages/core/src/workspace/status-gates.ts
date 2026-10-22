@@ -209,7 +209,7 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
   if (standing.approval) {
     // #3206: a human approval from before a fact re-recorded for a mode or context change still counts.
     const tally = tallyGateApprovals(own, gate, since, planDigest, standing.approval, humanQuorumSince(facts, standing));
-    approved = tally.permit !== undefined || tally.counted.length >= tally.need;
+    approved = tally.permit !== undefined || tally.met;
     approvals = tally.permit && !tally.counted.includes(tally.permit) ? [...tally.counted, tally.permit] : tally.counted;
     needed = tally.need;
     mismatched = tally.mismatched;

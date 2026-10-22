@@ -27,6 +27,11 @@
  * counts for nothing, as terragucci's wave gate has it: the caller hands in
  * the lines of `_gates/<op>/applied.jsonl` ({@link parseAppliedGateLines}).
  *
+ * Approval rules (#4290), a quorum as a list of `{ targets, count, roles,
+ * notAuthor }`, are judged with `./op/gate-quorum.ts`, re-exported here:
+ * {@link trustRolesAt} and {@link gateSignersAt} read what
+ * `trustQuorumJudge` judges by, at base.
+ *
  * The module reads the ledger lines and the review it is handed; reading
  * them is the caller's. It imports no TypeScript, esbuild, zod, ajv, lint,
  * fold or codegen module, no package's code, and none of chant's git ledger
@@ -105,6 +110,28 @@ export {
   type AppliedGateRecord,
 } from "./lifecycle/gate-applied";
 export type { MergedReview } from "./op/gate-review";
+export {
+  quorumNeed,
+  quorumProblems,
+  quorumRuleLine,
+  quorumRuleProgress,
+  quorumRules,
+  quorumRulesFor,
+  quorumWaiting,
+  rolesOf,
+  ruleNeedsProof,
+  samePrincipal,
+  targetGlobMatch,
+  trustQuorumJudge,
+  UNPROVEN_JUDGE,
+  type GateQuorumJudge,
+  type GateQuorumRule,
+  type GateQuorumRuleProgress,
+  type GateQuorumSpec,
+  type QuorumApprover,
+  type QuorumJudgement,
+  type TrustQuorumInput,
+} from "./op/gate-quorum";
 
 // ── reading at base ──────────────────────────────────────────────────────
 
@@ -170,6 +197,16 @@ function trustAt(repo: string, base: string): { signers: GateSigners; roles: Rec
  */
 export function gateSignersAt(repo: string, base: string): GateSigners {
   return trustAt(repo, base).signers;
+}
+
+/**
+ * The role grants of `.chant/trust.json` at `base` (#4290): role name to the
+ * principals that hold it, as chant reads them. A missing file gives none,
+ * and so does one that is not valid, which turns chant's trust off.
+ * {@link trustQuorumJudge} takes them with {@link gateSignersAt}'s signers.
+ */
+export function trustRolesAt(repo: string, base: string): Record<string, string[]> {
+  return trustAt(repo, base).roles;
 }
 
 /** A gate the declaration at base names under `identity.gates`, and the principal class its signer must be in, if any. */
