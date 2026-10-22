@@ -261,11 +261,22 @@ export type CiSource = "checks" | "runs";
  */
 export type CiWorkflow = "trunk-curated" | "trunk-curated+apply-on-merge";
 
+/**
+ * When a pull request takes its target locks (#4293, ../lifecycle/target-lock.ts).
+ * `apply`: its apply takes them, and `chant lock` does by hand. `plan`: its
+ * plan takes them too, through `chant lock --stage plan` in a job that runs
+ * the target branch's code. Under either, an apply refuses a target another
+ * open pull request holds.
+ */
+export type CiLocks = "apply" | "plan";
+
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
   green: CiGreen | null;
   /** `ci.workflow` (#4168 step 6): the workflow every member follows unless it names its own; absent when the declaration sets none. */
   workflow?: CiWorkflow;
+  /** `ci.locks` (#4293): when a pull request takes its target locks; absent when the declaration sets none, and then nothing is locked. */
+  locks?: CiLocks;
   /**
    * `ci.reportUrl` (#4160): where the pull-request jobs copy their reports
    * and `chant ci run` keeps the run index, `<reportUrl>/runs/index.json`.
@@ -1185,13 +1196,14 @@ function globMap(raw: Record<string, string[]>): Record<string, string[]> {
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const workflow = {
     ...(block.workflow !== undefined ? { workflow: block.workflow } : {}),
     ...(hooks ? { hooks } : {}),
     ...(block.branches !== undefined ? { branches: globMap(block.branches) } : {}),
     ...(block.labels !== undefined ? { labels: globMap(block.labels) } : {}),
+    ...(block.locks !== undefined ? { locks: block.locks } : {}),
   };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {

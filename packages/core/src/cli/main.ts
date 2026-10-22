@@ -563,6 +563,15 @@ Ops:
                         applies it once, if .chant/overriders at base lists
                         --actor
 
+  lock <target>...      Lock targets for a pull request on chant/lifecycle
+                        (--pr <n>, --stage plan|apply|lock, --head <sha>,
+                        --by <who>, --gate <name>, --json). --from-report
+                        <pr-plan.json> locks the components a plan selected.
+                        --forge <kind> reads which holders are still open and
+                        posts chant/lock on --head. Exits 3 when another open
+                        pull request holds a target. --list prints the locks
+  unlock [<target>...]  Release the locks a pull request holds (--pr <n>,
+                        --gate <name>, --json)
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
                         a Mermaid flowchart, Graphviz DOT, or node positions;
@@ -1536,6 +1545,9 @@ export const commandRegistry: CommandDef[] = [
   { name: "operator log", handler: runOperatorLog },
   { name: "operator", handler: runOperator },
   { name: "approve", handler: runApprove },
+  // #4293 — target locks a pull request holds on chant/lifecycle. Imported on first use.
+  { name: "lock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runLock(ctx) },
+  { name: "unlock", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/lock")).runUnlock(ctx) },
 
   { name: "graph", handler: runGraph },
   { name: "vendor", handler: runVendor },

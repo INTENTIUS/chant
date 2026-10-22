@@ -640,6 +640,9 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const reviewRules = !ctx.args.requireReview && securityGroupsAt(process.cwd(), ctx.args.base).has("review-rules");
   if (reviewRules && !ctx.args.forge) return fail("the workspace opts into review-rules, which reads the pull request's reviews, so pr-apply needs --forge <kind>");
   if (reviewRules) ctx = { ...ctx, args: { ...ctx.args, requireReview: true } };
+  // #4293: ci.locks, read at base like the security groups, so the change cannot turn its own locks off.
+  const { ciLocksAt } = await import("../../workspace/ci-locks");
+  const locks = ciLocksAt(process.cwd(), ctx.args.base);
   const { args } = ctx;
   if (args.requireReview && !args.forge) return fail("--require-review reads the pull request's reviews, so it needs --forge <kind>");
   if (args.wave !== undefined && !args.waveGate) return fail("--wave runs one wave of a --wave-gate apply, so it needs --wave-gate <name>");
@@ -672,6 +675,17 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const events = await openCliRunEvents(args, { kind: "component", name: `pr-apply ${op}`, runId: release.runId, cwd: resolve(".") }, upload?.line);
   stage.stream = events;
   events?.emit({ type: "run-start", waves: p.plan.waves });
+  if (locks && p.plan.order.length > 0) {
+    const held = await heldLocksOf(p, pr);
+    if (typeof held === "number") return held;
+    if (held) {
+      const set: PrPlanSet = { doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: false };
+      return stopper(ctx, p, events, upload)(
+        prReport({ stage: "apply", pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set, approval: { status: "pending" }, status: "refused", refusal: "locked", message: held }),
+        GATED_EXIT_CODE,
+      );
+    }
+  }
   if (args.waveGate) return prApplyWaves(ctx, p, { pr, op, release, upload, events, ...(green ? { green } : {}) });
 
   // `--resume` (#3464): an earlier attempt at this change on this commit
@@ -870,6 +884,29 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied" && !afterFailed) console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
+}
+
+/**
+ * Under `ci.locks` (#4293): the refusal when another open pull request holds
+ * a lock on a component this apply reaches, else null. The targets are the
+ * selected components, the names `chant lock` takes. A lock whose pull
+ * request the forge says merged or closed reads as released; with no
+ * `--forge` every lock counts. A lock file that cannot be read stops the
+ * apply, since nothing then says the targets are free.
+ */
+async function heldLocksOf(p: Prepared, pr: number | null): Promise<string | null | number> {
+  const { heldTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
+  const isOpen = p.forge?.pullRequestOpen?.bind(p.forge);
+  let held;
+  try {
+    held = await heldTargetLocks(p.gate, p.plan.order, pr, { ...(isOpen ? { isOpen } : {}) });
+  } catch (err) {
+    return fail(`could not read the target locks of ${p.gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (held.length === 0) return null;
+  const name = (n: number) => (p.forge?.kind === "gitlab" ? `merge request !${n}` : `pull request ${n}`);
+  const holders = [...new Set(held.map((h) => h.pr))].sort((a, b) => a - b);
+  return `${describeHeldTargetLocks(held, name)}, so nothing was applied. Apply again once ${holders.length === 1 ? "it merges or closes" : "they merge or close"}, or after \`chant unlock --pr ${holders[0]}${p.gate === PR_APPLY_GATE ? "" : ` --gate ${p.gate}`}\`${isOpen ? "" : ". Without --forge every lock counts as held"}.`;
 }
 
 /** #4274: a component that published nothing is recorded by the plan digest its approval bound. */

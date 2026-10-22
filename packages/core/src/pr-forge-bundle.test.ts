@@ -34,7 +34,7 @@ describe("the pr-forge bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual(["packages/core/src/pr-forge.ts"]);
-    // About 33 KB today, after the pull request authors (#4000).
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(36 * 1024);
+    // About 37 KB today, after the pull request authors (#4000) and pullRequestOpen for target locks (#4293).
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(40 * 1024);
   });
 });

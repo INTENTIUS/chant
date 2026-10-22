@@ -127,6 +127,17 @@ describe("github", () => {
     expect(await githubForge({ ...opts, fetch }).pullRequestFor(SHA)).toBe(9);
   });
 
+  test("a pull request is open while its state is open and it has not merged; an unknown one is not (#4293)", async () => {
+    const { fetch } = fakeFetch({
+      "GET /repos/acme/infra/pulls/1": { number: 1, state: "open", merged: false },
+      "GET /repos/acme/infra/pulls/2": { number: 2, state: "closed", merged: true },
+    });
+    const forge = githubForge({ ...opts, fetch });
+    expect(await forge.pullRequestOpen!(1)).toBe(true);
+    expect(await forge.pullRequestOpen!(2)).toBe(false);
+    expect(await forge.pullRequestOpen!(3)).toBe(false);
+  });
+
   test("resolves to the note's web URL", async () => {
     const { fetch } = fakeFetch({
       "GET /repos/acme/infra/issues/12/comments": [],
@@ -237,6 +248,11 @@ describe("forgejo", () => {
     expect(await forgejoForge({ ...opts, fetch: none.fetch }).pullRequestFor(SHA)).toBeNull();
   });
 
+  test("reads whether a pull request is open from the same pulls endpoint (#4293)", async () => {
+    const { fetch } = fakeFetch({ "GET /api/v1/repos/acme/infra/pulls/4": { number: 4, state: "open", merged: false } });
+    expect(await forgejoForge({ ...opts, fetch }).pullRequestOpen!(4)).toBe(true);
+  });
+
   test("names reviewers on its host", () => {
     expect(forgejoForge({ ...opts, fetch: fakeFetch({}).fetch }).principalOf("Ana")).toBe("forgejo@codeberg.org:ana");
   });
@@ -294,6 +310,16 @@ describe("gitlab", () => {
     expect(await forge.approvers(5)).toEqual(["ana", "ben"]);
     expect(await forge.pullRequestFor(SHA)).toBe(5);
     expect(forge.principalOf("ana")).toBe("gitlab@gitlab.example.com:ana");
+  });
+
+  test("a merge request is open while its state is opened (#4293)", async () => {
+    const { fetch } = fakeFetch({
+      "GET /api/v4/projects/42/merge_requests/5": { iid: 5, state: "opened" },
+      "GET /api/v4/projects/42/merge_requests/6": { iid: 6, state: "merged" },
+    });
+    const forge = gitlabForge({ ...opts, fetch });
+    expect(await forge.pullRequestOpen!(5)).toBe(true);
+    expect(await forge.pullRequestOpen!(6)).toBe(false);
   });
 });
 
