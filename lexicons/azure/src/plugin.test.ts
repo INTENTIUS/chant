@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { azurePlugin } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+import { emulatorsOf, endpointEnvVars } from "@intentius/chant/op";
 
 describe("azurePlugin", () => {
   // -----------------------------------------------------------------------
@@ -231,5 +232,14 @@ describe("azurePlugin", () => {
     const ids = checks.map((c) => c.id);
     expect(ids).toContain("AZR010");
     expect(ids).toContain("AZR011");
+  });
+});
+
+// #4281: `chant components pr-plan`, `pr-apply` and `run --components` apply an
+// environment's declared endpoint to the vars the plugin's emulator names. `arm-deploy`
+// reads AZURE_ENDPOINT_URL, so the plugin has to name it.
+describe("azurePlugin endpoint var (#4281)", () => {
+  test("the emulator names AZURE_ENDPOINT_URL, the var arm-deploy reads", () => {
+    expect(emulatorsOf(azurePlugin.emulator).flatMap((cap) => endpointEnvVars(cap))).toEqual(["AZURE_ENDPOINT_URL"]);
   });
 });

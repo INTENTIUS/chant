@@ -145,3 +145,34 @@ export function zeroResourcesWarning(
   if (Object.keys(observed.unobserved).length > 0) return undefined;
   return `${lexicon}: 0 live resources for env "${environment}" (${declaredCount} declared) — check the endpoint/credentials`;
 }
+
+/**
+ * Run `run` with `environment`'s declared endpoint applied, as
+ * {@link applyLiveEndpoint} applies it to a `--live` read, and restored after
+ * (#4281). The component plan and apply paths (`components pr-plan`,
+ * `pr-apply`, `pr-record`, `fan-out`, `promote`, `rollback`, `redeploy` and
+ * `chant run --components`) run capabilities that honor the same ambient vars:
+ * azure's `arm-deploy` reads `AZURE_ENDPOINT_URL`, gcp's `gcp-apply`
+ * `GCP_ENDPOINT_URL`, aws's `cfn-deploy` `AWS_ENDPOINT_URL`. Without this, a
+ * plan for an environment declared against an emulator went to the real cloud
+ * unless the shell exported the var by hand.
+ *
+ * `lexicons` is called only when the environment declares an endpoint, so a
+ * caller that has to load its plugins pays for that only then.
+ */
+export async function withEnvironmentEndpoint<T>(
+  environments: EnvironmentDeclaration[] | undefined,
+  environment: string,
+  lexicons: () => Promise<readonly EndpointLexicon[]> | readonly EndpointLexicon[],
+  run: () => Promise<T>,
+  options: { warn?: (message: string) => void; env?: NodeJS.ProcessEnv } = {},
+): Promise<T> {
+  if (!environmentEndpoint(environments, environment)) return run();
+  const applied = applyLiveEndpoint(environments, environment, await lexicons(), options.env);
+  if (applied.notice) options.warn?.(applied.notice);
+  try {
+    return await run();
+  } finally {
+    applied.restore();
+  }
+}

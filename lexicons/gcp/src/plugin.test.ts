@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { gcpPlugin } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+import { emulatorsOf, endpointEnvVars } from "@intentius/chant/op";
 
 describe("gcpPlugin", () => {
   // ── Basic interface ────────────────────────────────────────────────
@@ -252,5 +253,14 @@ describe("gcpPlugin", () => {
     test("is defined", () => {
       expect(gcpPlugin.hoverProvider).toBeDefined();
     });
+  });
+});
+
+// #4281: `chant components pr-plan`, `pr-apply` and `run --components` apply an
+// environment's declared endpoint to the vars the plugin's emulator names. `gcp-apply`
+// reads GCP_ENDPOINT_URL, so the plugin has to name it.
+describe("gcpPlugin endpoint var (#4281)", () => {
+  test("the emulator names GCP_ENDPOINT_URL, the var gcp-apply reads", () => {
+    expect(emulatorsOf(gcpPlugin.emulator).flatMap((cap) => endpointEnvVars(cap))).toEqual(["GCP_ENDPOINT_URL"]);
   });
 });
