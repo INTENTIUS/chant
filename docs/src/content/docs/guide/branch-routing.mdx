@@ -40,7 +40,7 @@ The pipeline targets `release` without `--branch` (`packages/core/src/cli/handle
 
 ## What the jobs do on a push
 
-The record and apply jobs read `ci.branches` from the declaration at base (`packages/core/src/cli/handlers/pr.ts:335`). They take the pushed ref from `--branch`, else from `GITHUB_REF_NAME` on GitHub and Forgejo or `CI_COMMIT_BRANCH` on GitLab (`packages/core/src/workspace/ci-branches.ts:77`). A member routed elsewhere plans nothing and reports `nothing`, with the reason as the report's message (`packages/core/src/cli/handlers/pr.ts:277`). The record job writes no merge record for it (`packages/core/src/cli/handlers/pr.ts:932`).
+The record and apply jobs read `ci.branches` from the declaration at base (`packages/core/src/cli/handlers/pr.ts:336`). They take the pushed ref from `--branch`, else from `GITHUB_REF_NAME` on GitHub and Forgejo or `CI_COMMIT_BRANCH` on GitLab (`packages/core/src/workspace/ci-branches.ts:77`). A member routed elsewhere plans nothing and reports `nothing`, with the reason as the report's message (`packages/core/src/cli/handlers/pr.ts:278`). The record job writes no merge record for it (`packages/core/src/cli/handlers/pr.ts:933`).
 
 A release is still one green commit (ws-104), so each mapped target has to produce a green commit of its own. [`ci.green`](/chant/reference/workspace-declaration/#ci) judges only the ref it names, and a mapped target gets no verdict from it today.
 
@@ -56,9 +56,9 @@ A release is still one green commit (ws-104), so each mapped target has to produ
 }
 ```
 
-When a pull request carries one of these labels, each member's plan job plans that member only if one of the labels matches it (`packages/core/src/workspace/ci-branches.ts:67`). The others report `nothing`. A pull request with none of the labels plans every member. The plan job needs `--forge` to read the labels, and a forge that cannot answer leaves every member planning (`packages/core/src/cli/handlers/pr.ts:349`).
+When a pull request carries one of these labels, each member's plan job plans that member only if one of the labels matches it (`packages/core/src/workspace/ci-branches.ts:67`). The others report `nothing`. A pull request with none of the labels plans every member. The plan job needs `--forge` to read the labels, and a forge that cannot answer leaves every member planning (`packages/core/src/cli/handlers/pr.ts:350`).
 
-A label never gates. Anyone with triage access can set one, so only the plan job reads labels. The record and apply jobs plan every member the change reaches, and an apply still waits for an approval of the digest it plans. The stages on a push return before the label read (`packages/core/src/cli/handlers/pr.ts:336`). A member a label left out of the pull request plan is planned at merge, and its approval is asked for then.
+A label never gates. Anyone with triage access can set one, so only the plan job reads labels. The record and apply jobs plan every member the change reaches, and an apply still waits for an approval of the digest it plans. The stages on a push return before the label read (`packages/core/src/cli/handlers/pr.ts:337`). A member a label left out of the pull request plan is planned at merge, and its approval is asked for then.
 
 ## Related
 
