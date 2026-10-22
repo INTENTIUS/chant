@@ -11,7 +11,7 @@ prompt: |
 
 `--member` and `--wave` pick whole components. `--target` goes one step finer and picks resources inside a component ([#4300](https://github.com/INTENTIUS/chant/issues/4300)). Use it to apply one fix to a big root, or to roll one object of a manifest ahead of the rest.
 
-`--target` and a capability's `targets` field need chant 0.124.42 or newer. A lexicon built against an older core sets no `targets`, so its verbs refuse.
+The flag and the `targets` field on a capability need chant 0.124.42 or newer, and the verbs of a lexicon built against an older core refuse every target because they set no `targets` field.
 
 ## Name the targets
 
