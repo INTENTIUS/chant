@@ -489,3 +489,29 @@ describe("metrics (#4039)", () => {
     }
   });
 });
+
+describe("ci.branches and ci.labels (#4292)", () => {
+  const members = [
+    { name: "prod-eu", dir: "prod-eu", kind: "chant" },
+    { name: "api", dir: "api", kind: "chant" },
+  ];
+
+  test("both maps are read without their x- keys, and stay absent when unset", () => {
+    const d = parse(base(members, { ci: { branches: { release: ["prod-*"], "x-note": "ops" }, labels: { "plan:prod": ["prod-*"] } } }));
+    expect(d.ci?.branches).toEqual({ release: ["prod-*"] });
+    expect(d.ci?.labels).toEqual({ "plan:prod": ["prod-*"] });
+    expect(parse(base(members, { ci: {} })).ci).toEqual({ green: null, reportUrl: null });
+  });
+
+  test("a member two branches route is declaration-invalid at the second branch", () => {
+    const err = failure(base(members, { ci: { branches: { release: ["prod-*"], hotfix: ["prod-eu"] } } }));
+    expect(err.code).toBe("declaration-invalid");
+    expect(err.message).toBe("ci.branches routes member prod-eu to both release and hotfix; a member applies from one branch");
+  });
+
+  test("an empty glob list or a glob that is not a member-name glob is refused", () => {
+    expect(failure(base(members, { ci: { branches: { release: [] } } })).code).toBe("declaration-invalid");
+    expect(failure(base(members, { ci: { branches: { release: ["prod/eu"] } } })).code).toBe("declaration-invalid");
+    expect(failure(base(members, { ci: { labels: { "plan:prod": "prod-*" } } })).code).toBe("declaration-invalid");
+  });
+});

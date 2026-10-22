@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 /** A git repository holding a workspace with two members, a root member and an example group. */
-export function twoMemberWorkspace(options: { root?: boolean; prefix?: string } = {}): string {
+export function twoMemberWorkspace(options: { root?: boolean; prefix?: string; extra?: Record<string, unknown> } = {}): string {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "chant-member-pipeline-")));
   execFileSync("git", ["init", "-q"], { cwd: repo });
   const ws = options.prefix ? join(repo, options.prefix) : repo;
@@ -21,7 +21,7 @@ export function twoMemberWorkspace(options: { root?: boolean; prefix?: string } 
   ];
   if (options.root) members.unshift({ name: "platform", dir: ".", kind: "chant" });
   const files: Record<string, string> = {
-    "chant.workspace.json": JSON.stringify({ name: "shop", schema: 1, members }, null, 2),
+    "chant.workspace.json": JSON.stringify({ name: "shop", schema: 1, members, ...options.extra }, null, 2),
     "services/api/chant.config.ts": "export default {};\n",
     "services/api/src/infra.ts": "\n",
     "apps/web/chant.config.ts": "export default {};\n",

@@ -159,6 +159,11 @@ interface Prepared {
   hookFailed?: string;
   /** Where the stage's hooks run, once its op is known. */
   hookPlace?: PrHookPlace;
+  /**
+   * Set when `ci.branches` or `ci.labels` (#4292) leave the member out of this
+   * stage: why. The plan is then empty, so the stage reports `nothing`.
+   */
+  routedAway?: string;
 }
 
 const fail = (message: string, hint?: string): number => {
@@ -258,6 +263,8 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"):
 
   const env = args.env ?? "local";
   const registry = await fanOutRegistry(projectPath, config);
+  const routedAway = member ? await routing(ctx, stage, projectPath, member, base, forge) : undefined;
+  if (routedAway) console.error(formatInfo(routedAway));
   return {
     config,
     env,
@@ -267,12 +274,13 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"):
     gate: args.gate ?? PR_APPLY_GATE,
     ...(forge ? { forge } : {}),
     components: derived.components,
-    plan: derived.plan,
+    plan: routedAway ? { ...derived.plan, order: [], waves: [], seeds: [], indeterminate: [] } : derived.plan,
     signal: derived.signal,
     registry,
     seededOutputs,
     hooks,
     hookOutcomes: [],
+    ...(routedAway ? { routedAway } : {}),
   };
 }
 
@@ -311,6 +319,41 @@ async function hookedPlan(p: Prepared, components: readonly string[], plan: () =
   if (set.failed) return set;
   if (runStageHook(p, "after-plan", components, set)) return { ...set, failed: true };
   return set;
+}
+
+/**
+ * Whether `ci.branches` or `ci.labels` (#4292), read from the declaration at
+ * base, leave `member` out of this stage: the reason, or undefined when the
+ * member runs. The record and apply stages read `ci.branches` against the
+ * pushed branch (`--branch`, else the forge's variables); the plan stage
+ * reads `ci.labels` against the pull request's labels. A label only narrows
+ * what is planned: the record and apply stages never read labels.
+ */
+async function routing(ctx: CommandContext, stage: "plan" | "apply" | "record", projectPath: string, member: string, base: string, forge: PrForge | undefined): Promise<string | undefined> {
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const { appliesFrom, plansUnderLabels, pushedBranchFromEnv } = await import("../../workspace/ci-branches");
+  const ci = scopeSource(projectPath, base).declaration?.ci;
+  if (stage !== "plan") {
+    if (!ci?.branches) return undefined;
+    const pushed = ctx.args.branch ?? pushedBranchFromEnv();
+    if (!pushed) return undefined;
+    const route = appliesFrom(ci.branches, member, pushed);
+    if (!route.applies) return route.note;
+    console.error(formatInfo(route.note));
+    return undefined;
+  }
+  if (!ci?.labels || ctx.args.pr === undefined || !forge?.labels) return undefined;
+  let carried: string[];
+  try {
+    carried = await forge.labels(ctx.args.pr);
+  } catch (err) {
+    console.error(formatWarning({ message: `could not read the labels of #${ctx.args.pr}, so every member plans: ${err instanceof Error ? err.message : String(err)}` }));
+    return undefined;
+  }
+  const filter = plansUnderLabels(ci.labels, member, carried);
+  if (!filter.plans) return filter.note;
+  if (filter.note) console.error(formatInfo(filter.note));
+  return undefined;
 }
 
 /**
@@ -432,6 +475,7 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   // #4288: the hooks the stage ran, and a failed hook's message in place of the stage's own.
   if (p.hookOutcomes.length > 0) report = { ...report, hooks: [...p.hookOutcomes] };
   if (p.hookFailed) report = { ...report, message: p.hookFailed };
+  if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
   const note = noteFor(report, p.forge);
   writeOutputs(ctx, report, note, upload);
   if (!ctx.args.noStatus) await publish(p.forge, report, note);
@@ -884,31 +928,34 @@ async function prRecord(ctx: CommandContext, stage: StageEvents): Promise<number
 
   const { mergeSourceOf, writeMergeRecord, MERGE_RECORD_SCHEMA_ID, MERGE_RECORD_CONTRACT } = await import("../../lifecycle/merge-record");
   const { pushLifecycleReport } = await import("../../lifecycle/git");
-  try {
-    const written = await writeMergeRecord({
-      $schema: MERGE_RECORD_SCHEMA_ID,
-      contract: MERGE_RECORD_CONTRACT,
-      commit: p.head,
-      base: p.base,
-      env: p.env,
-      ...(p.member ? { member: p.member } : {}),
-      source: mergeSourceOf(resolve("."), p.head, pr),
-      op: pr === null ? null : op,
-      gate: p.gate,
-      digest: nothing ? null : set.doc.digest,
-      plan: nothing ? "nothing" : set.failed ? "plan-failed" : approval.status === "approved" ? "approved" : approval.status === "changed" ? "changed" : "unapproved",
-      ...(approval.status === "changed" && approval.approved ? { approvedDigest: approval.approved } : {}),
-      approvedBy: approval.status === "approved" ? (approval.approvedBy ?? []) : [],
-      ...(authorApproved && authorApproved.length > 0 ? { authorApproved } : {}),
-      components: p.plan.order,
-      recordedAt: new Date().toISOString(),
-    });
-    if (written.written) {
-      const pushed = await pushLifecycleReport();
-      if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
+  // #4292: a member another branch applies has no merge on this one, so no record says it planned nothing here.
+  if (!p.routedAway) {
+    try {
+      const written = await writeMergeRecord({
+        $schema: MERGE_RECORD_SCHEMA_ID,
+        contract: MERGE_RECORD_CONTRACT,
+        commit: p.head,
+        base: p.base,
+        env: p.env,
+        ...(p.member ? { member: p.member } : {}),
+        source: mergeSourceOf(resolve("."), p.head, pr),
+        op: pr === null ? null : op,
+        gate: p.gate,
+        digest: nothing ? null : set.doc.digest,
+        plan: nothing ? "nothing" : set.failed ? "plan-failed" : approval.status === "approved" ? "approved" : approval.status === "changed" ? "changed" : "unapproved",
+        ...(approval.status === "changed" && approval.approved ? { approvedDigest: approval.approved } : {}),
+        approvedBy: approval.status === "approved" ? (approval.approvedBy ?? []) : [],
+        ...(authorApproved && authorApproved.length > 0 ? { authorApproved } : {}),
+        components: p.plan.order,
+        recordedAt: new Date().toISOString(),
+      });
+      if (written.written) {
+        const pushed = await pushLifecycleReport();
+        if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
+      }
+    } catch (err) {
+      console.error(formatWarning({ message: `could not write the merge record for ${p.head}: ${err instanceof Error ? err.message : String(err)}` }));
     }
-  } catch (err) {
-    console.error(formatWarning({ message: `could not write the merge record for ${p.head}: ${err instanceof Error ? err.message : String(err)}` }));
   }
 
   const stop = stopper(ctx, p, events, upload);

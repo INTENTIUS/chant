@@ -19,6 +19,7 @@
 import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-policy";
 import { parseReportUrl } from "../pr-report-url";
 import schema from "./declaration.schema.json" with { type: "json" };
+import { routeConflicts } from "./ci-branches";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
@@ -280,6 +281,18 @@ export interface CiDeclaration {
    * Absent when the declaration sets none.
    */
   hooks?: OpWaveHooks;
+  /**
+   * `ci.branches` (#4292): branch name to member-name globs. A member a glob
+   * matches applies from that branch alone; the others apply from every
+   * branch the map does not name (./ci-branches.ts). Absent when unset.
+   */
+  branches?: Record<string, string[]>;
+  /**
+   * `ci.labels` (#4292): pull request label to member-name globs. A labelled
+   * pull request plans only the members its labels match. Never a gate.
+   * Absent when unset.
+   */
+  labels?: Record<string, string[]>;
 }
 
 export interface MemberRole {
@@ -1024,6 +1037,15 @@ export function parseDeclaration(text: string, file: string, reader: string = re
   const tierSession = factoryTierSessionProblem(members, agents);
   if (tierSession) throw new WorkspaceReadError("declaration-invalid", tierSession.message, at(tierSession.pointer));
   const ci = ciOf(obj.ci, at);
+  // #4292: a member applies from one branch, so two branches may not both route it.
+  const [conflict] = routeConflicts(ci?.branches, members.map((m) => m.name));
+  if (conflict) {
+    throw new WorkspaceReadError(
+      "declaration-invalid",
+      `ci.branches routes member ${conflict.member} to both ${conflict.branches.join(" and ")}; a member applies from one branch`,
+      at(`/ci/branches/${pointerToken(conflict.branches[1]!)}`),
+    );
+  }
 
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
@@ -1156,11 +1178,21 @@ function ciHooksOf(raw: unknown, pointer: string, at: (pointer: string, key?: bo
   return structuredClone(raw as OpWaveHooks);
 }
 
+/** A `ci.branches` or `ci.labels` map, copied without its `x-` keys. */
+function globMap(raw: Record<string, string[]>): Record<string, string[]> {
+  return Object.fromEntries(Object.entries(raw).filter(([k]) => !k.startsWith("x-")).map(([k, v]) => [k, [...v]]));
+}
+
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
-  const workflow = { ...(block.workflow !== undefined ? { workflow: block.workflow } : {}), ...(hooks ? { hooks } : {}) };
+  const workflow = {
+    ...(block.workflow !== undefined ? { workflow: block.workflow } : {}),
+    ...(hooks ? { hooks } : {}),
+    ...(block.branches !== undefined ? { branches: globMap(block.branches) } : {}),
+    ...(block.labels !== undefined ? { labels: globMap(block.labels) } : {}),
+  };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {
     // #4160: refused here as pr-plan and ci run refuse the flag, so a reader never gets a URL no job can write to.

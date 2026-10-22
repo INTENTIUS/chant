@@ -26,6 +26,7 @@ import { GENERATED_MARKER } from "../discovery/files";
 import type { PipelineMember } from "../lexicon";
 import type { WorkspaceRootSearch } from "../project-root";
 import { ownerOf, readDeclaration, resolveGroups, rootExclusions, WorkspaceReadError, type Declaration, type Member } from "./declaration";
+import { routedBranch } from "./ci-branches";
 import { gitTop, workingTree } from "./tree";
 
 /**
@@ -196,6 +197,12 @@ export interface MemberComponentPlan {
   /** The command that regenerates it, run in the member's directory. */
   command: string;
   env: string;
+  /**
+   * With `--pr-loop`, the branch the pipeline targets: `--branch`, else the
+   * branch `ci.branches` routes the member to (#4292). Undefined for the
+   * generator's default.
+   */
+  branch?: string;
 }
 
 export interface ComponentPlanInput {
@@ -234,6 +241,7 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
   const ctx = resolveMemberContext(input.projectDir, input.found);
   if (!ctx) return undefined;
   const env = input.env ?? DEFAULT_ENV;
+  const branch = input.prLoop ? prLoopBranch(ctx, input.prLoop.branch) : undefined;
   let target: string;
   if (input.output) {
     target = resolve(input.output);
@@ -273,7 +281,29 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
     target,
     command: parts.map(shellArg).join(" "),
     env,
+    ...(branch !== undefined ? { branch } : {}),
   };
+}
+
+/**
+ * The branch a member's pull-request pipeline targets (#4292): the one
+ * `ci.branches` routes it to, which `--branch` may repeat but not change.
+ * Without a route, `--branch` as given, which may not name a routed branch
+ * whose globs leave the member out.
+ */
+function prLoopBranch(ctx: MemberContext, flag: string | undefined): string | undefined {
+  const branches = ctx.declaration.ci?.branches;
+  const own = routedBranch(branches, ctx.member.name);
+  if (own !== null) {
+    if (flag !== undefined && flag !== own) {
+      throw new Error(`--branch ${flag}: ci.branches routes member ${ctx.member.name} to ${own}, so its pull-request pipeline targets ${own}`);
+    }
+    return own;
+  }
+  if (flag !== undefined && Object.prototype.hasOwnProperty.call(branches ?? {}, flag)) {
+    throw new Error(`--branch ${flag}: ci.branches applies only the members its globs match from ${flag}, and member ${ctx.member.name} is not one`);
+  }
+  return flag;
 }
 
 /** Write a member's pipeline with its header and record it as the member's generated file. */

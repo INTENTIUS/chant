@@ -207,6 +207,7 @@ export default defineConfig({
 								{ label: 'Hooks on Pull-Request Jobs', slug: 'guide/pull-request-hooks' },
 								{ label: 'Apply on Merge (opt-in)', slug: 'guide/apply-on-merge' },
 								{ label: 'Move off Apply on Merge', slug: 'guide/move-off-apply-on-merge' },
+								{ label: 'Route Members to Branches', slug: 'guide/branch-routing' },
 							],
 						},
 						{
