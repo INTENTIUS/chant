@@ -374,7 +374,7 @@ Pass `--forge` to post the note on the pull request and set the `chant/plan`, `c
 
 With `--forge`, `pr-plan` and `pr-post` also ask when each scheduled watch or reconcile Op last ran, and the note warns of one whose cron fired twice since ([#4289](https://github.com/INTENTIUS/chant/issues/4289), [Catch a Stopped Watch Schedule](/chant/guide/overdue-scheduled-ops/)).
 
-`--no-status` posts neither. The generated plan job passes it, since the plan runs the pull request's code and its job holds no forge token ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). The `plan-note` job then posts with `pr-post`.
+`--no-status` posts neither. The generated plan passes it, since it runs the pull request's code with no forge token ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). Then `pr-post` posts from the `plan-note` job.
 
 #### `components pr-post`
 
@@ -386,8 +386,8 @@ chant components pr-post --pr 12 --head "$HEAD_SHA" --env prod --forge github --
 
 The change's code wrote the report, so `pr-post` reads it as data (`packages/core/src/pr-post.ts`):
 
-- The pull request, the head, the environment and the member come from the flags. A report that names another refuses: the status fails and no note is posted (`readPlanReport`).
-- The note is rendered again from the report. Every `<!--` after its marker line becomes `&lt;!--`, so the note carries no hidden marker but its own (`planNoteFor`).
+- The flags name the pull request and its head, and the environment and member too. A report that names another refuses: the status fails and no note is posted (`readPlanReport`).
+- `pr-post` renders the note again and writes each `<!--` after the first line as `&lt;!--` (`planNoteFor`). A forged marker in the report then shows as text.
 - `--result failure` or `cancelled`, the plan job's own result, fails the status whatever the report says.
 
 It exits 0 once it has posted, and a forge that refuses a call is a warning. The plan job's result stays the one that fails the run.

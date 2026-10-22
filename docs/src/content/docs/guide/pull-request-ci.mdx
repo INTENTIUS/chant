@@ -152,7 +152,7 @@ On GitLab, put the `node_modules/.bin` directory on the path with `export PATH="
 The workflow runs on `pull_request` and on `push` to the target branch.
 
 - The `plan` job measures from `github.event.pull_request.base.sha`. It runs the pull request's code, so its token may only read, and no step that runs that code holds it ([keep the forge token from the plan](/chant/guide/security-forge-token-handover/)).
-- The `plan-note` job runs after it, at the target branch's commit. It posts the note and the `chant/plan` status from the plan's report with `chant components pr-post`, and keeps the report as the `chant-pr-plan` artifact. It may comment and set statuses.
+- After it, `plan-note` runs at the target branch's commit. With `chant components pr-post` it posts the note and the `chant/plan` status from the plan's report, and it keeps the report as the `chant-pr-plan` artifact. Only this job may comment and set statuses.
 - The `record` job measures from `github.event.before`, the commit the push replaced. That works for merge commits, squash merges and rebase merges. On a branch's first push GitHub sets it to forty zeros, so the job measures from the merge base of the target branch and the pushed commit, or from the pushed commit's parent when that merge base is the commit itself. A root commit is measured from the empty tree. It may push, to write the merge record and the change set on `chant/lifecycle`. One record runs at a time per environment, through the concurrency group `chant-record-<env>`.
 
 The note job and the record job use the job's own `github.token`. On a pull request from a fork that token is read-only, so the note and the status are not posted. The run says so and its outcome stands.

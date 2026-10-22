@@ -11,7 +11,7 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-The plan job of a [pull-request pipeline](/chant/guide/pull-request-ci/) runs the pull request's code. That is the synth of its components, the plans their capabilities run, its build and lint, and its hooks. A token that can post a note or set a status can also push. So since [#4295](https://github.com/INTENTIUS/chant/issues/4295) no step that runs that code holds a forge token, and a fresh job posts the plan. The order of the steps is terragucci's `handover.ts`.
+The plan job of a [pull-request pipeline](/chant/guide/pull-request-ci/) runs the pull request's code. It synthesizes the components and runs their capabilities' plans. With `--pr-build` it builds and lints, and its hooks run too. A token that can post a note or set a status can also push. So since [#4295](https://github.com/INTENTIUS/chant/issues/4295) no step that runs that code holds a forge token, and a fresh job posts the plan. The order of the steps is terragucci's `handover.ts`.
 
 This is on in every pipeline chant generates. It is in the [security features](/chant/reference/security-features/) table as a listed exception, like the environment allowlist, and no group turns it on.
 
@@ -25,7 +25,7 @@ chant build --components --generate github --pr-loop --env prod --output .github
 
 The plan job's report now reaches the forge through a second job, `plan-note`. The note job runs the chant of the target branch's commit, and that commit's `chant` has to have `components pr-post`. So on the pull request that brings the regenerated pipeline, the note job can fail where the target branch's chant is older. The next pull request posts.
 
-A pipeline generated before #4295 still works. Its plan job holds the token, so `chant ci run plan --in-place` leaves every token out of the plan's steps, posts the note itself once they settle, and warns to regenerate (`planPoster` in `packages/core/src/workspace/ci-run.ts:735`).
+A pipeline generated before #4295 still works. Its plan job holds the token, so `chant ci run plan --in-place` leaves every token out of the plan's steps. Once they settle it posts the note itself and warns to regenerate (`planPoster` in `packages/core/src/workspace/ci-run.ts:735`).
 
 ## What the plan job does on GitHub and Forgejo
 

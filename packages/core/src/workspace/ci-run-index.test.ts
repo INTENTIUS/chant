@@ -31,7 +31,8 @@ import schema from "./ci-run-index.schema.json";
 afterAll(cleanScratch);
 
 const JOB_IMAGE = "chant-ci-run-index-test:local";
-const HOST = { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_TOKEN: "t", GITHUB_REPOSITORY: "acme/estate" };
+// No forge token: a plan job given one posts its note from the report (#4295), which these tests do not look at.
+const HOST = { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_REPOSITORY: "acme/estate" };
 
 /** The repository every test starts from, built once: one member, and two commits. */
 const repoTemplate = repoFixture(() => {
