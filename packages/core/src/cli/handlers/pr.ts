@@ -64,6 +64,7 @@
  * through `--forge`.
  */
 
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
@@ -109,6 +110,7 @@ import {
   type PrReport,
   type PrWave,
   type PrRound,
+  type PrOverdue,
 } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
@@ -407,7 +409,7 @@ async function publish(forge: PrForge | undefined, report: PrReport, note: strin
   if (report.pr === null) return;
   // A member the change does not reach has nothing to say: one note per
   // member would put a line on every pull request for each member it skips.
-  if (report.member && report.status === "nothing") return;
+  if (report.member && report.status === "nothing" && !report.overdue?.length) return;
   try {
     await forge.upsertNote(report.pr, prNoteMarker(report.env, report.member), note);
   } catch (err) {
@@ -520,7 +522,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     }
   }
   const status = p.plan.order.length === 0 ? "nothing" : set.failed ? "plan-failed" : "planned";
-  const report = prReport({
+  const overdue = await overdueOps(p);
+  const planned = prReport({
     stage: "plan",
     pr: ctx.args.pr,
     env: p.env,
@@ -536,6 +539,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     status,
     ...(ctx.args.waveGate ? { waveGate: ctx.args.waveGate } : {}),
   });
+  const report: PrReport = overdue.length > 0 ? { ...planned, overdue } : planned;
   await finish(ctx, p, report, upload);
   // The plan stage settles on its planning: an approval still to come is what it reports, not a stop.
   events?.settle(settleOf(status), status === "plan-failed" ? "a member failed to plan" : undefined);
@@ -547,6 +551,35 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     console.error(formatInfo(approval.status === "approved" ? `approved by ${(approval.approvedBy ?? []).join(", ")}` : `approve : ${prApproveCommand(report)}`));
   }
   return status === "plan-failed" ? 1 : 0;
+}
+
+/**
+ * The scheduled watch and reconcile Ops that stopped running (#4289,
+ * `op/schedule-overdue.ts`), asked of the forge. Without a forge, or when
+ * the Ops cannot be read, nothing is checked and the plan goes on.
+ */
+async function overdueOps(p: Prepared): Promise<PrOverdue[]> {
+  if (!p.forge?.scheduledRuns) return [];
+  try {
+    const { discoverOps } = await import("../../op/discover");
+    const { scheduledWatches, checkOverdueOps } = await import("../../op/schedule-overdue");
+    const discovered = await discoverOps({ cwd: resolve(".") });
+    const watches = scheduledWatches([...discovered.ops.values()].map((d) => d.config));
+    if (watches.length === 0) return [];
+    const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+    if (top.status !== 0) return [];
+    return await checkOverdueOps({
+      watches,
+      forge: p.forge,
+      repoRoot: top.stdout.trim(),
+      ...(p.member ? { member: p.member } : {}),
+      now: new Date(),
+      log: (line) => console.error(formatWarning({ message: line })),
+    });
+  } catch (err) {
+    console.error(formatWarning({ message: `could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}` }));
+    return [];
+  }
 }
 
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */

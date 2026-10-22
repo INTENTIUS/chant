@@ -295,7 +295,8 @@ function prLoopGithubDoc(
       if: "github.event_name == 'pull_request'",
       "runs-on": GITHUB_RUNNER,
       container: image,
-      permissions: { contents: "read", "pull-requests": "write", statuses: "write" },
+      // #4289: `actions: read` lets pr-plan ask when each scheduled watch or reconcile Op last ran.
+      permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
       steps: steps(plan, "Plan the members this pull request reaches"),
     },
     ...Object.fromEntries(applyJobs),

@@ -391,6 +391,38 @@ export interface PrForge {
   openPullRequests?(base: string): Promise<OpenPullRequest[]>;
   /** GitHub and Forgejo (#4095): the commit `branch` points at, or undefined when there is no such branch. */
   branchHead?(branch: string): Promise<string | undefined>;
+  /**
+   * When a scheduled Op's generated job last ran from its schedule or by hand
+   * (#4289). GitHub reads the workflow `workflow` names and its `schedule` and
+   * `workflow_dispatch` runs. Forgejo reads the repository's runs and keeps
+   * the ones from that workflow file. GitLab reads the active pipeline
+   * schedules whose `CHANT_SCHEDULED_OP` variable is `op` and their last
+   * pipelines. Throws a {@link ForgeApiError} when the forge will not say.
+   */
+  scheduledRuns?(query: ScheduledRunsQuery): Promise<ScheduledRuns>;
+}
+
+/** Which scheduled Op job {@link PrForge.scheduledRuns} asks about. */
+export interface ScheduledRunsQuery {
+  /** The Op's name, the value of GitLab's `CHANT_SCHEDULED_OP` selector. */
+  op: string;
+  /** GitHub and Forgejo: the Op's workflow file name, such as `drift-watch.yml`. */
+  workflow: string;
+}
+
+/** What a forge says about a scheduled Op job's runs (#4289). */
+export interface ScheduledRuns {
+  /** When the job last ran from its schedule or by hand (ISO 8601), if it ever did. */
+  last?: string;
+  /** GitHub: the workflow is off, and why (`disabled_inactivity`, `disabled_manually`). */
+  disabled?: string;
+  /** GitLab: no active pipeline schedule selects the Op. */
+  noSchedule?: boolean;
+}
+
+/** The newest of some ISO 8601 times, ignoring what does not parse. */
+function newestTime(times: readonly (string | undefined)[]): string | undefined {
+  return times.filter((t): t is string => typeof t === "string" && !Number.isNaN(Date.parse(t))).sort((a, b) => Date.parse(b) - Date.parse(a))[0];
 }
 
 /** A GitHub or Forgejo client. */
@@ -777,6 +809,27 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const commit = isObject(b) && isObject(b.commit) ? b.commit : undefined;
       return commit ? str(commit.sha) ?? str(commit.id) : undefined;
     },
+    async scheduledRuns(q) {
+      const file = encodeURIComponent(q.workflow);
+      if (kind === "github") {
+        const workflow = await api.call("GET", `${repo}/actions/workflows/${file}`);
+        const runs = await Promise.all(["schedule", "workflow_dispatch"].map((event) => api.call("GET", `${repo}/actions/workflows/${file}/runs?event=${event}&per_page=1`)));
+        const last = newestTime(runs.flatMap((r) => (isObject(r) && Array.isArray(r.workflow_runs) ? r.workflow_runs.map((w) => (isObject(w) ? str(w.created_at) : undefined)) : [])));
+        const state = (isObject(workflow) ? str(workflow.state) : undefined) ?? "active";
+        return { ...(last ? { last } : {}), ...(state.startsWith("disabled") ? { disabled: state } : {}) };
+      }
+      // Forgejo lists a repository's runs newest first; the event and the workflow are read from each run, whatever the query honours.
+      const listed = await api.call("GET", `${repo}/actions/runs?event=schedule&limit=50`);
+      const runs = Array.isArray(listed) ? listed : isObject(listed) && Array.isArray(listed.workflow_runs) ? listed.workflow_runs : [];
+      const ours = runs.filter((r): r is Record<string, unknown> => {
+        if (!isObject(r)) return false;
+        const event = str(r.event) ?? str(r.trigger_event);
+        const workflow = str(r.workflow_id) ?? str(r.path);
+        return (event === "schedule" || event === "workflow_dispatch") && (workflow === undefined || workflow.endsWith(q.workflow));
+      });
+      const last = newestTime(ours.map((r) => str(r.created) ?? str(r.created_at) ?? str(r.started)));
+      return last ? { last } : {};
+    },
     async editPullRequest(pr, change) {
       return pull(await api.call("PATCH", `${repo}/pulls/${pr}`, { ...(change.title !== undefined ? { title: change.title } : {}), ...(change.body !== undefined ? { body: change.body } : {}) }));
     },
@@ -983,6 +1036,19 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         .map(mergeRequest)
         .filter((m): m is PullRequest => m !== undefined)
         .sort((a, b) => a.number - b.number)[0];
+    },
+    async scheduledRuns(q) {
+      // The variable the gitlab lexicon's generated Op file selects a scheduled job by.
+      const selects = (d: unknown): boolean =>
+        isObject(d) && Array.isArray(d.variables) && d.variables.some((v) => isObject(v) && v.key === "CHANT_SCHEDULED_OP" && v.value === q.op);
+      const schedules = await api.list(`${project}/pipeline_schedules?scope=active`, pageParams, 100);
+      // A schedule's variables are on each schedule, not the list.
+      const details = await Promise.all(schedules.map((s) => api.call("GET", `${project}/pipeline_schedules/${isObject(s) ? num(s.id) : ""}`)));
+      const ours = details.filter(selects);
+      const ids = ours.map((d) => (isObject(d) && isObject(d.last_pipeline) ? num(d.last_pipeline.id) : undefined)).filter((n): n is number => n !== undefined && n > 0);
+      const pipelines = await Promise.all(ids.map((id) => api.call("GET", `${project}/pipelines/${id}`)));
+      const last = newestTime(pipelines.map((p) => (isObject(p) ? str(p.created_at) : undefined)));
+      return { ...(last ? { last } : {}), ...(ours.length === 0 ? { noSchedule: true } : {}) };
     },
     async editPullRequest(mr, change) {
       return mergeRequest(await api.call("PUT", `${notes}/${mr}`, { ...(change.title !== undefined ? { title: change.title } : {}), ...(change.body !== undefined ? { description: change.body } : {}) }));

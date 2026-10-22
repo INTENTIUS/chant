@@ -370,6 +370,8 @@ With `--events-json` each stage also keeps its stream in a file on the host, as 
 
 Pass `--forge` to post the note on the pull request and set the `chant/plan`, `chant/record` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, the forge names the pull request that merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
 
+With `--forge`, `pr-plan` also asks when each scheduled watch or reconcile Op last ran, and the note warns about one whose cron fired twice since ([#4289](https://github.com/INTENTIUS/chant/issues/4289), [Catch a Stopped Watch Schedule](/chant/guide/overdue-scheduled-ops/)).
+
 #### Finishing an apply that failed partway
 
 `pr-apply --resume <file>` keeps the same attempt record `fan-out --resume` keeps, with the change set the gate approved in it. The apply writes it before the first member runs and again as each component settles. When a member fails, repeat the same command on the same commit with the same file:

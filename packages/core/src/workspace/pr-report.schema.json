@@ -77,6 +77,21 @@
         }
       }
     },
+    "overdue": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4289, written by chant 0.124.35 and newer. Plan stage: the scheduled watch and reconcile Ops whose cron has fired at least twice since their job last ran, or since their pipeline file was added when no run is on record. Absent when none is overdue or the forge was not asked.",
+      "items": {
+        "type": "object",
+        "required": ["op", "cron", "since", "message"],
+        "properties": {
+          "op": { "type": "string" },
+          "cron": { "type": "string" },
+          "since": { "type": "string", "description": "The job's last run, or the pipeline file's first commit when neverRan, ISO 8601." },
+          "neverRan": { "type": "boolean" },
+          "message": { "type": "string", "description": "The warning as the plan note prints it." }
+        }
+      }
+    },
     "plannedOutputs": {
       "type": "object",
       "description": "Added within contract version 1 by #3999, written by chant 0.124.32 and newer. Per dependency in the change that a member was planned against, the names of the outputs its plan knows, sorted. An output a member reads that is not listed is known only after apply, and the member lists it under unknownInputs. Absent when no member read one.",

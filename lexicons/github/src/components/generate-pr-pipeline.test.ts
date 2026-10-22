@@ -72,7 +72,7 @@ describe("the GitHub pull-request workflow", () => {
     expect(plan.env).toMatchObject({ BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}" });
     // The runner key is an optional secret: unset, the expression is empty and the record is unsigned.
     expect(plan.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
-    expect(doc.jobs.plan.permissions).toEqual({ contents: "read", "pull-requests": "write", statuses: "write" });
+    expect(doc.jobs.plan.permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "write", statuses: "write" });
 
     const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
     // #4168: ci run builds pr-apply without --require-review unless the pipeline asks for it.
