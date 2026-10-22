@@ -125,3 +125,17 @@ describe("pr-post reads the plan report as data (#4295)", () => {
     expect(r.noted).toBe(false);
   });
 });
+
+describe("pr-post asks for overdue scheduled Ops itself (#4289, #4295)", () => {
+  test("the Ops it finds go in the note, and an overdue list the change wrote is dropped", async () => {
+    const forged = { ...REPORT, overdue: [{ op: "forged", cron: "* * * * *", message: "forged warning" }] };
+    const found = { op: "drift-watch", cron: "0 * * * *", message: "Op drift-watch has not run since its cron fired twice" };
+    const { forge, notes } = fakeForge();
+    await postPlanReport({ forge, dir: reportDir(forged), ...at, overdue: async () => [found as never] });
+    expect(notes[0]!.body).toContain("drift-watch has not run");
+    expect(notes[0]!.body).not.toContain("forged warning");
+    const quiet = fakeForge();
+    await postPlanReport({ forge: quiet.forge, dir: reportDir(forged), ...at, overdue: async () => [] });
+    expect(quiet.notes[0]!.body).not.toContain("forged warning");
+  });
+});

@@ -18,7 +18,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, renderPrNote, type PrReport } from "./pr-loop";
+import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "./plan-summary";
 
@@ -38,6 +38,11 @@ export interface PlanPostInput {
   member?: string;
   /** The plan job's own result (`needs.plan.result`). `failure` fails the status. */
   result?: string;
+  /**
+   * The scheduled Ops that stopped running (#4289), asked here since the plan
+   * job held no token to ask with. It replaces any `overdue` in the report.
+   */
+  overdue?: () => Promise<PrOverdue[]>;
 }
 
 /** What {@link postPlanReport} did. */
@@ -115,12 +120,17 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
     state = "failure";
     description = cut(read.refused);
   } else {
-    const report = read.report;
+    let report = read.report;
+    if (input.overdue) {
+      const { overdue: _forged, ...rest } = report;
+      const found = await input.overdue().catch(() => [] as PrOverdue[]);
+      report = (found.length > 0 ? { ...rest, overdue: found } : rest) as PrReport;
+    }
     try {
       state = prStatusState(report);
       description = prStatusDescription(report);
       // A member the change does not reach has nothing to say on the pull request (as pr-plan's own publish).
-      if (!(input.member && report.status === "nothing")) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member));
+      if (!(input.member && report.status === "nothing" && !report.overdue?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member));
     } catch (err) {
       refused = `the plan report does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";

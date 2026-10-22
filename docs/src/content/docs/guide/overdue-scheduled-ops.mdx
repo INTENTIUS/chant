@@ -4,7 +4,7 @@ description: The pull-request plan note warns when a scheduled watch or reconcil
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/overdue-scheduled-ops/.
-  Check that this repository's pull-request pipeline runs `chant components pr-plan` with `--forge`, and that on GitHub its plan job has `actions: read`. If it does not, regenerate the pipeline with the command in its header and open a pull request with it.
+  Check that this repository's pull-request pipeline runs `chant components pr-plan` with `--forge`, and that on GitHub its `plan-note` job has `actions: read`. If it does not, regenerate the pipeline with the command in its header and open a pull request with it.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -38,9 +38,9 @@ The job log gets the same line. Chant `0.124.35` and newer also list the Ops in 
 
 The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:151`).
 
-## Give the plan job read access
+## Give the note job read access
 
-- GitHub: the generated plan job asks for `actions: read` (`lexicons/github/src/components/generate-pipeline.ts:299`). A pipeline generated before chant `0.124.35` lacks it, so regenerate it with the command in its header.
+- GitHub: the generated `plan-note` job asks for `actions: read` (`lexicons/github/src/components/generate-pipeline.ts:356`). The plan job holds no forge token since [#4295](https://github.com/INTENTIUS/chant/issues/4295), so `pr-post` in the note job runs the check, with the Ops read at the target branch's commit. A pipeline generated before chant `0.124.35` lacks it, so regenerate it with the command in its header.
 - Forgejo: the job token reads the repository's runs.
 - GitLab: listing pipeline schedules needs an access token with the `read_api` scope, which the job token lacks. Set `CHANT_GITLAB_TOKEN` or `GITLAB_TOKEN`, which `--forge gitlab` reads before `CI_JOB_TOKEN` (`packages/core/src/pr-forge.ts:1222`).
 

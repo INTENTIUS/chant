@@ -566,7 +566,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     }
   }
   const status = p.plan.order.length === 0 ? "nothing" : set.failed ? "plan-failed" : "planned";
-  const overdue = await overdueOps(p);
+  const overdue = await overdueOps(p.forge, p.member);
   const planned = prReport({
     stage: "plan",
     pr: ctx.args.pr,
@@ -600,10 +600,12 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
 /**
  * The scheduled watch and reconcile Ops that stopped running (#4289,
  * `op/schedule-overdue.ts`), asked of the forge. Without a forge, or when
- * the Ops cannot be read, nothing is checked and the plan goes on.
+ * the Ops cannot be read, nothing is checked and the plan goes on. The
+ * generated plan holds no forge token (#4295), so there the plan-note job's
+ * `pr-post` asks instead, reading the Ops at the target branch's commit.
  */
-async function overdueOps(p: Prepared): Promise<PrOverdue[]> {
-  if (!p.forge?.scheduledRuns) return [];
+async function overdueOps(forge: PrForge | undefined, member: string | undefined): Promise<PrOverdue[]> {
+  if (!forge?.scheduledRuns) return [];
   try {
     const { discoverOps } = await import("../../op/discover");
     const { scheduledWatches, checkOverdueOps } = await import("../../op/schedule-overdue");
@@ -614,9 +616,9 @@ async function overdueOps(p: Prepared): Promise<PrOverdue[]> {
     if (top.status !== 0) return [];
     return await checkOverdueOps({
       watches,
-      forge: p.forge,
+      forge,
       repoRoot: top.stdout.trim(),
-      ...(p.member ? { member: p.member } : {}),
+      ...(member ? { member } : {}),
       now: new Date(),
       log: (line) => console.error(formatWarning({ message: line })),
     });
@@ -1788,6 +1790,8 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
     env: args.env,
     ...(member ? { member } : {}),
     ...(args.planResult ? { result: args.planResult } : {}),
+    // #4289: the plan job could not ask the forge, so the note job does, from the Ops at the commit it checked out.
+    overdue: () => overdueOps(forge, member),
   });
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
