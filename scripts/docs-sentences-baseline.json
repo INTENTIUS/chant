@@ -679,6 +679,9 @@
   "discourse/punchy-fragments": 2,
   "repetition/near-duplicate": 2
  },
+ "docs/src/content/docs/guide/pull-request-hooks.mdx": {
+  "dead-metaphor/rare-lemma": 1
+ },
  "docs/src/content/docs/guide/reconciling-lifecycle.mdx": {
   "formatting/em-dash-density": 6,
   "tricolon/comma-series": 1

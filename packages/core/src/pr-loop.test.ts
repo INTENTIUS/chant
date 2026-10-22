@@ -366,3 +366,25 @@ describe("a gate per wave on merge (#4003)", () => {
     expect(prStatusDescription({ ...waiting, waves: [wave1], refusal: "earlier-wave" })).toBe("refused: an earlier wave has not applied");
   });
 });
+
+describe("stage hooks in the report and the note (#4288)", () => {
+  const hooked: PrReport = {
+    ...planReport,
+    status: "plan-failed",
+    message: "The before-plan hook lint exited 1, so nothing was planned or applied.",
+    hooks: [
+      { moment: "before-observe", name: "init", target: "a", exit: 0, outcome: "passed" },
+      { moment: "before-plan", name: "lint", exit: 1, outcome: "failed" },
+    ],
+  };
+
+  test("a report with hooks validates", () => {
+    expectValid(hooked);
+  });
+
+  test("the note counts the hooks that passed and names the one that failed", () => {
+    const note = renderPrNote(hooked);
+    expect(note).toContain("A hook failed, so nothing can apply.");
+    expect(note).toContain("Hooks: 1 passed; `lint` before-plan failed (exit 1).");
+  });
+});

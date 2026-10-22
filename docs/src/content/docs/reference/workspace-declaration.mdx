@@ -386,6 +386,10 @@ A commit that leaves the window still pending is rewritten `unbuilt`, for the re
 
 The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` or `file://<directory>`, with an absolute directory. Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it.
 
+### Stage hooks
+
+`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `after.gate` and `apply.runBy` are refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1149`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.35 or newer to read it.
+
 ## Retention
 
 `retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.

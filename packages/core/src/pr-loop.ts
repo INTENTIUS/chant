@@ -71,6 +71,9 @@ export const PR_REPORT_PLANNED_OUTPUTS_FLOOR = "0.124.32";
 /** The chant that writes the `record` stage and the `recorded` status (#4168 step 1). */
 export const PR_REPORT_RECORD_FLOOR = "0.124.33";
 
+/** The first chant whose report can carry `hooks` (#4288). */
+export const PR_REPORT_HOOKS_FLOOR = "0.124.35";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -290,6 +293,21 @@ export interface PrWave {
 }
 
 /**
+ * One stage hook a pull-request job ran (#4288), from `ci.hooks` in the
+ * workspace declaration at base. The shape of an Op waves hook outcome.
+ */
+export interface PrHookOutcome {
+  /** `before-observe`, `before-plan`, `after-plan`, `before-apply` or `after-apply`. */
+  moment: string;
+  name: string;
+  /** The component, for a `perRun` hook. */
+  target?: string;
+  exit: number;
+  /** `held`: an `onFailure: approve` hook failed, which the pull request's gate answers. */
+  outcome: "passed" | "failed" | "held";
+}
+
+/**
  * The document `pr-plan` and `pr-apply` write (`pr-report.schema.json`).
  * The terragucci plan report (#3349) reads it; fields are only ever added.
  */
@@ -361,6 +379,11 @@ export interface PrReport {
   };
   members: PrMember[];
   changeSet: ChangeSetDocument;
+  /**
+   * The stage hooks the job ran (#4288), in order. Absent when it ran none.
+   * Added within contract 1 by chant {@link PR_REPORT_HOOKS_FLOOR}.
+   */
+  hooks?: PrHookOutcome[];
 }
 
 /** The counts a member's entries add up to. */
@@ -421,6 +444,7 @@ function headline(report: PrReport): string {
     case "recorded":
       return `Recorded the plan of ${members} on merge. Nothing applied: a release that carries this commit deploys it.`;
     case "plan-failed":
+      if (report.hooks?.some((h) => h.outcome === "failed")) return "A hook failed, so nothing can apply.";
       return `Planning failed for ${report.members.filter((m) => m.status === "plan-failed").length} of ${members}, so nothing can apply.`;
     case "applied":
       return `Applied ${members}.`;
@@ -535,6 +559,13 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     }
   }
   out.push(...waveLines(report, options.approver ?? "<you>"));
+  // #4288: the hooks that did not pass, by name; a passed hook is a count.
+  const hooks = report.hooks ?? [];
+  if (hooks.length > 0) {
+    const passed = hooks.filter((h) => h.outcome === "passed").length;
+    const other = hooks.filter((h) => h.outcome !== "passed").map((h) => `${code(h.name)} ${h.moment}${h.target ? ` for ${code(h.target)}` : ""} ${h.outcome === "held" ? "held" : "failed"} (exit ${h.exit})`);
+    out.push("", `Hooks: ${passed} passed${other.length > 0 ? `; ${other.join("; ")}` : ""}.`);
+  }
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);
   }

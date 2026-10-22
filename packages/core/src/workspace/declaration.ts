@@ -27,6 +27,7 @@ import type { SecurityGroup } from "./security";
 import { joinPath, type WorkspaceTree } from "./tree";
 import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
+import { assertPrLoopHooks, type OpWaveHooks } from "../op/op-waves";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
 export const DECLARATION_FILES = ["chant.workspace.json", "chant.workspace.jsonc"] as const;
@@ -272,6 +273,13 @@ export interface CiDeclaration {
    * the declaration sets none.
    */
   reportUrl: string | null;
+  /**
+   * `ci.hooks` (#4288): the stage hooks the pull-request jobs run, in the
+   * shape an Op waves spec's `hooks` takes. `chant components pr-plan`,
+   * `pr-record` and `pr-apply` read them from the declaration at base.
+   * Absent when the declaration sets none.
+   */
+  hooks?: OpWaveHooks;
 }
 
 export interface MemberRole {
@@ -592,6 +600,8 @@ export interface Member {
   security: SecurityGroup[];
   /** The member's own `ci.workflow` (#4168 step 6), which wins over the top level's; null when it names none. */
   ciWorkflow: CiWorkflow | null;
+  /** The member's own `ci.hooks` (#4288), run after the top level's; null when it names none. */
+  ciHooks: OpWaveHooks | null;
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -889,6 +899,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       travel: e.travel === true,
       security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
       ciWorkflow: ((e.ci as { workflow?: CiWorkflow } | undefined)?.workflow) ?? null,
+      ciHooks: ciHooksOf((e.ci as { hooks?: unknown } | undefined)?.hooks, `${pointer}/ci/hooks`, at),
       suppress,
       pointer,
     };
@@ -1134,10 +1145,22 @@ function retentionOf(raw: unknown): RetentionOverride | null {
   return out;
 }
 
+/** A `ci.hooks` block (#4288), refused when a pull-request job could not run it. Null when absent. */
+function ciHooksOf(raw: unknown, pointer: string, at: (pointer: string, key?: boolean) => ErrorLocation): OpWaveHooks | null {
+  if (raw === undefined) return null;
+  try {
+    assertPrLoopHooks(pointer.slice(1).replace(/\//g, "."), raw as OpWaveHooks);
+  } catch (err) {
+    throw new WorkspaceReadError("declaration-invalid", err instanceof Error ? err.message : String(err), at(pointer));
+  }
+  return structuredClone(raw as OpWaveHooks);
+}
+
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
-  const workflow = block.workflow !== undefined ? { workflow: block.workflow } : {};
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
+  const workflow = { ...(block.workflow !== undefined ? { workflow: block.workflow } : {}), ...(hooks ? { hooks } : {}) };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {
     // #4160: refused here as pr-plan and ci run refuse the flag, so a reader never gets a URL no job can write to.

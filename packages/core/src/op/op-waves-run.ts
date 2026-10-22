@@ -83,6 +83,7 @@ import {
   opWaveApplyHooksRunBy,
   opWaveGateName,
   opWaveHooksAt,
+  opWaveHookRuns,
   opWavePointAt,
   opWavePointProblems,
   opWaveRecordPath,
@@ -884,6 +885,8 @@ interface HookPlace {
   cwd: string;
   exec: OpWaveExec;
   log: (line: string) => void;
+  /** Where a hook writes a hold on another gate (`CHANT_HOLD`). Default: under the wave's directory. */
+  holdPath?: string;
 }
 
 /**
@@ -903,12 +906,18 @@ function runHookList(
   if (!hooks || hooks.length === 0) return out;
   const { name: specName, op, waveName, k, cwd, exec, log } = at;
   // #3821: a hook that holds the wave on another gate names it in this file.
-  const holdPath = `.chant/op-waves/${specName}/wave-${k}/hold.json`;
+  const holdPath = at.holdPath ?? `.chant/op-waves/${specName}/wave-${k}/hold.json`;
   const env = { CHANT_OP_WAVES: specName, CHANT_WAVE: waveName, CHANT_WAVE_NUMBER: String(k), CHANT_HOOK: moment, CHANT_RUNS: runsPath, CHANT_HOLD: holdPath, ...extraEnv };
   for (const hook of hooks) {
     const name = hook.name ?? (hook.command.join(" ").length > 60 ? `${hook.command.join(" ").slice(0, 57)}...` : hook.command.join(" "));
+    // #4288: a hook with `targets` is for the runs they match. Once for the wave, it runs when one matches or no run is known yet.
+    const mine = opWaveHookRuns(hook, runs);
+    if (hook.targets && (hook.perRun ? mine.length === 0 : mine.length === 0 && runs.length > 0)) {
+      log(`${moment} hook ${name}: no run matches its targets (${hook.targets.join(", ")}), so it did not run`);
+      continue;
+    }
     const calls = hook.perRun
-      ? runs.map((run) => ({
+      ? mine.map((run) => ({
           target: run.target as string | undefined,
           argv: opWaveArgv(hook.command, { op: run.op, wave: waveName, target: run.target, runs: runsPath, ...(run.plan ? { plan: run.plan } : {}) }),
           env: { ...env, CHANT_TARGET: run.target, ...(run.plan ? { CHANT_PLAN: run.plan } : {}) } as Record<string, string>,
@@ -1032,6 +1041,64 @@ async function runHooks(
     }
   }
   return back;
+}
+
+/** The options of {@link runStageHooks} (#4288). */
+export interface RunStageHooksOptions {
+  /** What the hooks belong to: `CHANT_OP_WAVES`, and the `{op}` of a hook that runs once. */
+  name: string;
+  op: string;
+  /** `{wave}` and `CHANT_WAVE`. */
+  wave: string;
+  /** `CHANT_WAVE_NUMBER`. Default 0. */
+  k?: number;
+  /** The runs a `perRun` hook runs for and `targets` match against. */
+  runs: readonly OpWaveHookRun[];
+  /** `{runs}` and `CHANT_RUNS`, relative to `cwd`; the caller writes it. */
+  runsFile: string;
+  /** `CHANT_HOLD`, relative to `cwd`. */
+  holdFile: string;
+  /** Added to every hook's environment. */
+  env?: Record<string, string>;
+  cwd?: string;
+  exec?: OpWaveExec;
+  log?: (line: string) => void;
+}
+
+/** What {@link runStageHooks} gave. */
+export interface StageHooksRun {
+  outcomes: OpWaveHookOutcome[];
+  /** Set when a hook with `onFailure: fail` failed; the hooks after it did not run. */
+  failed?: string;
+  /** The `onFailure: approve` hooks that failed. A hold on another gate counts as one here. */
+  holds: string[];
+}
+
+/**
+ * Run one moment's hooks outside an Op waves job (#4288): the pull-request
+ * jobs, or a product's own stage, with the same `targets`, `perRun`,
+ * `onFailure` and argv filling a wave job uses. A hook that holds on another
+ * gate (`CHANT_HOLD`) is counted as a plain hold; settling that gate is the
+ * caller's.
+ */
+export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
+  const cwd = options.cwd ?? process.cwd();
+  const log = options.log ?? ((line: string) => console.error(line));
+  const place: HookPlace = { name: options.name, op: options.op, waveName: options.wave, k: options.k ?? 0, cwd, exec: options.exec ?? spawnExec, log, holdPath: options.holdFile };
+  const out = runHookList(place, moment, hooks, options.runs, options.runsFile, options.env);
+  return { outcomes: out.outcomes, ...(out.failed ? { failed: out.failed } : {}), holds: [...out.holds, ...out.otherGates.map((g) => `${g.label} (on ${g.request.op ?? options.name} / ${g.request.gate})`)] };
+}
+
+/**
+ * The hooks that run before a job plans (#4288): `before-observe`, then
+ * `before-plan`. A failure or a hold on another gate in the first ends it
+ * there; the holds of both add up.
+ */
+async function runBeforePlanHooks(ctx: WaveContext, hooks: Partial<Record<OpWaveHookMoment, OpWaveHook[]>> | undefined, runs: readonly OpWaveRun[]): Promise<HooksOutcome> {
+  const observe = await runHooks(ctx, "before-observe", hooks?.["before-observe"], runs);
+  if (observe.failed || observe.waitingOn) return observe;
+  const plan = await runHooks(ctx, "before-plan", hooks?.["before-plan"], runs);
+  return { ...plan, holds: [...observe.holds, ...plan.holds] };
 }
 
 /** How many gates one hook call holds a wave on in turn (#3847): the first hold and the holds its approved re-runs ask for. */
@@ -1396,7 +1463,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
       log(`${part} of wave ${k} (${wave.name}) holds none of the wave's runs; nothing to apply`);
       return { end: result };
     }
-    const before = await runHooks(ctx, "before-plan", decision.hooks?.["before-plan"], slice);
+    const before = await runBeforePlanHooks(ctx, decision.hooks, slice);
     if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in ${part} of wave ${k} was planned or applied`) };
     if (before.waitingOn) return { end: await waitOnOther(ctx, decision, before.waitingOn) };
     const { members } = planRuns(ctx, slice);
@@ -1445,7 +1512,7 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
     ...(rules.point ? { point: { ...rules.point } } : {}),
   };
-  const before = await runHooks(ctx, "before-plan", rules.hooks["before-plan"], wave.runs);
+  const before = await runBeforePlanHooks(ctx, rules.hooks, wave.runs);
   if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
   if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
   const { members, pending, overriders, overridersSource, extras, waves: found } = planRuns(ctx, wave.runs, wave.discover === true);
