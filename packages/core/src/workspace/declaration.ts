@@ -20,6 +20,7 @@ import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-
 import { parseReportUrl } from "../pr-report-url";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
+import { cloudIdentityProblems, CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
@@ -311,6 +312,12 @@ export interface CiDeclaration {
    * Absent when the declaration sets none.
    */
   policy?: GatePolicySettings;
+  /**
+   * `ci.identity` (#4296): `cloud` gives each cloud's plan and apply
+   * identities by environment and member globs (../ci-identity.ts).
+   * Absent when unset.
+   */
+  identity?: { cloud: CloudIdentityDeclaration };
 }
 
 export interface MemberRole {
@@ -1212,9 +1219,28 @@ function ciPolicyOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorL
   return structuredClone(raw);
 }
 
+/**
+ * `ci.identity.cloud` (#4296), copied without its `x-` keys. A rule that
+ * plans as an identity some rule applies as is refused: the plan runs the
+ * pull request's code.
+ */
+function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, key?: boolean) => ErrorLocation): CloudIdentityDeclaration {
+  const out: CloudIdentityDeclaration = {};
+  for (const cloud of CLOUDS) {
+    const c = raw[cloud];
+    if (c === undefined) continue;
+    const kept = Object.fromEntries(Object.entries(c).filter(([k]) => !k.startsWith("x-")));
+    const rules = c.rules.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("x-")).map(([k, v]) => [k, Array.isArray(v) ? [...v] : v])));
+    (out as Record<string, unknown>)[cloud] = { ...kept, rules };
+  }
+  const [problem] = cloudIdentityProblems(out);
+  if (problem) throw new WorkspaceReadError("declaration-invalid", problem.message, at(problem.pointer));
+  return out;
+}
+
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1224,6 +1250,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     ...(block.labels !== undefined ? { labels: globMap(block.labels) } : {}),
     ...(block.locks !== undefined ? { locks: block.locks } : {}),
     ...(policy ? { policy } : {}),
+    ...(block.identity?.cloud !== undefined ? { identity: { cloud: cloudIdentityOf(block.identity.cloud, at) } } : {}),
   };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {

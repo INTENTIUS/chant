@@ -241,6 +241,7 @@ export default defineConfig({
 								{ label: 'Require Forge Review for Applies', slug: 'guide/security-review-rules' },
 								{ label: 'Run Applies Only on Started Runners', slug: 'guide/security-isolated-runners' },
 								{ label: 'Keep the Forge Token From the Plan', slug: 'guide/security-forge-token-handover' },
+								{ label: 'Plan and Apply as Separate Cloud Identities', slug: 'guide/security-cloud-identities' },
 							],
 						},
 						{

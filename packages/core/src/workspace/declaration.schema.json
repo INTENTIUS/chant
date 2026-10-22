@@ -213,6 +213,63 @@
             "^(?!x-).+$": { "$ref": "#/$defs/ciMemberGlobs" }
           },
           "additionalProperties": false
+        },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^x-": true },
+          "description": "Cloud identities for the pull-request jobs (#4296). Added in schema 1 by chant 0.124.36, so a declaration that uses it sets minReader to 0.124.36 or newer.",
+          "properties": {
+            "cloud": {
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": { "^x-": true },
+              "description": "Each cloud's plan and apply identities, as rules over environment and member globs. chant build --pr-loop takes the first rule that matches the pipeline's environment and member. The plan job trades its OIDC token for the plan identity before the change is checked out, the record job takes the plan identity, and the apply jobs the apply identity. A rule may not plan as an identity any rule applies as.",
+              "properties": {
+                "aws": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": { "^x-": true },
+                  "required": ["rules"],
+                  "description": "AWS roles, assumed through STS AssumeRoleWithWebIdentity.",
+                  "properties": {
+                    "region": { "type": "string", "minLength": 1, "description": "The STS region. Default us-east-1." },
+                    "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default sts.amazonaws.com." },
+                    "endpoint": { "type": "string", "pattern": "^https?://", "description": "The STS endpoint, for an emulator. Default the region's, or AWS_ENDPOINT_URL_STS in the job." },
+                    "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
+                  }
+                },
+                "gcp": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": { "^x-": true },
+                  "required": ["provider", "rules"],
+                  "description": "GCP service accounts, reached through a workload identity provider and impersonated with IAM generateAccessToken.",
+                  "properties": {
+                    "provider": { "type": "string", "pattern": "^(//iam\\.googleapis\\.com/)?projects/[^/]+/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$", "description": "The workload identity provider: projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>." },
+                    "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default https://iam.googleapis.com/<provider>." },
+                    "stsEndpoint": { "type": "string", "pattern": "^https?://", "description": "Google's STS, for an emulator. Default https://sts.googleapis.com." },
+                    "iamEndpoint": { "type": "string", "pattern": "^https?://", "description": "IAM credentials, for an emulator. Default https://iamcredentials.googleapis.com." },
+                    "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
+                  }
+                },
+                "azure": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "patternProperties": { "^x-": true },
+                  "required": ["tenantId", "rules"],
+                  "description": "Entra application clients, each with a federated credential for the forge's tokens. The rules' identities are client ids.",
+                  "properties": {
+                    "tenantId": { "type": "string", "minLength": 1, "description": "The Entra tenant." },
+                    "subscriptionId": { "type": "string", "minLength": 1, "description": "Set as AZURE_SUBSCRIPTION_ID and ARM_SUBSCRIPTION_ID when given." },
+                    "audience": { "type": "string", "minLength": 1, "description": "The OIDC token's audience. Default api://AzureADTokenExchange." },
+                    "authority": { "type": "string", "pattern": "^https?://", "description": "The Entra authority host, for an emulator. Default https://login.microsoftonline.com." },
+                    "rules": { "$ref": "#/$defs/ciCloudIdentityRules" }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -282,6 +339,29 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "ciCloudIdentityRules": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Rules, first match wins: a rule matches a pipeline when its environments match the pipeline's environment and its members match the pipeline's member. A rule with no environments matches every environment, and one with no members every member and a pipeline outside a member.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "patternProperties": { "^x-": true },
+        "required": ["plan", "apply"],
+        "properties": {
+          "environments": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Environment-name globs, such as prod or staging-*."
+          },
+          "members": { "$ref": "#/$defs/ciMemberGlobs" },
+          "plan": { "type": "string", "minLength": 1, "description": "The identity the plan and record jobs take: a role ARN, a service account email or a client id." },
+          "apply": { "type": "string", "minLength": 1, "description": "The identity the apply jobs take." }
+        }
+      }
+    },
     "ciMemberGlobs": {
       "type": "array",
       "minItems": 1,

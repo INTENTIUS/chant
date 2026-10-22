@@ -76,11 +76,13 @@ export const NO_FORGE_TOKEN_MARKER = "CHANT_NO_FORGE_TOKEN";
  * script as a file (`sh -e {0}` in a GitHub or Forgejo container job), so
  * `$0` is that file. terragucci's `restartWithout` (render.ts:1826).
  */
-export function dropForgeTokens(shell: "sh" | "bash" = "sh"): string {
+export function dropForgeTokens(shell: "sh" | "bash" = "sh", extra: readonly string[] = []): string {
   const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
   const marker = NO_FORGE_TOKEN_MARKER;
+  // #4296: a plan job that traded its OIDC token drops the variables a token is requested with too.
+  const vars = [...FORGE_TOKEN_VARS, ...extra];
   const can = `[ -z "\${${marker}:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
-  return `if ${can}; then exec env ${FORGE_TOKEN_VARS.map((v) => `-u ${v}`).join(" ")} ${marker}=1 ${again}; fi; unset ${FORGE_TOKEN_VARS.join(" ")}`;
+  return `if ${can}; then exec env ${vars.map((v) => `-u ${v}`).join(" ")} ${marker}=1 ${again}; fi; unset ${vars.join(" ")}`;
 }
 
 /** The line a GitLab plan job starts its script with: GitLab runs the script in one shell, so the unset holds for every line after it. */

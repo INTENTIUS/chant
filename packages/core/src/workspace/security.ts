@@ -111,6 +111,8 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Env allowlist and log redaction", byDefault: "on: `ci run`'s contract, a listed exception", setting: "`--pass-env`", group: null, codes: [] },
   // #4295: the plan job's steps never hold a forge token; the plan-note job posts. Part of the generated pipeline, so nothing turns it on.
   { feature: "Plan steps hold no forge token", byDefault: "on: the plan job's contract, a listed exception", setting: "regenerate the pipeline", group: null, codes: [] },
+  // #4296: the plan job trades its OIDC token for the plan identity before the checkout, and the apply jobs take the apply identity.
+  { feature: "Separate plan and apply cloud identities", byDefault: "off: no job requests an OIDC token", setting: "`ci.identity.cloud`", group: null, codes: [] },
 ];
 
 /** The reference page's table of {@link SECURITY_FEATURES}, as markdown. */

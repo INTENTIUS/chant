@@ -61,6 +61,7 @@ import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
 import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
+import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import {
   GREEN_TAG_PATTERN,
   GREEN_TICK_WORKFLOW,
@@ -222,6 +223,16 @@ function gatedWaveGithubDoc(
  * `chant-pr-plan` artifact, and posts the note and `chant/plan` with
  * `chant components pr-post`. Only the note job may write to the pull
  * request and its statuses.
+ *
+ * With `identity` (#4296, `@intentius/chant/ci-identity`) the plan, record
+ * and apply jobs get `id-token: write`, and each starts with a step that
+ * trades the job's OIDC token for its cloud identity before anything is
+ * checked out: the plan and record jobs for the plan identity, the apply
+ * jobs for the apply identity. The trade leaves the credentials in
+ * `GITHUB_ENV`. Every later step of the plan job starts without the
+ * variables a token is requested with, so the pull request's code holds no
+ * OIDC token and cannot request one, and the plan job names no apply
+ * identity.
  */
 function prLoopGithubDoc(
   components: DriverComponent[],
@@ -254,8 +265,18 @@ function prLoopGithubDoc(
     uses: "actions/cache/save@v4",
     with: { path: recordPath, key: recordKey(wave) },
   });
+  // #4296: the step that trades the job's OIDC token for its cloud identity, before the checkout.
+  const identity = loop.identity;
+  const tradeStep = (spec: CloudTradeSpec, which: "plan" | "apply"): Record<string, unknown> => ({
+    name: `Trade the job's OIDC token for the ${which} identity`,
+    ...(rooted ? {} : { "working-directory": "." }),
+    env: { [TRADE_SPEC_ENV]: JSON.stringify(spec) },
+    run: tradeLine("$GITHUB_ENV", "github-env"),
+  });
+  const withIdToken = (permissions: Record<string, string>): Record<string, string> => (identity ? { ...permissions, "id-token": "write" } : permissions);
   const reportName = (job: typeof plan) => `chant-pr-${job.wave ? prApplyWaveJobName(job.wave) : job.jobName}`;
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
+    ...(identity ? [tradeStep(job.jobName === "record" ? identity.plan : identity.apply, job.jobName === "record" ? "plan" : "apply")] : []),
     checkoutStep(true),
     ...runSteps(prLoopSetup(image)),
     ...runSteps(beforeScript),
@@ -292,7 +313,7 @@ function prLoopGithubDoc(
     ...(needs.length > 0 ? { needs } : {}),
     container: image,
     concurrency: concurrency(prApplyGroup(env, member?.name)),
-    permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
+    permissions: withIdToken({ contents: "write", "pull-requests": "write", statuses: "write" }),
     ...(job.wave ? { outputs: { [WAVE_GREEN_OUTPUT]: `\${{ steps.${WAVE_STEP_ID}.outputs.${WAVE_GREEN_OUTPUT} }}` } } : {}),
     steps: steps(job, name),
   });
@@ -309,9 +330,12 @@ function prLoopGithubDoc(
   const applyJobs: Array<[string, Record<string, unknown>]> = [recordJob, ...greenJobs];
   // #4295: the plan job runs the pull request's code and holds no forge token while it does.
   const forgeName = loop.forge ?? "github";
-  const drop = dropForgeTokens("sh");
+  // #4296: once the plan job has traded its OIDC token, its later steps start without the variables a token is requested with.
+  const drop = dropForgeTokens("sh", identity ? OIDC_REQUEST_VARS : []);
   const headStep = (line: string, name?: string): Record<string, unknown> => ({ ...(name ? { name } : {}), run: `${drop}\n${line}` });
   const planSteps: Array<Record<string, unknown>> = [
+    // #4296: the trade runs first, before the change is checked out, with the plan identity alone.
+    ...(identity ? [tradeStep(identity.plan, "plan")] : []),
     // A script, not actions/checkout, whose post step runs at the job's end with the token as its input.
     {
       name: "Check out the change",
@@ -343,7 +367,7 @@ function prLoopGithubDoc(
       if: "github.event_name == 'pull_request'",
       "runs-on": GITHUB_RUNNER,
       container: image,
-      permissions: { contents: "read" },
+      permissions: withIdToken({ contents: "read" }),
       outputs: handoverOutputs(PLAN_STEP_ID, forgeName),
       steps: planSteps,
     },

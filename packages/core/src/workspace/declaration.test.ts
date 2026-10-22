@@ -524,3 +524,30 @@ describe("ci.branches and ci.labels (#4292)", () => {
     expect(failure(base(members, { ci: { labels: { "plan:prod": "prod-*" } } })).code).toBe("declaration-invalid");
   });
 });
+
+describe("ci.identity.cloud (#4296)", () => {
+  const members = [{ name: "net", dir: "net", kind: "chant" }];
+  const aws = { region: "eu-west-1", "x-note": "ops", rules: [{ environments: ["prod"], members: ["net"], plan: "arn:aws:iam::1:role/plan", apply: "arn:aws:iam::1:role/apply", "x-why": "split" }] };
+
+  test("each cloud is read without its x- keys", () => {
+    const d = parse(base(members, { ci: { identity: { cloud: { aws, azure: { tenantId: "t", rules: [{ plan: "p", apply: "a" }] } } } } }));
+    expect(d.ci?.identity).toEqual({
+      cloud: {
+        aws: { region: "eu-west-1", rules: [{ environments: ["prod"], members: ["net"], plan: "arn:aws:iam::1:role/plan", apply: "arn:aws:iam::1:role/apply" }] },
+        azure: { tenantId: "t", rules: [{ plan: "p", apply: "a" }] },
+      },
+    });
+  });
+
+  test("a rule that plans as an identity some rule applies as is declaration-invalid at that rule", () => {
+    const err = failure(base(members, { ci: { identity: { cloud: { aws: { rules: [{ plan: "r", apply: "r" }] } } } } }));
+    expect(err.code).toBe("declaration-invalid");
+    expect(err.message).toContain("ci.identity.cloud.aws.rules[0] plans and applies as r");
+  });
+
+  test("the schema refuses a rule with no apply, an unknown cloud and a GCP provider that is not a provider's name", () => {
+    expect(failure(base(members, { ci: { identity: { cloud: { aws: { rules: [{ plan: "r" }] } } } } })).code).toBe("declaration-invalid");
+    expect(failure(base(members, { ci: { identity: { cloud: { oci: { rules: [] } } } } })).code).toBe("declaration-invalid");
+    expect(failure(base(members, { ci: { identity: { cloud: { gcp: { provider: "forge", rules: [{ plan: "p", apply: "a" }] } } } } })).code).toBe("declaration-invalid");
+  });
+});
