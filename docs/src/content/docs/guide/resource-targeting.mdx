@@ -11,6 +11,8 @@ prompt: |
 
 `--member` and `--wave` pick whole components. `--target` goes one step finer and picks resources inside a component ([#4300](https://github.com/INTENTIUS/chant/issues/4300)). Use it to apply one fix to a big root, or to roll one object of a manifest ahead of the rest.
 
+`--target` and a capability's `targets` field need chant 0.124.42 or newer. A lexicon built against an older core sets no `targets`, so its verbs refuse.
+
 ## Name the targets
 
 Pass `--target <component>:<address>` to `chant components fan-out` or `chant run --components`. Repeat it for more addresses. The address is everything after the first colon, so an address may hold colons of its own ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/capability.ts#L317)).
