@@ -51,6 +51,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `wait-for-stack` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `wait-job` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `wait-steady-state` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `arm-deploy` | azure | yes | yes | each template resource from ARM by its id, compared with the body the apply would PUT | a create, update, no-op or delete per resource, and each changed property path with its value before and after. See [arm-deploy](#arm-deploy) |
 | `fly-release` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `fly-rollback` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `run-agent` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
@@ -75,7 +76,21 @@ A component's members come from its steps that have `plan`, one member per such 
 
 ## Capabilities with plan
 
-Three capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
+Four capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
+
+### `arm-deploy`
+
+`lexicons/azure/src/components/arm-deploy.ts` holds the plan and the apply. Its `run` hands the template to `azApply`. `ApplyOp`'s `arm` target calls the same applier, so a component step and an Op share one code path. One resource group is one member. A step without `resourceGroup` deploys into a group named for its component. The step reaches `endpoint` when it sets one and `AZURE_ENDPOINT_URL` otherwise, which is how it targets floci-az. `subscriptionId` and `AZURE_SUBSCRIPTION_ID` pick the subscription the same way.
+
+ARM offers no change set, so the plan GETs each declared resource by its id at the template's `apiVersion`. It compares the answer with the body `azApply` would PUT. Both sides go through the noise rules in `lexicons/azure/src/deep-observe.ts` first. A 404 makes the resource a create that lists every property it declares. Matching properties make it a `no-op`, and any difference makes it an update listing the paths that moved with both values. The ownership tags `azApply` stamps are never compared, since floci-az drops tags. A value read from `reference()` or `listKeys()` is shown as known after apply, and the plan never calls `listKeys`.
+
+With `prune: true` the plan adds a delete for each resource in the group that carries chant's ownership tag and that the template no longer declares. That is the set `azApply` would prune. Without `prune` the plan proposes no deletes.
+
+A read that fails for any reason but a 404 leaves a hole naming the reason, and such a plan gives `run` nothing to hold it to. A step waiting on an upstream output reads nothing and gets a hole naming that upstream.
+
+The digest binds the environment and the template's bytes. It binds where the step deploys too, meaning the group and its location under one endpoint and subscription. The prune setting and every entry with its attributes are in it as well. On apply, `run` plans again first. A digest other than the approved one stops it before any PUT, with `refusing to apply`.
+
+The template's own `outputs` section is evaluated against a live read of its resources, by `outputs` and at the end of `run`, and an output that comes to nothing is skipped. Before apply, the plan gives the value of an output whose every resource read is planned as `no-op`, or which reads none.
 
 ### `cfn-deploy`
 
@@ -159,6 +174,6 @@ A component that has a step with `plan` beside steps without one, such as a `lam
 
 ## Outputs
 
-`cfn-deploy`, `terraform-apply` and `kubectl-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member that the change does not plan, so a `stackOutput()` reference resolves to the value deployed now (`deployedOutputs` in the report). For a dependency the change plans too, it reads what that dependency's plan says it will expose (`plannedOutputs`, [#3999](https://github.com/INTENTIUS/chant/issues/3999)).
+`arm-deploy`, `cfn-deploy`, `terraform-apply` and `kubectl-apply` have `outputs`. A pull request's plan reads them for each dependency of a planned member that the change does not plan, so a `stackOutput()` reference resolves to the value deployed now (`deployedOutputs` in the report). For a dependency the change plans too, it reads what that dependency's plan says it will expose (`plannedOutputs`, [#3999](https://github.com/INTENTIUS/chant/issues/3999)).
 
 A reference neither can answer stays unresolved, and `cfn-deploy` and `terraform-apply` report a hole for it. When the upstream is in the change, the member lists the reference under `unknownInputs`. The apply holds that member back until its upstream applied, plans it again, and asks for an approval of that plan at `pr-apply-round-<n>`. An artifact a build in the same change publishes, read as `@<component>.publish.*`, is listed under `buildInputs` instead. The build's provenance binds it, so the member applies with it without a second approval. `--seed-outputs <file>` supplies values instead of either read.

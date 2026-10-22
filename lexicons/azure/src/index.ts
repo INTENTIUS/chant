@@ -17,6 +17,9 @@ export { defaultTags, type TagEntry, type DefaultTags } from "./default-tags";
 export { deploymentScope, isDeploymentScope, type DeploymentScope, type DeployScope } from "./deploy-scopes";
 export { azureSerializer } from "./serializer";
 export { azurePlugin } from "./plugin";
+// Core's capability-plugin loader scans this package's exports and loads
+// `azureCapabilityPlugin` when a project's chant.config lists this lexicon (#4273).
+export { azureCapabilityPlugin } from "./components/capability-plugin";
 export { Parameter } from "./parameter";
 
 // Deep observation (#1086): the `az resource show` reader and the noise
