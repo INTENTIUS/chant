@@ -425,6 +425,10 @@ Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.3
 
 Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing. A lock whose pull request merged or closed reads as released. With no `ci.locks`, pr-apply reads no locks. pr-apply takes the field from the declaration at base, so a pull request cannot turn its own locks off. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets it up. chant reads the field from 0.124.36, so a declaration that sets it needs `minReader` `0.124.36` or newer.
 
+### Policy
+
+`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.36` or newer, since an older chant refuses it.
+
 ## Retention
 
 `retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.

@@ -601,6 +601,16 @@ A per-run plan file takes `denied` too. A wave with a denied run applies nothing
 | one has none | exits 7 and applies nothing. Unless a denial already stands for the run, it records one on the override ledger (the run's plan, its rules and `members`) and prints `chant approve policy-override <run> --rule <id> --reason "<why>"` |
 | one has an override of an earlier plan or other rules | exits 7, and `refused.reason` is `override-moved` |
 
+## Policy holds
+
+A plan file can also say the product's policy holds a run for a person ([#4294](https://github.com/INTENTIUS/chant/issues/4294)):
+
+```json
+{ "runs": [{ "target": "network/iam", "planDigest": "jcs1-sha256:...", "held": { "rules": ["main.hold_iam"], "reason": "an IAM role changes" } }] }
+```
+
+Such a run holds its wave until a person approves the set digest. This happens under `gate: "never"` too, the way a hook with `onFailure: "approve"` holds a wave. The decision's `heldBy` names it as `policy on <target> (<rules>)` (`packages/core/src/op/op-waves-run.ts:1636`). A denial on the same run still refuses the wave. `@intentius/chant/gate-policy` runs conftest or OPA and gives the rules a product writes here ([Policy at the Gate](/chant/guide/gate-policy/#for-a-product-with-its-own-input)).
+
 ## Keep a product's gate names
 
 A product that ran its own wave gates before moving onto `chant run wave` has pending facts and approvals on `chant/lifecycle` under its own gate names, and maybe a plan note that shows a digest over the runs that change something. Three spec fields keep those valid across the move:

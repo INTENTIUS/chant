@@ -90,7 +90,7 @@ import { blockedMembers, blockedWords, settleEarlierWaves, type WaveMemberOutcom
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
-import { gitGateLedgerPort, type GateCheck } from "../../op/gate";
+import { gateIsSealed, gitGateLedgerPort, type GateCheck } from "../../op/gate";
 import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
 import type { RunEventBody, RunEventComponentSettle, RunEventSettleStatus } from "../../run-event";
 import { openCliRunEvents, refusesEventsWithJson } from "../run-events";
@@ -107,6 +107,7 @@ import {
   renderPrNote,
   type PrApproval,
   type PrMember,
+  type PrPolicyReport,
   type PrReport,
   type PrWave,
   type PrRound,
@@ -128,6 +129,7 @@ import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import type { CapabilityRegistry } from "../../components/capability";
 import { prLoopHooksAt, runPrHooks, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
+import { decidePrPolicyOverride, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
 
@@ -167,6 +169,10 @@ interface Prepared {
    * stage: why. The plan is then empty, so the stage reports `nothing`.
    */
   routedAway?: string;
+  /** `ci.policy` from the declaration at base (#4294). */
+  policy: PrLoopPolicy;
+  /** What the policy said about the plan, for the report's `policy`. */
+  policyReport?: PrPolicyReport;
 }
 
 const fail = (message: string, hint?: string): number => {
@@ -263,6 +269,14 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"):
     return fail(err instanceof Error ? err.message : String(err));
   }
   if (hooks.note) console.error(formatInfo(hooks.note));
+  // #4294: the policy, read from the declaration at base like the hooks.
+  let policy: PrLoopPolicy;
+  try {
+    policy = prLoopPolicyAt(projectPath, base);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  if (policy.note) console.error(formatInfo(policy.note));
 
   const env = args.env ?? "local";
   const registry = await fanOutRegistry(projectPath, config);
@@ -284,6 +298,7 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"):
     hooks,
     hookOutcomes: [],
     ...(routedAway ? { routedAway } : {}),
+    policy,
   };
 }
 
@@ -479,6 +494,7 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   if (p.hookOutcomes.length > 0) report = { ...report, hooks: [...p.hookOutcomes] };
   if (p.hookFailed) report = { ...report, message: p.hookFailed };
   if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
+  if (p.policyReport) report = { ...report, policy: p.policyReport };
   const note = noteFor(report, p.forge);
   writeOutputs(ctx, report, note, upload);
   if (!ctx.args.noStatus) await publish(p.forge, report, note);
@@ -533,6 +549,86 @@ function openUpload(events: StageEvents, stage: "plan" | "apply" | "record", pr:
   return events.upload;
 }
 
+/** What the policy step decided (#4294): a stop, or whether the plan is held and the override it applies under. */
+interface PolicyJudged {
+  stop?: { refusal: "policy-denied" | "policy-error"; message: string; code: number };
+  held: boolean;
+  override?: NonNullable<PrPolicyReport["override"]>;
+}
+
+/**
+ * Run `ci.policy` at base over the planned set (#4294) and keep what it said
+ * on `p` for the report. A denial is decided against the override ledger:
+ * read only at the plan stage, and recorded for an override at the apply.
+ */
+async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
+  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc });
+  if (!verdict) return { held: false };
+  const report = prPolicyReport(verdict, p.policy.base);
+  p.policyReport = report;
+  for (const w of verdict.warnings) console.error(formatWarning({ message: `policy warning: ${w}` }));
+  if (verdict.result === "error") {
+    return { held: false, stop: { refusal: "policy-error", code: 1, message: `The policy at ${p.policy.base.slice(0, 12)} could not be checked, so nothing was applied: ${verdict.error}` } };
+  }
+  const held = verdict.holds.length > 0;
+  for (const h of verdict.holds) console.error(formatInfo(`policy holds the plan for a person's approval (${h.rule}): ${h.message}`));
+  if (verdict.result !== "denied") return { held };
+  const denied = verdict.denials.map((d) => `${d.rule}: ${d.message}`).join("; ");
+  let decided: Awaited<ReturnType<typeof decidePrPolicyOverride>>;
+  try {
+    // The plan stage records nothing, and reads the applied records so a spent override reads as spent.
+    const real = gitGateLedgerPort();
+    const port = at.stage === "plan" ? { ...readOnlyLedger(real), ...(real.readApplied ? { readApplied: real.readApplied.bind(real) } : {}) } : real;
+    decided = await decidePrPolicyOverride({
+      port,
+      subject: at.op,
+      digest: at.set.doc.digest,
+      rules: verdict.rules,
+      base: p.base,
+      cwd: resolve("."),
+      sealed: await gateIsSealed(p.gate),
+      record: at.stage === "apply",
+      description: `${at.op}: plan ${at.set.doc.digest} denied by ${verdict.rules.join(", ")}`,
+    });
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    if (at.stage === "plan") {
+      console.error(formatWarning({ message: `could not read the override ledger, so no override reads as standing: ${why}` }));
+      return { held, stop: { refusal: "policy-denied", code: 1, message: `The policy denied this plan: ${denied}.` } };
+    }
+    return { held, stop: { refusal: "policy-denied", code: GATED_EXIT_CODE, message: `The policy denied this plan (${denied}), and the override ledger could not be read or written: ${why}. Nothing was applied.` } };
+  }
+  if (decided.status === "overridden") {
+    report.override = decided.override;
+    console.error(formatInfo(`the policy denial (${verdict.rules.join(", ")}) is overridden by ${decided.override.by} at ${decided.override.at}: ${decided.override.reason}`));
+    return { held, override: decided.override };
+  }
+  report.overrideCommand = decided.command;
+  for (const why of decided.refusals) console.error(formatInfo(`an override does not count: ${why}`));
+  const who = decided.overriders.length ? `${decided.overriders.join(", ")} may` : "nobody listed in .chant/overriders at base may";
+  const moved = decided.moved ? ` ${decided.moved.by} overrode an earlier plan or other rules, which counts for nothing here.` : "";
+  return {
+    held,
+    stop: {
+      refusal: "policy-denied",
+      code: at.stage === "plan" ? 1 : GATED_EXIT_CODE,
+      message: `The policy denied this plan: ${denied}.${moved} Nothing was applied. ${who} override it: ${decided.command}`,
+    },
+  };
+}
+
+/** Spend the override the apply runs under (#4294), before anything applies. The failure's message, or undefined. */
+async function spendPolicy(op: string, judged: PolicyJudged, head: string): Promise<string | undefined> {
+  if (!judged.override) return undefined;
+  try {
+    await spendPrPolicyOverride(gitGateLedgerPort(), op, judged.override, { commit: head });
+  } catch (err) {
+    return `Could not record the override this apply runs under, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  console.error(formatInfo(`applies under the override by ${judged.override.by}, which is now spent`));
+  return undefined;
+}
+
 /** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrPlan(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
@@ -553,6 +649,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   stage.stream = events;
   events?.emit({ type: "run-start", waves: p.plan.waves });
   const set = await planAll(p, events?.emit);
+  // #4294: the policy at base over the planned change set.
+  const judged = p.plan.order.length > 0 && !set.failed ? await judgePolicy(p, { stage: "plan", op, pr: ctx.args.pr, set }) : { held: false };
 
   let approval: PrApproval = { status: "pending" };
   if (p.plan.order.length > 0) {
@@ -594,7 +692,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     console.error(formatInfo(`plan    : ${report.digest}`));
     console.error(formatInfo(approval.status === "approved" ? `approved by ${(approval.approvedBy ?? []).join(", ")}` : `approve : ${prApproveCommand(report)}`));
   }
-  return status === "plan-failed" ? 1 : 0;
+  if (judged.stop) console.error(formatWarning({ message: judged.stop.message }));
+  return status === "plan-failed" || judged.stop ? 1 : 0;
 }
 
 /**
@@ -755,10 +854,14 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
 
   let approval: PrApproval;
   let via: "merges" | "gate" = "gate";
+  // #4294: the policy at base, before the gate. A resume runs under the decision of the attempt it finishes.
+  let judged: PolicyJudged = { held: false };
   if (resumed) {
     approval = resumed.approval;
   } else {
-    const decided = await decideApplyGate(p, { op, pr, set, events, ...(green ? { green } : {}) });
+    judged = await judgePolicy(p, { stage: "apply", op, pr, set });
+    if (judged.stop) return stop(prReport({ ...base, approval: { status: "pending" }, status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);
+    const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(green ? { green } : {}) });
     approval = decided.approval;
     if (!decided.satisfied) return stop(prReport({ ...base, approval, status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
     via = decided.via;
@@ -771,6 +874,8 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     emitReviewStop(events, review.message);
     return stop(prReport({ ...base, approval, status: "refused", refusal: review.refusal, message: review.message }), GATED_EXIT_CODE);
   }
+  const unspent = await spendPolicy(op, judged, p.head);
+  if (unspent) return stop(prReport({ ...base, approval, status: "refused", refusal: "policy-denied", message: unspent }), 1);
 
   // The record is written before the first component runs and again as each
   // one settles, so a run killed partway still knows what applied.
@@ -1070,11 +1175,15 @@ async function greenTargetOf(ctx: CommandContext): Promise<GreenTarget | number>
  */
 async function decideApplyGate(
   p: Prepared,
-  at: { op: string; pr: number | null; set: PrPlanSet; events?: RunEventStream; green?: GreenTarget },
+  at: { op: string; pr: number | null; set: PrPlanSet; events?: RunEventStream; green?: GreenTarget; held?: boolean },
 ): Promise<{ approval: PrApproval; satisfied: true; via: "merges" | "gate" } | { approval: PrApproval; satisfied: false; refusal: "plan-changed" | "not-approved"; message: string }> {
   const { op, pr, set, events, green } = at;
   let uncovered: string[] = [];
-  if (green) {
+  // #4294: a plan the policy holds needs an approval of its own digest, so the merges' approvals do not cover it.
+  if (green && at.held) {
+    console.error(formatInfo(`the policy holds the plan at ${green.commit.slice(0, 12)}, so it needs an approval of its own digest and does not apply under the merges' approvals`));
+    uncovered = ["the policy holds this plan for an approval of its own digest"];
+  } else if (green) {
     const cover = coverByMerges(set.doc, green.approved);
     if (cover.covered) {
       console.error(formatInfo(`the approved plans of ${cover.coveredBy.length} merge${cover.coveredBy.length === 1 ? "" : "s"} cover the plan at ${green.commit.slice(0, 12)}, so it applies under them`));
@@ -1543,6 +1652,7 @@ async function prApplyWaves(
   }
 
   let planned: PrPlanSet | undefined;
+  let judged: PolicyJudged = { held: false };
   if (carry) {
     // What the earlier waves applied settles first (#4007), each in its own wave, as a resumed apply's does.
     p.plan.waves.forEach((names, i) => {
@@ -1560,7 +1670,10 @@ async function prApplyWaves(
       return stop(report({ status: "plan-failed", message: "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied." }), 1);
     }
     await storeChangeSetForGate(ctx, p, set.doc);
-    const decided = await decideApplyGate(p, { op, pr, set, events, ...(green ? { green } : {}) });
+    // #4294: the policy at base judges the whole change set, before the pull request's gate.
+    judged = await judgePolicy(p, { stage: "apply", op, pr, set });
+    if (judged.stop) return stop(report({ status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);
+    const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(green ? { green } : {}) });
     approval = decided.approval;
     if (!decided.satisfied) return stop(report({ status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
     via = decided.via;
@@ -1575,6 +1688,8 @@ async function prApplyWaves(
     emitReviewStop(events, prReview.message);
     return stop(report({ status: "refused", refusal: prReview.refusal, message: prReview.message }), GATED_EXIT_CODE);
   }
+  const unspent = await spendPolicy(op, judged, p.head);
+  if (unspent) return stop(report({ status: "refused", refusal: "policy-denied", message: unspent }), 1);
 
   const recordAttempt = (): void => {
     if (!resumePath) return;

@@ -41,6 +41,18 @@ vi.mock("../../lifecycle/target-lock", async (original) => ({
   heldTargetLocks: (gate: string, targets: readonly string[], pr: number | null) => heldLocks(gate, targets, pr),
 }));
 
+/** What ci.policy at base says (#4294): no policy unless a test sets a verdict. The engine itself is gate-policy.test.ts's. */
+let policyVerdict: import("../../gate-policy").GatePolicyVerdict | undefined;
+vi.mock("../../components/pr-policy", async (original) => ({
+  ...(await original<typeof import("../../components/pr-policy")>()),
+  prLoopPolicyAt: (_cwd: string, base: string) => ({ base }),
+  runPrPolicy: () => policyVerdict,
+}));
+vi.mock("../../override-gate", async (original) => ({
+  ...(await original<typeof import("../../override-gate")>()),
+  overridersAt: (_repo: string, base: string) => ({ base, path: ".chant/overriders", active: true, principals: ["github:carol"] }),
+}));
+
 vi.mock("../../components/changed-files", () => ({
   resolveCommit: async () => HEAD,
   resolveMergeBase: async () => BASE,
@@ -152,6 +164,7 @@ beforeEach(async () => {
   hooksAtBase = {};
   locksMode = null;
   heldLocks = async () => [];
+  policyVerdict = undefined;
   gateLedger = memoryGateLedgerPort();
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
   vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.map(String).join(" ")); });
@@ -599,5 +612,70 @@ describe("ci.hooks on the pull-request path (#4288)", () => {
     expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(1);
     expect(ran).toEqual([]);
     expect(JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"))).toMatchObject({ status: "failed", message: "The before-apply hook backup exited 1, so nothing was applied." });
+  });
+});
+
+describe("ci.policy on the pull-request path (#4294)", () => {
+  const denied = (): import("../../gate-policy").GatePolicyVerdict => ({
+    result: "denied",
+    engine: "opa",
+    denials: [{ rule: "main.deny_public", message: "bucket logs is public" }],
+    rules: ["main.deny_public"],
+    holds: [],
+    warnings: [],
+  });
+  const approve = (digest: string) => ({ version: 1 as const, kind: "resolution" as const, op: "pr-12", gate: "pr-apply", resolvedBy: "github:alice", timestamp: new Date(Date.now() - 1000).toISOString(), planDigest: digest });
+
+  test("pr-plan reports the denial, fails its status and exits 1, and records nothing", async () => {
+    policyVerdict = denied();
+    expect(await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }))).toBe(1);
+    const report = JSON.parse(readFileSync(join(dir, "pr-plan.json"), "utf8"));
+    expect(report).toMatchObject({ status: "planned", policy: { result: "denied", rules: ["main.deny_public"], overrideCommand: expect.stringContaining("chant approve policy-override pr-12 --rule main.deny_public") } });
+    expect(gateLedger.appended).toEqual([]);
+    expect(readFileSync(join(dir, "pr-note.md"), "utf8")).toContain("denied this plan:");
+  });
+
+  test("pr-apply refuses a denied plan though the gate is approved, and records the denial for an override", async () => {
+    await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }));
+    const digest = await plannedDigest();
+    gateLedger = memoryGateLedgerPort({ resolutions: [approve(digest)] });
+    policyVerdict = denied();
+    const ran: string[] = [];
+    onRun = (r) => ran.push(r);
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
+    const report = JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"));
+    expect(report).toMatchObject({ status: "refused", refusal: "policy-denied", policy: { result: "denied" } });
+    expect(report.message).toContain("github:carol may override it");
+    expect(gateLedger.appended).toEqual([expect.objectContaining({ op: "policy-override", gate: "pr-12", plan: digest, rules: ["main.deny_public"] })]);
+    expect(ran).toEqual([]);
+  });
+
+  test("an override by a listed overrider lets pr-apply apply under the gate's approval, and is spent first", async () => {
+    await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }));
+    const digest = await plannedDigest();
+    const { overrideDigest } = await import("../../override-gate");
+    const od = overrideDigest("pr-12", digest, ["main.deny_public"]);
+    gateLedger = memoryGateLedgerPort({
+      resolutions: [approve(digest), { version: 1, kind: "resolution", op: "policy-override", gate: "pr-12", resolvedBy: "github:carol", timestamp: new Date(Date.now() - 500).toISOString(), planDigest: od, note: "the bucket is the docs site" }],
+    });
+    policyVerdict = denied();
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(0);
+    const report = JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"));
+    expect(report).toMatchObject({ status: "applied", policy: { result: "denied", override: { by: "github:carol", digest: od } } });
+    expect(gateLedger.applied).toEqual([expect.objectContaining({ op: "policy-override", gate: "pr-12", planDigest: od })]);
+  });
+
+  test("a policy that could not run applies nothing and exits 1; a hold still needs the gate's approval", async () => {
+    await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }));
+    const digest = await plannedDigest();
+    gateLedger = memoryGateLedgerPort({ resolutions: [approve(digest)] });
+    policyVerdict = { result: "error", engine: "opa", denials: [], rules: [], holds: [], warnings: [], error: "opa did not run" };
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(1);
+    expect(JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"))).toMatchObject({ status: "refused", refusal: "policy-error" });
+
+    gateLedger = memoryGateLedgerPort();
+    policyVerdict = { result: "held", engine: "opa", denials: [], rules: [], holds: [{ rule: "main.hold_iam", message: "iam" }], warnings: [] };
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
+    expect(JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"))).toMatchObject({ status: "refused", refusal: "not-approved", policy: { result: "held" } });
   });
 });

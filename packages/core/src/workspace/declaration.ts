@@ -29,6 +29,7 @@ import { joinPath, type WorkspaceTree } from "./tree";
 import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
 import { assertPrLoopHooks, type OpWaveHooks } from "../op/op-waves";
+import { assertGatePolicySettings, type GatePolicySettings } from "../gate-policy";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
 export const DECLARATION_FILES = ["chant.workspace.json", "chant.workspace.jsonc"] as const;
@@ -304,6 +305,12 @@ export interface CiDeclaration {
    * Absent when unset.
    */
   labels?: Record<string, string[]>;
+  /**
+   * `ci.policy` (#4294): the policy engine the pull-request jobs run over
+   * the change set, read with the policy from the declaration at base.
+   * Absent when the declaration sets none.
+   */
+  policy?: GatePolicySettings;
 }
 
 export interface MemberRole {
@@ -1194,16 +1201,29 @@ function globMap(raw: Record<string, string[]>): Record<string, string[]> {
   return Object.fromEntries(Object.entries(raw).filter(([k]) => !k.startsWith("x-")).map(([k, v]) => [k, [...v]]));
 }
 
+/** A `ci.policy` block (#4294), refused when the pull-request jobs could not run it. Null when absent. */
+function ciPolicyOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): GatePolicySettings | null {
+  if (raw === undefined) return null;
+  try {
+    assertGatePolicySettings("ci.policy", raw);
+  } catch (err) {
+    throw new WorkspaceReadError("declaration-invalid", err instanceof Error ? err.message : String(err), at("/ci/policy"));
+  }
+  return structuredClone(raw);
+}
+
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
+  const policy = ciPolicyOf(block.policy, at);
   const workflow = {
     ...(block.workflow !== undefined ? { workflow: block.workflow } : {}),
     ...(hooks ? { hooks } : {}),
     ...(block.branches !== undefined ? { branches: globMap(block.branches) } : {}),
     ...(block.labels !== undefined ? { labels: globMap(block.labels) } : {}),
     ...(block.locks !== undefined ? { locks: block.locks } : {}),
+    ...(policy ? { policy } : {}),
   };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {

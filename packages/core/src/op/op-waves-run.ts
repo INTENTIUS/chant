@@ -119,6 +119,13 @@ export interface OpWavePlanFile {
    * plan digest and these rules counts (`@intentius/chant/override-gate`).
    */
   denied?: { rules: string[]; reason?: string };
+  /**
+   * The product's policy holds this plan for a person (#4294): the ids of
+   * the hold rules that matched. The wave waits for an approval of its set
+   * digest whatever its gate policy says, as a hook with `onFailure:
+   * approve` holds it. `@intentius/chant/gate-policy` gives the rules.
+   */
+  held?: { rules: string[]; reason?: string };
 }
 
 /** What a wave-level plan command writes to `{plans}` (#3762): one plan per run, by target. The array alone is read too. */
@@ -176,6 +183,8 @@ export interface OpWaveMember extends WaveMember {
   denied?: { rules: string[]; reason?: string };
   /** The override that lets the denied plan through (#3821). */
   override?: { by: string; at: string; digest: string; reason: string };
+  /** The product's policy holds the plan for a person (#4294). */
+  held?: { rules: string[]; reason?: string };
 }
 
 /** Where a wave's policy came from. */
@@ -697,11 +706,12 @@ function planRun(opts: { spec: OpWavesSpec; wave: number; cwd: string; exec: OpW
 }
 
 function member(target: string, op: string, file: OpWavePlanFile): OpWaveMember {
-  const denied = file.denied as unknown;
-  if (denied !== undefined) {
-    const d = denied as { rules?: unknown; reason?: unknown } | null;
+  for (const key of ["denied", "held"] as const) {
+    const value = file[key] as unknown;
+    if (value === undefined) continue;
+    const d = value as { rules?: unknown; reason?: unknown } | null;
     if (!d || typeof d !== "object" || !Array.isArray(d.rules) || d.rules.length === 0 || !d.rules.every((r) => typeof r === "string" && r.trim() !== "") || (d.reason !== undefined && typeof d.reason !== "string")) {
-      throw new Error(`the plan of ${target} has denied ${JSON.stringify(denied)}; a denial is { "rules": ["<rule id>", ...], "reason"?: "<text>" }`);
+      throw new Error(`the plan of ${target} has ${key} ${JSON.stringify(value)}; ${key === "denied" ? "a denial" : "a hold"} is { "rules": ["<rule id>", ...], "reason"?: "<text>" }`);
     }
   }
   return {
@@ -711,6 +721,7 @@ function member(target: string, op: string, file: OpWavePlanFile): OpWaveMember 
     ...(file.destructive === true ? { destructive: true } : {}),
     ...(file.empty === true ? { empty: true } : {}),
     ...(file.denied ? { denied: { rules: file.denied.rules, ...(file.denied.reason ? { reason: file.denied.reason } : {}) } } : {}),
+    ...(file.held ? { held: { rules: [...new Set(file.held.rules)].sort(), ...(file.held.reason ? { reason: file.held.reason } : {}) } } : {}),
   };
 }
 
@@ -791,7 +802,7 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   const members = runs.map((run) => {
     const m = member(run.target, run.op ?? spec.op, byTarget.get(run.target)!);
     const path = join(cwd, opWavePlanPath(spec, k, run.target));
-    writeFileSync(path, JSON.stringify({ planDigest: m.planDigest, ...(m.destructive ? { destructive: true } : {}), ...(m.empty ? { empty: true } : {}), ...(m.denied ? { denied: m.denied } : {}) }) + "\n");
+    writeFileSync(path, JSON.stringify({ planDigest: m.planDigest, ...(m.destructive ? { destructive: true } : {}), ...(m.empty ? { empty: true } : {}), ...(m.denied ? { denied: m.denied } : {}), ...(m.held ? { held: m.held } : {}) }) + "\n");
     return m;
   });
   const overriders = Array.isArray(parsed) ? undefined : (parsed as { overriders?: unknown }).overriders;
@@ -1622,6 +1633,8 @@ async function decideOpWave(
   const after = await runHooks(ctx, "after-plan", planned.rules.hooks["after-plan"], wave.runs, planned.planned, digest);
   if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in wave ${k} was applied`) };
   holds.push(...planned.before, ...after.holds);
+  // #4294: a run the product's policy holds makes the wave wait for a person, as a held hook does.
+  for (const m of members) if (m.held) holds.push(`policy on ${m.member} (${m.held.rules.join(", ")})${m.held.reason ? `: ${m.held.reason}` : ""}`);
   if (holds.length > 0) decision.heldBy = holds;
   if (after.waitingOn) return { end: await decided(ctx, decision, recordPath, after.waitingOn) };
   // #3821: a run the product's policy denied applies only under an override; with none the wave is refused, and no approval is waited for.

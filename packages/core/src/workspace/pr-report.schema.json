@@ -37,8 +37,8 @@
       "description": "planned: every member planned (plan stage). recorded (#4168, chant 0.124.33 and newer): every member planned on the merged commit and the merge record was written (record stage); approval says whether the plan is the approved one, and nothing applied. plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. wave-applied (#4003, chant 0.124.32 and newer): with --wave-gate and --wave, the wave applied and a later wave is still to run. refused: nothing applied, see refusal. waiting (#3999): the approved plans applied except members held back after an upstream applied, which wait on an approval of the plan the last of rounds made."
     },
     "refusal": {
-      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request", "wave-not-approved", "wave-plan-changed", "earlier-wave", "locked"],
-      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits. With --wave-gate (#4003, chant 0.124.32 and newer): wave-not-approved, a wave's new plan is not covered by the approved one and no approval of its gate stands for it; wave-plan-changed, an approval of its gate stands for another digest; earlier-wave, an earlier wave has work left or no record says it applied. The waves that applied before a wave refused stay applied; waves says which. locked (#4293, chant 0.124.36 and newer): under ci.locks, another open pull request holds a lock on a target the apply reaches, and nothing applied."
+      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request", "wave-not-approved", "wave-plan-changed", "earlier-wave", "locked", "policy-denied", "policy-error"],
+      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits. With --wave-gate (#4003, chant 0.124.32 and newer): wave-not-approved, a wave's new plan is not covered by the approved one and no approval of its gate stands for it; wave-plan-changed, an approval of its gate stands for another digest; earlier-wave, an earlier wave has work left or no record says it applied. The waves that applied before a wave refused stay applied; waves says which. locked (#4293, chant 0.124.36 and newer): under ci.locks, another open pull request holds a lock on a target the apply reaches, and nothing applied. With ci.policy (#4294, chant 0.124.36 and newer): policy-denied, the policy at base denied the plan and no override counts; policy-error, the policy could not be run or gave no readable answer."
     },
     "message": { "type": "string", "description": "The refusal or failure as printed." },
     "resumed": {
@@ -205,6 +205,46 @@
           "exit": { "type": "integer" },
           "outcome": { "enum": ["passed", "failed", "held"], "description": "held: an onFailure approve hook failed, which the pull request's gate answers." }
         }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "Added within contract version 1 by #4294, written by chant 0.124.36 and newer. What ci.policy in the workspace declaration at base said about the change set. Absent when the base sets no policy, or the stage reached no plan to judge.",
+      "required": ["result", "engine", "base", "denials", "holds", "warnings"],
+      "additionalProperties": false,
+      "properties": {
+        "result": { "enum": ["passed", "denied", "held", "error"], "description": "denied wins over held. error: the policy did not run or gave no readable answer, and nothing applies." },
+        "engine": { "enum": ["conftest", "opa"], "description": "The result shape read." },
+        "base": { "type": "string", "description": "The commit the settings and the policy were read at." },
+        "denials": { "type": "array", "items": { "$ref": "#/$defs/policyFinding" } },
+        "rules": { "type": "array", "items": { "type": "string" }, "description": "The ids of the rules that denied, sorted: what an override names." },
+        "holds": { "type": "array", "items": { "$ref": "#/$defs/policyFinding" }, "description": "Rules that hold the plan for a person's approval of its digest." },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "error": { "type": "string" },
+        "override": {
+          "type": "object",
+          "required": ["by", "at", "reason", "digest"],
+          "additionalProperties": false,
+          "description": "The override on _gates/policy-override.jsonl that lets the denied plan through.",
+          "properties": {
+            "by": { "type": "string" },
+            "at": { "type": "string" },
+            "reason": { "type": "string" },
+            "digest": { "type": "string", "description": "The override digest: the op, the plan digest and the rules." }
+          }
+        },
+        "overrideCommand": { "type": "string", "description": "While denied: the command that overrides the denial." }
+      }
+    }
+  },
+  "$defs": {
+    "policyFinding": {
+      "type": "object",
+      "required": ["rule", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "rule": { "type": "string", "description": "<package>.<rule>, such as main.deny_public_bucket." },
+        "message": { "type": "string" }
       }
     }
   }
