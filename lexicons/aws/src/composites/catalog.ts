@@ -5,6 +5,75 @@ import type { CompositeEntry } from "@intentius/chant/lexicon";
 
 export const compositeCatalog: CompositeEntry[] = [
   {
+    "name": "AddressEntry",
+    "lexicon": "aws",
+    "description": "A Route 53 latency CNAME to an A record naming an IP endpoint, guarded by a health check probing that address.",
+    "bundles": [
+      "HealthCheck",
+      "RecordSet"
+    ],
+    "params": [
+      {
+        "name": "origin",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The name the address is published under (an A record), which the latency record points at."
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": true,
+        "description": "The port the check probes."
+      },
+      {
+        "name": "defaults",
+        "type": "HostnameEntryProps[\"defaults\"] & { origin?: Partial<ConstructorParameters<typeof RecordSet>[0]>; }",
+        "required": false
+      },
+      {
+        "name": "zoneId",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The hosted zone's id (`zone.Id`)."
+      },
+      {
+        "name": "name",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The name every entry answers for."
+      },
+      {
+        "name": "id",
+        "type": "string",
+        "required": true,
+        "description": "The record's set identifier, unique among the entries for `name`."
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "required": true,
+        "description": "The AWS region whose latency this record is chosen for."
+      },
+      {
+        "name": "endpoint",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The endpoint: a hostname here, an IP address for AddressEntry."
+      },
+      {
+        "name": "ttl",
+        "type": "number",
+        "required": false,
+        "description": "The records' TTL in seconds."
+      },
+      {
+        "name": "check",
+        "type": "LatencyEntryCheck",
+        "required": false
+      }
+    ]
+  },
+  {
     "name": "AgentCoreAgent",
     "lexicon": "aws",
     "description": "A Bedrock AgentCore agent as one CloudFormation-serializable bundle.",
@@ -801,6 +870,69 @@ export const compositeCatalog: CompositeEntry[] = [
         "type": "string",
         "required": true,
         "description": "The organization root to hang the foundation off (\"r-...\" or `OrganizationRoot(...).organization.RootId`)."
+      }
+    ]
+  },
+  {
+    "name": "HostnameEntry",
+    "lexicon": "aws",
+    "description": "A Route 53 latency CNAME to a hostname endpoint, guarded by a health check probing that hostname.",
+    "bundles": [
+      "HealthCheck",
+      "RecordSet"
+    ],
+    "params": [
+      {
+        "name": "zoneId",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The hosted zone's id (`zone.Id`)."
+      },
+      {
+        "name": "name",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The name every entry answers for."
+      },
+      {
+        "name": "id",
+        "type": "string",
+        "required": true,
+        "description": "The record's set identifier, unique among the entries for `name`."
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "required": true,
+        "description": "The AWS region whose latency this record is chosen for."
+      },
+      {
+        "name": "endpoint",
+        "type": "Value<string>",
+        "required": true,
+        "description": "The endpoint: a hostname here, an IP address for AddressEntry."
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": false,
+        "description": "The port the check probes."
+      },
+      {
+        "name": "ttl",
+        "type": "number",
+        "required": false,
+        "description": "The records' TTL in seconds."
+      },
+      {
+        "name": "check",
+        "type": "LatencyEntryCheck",
+        "required": false
+      },
+      {
+        "name": "defaults",
+        "type": "{ check?: Partial<ConstructorParameters<typeof HealthCheck>[0]>; record?: Partial<ConstructorParameters<typeof Record...",
+        "required": false
       }
     ]
   },

@@ -64,3 +64,5 @@ export { MonitoringStack } from "./monitoring-stack";
 export type { MonitoringStackProps, MonitoringMetricSpec } from "./monitoring-stack";
 export { BucketDeployment } from "./bucket-deployment";
 export type { BucketDeploymentProps, BucketDeploymentResult } from "./bucket-deployment";
+export { HostnameEntry, AddressEntry } from "./latency-entry";
+export type { HostnameEntryProps, AddressEntryProps, LatencyEntryCheck } from "./latency-entry";

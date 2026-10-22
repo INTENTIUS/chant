@@ -180,6 +180,7 @@ export {
   StepFunctionsWorkflow,
   MonitoringStack,
   BucketDeployment,
+  HostnameEntry, AddressEntry,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
@@ -194,6 +195,7 @@ export type {
   StepFunctionsWorkflowProps,
   MonitoringStackProps, MonitoringMetricSpec,
   BucketDeploymentProps, BucketDeploymentResult,
+  HostnameEntryProps, AddressEntryProps, LatencyEntryCheck,
 } from "./composites/index";
 
 // Code generation pipeline
