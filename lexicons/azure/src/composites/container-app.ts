@@ -65,24 +65,45 @@ export const ContainerAppNetwork = Composite((props: ContainerAppNetworkProps) =
   const vnetName = `${name}-vnet`;
   const delegations = [{ name: "apps", properties: { serviceName: "Microsoft.App/environments" } }];
 
-  // The subnet is also listed inline, as VnetDefault does, so a later
-  // deployment of the VNet does not try to remove it.
-  const virtualNetwork = new VirtualNetwork(mergeDefaults({
-    name: vnetName,
-    location,
-    tags: mergedTags,
-    addressSpace: { addressPrefixes: [addressSpace] },
-    subnets: [{ name: "apps", properties: { addressPrefix: subnetPrefix, delegations } }],
-  }, defaults?.virtualNetwork), { apiVersion: "2023-05-01" });
-
   const subnet = new Subnet(mergeDefaults({
     name: `${vnetName}/apps`,
     addressPrefix: subnetPrefix,
     delegations,
   }, defaults?.subnet), { apiVersion: "2023-05-01" });
 
+  // The subnet is also listed inline, as VnetDefault does, so a later
+  // deployment of the VNet does not try to remove it. The inline entry is
+  // built from the Subnet resource's merged props, so `defaults.subnet`
+  // reaches both copies. The apps entry always comes first; a caller's
+  // `defaults.virtualNetwork.subnets` adds the other subnets after it, and
+  // an entry of theirs named "apps" is replaced by this one.
+  const { subnets: extraSubnets, ...vnetDefaults } = (defaults?.virtualNetwork ?? {}) as {
+    subnets?: Array<{ name?: string }>;
+  } & Record<string, unknown>;
+  const virtualNetwork = new VirtualNetwork(mergeDefaults({
+    name: vnetName,
+    location,
+    tags: mergedTags,
+    addressSpace: { addressPrefixes: [addressSpace] },
+    subnets: [
+      inlineSubnet("apps", subnetProps(subnet)),
+      ...(extraSubnets ?? []).filter((s) => s?.name !== "apps"),
+    ],
+  }, vnetDefaults), { apiVersion: "2023-05-01" });
+
   return { virtualNetwork, subnet };
 }, "ContainerAppNetwork");
+
+/** A Subnet resource's props, flat or under `properties`. */
+function subnetProps(subnet: InstanceType<typeof Subnet>): Record<string, unknown> {
+  return (subnet as unknown as { props: Record<string, unknown> }).props;
+}
+
+/** The VNet's inline entry for a subnet, from that Subnet resource's props. */
+function inlineSubnet(name: string, props: Record<string, unknown>) {
+  const { name: _name, id: _id, properties, ...flat } = props;
+  return { name, properties: { ...flat, ...(properties as Record<string, unknown> | undefined) } };
+}
 
 export interface ContainerAppSiteProps {
   /** Environment name; the workspace is `<name>-logs` and the identity `<name>-<app>`. */

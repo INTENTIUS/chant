@@ -777,6 +777,45 @@ describe("ContainerAppNetwork", () => {
     const { virtualNetwork } = ContainerAppNetwork({ name: "web", defaults: { virtualNetwork: { location: "westeurope" } } });
     expect(p(virtualNetwork).location).toBe("westeurope");
   });
+
+  type Inline = { name: string; properties: Record<string, unknown> };
+
+  test("defaults.subnet reaches the inline entry as well as the Subnet resource", () => {
+    const nsg = { id: "[resourceId('Microsoft.Network/networkSecurityGroups', 'web-nsg')]" };
+    const routeTable = { id: "[resourceId('Microsoft.Network/routeTables', 'web-rt')]" };
+    const { virtualNetwork, subnet } = ContainerAppNetwork({
+      name: "web",
+      defaults: { subnet: { networkSecurityGroup: nsg, routeTable } as any },
+    });
+    const inline = (p(virtualNetwork).subnets as Inline[])[0];
+    expect(p(subnet).networkSecurityGroup).toEqual(nsg);
+    expect(inline.properties.networkSecurityGroup).toEqual(nsg);
+    expect(inline.properties.routeTable).toEqual(routeTable);
+    const { name: _n, ...flat } = p(subnet);
+    expect(inline.properties).toEqual(flat);
+  });
+
+  test("defaults.virtualNetwork.subnets adds subnets after apps and keeps its delegation", () => {
+    const { virtualNetwork } = ContainerAppNetwork({
+      name: "web",
+      defaults: { virtualNetwork: { subnets: [{ name: "db", properties: { addressPrefix: "10.0.2.0/24" } }] } as any },
+    });
+    const subnets = p(virtualNetwork).subnets as Inline[];
+    expect(subnets.map((s) => s.name)).toEqual(["apps", "db"]);
+    const delegations = subnets[0].properties.delegations as Array<{ properties: { serviceName: string } }>;
+    expect(delegations[0].properties.serviceName).toBe("Microsoft.App/environments");
+  });
+
+  test("a caller's own apps entry in defaults.virtualNetwork.subnets is replaced by the merged one", () => {
+    const { virtualNetwork } = ContainerAppNetwork({
+      name: "web",
+      defaults: { virtualNetwork: { subnets: [{ name: "apps", properties: { addressPrefix: "10.9.0.0/23" } }] } as any },
+    });
+    const subnets = p(virtualNetwork).subnets as Inline[];
+    expect(subnets).toHaveLength(1);
+    expect(subnets[0].properties.addressPrefix).toBe("10.0.0.0/23");
+    expect(subnets[0].properties.delegations).toBeDefined();
+  });
 });
 
 // --- ContainerAppSite ---
