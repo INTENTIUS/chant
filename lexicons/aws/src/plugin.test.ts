@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { awsPlugin, stackDoesNotExist } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+import { emulatorsOf, endpointEnvVars } from "@intentius/chant/op";
 
 describe("stackDoesNotExist (pre-first-apply live state)", () => {
   test("true for the CloudFormation 'does not exist' error", () => {
@@ -327,5 +328,14 @@ describe("awsPlugin", () => {
       });
       expect(info).toBeUndefined();
     });
+  });
+});
+
+// #4281: `chant components pr-plan`, `pr-apply` and `run --components` apply an
+// environment's declared endpoint to the vars the plugin's emulator names. `cfn-deploy`
+// reads AWS_ENDPOINT_URL, so the plugin has to name it.
+describe("awsPlugin endpoint var (#4281)", () => {
+  test("the emulator names AWS_ENDPOINT_URL, the var cfn-deploy reads", () => {
+    expect(emulatorsOf(awsPlugin.emulator).flatMap((cap) => endpointEnvVars(cap))).toEqual(["AWS_ENDPOINT_URL"]);
   });
 });

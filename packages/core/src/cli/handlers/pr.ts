@@ -120,6 +120,7 @@ import { coverByMerges, greenOp, type GreenTarget } from "../../components/green
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import { appliedDigestOf } from "../../components/auto-release";
 import type { CommandContext } from "../registry";
+import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import type { CapabilityRegistry } from "../../components/capability";
@@ -422,7 +423,7 @@ function openUpload(events: StageEvents, stage: "plan" | "apply" | "record", pr:
 /** chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrPlan(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
-  return withStageEvents("pr-plan", ctx, (events) => prPlan(ctx, events));
+  return withStageEvents("pr-plan", ctx, (events) => withComponentEndpoint(ctx, () => prPlan(ctx, events)));
 }
 
 async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> {
@@ -483,7 +484,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
-  return withStageEvents("pr-apply", ctx, (events) => prApply(ctx, events));
+  return withStageEvents("pr-apply", ctx, (events) => withComponentEndpoint(ctx, () => prApply(ctx, events)));
 }
 
 async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number> {
@@ -724,7 +725,7 @@ function prAppliedDigests(p: Prepared, members: PrMember[]) {
 /** chant components pr-record --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrRecord(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
-  return withStageEvents("pr-record", ctx, (events) => prRecord(ctx, events));
+  return withStageEvents("pr-record", ctx, (events) => withComponentEndpoint(ctx, () => prRecord(ctx, events)));
 }
 
 /**

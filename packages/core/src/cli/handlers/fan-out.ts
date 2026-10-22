@@ -77,6 +77,7 @@ import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { resolveBuildRoot } from "./lifecycle";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
+import { withComponentEndpoint } from "../component-endpoint";
 
 /**
  * The stack-level change signal, from whichever end the invocation supplied.
@@ -194,6 +195,12 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   if (refusesBothStreams(args)) return 1;
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
+  // #4281: every capability the fan-out plans or runs reaches the environment's declared endpoint.
+  return withComponentEndpoint(ctx, () => fanOut(ctx, projectPath, config), { config });
+}
+
+async function fanOut(ctx: CommandContext, projectPath: string, config: ChantConfig): Promise<number> {
+  const { args } = ctx;
 
   const paramsResolution = resolveCliBuildParams(config.buildParams, {
     cli: parseParamFlags(args.param),

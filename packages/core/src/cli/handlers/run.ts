@@ -17,6 +17,7 @@ import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
+import { withComponentEndpoint } from "../component-endpoint";
 import { stewardBesideFor, stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
 import { holdBesideLease } from "../../op/steward-beside";
 import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
@@ -1028,7 +1029,8 @@ export async function recordAutoReleasesForRun(
  * rather than loaded a second time.
  */
 export function runOpComponents(ctx: CommandContext): Promise<number> {
-  return withRecordingChoice(ctx, () => runComponentSelection(ctx));
+  // #4281: the components run against the environment's declared endpoint.
+  return withRecordingChoice(ctx, () => withComponentEndpoint(ctx, () => runComponentSelection(ctx)));
 }
 
 /**

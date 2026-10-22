@@ -68,6 +68,7 @@ import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
+import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 
 const PROMOTE_USAGE =
@@ -390,7 +391,20 @@ function approvalLine(r: import("../../lifecycle/merge-record").MergeRecord): st
  * which differ only in how the plan was chosen, whether the publish step runs,
  * and which field names the earlier release on the new record.
  */
-async function deployPlan(
+/** {@link deployPlanIn}, with `plan.to`'s declared endpoint applied (#4281). */
+function deployPlan(
+  ctx: CommandContext,
+  verb: Verb,
+  plan: PromotionPlan,
+  project: { projectPath: string; config: ChantConfig; targets: DriverComponent[] },
+  actor: string | undefined,
+  record: (item: PromotionItem, env: string, run: DeployRunInfo) => ReleaseRecordInput,
+  under?: UnderRelease,
+): Promise<number> {
+  return withComponentEndpoint(ctx, () => deployPlanIn(ctx, verb, plan, project, actor, record, under), { config: project.config, environment: plan.to });
+}
+
+async function deployPlanIn(
   ctx: CommandContext,
   verb: Verb,
   plan: PromotionPlan,
