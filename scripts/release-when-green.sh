@@ -160,7 +160,7 @@ done
 say "$short is tagged ci/green"
 
 # 4. Cut and publish.
-out=$($release_cmd "$bump" "$sha" | tee /dev/stderr)
+out=$($release_cmd "$bump" "$sha" | tee >(cat >&2))
 version=$(sed -n 's/^Released \([^:]*\):.*/\1/p' <<<"$out")
 [ -n "$version" ] || die "the release printed no version"
 say "waiting on publish.yml at release/npm/$version"
