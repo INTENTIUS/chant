@@ -406,7 +406,7 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 | `branches` | A member a branch's globs match applies from that branch alone: its pull-request pipeline targets it, and its record and apply jobs plan nothing on a push to another branch. A member no glob matches applies from every branch the map leaves out. A member two branches match is refused with `declaration-invalid`. |
 | `labels` | When a pull request carries one of the labels, its plan jobs plan only the members those labels match. The record and apply jobs never read labels, so a label never gates. |
 
-Each glob list holds at least one glob, and `x-` keys are ignored. Read by chant 0.124.36 and newer, so set `minReader` with either field.
+Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.36 is the first reader of both fields; set `minReader` to it when you use one.
 
 ## Retention
 
