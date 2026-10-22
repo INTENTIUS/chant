@@ -43,7 +43,7 @@ Each cloud takes a list of rules. Each rule has `environments` and `members` glo
 }
 ```
 
-A rule whose plan and apply are the same identity is refused with `declaration-invalid`. So is a rule that plans as an identity another rule applies as (`cloudIdentityProblems`, `ci-identity.ts:183`). Either would let the change's code act as an apply identity. chant 0.124.36 is the first reader, so set `minReader` to it.
+A rule whose plan and apply are the same identity is refused with `declaration-invalid`. So is a rule that plans as an identity another rule applies as (`cloudIdentityProblems`, `ci-identity.ts:183`). Either would let the change's code act as an apply identity. chant 0.124.41 is the first reader, so set `minReader` to it.
 
 Then regenerate each member's pipeline with the flags it was generated with:
 

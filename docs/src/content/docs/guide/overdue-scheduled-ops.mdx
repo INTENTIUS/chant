@@ -34,13 +34,13 @@ Each overdue Op adds a line to the plan note (`packages/core/src/pr-loop.ts:584`
 Warning: Op `drift-watch` is overdue: its schedule `0 6 * * *` has fired at least twice and its last run was on 2026-10-18. GitHub has turned the workflow off (disabled_inactivity). Turn it on again under Actions.
 ```
 
-The job log gets the same line. Chant `0.124.35` and newer also list the Ops in the report's `overdue` field (`packages/core/src/pr-loop.ts:393`). A workspace member's note is posted for an overdue Op even when the change reaches none of its components (`packages/core/src/cli/handlers/pr.ts:455`).
+The job log gets the same line. Chant `0.124.41` and newer also list the Ops in the report's `overdue` field (`packages/core/src/pr-loop.ts:393`). A workspace member's note is posted for an overdue Op even when the change reaches none of its components (`packages/core/src/cli/handlers/pr.ts:455`).
 
 The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:151`).
 
 ## Give the note job read access
 
-- GitHub: the generated `plan-note` job asks for `actions: read` (`lexicons/github/src/components/generate-pipeline.ts:356`). The plan job holds no forge token since [#4295](https://github.com/INTENTIUS/chant/issues/4295), so `pr-post` in the note job runs the check, with the Ops read at the target branch's commit. A pipeline generated before chant `0.124.35` lacks it, so regenerate it with the command in its header.
+- GitHub: the generated `plan-note` job asks for `actions: read` (`lexicons/github/src/components/generate-pipeline.ts:356`). The plan job holds no forge token since [#4295](https://github.com/INTENTIUS/chant/issues/4295), so `pr-post` in the note job runs the check, with the Ops read at the target branch's commit. A pipeline generated before chant `0.124.41` lacks it, so regenerate it with the command in its header.
 - Forgejo: the job token reads the repository's runs.
 - GitLab: listing pipeline schedules needs an access token with the `read_api` scope, which the job token lacks. Set `CHANT_GITLAB_TOKEN` or `GITLAB_TOKEN`, which `--forge gitlab` reads before `CI_JOB_TOKEN` (`packages/core/src/pr-forge.ts:1232`).
 

@@ -388,7 +388,7 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 
 ### Stage hooks
 
-`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `after.gate` and `apply.runBy` are refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1149`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.35 or newer to read it.
+`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `after.gate` and `apply.runBy` are refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it.
 
 ### Branches and labels
 
@@ -406,7 +406,7 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 | `branches` | A member a branch's globs match applies from that branch alone: its pull-request pipeline targets it, and its record and apply jobs plan nothing on a push to another branch. A member no glob matches applies from every branch the map leaves out. A member two branches match is refused with `declaration-invalid`. |
 | `labels` | When a pull request carries one of the labels, its plan jobs plan only the members those labels match. The record and apply jobs never read labels, so a label never gates. |
 
-Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.36 is the first reader of both fields; set `minReader` to it when you use one.
+Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.41 is the first reader of both fields; set `minReader` to it when you use one.
 
 ### Locks
 
@@ -423,11 +423,11 @@ Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.3
 | `apply` | the pull request's apply, and [`chant lock`](/chant/cli/lock/) by hand |
 | `plan` | the same, and a lock job that runs `chant lock --stage plan` after the plan job |
 
-Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing. A lock whose pull request merged or closed reads as released. With no `ci.locks`, pr-apply reads no locks. pr-apply takes the field from the declaration at base, so a pull request cannot turn its own locks off. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets it up. chant reads the field from 0.124.36, so a declaration that sets it needs `minReader` `0.124.36` or newer.
+Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing. A lock whose pull request merged or closed reads as released. With no `ci.locks`, pr-apply reads no locks. pr-apply takes the field from the declaration at base, so a pull request cannot turn its own locks off. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets it up. chant reads the field from 0.124.41, so a declaration that sets it needs `minReader` `0.124.41` or newer.
 
 ### Policy
 
-`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.36` or newer, since an older chant refuses it.
+`ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.41` or newer, since an older chant refuses it.
 
 ### Cloud identities
 
@@ -450,7 +450,7 @@ Under either value, `chant components pr-apply` refuses with `locked` when anoth
 | `azure` | Its identities are client ids. It takes `tenantId` and `rules`, and may set `subscriptionId`, `audience` (default `api://AzureADTokenExchange`) and `authority`. |
 | `rules[]` | Each rule has a `plan` and an `apply` identity and may set `environments` and `members` globs. The first rule that matches the pipeline's environment and member wins. |
 
-A rule that plans as an identity any rule applies as is refused with `declaration-invalid` at that rule (`packages/core/src/workspace/declaration.ts:1237`). Keys starting with `x-` are skipped, and a declaration that sets the block needs chant 0.124.36 or newer as its `minReader`.
+A rule that plans as an identity any rule applies as is refused with `declaration-invalid` at that rule (`packages/core/src/workspace/declaration.ts:1237`). Keys starting with `x-` are skipped, and a declaration that sets the block needs chant 0.124.41 or newer as its `minReader`.
 
 ## Retention
 

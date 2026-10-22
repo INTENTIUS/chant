@@ -23,7 +23,7 @@ Set `ci.locks` in `chant.workspace.json`:
 }
 ```
 
-`plan` makes the plan take the locks, through the lock job below. `apply` leaves the plan alone. Then only `chant lock` takes locks, and an apply before merge will once it ships ([#4301](https://github.com/INTENTIUS/chant/issues/4301)). Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L530)). It reads the field at base ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ci-locks.ts#L15)), so the pull request that adds it does not lock yet. Set `minReader` to `0.124.36` or newer.
+`plan` makes the plan take the locks, through the lock job below. `apply` leaves the plan alone. Then only `chant lock` takes locks, and an apply before merge will once it ships ([#4301](https://github.com/INTENTIUS/chant/issues/4301)). Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L530)). It reads the field at base ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ci-locks.ts#L15)), so the pull request that adds it does not lock yet. Set `minReader` to `0.124.41` or newer.
 
 ## Add the lock job on GitHub
 
