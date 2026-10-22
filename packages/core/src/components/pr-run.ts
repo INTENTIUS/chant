@@ -514,7 +514,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
 
   const completed = new Set(run.completed);
   const held = new Map((run.held ?? []).map((h) => [h.component, h]));
-  const blocked = new Set(run.blocked.map((b) => b.component));
+  const blocked = new Map(run.blocked.map((b) => [b.component, b.blockedBy]));
   const errorOf = (component: string): string | undefined => {
     const result = [...run.results].reverse().find((r) => r.component === component);
     if (result?.status === "gated") return `stopped at its own gate ${result.gate?.gate ?? ""}`.trim();
@@ -529,7 +529,10 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
     const h = held.get(m.component);
     if (h) return { ...asPlanned, status: "waiting", held: h.heldBy ? `${h.heldBy} is held: ${h.reason}` : h.reason };
     if (fresh?.status === "plan-failed") return { ...asPlanned, status: "plan-failed", ...(fresh.error ? { error: fresh.error } : {}) };
-    if (blocked.has(m.component)) return { ...asPlanned, status: "blocked" };
+    if (blocked.has(m.component)) {
+      const by = blocked.get(m.component);
+      return { ...asPlanned, status: "blocked", ...(by ? { blockedBy: by } : {}) };
+    }
     const error = errorOf(m.component);
     return { ...asPlanned, status: "failed", ...(error ? { error } : {}) };
   });

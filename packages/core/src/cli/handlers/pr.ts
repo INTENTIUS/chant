@@ -85,6 +85,7 @@ import {
 } from "../../components/pr-run";
 import { composeChangeSet, verifyChangeSetDigest } from "../../change-set";
 import { waveGateName } from "../../gated-waves";
+import { blockedMembers, blockedWords, settleEarlierWaves, type WaveMemberOutcome } from "../../wave-blocked";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
@@ -1353,8 +1354,23 @@ async function prApplyWaves(
   const completed = new Set(carry?.completed ?? []);
   const outputsSoFar: Record<string, Record<string, unknown>> = { ...(carry?.outputs ?? {}) };
   const inputsSoFar: Record<string, string> = Object.fromEntries([...completed].filter((n) => inputsNow[n] !== undefined).map((n) => [n, inputsNow[n]!]));
-  const failedSoFar = new Set<string>();
+  // #4291: what failed in an earlier wave's job stays failed until it applies, so this job blocks its dependents and runs the rest.
+  const failedSoFar = new Set<string>((carry ? attempt?.failed ?? [] : []).filter((name) => !completed.has(name)));
   let waves: PrWave[] = carry?.record.waves ?? [];
+  const upstreams = new Map(p.components.map((c) => [c.name, c.dependsOn ?? []]));
+  /** Each component's outcome so far, past applied (#4291): failed, waiting, not-applied, or blocked by a failure. */
+  const outcomes = (): Map<string, WaveMemberOutcome> => {
+    const out = new Map<string, WaveMemberOutcome>();
+    for (const name of completed) out.set(name, { status: "applied" });
+    for (const name of failedSoFar) out.set(name, { status: "failed" });
+    for (const w of waves) {
+      if (w.status !== "waiting" && w.status !== "plan-failed" && w.status !== "failed") continue;
+      for (const name of w.components) if (!out.has(name)) out.set(name, { status: w.status === "waiting" ? "waiting" : "not-applied" });
+    }
+    return out;
+  };
+  /** Components a failure blocked (#4291), each with the component that failed. */
+  const blockedSoFar = new Map<string, string>();
   const after = new Map<string, PrMember>();
   const leftIn = (k: number): string[] => (p.plan.waves[k - 1] ?? []).filter((name) => !completed.has(name));
   const firstLeft = (): number => p.plan.waves.findIndex((_, i) => leftIn(i + 1).length > 0) + 1;
@@ -1369,15 +1385,32 @@ async function prApplyWaves(
     const set = approved ?? { doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: false };
     const members = set.members.map((m): PrMember => {
       const now = after.get(m.member);
-      if (now) return { ...m, status: now.status, ...(now.error ? { error: now.error } : {}) };
-      return completed.has(m.component) ? { ...m, status: "applied" } : m;
+      if (now) return { ...m, status: now.status, ...(now.error ? { error: now.error } : {}), ...(now.blockedBy ? { blockedBy: now.blockedBy } : {}) };
+      if (completed.has(m.component)) return { ...m, status: "applied" };
+      const by = blockedSoFar.get(m.component);
+      if (by !== undefined) return { ...m, status: "blocked", blockedBy: by };
+      return failedSoFar.has(m.component) ? { ...m, status: "failed" } : m;
     });
     return prReport({ ...reportBase, set, approval, members, waves, ...input });
   };
 
   // `--wave <k>` reached before an earlier wave applied: nothing runs, as `fan-out --wave` refuses.
+  // #4291: an earlier member that failed, or was blocked by one that failed, counts as settled; it blocks its dependents here.
   const left = firstLeft();
-  if (only !== undefined && left > 0 && left < only) {
+  const earlierWaiting = only !== undefined ? waves.find((w) => w.wave < only && w.status === "waiting" && w.components.some((name) => !completed.has(name))) : undefined;
+  if (earlierWaiting) {
+    return stop(
+      report({
+        status: "refused",
+        refusal: "earlier-wave",
+        message: `Wave ${only} does not run yet: wave ${earlierWaiting.wave} waits at its gate ${earlierWaiting.gate}. Nothing was applied. Approve that wave and run its job again, then this one.`,
+      }),
+      GATED_EXIT_CODE,
+    );
+  }
+  const settled = only !== undefined && left > 0 && left < only ? settleEarlierWaves(p.plan.waves, only, upstreams, outcomes()) : undefined;
+  if (settled) for (const [name, o] of settled.outcomes) if (o.status === "blocked" && o.by) blockedSoFar.set(name, o.by);
+  if (only !== undefined && left > 0 && left < only && (settled?.unsettled.length ?? 0) > 0) {
     return stop(
       report({
         status: "refused",
@@ -1453,9 +1486,27 @@ async function prApplyWaves(
 
   const from = only ?? (left || total + 1);
   const to = only ?? total;
+  /** The last apply in this job that failed (#4291): its results give the exit code once every wave ran. */
+  let lastFailure: { results: Parameters<typeof failedRunExitCode>[0]; gated: boolean } | undefined;
+  let planFailedIn: number | undefined;
   for (let k = from; k <= to; k++) {
-    const wavePlan = prWavePlan(p.plan, p.components, k, [...completed]);
-    if (wavePlan.order.length === 0) continue;
+    // #4291: a component of this wave whose upstream failed, or was blocked by a failure, is blocked; the rest of the wave runs.
+    const before = new Set(p.plan.waves.slice(0, k - 1).flat());
+    const mine = leftIn(k);
+    for (const name of mine) {
+      failedSoFar.delete(name);
+      blockedSoFar.delete(name);
+    }
+    const outcomesNow = outcomes();
+    for (const [name, by] of blockedSoFar) outcomesNow.set(name, { status: "blocked", by });
+    const blockedNow = blockedMembers(mine, upstreams, before, outcomesNow);
+    for (const [name, by] of blockedNow) blockedSoFar.set(name, by);
+    if (blockedNow.size > 0) console.error(formatWarning({ message: `wave ${k}: ${blockedWords(blockedNow)}, so not planned or applied`, hint: "A failure blocks only the members that depend on it; the rest of the wave goes on." }));
+    const wavePlan = prWavePlan(p.plan, p.components, k, [...completed, ...blockedNow.keys()]);
+    if (wavePlan.order.length === 0) {
+      if (blockedNow.size > 0) recordAttempt();
+      continue;
+    }
     const inThisWave = new Set(wavePlan.order);
 
     // Wave 1 of the apply that just planned every member applies those plans:
@@ -1483,9 +1534,15 @@ async function prApplyWaves(
         }),
       );
       if (fresh.failed) {
-        for (const m of fresh.members) after.set(m.member, m);
+        for (const m of fresh.members) {
+          after.set(m.member, m);
+          if (m.status === "plan-failed") failedSoFar.add(m.component);
+        }
         setWave({ wave: k, components: wavePlan.order, status: "plan-failed", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest });
-        return stop(report({ status: "plan-failed", message: `A member of wave ${k} failed to plan, so nothing in wave ${k} was applied.` }), 1);
+        // #4291: the later waves still run what does not depend on this wave.
+        console.error(formatWarning({ message: `A member of wave ${k} failed to plan, so nothing in wave ${k} was applied.`, hint: "The waves after it apply what does not depend on wave " + k + "." }));
+        planFailedIn ??= k;
+        continue;
       }
       const moved = waveNotCovered(approvedSet.doc, fresh.doc, approvedSet.members);
       set = fresh;
@@ -1561,6 +1618,7 @@ async function prApplyWaves(
       onComponentSettled: (settled, outputs) => {
         if (settled.status === "ok") {
           completed.add(settled.component);
+          failedSoFar.delete(settled.component);
           if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
           if (outputs) outputsSoFar[settled.component] = outputs;
         } else if (settled.status === "fail") {
@@ -1579,10 +1637,27 @@ async function prApplyWaves(
     setWave({ ...entry, status: applied.status === "applied" && !waveAfter ? "applied" : "failed" });
     await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
     if (applied.status !== "applied") {
-      return stop(report({ status: "failed" }), failedRunExitCode(applied.run.results), applied.run.status === "gated" ? "gated" : undefined);
+      // #4291: a failed member blocks only its dependents, so the later waves still run.
+      lastFailure = { results: applied.run.results, gated: applied.run.status === "gated" };
+      recordAttempt();
+      continue;
     }
     if (waveAfter) return stop(report({ status: "failed", message: waveAfter }), 1);
     console.error(formatSuccess(`applied wave ${k} of ${total} under ${entry.approval === "pull-request" ? `the pull request's approval of ${approvedSet.doc.digest}` : `${entry.gate}, approved for ${entry.digest}`} by ${(entry.approvedBy ?? []).join(", ")}`));
+  }
+
+  // #4291: a failure, or a member it blocked, fails the job once every other member applied.
+  const blockedHere = [...blockedSoFar.keys()].filter((name) => (only === undefined ? true : (p.plan.waves[only - 1] ?? []).includes(name)));
+  if (lastFailure || planFailedIn !== undefined || blockedHere.length > 0) {
+    const blockedLine = blockedSoFar.size > 0 ? ` Blocked: ${blockedWords(blockedSoFar)}.` : "";
+    const message = planFailedIn !== undefined && !lastFailure
+      ? `A member of wave ${planFailedIn} failed to plan, so nothing in wave ${planFailedIn} was applied.${blockedLine}`
+      : blockedLine ? blockedLine.trim() : undefined;
+    return stop(
+      report({ status: "failed", ...(message ? { message } : {}) }),
+      lastFailure ? failedRunExitCode(lastFailure.results) : 1,
+      lastFailure?.gated ? "gated" : undefined,
+    );
   }
 
   const done = p.plan.order.every((name) => completed.has(name));

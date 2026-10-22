@@ -129,6 +129,19 @@ export interface FanOutWaveGate {
    * do not exist yet. A later wave is left for its own job.
    */
   only?: number;
+  /**
+   * With `only` (#4291): members of earlier waves the record says failed to
+   * plan or to apply. Each blocks its dependents in this wave and names
+   * itself as what blocked them; the rest of the wave runs. An earlier
+   * member that neither applied nor failed still refuses the run.
+   */
+  failedEarlier?: readonly string[];
+  /**
+   * With `only` (#4291): earlier waves the record says stopped at their gate.
+   * A member left in one of them stops this wave too ({@link EarlierWaveWaitingError}),
+   * since a gate nobody approved stops every wave after it.
+   */
+  waitingEarlier?: ReadonlyArray<{ wave: number; gate: string; components: readonly string[] }>;
 }
 
 /** Thrown when `FanOutWaveGate.only` names a wave whose predecessors have not all applied. */
@@ -143,6 +156,22 @@ export class EarlierWaveNotAppliedError extends Error {
         `Run wave ${earlier} first, with the same --resume record.`,
     );
     this.name = "EarlierWaveNotAppliedError";
+  }
+}
+
+/**
+ * Thrown when `FanOutWaveGate.only` names a wave after one that waits at its
+ * gate (#4291): nothing in this wave runs until that gate is approved and
+ * its job runs again. The CLI exits 3, as the waiting wave's job does.
+ */
+export class EarlierWaveWaitingError extends Error {
+  constructor(
+    readonly wave: number,
+    readonly earlier: number,
+    readonly gate: string,
+  ) {
+    super(`wave ${wave} does not run yet: wave ${earlier} waits at its gate ${gate}. Approve it and run wave ${earlier} again, then this wave.`);
+    this.name = "EarlierWaveWaitingError";
   }
 }
 
@@ -518,7 +547,13 @@ async function runGatedWaves(
       if (!wave) return { end: "stop" };
       const runnable = wave.filter((name) => left.has(name) && !blockedBy.has(name));
       if (waveGate.only !== undefined && waveNum < waveGate.only) {
-        if (runnable.length > 0) throw new EarlierWaveNotAppliedError(waveGate.only, waveNum, runnable);
+        // #4291: an earlier member that failed blocks only its dependents; one that waits at its gate stops this wave.
+        const failedBefore = new Set(waveGate.failedEarlier ?? []);
+        const open = runnable.filter((name) => !failedBefore.has(name));
+        const waiting = waveGate.waitingEarlier?.find((w) => w.wave === waveNum && open.some((name) => w.components.includes(name)));
+        if (waiting) throw new EarlierWaveWaitingError(waveGate.only, waveNum, waiting.gate);
+        if (open.length > 0) throw new EarlierWaveNotAppliedError(waveGate.only, waveNum, open);
+        for (const name of runnable) markBlocked(name);
         return { end: "next" };
       }
       if (waveGate.only !== undefined && waveNum > waveGate.only) return { end: "stop" };
@@ -664,7 +699,9 @@ async function runGatedWaves(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([component, by]) => ({ component, reason: "blocked" as const, blockedBy: by }));
 
-  const status: FanOutRunResult["status"] = failed.length > 0 ? "fail" : gatedFact ? "gated" : "ok";
+  // #4291: a member of this job's wave that an earlier job's failure blocked fails the job, though the rest of the wave applied.
+  const blockedHere = waveGate.only !== undefined && (plan.waves[waveGate.only - 1] ?? []).some((name) => blockedBy.has(name));
+  const status: FanOutRunResult["status"] = failed.length > 0 || blockedHere ? "fail" : gatedFact ? "gated" : "ok";
   emit?.({ type: "run-settle", status: status === "fail" ? "failed" : status, durationMs: null });
 
   return {

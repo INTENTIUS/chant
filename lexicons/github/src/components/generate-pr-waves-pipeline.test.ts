@@ -96,7 +96,9 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
     for (const k of [1, 2, 3]) {
       const job = doc.jobs[`apply-wave-${k}`]!;
       // #4168 step 9: the waves apply the newest green commit once the tick ran.
-      expect(job.if).toBe("github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'");
+      // #4291: a wave after the first runs after one that failed, so a failure blocks only its dependents.
+      const onGreen = "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'";
+      expect(job.if).toBe(k === 1 ? onGreen : `!cancelled() && needs.apply-wave-${k - 1}.result != 'skipped' && (${onGreen})`);
       expect(job.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
       expect(job.permissions.contents).toBe("write");
       const run = job.steps.find((s) => s.run?.includes("ci run apply"))!.run!;

@@ -56,7 +56,7 @@ import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
 import { changedFilesBetween, lexiconChangedUnits } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
-import { EarlierWaveNotAppliedError, runFanOut } from "../../components/fan-out-run";
+import { EarlierWaveNotAppliedError, EarlierWaveWaitingError, runFanOut, type FanOutWaveGate } from "../../components/fan-out-run";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { appliedDigestOf } from "../../components/auto-release";
@@ -268,7 +268,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   }
 
   const gate = args.gate ? { op: FAN_OUT_GATE_OP, gate: args.gate } : undefined;
-  const waveGate = args.waveGate
+  const waveGate: FanOutWaveGate | undefined = args.waveGate
     ? { op: FAN_OUT_GATE_OP, gate: args.waveGate, ...(args.wave !== undefined ? { only: args.wave } : {}) }
     : undefined;
 
@@ -287,6 +287,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   let priorOutputs: Record<string, Record<string, unknown>> = {};
   let priorWaves: WaveRecord[] = [];
   let priorCarried: Record<string, unknown> = {};
+  let priorFailed: string[] = [];
   let progress: FanOutProgress | undefined;
   if (resumePath) {
     let attempt: FanOutAttempt | undefined;
@@ -330,6 +331,12 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
       );
       progress = { completed: split.carried };
       priorWaves = attempt.waves ?? [];
+      // #4291: what failed stays in the record until it applies, so each later wave's job blocks its dependents and runs the rest.
+      priorFailed = attempt.failed.filter((name) => !carried.has(name));
+      if (waveGate?.only !== undefined) {
+        waveGate.failedEarlier = priorFailed;
+        waveGate.waitingEarlier = priorWaves.filter((w) => w.status === "gated").map((w) => ({ wave: w.wave, gate: w.gate, components: w.components }));
+      }
       // What steps kept per member (#3459), such as a choudoufu root's wave
       // resume file. Each step decides whether what it kept still applies.
       priorCarried = attempt.carried ?? {};
@@ -397,7 +404,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   // repeated command picks up from there instead of redoing them.
   const completedSoFar = new Set(priorCompleted);
   const inputsSoFar: Record<string, string> = { ...priorInputs };
-  const failedSoFar: string[] = [];
+  const failedSoFar = new Set(priorFailed);
   const outputsSoFar = { ...priorOutputs };
   let wavesSoFar = priorWaves;
   const carriedSoFar: Record<string, unknown> = { ...priorCarried };
@@ -455,8 +462,9 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
                 completedSoFar.add(settled.component);
                 if (inputsNow[settled.component] !== undefined) inputsSoFar[settled.component] = inputsNow[settled.component]!;
                 if (outputs) outputsSoFar[settled.component] = outputs;
+                failedSoFar.delete(settled.component);
               } else if (settled.status === "fail") {
-                failedSoFar.push(settled.component);
+                failedSoFar.add(settled.component);
               }
               recordAttempt();
             },
@@ -466,6 +474,11 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   } catch (err) {
     events?.settle("failed", err instanceof Error ? err.message : String(err));
     // `--wave <n>` reached before an earlier wave applied: nothing ran.
+    // #4291: an earlier wave waits at its gate, so this one waits too.
+    if (err instanceof EarlierWaveWaitingError) {
+      console.error(formatInfo(err.message));
+      return GATED_EXIT_CODE;
+    }
     if (err instanceof EarlierWaveNotAppliedError) {
       console.error(formatError({ message: err.message }));
       return 1;

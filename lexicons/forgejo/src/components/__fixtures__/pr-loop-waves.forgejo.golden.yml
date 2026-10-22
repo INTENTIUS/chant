@@ -107,7 +107,7 @@ jobs:
           path: .chant/pr
           if-no-files-found: ignore
   apply-wave-2:
-    if: startsWith(github.ref, 'refs/tags/ci/green/')
+    if: '!cancelled() && needs.apply-wave-1.result != ''skipped'' && (startsWith(github.ref, ''refs/tags/ci/green/''))'
     runs-on: docker
     needs:
       - apply-wave-1

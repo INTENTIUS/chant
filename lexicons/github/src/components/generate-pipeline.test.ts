@@ -434,6 +434,9 @@ describe("generateGithubPipeline: gated waves (#3049)", () => {
     const parsed = parseYAML(result.yaml) as { jobs: Record<string, { needs?: string[]; steps: Array<Record<string, unknown>> }> };
     expect(Object.keys(parsed.jobs)).toEqual(["wave-1", "wave-2", "wave-3"]);
     expect(parsed.jobs["wave-2"].needs).toEqual(["wave-1"]);
+    // #4291: wave 2 runs after wave 1 failed, so a failure blocks only its dependents.
+    expect((parsed.jobs["wave-2"] as Record<string, unknown>).if).toBe("!cancelled() && needs.wave-1.result != 'skipped'");
+    expect((parsed.jobs["wave-1"] as Record<string, unknown>).if).toBeUndefined();
 
     const steps = parsed.jobs["wave-2"].steps;
     expect(steps[0].with).toEqual({ "fetch-depth": 0 });
