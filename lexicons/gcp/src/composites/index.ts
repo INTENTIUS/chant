@@ -32,3 +32,7 @@ export { GkeCrdbRegion } from "./gke-crdb-region";
 export type { GkeCrdbRegionConfig, GkeCrdbRegionNodeConfig } from "./gke-crdb-region";
 export { GpuNodePool } from "./gpu-node-pool";
 export type { GpuNodePoolProps, GpuNodePoolTaint } from "./gpu-node-pool";
+export { PrivateEgressNetwork } from "./private-egress-network";
+export type { PrivateEgressNetworkProps } from "./private-egress-network";
+export { PublicCloudRun } from "./public-cloud-run";
+export type { PublicCloudRunProps } from "./public-cloud-run";
