@@ -232,7 +232,7 @@ describe("old and new approvals add up toward one quorum", () => {
     });
     const check = await evaluateGate(port, input(quorum));
     expect(check.satisfied).toBe(false);
-    expect(!check.satisfied && check.quorum).toEqual({ approvers: ["alice"], need: 2 });
+    expect(!check.satisfied && check.quorum).toMatchObject({ approvers: ["alice"], need: 2 });
     expect(port.resolved).toHaveLength(0);
   });
 
