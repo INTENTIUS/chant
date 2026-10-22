@@ -211,6 +211,7 @@ export default defineConfig({
 								{ label: 'Keep Going Past a Failed Member', slug: 'guide/failed-member-blocks' },
 								{ label: 'Move off Apply on Merge', slug: 'guide/move-off-apply-on-merge' },
 								{ label: 'Route Members to Branches', slug: 'guide/branch-routing' },
+								{ label: 'Lock the Targets a Pull Request Reaches', slug: 'guide/target-locks' },
 							],
 						},
 						{
@@ -348,6 +349,7 @@ export default defineConfig({
 								{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },
 								{ label: 'change-set', slug: 'cli/change-set' },
 								{ label: 'ci', slug: 'cli/ci' },
+								{ label: 'lock', slug: 'cli/lock' },
 								{ label: 'release', slug: 'cli/release' },
 								{ label: 'audit', slug: 'cli/audit' },
 								{ label: 'migrate', slug: 'cli/migrate' },

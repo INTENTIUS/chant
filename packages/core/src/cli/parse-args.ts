@@ -72,6 +72,7 @@ const BOOLEAN_FLAGS = new Set([
   "--in-place",
   "--require-runner-start",
   "--no-push",
+  "--list",
   "--no-require-review",
   "--expire",
   "--check-live",
@@ -396,6 +397,17 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
     } else if (arg === "--require-review") {
       result.requireReview = true;
+    } else if (arg === "--list") {
+      // `chant lock --list` (#4293): print the target locks instead of taking any.
+      result.list = true;
+    } else if (arg === "--stage") {
+      // `chant lock --stage plan|apply|lock` (#4293): how the lock was taken.
+      result.lockStage = args[++i];
+      if (!result.lockStage || result.lockStage.startsWith("-")) throw new Error("--stage needs plan, apply or lock: --stage <stage>");
+    } else if (arg === "--from-report") {
+      // `chant lock --from-report <pr-plan.json>` (#4293): lock the components a pull-request report lists.
+      result.fromReport = args[++i];
+      if (!result.fromReport || result.fromReport.startsWith("-")) throw new Error("--from-report needs a report file: --from-report <pr-plan.json>");
     } else if (arg === "--report-url") {
       // `chant components pr-plan|pr-apply --report-url <url>` (#4007).
       const url = args[++i];

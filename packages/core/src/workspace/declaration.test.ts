@@ -436,6 +436,15 @@ describe("retention (#4036)", () => {
   });
 });
 
+describe("ci.locks (#4293)", () => {
+  test("apply or plan is read; absent leaves it out; anything else is declaration-invalid", () => {
+    expect(parse(base([], { ci: { locks: "plan" } })).ci).toEqual({ green: null, locks: "plan", reportUrl: null });
+    expect(parse(base([], { ci: { locks: "apply" } })).ci?.locks).toBe("apply");
+    expect(parse(base([], { ci: {} })).ci?.locks).toBeUndefined();
+    for (const locks of ["merge", true, ""]) expect(failure(base([], { ci: { locks } })).code).toBe("declaration-invalid");
+  });
+});
+
 describe("ci.reportUrl (#4160)", () => {
   test("an s3:// or file:// URL is read without its trailing slash, beside green or alone, and is null when absent", () => {
     expect(parse(base([])).ci).toBeNull();

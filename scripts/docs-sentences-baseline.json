@@ -162,6 +162,11 @@
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 1
  },
+ "docs/src/content/docs/cli/lock.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 2
+ },
  "docs/src/content/docs/cli/lsp.mdx": {
   "formatting/em-dash-density": 5,
   "claude/colon-reveal": 3,
@@ -695,6 +700,9 @@
   "discourse/punchy-fragments": 2,
   "repetition/near-duplicate": 1,
   "formatting/em-dash-density": 5
+ },
+ "docs/src/content/docs/guide/target-locks.mdx": {
+  "dead-metaphor/rare-lemma": 2
  },
  "docs/src/content/docs/guide/trunk-curated-setup.mdx": {
   "anaphora/repeated-opening": 2

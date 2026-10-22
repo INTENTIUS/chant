@@ -362,6 +362,13 @@ export interface PrForge {
   /** The merged pull request that produced `sha`, or null. */
   pullRequestFor(sha: string): Promise<number | null>;
   /**
+   * Whether pull request `pr` (merge request `pr` on GitLab) is still open
+   * (#4293): neither merged nor closed. A pull request the forge does not
+   * know reads as not open. Target locks (../lifecycle/target-lock.ts) read
+   * a lock whose holder is not open as released.
+   */
+  pullRequestOpen?(pr: number): Promise<boolean>;
+  /**
    * Open a pull request (a merge request on GitLab) from `head` into `base`,
    * or into the default branch when `base` is not given. Over REST on every
    * forge, so it works on Forgejo, where `gh pr create` cannot (#3798).
@@ -725,6 +732,15 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       }
       return [...logins].sort();
     },
+    async pullRequestOpen(pr) {
+      try {
+        const got = await api.call("GET", `${repo}/pulls/${pr}`);
+        return isObject(got) && got.state === "open" && got.merged !== true;
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return false;
+        throw err;
+      }
+    },
     async pullRequestFor(sha) {
       if (kind === "forgejo") {
         try {
@@ -1020,6 +1036,15 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         for (const u of Array.isArray(users) ? users : []) if (isObject(u) && typeof u.username === "string") logins.add(u.username);
       }
       return [...logins].sort();
+    },
+    async pullRequestOpen(mr) {
+      try {
+        const got = await api.call("GET", `${notes}/${mr}`);
+        return isObject(got) && got.state === "opened";
+      } catch (err) {
+        if (err instanceof ForgeApiError && err.status === 404) return false;
+        throw err;
+      }
     },
     async pullRequestFor(sha) {
       const mrs = await api.call("GET", `${project}/repository/commits/${sha}/merge_requests`);

@@ -32,6 +32,14 @@ vi.mock("../../components/pr-hooks", async (original) => ({
   ...(await original<typeof import("../../components/pr-hooks")>()),
   prLoopHooksAt: (_cwd: string, base: string) => ({ hooks: hooksAtBase, base }),
 }));
+/** `ci.locks` pr-apply reads at base (#4293), and the locks other pull requests hold; none unless a test sets them. */
+let locksMode: "apply" | "plan" | null = null;
+let heldLocks: (gate: string, targets: readonly string[], pr: number | null) => Promise<unknown[]> = async () => [];
+vi.mock("../../workspace/ci-locks", () => ({ ciLocksAt: () => locksMode }));
+vi.mock("../../lifecycle/target-lock", async (original) => ({
+  ...(await original<typeof import("../../lifecycle/target-lock")>()),
+  heldTargetLocks: (gate: string, targets: readonly string[], pr: number | null) => heldLocks(gate, targets, pr),
+}));
 
 vi.mock("../../components/changed-files", () => ({
   resolveCommit: async () => HEAD,
@@ -142,6 +150,8 @@ beforeEach(async () => {
   onRun = () => {};
   groups = [];
   hooksAtBase = {};
+  locksMode = null;
+  heldLocks = async () => [];
   gateLedger = memoryGateLedgerPort();
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
   vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.map(String).join(" ")); });
@@ -358,6 +368,39 @@ describe("--events-json beside --json", () => {
     expect(await runComponentsPrApply(ctx({ pr: 12, json: true }))).toBe(1);
     expect(errors.filter((e) => /--events-json and --json both stream to stdout/.test(e))).toHaveLength(2);
     expect(out).toEqual([]);
+  });
+});
+
+describe("pr-apply under ci.locks (#4293)", () => {
+  test("a target another open pull request holds refuses the apply as locked, before anything plans or applies", async () => {
+    locksMode = "plan";
+    const asked: unknown[] = [];
+    heldLocks = async (gate, targets, pr) => {
+      asked.push({ gate, targets, pr });
+      return [{ target: "net", pr: 9, by: "bob", at: "2026-10-22T10:00:00.000Z", stage: "plan" }];
+    };
+    let ran = false;
+    onRun = () => void (ran = true);
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
+    expect(asked).toEqual([{ gate: "pr-apply", targets: ["net", "app"], pr: 12 }]);
+    expect(ran).toBe(false);
+    const { readFile } = await import("node:fs/promises");
+    const report = JSON.parse(await readFile(join(dir, "pr-apply.json"), "utf8"));
+    expect(report).toMatchObject({ status: "refused", refusal: "locked" });
+    expect(report.message).toContain("net is locked by pull request 9 (planned by bob), so nothing was applied");
+    expect(report.message).toContain("chant unlock --pr 9");
+  });
+
+  test("no lock held by another pull request lets the apply go on to its gate; without ci.locks nothing is read", async () => {
+    locksMode = "apply";
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
+    const { readFile } = await import("node:fs/promises");
+    expect(JSON.parse(await readFile(join(dir, "pr-apply.json"), "utf8"))).toMatchObject({ status: "refused", refusal: "not-approved" });
+    locksMode = null;
+    heldLocks = async () => {
+      throw new Error("read without ci.locks");
+    };
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(3);
   });
 });
 

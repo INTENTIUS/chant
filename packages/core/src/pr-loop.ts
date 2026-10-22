@@ -266,7 +266,9 @@ export type PrRefusal =
   /** `--wave-gate`: an approval of the wave's gate stands for another digest, so its plan moved since. */
   | "wave-plan-changed"
   /** `--wave-gate` with `--wave <k>`: an earlier wave has work left, or no record says it applied. */
-  | "earlier-wave";
+  | "earlier-wave"
+  /** Under `ci.locks` (#4293): another open pull request holds a lock on a target this apply reaches. */
+  | "locked";
 
 /**
  * One wave of an apply with `--wave-gate` (#4003): what it planned, where it
@@ -714,7 +716,7 @@ export function prStatusDescription(report: PrReport): string {
         text = "refused: an earlier wave has not applied";
         break;
       }
-      text = `refused: ${report.refusal === "plan-changed" ? "the plan changed after review" : report.refusal === "not-a-reviewer" ? "the approver has not approved the pull request" : report.refusal === "author-approved" ? "the approver wrote the change" : report.refusal === "no-pull-request" ? "no pull request merged this commit" : "the plan is not approved"}`;
+      text = `refused: ${report.refusal === "plan-changed" ? "the plan changed after review" : report.refusal === "not-a-reviewer" ? "the approver has not approved the pull request" : report.refusal === "author-approved" ? "the approver wrote the change" : report.refusal === "no-pull-request" ? "no pull request merged this commit" : report.refusal === "locked" ? "another pull request holds a target lock" : "the plan is not approved"}`;
       break;
     }
   }

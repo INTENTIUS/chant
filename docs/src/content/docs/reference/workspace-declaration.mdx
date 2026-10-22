@@ -408,6 +408,23 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 
 Each glob list holds at least one glob, and `x-` keys are ignored. chant 0.124.36 is the first reader of both fields; set `minReader` to it when you use one.
 
+### Locks
+
+`ci.locks` says when a pull request takes its target locks ([#4293](https://github.com/INTENTIUS/chant/issues/4293)). The locks live in `_locks/<gate>.json` on `chant/lifecycle`, under the member's prefix in a workspace member.
+
+```json
+"ci": {
+  "locks": "plan"
+}
+```
+
+| Value | Who takes the locks |
+|---|---|
+| `apply` | the pull request's apply, and [`chant lock`](/chant/cli/lock/) by hand |
+| `plan` | the same, and a lock job that runs `chant lock --stage plan` after the plan job |
+
+Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing. A lock whose pull request merged or closed reads as released. With no `ci.locks`, pr-apply reads no locks. pr-apply takes the field from the declaration at base, so a pull request cannot turn its own locks off. [Lock the Targets a Pull Request Reaches](/chant/guide/target-locks/) sets it up. chant reads the field from 0.124.36, so a declaration that sets it needs `minReader` `0.124.36` or newer.
+
 ## Retention
 
 `retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.

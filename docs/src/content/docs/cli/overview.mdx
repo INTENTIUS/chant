@@ -101,6 +101,8 @@ Capture and compare deployed infrastructure state. Snapshots are stored on an or
 | [`lifecycle whoami <env>`](/chant/cli/lifecycle/#lifecycle-whoami-env) | Who chant would act as in each configured lexicon, and what that principal is scoped to — read-only, before anything acts |
 | [`lifecycle log [env]`](/chant/cli/lifecycle/) | History of lifecycle snapshots |
 | [`lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) | Prune stored change sets, releases and run event files by the retention policy; a dry run without `--yes` |
+| [`lock <target>...`](/chant/cli/lock/) | Lock targets for a pull request on `chant/lifecycle`, so no other pull request applies or locks them until it merges or closes |
+| [`unlock --pr <n>`](/chant/cli/lock/#unlock) | Release the locks a pull request holds |
 
 ## Component Release Ledger + Status
 
