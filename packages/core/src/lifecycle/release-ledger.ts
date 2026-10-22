@@ -348,8 +348,20 @@ export function resolveCiRun(env: NodeJS.ProcessEnv = process.env): { runId: str
       },
     };
   }
+  // #4275: a step of a job the chant runner ran. The forge branches come first, and the runner
+  // strips the forge's run variables from its steps, so neither kind of job is taken for the other.
+  if (env[CHANT_CI_RUN_ID_ENV] && env[CHANT_CI_RUN_FORGE_ENV] === "chant") {
+    return { runId: env[CHANT_CI_RUN_ID_ENV], runOrigin: { forge: "chant" } };
+  }
   return undefined;
 }
+
+/** The run id `chant ci run` hands each step of a job it runs (#4275), the id its run index lists. */
+export const CHANT_CI_RUN_ID_ENV = "CHANT_CI_RUN_ID";
+/** The run's origin `chant ci run` hands each step with {@link CHANT_CI_RUN_ID_ENV}: always `chant`. */
+export const CHANT_CI_RUN_FORGE_ENV = "CHANT_CI_RUN_FORGE";
+/** The forge's run variables, which a step of a job the chant runner ran never gets (#4275). */
+export const FORGE_RUN_ENV = ["GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "CI_PIPELINE_ID", "CI_PIPELINE_URL", "CI_JOB_ID"] as const;
 
 /**
  * The CI run the environment names, as {@link resolveCiRun} has it, with the
@@ -361,7 +373,7 @@ export function resolveCiJob(env: NodeJS.ProcessEnv = process.env): { runId: str
   const ci = resolveCiRun(env);
   if (!ci) return undefined;
   const github = ci.runOrigin.forge === "github";
-  const jobId = github ? env.GITHUB_JOB : env.CI_JOB_ID;
+  const jobId = github ? env.GITHUB_JOB : ci.runOrigin.forge === "gitlab" ? env.CI_JOB_ID : undefined;
   const attempt = github ? Number(env.GITHUB_RUN_ATTEMPT) : NaN;
   return {
     runId: ci.runId,

@@ -79,7 +79,7 @@ import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type Com
 import { PR_APPLY_GATE } from "../pr-loop";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
-import { resolveCiJob, type RunOrigin } from "../lifecycle/release-ledger";
+import { CHANT_CI_RUN_FORGE_ENV, CHANT_CI_RUN_ID_ENV, FORGE_RUN_ENV, resolveCiJob, type RunOrigin } from "../lifecycle/release-ledger";
 import { fetchLifecycleStatus, pushLifecycleReport } from "../lifecycle/git";
 import { ACTIVITY_PROFILES } from "../op/activity-profiles";
 import type { ActivityFn, ActivityProfile } from "../op/activity-registry";
@@ -761,6 +761,23 @@ function ciRunSigner(req: CiRunRequest, at: { cwd: string; top: string; commit: 
   }
 }
 
+/**
+ * The steps' environment (#4275). A job the chant runner ran gets its run's id
+ * and origin, so a release record written inside it names the run the run
+ * index lists, and none of the forge's run variables. Any other job, in place
+ * in a forge job or on this machine, never carries the runner's.
+ */
+export function ciRunStepEnv(jobEnv: Record<string, string>, origin: RunOrigin, runId: string): Record<string, string> {
+  const out = { ...jobEnv };
+  delete out[CHANT_CI_RUN_ID_ENV];
+  delete out[CHANT_CI_RUN_FORGE_ENV];
+  if (origin.forge !== "chant") return out;
+  for (const name of FORGE_RUN_ENV) delete out[name];
+  out[CHANT_CI_RUN_ID_ENV] = runId;
+  out[CHANT_CI_RUN_FORGE_ENV] = "chant";
+  return out;
+}
+
 /** Where the job runs: a fresh worktree of the commit, or with `inPlace` the checkout itself, which is left as it is. */
 function jobCheckout(top: string, commit: string, inPlace?: boolean): { dir: string; remove(): void } {
   return inPlace ? { dir: top, remove() {} } : freshCheckout(top, commit);
@@ -788,16 +805,16 @@ async function runCiJob(
   const checkout = jobCheckout(top, commit, req.inPlace);
   try {
     const jobDir = place.dir === "." ? checkout.dir : join(checkout.dir, place.dir);
+    const runId = req.runId ?? `chant-${Date.now()}`;
     const op = ciJobOp({
       job,
       env: req.env,
       cwd: jobDir,
-      jobEnv,
+      jobEnv: ciRunStepEnv(jobEnv, origin, runId),
       setup: req.inPlace ? [] : prLoopSetup(req.image ?? PR_LOOP_IMAGE),
       build: [...(req.beforeScript ?? []), ...(job.build ?? [])],
       ...(req.chant ? { chant: req.chant } : {}),
     });
-    const runId = req.runId ?? `chant-${Date.now()}`;
     const warnings: string[] = [...early];
     const resume = req.job === "apply" && req.resumeRecord ? { host: resolve(req.resumeRecord), job: join(jobDir, PR_APPLY_RECORD) } : undefined;
     if (resume && existsSync(resume.host)) {

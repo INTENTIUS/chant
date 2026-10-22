@@ -24,6 +24,7 @@ import type { StepRecord } from "../op/local-executor";
 import { sshFromEd25519 } from "./trust/dsse";
 import { verifyOpRunStatement } from "./trust/op-run-statement";
 import { readRunLedger } from "../lifecycle/run-ledger";
+import { resolveRunId } from "../lifecycle/release-ledger";
 import { prLoopJobs, PR_LOOP_SETUP } from "../components/pr-pipeline";
 import { parseArgs } from "../cli/parse-args";
 import { ciSecretsFor, readCiSecrets } from "./ci-secrets";
@@ -835,6 +836,31 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
 
     const index = JSON.parse(readFileSync(join(reports, "runs", "index.json"), "utf-8")) as { runs: Record<string, unknown>[] };
     expect(index.runs[0]).toMatchObject({ job: "plan", runId: "forge-plan-1", signer: null, runOrigin: { forge: "github", jobId: "plan", attempt: 2 } });
+  });
+
+  test("a release record written in a runner job names the run the run index lists, and a forge job's never does (#4275)", async () => {
+    const { app, base } = workspace();
+    const reports = scratchDir("chant-ci-run-index-");
+    const output = join(scratchDir("chant-ci-run-out-"), "pr");
+    // The host's forge run id, even passed on by name, does not reach a runner job's steps.
+    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...HOST, ...FORGE }, passEnv: ["GITHUB_RUN_ID", "GITHUB_JOB"], push: false, output, loop: { reportUrl: `file://${reports}` } });
+    expect(r.status).toBe("ok");
+    const step = envFile(output, "pr-plan");
+    expect(step).not.toHaveProperty("GITHUB_RUN_ID");
+    const index = JSON.parse(readFileSync(join(reports, "runs", "index.json"), "utf-8")) as { runs: { runId: string; runOrigin: unknown }[] };
+    expect(index.runs[0]!.runId).toMatch(/^chant-\d+$/);
+    expect(resolveRunId(undefined, step)).toEqual({ runId: index.runs[0]!.runId, runOrigin: index.runs[0]!.runOrigin });
+    expect(index.runs[0]!.runOrigin).toEqual({ forge: "chant" });
+
+    // In place in a forge job, the runner's variables from the host are dropped, and the record names the forge's run.
+    const forge = await ciRun({ cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...HOST, ...FORGE, CHANT_CI_RUN_ID: "chant-1", CHANT_CI_RUN_FORGE: "chant" }, inPlace: true, push: false, runId: "forge-plan-2" });
+    expect(forge.status).toBe("ok");
+    const inPlace = envFile(join(app, ".chant/pr"), "pr-plan");
+    expect(inPlace).not.toHaveProperty("CHANT_CI_RUN_ID");
+    expect(resolveRunId(undefined, inPlace).runOrigin).toMatchObject({ forge: "github", repo: "acme/estate" });
+    // And a forge's run id wins over the runner's variables wherever both appear.
+    expect(resolveRunId(undefined, { GITHUB_RUN_ID: "4242", CHANT_CI_RUN_ID: "chant-1", CHANT_CI_RUN_FORGE: "chant" }).runId).toBe("4242");
+    expect(resolveRunId(undefined, { CHANT_CI_RUN_ID: "chant-1" }).runOrigin).toEqual({ forge: "local" });
   });
 
   test("a failed command's exit code is the job's, and --wave reaches pr-apply", async () => {
