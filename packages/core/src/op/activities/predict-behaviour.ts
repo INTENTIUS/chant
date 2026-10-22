@@ -85,6 +85,9 @@ import type { BehaviourKinds } from "../../behaviour-kinds";
 import { createBehaviourPredict } from "../../behaviour-predict";
 import type { SerializerResult } from "../../serializer";
 import { markerSlug, reconcilePr, suppliedMarker, type ReconcileResult } from "./reconcile";
+import { baseRefFrom, headRefFrom } from "./pr-refs";
+
+export { baseRefFrom, headRefFrom };
 
 const execAsync = promisify(exec);
 
@@ -292,29 +295,6 @@ export function noBaseRefMessage(): string {
     "GitLab CI a merge_request_event pipeline sets CI_MERGE_REQUEST_TARGET_BRANCH_NAME. Trigger the Op from " +
     "one of those, or pass `base` with the branch name."
   );
-}
-
-/** Where the base branch name comes from, most specific first. Pure — exported for testing. */
-export function baseRefFrom(
-  env: Record<string, string | undefined>,
-  explicit?: string,
-): string | undefined {
-  const fromArgs = explicit?.trim();
-  if (fromArgs) return fromArgs;
-  for (const source of ["GITHUB_BASE_REF", "CI_MERGE_REQUEST_TARGET_BRANCH_NAME"]) {
-    const value = env[source]?.trim();
-    if (value) return value;
-  }
-  return undefined;
-}
-
-/** What the head side is called in the finding: the source branch when the run names one, else the short commit. */
-export function headRefFrom(env: Record<string, string | undefined>, shortSha?: string): string {
-  for (const source of ["GITHUB_HEAD_REF", "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"]) {
-    const value = env[source]?.trim();
-    if (value) return value;
-  }
-  return shortSha?.trim() || "head";
 }
 
 /** A checked-out base branch: where its project root is, and how to remove it. */
