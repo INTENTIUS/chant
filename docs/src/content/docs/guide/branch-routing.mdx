@@ -24,7 +24,7 @@ Map a target to globs over member names in `chant.workspace.json`:
 
 A member a glob matches applies from that target alone. A member no glob matches applies from every target the map leaves out, `main` included (`packages/core/src/workspace/ci-branches.ts:48`). A member matched by two entries is refused with `declaration-invalid` at the second entry (`packages/core/src/workspace/declaration.ts:1041`).
 
-The globs take `*`, `?`, `[...]` and `{a,b}` over the member's name. Set `minReader` to 0.124.36 or newer with the field.
+The globs take `*`, `?`, `[...]` and `{a,b}` over the member's name. Set `minReader` to 0.124.41 or newer with the field.
 
 ## Regenerate the routed members' pipelines
 

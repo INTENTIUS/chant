@@ -34,7 +34,7 @@ describe("ci.hooks in the declaration (#4288)", () => {
     const d = parseDeclaration(
       JSON.stringify(declaration({ before: { observe: [{ name: "init", command: ["init"] }] } }, { before: { observe: [{ name: "member-init", command: ["mi"], targets: ["db*"] }] } })),
       "chant.workspace.json",
-      "0.124.35",
+      "0.124.41",
     );
     expect(d.ci?.hooks).toEqual({ before: { observe: [{ name: "init", command: ["init"] }] } });
     expect(prLoopHooksOf(d, "infra")["before-observe"]!.map((h) => h.name)).toEqual(["init", "member-init"]);
@@ -42,7 +42,7 @@ describe("ci.hooks in the declaration (#4288)", () => {
   });
 
   test("refuses hooks a pull-request job cannot run", () => {
-    const read = (hooks: unknown) => () => parseDeclaration(JSON.stringify(declaration(hooks)), "chant.workspace.json", "0.124.35");
+    const read = (hooks: unknown) => () => parseDeclaration(JSON.stringify(declaration(hooks)), "chant.workspace.json", "0.124.41");
     expect(read({ after: { gate: [{ command: ["x"] }] } })).toThrow(WorkspaceReadError);
     expect(read({ before: { plan: [{ command: [] }] } })).toThrow(/must be a command as argv/);
     expect(read({ apply: { runBy: "apply" } })).toThrow(/runBy is for an Op waves spec/);

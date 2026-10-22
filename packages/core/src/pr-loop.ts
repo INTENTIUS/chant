@@ -72,13 +72,13 @@ export const PR_REPORT_PLANNED_OUTPUTS_FLOOR = "0.124.32";
 export const PR_REPORT_RECORD_FLOOR = "0.124.33";
 
 /** The first chant whose report can carry `hooks` (#4288). */
-export const PR_REPORT_HOOKS_FLOOR = "0.124.35";
+export const PR_REPORT_HOOKS_FLOOR = "0.124.41";
 
 /** The first chant whose plan report can carry `overdue` (#4289). */
-export const PR_REPORT_OVERDUE_FLOOR = "0.124.35";
+export const PR_REPORT_OVERDUE_FLOOR = "0.124.41";
 
 /** The first chant whose report can carry `policy` and the `policy-denied` and `policy-error` refusals (#4294). */
-export const PR_REPORT_POLICY_FLOOR = "0.124.36";
+export const PR_REPORT_POLICY_FLOOR = "0.124.41";
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";

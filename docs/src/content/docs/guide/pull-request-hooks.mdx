@@ -4,7 +4,7 @@ description: Run your own commands before and after the plan and the apply in th
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/pull-request-hooks/.
-  Add the `ci.hooks` I describe to `chant.workspace.json`, raise `minReader` to 0.124.35 if it is lower, and open a pull request with the change.
+  Add the `ci.hooks` I describe to `chant.workspace.json`, raise `minReader` to 0.124.41 if it is lower, and open a pull request with the change.
   Say in its description that the hooks run from the next pull request after this one merges.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -33,7 +33,7 @@ Put them under `ci.hooks` in `chant.workspace.json`. The shape is the one an Op 
 }
 ```
 
-A member can set its own `ci.hooks`. They run after the top level's (`packages/core/src/components/pr-hooks.ts:46`). Set `minReader` to 0.124.35 or newer with either.
+A member can set its own `ci.hooks`. They run after the top level's (`packages/core/src/components/pr-hooks.ts:46`). Set `minReader` to 0.124.41 or newer with either.
 
 ## When each moment runs
 

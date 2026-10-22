@@ -4,7 +4,7 @@ description: Run conftest or OPA over a pull request's change set with the polic
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/gate-policy/.
-  Add the `ci.policy` I describe to `chant.workspace.json` and the Rego I describe under its `path`, raise `minReader` to 0.124.36 if it is lower, and open a pull request with the change.
+  Add the `ci.policy` I describe to `chant.workspace.json` and the Rego I describe under its `path`, raise `minReader` to 0.124.41 if it is lower, and open a pull request with the change.
   Say in its description that the policy judges pull requests from the next one after this one merges.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -17,7 +17,7 @@ Put `ci.policy` in `chant.workspace.json`, and put the Rego in the directory tha
 
 ```json
 {
-  "minReader": "0.124.36",
+  "minReader": "0.124.41",
   "ci": {
     "policy": { "engine": "opa", "path": "policy", "namespace": "main" }
   }
@@ -106,7 +106,7 @@ Add `--sign` when the gate is sealed. The next `pr-apply` finds the override and
 
 ## In the report
 
-`pr-plan.json` and `pr-apply.json` carry `policy` (the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/)) with `result` (`passed`, `denied`, `held` or `error`), `engine`, `base`, `denials`, `rules`, `holds` and `warnings`. An overridden denial adds `override`, and one that still stands adds `overrideCommand`. Reports from chant 0.124.36 on carry these fields.
+`pr-plan.json` and `pr-apply.json` carry `policy` (the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/)) with `result` (`passed`, `denied`, `held` or `error`), `engine`, `base`, `denials`, `rules`, `holds` and `warnings`. An overridden denial adds `override`, and one that still stands adds `overrideCommand`. Reports from chant 0.124.41 on carry these fields.
 
 ## For a product with its own input
 

@@ -38,7 +38,7 @@
     },
     "refusal": {
       "enum": ["not-approved", "plan-changed", "not-a-reviewer", "author-approved", "no-pull-request", "wave-not-approved", "wave-plan-changed", "earlier-wave", "locked", "policy-denied", "policy-error"],
-      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits. With --wave-gate (#4003, chant 0.124.32 and newer): wave-not-approved, a wave's new plan is not covered by the approved one and no approval of its gate stands for it; wave-plan-changed, an approval of its gate stands for another digest; earlier-wave, an earlier wave has work left or no record says it applied. The waves that applied before a wave refused stay applied; waves says which. locked (#4293, chant 0.124.36 and newer): under ci.locks, another open pull request holds a lock on a target the apply reaches, and nothing applied. With ci.policy (#4294, chant 0.124.36 and newer): policy-denied, the policy at base denied the plan and no override counts; policy-error, the policy could not be run or gave no readable answer."
+      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review. author-approved (#4000): under --require-review, an approval names the pull request's author or an author or committer of one of its commits. With --wave-gate (#4003, chant 0.124.32 and newer): wave-not-approved, a wave's new plan is not covered by the approved one and no approval of its gate stands for it; wave-plan-changed, an approval of its gate stands for another digest; earlier-wave, an earlier wave has work left or no record says it applied. The waves that applied before a wave refused stay applied; waves says which. locked (#4293, chant 0.124.41 and newer): under ci.locks, another open pull request holds a lock on a target the apply reaches, and nothing applied. With ci.policy (#4294, chant 0.124.41 and newer): policy-denied, the policy at base denied the plan and no override counts; policy-error, the policy could not be run or gave no readable answer."
     },
     "message": { "type": "string", "description": "The refusal or failure as printed." },
     "resumed": {
@@ -79,7 +79,7 @@
     },
     "overdue": {
       "type": "array",
-      "description": "Added within contract version 1 by #4289, written by chant 0.124.35 and newer. Plan stage: the scheduled watch and reconcile Ops whose cron has fired at least twice since their job last ran, or since their pipeline file was added when no run is on record. Absent when none is overdue or the forge was not asked.",
+      "description": "Added within contract version 1 by #4289, written by chant 0.124.41 and newer. Plan stage: the scheduled watch and reconcile Ops whose cron has fired at least twice since their job last ran, or since their pipeline file was added when no run is on record. Absent when none is overdue or the forge was not asked.",
       "items": {
         "type": "object",
         "required": ["op", "cron", "since", "message"],
@@ -193,7 +193,7 @@
     },
     "hooks": {
       "type": "array",
-      "description": "Added within contract version 1 by #4288, written by chant 0.124.35 and newer. The stage hooks the job ran, in order, from ci.hooks in the workspace declaration at base. Absent when it ran none.",
+      "description": "Added within contract version 1 by #4288, written by chant 0.124.41 and newer. The stage hooks the job ran, in order, from ci.hooks in the workspace declaration at base. Absent when it ran none.",
       "items": {
         "type": "object",
         "required": ["moment", "name", "exit", "outcome"],
@@ -209,7 +209,7 @@
     },
     "policy": {
       "type": "object",
-      "description": "Added within contract version 1 by #4294, written by chant 0.124.36 and newer. What ci.policy in the workspace declaration at base said about the change set. Absent when the base sets no policy, or the stage reached no plan to judge.",
+      "description": "Added within contract version 1 by #4294, written by chant 0.124.41 and newer. What ci.policy in the workspace declaration at base said about the change set. Absent when the base sets no policy, or the stage reached no plan to judge.",
       "required": ["result", "engine", "base", "denials", "holds", "warnings"],
       "additionalProperties": false,
       "properties": {

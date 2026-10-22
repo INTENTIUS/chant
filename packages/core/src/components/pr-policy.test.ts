@@ -57,7 +57,7 @@ const opaOut = (value: unknown): string => JSON.stringify({ result: [{ expressio
 
 describe("ci.policy in the declaration (#4294)", () => {
   test("parses at the top level, and refuses an unattended outcome", () => {
-    const read = (policy: unknown) => parseDeclaration(JSON.stringify(declaration(policy)), "chant.workspace.json", "0.124.36");
+    const read = (policy: unknown) => parseDeclaration(JSON.stringify(declaration(policy)), "chant.workspace.json", "0.124.41");
     expect(read({ engine: "opa", path: "rules" }).ci?.policy).toEqual({ engine: "opa", path: "rules" });
     expect(() => read({ outcomes: ["allow_unattended"] })).toThrow(WorkspaceReadError);
     expect(() => read({ engine: "rego" })).toThrow(/conftest or opa/);
