@@ -197,7 +197,25 @@ export async function readRunLedger(
 ): Promise<{ records: OpRunRecord[]; malformed: number }> {
   const content = await readBlobFromPath(environment, fileFor(op), opts);
   if (!content) return { records: [], malformed: 0 };
+  return parseRunLedger(content);
+}
 
+/** The run ledger file name for `op` under `<env>/`, `runs__<op>.jsonl`. */
+export function runLedgerFile(op: string): string {
+  return fileFor(op);
+}
+
+/** The op a run ledger file name holds, or null when `file` is not one. */
+export function opOfRunLedgerFile(file: string): string | null {
+  return file.startsWith(PREFIX) && file.endsWith(".jsonl") && file.length > PREFIX.length + ".jsonl".length ? file.slice(PREFIX.length, -".jsonl".length) : null;
+}
+
+/**
+ * Parse the text of one run ledger file the way {@link readRunLedger} reads
+ * it (#4297): a reader that fetches the file itself, such as `chant query`,
+ * gets the same records and the same malformed count.
+ */
+export function parseRunLedger(content: string): { records: OpRunRecord[]; malformed: number } {
   const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
   const records: OpRunRecord[] = [];
   let malformed = 0;
