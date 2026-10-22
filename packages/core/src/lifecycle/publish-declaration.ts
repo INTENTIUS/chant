@@ -61,9 +61,10 @@ export const NpmPublishSchema = z
      */
     tokenEnv: envName.optional(),
     /**
-     * Seconds the reveal waits for the registry to serve every version it
-     * published before installing them to audit (#4244). A registry accepts a
-     * publish before it serves it. Default 600.
+     * A cap, in seconds, on the reveal's wait for the registry to serve every
+     * version it published before installing them to audit (#4244). A
+     * registry accepts a publish before it serves it. Unset, the wait ends
+     * only when every version is served or the registry fails (#4271).
      */
     registryWait: z.number().int().min(0).optional(),
   })

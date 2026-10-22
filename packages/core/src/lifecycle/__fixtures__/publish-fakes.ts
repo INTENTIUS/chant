@@ -203,7 +203,12 @@ if (args[0] === "publish") {
   const [name, version] = split(args[1]);
   const p = reg.packages[name];
   if (!p) { console.error("npm error 404 Not Found - " + name); process.exit(1); }
-  if (p.lag && p.lag[version] > 0) { p.lag[version] -= 1; save(); }
+  if (process.env.FAKE_NPM_VIEW_ERROR && name.includes(process.env.FAKE_NPM_VIEW_ERROR) && p.versions.includes(version)) { console.error("npm error code E500"); console.error("npm error 500 Internal Server Error - GET https://registry.example/" + name); process.exit(1); }
+  if (p.lag && p.lag[version] > 0) {
+    p.lag[version] -= 1; save();
+    // A new package npm does not serve yet answers 404, as the real registry does.
+    if (process.env.FAKE_NPM_LAG_404) { console.error("npm error code E404"); console.error("npm error 404 No match found for version " + version); process.exit(1); }
+  }
   else if (p.versions.includes(version)) console.log(version);
 } else if (args[0] === "dist-tag" && args[1] === "add") {
   const [name, version] = split(args[2]);

@@ -518,7 +518,39 @@ describe("SBOMs and provenance (#4049)", () => {
       expect(installs(log)).toBe(1);
     });
 
-    test("a version never served: the wait ends with an error naming it, before any install", async () => {
+    test("with no registryWait it waits past 600 seconds until npm serves, naming what is missing about once a minute (#4271)", async () => {
+      // 120 polls of 10s: 20 minutes, as chant-lexicon-aws took on 0.124.39.
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_LAG: "@acme/core=120,@acme/cli=3" });
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(sleeps.length).toBe(120);
+      const progress = ctx.lines.filter((l) => l.startsWith("waiting for the registry to serve"));
+      expect(progress[0]).toBe("waiting for the registry to serve @acme/core@1.0.0, @acme/cli@1.0.0");
+      expect(progress[1]).toBe("waiting for the registry to serve @acme/core@1.0.0 (60s so far)");
+      expect(progress.at(-1)).toBe("waiting for the registry to serve @acme/core@1.0.0 (1140s so far)");
+      expect(progress.length).toBe(20);
+      expect(installs(log)).toBe(1);
+    });
+
+    test("a 404 for the version is not yet served, and the wait goes on (#4271)", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_LAG: "@acme/cli=2", FAKE_NPM_LAG_404: "1" });
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(sleeps).toEqual([10_000, 10_000]);
+      expect(installs(log)).toBe(1);
+    });
+
+    test("a registry error that is not a 404 ends the wait with npm's error, before any install (#4271)", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_VIEW_ERROR: "@acme/cli" });
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-registry-failed");
+      expect(err.message).toBe("npm view @acme/cli@1.0.0 exited 1 while the reveal waited for the registry to serve it, so nothing was audited: npm error 500 Internal Server Error - GET https://registry.example/@acme/cli");
+      expect(sleeps).toEqual([]);
+      expect(installs(log)).toBe(0);
+    });
+
+    test("with registryWait declared, a version never served: the wait ends with an error naming it, before any install", async () => {
       const { log, deps, ctx, d } = lagged({ FAKE_NPM_LAG: "@acme/core=1000" }, 30);
       const [target] = await createPublishTargets([d], deps);
       const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
