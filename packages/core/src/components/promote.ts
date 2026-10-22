@@ -39,7 +39,7 @@
  */
 
 import { parseWiringRef, type WiringRef } from "../lint/rules/comp/support";
-import { latestPerComponent, type ReleaseRecord, type ReleaseRecordInput, type ReleaseAdmission, type RunOrigin } from "../lifecycle/release-ledger";
+import { isApplyRecord, latestPerComponent, type ReleaseRecord, type ReleaseRecordInput, type ReleaseAdmission, type RunOrigin } from "../lifecycle/release-ledger";
 import { CapabilityRegistry, type Capability } from "./capability";
 import {
   runInterpretDriver,
@@ -109,18 +109,34 @@ export function selectRelease(
   env: string,
   digest?: string,
 ): { record: ReleaseRecord } | { error: string } {
-  const own = records.filter((r) => r.component === component);
-  if (own.length === 0) return { error: `no release of "${component}" is recorded in "${env}"` };
-  if (digest === undefined) return { record: latestPerComponent(own).get(component)! };
-  const matching = own.filter((r) => r.digest === digest);
+  const own = deployableRecords(records, component, env);
+  if ("error" in own) return own;
+  if (digest === undefined) return { record: latestPerComponent(own.records).get(component)! };
+  const matching = own.records.filter((r) => r.digest === digest);
   if (matching.length === 0) {
     return {
       error: `digest ${digest} is not recorded for "${component}" in "${env}"; ` +
-        `its recorded digests are ${[...new Set(own.map((r) => r.digest))].join(", ")}`,
+        `its recorded digests are ${[...new Set(own.records.map((r) => r.digest))].join(", ")}`,
     };
   }
   return { record: latestPerComponent(matching).get(component)! };
 }
+
+/**
+ * The records of `component` a promote, rollback or redeploy can deploy from
+ * (#4274): every one but those that only say it applied ({@link isApplyRecord}),
+ * whose digest is a plan or deploy-input digest and names no artifact.
+ */
+function deployableRecords(records: ReleaseRecord[], component: string, env: string): { records: ReleaseRecord[] } | { error: string } {
+  const own = records.filter((r) => r.component === component);
+  if (own.length === 0) return { error: `no release of "${component}" is recorded in "${env}"` };
+  const deployable = own.filter((r) => !isApplyRecord(r));
+  if (deployable.length === 0) return { error: appliesOnly(component, env) };
+  return { records: deployable };
+}
+
+const appliesOnly = (component: string, env: string): string =>
+  `"${component}" has only applies recorded in "${env}", each by a plan or deploy-input digest, so no artifact of it can be deployed again`;
 
 /**
  * Read `--digest <component>=<digest>` values (#2602) into a component-to-
@@ -198,12 +214,16 @@ export function planPromotion(input: {
     return { from, to, items: [{ component, digest: picked.record.digest, source: picked.record }], notPromoted: [] };
   }
 
-  const latest = latestPerComponent(sourceRecords);
+  const latest = latestPerComponent(sourceRecords.filter((r) => !isApplyRecord(r)));
   const items: PromotionItem[] = [];
   const notPromoted: PromotionPlan["notPromoted"] = [];
   for (const [name, record] of [...latest].sort(([a], [b]) => a.localeCompare(b))) {
     if (declared.includes(name)) items.push({ component: name, digest: record.digest, source: record });
     else notPromoted.push({ component: name, reason: "recorded but not declared in this checkout" });
+  }
+  // #4274: a component that only applied (infrastructure, no artifact) has nothing to promote.
+  for (const name of [...new Set(sourceRecords.filter((r) => isApplyRecord(r) && !latest.has(r.component)).map((r) => r.component))].sort()) {
+    notPromoted.push({ component: name, reason: "only applies are recorded, by a plan or deploy-input digest; there is no artifact to promote" });
   }
   if (items.length === 0) {
     return { error: `nothing to promote: no component declared here has a release recorded in "${from}"` };
@@ -228,9 +248,10 @@ export function planRollback(input: {
   if (!declared.includes(component)) {
     return { error: `component "${component}" is not declared in this checkout` };
   }
-  const own = records.filter((r) => r.component === component);
-  const current = latestPerComponent(own).get(component);
-  if (!current) return { error: `no release of "${component}" is recorded in "${env}"` };
+  const deployable = deployableRecords(records, component, env);
+  if ("error" in deployable) return deployable;
+  const own = deployable.records;
+  const current = latestPerComponent(own).get(component)!;
 
   let target: ReleaseRecord;
   if (digest !== undefined) {
@@ -284,7 +305,7 @@ export function planReleaseRollback(input: {
       notPromoted.push({ component, reason: `in release ${name} but not declared in this checkout` });
       continue;
     }
-    const ran = records.filter((r) => r.component === component && r.releaseDigest === release.releaseDigest);
+    const ran = records.filter((r) => r.component === component && r.releaseDigest === release.releaseDigest && !isApplyRecord(r));
     if (ran.length === 0) {
       neverRan.push(component);
       continue;
@@ -299,7 +320,7 @@ export function planReleaseRollback(input: {
     };
   }
   if (items.length === 0) return { error: `release ${name} has no component declared in this checkout` };
-  const current = latestPerComponent(records);
+  const current = latestPerComponent(records.filter((r) => !isApplyRecord(r)));
   const already = items.every((i) => {
     const now = current.get(i.component);
     return now !== undefined && now.releaseDigest === release.releaseDigest && now.digest === i.digest && !input.unsettled?.has(i.component);
@@ -329,8 +350,9 @@ export function planRedeploy(input: {
   if (!declared.includes(component)) {
     return { error: `component "${component}" is not declared in this checkout` };
   }
-  const current = latestPerComponent(records.filter((r) => r.component === component)).get(component);
-  if (!current) return { error: `no release of "${component}" is recorded in "${env}"` };
+  const deployable = deployableRecords(records, component, env);
+  if ("error" in deployable) return deployable;
+  const current = latestPerComponent(deployable.records).get(component)!;
   if (digest !== undefined && digest !== current.digest) {
     return {
       error: `${digest} is not the current release of "${component}" in "${env}" (that is ${current.digest}); ` +
@@ -699,6 +721,8 @@ function sharedRecord(item: PromotionItem, env: string, run: DeployRunInfo): Rel
     ...(run.admission ? { admission: run.admission } : {}),
     ...(source.manifestDigest ? { manifestDigest: source.manifestDigest } : {}),
     ...(source.inputDigest ? { inputDigest: source.inputDigest } : {}),
+    // #4274: a release's templates digest stays one when it is deployed again.
+    ...(source.digestKind ? { digestKind: source.digestKind } : {}),
   };
 }
 

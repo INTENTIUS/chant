@@ -59,6 +59,7 @@ import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import { EarlierWaveNotAppliedError, runFanOut } from "../../components/fan-out-run";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
+import { appliedDigestOf } from "../../components/auto-release";
 import { describeChangedWave, withWaveRecord, type WaveRecord } from "../../gated-waves";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
@@ -503,6 +504,10 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       release.runId,
       resolveAutoReleaseDisabled(config, args.noReleaseRecord),
       release.runOrigin,
+      undefined,
+      undefined,
+      // #4274: a component that publishes nothing is recorded by its deploy-input digest.
+      appliedDigestOf({ components: derived.components, env: args.env ?? "local", projectRoot: projectPath }),
     );
   }
 

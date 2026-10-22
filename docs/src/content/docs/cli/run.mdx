@@ -322,7 +322,7 @@ chant run --components search-service --env staging --seed-outputs out/shared-al
 
 #### The recorded digest: `--digest-file`
 
-`--digest-file <file>` writes one `<component>=<digest>` line for each release the run recorded (see [Auto-recorded releases](#auto-recorded-releases)), after a successful run. The file is empty when the run recorded nothing, for example under `--no-release-record` or for a component with no publish step. The line is the form [`chant components promote --digest`](/chant/cli/components/#components-promote) takes, so a later job can promote the exact release this job built rather than whatever is latest in the environment. A pipeline from [`chant build --components --generate <lexicon> --promote-to <env>`](/chant/cli/build/#promote-job) uses it that way.
+`--digest-file <file>` writes one `<component>=<digest>` line for each release the run recorded (see [Auto-recorded releases](#auto-recorded-releases)), after a successful run. The file is empty when the run recorded nothing, for example under `--no-release-record`, or when it recorded only components with no publish step, whose records name no artifact. The line is the form [`chant components promote --digest`](/chant/cli/components/#components-promote) takes, so a later job can promote the exact release this job built rather than whatever is latest in the environment. A pipeline from [`chant build --components --generate <lexicon> --promote-to <env>`](/chant/cli/build/#promote-job) uses it that way.
 
 ```bash
 chant run --components search-service --env staging --digest-file search-service.digest
@@ -376,7 +376,11 @@ The marker line names the command to run from the member's directory, and the me
 
 ## Auto-recorded releases
 
-Auto-recording is **on by default**. It writes exactly one record per component whose `deploy` composition published a digest-bearing artifact (via `publish-image`, `publish-artifact`, or `load-image-on-host`); a component with no publish step, or a failed deploy, writes nothing. A ledger-write failure (e.g. a concurrent push, or no git remote configured) is reported as a warning and never turns an otherwise-successful deploy into a nonzero exit.
+Auto-recording is **on by default**. It writes exactly one record per component a successful run deployed; a failed deploy writes nothing. For a component whose `deploy` composition published a digest-bearing artifact (via `publish-image`, `publish-artifact`, or `load-image-on-host`), the record's `digest` is that artifact's. A component that only deploys infrastructure publishes nothing, and it is recorded too (#4274). Its record's `digestKind` says what `digest` names in place of an artifact. `pr-apply` records `plan`, the plan digest its approval bound; with several planned members that is the set digest over them. A run that planned nothing, as `chant run --components` does, records `deploy-input`, the component's input digest from `componentInputDigests` (`packages/core/src/components/fan-out-inputs.ts`). Under `--release` the record carries the release's templates digest with `templates` (#4222).
+
+A `plan` or `deploy-input` record says the component applied at that commit and names no artifact. Promote, rollback and redeploy never deploy from it. A promote of every component lists it as not promoted, and `--digest-file` leaves it out. Status compares two environments' records of it on `gitSha`.
+
+A ledger-write failure (e.g. a concurrent push, or no git remote configured) is reported as a warning and never turns an otherwise-successful deploy into a nonzero exit.
 
 Opt out per-invocation with `--no-release-record`, or project-wide via `chant.config.ts`:
 

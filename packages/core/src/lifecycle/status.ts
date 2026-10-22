@@ -43,7 +43,7 @@
 
 import type { ChangeSet, ChangeAction } from "./change-set";
 import type { ResourceMetadata } from "../lexicon";
-import { latestPerComponent, type ReleaseRecord } from "./release-ledger";
+import { isApplyRecord, latestPerComponent, type ReleaseRecord } from "./release-ledger";
 import { isLegacyContentDigest } from "./legacy-digest";
 import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
 import { unobservedReasonText, type UnobservedReason } from "../observation";
@@ -647,7 +647,8 @@ function notBefore(since: string, recordedAt: string): boolean {
  */
 function contradictsRecord(recorded: ReleaseRecord, evidence: LiveComponentEvidence): string | undefined {
   for (const id of evidence.identities ?? []) {
-    if (id.digest !== undefined) {
+    // #4274: an apply's digest is a plan or deploy-input digest, which no live resource reports.
+    if (id.digest !== undefined && !isApplyRecord(recorded)) {
       const matches =
         sameDigest(id.digest, recorded.digest) ||
         (recorded.inputDigest !== undefined && sameDigest(id.digest, recorded.inputDigest));
@@ -697,7 +698,9 @@ export interface CrossEnvComparison {
    * environments legitimately render to different bytes, so cross-environment
    * "is prod running what staging tested" joins on the input side while
    * `digest` proves the exact bytes each cluster got. Records without it
-   * compare on `digest` exactly as before.
+   * compare on `digest` exactly as before. An apply record (#4274) compares
+   * on its `gitSha`, since its plan or deploy-input digest takes in the
+   * environment and so differs between any two.
    */
   same: boolean;
   /** The identities `same` was decided on (`inputDigest ?? digest` per side), when both sides had one and they differ from the digests shown. */
@@ -711,6 +714,11 @@ export interface CrossEnvComparison {
   mixedDigestForms?: true;
 }
 
+/** What two environments' records of a component are compared on: the input side when there is one, the commit for an apply (#4274). */
+export function comparableIdentity(record: ReleaseRecord): string {
+  return isApplyRecord(record) ? `git:${record.gitSha}` : record.inputDigest ?? record.digest;
+}
+
 /** Compare the latest recorded digest for `component` between two environments' release records. */
 export function compareAcrossEnvironments(
   component: string,
@@ -719,9 +727,9 @@ export function compareAcrossEnvironments(
 ): CrossEnvComparison {
   const latestA = latestPerComponent(envA.records).get(component);
   const latestB = latestPerComponent(envB.records).get(component);
-  const idA = latestA ? latestA.inputDigest ?? latestA.digest : undefined;
-  const idB = latestB ? latestB.inputDigest ?? latestB.digest : undefined;
-  const comparedOnInputs = (latestA?.inputDigest ?? latestB?.inputDigest) !== undefined;
+  const idA = latestA ? comparableIdentity(latestA) : undefined;
+  const idB = latestB ? comparableIdentity(latestB) : undefined;
+  const comparedOnInputs = (latestA !== undefined && idA !== latestA.digest) || (latestB !== undefined && idB !== latestB.digest);
   return {
     component,
     envA: envA.name,

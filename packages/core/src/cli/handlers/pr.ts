@@ -118,6 +118,7 @@ import { findWorkspaceRoot } from "../../project-root";
 import { resolveChangedUnits } from "./fan-out";
 import { coverByMerges, greenOp, type GreenTarget } from "../../components/green-cover";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
+import { appliedDigestOf } from "../../components/auto-release";
 import type { CommandContext } from "../registry";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
@@ -695,7 +696,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
       : {}),
   });
   recordAttempt();
-  await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), release.runOrigin);
+  await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
   const report = prReport({
     ...base,
     approval,
@@ -713,6 +714,11 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
+}
+
+/** #4274: a component that published nothing is recorded by the plan digest its approval bound. */
+function prAppliedDigests(p: Prepared, members: PrMember[]) {
+  return appliedDigestOf({ components: p.components, env: p.env, projectRoot: resolve("."), members });
 }
 
 /** chant components pr-record --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
@@ -1485,7 +1491,7 @@ async function prApplyWaves(
       if (outputs) outputsSoFar[name] = outputs;
     }
     setWave({ ...entry, status: applied.status === "applied" ? "applied" : "failed" });
-    await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin);
+    await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
     if (applied.status !== "applied") {
       return stop(report({ status: "failed" }), failedRunExitCode(applied.run.results), applied.run.status === "gated" ? "gated" : undefined);
     }

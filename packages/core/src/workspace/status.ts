@@ -38,7 +38,7 @@ import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { GATES_DIR } from "../lifecycle/gate-ledger";
 import { readPathSha } from "../lifecycle/git";
-import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
+import { latestPerComponent, readReleaseLedger, type ReleaseDigestKind, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { describeRevocation, revokedCommitsAt, revokedReleaseLookup, type ReleaseRevocation, type RevokedRelease } from "../lifecycle/release-revocation";
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { readDeployOutcomes, type DeployOutcome } from "../lifecycle/deploy-outcome";
@@ -138,6 +138,8 @@ export interface StatusRelease {
   releaseLabel: string | null;
   /** Read flags, such as `legacy-digest` (#2514). */
   flags: string[];
+  /** What `digest` names when it is not an artifact digest (#4274): `plan`, `deploy-input` or `templates`. Absent for an artifact digest. */
+  digestKind?: ReleaseDigestKind;
   /**
    * The release plan `digest` names, read from `_plans/<digest>.json` on
    * chant/lifecycle (ws-055, #2733) — the work items and evidence this
@@ -611,6 +613,7 @@ async function readEnvironment(
       releaseDigest: r.releaseDigest ?? null,
       releaseLabel: (r.releaseDigest !== undefined ? labels.get(r.releaseDigest) : undefined) ?? null,
       flags: [...(r.flags ?? [])],
+      ...(r.digestKind ? { digestKind: r.digestKind } : {}),
       plan: await readReleasePlan(r.digest, { cwd, prefix: planPrefix }),
       ...(await revokedItem(r, env, revokedOf, back)),
     })),
@@ -665,8 +668,9 @@ async function supersedeRevokedGates(gates: StatusGate[], revokedOf: RevokedOf):
   );
 }
 
-/** The digest two environments are compared on: the input side when there is one. */
-const compareKey = (r: StatusRelease): string => r.inputDigest ?? r.digest;
+/** The digest two environments are compared on: the input side when there is one, the commit for an apply (#4274). */
+const compareKey = (r: StatusRelease): string =>
+  r.digestKind === "plan" || r.digestKind === "deploy-input" ? `git:${r.gitSha}` : r.inputDigest ?? r.digest;
 
 export function compareEnvironments(a: StatusEnvironment, b: StatusEnvironment): StatusCompare {
   const left = new Map(a.releases.map((r) => [r.component, r]));

@@ -108,6 +108,45 @@ describe("planning", () => {
   });
 });
 
+describe("records of an apply, not an artifact (#4274)", () => {
+  const apply = (component: string, timestamp: string, digestKind: "plan" | "deploy-input" = "plan"): ReleaseRecord => ({
+    ...rec(component, "staging", `jcs1-sha256:${timestamp.slice(0, 10)}`, timestamp),
+    digestKind,
+  });
+  const records = [
+    rec("api", "staging", "sha256:api", "2026-01-02T00:00:00Z"),
+    apply("infra", "2026-01-02T00:00:00Z"),
+    apply("infra", "2026-01-03T00:00:00Z", "deploy-input"),
+  ];
+
+  test("promoting every component leaves an infrastructure component out and says why", () => {
+    const plan = planPromotion({ from: "staging", to: "prod", sourceRecords: records, declared: ["api", "infra"] }) as PromotionPlan;
+    expect(plan.items.map((i) => i.component)).toEqual(["api"]);
+    expect(plan.notPromoted).toEqual([{ component: "infra", reason: expect.stringMatching(/only applies are recorded/) }]);
+  });
+
+  test("a newer apply never hides the artifact release before it", () => {
+    const mixed = [rec("api", "staging", "sha256:api", "2026-01-01T00:00:00Z"), apply("api", "2026-01-05T00:00:00Z")];
+    const picked = selectRelease(mixed, "api", "staging");
+    expect("record" in picked && picked.record.digest).toBe("sha256:api");
+  });
+
+  test("promote, rollback and redeploy of a component with only applies are refused by name", () => {
+    const promote = planPromotion({ from: "staging", to: "prod", sourceRecords: records, declared: ["api", "infra"], component: "infra" });
+    expect("error" in promote && promote.error).toMatch(/"infra" has only applies recorded in "staging"/);
+    const rollback = planRollback({ env: "staging", records, declared: ["infra"], component: "infra" });
+    expect("error" in rollback && rollback.error).toMatch(/only applies recorded/);
+    const redeploy = planRedeploy({ env: "staging", records, declared: ["infra"], component: "infra" });
+    expect("error" in redeploy && redeploy.error).toMatch(/only applies recorded/);
+  });
+
+  test("a rollback or redeploy carries a templates digest's kind forward", () => {
+    const source: ReleaseRecord = { ...rec("infra", "staging", "sha256:tpl", "2026-01-02T00:00:00Z"), digestKind: "templates" };
+    const run = { runId: "r2", actor: "ci", timestamp: "2026-01-04T00:00:00Z" };
+    expect(rollbackRecord({ component: "infra", digest: "sha256:tpl", source }, "staging", run)).toMatchObject({ digestKind: "templates" });
+  });
+});
+
 describe("pinning each component to a digest (#2602)", () => {
   // api's pinned release is older than its latest one: another pipeline
   // recorded sha256:newer while this one ran.

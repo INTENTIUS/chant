@@ -242,6 +242,35 @@ export interface ReleaseRecord {
    * deploy that was not made from a release.
    */
   releaseDigest?: string;
+  /**
+   * Optional: what `digest` names when it is not an artifact digest (#4274).
+   * Absent on a record whose digest is the artifact the deploy promoted, and on
+   * every record written before 0.124.35.
+   *
+   * - `plan`: the component published nothing, and the digest is its plan
+   *   digest, the one its approval bound (`pr-apply`).
+   * - `deploy-input`: the component published nothing and planned nothing, and
+   *   the digest is its deploy-input digest (`componentInputDigests`,
+   *   ../components/fan-out-inputs.ts).
+   * - `templates`: the digest of the templates the release records for the
+   *   component (#4222, `releaseTemplatesDigest`).
+   *
+   * A `plan` or `deploy-input` record says the component applied; it names no
+   * artifact, so promote, rollback and redeploy never deploy it
+   * ({@link isApplyRecord}).
+   */
+  digestKind?: ReleaseDigestKind;
+}
+
+/** What a release record's `digest` names when it is not an artifact digest (#4274). */
+export type ReleaseDigestKind = "plan" | "deploy-input" | "templates";
+
+/**
+ * Whether `record` only says its component applied (#4274): its digest is a
+ * plan or deploy-input digest, not one anything can be deployed from again.
+ */
+export function isApplyRecord(record: Pick<ReleaseRecord, "digestKind">): boolean {
+  return record.digestKind === "plan" || record.digestKind === "deploy-input";
 }
 
 /** Thrown by `appendReleaseRecord` when the record is missing a required field — a release record can never be recorded partially, since it is never editable afterward. */

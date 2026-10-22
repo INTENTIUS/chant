@@ -489,6 +489,8 @@ export interface RunComponentsResult {
   run?: DriverRunResult;
   /** Component names actually dispatched to the driver, in run order. */
   selected: string[];
+  /** The components dispatched, as they ran (#4274): what a component's deploy-input digest is taken over. */
+  components?: DriverComponent[];
   error?: string;
   /** Set when the run stopped at a `gate` nobody has approved (#2119): the component it stopped at and the pending fact recorded for it. */
   gated?: {
@@ -718,6 +720,7 @@ export async function runComponents(
         success: run.status === "ok",
         run,
         selected,
+        components: resolvedTargets,
         buildParams: options.buildParams,
         ...(run.status === "gated" && run.gate
           ? {
@@ -785,6 +788,7 @@ export async function runComponents(
       success: componentResult.ok,
       run,
       selected,
+      components: resolvedTargets,
       buildParams: options.buildParams,
       ...(componentResult.status === "gated" && componentResult.gate
         ? {

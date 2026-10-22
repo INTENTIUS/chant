@@ -661,7 +661,7 @@ async function deployPlan(
         const admission = gateAdmission(result);
         const input = record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}) });
         const templates = templateDigests.get(item.component);
-        const { record: written } = await appendReleaseRecord(under ? { ...input, ...(templates ? { digest: templates } : {}), releaseDigest: under.release.releaseDigest } : input);
+        const { record: written } = await appendReleaseRecord(under ? { ...input, ...(templates ? { digest: templates, digestKind: "templates" as const } : {}), releaseDigest: under.release.releaseDigest } : input);
         recorded.push(written);
       }
       if (outcome) await appendDeployOutcome(outcome);
