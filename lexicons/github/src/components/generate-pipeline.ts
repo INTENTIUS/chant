@@ -59,7 +59,8 @@
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
+import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_RUNNER } from "@intentius/chant/ci-jobs";
+import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import {
   GREEN_TAG_PATTERN,
   GREEN_TICK_WORKFLOW,
@@ -70,7 +71,9 @@ import {
   prApplyRecordKey,
   prApplyWaveJobName,
   prLoopJobs,
+  prLoopPostJob,
   prLoopSetup,
+  PR_PLAN_NOTE_JOB,
   prLoopWaveJobs,
   prLoopWithWaves,
 } from "@intentius/chant/components/pr-pipeline";
@@ -82,6 +85,7 @@ import type {
   PipelineMember,
 } from "@intentius/chant/lexicon";
 import { afterEarlierWave, checkoutStep, concurrency, downloadArtifactStep, emitWorkflowYAML, keepRecordStep, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
+import { actionRef } from "../action-pins";
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
 
@@ -121,6 +125,9 @@ export interface GithubPipelineDoc {
   /** Every generated job, for the machine-readable view. */
   jobs: GeneratedJob[];
 }
+
+/** The plan job's last step, whose outputs carry its report to the plan-note job (#4295). */
+const PLAN_STEP_ID = "plan";
 
 /** The output a gated apply wave hands the green commit it applies through, and the step that sets it (#4221). */
 const WAVE_GREEN_OUTPUT = "green-sha";
@@ -205,6 +212,16 @@ function gatedWaveGithubDoc(
  * for the pushed commit, so wave k reads what wave k-1 left, and a re-run of
  * a wave that stopped at its gate reads what it left itself. Each keeps its
  * report as `chant-pr-apply-wave-<k>`.
+ *
+ * The plan job holds no forge token while the pull request's code runs
+ * (#4295, `@intentius/chant/ci-handover`). It checks the change out with a
+ * script that gives the job's token to its fetches alone, starts every later
+ * step again without the token variables, and ends with the plan step, which
+ * hands its report on as the job's outputs. The `plan-note` job then checks
+ * out the target branch's commit, takes the report back, keeps it as the
+ * `chant-pr-plan` artifact, and posts the note and `chant/plan` with
+ * `chant components pr-post`. Only the note job may write to the pull
+ * request and its statuses.
  */
 function prLoopGithubDoc(
   components: DriverComponent[],
@@ -290,14 +307,54 @@ function prLoopGithubDoc(
       ? [["apply", applyJob(apply, [], "Apply the newest green commit under the merged changes' approvals")]]
       : [];
   const applyJobs: Array<[string, Record<string, unknown>]> = [recordJob, ...greenJobs];
+  // #4295: the plan job runs the pull request's code and holds no forge token while it does.
+  const forgeName = loop.forge ?? "github";
+  const drop = dropForgeTokens("sh");
+  const headStep = (line: string, name?: string): Record<string, unknown> => ({ ...(name ? { name } : {}), run: `${drop}\n${line}` });
+  const planSteps: Array<Record<string, unknown>> = [
+    // A script, not actions/checkout, whose post step runs at the job's end with the token as its input.
+    {
+      name: "Check out the change",
+      ...(rooted ? {} : { "working-directory": "." }),
+      env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
+      run: checkoutScript(true, true),
+    },
+    ...[...prLoopSetup(image), ...beforeScript].map((line) => headStep(line)),
+    ...(plan.build ? [headStep(plan.build[0]!, "Build the templates"), headStep(plan.build[1]!, "Lint the project")] : []),
+    // The job's last step: a step after it would start beside whatever the change's code left running.
+    {
+      name: "Plan the members this pull request reaches",
+      id: PLAN_STEP_ID,
+      env: plan.run.env,
+      run: [drop, ...handoverTrap(PR_LOOP_REPORT_DIR, forgeName), ...(plan.checkout ?? []), ...(plan.setup ?? []), plan.run.command, ...extraScript].join("\n"),
+    },
+  ];
+  const post = prLoopPostJob(forgeName, env, member?.name);
+  const noteSteps: Array<Record<string, unknown>> = [
+    // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
+    { name: "Check out the target branch's commit", uses: actionRef("actions/checkout"), with: { ref: "${{ github.event.pull_request.base.sha }}" } },
+    ...runSteps(beforeScript),
+    { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
+    { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
+    { name: "Post the plan note and chant/plan", if: "always()", env: post.env, run: post.command },
+  ];
   const jobsDoc: Record<string, unknown> = {
     plan: {
       if: "github.event_name == 'pull_request'",
       "runs-on": GITHUB_RUNNER,
       container: image,
-      // #4289: `actions: read` lets pr-plan ask when each scheduled watch or reconcile Op last ran.
+      permissions: { contents: "read" },
+      outputs: handoverOutputs(PLAN_STEP_ID, forgeName),
+      steps: planSteps,
+    },
+    [PR_PLAN_NOTE_JOB]: {
+      needs: ["plan"],
+      if: "always() && github.event_name == 'pull_request' && (needs.plan.result == 'success' || needs.plan.result == 'failure')",
+      "runs-on": GITHUB_RUNNER,
+      container: image,
+      // #4289: `actions: read` lets pr-post ask when each scheduled watch or reconcile Op last ran.
       permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
-      steps: steps(plan, "Plan the members this pull request reaches"),
+      steps: noteSteps,
     },
     ...Object.fromEntries(applyJobs),
   };
@@ -313,9 +370,10 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", ...applyNames],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...applyNames],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
+      { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
       ...applyNames.map((name, i) => ({
         jobName: name,
         component: name === "record" ? "merge record" : loop.waveGate ? `green apply, wave ${i}` : "green apply",

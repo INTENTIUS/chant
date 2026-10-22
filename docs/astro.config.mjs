@@ -238,6 +238,7 @@ export default defineConfig({
 								{ label: 'Sign What the Runners Do', slug: 'guide/security-who-ran-it' },
 								{ label: 'Require Forge Review for Applies', slug: 'guide/security-review-rules' },
 								{ label: 'Run Applies Only on Started Runners', slug: 'guide/security-isolated-runners' },
+								{ label: 'Keep the Forge Token From the Plan', slug: 'guide/security-forge-token-handover' },
 							],
 						},
 						{

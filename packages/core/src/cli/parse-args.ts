@@ -401,6 +401,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       const url = args[++i];
       if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix> or file://<directory>");
       result.reportUrl = url;
+    } else if (arg === "--result") {
+      // `chant components pr-post --result <result>` (#4295): the plan job's own result, which fails the status when it failed.
+      result.planResult = args[++i];
+      if (!result.planResult || result.planResult.startsWith("-")) throw new Error("--result needs the plan job's result: --result success|failure|cancelled");
     } else if (arg === "--no-status") {
       // `chant ci run|serve --no-status` (#4097): post no commit status for the job.
       result.noStatus = true;

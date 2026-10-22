@@ -109,6 +109,8 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Apply jobs require a runner-start statement", byDefault: "off", setting: "`--require-runner-start`", group: "isolated-runners", codes: ["security-runner-start-no-key", "security-runner-start-no-role", "security-trust-unreadable"] },
   { feature: "Secrets file", byDefault: "off", setting: "`--secrets`", group: null, codes: [] },
   { feature: "Env allowlist and log redaction", byDefault: "on: `ci run`'s contract, a listed exception", setting: "`--pass-env`", group: null, codes: [] },
+  // #4295: the plan job's steps never hold a forge token; the plan-note job posts. Part of the generated pipeline, so nothing turns it on.
+  { feature: "Plan steps hold no forge token", byDefault: "on: the plan job's contract, a listed exception", setting: "regenerate the pipeline", group: null, codes: [] },
 ];
 
 /** The reference page's table of {@link SECURITY_FEATURES}, as markdown. */

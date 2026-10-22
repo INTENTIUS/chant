@@ -5,6 +5,7 @@
  * CI schema this lexicon vendors.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGitlabPipeline } from "./generate-pipeline";
 import { greenCheckout, PR_LOOP_SETUP, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
+import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 
 const ESTATE: DriverComponent[] = [
   { name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: "net" }] }] },
@@ -54,7 +56,9 @@ describe("the GitLab merge-request pipeline", () => {
   test("plans in a merge request pipeline from its diff base, records on a push to the default branch, applies on a ci/green/ tag, one at a time", () => {
     expect(doc.plan.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
     expect(doc.plan.variables).toEqual({ BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" });
+    // #4295: the merge request's code runs here, so the script drops the forge tokens first.
     expect(doc.plan.script).toEqual([
+      GITLAB_DROP_FORGE_TOKENS,
       ...PR_LOOP_SETUP,'chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge gitlab']);
     expect(doc.record.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
     expect(doc.record.variables).toEqual({ BASE_SHA: "$CI_COMMIT_BEFORE_SHA" });
@@ -121,7 +125,7 @@ describe("the GitLab merge-request pipeline", () => {
     const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr.network.prod.gitlab-ci.yml" };
     const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, member });
     const mdoc = parseYAML(scoped.yaml) as Record<string, unknown> & { workflow: { name?: string; rules: unknown[] } };
-    expect(scoped.jobs.map((j) => j.jobName)).toEqual(["network-plan", "network-record", "network-apply"]);
+    expect(scoped.jobs.map((j) => j.jobName)).toEqual(["network-plan", "network-plan-note", "network-record", "network-apply"]);
     expect(mdoc.plan).toBeUndefined();
     // Included files merge top-level keys: no name, so members do not collide on it.
     expect(mdoc.workflow.name).toBeUndefined();
@@ -162,7 +166,7 @@ describe("the gitlab pull-request pipeline with build (#4088)", () => {
     const script = (job: string) => (doc[job] as { script: string[] }).script;
     for (const job of ["plan", "apply"]) {
       const lines = script(job);
-      const i = lines.findIndex((l) => l.startsWith("chant components pr-"));
+      const i = lines.findIndex((l) => l.startsWith(`chant ci run ${job}`));
       expect(lines.slice(i - 2, i)).toEqual(["chant build --env prod", "chant lint"]);
     }
   });
@@ -199,7 +203,7 @@ describe("the GitLab merge-request pipeline records on merge by default (#4168)"
   });
 
   test("a push to the default branch runs the record job, which applies nothing and keeps no cache", () => {
-    expect(doc.stages).toEqual(["plan", "record"]);
+    expect(doc.stages).toEqual(["plan", "plan-note", "record"]);
     expect(doc.apply).toBeUndefined();
     expect(doc.record.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
     expect(doc.record.script.at(-1)).toBe('chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge gitlab');
@@ -215,5 +219,36 @@ describe("the GitLab merge-request pipeline records on merge by default (#4168)"
     const scoped = parseYAML(generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, member: { name: "network", dir: "infra/network" } }).yaml) as Record<string, Job>;
     expect(scoped["network-record"].resource_group).toBe("chant-record.network.prod");
     expect(scoped["network-record"].script.at(-1)).toContain("chant ci run record");
+  });
+});
+
+describe("the GitLab plan job holds no forge token while the merge request's code runs (#4295)", () => {
+  const result = generateGitlabPipeline(ESTATE, { env: "prod", image: "example/ci:1", beforeScript: ["npm ci"], prLoop: { build: true } });
+  const doc = parseYAML(result.yaml) as Record<string, Job & { stage: string; rules: Array<{ if: string; when?: string }> }>;
+
+  test("the plan's script drops the tokens first, and every later line runs without them", () => {
+    const plan = doc.plan!;
+    expect(plan.script[0]).toBe(GITLAB_DROP_FORGE_TOKENS);
+    // GitLab runs the script in one shell: each line after the first, run there with the tokens set, sees none of them.
+    const SECRET = "glpat-handover-4295";
+    const tokens = { GITLAB_TOKEN: SECRET, CHANT_FORGE_TOKEN: SECRET, CHANT_GITLAB_TOKEN: SECRET, CI_JOB_TOKEN: SECRET };
+    const lines = plan.script.map((line, i) => (i === 0 ? line : `env | grep -c ${SECRET} || true`));
+    const out = execFileSync("sh", ["-c", lines.join("\n")], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...tokens }, encoding: "utf-8" });
+    expect(out.trim().split("\n").every((n) => n === "0")).toBe(true);
+    expect(plan.variables).not.toHaveProperty("GITLAB_TOKEN");
+    expect(prLoopJobs("gitlab", "prod")[0]!.command.endsWith(" --no-status")).toBe(true);
+  });
+
+  test("the plan-note job takes the plan's artifact, checks out the target branch's commit, and posts", () => {
+    const note = doc["plan-note"]!;
+    expect(note.stage).toBe("plan-note");
+    expect(note.needs).toEqual(["plan"]);
+    expect(note.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"', when: "always" }]);
+    expect(note.variables).toEqual({ PR_NUMBER: "$CI_MERGE_REQUEST_IID", HEAD_SHA: "$CI_COMMIT_SHA", BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA" });
+    expect(note.script[0]).toBe('git checkout --quiet --detach "$BASE_SHA"');
+    expect(note.script.at(-1)).toBe('chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env prod --output .chant/pr --forge gitlab');
+    // It runs no build, lint or plan: none of the merge request's code.
+    expect(note.script.join("\n")).not.toMatch(/chant (build|lint|ci run)/);
+    expect(result.stages).toEqual(["plan", "plan-note", "record"]);
   });
 });

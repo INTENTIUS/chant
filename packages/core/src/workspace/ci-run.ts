@@ -45,6 +45,16 @@
  * commit: `pending` when it starts, `success` or `failure` when it settles.
  * A status the forge refuses is a warning and never fails the job.
  *
+ * The plan runs the pull request's code, so no step of the plan job gets a
+ * forge token (#4295, ../ci-handover.ts): every name in `FORGE_TOKEN_VARS`
+ * is left out of its steps' environment, from the runner, a secret or the
+ * forge job alike, and `pr-plan` runs with `--no-status`. Once the steps
+ * settle, the runner posts the note and the `chant/plan` status from the
+ * report with its own token (`postPlanReport`, ../pr-post.ts). In place, a
+ * generated job holds no token and its `plan-note` job posts; a job that
+ * still holds one was generated before #4295, and the runner posts for it
+ * with a warning to regenerate.
+ *
  * Signing is opt-in (#4156). With no runner key the record is unsigned, and
  * a reader counts it with no signer. A key `.chant/trust.json` does not list
  * leaves it unsigned with a note `--verbose` prints, unless the declaration
@@ -75,7 +85,9 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
-import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind } from "../pr-forge";
+import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind, type PrForge } from "../pr-forge";
+import { holdsForgeToken, withoutForgeTokens } from "../ci-handover";
+import { postPlanReport } from "../pr-post";
 import { PR_APPLY_GATE } from "../pr-loop";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
@@ -458,6 +470,12 @@ export interface CiRunRequest {
   secrets?: CiSecrets;
   /** `--output`: where the job's report is copied, from `cwd`. Default `.chant/pr`. */
   output?: string;
+  /**
+   * The forge client that posts the plan's note and `chant/plan` status from
+   * its report once the steps settle (#4295). Default: one built from the
+   * runner's environment when it holds a forge token.
+   */
+  planForge?: PrForge;
   /** `--run-index-limit`: how many runs the index at `loop.reportUrl` keeps (#4098). Default 200. */
   runIndexLimit?: number;
   /** A runner key, PEM, that signs the run's record. */
@@ -675,7 +693,8 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const started = req.requireRunnerStart || isolated ? runnerStartFor(req, { top, commit, hostEnv }) : undefined;
   // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
   const forgeCommand = req.noForge ? found.command.replace(` --forge ${req.forge}`, "") : found.command;
-  const command = `${forgeCommand}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${req.local ? " --no-status" : ""}`;
+  const noStatus = req.local && !/ --no-status(?: |$)/.test(forgeCommand);
+  const command = `${forgeCommand}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${noStatus ? " --no-status" : ""}`;
   const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
   const own = ciJobEnv(job, {
     forge: req.forge,
@@ -686,19 +705,68 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
     secrets: ciSecretsFor(req.secrets, req.job),
   });
   // #4156: in place, the forge job's environment is the job's, less the runner key.
-  const jobEnv = req.inPlace ? { ...definedEnv(hostEnv), ...own } : own;
+  // #4295: the plan runs the pull request's code, so no step of it gets a forge token, whatever gave it one.
+  const merged = req.inPlace ? { ...definedEnv(hostEnv), ...own } : own;
+  const jobEnv = req.job === "plan" ? withoutForgeTokens(merged) : merged;
   delete jobEnv[RUNNER_KEY_ENV];
+  const poster = req.job === "plan" ? planPoster(req, hostEnv) : undefined;
   // #4096: the secrets and the job's secret-looking variables, redacted from everything the run writes and returns.
   // In place the forge's own variables come too; one whose value is short, such as a flag, is left out, so it can't blank common words.
   const redact = ciRedactor(req.inPlace ? { ...longValues(jobEnv), ...own } : jobEnv, req.secrets);
   try {
     const ran = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
-    const result = started ? { ...ran, notes: [started, ...ran.notes] } : ran;
+    const posted = poster ? await postFromReport(req, poster, ran, { commit, ...(place.member ? { member: place.member } : {}) }) : [];
+    const withPosts = posted.length > 0 ? { ...ran, warnings: [...ran.warnings, ...posted] } : ran;
+    const result = started ? { ...withPosts, notes: [started, ...withPosts.notes] } : withPosts;
     return redact ? { ...result, warnings: result.warnings.map(redact), notes: result.notes.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result;
   } catch (err) {
     if (redact && err instanceof Error) err.message = redact(err.message);
     throw err;
   }
+}
+
+/**
+ * Who posts the plan's note and `chant/plan` status (#4295): the runner,
+ * from the report, once the plan's steps settled, with the forge token the
+ * steps never got. None on `--local`, for a plain git server (`noForge`), or
+ * without a token. In place, a token means the job was generated before the
+ * plan-note job existed: the runner still posts, and says to regenerate.
+ */
+function planPoster(req: CiRunRequest, hostEnv: Record<string, string | undefined>): { forge: PrForge; warning?: string } | { error: string } | undefined {
+  if (req.local || req.noForge || req.pr === undefined) return undefined;
+  const warning = req.inPlace
+    ? "this plan job holds a forge token, which the pull request's code runs beside in the same job; regenerate the pipeline, whose plan-note job posts the note from a fresh job (#4295)"
+    : undefined;
+  if (req.planForge) return { forge: req.planForge, ...(warning ? { warning } : {}) };
+  if (!holdsForgeToken(hostEnv)) return undefined;
+  try {
+    return { forge: forgeFromEnv(req.forge, hostEnv), ...(warning ? { warning } : {}) };
+  } catch (err) {
+    return { error: `the plan's note and status will not be posted: ${message(err)}` };
+  }
+}
+
+/** Post the plan's note and status from the report the job wrote (#4295), and return the warnings. */
+async function postFromReport(
+  req: CiRunRequest,
+  poster: NonNullable<ReturnType<typeof planPoster>>,
+  ran: CiRunResult,
+  at: { commit: string; member?: string },
+): Promise<string[]> {
+  if ("error" in poster) return [poster.error];
+  const warnings = poster.warning ? [poster.warning] : [];
+  const dir = ran.report ?? resolve(req.cwd, req.output ?? PR_LOOP_REPORT_DIR);
+  const posted = await postPlanReport({
+    forge: poster.forge,
+    dir,
+    pr: req.pr!,
+    head: at.commit,
+    env: req.env,
+    ...(at.member ? { member: at.member } : {}),
+    result: ran.status === "ok" ? "success" : "failure",
+  });
+  if (posted.refused) warnings.push(`the plan report was not posted: ${posted.refused}`);
+  return [...warnings, ...posted.warnings];
 }
 
 /**

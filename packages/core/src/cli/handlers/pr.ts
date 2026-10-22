@@ -566,7 +566,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     }
   }
   const status = p.plan.order.length === 0 ? "nothing" : set.failed ? "plan-failed" : "planned";
-  const overdue = await overdueOps(p);
+  const overdue = await overdueOps(p.forge, p.member);
   const planned = prReport({
     stage: "plan",
     pr: ctx.args.pr,
@@ -600,10 +600,12 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
 /**
  * The scheduled watch and reconcile Ops that stopped running (#4289,
  * `op/schedule-overdue.ts`), asked of the forge. Without a forge, or when
- * the Ops cannot be read, nothing is checked and the plan goes on.
+ * the Ops cannot be read, nothing is checked and the plan goes on. The
+ * generated plan holds no forge token (#4295), so there the plan-note job's
+ * `pr-post` asks instead, reading the Ops at the target branch's commit.
  */
-async function overdueOps(p: Prepared): Promise<PrOverdue[]> {
-  if (!p.forge?.scheduledRuns) return [];
+async function overdueOps(forge: PrForge | undefined, member: string | undefined): Promise<PrOverdue[]> {
+  if (!forge?.scheduledRuns) return [];
   try {
     const { discoverOps } = await import("../../op/discover");
     const { scheduledWatches, checkOverdueOps } = await import("../../op/schedule-overdue");
@@ -614,9 +616,9 @@ async function overdueOps(p: Prepared): Promise<PrOverdue[]> {
     if (top.status !== 0) return [];
     return await checkOverdueOps({
       watches,
-      forge: p.forge,
+      forge,
       repoRoot: top.stdout.trim(),
-      ...(p.member ? { member: p.member } : {}),
+      ...(member ? { member } : {}),
       now: new Date(),
       log: (line) => console.error(formatWarning({ message: line })),
     });
@@ -1753,4 +1755,46 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
   const body = JSON.stringify(doc, null, 2) + "\n";
   writeFileSync(join(dir, name), body);
   upload?.file(name, body);
+}
+
+/**
+ * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] (#4295)
+ *
+ * Post the plan note and the `chant/plan` status from the report a plan job
+ * wrote with `pr-plan --no-status`, in a job that runs none of the change's
+ * code. The pull request, the head, the environment and the member come from
+ * the flags, and a report that names others is refused (`../../pr-post.ts`).
+ * It exits 0 once it has posted, whatever the plan said, so the plan job's
+ * own result stays the one that fails the run.
+ */
+export async function runComponentsPrPost(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  if (args.pr === undefined) return fail("pr-post needs the pull or merge request: --pr <n>");
+  if (!args.head || !/^[0-9a-f]{40}$/.test(args.head)) return fail("pr-post needs the full commit the plan job checked out: --head <sha>");
+  if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail(`pr-post posts to a forge: --forge ${FORGE_KINDS.join("|")}`);
+  if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv(args.forge as ForgeKind);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const { postPlanReport } = await import("../../pr-post");
+  const member = args.members?.[0];
+  const posted = await postPlanReport({
+    forge,
+    dir: resolve(args.output ?? PR_REPORT_DIR),
+    pr: args.pr,
+    head: args.head,
+    env: args.env,
+    ...(member ? { member } : {}),
+    ...(args.planResult ? { result: args.planResult } : {}),
+    // #4289: the plan job could not ask the forge, so the note job does, from the Ops at the commit it checked out.
+    overdue: () => overdueOps(forge, member),
+  });
+  for (const message of posted.warnings) console.error(formatWarning({ message }));
+  if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
+  console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  return 0;
 }

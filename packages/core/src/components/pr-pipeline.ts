@@ -8,8 +8,11 @@
  * values they read from the forge live here so the three cannot disagree.
  *
  * - The plan job runs `chant components pr-plan` against the pull request's
- *   target commit. It posts the note and the `chant/plan` status and writes
- *   nothing to `chant/lifecycle`, since it runs the pull request's code.
+ *   target commit. It writes nothing to `chant/lifecycle` and holds no forge
+ *   token, since it runs the pull request's code (#4295): it writes the note
+ *   and the status into its report with `--no-status`, and the `plan-note`
+ *   job after it posts them with `chant components pr-post`
+ *   ({@link prLoopPostJob}, ../ci-handover.ts).
  * - The record job (#4168 step 1, the default) runs `chant components
  *   pr-record` against the commit the push replaced. It plans the same
  *   members on the merged commit, stores the change set and writes the merge
@@ -81,6 +84,7 @@
 import type { ForgeKind } from "../pr-forge";
 import { PR_APPLY_GATE } from "../pr-loop";
 import { CI_IMAGE, GITHUB_JOB_TOKEN } from "../ci-jobs";
+import { withoutForgeTokens } from "../ci-handover";
 import { EMPTY_TREE_SHA } from "./changed-files";
 import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
@@ -264,16 +268,18 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ...(options.reportUrl ? ["--report-url", JSON.stringify(options.reportUrl)] : []),
   ];
   const runEnv = (env: Record<string, string>): Record<string, string> => (github ? { ...env, [RUNNER_KEY_ENV]: `\${{ secrets.${RUNNER_KEY_ENV} }}` } : env);
+  // #4295: the plan runs the pull request's code, so it gets no forge token. It writes the note and the
+  // status into its report (--no-status), and the plan-note job posts them (prLoopPostJob).
   const planEnv = github
-    ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...jobEnv }
-    : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...jobEnv };
+    ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...withoutForgeTokens(jobEnv) }
+    : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...withoutForgeTokens(jobEnv) };
   const greenBranch = github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
   const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
   return [
     {
       jobName: "plan",
       // With `waveGate` the plan's note says the later waves may stop at their own gates (#4003).
-      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : [])].join(" "),
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), "--no-status"].join(" "),
       env: planEnv,
       ...build,
       run: { command: ciRun("plan").join(" "), env: runEnv(planEnv) },
@@ -302,6 +308,35 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       run: { command: ciRun("record").join(" "), env: runEnv(applyEnv) },
     },
   ];
+}
+
+/** The name of the job that posts the plan's note and status (#4295). */
+export const PR_PLAN_NOTE_JOB = "plan-note";
+
+/**
+ * The plan-note job's command and the values it reads (#4295). It runs in a
+ * fresh job after the plan, at the target branch's commit, and posts the
+ * note and the `chant/plan` status from the report the plan job handed on,
+ * with the forge token the plan job never held. `HEAD_SHA` is the commit
+ * the plan job checked out, `PR_NUMBER` the pull request, and on GitHub and
+ * Forgejo `PLAN_RESULT` the plan job's result, which fails the status when
+ * the plan job failed. `BASE_SHA` is the commit the note job checks out on
+ * GitLab, whose runner checks out the pipeline's own commit.
+ */
+export function prLoopPostJob(forge: ForgeKind, env: string, member?: string): { command: string; env: Record<string, string> } {
+  const github = forge !== "gitlab";
+  const command = [
+    "chant", "components", "pr-post", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"',
+    "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
+    ...(member ? ["--member", member] : []),
+    ...(github ? ["--result", '"$PLAN_RESULT"'] : []),
+  ].join(" ");
+  return {
+    command,
+    env: github
+      ? { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN }
+      : { PR_NUMBER: "$CI_MERGE_REQUEST_IID", HEAD_SHA: "$CI_COMMIT_SHA", BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA" },
+  };
 }
 
 /**

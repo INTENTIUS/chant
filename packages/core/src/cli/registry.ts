@@ -491,6 +491,8 @@ export interface ParsedArgs {
   ciSecrets?: string;
   /** `chant ci workflow --chant <command>` (#3573): the command the tick step runs chant with, in place of the npx pin. Also `chant ci run --chant` (#4094): what runs chant in the job. */
   ciChant?: string;
+  /** `chant components pr-post --result <result>` (#4295): the plan job's own result. `failure` or `cancelled` fails the `chant/plan` status. */
+  planResult?: string;
   /** `chant ci run|serve --no-status` (#4097): post no commit status for the job. `chant components pr-plan|pr-apply --no-status` (#4161): post neither the status nor the note. */
   noStatus?: boolean;
   /** `chant ci run|serve --status-url <template>` (#4097): the link a job's status carries. `{key}` is `<pr>/<commit>[/<member>]`, as `--report-url` keys it. */
