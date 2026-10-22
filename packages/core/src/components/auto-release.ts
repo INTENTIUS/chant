@@ -26,8 +26,10 @@
  * env vars, timestamp is a real `new Date()` taken at record time).
  */
 import { getHeadCommit, pushLifecycle, StaleLifecycleBranchError } from "../lifecycle/git";
-import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseAdmission, type ReleaseRecord, type RunOrigin } from "../lifecycle/release-ledger";
-import type { DriverStepRecord } from "./driver";
+import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseAdmission, type ReleaseDigestKind, type ReleaseRecord, type RunOrigin } from "../lifecycle/release-ledger";
+import { changeSetDigest } from "../change-set";
+import type { DriverComponent, DriverStepRecord } from "./driver";
+import { componentInputDigests } from "./fan-out-inputs";
 
 /**
  * A step output that represents a *promoted* artifact — a publish-family result
@@ -66,6 +68,32 @@ export function extractRunDigest(records: DriverStepRecord[]): string | undefine
     }
   }
   return found;
+}
+
+/**
+ * What each component of a run applied, for the ones that publish no artifact
+ * (#4274). A component with planned members (`pr-apply`'s change set) gets its
+ * plan digest: the one member's `planDigest`, or with several the
+ * change-set digest over them, the way a set's digest is taken. Any other gets
+ * its deploy-input digest from `componentInputDigests`, computed on first use.
+ */
+export function appliedDigestOf(input: {
+  /** Every component of the project, so a component's upstream digests count. */
+  components: DriverComponent[];
+  env: string;
+  projectRoot: string;
+  /** The planned members a pull request applied, when there were any. */
+  members?: ReadonlyArray<{ member: string; component: string; planDigest: string | null }>;
+}): (component: string) => AppliedDigest | null {
+  let inputs: Record<string, string> | undefined;
+  return (component) => {
+    const planned = (input.members ?? []).filter((m): m is typeof m & { planDigest: string } => m.component === component && m.planDigest !== null);
+    if (planned.length === 1) return { digest: planned[0]!.planDigest, kind: "plan" };
+    if (planned.length > 1) return { digest: changeSetDigest(planned), kind: "plan" };
+    inputs ??= componentInputDigests(input.components, { projectRoot: input.projectRoot, env: input.env });
+    const digest = inputs[component];
+    return digest === undefined ? null : { digest, kind: "deploy-input" };
+  };
 }
 
 /** Explicit reasons `maybeRecordAutoRelease` declined to write a record — never a thrown error, since "nothing to record" (or "opted out") is an expected, common outcome. */
@@ -109,6 +137,19 @@ export interface AutoReleaseRunInfo {
    * when the run published no artifact. Set only with `releaseDigest`.
    */
   templatesDigest?: string;
+  /**
+   * What the run applied, for a component that published no artifact (#4274):
+   * its plan digest, or its deploy-input digest when nothing planned. Recorded
+   * as `digest` with `digestKind`, after an artifact digest and
+   * `templatesDigest`, so an infrastructure-only component has a record too.
+   */
+  appliedDigest?: AppliedDigest;
+}
+
+/** A digest naming what a component applied, not an artifact (#4274). */
+export interface AppliedDigest {
+  digest: string;
+  kind: Extract<ReleaseDigestKind, "plan" | "deploy-input">;
 }
 
 /** Opt-out + field-override knobs for auto-release recording, threaded from CLI flags/config (#597: "opt-out-able (flag/config), documented default"). */
@@ -142,7 +183,8 @@ function resolveActor(override?: string): string | undefined {
  *  - `run.success` false — defensive; callers should not reach here on failure.
  *  - no digest found in the run's records — a component with no publish step
  *    has nothing to bind a release record to, unless the run was made under a
- *    release that records its templates (`templatesDigest`, #4222).
+ *    release that records its templates (`templatesDigest`, #4222) or the
+ *    caller names what it applied (`appliedDigest`, #4274).
  *  - no resolvable actor — mirrors `runComponentsReleaseRecord`'s hard
  *    requirement; an unattributed record defeats the ledger's purpose.
  *
@@ -166,7 +208,10 @@ export async function maybeRecordAutoRelease(
     return { recorded: false, reason: "run-not-successful" };
   }
 
-  const digest = run.digest ?? extractRunDigest(run.records ?? []) ?? (run.releaseDigest ? run.templatesDigest : undefined);
+  const artifact = run.digest ?? extractRunDigest(run.records ?? []);
+  const templates = artifact === undefined && run.releaseDigest ? run.templatesDigest : undefined;
+  const digest = artifact ?? templates ?? run.appliedDigest?.digest;
+  const digestKind: ReleaseDigestKind | undefined = artifact !== undefined ? undefined : templates !== undefined ? "templates" : run.appliedDigest?.kind;
   if (!digest) {
     return { recorded: false, reason: "no-digest", detail: `component "${run.component}" published no digest-bearing artifact` };
   }
@@ -201,6 +246,7 @@ export async function maybeRecordAutoRelease(
         ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
         ...(run.inputDigest ? { inputDigest: run.inputDigest } : {}),
         ...(run.releaseDigest ? { releaseDigest: run.releaseDigest } : {}),
+        ...(digestKind ? { digestKind } : {}),
       },
       { cwd: options.cwd },
     );

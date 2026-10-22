@@ -49,6 +49,16 @@ vi.mock("../../op/gate", async () => {
 });
 const sealedGates = new Set<string>();
 
+/**
+ * The release ledger, for the same reason (#4274): a component that publishes
+ * nothing is recorded by its deploy-input digest, and the real ledger is this
+ * repository's `chant/lifecycle`, pushed to its remote.
+ */
+vi.mock("../../components/auto-release", async () => {
+  const actual = await vi.importActual<typeof import("../../components/auto-release")>("../../components/auto-release");
+  return { ...actual, maybeRecordAutoRelease: async () => ({ recorded: false, reason: "opted-out" }) };
+});
+
 const { CapabilityRegistry } = await import("../../components/capability");
 const { memoryGateLedgerPort } = await import("../../op/gate");
 const { runComponentsFanOut } = await import("./fan-out");

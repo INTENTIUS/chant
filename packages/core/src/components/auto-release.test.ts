@@ -181,7 +181,46 @@ describe("maybeRecordAutoRelease", () => {
     );
     expect(outcome).toMatchObject({ recorded: true });
     const [input] = appendReleaseRecordMock.mock.calls[0];
-    expect(input).toMatchObject({ digest: "sha256:tpl", releaseDigest: "sha256:rel" });
+    expect(input).toMatchObject({ digest: "sha256:tpl", releaseDigest: "sha256:rel", digestKind: "templates" });
+  });
+
+  test("#4274: a run that published nothing records what it applied, and says which digest that is", async () => {
+    appendReleaseRecordMock.mockResolvedValue({
+      commit: "c".repeat(40),
+      record: { version: 1, component: "infra", env: "staging", digest: "sha256:plan", gitSha: "x", runId: "r", timestamp: "t", actor: "alice", digestKind: "plan" },
+    });
+    const outcome = await maybeRecordAutoRelease(
+      { component: "infra", env: "staging", success: true, records: [applyRecord()], runId: "run-1", appliedDigest: { digest: "sha256:plan", kind: "plan" } },
+      { actor: "alice", gitSha: "a".repeat(40) },
+    );
+    expect(outcome).toMatchObject({ recorded: true });
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ digest: "sha256:plan", digestKind: "plan" });
+  });
+
+  test("#4274: an artifact digest wins over what the run applied, and carries no digestKind", async () => {
+    appendReleaseRecordMock.mockResolvedValue({
+      commit: "c".repeat(40),
+      record: { version: 1, component: "svc", env: "prod", digest: "sha256:abc", gitSha: "x", runId: "r", timestamp: "t", actor: "alice" },
+    });
+    await maybeRecordAutoRelease(
+      { component: "svc", env: "prod", success: true, records: [publishRecord("sha256:abc")], runId: "run-1", appliedDigest: { digest: "sha256:in", kind: "deploy-input" } },
+      { actor: "alice", gitSha: "a".repeat(40) },
+    );
+    const [input] = appendReleaseRecordMock.mock.calls[0];
+    expect(input).toMatchObject({ digest: "sha256:abc" });
+    expect(input).not.toHaveProperty("digestKind");
+  });
+
+  test("#4274: a templates digest under a release wins over what the run applied", async () => {
+    appendReleaseRecordMock.mockResolvedValue({
+      commit: "c".repeat(40),
+      record: { version: 1, component: "infra", env: "staging", digest: "sha256:tpl", gitSha: "x", runId: "r", timestamp: "t", actor: "alice" },
+    });
+    await maybeRecordAutoRelease(
+      { component: "infra", env: "staging", success: true, records: [applyRecord()], runId: "run-1", releaseDigest: "sha256:rel", templatesDigest: "sha256:tpl", appliedDigest: { digest: "sha256:in", kind: "deploy-input" } },
+      { actor: "alice", gitSha: "a".repeat(40) },
+    );
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ digest: "sha256:tpl", digestKind: "templates" });
   });
 
   test("#4222: a templates digest without a release is ignored", async () => {

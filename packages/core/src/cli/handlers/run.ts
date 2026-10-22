@@ -29,11 +29,11 @@ import { ndjsonProgressSink } from "../../components/run-progress";
 import { findStoredRun, readRunEvents } from "../../run-event-store";
 import type { RunEvent } from "../../run-event";
 import { openCliRunEvents, refusesBothStreams, stdoutLine } from "../run-events";
-import { maybeRecordAutoRelease } from "../../components/auto-release";
+import { appliedDigestOf, extractRunDigest, maybeRecordAutoRelease, type AppliedDigest } from "../../components/auto-release";
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import { failedRunExitCode, type DriverComponentResult } from "../../components/driver";
 import { isComponentList, type ComponentRunPlan, type RunComponentsResult } from "../../components/cli-support";
-import { resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
+import { isApplyRecord, resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
 import { gateAdmission, gateApprover } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
 
@@ -935,10 +935,14 @@ export async function recordAutoReleasesForRun(
   releaseDigest?: string,
   /** #4222: the digest of the templates the release records for a component in `env`, for one that publishes no artifact. */
   templatesDigestOf?: (component: string) => string | null,
+  /** #4274: what a component that publishes no artifact applied (`appliedDigestOf`), so it is recorded too. */
+  appliedDigestOf?: (component: string) => AppliedDigest | null,
 ): Promise<ReleaseRecord[]> {
   const recorded: ReleaseRecord[] = [];
   for (const componentResult of results) {
     if (!componentResult.ok) continue;
+    // Hashed only for a component that promoted no artifact, the only one it is recorded for.
+    const applied = appliedDigestOf && !disabled && extractRunDigest(componentResult.records) === undefined ? appliedDigestOf(componentResult.component) : null;
     const outcome = await maybeRecordAutoRelease(
       {
         component: componentResult.component,
@@ -954,6 +958,7 @@ export async function recordAutoReleasesForRun(
         // #4043: the release the deploy was made under, when `--release` named one.
         ...(releaseDigest !== undefined ? { releaseDigest } : {}),
         ...(releaseDigest !== undefined && templatesDigestOf?.(componentResult.component) ? { templatesDigest: templatesDigestOf(componentResult.component)! } : {}),
+        ...(applied ? { appliedDigest: applied } : {}),
       },
       { disabled },
     );
@@ -1281,7 +1286,11 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
     // #3955: a run that records nothing has no release to report either.
     const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord) || ledgerRecordingOff();
     const templatesDigestOf = underRelease ? await releaseTemplatesDigestOf(underRelease.release, env) : undefined;
-    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest, templatesDigestOf);
+    // #4274: a component that publishes nothing is recorded by its deploy-input digest.
+    const appliedOf = result.components ? appliedDigestOf({ components: result.components, env, projectRoot: projectPath }) : undefined;
+    const recorded = await recordAutoReleasesForRun(result.run.results, env, release.runId, disabled, release.runOrigin, underRelease?.releaseDigest, templatesDigestOf, appliedOf);
+    // A generated promote job promotes artifacts; an apply has none to name.
+    const promotable = recorded.filter((r) => !isApplyRecord(r));
     if (underRelease) await warnOnArtifactMismatch(underRelease.release, recorded);
     // `--digest-file` (#2602): the releases this run recorded, one
     // `<component>=<digest>` line each, the form `chant components promote
@@ -1290,7 +1299,7 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
     if (ctx.args.digestFile) {
       const digestPath = resolve(ctx.args.digestFile);
       mkdirSync(dirname(digestPath), { recursive: true });
-      writeFileSync(digestPath, recorded.map((r) => `${r.component}=${r.digest}\n`).join(""));
+      writeFileSync(digestPath, promotable.map((r) => `${r.component}=${r.digest}\n`).join(""));
     }
   }
 

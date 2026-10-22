@@ -432,6 +432,16 @@ describe("status", () => {
       expect(result.digestB).toBe("sha256:prod-bytes");
     });
 
+    test("apply records compare on the commit, since their digests take in the environment (#4274)", () => {
+      const apply = (env: string, gitSha: string) =>
+        record({ component: "infra", env, gitSha, digest: `jcs1-sha256:${env.padEnd(64, "0").slice(0, 64)}`, digestKind: "deploy-input" });
+      const same = compareAcrossEnvironments("infra", { name: "staging", records: [apply("staging", "a1")] }, { name: "prod", records: [apply("prod", "a1")] });
+      expect(same.same).toBe(true);
+      expect(same.comparedOn).toEqual({ a: "git:a1", b: "git:a1" });
+      const moved = compareAcrossEnvironments("infra", { name: "staging", records: [apply("staging", "b2")] }, { name: "prod", records: [apply("prod", "a1")] });
+      expect(moved.same).toBe(false);
+    });
+
     test("differing inputDigests are a real difference, whatever the bytes say", () => {
       const result = compareAcrossEnvironments(
         "web",
@@ -667,6 +677,15 @@ describe("drifted: live evidence contradicts the recorded release (#2513)", () =
       [entry()],
       new Map([["svc", { now: live({ attributes: { digest: "sha256:input" } }) }]]),
       { ...released, inputDigest: "sha256:input" },
+    );
+    expect(row.reconciliation).toBe("reconciled");
+  });
+
+  test("reconciled: an apply record's plan digest is never held against a live digest (#4274)", () => {
+    const row = reconcile(
+      [entry()],
+      new Map([["svc", { now: live({ attributes: { digest: "sha256:other", gitSha: "1111111" } }) }]]),
+      { ...released, digest: `jcs1-sha256:${"a".repeat(64)}`, digestKind: "plan" },
     );
     expect(row.reconciliation).toBe("reconciled");
   });

@@ -46,7 +46,8 @@ vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
   return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };
 });
-vi.mock("../../components/auto-release", () => ({
+vi.mock("../../components/auto-release", async () => ({
+  ...(await vi.importActual<typeof import("../../components/auto-release")>("../../components/auto-release")),
   maybeRecordAutoRelease: (...args: unknown[]) => maybeRecordAutoReleaseMock(...args),
 }));
 vi.mock("../../components/manifest-persistence", () => ({
