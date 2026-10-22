@@ -737,7 +737,7 @@ export interface ParsedArgs {
    * on a model-authored channel.
    */
   allowSameOrigin?: boolean;
-  /** `chant approve --role <name>` (#2508) — roles the approver claims, for a gate whose quorum counts only some roles. Repeatable; a comma list also works. */
+  /** `chant approve --role <name>` (#2508) — roles the approver claims, which a gate's policy sees. A quorum never counts them (#4290): its roles come from `.chant/trust.json` at base. Repeatable; a comma list also works. */
   roles?: string[];
   /** `chant approve --agent` (#2508) — record the approval as an agent's. An agent never counts toward a quorum; it passes a gate only through a policy permit in `enforce` mode. */
   agent?: boolean;

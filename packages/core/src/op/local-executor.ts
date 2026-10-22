@@ -41,6 +41,7 @@ import { resolveGateAliases } from "./gate-alias";
 import { gatePointOf } from "./gate-point";
 import { evaluatePointGate, workspaceGatePointAsker, type GatePointAsker } from "./gate-point-run";
 import type { ResolvedGateApproval } from "./gate-approval";
+import { quorumRules, quorumRulesFor } from "./gate-quorum";
 import { GATE_PLAN_CONTEXT_KEY, gatePlanSummaryOfResult } from "./gate-plan-context";
 import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
@@ -732,6 +733,7 @@ function gateFn(step: GateStep): string {
 function resolveGateApproval(
   step: GateStep,
   resultsById: ReadonlyMap<string, unknown>,
+  env?: string,
 ): ResolvedGateApproval | undefined {
   const authored = step.approval;
   if (!authored) return undefined;
@@ -750,8 +752,13 @@ function resolveGateApproval(
     const summary = gatePlanSummaryOfResult(resultsById.get(step.plan.step));
     if (summary) context = { ...(context ?? {}), [GATE_PLAN_CONTEXT_KEY]: summary };
   }
+  // #4290: the rules this run's gate takes, by its environment. A rule with
+  // `targets` never covers a run with no environment. One rule with no
+  // `targets` keeps its own shape, so a standing pending fact still matches.
+  const single = authored.quorum !== undefined && !Array.isArray(authored.quorum) && (authored.quorum as { targets?: unknown }).targets === undefined;
+  const rules = authored.quorum ? quorumRulesFor(quorumRules(authored.quorum), env !== undefined ? [env] : []) : [];
   return {
-    ...(authored.quorum ? { quorum: authored.quorum } : {}),
+    ...(single ? { quorum: authored.quorum } : rules.length > 0 ? { quorum: rules } : {}),
     ...(authored.policy ? { policy: authored.policy } : {}),
     mode: authored.mode ?? "log-only",
     ...(context ? { context } : {}),
@@ -779,7 +786,7 @@ async function runGateStep(
   // a run over a missing digest.
   const resolvedPlan = resolveStepOutputRefs(step.plan, resultsById);
   const planDigest = typeof resolvedPlan === "string" && resolvedPlan !== "" ? resolvedPlan : undefined;
-  const approval = resolveGateApproval(step, resultsById);
+  const approval = resolveGateApproval(step, resultsById, gates.env);
   // #3947: a gate that resumes stores the outputs the steps after it read.
   const resumeAt = gates.resume?.gates.get(step);
   let checkpoint: GateCheckpoint | undefined;

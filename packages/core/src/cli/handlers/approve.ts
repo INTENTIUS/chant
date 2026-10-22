@@ -21,6 +21,7 @@ import {
   type GateApprover, type GatePolicyDecision, type GatePolicyEvaluator, type ResolvedGateApproval,
 } from "../../op/gate-approval";
 import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate";
+import { quorumRuleLine, quorumRules, trustQuorumJudge, UNPROVEN_JUDGE, type GateQuorumJudge } from "../../op/gate-quorum";
 import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, RELEASE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
@@ -680,7 +681,9 @@ export async function recordGateApproval(
     ));
   }
   if (approval) {
-    for (const line of describeApprovalProgress(approval, record, ledger.resolutions, standingForOrigin, ledger.pending)) {
+    // #4290: the rules count roles from .chant/trust.json at base, for a proven approver.
+    const judge = trustQuorumJudge({ signers: scope.policy, roles: scope.policy.roles });
+    for (const line of describeApprovalProgress(approval, record, ledger.resolutions, standingForOrigin, ledger.pending, judge)) {
       console.error(formatInfo(line));
     }
   }
@@ -699,6 +702,7 @@ export function describeApprovalProgress(
   prior: GateResolutionRecord[],
   standing: PendingGateRecord | undefined,
   pending: readonly PendingGateRecord[] = standing ? [standing] : [],
+  judge: GateQuorumJudge = UNPROVEN_JUDGE,
 ): string[] {
   const lines: string[] = [];
   const decision = record.policyDecision;
@@ -717,15 +721,24 @@ export function describeApprovalProgress(
   const since = standing?.timestamp ?? new Date(0).toISOString();
   // #3206: count the humans the way the run will, back past facts re-recorded for this plan.
   const humansSince = standing && samePlanDigest(standing.planDigest, record.planDigest) ? humanQuorumSince(pending, standing) : since;
-  const tally = tallyGateApprovals([...prior, record], record.gate, since, record.planDigest, approval, humansSince);
-  const roles = approval.quorum?.roles ? ` with role ${approval.quorum.roles.join(" or ")}` : "";
+  const tally = tallyGateApprovals([...prior, record], record.gate, since, record.planDigest, approval, humansSince, judge);
   const who = tally.counted.map((r) => r.resolvedBy).join(", ") || "none yet";
-  lines.push(`Quorum: ${tally.counted.length} of ${tally.need} human approval(s)${roles} for this plan (${who}).`);
+  if (!Array.isArray(approval.quorum)) {
+    const one = quorumRules(approval.quorum)[0];
+    const roles = one?.roles ? ` with role ${one.roles.join(" or ")}` : "";
+    lines.push(`Quorum: ${tally.counted.length} of ${tally.need} human approval(s)${roles} for this plan (${who}).`);
+  } else {
+    // #4290: one line per approval rule the gate takes.
+    for (const p of tally.rules ?? []) lines.push(`Quorum: ${quorumRuleLine(p)}.`);
+  }
   if (!tally.counted.includes(record)) {
+    const roles = quorumRules(approval.quorum).flatMap((r) => r.roles ?? []);
     lines.push(
       approverOf(record).kind === "agent"
         ? "An agent's approval does not count toward the quorum."
-        : `This approval does not count toward the quorum: the approver claims none of its roles (${approval.quorum?.roles?.join(", ")}).`,
+        : judge(record).proven
+          ? `This approval does not count toward the quorum: .chant/trust.json at base gives ${record.resolvedBy} none of its roles (${[...new Set(roles)].join(", ")}).`
+          : `This approval does not count toward the quorum: its roles are read from .chant/trust.json at base, and only for an approval sealed by a signer listed at base (chant approve --sign).`,
     );
   }
   return lines;

@@ -30,6 +30,8 @@ import { dirname } from "node:path";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { evaluateGate, type GateCheck, type GateLedgerPort } from "./op/gate";
 import type { AppliedGateRecord } from "./lifecycle/gate-applied";
+import type { ResolvedGateApproval } from "./op/gate-approval";
+import type { GateQuorumJudge } from "./op/gate-quorum";
 
 export { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "./wave-layout";
 export {
@@ -66,6 +68,10 @@ export interface WaveGateRequest {
   fields?: Record<string, unknown>;
   /** The pending fact carries `neverOverMcp` (#3821). */
   neverOverMcp?: boolean;
+  /** The approval rules the wave takes (#4290), as an `approval` block with a quorum. */
+  approval?: ResolvedGateApproval;
+  /** Judges approvals for those rules (#4290). */
+  judge?: GateQuorumJudge;
 }
 
 /**
@@ -85,6 +91,8 @@ export function decideWaveGate(port: GateLedgerPort, request: WaveGateRequest): 
     ...(request.spent ? { spent: request.spent } : {}),
     ...(request.fields ? { fields: request.fields } : {}),
     ...(request.neverOverMcp ? { neverOverMcp: true } : {}),
+    ...(request.approval ? { approval: request.approval } : {}),
+    ...(request.judge ? { judge: request.judge } : {}),
   });
 }
 

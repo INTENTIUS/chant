@@ -137,6 +137,12 @@ export type {
   GatePolicyEvaluator, GatePolicyRef, GatePolicyRequest, GateQuorum, ResolvedGateApproval,
 } from "./gate-approval";
 export {
+  quorumRules, quorumRulesFor, quorumNeed, quorumProblems, quorumRuleProgress, quorumRuleLine, quorumWaiting, rolesOf, trustQuorumJudge, UNPROVEN_JUDGE,
+} from "./gate-quorum";
+export type {
+  GateQuorumRule, GateQuorumSpec, GateQuorumJudge, GateQuorumRuleProgress, QuorumJudgement, QuorumApprover, TrustQuorumInput,
+} from "./gate-quorum";
+export {
   gatePlanSummary, gatePlanSummaryOfResult, changeSetOfResult, GATE_PLAN_CONTEXT_KEY, GATE_PLAN_ADDRESS_LIMIT,
 } from "./gate-plan-context";
 export type { GatePlanSummary } from "./gate-plan-context";

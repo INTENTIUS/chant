@@ -24,6 +24,7 @@ import { samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
 import { humanQuorumSince, tallyGateApprovals, type GateApprovalRule } from "../op/gate";
+import type { GateQuorumJudge } from "../op/gate-quorum";
 import type { ReasonCode } from "./reason-codes";
 import type { ReleaseRevocation } from "../lifecycle/release-revocation";
 import { CHANGE_SETS_DIR, changeSetFile } from "../lifecycle/change-set-store";
@@ -188,7 +189,7 @@ export function approveCommand(component: string, gate: string, env: string | nu
 const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal: r.resolvedBy, channel: r.origin ?? null, relayedBy: r.relayedBy ?? null, at: r.timestamp });
 
 /** One gate in one environment, decided against its newest pending fact. */
-function decide(component: string, standing: PendingGateRecord, facts: PendingGateRecord[], all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null): StatusGate {
+function decide(component: string, standing: PendingGateRecord, facts: PendingGateRecord[], all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null, judge?: GateQuorumJudge): StatusGate {
   const gate = standing.gate;
   // #3163: under identity.gates, an unsigned approval, or one from outside the class, doesn't count, as a run reads it.
   // #4045: nor does an approval for another release, and an `empty` pass is never an approval.
@@ -208,8 +209,9 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
   let mismatched: GateResolutionRecord | undefined;
   if (standing.approval) {
     // #3206: a human approval from before a fact re-recorded for a mode or context change still counts.
-    const tally = tallyGateApprovals(own, gate, since, planDigest, standing.approval, humanQuorumSince(facts, standing));
-    approved = tally.permit !== undefined || tally.counted.length >= tally.need;
+    // #4290: approval rules count roles from .chant/trust.json at base, for a proven approver.
+    const tally = tallyGateApprovals(own, gate, since, planDigest, standing.approval, humanQuorumSince(facts, standing), judge);
+    approved = tally.permit !== undefined || tally.met;
     approvals = tally.permit && !tally.counted.includes(tally.permit) ? [...tally.counted, tally.permit] : tally.counted;
     needed = tally.need;
     mismatched = tally.mismatched;
@@ -249,7 +251,7 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
  * gate whose other facts have one is left out, as a run leaves it out: such a
  * line binds no environment, and `chant approve --expire` writes one.
  */
-export function gatesInLedger(component: string, content: string, envs: readonly string[], now: string, rules: GateRuleLookup = () => null): { gates: StatusGate[]; malformed: number } {
+export function gatesInLedger(component: string, content: string, envs: readonly string[], now: string, rules: GateRuleLookup = () => null, judge?: GateQuorumJudge): { gates: StatusGate[]; malformed: number } {
   const { pending, resolutions, malformed } = parseGateLedger(content);
   const gates: StatusGate[] = [];
   for (const gate of [...new Set(pending.map((p) => p.gate))].sort()) {
@@ -264,7 +266,7 @@ export function gatesInLedger(component: string, content: string, envs: readonly
     }
     for (const env of [...byEnv.keys()].sort((a, b) => envs.indexOf(a ?? "") - envs.indexOf(b ?? ""))) {
       const envFacts = byEnv.get(env)!;
-      gates.push(decide(component, latestPendingGate(envFacts, gate)!, envFacts, resolutions, now, rules(gate)));
+      gates.push(decide(component, latestPendingGate(envFacts, gate)!, envFacts, resolutions, now, rules(gate), judge));
     }
   }
   return { gates, malformed };
@@ -281,6 +283,7 @@ export async function readMemberGates(
   read: GateLedgerReader = defaultGateLedgerReader,
   rules: GateRuleLookup = () => null,
   listChangeSets: ChangeSetLister = defaultChangeSetLister,
+  judge?: GateQuorumJudge,
 ): Promise<{ gates: StatusGate[]; ledger: StatusGateLedger }> {
   const ledger: StatusGateLedger = { layout, path: dir, shared: false, malformed: 0, reason: null };
   if (commit === null) {
@@ -298,7 +301,7 @@ export async function readMemberGates(
   }
   const gates: StatusGate[] = [];
   for (const component of [...files.keys()].sort()) {
-    const read = gatesInLedger(component, files.get(component)!, envs, now, rules);
+    const read = gatesInLedger(component, files.get(component)!, envs, now, rules, judge);
     gates.push(...read.gates);
     ledger.malformed += read.malformed;
   }

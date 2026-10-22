@@ -864,8 +864,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--expire") {
       result.expire = true;
     } else if (arg === "--role") {
-      // #2508 — a role the approver holds, for a gate whose quorum names
-      // roles. Repeatable, and a comma list works too.
+      // #2508 — a role the approver claims, which a gate's policy sees. A
+      // quorum reads roles from .chant/trust.json at base instead (#4290).
+      // Repeatable, and a comma list works too.
       const value = args[++i] ?? "";
       result.roles = [...(result.roles ?? []), ...value.split(",").map((r) => r.trim()).filter(Boolean)];
     } else if (arg === "--agent") {

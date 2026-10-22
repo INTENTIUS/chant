@@ -42,6 +42,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ResolvedGateApproval } from "../op/gate-approval";
+import { quorumRules, type GateQuorumSpec } from "../op/gate-quorum";
 import { checkLineage, findingKey, type CheckFinding } from "./lineage-check";
 import { dirLabel, git, parseDirSpec, parseTemplateSource, portableUrl, readTemplateDir, readTemplateTree, recordedDirPath } from "./lineage-init";
 import {
@@ -589,11 +590,13 @@ async function rulesAtHead(repo: string, paths: string[]): Promise<ResolvedGateA
       for (const { config, filePath } of ops.values()) {
         const rel = relative(repo, filePath).split(sep).join("/");
         if (!opFiles.has(rel)) continue;
+        // #4290: a quorum may be a list of rules; the strictest count is asked for.
         for (const approval of gateApprovals(config)) {
-          const need = approval.quorum?.count ?? 1;
-          if (need > count) {
-            count = need;
-            roles = approval.quorum?.roles;
+          for (const rule of quorumRules(approval.quorum)) {
+            if (rule.count > count) {
+              count = rule.count;
+              roles = rule.roles;
+            }
           }
         }
       }
@@ -602,10 +605,10 @@ async function rulesAtHead(repo: string, paths: string[]): Promise<ResolvedGateA
   return { mode: "log-only", quorum: { count, ...(roles && roles.length > 0 ? { roles } : {}) } };
 }
 
-type StepLike = { kind: string; approval?: { quorum?: { count: number; roles?: string[] } }; steps?: StepLike[] };
+type StepLike = { kind: string; approval?: { quorum?: GateQuorumSpec }; steps?: StepLike[] };
 
-function gateApprovals(config: { phases?: Array<{ steps: StepLike[] }>; onFailure?: Array<{ steps: StepLike[] }> }): Array<{ quorum?: { count: number; roles?: string[] } }> {
-  const out: Array<{ quorum?: { count: number; roles?: string[] } }> = [];
+function gateApprovals(config: { phases?: Array<{ steps: StepLike[] }>; onFailure?: Array<{ steps: StepLike[] }> }): Array<{ quorum?: GateQuorumSpec }> {
+  const out: Array<{ quorum?: GateQuorumSpec }> = [];
   const visit = (step: StepLike): void => {
     if (step.kind === "gate") out.push(step.approval ?? {});
     if (step.kind === "effect") (step.steps ?? []).forEach(visit);
@@ -1042,7 +1045,7 @@ export function describeStaged(staged: StagedUpgrade): string[] {
   }
   for (const s of staged.manualSteps) lines.push(`  manual step: ${at(s.path)} (${s.reason})`);
   if (staged.governance) {
-    const q = staged.governance.approval.quorum!;
+    const q = quorumRules(staged.governance.approval.quorum)[0]!;
     lines.push(
       `  governance: ${staged.governance.paths.join(", ")}; needs ${q.count} human approval(s)${q.roles ? ` with a role in ${q.roles.join(", ")}` : ""}, from the rules at ${staged.governance.rules.slice(0, 12)}`,
     );

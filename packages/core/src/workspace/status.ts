@@ -61,6 +61,7 @@ import { gateAdmissionFrom, releaseRuleFrom } from "./identity";
 import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
 import { scopeSource } from "./write-scope";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
+import { trustQuorumJudge } from "../op/gate-quorum";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
 import { gitTop, workingTree } from "./tree";
 import { handToRootChant } from "./which-chant";
@@ -718,6 +719,8 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const ruleSource = scopeSource(found.dir);
     const rules = (gate: string) => gateAdmissionFrom(ruleSource, gate);
     const releaseRule = releaseRuleFrom(ruleSource).rule;
+    // #4290: approval rules read roles from the trust policy at base, for a proven approver.
+    const judge = trustQuorumJudge({ signers: ruleSource.policy, roles: ruleSource.policy.roles });
     // #4033 (ws-105): revoked commits, read from local tags once and only when a release is met.
     // Tags that can't be judged read as none revoked; workspace check reports the declaration.
     let revokedCommits: Promise<ReadonlyMap<string, ReleaseRevocation>> | undefined;
@@ -730,7 +733,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       const environments: StatusEnvironment[] = [];
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read, revokedOf, query.readOutcomes));
       const own = await hasMemberLedger(m, found.dir);
-      const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules);
+      const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules, undefined, judge);
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       // The declaration's x- keys go back on the objects that hold them (#3595).
       const x = (pointer: string) => extensionsAt(declaration, pointer);

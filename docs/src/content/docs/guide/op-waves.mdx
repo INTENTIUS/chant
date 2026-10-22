@@ -528,6 +528,10 @@ chant approve migrations migrations-wave-3 --plan jcs1-sha256:... --actor github
 
 The signers file is read at the base commit, like the policy. A pull request that adds its author's key to it cannot use that key to approve its own waves. Without a signers file at base, no approval counts.
 
+### More than one approver
+
+`approvals.quorum` asks for more approvers, or approvers with a role, on the waves whose targets a glob names. It is read at base. See [Approval Rules](/chant/guide/approval-rules/).
+
 ## Ask a decision point
 
 A wave whose gate should be decided by a workspace [decision point](/chant/guide/ops/#a-gate-that-asks-a-decision-point), the way an Op gate with a `point` is, names the point on the spec, or on one wave:

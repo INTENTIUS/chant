@@ -51,6 +51,10 @@ import { isModelAuthored } from "../lifecycle/gate-origin";
 import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
+import {
+  quorumNeed, quorumRuleProgress, quorumRules, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
+  type GateQuorumJudge, type GateQuorumRuleProgress,
+} from "./gate-quorum";
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
 import { ciRunIdFromEnv, resolveGateRunLocator } from "./gate-run-locator";
@@ -99,6 +103,14 @@ export interface GateLedgerPort {
    * Absent, every approval is judged as before.
    */
   approvalRule?(gate: string, at?: { base?: string }): Promise<GateApprovalRule | null>;
+  /**
+   * The judge a gate's approval rules are met by (#4290): which approvals
+   * prove their approver (a seal verified against the signers at base) and
+   * the roles `.chant/trust.json` at base gives them. `at.base` as for
+   * {@link GateLedgerPort.approvalRule}. Absent, no approval proves anyone,
+   * so a rule naming roles is never met.
+   */
+  quorumJudge?(gate: string, at?: { base?: string }): Promise<GateQuorumJudge>;
   /** The approvals a wave applied under (#3784), from `_gates/<op>/applied.jsonl`. Absent on a port that never spends approvals. */
   readApplied?(op: string): Promise<AppliedGateRecord[]>;
   /** Record that a wave is about to apply under an approval (#3784), which spends it. */
@@ -151,6 +163,12 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       // Loaded on demand: the rule lives in the workspace modules, which import the Op modules.
       const { gateAdmission } = await import("../workspace/identity");
       return gateAdmission(opts?.cwd ?? process.cwd(), gate, at?.base);
+    },
+    async quorumJudge(_gate, at) {
+      // #4290: the signers and role grants at base, never the approver's claim.
+      const { scopeSource } = await import("../workspace/write-scope");
+      const { policy } = scopeSource(opts?.cwd ?? process.cwd(), at?.base);
+      return trustQuorumJudge({ signers: policy, roles: policy.roles });
     },
     async appendResolution(input) {
       const { record } = await appendGateResolution(input, opts);
@@ -293,6 +311,13 @@ export interface GateCheckInput {
    * it so `chant approve` can evaluate the policy.
    */
   approval?: ResolvedGateApproval;
+  /**
+   * Judges approvals for `approval.quorum`'s rules (#4290). Absent, the
+   * port's {@link GateLedgerPort.quorumJudge} at its default base, else no
+   * approval proves anyone. A wave passes one that knows the change's author
+   * and the merged pull request's review.
+   */
+  judge?: GateQuorumJudge;
   /** ISO-8601 "now" — supplied by the caller, so the decision is deterministic under test. */
   now?: string;
   /**
@@ -399,6 +424,8 @@ export interface GateQuorumProgress {
   /** Approvers whose approval counts toward the quorum, oldest first. */
   approvers: string[];
   need: number;
+  /** Where each approval rule the gate takes stands (#4290). Absent when it takes none. */
+  rules?: GateQuorumRuleProgress[];
 }
 
 /** Either the gate is answered, or it is a standing fact. */
@@ -464,8 +491,12 @@ export function approverOf(record: GateResolutionRecord): GateApprover {
 export interface GateTally {
   /** Distinct human approvers of this plan who count toward the quorum, one record each (their newest), oldest first. */
   counted: GateResolutionRecord[];
-  /** The quorum's count, 1 when the gate declares none. */
+  /** The most approvers a rule needs, 1 when the gate declares none. */
   need: number;
+  /** Every rule is met (#4290); with no rules, one human approved. */
+  met: boolean;
+  /** Where each rule stands (#4290). Absent when the gate takes no rule. */
+  rules?: GateQuorumRuleProgress[];
   /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version and resolved context. */
   permit?: GateResolutionRecord;
   /** The newest approval of this gate for a different plan, when the gate binds one. */
@@ -483,8 +514,12 @@ export interface GateTally {
  * pending fact re-recorded for a changed mode or context keeps a partly
  * filled quorum (#3206). It defaults to `sinceIso`.
  *
- * Of those, only a human's counts toward the quorum, once per `resolvedBy`,
- * and only with one of the quorum's roles when it names any. An agent counts
+ * Of those, only a human's counts toward the quorum, once per `resolvedBy`.
+ * The quorum is a list of rules (#4290, `./gate-quorum.ts`), already the ones
+ * the gate takes: each is met by distinct humans, counting toward `roles`
+ * only an approver `judge` proves and gives one of them (roles from
+ * `.chant/trust.json` at base, never the approver's claim), and the gate
+ * passes when every rule is met. With no rule, one human passes it. An agent counts
  * only through a recorded `allow` in `enforce` mode, evaluated under the
  * policy version the gate declares now, recorded while the gate was in
  * `enforce` (#2512), and evaluated under the context the gate resolves now
@@ -499,14 +534,16 @@ export function tallyGateApprovals(
   planDigest: string | undefined,
   approval: ResolvedGateApproval,
   humansSinceIso: string = sinceIso,
+  judge: GateQuorumJudge = UNPROVEN_JUDGE,
 ): GateTally {
   const since = new Date(sinceIso).getTime();
   const humansSince = Math.min(since, new Date(humansSinceIso).getTime());
   const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
-  const roles = approval.quorum?.roles;
+  const rules = quorumRules(approval.quorum);
   const context = gateContextDigest(approval.context);
 
-  const byActor = new Map<string, GateResolutionRecord>();
+  // Each human once: their newest approval, or their newest proven one when they have one.
+  const byActor = new Map<string, { record: GateResolutionRecord; proven: boolean }>();
   let permit: GateResolutionRecord | undefined;
   let mismatched: GateResolutionRecord | undefined;
   for (const r of records) {
@@ -534,20 +571,20 @@ export function tallyGateApprovals(
       permit = r;
     }
 
-    const approver = approverOf(r);
-    if (approver.kind !== "human") continue;
-    if (roles && !(approver.roles ?? []).some((role) => roles.includes(role))) continue;
-    const prior = byActor.get(r.resolvedBy);
-    if (!prior || at(r) >= at(prior)) byActor.set(r.resolvedBy, r);
+    if (approverOf(r).kind !== "human") continue;
+    const key = r.resolvedBy.normalize("NFKC").trim().toLowerCase();
+    const proven = rules.some(ruleNeedsProof) && judge(r).proven;
+    const prior = byActor.get(key);
+    if (!prior || (proven && !prior.proven) || (proven === prior.proven && at(r) >= at(prior.record))) byActor.set(key, { record: r, proven });
   }
 
-  const counted = [...byActor.values()].sort((a, b) => at(a) - at(b));
-  return {
-    counted,
-    need: approval.quorum?.count ?? 1,
-    ...(permit ? { permit } : {}),
-    ...(mismatched ? { mismatched } : {}),
-  };
+  const humans = [...byActor.values()].map((v) => v.record).sort((a, b) => at(a) - at(b));
+  const extra = { ...(permit ? { permit } : {}), ...(mismatched ? { mismatched } : {}) };
+  if (rules.length === 0) return { counted: humans, need: 1, met: humans.length >= 1, ...extra };
+  const approvers = humans.map((r) => ({ who: r.resolvedBy, at: r.timestamp, judged: judge(r) }));
+  const progress = rules.map((rule) => quorumRuleProgress(rule, approvers));
+  const counted = humans.filter((r) => progress.some((p) => p.approvers.some((a) => samePrincipal(a, r.resolvedBy))));
+  return { counted, need: quorumNeed(rules), met: progress.every((p) => p.met), rules: progress, ...extra };
 }
 
 /**
@@ -807,11 +844,15 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       standing.approval?.policy?.version === input.approval.policy?.version
         ? humanQuorumSince(pending, standing)
         : since;
-    const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval, humansSince);
+    // #4290: who an approval proves, and their roles at base, for rules that read them.
+    const judge = quorumRules(input.approval.quorum).some(ruleNeedsProof)
+      ? (input.judge ?? (await port.quorumJudge?.(input.gate)) ?? UNPROVEN_JUDGE)
+      : UNPROVEN_JUDGE;
+    const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval, humansSince, judge);
     if (tally.permit) {
       return { satisfied: true, resolution: tally.permit, via: "policy", approvals: tally.counted };
     }
-    if (tally.counted.length >= tally.need) {
+    if (tally.met) {
       return {
         satisfied: true,
         resolution: tally.counted[tally.counted.length - 1]!,
@@ -820,19 +861,19 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       };
     }
     mismatched = tally.mismatched;
-    quorum = { approvers: tally.counted.map((r) => r.resolvedBy), need: tally.need };
+    quorum = { approvers: tally.counted.map((r) => r.resolvedBy), need: tally.need, ...(tally.rules ? { rules: tally.rules } : {}) };
     // #3949: old and new approvals add up toward one quorum, each approver once.
     const counted = new Set(tally.counted.map((r) => r.resolvedBy));
     const extra = fromAliases.filter((r) => !counted.has(r.resolvedBy));
     if (extra.length > 0) {
       const asCarried = new Map(extra.map((r) => [{ version: 1, ...carriedApproval(r, input.op, input.gate, now) } as GateResolutionRecord, r]));
-      const combined = tallyGateApprovals([...resolutions, ...asCarried.keys()], input.gate, since, input.planDigest, input.approval, humansSince);
-      if (combined.counted.length >= combined.need) {
+      const combined = tallyGateApprovals([...resolutions, ...asCarried.keys()], input.gate, since, input.planDigest, input.approval, humansSince, judge);
+      if (combined.met) {
         const written = await carry(combined.counted.filter((r) => asCarried.has(r)).map((r) => asCarried.get(r)!));
         const approvals = [...combined.counted.filter((r) => !asCarried.has(r)), ...written];
         return { satisfied: true, resolution: written[written.length - 1]!, via: "alias", approvals, carried: written };
       }
-      quorum = { approvers: combined.counted.map((r) => r.resolvedBy), need: combined.need };
+      quorum = { approvers: combined.counted.map((r) => r.resolvedBy), need: combined.need, ...(combined.rules ? { rules: combined.rules } : {}) };
     }
   } else {
     const found = latestResolutionForPlan(resolutions, input.gate, since, input.planDigest);

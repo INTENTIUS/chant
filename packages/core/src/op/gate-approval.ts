@@ -5,7 +5,9 @@
  * more than that, as data that survives into the build output:
  *
  * - `quorum`: how many distinct human approvers the gate needs, and
- *   optionally which roles count toward it.
+ *   optionally which roles count toward it. Since #4290 it may be a list of
+ *   rules, each scoped by `targets` globs over the run's environment
+ *   (`./gate-quorum.ts`).
  * - `policy`: a policy set a lexicon rendered (the cedar lexicon's
  *   `gatePolicy()`), evaluated for each approval as a `PassGate` request.
  * - `mode`: `"log-only"` records the policy's decision next to the approval
@@ -30,15 +32,20 @@
  * decision also records the digest of the context it was asked about, and a
  * permit counts only while the run resolves that same context (#3774).
  *
- * The trust boundary is unchanged from `../lifecycle/gate-ledger.ts`: a
- * resolution is a local fact, not a signed one, and roles on it are what the
- * approver claimed.
+ * A resolution is a local fact, not a signed one (`../lifecycle/gate-ledger.ts`).
+ * Roles on it are what the approver claimed, and since #4290 the quorum
+ * never reads them: a role counts only when `.chant/trust.json` at base
+ * grants it and a seal proves the approver (`./gate-quorum.ts`). A policy
+ * still sees the claimed roles in its request.
  */
 
 import { createHash } from "node:crypto";
 import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
 import { GATE_PLAN_CONTEXT_KEY } from "./gate-plan-context";
+import { quorumProblems, type GateQuorumRule, type GateQuorumSpec } from "./gate-quorum";
+
+export type { GateQuorumRule, GateQuorumSpec } from "./gate-quorum";
 
 /** What a policy's decision does to the gate. */
 export type GateApprovalMode = "log-only" | "enforce";
@@ -62,20 +69,20 @@ export interface GatePolicyRef {
   text: string;
 }
 
-/** How many distinct human approvers a gate needs, and which roles count. */
-export interface GateQuorum {
-  /** At least 1. */
-  count: number;
-  /** When set, only an approver holding one of these roles counts toward {@link GateQuorum.count}. */
-  roles?: string[];
-}
+/**
+ * How many distinct human approvers a gate needs, and which roles count: one
+ * approval rule (#4290, `./gate-quorum.ts`). A role counts only when
+ * `.chant/trust.json` at base grants it to a proven approver.
+ */
+export type GateQuorum = GateQuorumRule;
 
 /** A value a gate hands its policy as context. */
 export type GateContextValue = string | number | boolean | string[] | StepOutputRef;
 
 /** The `approval` block on a `gate` step. */
 export interface GateApproval {
-  quorum?: GateQuorum;
+  /** One rule, or a list of rules scoped by `targets` over the run's environment (#4290). */
+  quorum?: GateQuorumSpec;
   policy?: GatePolicyRef;
   /** Default `"log-only"`, so a new policy is observed against real gate traffic before it binds. */
   mode?: GateApprovalMode;
@@ -96,7 +103,8 @@ export interface GateApproval {
  * actually produced.
  */
 export interface ResolvedGateApproval {
-  quorum?: GateQuorum;
+  /** The rules this run's gate takes (#4290): a list, or one rule on a fact written before. */
+  quorum?: GateQuorumSpec;
   policy?: GatePolicyRef;
   mode: GateApprovalMode;
   context?: Record<string, unknown>;
@@ -197,19 +205,8 @@ export function gateApprovalProblems(approval: unknown): string[] {
   const problems: string[] = [];
 
   if (a.quorum !== undefined) {
-    const q = a.quorum as Record<string, unknown> | null;
-    if (typeof q !== "object" || q === null) {
-      problems.push("`approval.quorum` must be an object");
-    } else {
-      if (typeof q.count !== "number" || !Number.isInteger(q.count) || q.count < 1) {
-        problems.push("`approval.quorum.count` must be an integer of at least 1");
-      }
-      if (q.roles !== undefined) {
-        if (!Array.isArray(q.roles) || q.roles.length === 0 || q.roles.some((r) => typeof r !== "string" || r === "")) {
-          problems.push("`approval.quorum.roles` must be a non-empty list of role names");
-        }
-      }
-    }
+    if (typeof a.quorum !== "object" || a.quorum === null) problems.push("`approval.quorum` must be an object or a list of rules");
+    else problems.push(...quorumProblems(a.quorum, "approval.quorum", { notAuthor: false }));
   }
 
   if (a.policy !== undefined) {

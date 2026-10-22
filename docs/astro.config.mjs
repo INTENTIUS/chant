@@ -195,6 +195,7 @@ export default defineConfig({
 								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
 								{ label: 'Op Waves', slug: 'guide/op-waves' },
 								{ label: 'Notify', slug: 'guide/notify' },
+								{ label: 'Approval Rules', slug: 'guide/approval-rules' },
 							],
 						},
 						{

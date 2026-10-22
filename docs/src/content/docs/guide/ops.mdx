@@ -346,12 +346,14 @@ gate("ship", {
 });
 ```
 
-The quorum counts distinct human approvers of the current plan. With `roles`, an approver counts only when they claim one of them:
+The quorum counts distinct human approvers of the current plan. With `roles`, an approver counts only when `.chant/trust.json` at base grants them one of the roles and the approval is sealed by a signer listed at base ([#4290](https://github.com/INTENTIUS/chant/issues/4290)). A role the approver claims with `--role` reaches the policy and never the quorum:
 
 ```bash
-chant approve release ship --approver alex --role maintainer
-chant approve release ship --approver sam --role maintainer
+chant approve release ship --approver github:alex --sign
+chant approve release ship --approver github:sam --sign
 ```
+
+`quorum` may also be a list of rules, each scoped to the run's environment by `targets` globs. [Approval Rules](/chant/guide/approval-rules/) has the list form and the migration from claimed roles.
 
 Each `chant approve` is its own line on the gate ledger. An approval counts only for the plan it names, so a new plan starts the count again. `chant approve` prints how far the quorum has got.
 

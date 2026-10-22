@@ -43,6 +43,14 @@
  * `chant/lifecycle`, as terragucci's wave gate does, and that approval is
  * spent: the same digest needs a new approval to apply again.
  *
+ * ## Approval rules (#4290)
+ *
+ * With `approvals: { quorum: [...] }` (read at base), a wave takes each rule
+ * whose `targets` glob matches one of its runs' targets and waits until each
+ * is met: `count` distinct people, from `roles` when it names them (granted
+ * in `.chant/trust.json` at base), one of them not the author with
+ * `notAuthor`. See `./gate-quorum.ts`.
+ *
  * ## Wave-level commands and hooks (#3762)
  *
  * A product whose tool plans a whole wave in one call (Terragrunt's `run
@@ -69,6 +77,7 @@
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import { gatePointProblems, type GatePoint } from "./gate-point";
+import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 
@@ -467,6 +476,18 @@ export interface OpWavesApprovals {
    * approval of a digest passes that digest as often as it is planned.
    */
   spend?: boolean;
+  /**
+   * Approval rules (#4290): a wave takes each rule whose `targets` glob
+   * matches one of its runs' targets (a rule with no `targets` covers every
+   * wave), and applies once each is met by distinct human approvers of its
+   * set digest. Read at the base commit, with the roles from
+   * `.chant/trust.json` there, so a change cannot loosen the rules its own
+   * wave is judged by. A role, or `notAuthor`, counts only a proven
+   * approver: a seal that verifies against the signers at base, or under
+   * `pr-review` the merged pull request's review. `notAuthor` reads the
+   * author from that pull request. See `./gate-quorum.ts`.
+   */
+  quorum?: GateQuorumRule[];
 }
 
 /** The scheduled resume job of an Op waves pipeline (#3683). */
@@ -554,10 +575,20 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   if (spec.approvals !== undefined) {
     const a = spec.approvals as unknown;
-    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false }.`);
+    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false, "quorum"?: [...] }.`);
     for (const [key, value] of Object.entries(a as Record<string, unknown>)) {
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the one there is approvals.spend.`);
+      if (key === "quorum") {
+        // #4290: approval rules, read at base like the policy.
+        if (!Array.isArray(value)) throw new Error(`${where}: approvals.quorum must be a list of rules, each { "targets"?, "count", "roles"?, "notAuthor"? }.`);
+        const problems = quorumProblems(value, "approvals.quorum", { notAuthor: true });
+        if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend and approvals.quorum.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
+    }
+    if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {
+      throw new Error(`${where}: approvals.quorum and a decision point are both set; a gate that asks a point takes its deciders and quorum from the point, so drop one of them.`);
     }
   }
   if (spec.gateName !== undefined) {
