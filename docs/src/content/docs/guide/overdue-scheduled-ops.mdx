@@ -22,7 +22,7 @@ The plan skips an Op unless the checkout holds the file `chant run --generate` w
 | Forgejo | `.forgejo/workflows/<op>.yml`, or `<member>-<op>.yml` | The repository's runs, kept to that workflow's `schedule` and `workflow_dispatch` events |
 | GitLab | The root `*.gitlab-ci.yml` whose rules test `$CHANT_SCHEDULED_OP == "<op>"` | The active pipeline schedules that set `CHANT_SCHEDULED_OP` to the Op, and their last pipelines |
 
-The paths come from `packages/core/src/op/schedule-overdue.ts:69` and `:73`. The forge calls are in `packages/core/src/pr-forge.ts:812` (GitHub and Forgejo) and `:1040` (GitLab).
+The paths come from `packages/core/src/op/schedule-overdue.ts:69` and `:73`. The forge calls are in `packages/core/src/pr-forge.ts:814` (GitHub and Forgejo) and `:1046` (GitLab).
 
 ## When it warns
 
@@ -34,7 +34,7 @@ Each overdue Op adds a line to the plan note (`packages/core/src/pr-loop.ts:584`
 Warning: Op `drift-watch` is overdue: its schedule `0 6 * * *` has fired at least twice and its last run was on 2026-10-18. GitHub has turned the workflow off (disabled_inactivity). Turn it on again under Actions.
 ```
 
-The job log gets the same line. Chant `0.124.35` and newer also list the Ops in the report's `overdue` field (`packages/core/src/pr-loop.ts:393`). A workspace member's note is posted for an overdue Op even when the change reaches none of its components (`packages/core/src/cli/handlers/pr.ts:412`).
+The job log gets the same line. Chant `0.124.35` and newer also list the Ops in the report's `overdue` field (`packages/core/src/pr-loop.ts:393`). A workspace member's note is posted for an overdue Op even when the change reaches none of its components (`packages/core/src/cli/handlers/pr.ts:455`).
 
 The warning never fails the plan, and when the forge refuses the call the job log says so and the Op gets no verdict (`packages/core/src/op/schedule-overdue.ts:151`).
 
@@ -42,7 +42,7 @@ The warning never fails the plan, and when the forge refuses the call the job lo
 
 - GitHub: the generated `plan-note` job asks for `actions: read` (`lexicons/github/src/components/generate-pipeline.ts:356`). The plan job holds no forge token since [#4295](https://github.com/INTENTIUS/chant/issues/4295), so `pr-post` in the note job runs the check, with the Ops read at the target branch's commit. A pipeline generated before chant `0.124.35` lacks it, so regenerate it with the command in its header.
 - Forgejo: the job token reads the repository's runs.
-- GitLab: listing pipeline schedules needs an access token with the `read_api` scope, which the job token lacks. Set `CHANT_GITLAB_TOKEN` or `GITLAB_TOKEN`, which `--forge gitlab` reads before `CI_JOB_TOKEN` (`packages/core/src/pr-forge.ts:1222`).
+- GitLab: listing pipeline schedules needs an access token with the `read_api` scope, which the job token lacks. Set `CHANT_GITLAB_TOKEN` or `GITLAB_TOKEN`, which `--forge gitlab` reads before `CI_JOB_TOKEN` (`packages/core/src/pr-forge.ts:1232`).
 
 ## Fix an overdue Op
 
