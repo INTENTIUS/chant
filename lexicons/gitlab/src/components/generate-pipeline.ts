@@ -258,6 +258,8 @@ function gatedWaveGitlabPipeline(
       variables: { ...GITLAB_FULL_HISTORY },
       script: [...prLoopSetup(image), ...beforeScript, job.command.join(" "), ...extraScript],
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+      // #4291: a wave runs after one that failed, and blocks only what depends on the failure.
+      ...(job.needs.length > 0 ? { when: "always" } : {}),
       artifacts: { when: "always", paths: [GATED_WAVE_RECORD] },
     };
   }
@@ -362,7 +364,8 @@ function prLoopGitlabPipeline(
           image,
           ...(i > 1 ? { needs: [applies[i - 1]!.name] } : {}),
           resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : prApplyGroup(env, member?.name),
-          rules: [{ if: job.jobName === "record" ? onMerge : onGreen }],
+          // #4291: a wave after the first runs after one that failed, and blocks only what depends on the failure.
+          rules: [{ if: job.jobName === "record" ? onMerge : onGreen, ...(job.wave && i > 1 ? { when: "always" } : {}) }],
           variables: job.run.env,
           script: script(job),
           // The attempt record (#3543), kept under the pushed commit even when

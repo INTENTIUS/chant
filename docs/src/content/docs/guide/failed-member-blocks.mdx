@@ -1,0 +1,69 @@
+---
+title: Keep Going Past a Failed Member
+description: How a wave job blocks only the components that depend on a failure, applies the rest, lists the blocked set in the pull-request note, and finishes on a re-run.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/failed-member-blocks/.
+  Regenerate this repository's wave pipeline with the flags it was generated with, so each wave job after the first runs when the one before it failed, and open a pull request with the pipeline.
+  Show me the `if:` (GitHub, Forgejo) or `when:` (GitLab) each wave job got.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A run applied a wave at a time can lose one component and still finish the others. When a component fails to plan or to apply, chant blocks the components that read from it, directly or through another blocked component, and applies the rest. This holds in the pull-request apply with a gate per wave (`pr-apply --wave-gate`) and in a gated-wave fan-out (`chant components fan-out --wave-gate`), whether the waves run in one job or one job per wave ([#4291](https://github.com/INTENTIUS/chant/issues/4291)).
+
+## Regenerate the pipeline
+
+A generated wave pipeline gives each wave job after the first a condition that runs it when the job before it failed. Regenerate it with the flags it was generated with:
+
+```bash
+chant build --components --generate github --pr-loop --apply-on-merge --wave-gate release --env prod --output .github/workflows/chant-pr.yml
+```
+
+On GitHub and Forgejo, `apply-wave-2` gets `if: !cancelled() && needs.apply-wave-1.result != 'skipped' && (...)`, where the part in brackets is the job's own trigger (`afterEarlierWave`, `lexicons/github/src/components/ci-jobs.ts:57`). A skipped or cancelled job before it still stops it. On GitLab the job's rule gets `when: always` (`lexicons/gitlab/src/components/generate-pipeline.ts:368`). A gated-wave fan-out pipeline's `wave-2` gets the same condition (`lexicons/github/src/components/generate-pipeline.ts:161`, `lexicons/gitlab/src/components/generate-pipeline.ts:262`).
+
+Each job already keeps its attempt record when it fails, so the next wave's job reads what failed from it.
+
+## What a wave job does after a failure
+
+Say wave 1 holds `net` and `db`, and wave 2 holds `app`, which reads `net`, and `web`, which reads `db`. `db` fails to apply.
+
+- Wave 1's job applies `net`, records `db` as failed, and exits 1.
+- Wave 2's job runs anyway. It blocks `web` behind `db` and applies `app` (`packages/core/src/cli/handlers/pr.ts:1426`).
+- Wave 2's job exits 1, since a member of its wave is blocked (`packages/core/src/cli/handlers/pr.ts:1564`).
+
+A component blocked behind a blocked component names the one that failed, not the one in between (`blockedMembers`, `packages/core/src/wave-blocked.ts:85`). The job log prints the blocked set:
+
+```text
+wave 2: web (blocked by db), so not planned or applied
+```
+
+A member of a later wave that fails to plan stops its own wave from applying. The waves after it still apply what does not read from it (`packages/core/src/cli/handlers/pr.ts:1466`).
+
+A wave that waits at its gate still stops every wave after it. The next wave's job refuses with exit 3 and applies nothing until that gate is approved and its job runs again (`packages/core/src/cli/handlers/pr.ts:1324`, `packages/core/src/components/fan-out-run.ts:554`).
+
+## Read the blocked set in the note
+
+The pull-request note gives each blocked member's status as `blocked by <component>`, and lists the set below the table (`blockedLine`, `packages/core/src/pr-loop.ts:452`):
+
+```text
+| `web` | web | blocked by `db` | 0 | 1 | 0 | 0 |
+
+Blocked, so not applied: `web` (blocked by `db`). A failure blocks only the members that depend on it, so the rest went on.
+```
+
+The headline counts them: `The apply failed: 1 failed, 1 blocked, 3 applied.` The report's `members[].blockedBy` carries the same name.
+
+## Finish the apply
+
+Fix what failed, then re-run the failed jobs. On GitHub, re-running the failed jobs runs wave 1's job and every job after it.
+
+- Wave 1's job applies `db`. `net` applied before and does not run again.
+- Wave 2's job applies `web`. `app` applied before and does not run again.
+
+A component stays failed in the record until it applies (`packages/core/src/cli/handlers/fan-out.ts:337`), so each later wave's job knows to block its dependents.
+
+## Use the rules from your own pipeline
+
+A product that runs waves in its own CI stages can import the same rules from `@intentius/chant/wave-blocked`. It has `blockedMembers`, `settleEarlierWaves`, `onlyWaiting`, `blockedWords`, `runSummary`, and the outcome files a wave job hands the next one (`writeWaveOutcomeFile` and `earlierWaveOutcomes`, `packages/core/src/wave-blocked.ts:191` and `:245`). The module imports only `node:fs` and `node:path`, so it bundles into a single file.
+
+A component's outcome is one of `applied`, `unchanged`, `failed`, `waiting`, `refused`, `decided`, `not-applied` or `blocked`. Only `applied` and `unchanged` let a dependent through.

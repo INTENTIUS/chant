@@ -81,7 +81,7 @@ import type {
   ComponentPipelineResult as GenerateGithubResult,
   PipelineMember,
 } from "@intentius/chant/lexicon";
-import { checkoutStep, concurrency, downloadArtifactStep, emitWorkflowYAML, keepRecordStep, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
+import { afterEarlierWave, checkoutStep, concurrency, downloadArtifactStep, emitWorkflowYAML, keepRecordStep, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
 
@@ -158,6 +158,8 @@ function gatedWaveGithubDoc(
     steps.push(...runSteps(prLoopSetup(image)), ...runSteps(beforeScript), { run: job.command.join(" ") }, ...runSteps(extraScript));
     steps.push(keepRecordStep(`Upload the record for wave ${job.wave}`, waveRecordArtifact(job.wave), GATED_WAVE_RECORD));
     jobsDoc[job.jobName] = {
+      // #4291: a wave runs after one that failed, and blocks only what depends on the failure.
+      ...(job.needs.length > 0 ? { if: afterEarlierWave(job.needs[0]!) } : {}),
       "runs-on": GITHUB_RUNNER,
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       container: image,
@@ -267,7 +269,8 @@ function prLoopGithubDoc(
   const onGreen = forgejo ? "startsWith(github.ref, 'refs/tags/ci/green/')" : "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'";
   const onPush = loop.applyOnMerge && forgejo ? "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')" : "github.event_name == 'push'";
   const applyJob = (job: typeof plan, needs: string[], name: string) => ({
-    if: job.jobName === "record" ? onPush : onGreen,
+    // #4291: a wave after the first runs after one that failed, and blocks only what depends on the failure.
+    if: job.jobName === "record" ? onPush : needs.length > 0 && job.wave ? afterEarlierWave(needs[0]!, onGreen) : onGreen,
     "runs-on": GITHUB_RUNNER,
     ...(needs.length > 0 ? { needs } : {}),
     container: image,

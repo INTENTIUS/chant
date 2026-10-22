@@ -177,6 +177,8 @@ export interface PrMember {
   round?: number;
   /** Apply stage (#3999): why the first round's plan did not apply. */
   held?: string;
+  /** A blocked member's (#4291): the component whose failure held it, past any component blocked in between. */
+  blockedBy?: string;
 }
 
 /** A round of plans an apply made after an upstream applied (#3999), the report's `rounds`. */
@@ -448,8 +450,10 @@ function headline(report: PrReport): string {
       return `Planning failed for ${report.members.filter((m) => m.status === "plan-failed").length} of ${members}, so nothing can apply.`;
     case "applied":
       return `Applied ${members}.`;
-    case "failed":
-      return `The apply failed: ${report.members.filter((m) => m.status === "failed").length} failed, ${report.members.filter((m) => m.status === "applied").length} applied.`;
+    case "failed": {
+      const blocked = report.members.filter((m) => m.status === "blocked").length;
+      return `The apply failed: ${report.members.filter((m) => m.status === "failed").length} failed, ${blocked > 0 ? `${blocked} blocked, ` : ""}${report.members.filter((m) => m.status === "applied").length} applied.`;
+    }
     case "wave-applied": {
       const applied = (report.waves ?? []).filter((w) => w.status === "applied").map((w) => w.wave);
       const total = report.selection.waves.length;
@@ -462,6 +466,25 @@ function headline(report: PrReport): string {
     case "waiting":
       return `Applied ${report.members.filter((m) => m.status === "applied").length} of ${members}; ${report.members.filter((m) => m.status === "waiting").length} wait on an approval of the plan made after their upstream applied.`;
   }
+}
+
+/**
+ * The blocked set (#4291): each component a failure held, grouped by the
+ * component that failed, and that the rest went on. Undefined when nothing
+ * is blocked.
+ */
+function blockedLine(members: readonly PrMember[]): string | undefined {
+  const byRoot = new Map<string, Set<string>>();
+  for (const m of members) {
+    if (m.status !== "blocked") continue;
+    const by = m.blockedBy ?? "a dependency";
+    byRoot.set(by, (byRoot.get(by) ?? new Set()).add(m.component));
+  }
+  if (byRoot.size === 0) return undefined;
+  const groups = [...byRoot]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([by, names]) => `${[...names].sort().map(code).join(", ")} (blocked by ${by === "a dependency" ? by : code(by)})`);
+  return `Blocked, so not applied: ${groups.join("; ")}. A failure blocks only the members that depend on it, so the rest went on.`;
 }
 
 /** Who a wave applied or waits under, as a table cell. */
@@ -546,6 +569,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       const holes = memberHoleReasons(report, m.member);
       const status =
         STATUS_WORDS[m.status] +
+        (m.status === "blocked" && m.blockedBy ? ` by ${code(m.blockedBy)}` : "") +
         (m.inputsMoved?.length ? `, inputs from ${m.inputsMoved.join(", ")} moved` : "") +
         (holes.length > 0 ? `; ${holes.length > 2 ? `${holes[0]}; and ${holes.length - 1} more, listed under Holes` : holes.join("; ")}` : "");
       // A member whose plan has holes and no entries says nothing about what
@@ -558,6 +582,8 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       out.push("", "A member whose inputs moved applied the plan it was approved with. The next run plans it against the new values.");
     }
   }
+  const blocked = blockedLine(report.members);
+  if (blocked) out.push("", blocked);
   out.push(...waveLines(report, options.approver ?? "<you>"));
   // #4288: the hooks that did not pass, by name; a passed hook is a count.
   const hooks = report.hooks ?? [];

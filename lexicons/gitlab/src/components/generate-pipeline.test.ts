@@ -343,6 +343,9 @@ describe("generateGitlabPipeline: gated waves (#3049)", () => {
     expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3"]);
     expect(parsed["wave-2"].needs).toEqual(["wave-1"]);
     expect(parsed["wave-1"].needs).toBeUndefined();
+    // #4291: wave 2 runs after wave 1 failed, so a failure blocks only its dependents.
+    expect(parsed["wave-2"].when).toBe("always");
+    expect(parsed["wave-1"].when).toBeUndefined();
     expect(parsed["wave-3"].image).toBe("node:22");
     expect(parsed["wave-3"].script).toEqual([
       expect.stringMatching(/^command -v tofu /),

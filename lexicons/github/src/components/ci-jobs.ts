@@ -46,6 +46,19 @@ export function keepRecordStep(name: string, artifact: string, path: string): Re
   };
 }
 
+/**
+ * The `if:` of a wave job after the first (#4291): it runs when the wave
+ * before it failed, so a failed member blocks only the members that depend
+ * on it, and the next wave's job blocks those and runs the rest. It does not
+ * run when the run was cancelled, or when the job before it was skipped
+ * (its own condition was false). `condition` is the job's own condition,
+ * which still has to hold.
+ */
+export function afterEarlierWave(previous: string, condition?: string): string {
+  const runs = `!cancelled() && needs.${previous}.result != 'skipped'`;
+  return condition ? `${runs} && (${condition})` : runs;
+}
+
 /** A `concurrency:` mapping: one run at a time per group. */
 export function concurrency(group: string, cancelInProgress = false): Record<string, unknown> {
   return { group, "cancel-in-progress": cancelInProgress };

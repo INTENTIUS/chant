@@ -11,7 +11,7 @@ import { describe, expect, test } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
 import { memoryGateLedgerPort } from "../op/gate";
 import { planFanOut } from "./fan-out";
-import { EarlierWaveNotAppliedError, runFanOut, type FanOutRunOptions } from "./fan-out-run";
+import { EarlierWaveNotAppliedError, EarlierWaveWaitingError, runFanOut, type FanOutRunOptions } from "./fan-out-run";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { DriverComponent } from "./driver";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
@@ -351,6 +351,50 @@ describe("one wave per CI job", () => {
     expect(result.gate?.gate).toBe("release-wave-2");
     expect(result.waves?.map((r) => r.wave)).toEqual([2]);
     expect(w.planned.map((p) => p.root).sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("a failed member blocks only its dependents across wave jobs (#4291)", () => {
+  /** net, then a and b, then app (reads a) and web (reads b). */
+  const WIDE: DriverComponent[] = [...ESTATE, root("web", ["b"])];
+
+  test("wave 3's job blocks what an earlier job's failure holds, and plans the rest", async () => {
+    const w = world();
+    const plan = planFanOut({ components: WIDE, changed: ["net"] });
+    const result = await runFanOut(plan, WIDE, w.registry, {
+      ...waveOptions(ledger()),
+      waveGate: { op: "fan-out", gate: "release", only: 3, failedEarlier: ["a"] },
+      progress: { completed: ["net", "b"] },
+    });
+    expect(result.blocked).toEqual([{ component: "app", reason: "blocked", blockedBy: "a" }]);
+    expect(w.planned.map((p) => p.root)).toEqual(["web"]);
+    // A member of the job's own wave was blocked, so the job fails though web went on to its gate.
+    expect(result.status).toBe("fail");
+  });
+
+  test("an earlier member that neither applied nor failed still refuses the job", async () => {
+    const w = world();
+    const plan = planFanOut({ components: WIDE, changed: ["net"] });
+    await expect(
+      runFanOut(plan, WIDE, w.registry, {
+        ...waveOptions(ledger()),
+        waveGate: { op: "fan-out", gate: "release", only: 3, failedEarlier: ["a"] },
+        progress: { completed: ["net"] },
+      }),
+    ).rejects.toThrow(EarlierWaveNotAppliedError);
+  });
+
+  test("an earlier wave that waits at its gate stops the job", async () => {
+    const w = world();
+    const plan = planFanOut({ components: WIDE, changed: ["net"] });
+    await expect(
+      runFanOut(plan, WIDE, w.registry, {
+        ...waveOptions(ledger()),
+        waveGate: { op: "fan-out", gate: "release", only: 3, waitingEarlier: [{ wave: 2, gate: "release-wave-2", components: ["a", "b"] }] },
+        progress: { completed: ["net"] },
+      }),
+    ).rejects.toThrow(EarlierWaveWaitingError);
+    expect(w.planned).toEqual([]);
   });
 });
 

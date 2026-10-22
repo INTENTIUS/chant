@@ -81,6 +81,7 @@ apply-wave-2:
   resource_group: chant-apply-prod
   rules:
     - if: '$CI_COMMIT_TAG =~ /^ci\/green\//'
+      when: always
   variables: {}
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
@@ -107,6 +108,7 @@ apply-wave-3:
   resource_group: chant-apply-prod
   rules:
     - if: '$CI_COMMIT_TAG =~ /^ci\/green\//'
+      when: always
   variables: {}
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)

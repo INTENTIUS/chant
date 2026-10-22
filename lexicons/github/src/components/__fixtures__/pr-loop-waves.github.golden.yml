@@ -126,7 +126,7 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
   apply-wave-2:
-    if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+    if: '!cancelled() && needs.apply-wave-1.result != ''skipped'' && (github.event_name == ''workflow_run'' || github.event_name == ''workflow_dispatch'')'
     runs-on: ubuntu-latest
     needs:
       - apply-wave-1
@@ -176,7 +176,7 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
   apply-wave-3:
-    if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+    if: '!cancelled() && needs.apply-wave-2.result != ''skipped'' && (github.event_name == ''workflow_run'' || github.event_name == ''workflow_dispatch'')'
     runs-on: ubuntu-latest
     needs:
       - apply-wave-2

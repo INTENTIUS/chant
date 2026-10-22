@@ -106,6 +106,7 @@ The apply job becomes one job per wave of the component graph, `apply-wave-1` to
 - Wave 1 plans every member, as the single apply does, and checks the plan against the merges' approvals, or the green commit's gate. Approved, it applies wave 1. A moved plan refuses with both digests named, as before.
 - Each later wave is planned again against the outputs the waves before it left. If the approved change set still covers that new plan, the wave needs no approval of its own. Coverage is the test a [resumed apply](/chant/cli/components/#finishing-an-apply-that-failed-partway) uses: each change the wave makes is one the approved plan made, and a value the approved plan knew only after apply may be any value now.
 - A wave whose plan moved waits at `release-wave-<k>`, under the apply's op, for an approval of its new plan. Nothing in that wave applies, and the job exits 3. Its new plan is kept as `change-set-wave-<k>.json` beside the report, and the note gives the approve command. Once it is approved, re-run the job; the waves after it follow.
+- A member that fails blocks only the members that read from it. The next wave's job runs anyway and applies the rest, and the note lists the blocked set; see [keep going past a failed member](/chant/guide/failed-member-blocks/) ([#4291](https://github.com/INTENTIUS/chant/issues/4291)).
 
 ```bash
 chant approve pr-12 release-wave-2 --plan jcs1-sha256:9b1f... --approver github:alice --sign
