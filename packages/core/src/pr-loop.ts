@@ -77,6 +77,9 @@ export const PR_REPORT_HOOKS_FLOOR = "0.124.35";
 /** The first chant whose plan report can carry `overdue` (#4289). */
 export const PR_REPORT_OVERDUE_FLOOR = "0.124.35";
 
+/** The first chant whose report can carry `policy` and the `policy-denied` and `policy-error` refusals (#4294). */
+export const PR_REPORT_POLICY_FLOOR = "0.124.36";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -268,7 +271,11 @@ export type PrRefusal =
   /** `--wave-gate` with `--wave <k>`: an earlier wave has work left, or no record says it applied. */
   | "earlier-wave"
   /** Under `ci.locks` (#4293): another open pull request holds a lock on a target this apply reaches. */
-  | "locked";
+  | "locked"
+  /** `ci.policy` at base denied the plan (#4294), and no override of it counts. */
+  | "policy-denied"
+  /** `ci.policy` at base could not be run, or gave no answer chant can read (#4294). */
+  | "policy-error";
 
 /**
  * One wave of an apply with `--wave-gate` (#4003): what it planned, where it
@@ -307,6 +314,29 @@ export interface PrOverdue {
   since: string;
   neverRan?: boolean;
   message: string;
+}
+
+/**
+ * What `ci.policy` at base said about the change set (#4294). Rule ids are
+ * `<package>.<rule>`.
+ */
+export interface PrPolicyReport {
+  /** `denied` wins over `held`. `error`: the policy did not run or gave no readable answer. */
+  result: "passed" | "denied" | "held" | "error";
+  /** The result shape read: `conftest` or `opa`. */
+  engine: "conftest" | "opa";
+  /** The commit the settings and the policy were read at. */
+  base: string;
+  denials: Array<{ rule: string; message: string }>;
+  /** The ids of the rules that denied, sorted: what an override names. */
+  rules?: string[];
+  holds: Array<{ rule: string; message: string }>;
+  warnings: string[];
+  error?: string;
+  /** The override that lets the denied plan through. */
+  override?: { by: string; at: string; reason: string; digest: string };
+  /** While denied: the command that overrides the denial. */
+  overrideCommand?: string;
 }
 
 /**
@@ -409,6 +439,12 @@ export interface PrReport {
    * Added within contract 1 by chant {@link PR_REPORT_HOOKS_FLOOR}.
    */
   hooks?: PrHookOutcome[];
+  /**
+   * What `ci.policy` at base said about the change set (#4294). Absent when
+   * the base sets no policy, or the stage reached no plan to judge. Added
+   * within contract 1 by chant {@link PR_REPORT_POLICY_FLOOR}.
+   */
+  policy?: PrPolicyReport;
 }
 
 /** The counts a member's entries add up to. */
@@ -508,6 +544,24 @@ function blockedLine(members: readonly PrMember[]): string | undefined {
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([by, names]) => `${[...names].sort().map(code).join(", ")} (blocked by ${by === "a dependency" ? by : code(by)})`);
   return `Blocked, so not applied: ${groups.join("; ")}. A failure blocks only the members that depend on it, so the rest went on.`;
+}
+
+/** The policy's lines in the note (#4294): what denied or held the plan, and how a denial is overridden. */
+function policyLines(report: PrReport): string[] {
+  const p = report.policy;
+  if (!p) return [];
+  const at = `read at ${code(short(p.base))}`;
+  const each = (list: Array<{ rule: string; message: string }>): string[] => list.map((f) => `- ${code(f.rule)}: ${f.message}`);
+  const out: string[] = [""];
+  if (p.result === "error") out.push(`Policy (${p.engine}, ${at}) could not be checked, so nothing applies: ${p.error ?? "no answer"}.`);
+  else if (p.result === "passed") out.push(`Policy (${p.engine}, ${at}) passed.`);
+  if (p.denials.length > 0) {
+    out.push(p.override ? `Policy (${p.engine}, ${at}) denied this plan; ${code(p.override.by)} overrode it: ${p.override.reason}` : `Policy (${p.engine}, ${at}) denied this plan:`, ...each(p.denials));
+    if (!p.override && p.overrideCommand) out.push("", `A person the overriders file at base lists may override it once pr-apply has recorded the denial: ${code(p.overrideCommand)}`);
+  }
+  if (p.holds.length > 0) out.push(`Policy (${p.engine}, ${at}) holds this plan for a person's approval of its digest:`, ...each(p.holds));
+  if (p.warnings.length > 0) out.push(`Policy warnings: ${p.warnings.join("; ")}`);
+  return out;
 }
 
 /** Who a wave applied or waits under, as a table cell. */
@@ -616,6 +670,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     const other = hooks.filter((h) => h.outcome !== "passed").map((h) => `${code(h.name)} ${h.moment}${h.target ? ` for ${code(h.target)}` : ""} ${h.outcome === "held" ? "held" : "failed"} (exit ${h.exit})`);
     out.push("", `Hooks: ${passed} passed${other.length > 0 ? `; ${other.join("; ")}` : ""}.`);
   }
+  out.push(...policyLines(report));
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);
   }
@@ -716,6 +771,10 @@ export function prStatusDescription(report: PrReport): string {
         text = "refused: an earlier wave has not applied";
         break;
       }
+      if (report.refusal === "policy-denied" || report.refusal === "policy-error") {
+        text = report.refusal === "policy-denied" ? `refused: the policy denied the plan (${(report.policy?.rules ?? []).join(", ")})` : "refused: the policy could not be checked";
+        break;
+      }
       text = `refused: ${report.refusal === "plan-changed" ? "the plan changed after review" : report.refusal === "not-a-reviewer" ? "the approver has not approved the pull request" : report.refusal === "author-approved" ? "the approver wrote the change" : report.refusal === "no-pull-request" ? "no pull request merged this commit" : report.refusal === "locked" ? "another pull request holds a target lock" : "the plan is not approved"}`;
       break;
     }
@@ -727,6 +786,8 @@ export function prStatusDescription(report: PrReport): string {
 export function prStatusState(report: PrReport): "success" | "failure" | "pending" {
   // #4168 decision 1: a merge whose plan differs from the approved one is recorded, and its status fails.
   if (report.status === "recorded") return report.approval.status === "changed" ? "failure" : "success";
+  // #4294: a plan the policy denied, with no override, or one it could not check, fails at the plan stage as it would at the apply.
+  if (report.status === "planned" && report.policy && (report.policy.result === "error" || (report.policy.result === "denied" && !report.policy.override))) return "failure";
   if (report.status === "planned" || report.status === "applied" || report.status === "wave-applied" || report.status === "nothing") return "success";
   if (report.status === "refused" && (report.refusal === "not-approved" || report.refusal === "wave-not-approved")) return "pending";
   if (report.status === "waiting") return "pending";

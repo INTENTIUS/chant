@@ -1,0 +1,113 @@
+---
+title: Policy at the Gate
+description: Run conftest or OPA over a pull request's change set with the policy read at base, so that a rule can deny a plan or hold it for a person.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/gate-policy/.
+  Add the `ci.policy` I describe to `chant.workspace.json` and the Rego I describe under its `path`, raise `minReader` to 0.124.36 if it is lower, and open a pull request with the change.
+  Say in its description that the policy judges pull requests from the next one after this one merges.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This guide is for a workspace that wants a policy engine to judge each pull request's plan before it applies ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). The jobs are `chant components pr-plan` and `pr-apply` ([Generated CI for Pull Requests](/chant/guide/pull-request-ci/)). The engine reads the change-set document the gate binds, which every lexicon's plan produces. A rule can deny the plan or hold it for a person, and a third kind of rule only warns.
+
+## Declare the policy
+
+Put `ci.policy` in `chant.workspace.json`, and put the Rego in the directory that `path` names.
+
+```json
+{
+  "minReader": "0.124.36",
+  "ci": {
+    "policy": { "engine": "opa", "path": "policy", "namespace": "main" }
+  }
+}
+```
+
+| Setting | Means | Default |
+|---|---|---|
+| `engine` | The result shape the command prints: `conftest` (`conftest test --output json`) or `opa` (`opa eval --format json`) | `conftest` |
+| `path` | The policy directory, relative to the declaration | `policy` |
+| `namespace` | The package to read | conftest: every namespace. opa: `main` |
+| `command` | argv to run in place of the engine's own. `{policy}` is the policy directory, `{input}` the input file | the engine's own (`packages/core/src/gate-policy.ts:181`) |
+
+The job finds the engine on its `PATH` when it runs. Any other command works when it prints one of the two shapes. The settings are checked (`packages/core/src/workspace/declaration.ts:1167`) when the declaration is read.
+
+### What the engine reads
+
+The input file holds one JSON document:
+
+```json
+{
+  "version": 1,
+  "stage": "apply",
+  "op": "pr-12",
+  "gate": "pr-apply",
+  "env": "prod",
+  "pr": 12,
+  "base": "<sha>",
+  "head": "<sha>",
+  "changeSet": { "digest": "jcs1-sha256:...", "members": [], "entries": [] }
+}
+```
+
+`changeSet` is the document whose digest the gate binds. Each of its `entries` is one change a plan proposes, with its `member`, `address`, `type` and `action`. A rule over it looks like this:
+
+```rego
+package main
+
+deny_public_bucket contains msg if {
+  some e in input.changeSet.entries
+  e.type == "aws_s3_bucket_public_access_block"
+  e.action == "delete"
+  msg := sprintf("%s drops its public access block", [e.address])
+}
+
+hold_iam contains msg if {
+  some e in input.changeSet.entries
+  startswith(e.type, "aws_iam_")
+  msg := sprintf("%s changes IAM", [e.address])
+}
+```
+
+## What each rule does
+
+Rules are counted by name, as conftest counts them (`packages/core/src/gate-policy.ts:88`).
+
+| Rule | Effect |
+|---|---|
+| `deny`, `violation`, `deny_<name>`, `violation_<name>` | The plan is denied. `pr-apply` applies nothing unless an override counts, and the gate still needs its approval |
+| `hold`, `hold_<name>` | The plan waits for a person's approval of its own digest |
+| `warn`, `warn_<name>` | Advice in the note and the log. It fails nothing |
+
+A denial wins over a hold (`packages/core/src/gate-policy.ts:169`). conftest runs only deny and warn rules, so a hold rule needs `engine: "opa"`.
+
+`pr-apply` always asks for an approval, so a hold changes one path there. A green commit's plan no longer applies under the approvals of the merges it carries; it needs an approval of its own digest (`packages/core/src/cli/handlers/pr.ts:1063`). In an [Op waves](/chant/guide/op-waves/#policy-holds) job a hold makes a wave wait even under `gate: "never"`.
+
+No rule lets a plan apply with nobody approving it. A non-empty change set always waits for a person (ws-104, ws-080). `ci.policy` refuses an `outcomes` or `allow_unattended` setting with `declaration-invalid` (`packages/core/src/gate-policy.ts:293`), and a rule named `allow_unattended` counts for nothing.
+
+## The policy comes from the base
+
+Both jobs read `ci.policy` and the policy directory from the commit the change is measured from (`packages/core/src/components/pr-policy.ts:66`). A pull request that edits the Rego or deletes the block is still judged by the policy on its base. Its own policy runs from the next pull request after it merges. If the base has no declaration and the change adds a policy, the job runs none and says so. When the declaration at base cannot be read and the change names a policy, the job refuses to run.
+
+A policy that does not run, or prints no result chant can read, is an error (`packages/core/src/gate-policy.ts:231`). `pr-plan` fails its status. `pr-apply` refuses with `policy-error` and exits 1 before anything applies (`packages/core/src/cli/handlers/pr.ts:524`).
+
+## Override a denial
+
+At the plan stage the report's `policy` holds the denial, and the commit status fails. The note lists each rule that denied and the override command. `pr-plan` records nothing and exits 1 (`packages/core/src/cli/handlers/pr.ts:647`).
+
+At the apply stage a denial with no override refuses with `policy-denied` and exits 3. The first refusal records the denial on `_gates/policy-override.jsonl` (`packages/core/src/cli/handlers/pr.ts:543`). Its subject is the gate's op, `pr-<n>`, and it binds the change set's digest and the rules. A person listed in `.chant/overriders` at base then overrides it:
+
+```bash
+chant approve policy-override pr-12 --rule main.deny_public_bucket --reason "the bucket is the public docs site"
+```
+
+Add `--sign` when the gate is sealed. The next `pr-apply` finds the override and checks the gate's approval as usual. Before anything applies it writes the override's line to `_gates/policy-override/applied.jsonl`, which spends it (`packages/core/src/cli/handlers/pr.ts:783`). A plan that moves, or other rules that deny, need an override of their own. The [Ops](/chant/guide/ops/) guide covers the override gate itself.
+
+## In the report
+
+`pr-plan.json` and `pr-apply.json` carry `policy` (the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/)) with `result` (`passed`, `denied`, `held` or `error`), `engine`, `base`, `denials`, `rules`, `holds` and `warnings`. An overridden denial adds `override`, and one that still stands adds `overrideCommand`. Reports from chant 0.124.36 on carry these fields.
+
+## For a product with its own input
+
+A product that builds its own input, such as Terraform's `show -json` wrapped for HCP, runs the same engine through `@intentius/chant/gate-policy`. `checkGatePolicy` runs the command and reads its answer. `exportGatePolicy` copies the policy out of a tree at base. The module imports only node built-ins, so it bundles into one file. In an Op waves plan file the product then writes `denied` or `held` for each run.

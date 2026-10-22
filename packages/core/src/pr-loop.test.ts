@@ -388,3 +388,39 @@ describe("stage hooks in the report and the note (#4288)", () => {
     expect(note).toContain("Hooks: 1 passed; `lint` before-plan failed (exit 1).");
   });
 });
+
+describe("the policy in the report and the note (#4294)", () => {
+  const policy = {
+    result: "denied" as const,
+    engine: "opa" as const,
+    base: "b".repeat(40),
+    denials: [{ rule: "main.deny_public", message: "bucket logs is public" }],
+    rules: ["main.deny_public"],
+    holds: [{ rule: "main.hold_iam", message: "an IAM role changes" }],
+    warnings: ["three deletes"],
+    overrideCommand: 'chant approve policy-override pr-7 --rule main.deny_public --reason "<why>"',
+  };
+  const denied: PrReport = { ...planReport, policy };
+
+  test("a report with a policy, and an apply the policy refused, validate", () => {
+    expectValid(denied);
+    expectValid({ ...denied, stage: "apply", status: "refused", refusal: "policy-denied", message: "The policy denied this plan." });
+    expectValid({ ...denied, policy: { ...policy, result: "error", denials: [], rules: undefined, holds: [], error: "opa did not run" }, stage: "apply", status: "refused", refusal: "policy-error" });
+  });
+
+  test("the note names the denial, the hold and the override command", () => {
+    const note = renderPrNote(denied);
+    expect(note).toContain("Policy (opa, read at `bbbbbbbbbbbb`) denied this plan:");
+    expect(note).toContain("- `main.deny_public`: bucket logs is public");
+    expect(note).toContain("holds this plan for a person's approval of its digest:");
+    expect(note).toContain(policy.overrideCommand);
+    expect(note).toContain("Policy warnings: three deletes");
+  });
+
+  test("a denied plan fails its status until an override counts; the apply's refusal says why", () => {
+    expect(prStatusState(denied)).toBe("failure");
+    expect(prStatusState({ ...denied, policy: { ...policy, override: { by: "github:carol", at: "2026-10-22T12:00:00Z", reason: "docs site", digest: "sha256:1" } } })).toBe("success");
+    expect(prStatusState({ ...denied, policy: { ...policy, result: "held", denials: [] } })).toBe("success");
+    expect(prStatusDescription({ ...denied, stage: "apply", status: "refused", refusal: "policy-denied" })).toBe("refused: the policy denied the plan (main.deny_public)");
+  });
+});
