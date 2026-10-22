@@ -450,7 +450,7 @@ Under either value, `chant components pr-apply` refuses with `locked` when anoth
 | `azure` | Its identities are client ids. It takes `tenantId` and `rules`, and may set `subscriptionId`, `audience` (default `api://AzureADTokenExchange`) and `authority`. |
 | `rules[]` | Each rule has a `plan` and an `apply` identity and may set `environments` and `members` globs. The first rule that matches the pipeline's environment and member wins. |
 
-A rule that plans as an identity any rule applies as is refused with `declaration-invalid` at that rule (`packages/core/src/workspace/declaration.ts:1218`). Keys starting with `x-` are skipped, and a declaration that sets the block needs chant 0.124.36 or newer as its `minReader`.
+A rule that plans as an identity any rule applies as is refused with `declaration-invalid` at that rule (`packages/core/src/workspace/declaration.ts:1237`). Keys starting with `x-` are skipped, and a declaration that sets the block needs chant 0.124.36 or newer as its `minReader`.
 
 ## Retention
 
