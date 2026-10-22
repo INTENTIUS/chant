@@ -1,0 +1,49 @@
+---
+title: Plan and Apply a Few Resources
+description: Name resource addresses on a fan-out or a component run so a component plans and applies some of its resources, and an approval covers exactly that narrowed plan
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/resource-targeting/.
+  Pick one terraform-apply or kubectl-apply component in this project and one address it declares.
+  Run `npx chant components fan-out --base origin/main --target <component>:<address> --wave-gate review --dry-run` and show me what it would plan, then the same without `--target`.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+`--member` and `--wave` pick whole components. `--target` goes one step finer and picks resources inside a component ([#4300](https://github.com/INTENTIUS/chant/issues/4300)). Use it to apply one fix to a big root, or to roll one object of a manifest ahead of the rest.
+
+## Name the targets
+
+Pass `--target <component>:<address>` to `chant components fan-out` or `chant run --components`. Repeat it for more addresses. The address is everything after the first colon, so an address may hold colons of its own ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/capability.ts#L317)).
+
+```bash
+chant components fan-out --base origin/main --env prod --wave-gate release \
+  --target network:aws_vpc.main --target network:aws_subnet.private
+chant run --components web --env dev --target web:Deployment/dev/web
+```
+
+A target must name a component the run selects. One it does not select refuses the run before anything plans ([fan-out](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/fan-out.ts#L282), [run](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/cli-support.ts#L675)). Components with no `--target` plan and apply in full.
+
+## Which steps accept targets
+
+Each capability says whether it can narrow. A component given addresses refuses before it plans or runs when any of its steps can't. The refusal names the verb and says why ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/driver.ts#L1187)). A verb that says nothing refuses too ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/capability.ts#L226)).
+
+| Verb | Targets | What an address names |
+|---|---|---|
+| `terraform-apply` | accepts | A resource or module address, passed to `plan` as `-target` ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/terraform/src/op/activities/terraform.ts#L570)). The saved plan holds those addresses and what they depend on, and the apply applies that file. A choudoufu root plans with `plan -target`, not as a one-root set ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/terraform/src/components/capability-plugin.ts#L261)). |
+| `kubectl-apply` | accepts | One object, `Kind/namespace/name` or `Kind/name`. The plan and the apply send only the named documents ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/k8s/src/components/kubectl-apply.ts#L473)). The prune is off, since a prune over a narrowed set would delete every owned object the targets leave out ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/k8s/src/components/kubectl-apply.ts#L373)). An address the manifest does not declare refuses. |
+| `cfn-deploy` | refuses | A change set covers the whole stack ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/aws/src/components/apply.ts#L506)). |
+| `helm-upgrade` | refuses | `helm upgrade` applies the whole release ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/helm/src/components/helm-upgrade.ts#L127)). |
+
+Any other verb refuses until its capability sets `targets: "accept"` and narrows its `plan` and `run`.
+
+## What an approval covers
+
+The addresses join the digest a gate binds, so an approval of a narrowed plan covers that plan and no other.
+
+Under `--wave-gate`, each member's digest is the digest over its plan's digest and its sorted addresses ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/wave-plan.ts#L176)). A plan that does not give back the addresses it was asked for refuses ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/wave-plan.ts#L172)). Under `--gate`, the set's digest takes in every component's addresses ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/fan-out-run.ts#L467)). The `--resume` record keys on the same digest ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/fan-out.ts#L291)), so a record made with other addresses does not carry over. A `gate` step inside a component binds them too ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/driver.ts#L923)).
+
+A run without `--target` has the digests it had before. An approval of the full plan never covers a narrowed run, and the reverse holds too. Approve the digest the narrowed run prints.
+
+## Limits
+
+`chant components pr-plan` and `pr-apply` take no `--target` yet. The generated pull-request jobs plan every component in full.

@@ -55,7 +55,7 @@ import { componentPlanDigest } from "./gate-plan";
 import { componentDeployInputs } from "./deploy-inputs";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
-import { isPlanMovedError, PLAN_MOVED_EXIT_CODE } from "./capability";
+import { isPlanMovedError, PLAN_MOVED_EXIT_CODE, TargetsRefusedError, targetRefusal } from "./capability";
 import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent } from "./run-progress";
@@ -889,6 +889,18 @@ export async function runComponentDeploy(
   onRunEvent?: RunEventSink,
 ): Promise<DriverComponentResult> {
   const emit = joinRunEventSinks(onRunEvent, progressSinkOf(onProgress));
+  // #4300: a component narrowed to targets runs only when every step can narrow.
+  try {
+    assertTargetsAccepted(component, registry, ctx);
+  } catch (err) {
+    if (!(err instanceof TargetsRefusedError)) throw err;
+    return {
+      component: component.name,
+      ok: false,
+      status: "fail",
+      records: [{ component: component.name, phase: "Targets", kind: err.kind, status: "fail", durationMs: 0, error: err.message }],
+    };
+  }
   // Each component tracks its own release: a digest one component promoted never stamps another's deploy.
   if (ctx.release) ctx = { ...ctx, release: { ...ctx.release } };
   const phaseOutputs: Record<string, Record<string, unknown>> = {};
@@ -908,6 +920,7 @@ export async function runComponentDeploy(
         component,
         ...(ctx.vars ? { vars: ctx.vars } : {}),
         ...(release !== undefined ? { release } : {}),
+        ...(ctx.targets ? { targets: ctx.targets } : {}),
         // #4155: the files the steps deploy from, read where the steps read
         // them. Only a gate reads the digest, so a run with none skips the hashing.
         ...(hasGateStep(component) ? { inputs: componentDeployInputs(component.deploy, process.cwd()).inputs } : {}),
@@ -1121,6 +1134,8 @@ export interface InterpretRunOptions {
    * step promotes an artifact. Absent: no deploy step sees a release.
    */
   releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
+  /** The addresses each component narrows to (#4300), by component: its `DeployContext.targets`. */
+  targets?: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -1144,11 +1159,47 @@ export interface InterpretRunOptions {
  */
 /** A component's `DeployContext` for a run: its env, vars and, when the caller knows it, its release. */
 export function deployContext(
-  options: { env: string; vars?: Record<string, unknown>; releaseIdentity?: (component: string) => ReleaseIdentity | undefined },
+  options: {
+    env: string;
+    vars?: Record<string, unknown>;
+    releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
+    targets?: Readonly<Record<string, readonly string[]>>;
+  },
   component: string,
 ): DeployContext {
   const release = options.releaseIdentity?.(component);
-  return { env: options.env, component, ...(options.vars ? { vars: options.vars } : {}), ...(release ? { release: { ...release } } : {}) };
+  const targets = options.targets?.[component];
+  return {
+    env: options.env,
+    component,
+    ...(options.vars ? { vars: options.vars } : {}),
+    ...(release ? { release: { ...release } } : {}),
+    ...(targets && targets.length > 0 ? { targets: [...new Set(targets)].sort() } : {}),
+  };
+}
+
+/**
+ * Refuse a component asked to narrow to `ctx.targets` (#4300) when one of its
+ * capability steps can't: throws {@link TargetsRefusedError} naming the first
+ * such verb, in composition order. A step whose kind is not registered
+ * refuses too. Does nothing when `ctx.targets` is absent.
+ */
+export function assertTargetsAccepted(component: DriverComponent, registry: CapabilityRegistry, ctx: DeployContext): void {
+  if (!ctx.targets || ctx.targets.length === 0) return;
+  const walk = (steps: DriverPhase["steps"]): void => {
+    for (const step of steps) {
+      if (typeof (step as DriverPhase).phase === "string" && Array.isArray((step as DriverPhase).steps)) {
+        walk((step as DriverPhase).steps);
+        continue;
+      }
+      const kind = (step as { kind?: unknown }).kind;
+      if (kind === "gate" || typeof kind !== "string") continue;
+      if (!registry.has(kind)) throw new TargetsRefusedError(component.name, kind, `no capability is registered for ${kind}`);
+      const reason = targetRefusal(registry.resolve(kind));
+      if (reason !== undefined) throw new TargetsRefusedError(component.name, kind, reason);
+    }
+  };
+  for (const phase of component.deploy) walk(phase.steps);
 }
 
 export async function runInterpretDriver(

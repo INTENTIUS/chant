@@ -294,6 +294,12 @@ export interface ParsedArgs {
   share?: number;
   /** `chant run wave --group <name>` (#3914) — apply one job group's runs of a decided wave. */
   group?: string;
+  /**
+   * `chant components fan-out --target <component>:<address>` and `chant run
+   * --components --target ...` (#4300), repeatable: the addresses a
+   * component's steps narrow to. Raw values; `parseComponentTargets` groups them.
+   */
+  targets?: string[];
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**

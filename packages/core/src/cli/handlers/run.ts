@@ -34,6 +34,7 @@ import { appliedDigestOf, extractRunDigest, maybeRecordAutoRelease, type Applied
 import { maybePersistBuildManifest } from "../../components/manifest-persistence";
 import { failedRunExitCode, type DriverComponentResult } from "../../components/driver";
 import { isComponentList, type ComponentRunPlan, type RunComponentsResult } from "../../components/cli-support";
+import { parseComponentTargets } from "../../components/capability";
 import { isApplyRecord, resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
 import { gateAdmission, gateApprover } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
@@ -1202,10 +1203,19 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
         if (plan.added.length > 0) console.error(formatInfo(`added as dependencies: ${plan.added.join(", ")}`));
       }
     : undefined;
+  // #4300: `--target <component>:<address>`, the addresses a component's steps narrow to.
+  let targets: Record<string, string[]> | undefined;
+  try {
+    targets = ctx.args.targets && ctx.args.targets.length > 0 ? parseComponentTargets(ctx.args.targets) : undefined;
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
   let result: RunComponentsResult;
   try {
     result = await runtime.runComponents(projectPath, selector, {
       env: ctx.args.env,
+      ...(targets ? { targets } : {}),
       componentOutputs: seededOutputs,
       onProgress,
       ...(events ? { onRunEvent: events.emit } : {}),

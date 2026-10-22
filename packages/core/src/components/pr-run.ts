@@ -110,6 +110,8 @@ export interface PrPlanSetOptions {
   vars?: Record<string, unknown>;
   /** Outputs supplied by the caller (`--seed-outputs`). They win over outputs read here. */
   seededOutputs?: Record<string, Record<string, unknown>>;
+  /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
+  targets?: Readonly<Record<string, readonly string[]>>;
   /**
    * Where the planning's events go (#4041): a `plan` phase with no
    * component, and in it one `plan` step per component, started as its wave
@@ -384,6 +386,8 @@ export interface PrApplyOptions {
   vars?: Record<string, unknown>;
   /** The set {@link planPrSet} planned and the gate approved, or {@link resumePrSet}'s set. */
   set: PrPlanSet;
+  /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
+  targets?: Readonly<Record<string, readonly string[]>>;
   onProgress?: (event: RunProgressEvent) => void;
   /** Where the apply's events go (#4041): the fan-out's run events. */
   onRunEvent?: RunEventSink;
@@ -467,6 +471,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       env: options.env,
       ...(options.vars ? { vars: options.vars } : {}),
       plans,
+      ...(options.targets ? { targets: options.targets } : {}),
       componentOutputs: outputs,
       hold: (name, now) => heldReason(byName.get(name)!, read, now, inChange),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
@@ -491,6 +496,7 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       env: options.env,
       ...(options.vars ? { vars: options.vars } : {}),
       seededOutputs: run.componentOutputs,
+      ...(options.targets ? { targets: options.targets } : {}),
     });
     for (const name of plan.order) roundOf.set(name, { round, set });
     const record = (status: PrRound["status"], approval: PrApproval, message?: string): void => {
@@ -626,6 +632,8 @@ export interface PrResumeOptions {
   env: string;
   vars?: Record<string, unknown>;
   seededOutputs?: Record<string, Record<string, unknown>>;
+  /** The addresses each component narrows to (#4300), by component: its steps' `DeployContext.targets`. */
+  targets?: Readonly<Record<string, readonly string[]>>;
   /** The approved set, from the attempt record. */
   record: PrApplyRecord;
   /** Components an earlier attempt applied. */
@@ -677,6 +685,7 @@ export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
     env: options.env,
     ...(options.vars ? { vars: options.vars } : {}),
     seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs },
+    ...(options.targets ? { targets: options.targets } : {}),
   });
   const reasons = fresh.doc.members
     .map((m) => planCoveredBy(options.record.changeSet, fresh.doc, m.member))

@@ -1011,7 +1011,8 @@ Component release ledger + status:
                              when the wave is reached, with --canary <name>
                              for wave 1 and --wave <n> for one wave per CI
                              job; --resume <file> finishes an attempt that
-                             stopped)
+                             stopped; --target <component>:<address> plans
+                             and applies only that address)
   components pr-plan       Plan the components a pull request reaches and
                             the ones that depend on them, and write the
                             report and note (--base <ref> --pr <n>

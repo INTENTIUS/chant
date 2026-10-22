@@ -72,6 +72,14 @@ export interface DeployContext {
    * against missing values.
    */
   unresolvedInputs?: string[];
+  /**
+   * The addresses this component's steps narrow to (#4300), from
+   * `--target <component>:<address>`, sorted. A step's `plan` plans only
+   * these, and its `run` applies only these. Every capability step of the
+   * component must accept targets ({@link Capability.targets}), or the
+   * component refuses before anything plans or runs. Absent: the whole step.
+   */
+  targets?: string[];
 }
 
 /**
@@ -101,6 +109,14 @@ export interface CapabilityPlan {
    * applies.
    */
   outputs?: PlannedOutputs;
+  /**
+   * The targets this plan narrowed to (#4300), sorted. A plan made with
+   * `DeployContext.targets` gives them back, which says it planned only
+   * those. Planning binds them into the member's digest
+   * ({@link targetedPlanDigest} in ./wave-plan.ts), so an approval of a
+   * targeted plan covers that plan and no other.
+   */
+  targets?: string[];
 }
 
 /**
@@ -176,10 +192,43 @@ export interface Capability<In = unknown, Out = unknown> {
    * compensation gap. See ../lint/rules/comp/comp003-mutating-no-rollback.ts.
    */
   readonly rollbackPolicy?: RollbackPolicy;
+  /**
+   * Whether this verb narrows to `DeployContext.targets` (#4300). `"accept"`:
+   * its `plan` and `run` act on the targets alone, and its plan gives them
+   * back in {@link CapabilityPlan.targets}. `{ refuse }`: it can't, and says
+   * why. Unset refuses too, with a reason that names the verb.
+   */
+  readonly targets?: TargetSupport;
 }
 
 /** A capability's relationship to rollback — see `Capability.rollbackPolicy`. */
 export type RollbackPolicy = "native" | "none-by-design" | "needs-opt-out";
+
+/** Whether a capability accepts `DeployContext.targets` (#4300). See `Capability.targets`. */
+export type TargetSupport = "accept" | { refuse: string };
+
+/**
+ * A component was asked to narrow to targets (#4300) and one of its steps'
+ * capabilities refuses them. Nothing in the component plans or runs.
+ */
+export class TargetsRefusedError extends Error {
+  constructor(
+    readonly component: string,
+    readonly kind: string,
+    readonly reason: string,
+  ) {
+    super(`component "${component}": ${kind} refuses targets: ${reason}`);
+    this.name = "TargetsRefusedError";
+  }
+}
+
+/** Why `capability` refuses targets, or `undefined` when it accepts them (#4300). */
+export function targetRefusal(capability: Pick<Capability<never, unknown>, "kind" | "targets">): string | undefined {
+  const t = capability.targets;
+  if (t === "accept") return undefined;
+  if (t && typeof t === "object" && typeof t.refuse === "string") return t.refuse;
+  return `${capability.kind} does not say it can narrow to targets`;
+}
 
 /** Extract a capability's `In` type. */
 export type CapabilityInput<C> = C extends Capability<infer In, unknown> ? In : never;
@@ -256,4 +305,26 @@ export class CapabilityRegistry {
   kinds(): string[] {
     return [...this.capabilities.keys()].sort();
   }
+}
+
+/**
+ * `--target <component>:<address>` values (#4300), grouped by component with
+ * each component's addresses sorted and unique. The address is everything
+ * after the first `:`, so it may hold colons of its own. Throws for a value
+ * with no component or no address, and, given `known`, for a component not
+ * among them.
+ */
+export function parseComponentTargets(values: readonly string[], known?: ReadonlySet<string>): Record<string, string[]> {
+  const out: Record<string, Set<string>> = {};
+  for (const value of values) {
+    const at = value.indexOf(":");
+    const component = at > 0 ? value.slice(0, at).trim() : "";
+    const address = at > 0 ? value.slice(at + 1).trim() : "";
+    if (component === "" || address === "") throw new Error(`--target needs a component and an address: --target <component>:<address>, got "${value}"`);
+    if (known && !known.has(component)) {
+      throw new Error(`--target ${value}: no component is named ${component} (components: ${[...known].sort().join(", ") || "none"})`);
+    }
+    (out[component] ??= new Set()).add(address);
+  }
+  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)).map(([c, s]) => [c, [...s].sort()]));
 }

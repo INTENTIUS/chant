@@ -100,3 +100,10 @@ describe("helm-upgrade capability (#1495 piece 4)", () => {
     await expect(cap.run(ctx, { release: "api", chart: "repo/api" })).rejects.toThrow(/UPGRADE FAILED/);
   });
 });
+
+describe("helm-upgrade targets (#4300)", () => {
+  test("refuses targets by name: a release applies whole", async () => {
+    const { targetRefusal } = await import("@intentius/chant/components/capability");
+    expect(targetRefusal(helmUpgradeCapability)).toMatch(/helm-upgrade can't narrow/);
+  });
+});

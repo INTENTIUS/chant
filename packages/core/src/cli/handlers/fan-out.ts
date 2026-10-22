@@ -56,7 +56,8 @@ import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
 import { changedFilesBetween, lexiconChangedUnits } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
-import { EarlierWaveNotAppliedError, EarlierWaveWaitingError, runFanOut, type FanOutWaveGate } from "../../components/fan-out-run";
+import { EarlierWaveNotAppliedError, EarlierWaveWaitingError, fanOutGateDigest, runFanOut, type FanOutWaveGate } from "../../components/fan-out-run";
+import { parseComponentTargets } from "../../components/capability";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { appliedDigestOf } from "../../components/auto-release";
@@ -267,6 +268,28 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
     }));
   }
 
+  // #4300: `--target <component>:<address>`, the addresses a component's steps narrow to.
+  let targets: Record<string, string[]> | undefined;
+  if (args.targets && args.targets.length > 0) {
+    try {
+      targets = parseComponentTargets(args.targets, new Set(derived.components.map((c) => c.name)));
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+    const running = new Set(derived.plan.order);
+    const outside = Object.keys(targets).filter((name) => !running.has(name));
+    if (outside.length > 0) {
+      console.error(formatError({
+        message: `--target names ${outside.join(", ")}, which this fan-out does not run`,
+        hint: "A target narrows a component the change selects. Drop the --target, or change what the fan-out selects.",
+      }));
+      return 1;
+    }
+  }
+  // The fan-out's identity: the derivation's digest, with the targets in it (#4300).
+  const runDigest = fanOutGateDigest(derived.plan.digest, targets);
+
   const gate = args.gate ? { op: FAN_OUT_GATE_OP, gate: args.gate } : undefined;
   const waveGate: FanOutWaveGate | undefined = args.waveGate
     ? { op: FAN_OUT_GATE_OP, gate: args.waveGate, ...(args.wave !== undefined ? { only: args.wave } : {}) }
@@ -297,7 +320,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
       console.error(formatError({ message: `--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}` }));
       return 1;
     }
-    if (attempt && !samePlanDigest(attempt.digest, derived.plan.digest)) {
+    if (attempt && !samePlanDigest(attempt.digest, runDigest)) {
       console.error(formatWarning({
         message: `--resume: "${args.resume}" records a different fan-out (${attempt.digest || "no digest"}), so its progress does not apply here`,
         hint: "The derivation changed, which makes this a different change. Everything selected will run.",
@@ -411,7 +434,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   const recordAttempt = (): void => {
     if (!resumePath) return;
     const attempt: FanOutAttempt = {
-      digest: derived.plan.digest,
+      digest: runDigest,
       completed: [...completedSoFar].sort(),
       failed: [...failedSoFar].sort(),
       outputs: outputsSoFar,
@@ -433,6 +456,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
       env,
       releaseIdentity: () => (revision ? { revision } : {}),
       componentOutputs,
+      ...(targets ? { targets } : {}),
       ...(gate ? { gate } : {}),
       ...(waveGate ? { waveGate } : {}),
       ...(waveGate

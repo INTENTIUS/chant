@@ -311,6 +311,8 @@ Under [`--no-record`](#a-test-run---no-record) a component's gate fails instead,
 
 `--param name=value` and `--params-file <path>` bind declared build-time parameters for the component build, with the same precedence as [`chant build`](/chant/cli/build/#build-time-parameters). `--sandbox` runs any project source the driver has to execute in one isolated child process; an Op with a `policyGate` step is refused under `--sandbox`, since that gate builds the project in the chant process.
 
+`--target <component>:<address>` (repeatable) plans and applies only that address of the component. A target that names a component the run does not run refuses it, and so does a step whose verb can't narrow. See [Plan and Apply a Few Resources](/chant/guide/resource-targeting/).
+
 #### Cross-job outputs: `--dump-outputs` and `--seed-outputs`
 
 A single-component run in one CI job can reference a component that ran in an earlier job. `--dump-outputs <file>` writes the accumulated cross-component and cross-stack outputs after the run as JSON keyed by component name. It is written even when the run fails, so a resumed run still has what completed. `--seed-outputs <file>` (repeatable) loads such files before the run, so a `stackOutput()` or `@<dep>.publish.*` reference to an upstream component resolves.

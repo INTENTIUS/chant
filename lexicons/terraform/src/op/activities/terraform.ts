@@ -184,6 +184,12 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
    * `stackOutput()`, reaches the plan.
    */
   vars?: Record<string, unknown>;
+  /**
+   * Resource addresses to plan alone, each passed as `-target` (#4300). The
+   * saved plan then holds only these and what they depend on, so the apply
+   * of that file changes nothing else.
+   */
+  targets?: string[];
 }
 
 export interface TerraformApplyArgs extends TerraformRootArgs {
@@ -557,9 +563,11 @@ export function terraformPlanCommand(opts: {
   varFiles?: string[];
   vars?: Record<string, unknown>;
   destroy?: boolean;
+  targets?: string[];
 }): string {
   const parts = [opts.binary, "plan", "-input=false", "-detailed-exitcode"];
   if (opts.destroy) parts.push("-destroy");
+  for (const target of [...new Set(opts.targets ?? [])].sort()) parts.push(`-target=${quoteArg(target)}`);
   for (const varFile of opts.varFiles ?? []) parts.push(`-var-file=${quoteArg(varFile)}`);
   for (const [name, value] of Object.entries(opts.vars ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
     if (value === undefined) continue;
@@ -956,6 +964,7 @@ export async function terraformPlan(
     ...(root.varFiles ? { varFiles: root.varFiles } : {}),
     ...(args.vars ? { vars: args.vars } : {}),
     ...(args.destroy ? { destroy: true } : {}),
+    ...(args.targets && args.targets.length > 0 ? { targets: args.targets } : {}),
   });
 
   let changed: boolean;

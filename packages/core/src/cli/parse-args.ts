@@ -378,6 +378,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const share = Number(raw);
       if (!Number.isInteger(share) || share < 1) throw new Error(`--share needs a share number from 1: got "${raw ?? ""}"`);
       result.share = share;
+    } else if (arg === "--target") {
+      // `chant components fan-out|run --components --target <component>:<address>` (#4300), repeatable.
+      const raw = args[++i];
+      if (!raw || raw.startsWith("-") || !raw.includes(":")) throw new Error("--target needs a component and an address: --target <component>:<address>");
+      (result.targets ??= []).push(raw);
     } else if (arg === "--canary") {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");

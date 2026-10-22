@@ -202,6 +202,12 @@ describe("terraformPlanCommand (#2086)", () => {
     ).toBe("terraform plan -input=false -detailed-exitcode -var-file=base.tfvars -var-file=prod.tfvars -out=p.tfplan");
   });
 
+  test("targets become -target flags, sorted and unique (#4300)", () => {
+    expect(terraformPlanCommand({ binary: "terraform", planFile: "p", targets: ["module.b", "aws_vpc.a", "module.b"] })).toBe(
+      "terraform plan -input=false -detailed-exitcode -target=aws_vpc.a -target=module.b -out=p",
+    );
+  });
+
   test("-destroy is opt-in", () => {
     expect(terraformPlanCommand({ binary: "tofu", planFile: "p", destroy: true })).toContain(" -destroy ");
   });
