@@ -15,6 +15,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGithubPipeline } from "@intentius/chant-lexicon-github/components/generate-pipeline";
 import { githubBaseFallback, greenCheckout } from "@intentius/chant/components/pr-pipeline";
+import { dropForgeTokens } from "@intentius/chant/ci-handover";
 import { generateForgejoPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -44,7 +45,10 @@ describe("the Forgejo pull-request workflow", () => {
   test("both jobs run chant ci run with the runner key secret, as on GitHub (#4156)", () => {
     expect(result.yaml).toContain("chant ci run plan --in-place --no-push");
     expect(result.yaml.match(/CHANT_RUNNER_KEY: '\$\{\{ secrets\.CHANT_RUNNER_KEY \}\}'/g)).toHaveLength(3);
-    expect(result.yaml).not.toContain("chant components pr-");
+    expect(result.yaml).not.toContain("chant components pr-plan");
+    expect(result.yaml).not.toContain("chant components pr-apply");
+    // #4295: the plan-note job posts with pr-post, to Forgejo.
+    expect(result.yaml).toContain("chant components pr-post --pr \"$PR_NUMBER\" --head \"$HEAD_SHA\" --env prod --output .chant/pr --forge forgejo");
   });
 
   test("its commands talk to Forgejo, on Forgejo's runner, with the job permissions dropped", () => {
@@ -125,8 +129,9 @@ describe("the forgejo pull-request pipeline with build (#4088)", () => {
 
   test("builds, then lints, before pr-plan and pr-apply", () => {
     for (const job of ["plan", "apply"]) {
-      const runs = doc.jobs[job].steps.map((s: { run?: string }) => s.run ?? "").filter(Boolean);
-      const i = runs.findIndex((r: string) => r.startsWith("chant components pr-"));
+      const drop = dropForgeTokens("sh") + "\n";
+      const runs = doc.jobs[job].steps.map((s: { run?: string }) => (s.run ?? "").replace(drop, "").trimEnd()).filter(Boolean);
+      const i = runs.findIndex((r: string) => r.includes(`chant ci run ${job}`));
       expect(runs.slice(i - 2, i)).toEqual(["chant build --env prod", "chant lint"]);
     }
   });
@@ -154,7 +159,7 @@ describe("the Forgejo pull-request workflow records on merge by default (#4168)"
   });
 
   test("a push runs ci run record against Forgejo, and nothing applies", () => {
-    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "record"]);
+    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "plan-note", "record"]);
     expect(result.yaml).toContain('chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge forgejo');
     expect(result.yaml).not.toContain("ci run apply");
     expect(result.yaml).toContain("group: chant-record-prod");

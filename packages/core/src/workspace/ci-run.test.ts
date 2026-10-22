@@ -18,7 +18,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
 import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciLoopOptions, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
-import type { CommitStatus } from "../pr-forge";
+import type { CommitStatus, ForgeStatus, PrForge } from "../pr-forge";
+import { FORGE_TOKEN_VARS } from "../ci-handover";
 import { ciList, ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
 import type { StepRecord } from "../op/local-executor";
 import { sshFromEd25519 } from "./trust/dsse";
@@ -136,6 +137,28 @@ const HOST = {
   GITHUB_RUN_ID: "999",
 };
 
+/** A plan report for pull request 7 at `sha` in member `app`, which the fake chant writes with FAKE_REPORT (#4295). */
+const PLAN_FIXTURE = JSON.parse(readFileSync(join(import.meta.dirname, "..", "__fixtures__", "pr-loop", "pr-plan.golden.json"), "utf-8")) as Record<string, unknown>;
+const planReport = (sha: string): string => JSON.stringify({ ...PLAN_FIXTURE, pr: 7, head: sha, member: "app" });
+
+/** A forge client that records the plan's status and note the runner posts from the report (#4295). */
+function recordingForge(): { forge: PrForge; statuses: Array<{ sha: string; status: ForgeStatus }>; notes: Array<{ pr: number; marker: string }> } {
+  const statuses: Array<{ sha: string; status: ForgeStatus }> = [];
+  const notes: Array<{ pr: number; marker: string }> = [];
+  const forge = {
+    kind: "forgejo",
+    host: "forgejo.localhost",
+    async setStatus(sha: string, status: ForgeStatus) {
+      statuses.push({ sha, status });
+    },
+    async upsertNote(pr: number, marker: string) {
+      notes.push({ pr, marker });
+      return "1";
+    },
+  } as unknown as PrForge;
+  return { forge, statuses, notes };
+}
+
 const envFile = (dir: string, stage: string): Record<string, string> =>
   Object.fromEntries(
     readFileSync(join(dir, `${stage}.env`), "utf-8")
@@ -235,6 +258,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
   let events: string[];
   let plan: Awaited<ReturnType<typeof ciRun>>;
   let apply: Awaited<ReturnType<typeof ciRun>>;
+  const posted = recordingForge();
 
   beforeAll(async () => {
     w = workspace();
@@ -250,8 +274,9 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
       base: w.base,
       pr: 7,
       chant,
-      hostEnv: HOST,
-      passEnv: ["AWS_ACCESS_KEY_ID"],
+      hostEnv: { ...HOST, FAKE_REPORT: planReport(w.sha) },
+      passEnv: ["AWS_ACCESS_KEY_ID", "FAKE_REPORT"],
+      planForge: posted.forge,
       runnerKey: BOT.pem,
       output: join(reports, "plan"),
       runId: "chant-plan-1",
@@ -271,20 +296,24 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
     const out = join(reports, "plan");
     const [job] = prLoopJobs("forgejo", "prod", {}, "app");
     const argv = readFileSync(join(out, "pr-plan.args"), "utf-8").trimEnd().split("\n");
-    expect(argv).toEqual(["components", "pr-plan", "--base", base, "--pr", "7", "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app"]);
+    expect(argv).toEqual(["components", "pr-plan", "--base", base, "--pr", "7", "--env", "prod", "--gate", "pr-apply", "--output", ".chant/pr", "--forge", "forgejo", "--member", "app", "--no-status"]);
     expect(job!.command.split(" ").slice(1).map((a) => a.replace(/"/g, ""))).toEqual(argv.map((a) => (a === base ? "$BASE_SHA" : a === "7" ? "$PR_NUMBER" : a)));
     const pwd = readFileSync(join(out, "pr-plan.pwd"), "utf-8").trim();
     expect(pwd).toBe(join(plan.checkout, "app"));
     expect(pwd.startsWith(realpathSync(root))).toBe(false);
     expect(existsSync(plan.checkout)).toBe(false);
     expect(git(root, "worktree", "list", "--porcelain")).toBe(worktrees);
-    expect(JSON.parse(readFileSync(join(out, "pr-plan.json"), "utf-8"))).toEqual({ stage: "pr-plan" });
+    expect(JSON.parse(readFileSync(join(out, "pr-plan.json"), "utf-8"))).toMatchObject({ stage: "plan", pr: 7, head: sha });
 
     // The environment is clean: the job's variables and the few the runner hands on. The copied
     // report shows the values of the variables whose names look secret as *** (#4096).
     const env = envFile(out, "pr-plan");
-    expect(env).toMatchObject({ BASE_SHA: base, PR_NUMBER: "7", GITHUB_SHA: sha, CHANT_ENV: "prod", GITHUB_TOKEN: "***", AWS_ACCESS_KEY_ID: "***" });
+    expect(env).toMatchObject({ BASE_SHA: base, PR_NUMBER: "7", GITHUB_SHA: sha, CHANT_ENV: "prod", AWS_ACCESS_KEY_ID: "***" });
     for (const name of ["NOT_FOR_JOBS", "CHANT_RUNNER_KEY", "GITHUB_RUN_ID"]) expect(env).not.toHaveProperty(name);
+    // #4295: the plan runs the pull request's code, so its step got no forge token; the runner posted from its report.
+    for (const name of FORGE_TOKEN_VARS) expect(env).not.toHaveProperty(name);
+    expect(posted.statuses).toEqual([{ sha, status: expect.objectContaining({ context: "chant/plan/app", state: "success" }) }]);
+    expect(posted.notes).toEqual([{ pr: 7, marker: "<!-- chant-pr:prod:app -->" }]);
   });
 
   test("the plan and the apply are recorded signed, with a pipeline run's events", async () => {
@@ -508,7 +537,9 @@ describe("a commit status per job (#4097)", () => {
 
   async function job(over: Record<string, unknown>) {
     const { root, app, base, sha } = workspace();
-    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: HOST, push: false, output: join(scratchDir("chant-ci-status-"), "pr"), ...over } as Parameters<typeof ciRun>[0]);
+    // #4295: a plan job's report is a real plan report, and the runner posts it to a recording forge.
+    const plan = { hostEnv: { ...HOST, FAKE_REPORT: planReport(sha) }, passEnv: ["FAKE_REPORT"], planForge: recordingForge().forge };
+    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), push: false, output: join(scratchDir("chant-ci-status-"), "pr"), ...plan, ...over } as Parameters<typeof ciRun>[0]);
     return { r, sha };
   }
 
@@ -818,7 +849,8 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
   test("with no key the job runs, warns of nothing, and its unsigned record counts in ci list and the run index", async () => {
     const { app, base, sha } = workspace();
     const reports = scratchDir("chant-ci-run-index-");
-    const { CHANT_RUNNER_KEY: _key, ...keyless } = HOST;
+    // #4295: a plan job generated now holds no forge token; its plan-note job posts.
+    const { CHANT_RUNNER_KEY: _key, GITHUB_TOKEN: _token, ...keyless } = HOST;
     const r = await ciRun({ cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...keyless, ...FORGE, GITHUB_JOB: "plan" }, inPlace: true, push: false, runId: "forge-plan-1", loop: { reportUrl: `file://${reports}` } });
     expect(r.status).toBe("ok");
     expect(r.warnings).toEqual([]);
@@ -938,5 +970,72 @@ describe("ci run --local (#4161)", () => {
     const { app, base } = workspace();
     await expect(ciRun({ cwd: app, job: "plan", env: "prod", forge: "github", base, pr: 1, chant: fakeChant(), hostEnv: HOST, inPlace: true, local: true })).rejects.toThrow(/--in-place .* --local/);
     expect(parseArgs(["ci", "run", "plan", "--local"]).local).toBe(true);
+  });
+});
+
+describe("the plan's steps hold no forge token (#4295)", () => {
+  test("on the runner: no token reaches a step from the runner, --pass-env or a forge name, and the runner posts the note from the report", async () => {
+    const { app, base, sha } = workspace();
+    const output = join(scratchDir("chant-ci-handover-"), "pr");
+    const forge = recordingForge();
+    const tokens = { GH_TOKEN: "gh-token-4295", FORGEJO_TOKEN: "fj-token-4295", CHANT_FORGE_TOKEN: "chant-token-4295", ACTIONS_RUNTIME_TOKEN: "rt-token-4295" };
+    const r = await ciRun({
+      image: JOB_IMAGE,
+      cwd: app,
+      job: "plan",
+      env: "prod",
+      forge: "forgejo",
+      base,
+      pr: 7,
+      chant: fakeChant(),
+      hostEnv: { ...HOST, ...tokens, FAKE_REPORT: planReport(sha) },
+      passEnv: ["FAKE_REPORT", ...Object.keys(tokens)],
+      beforeScript: ["mkdir -p .chant/pr && env | sort > .chant/pr/before.env"],
+      planForge: forge.forge,
+      push: false,
+      output,
+    });
+    expect(r.status).toBe("ok");
+    expect(r.warnings).toEqual([]);
+    const env = readFileSync(join(output, "pr-plan.env"), "utf-8");
+    for (const value of ["forge-token", ...Object.values(tokens)]) expect(env).not.toContain(value);
+    // The build phase's lines run the change's code too.
+    expect(r.record.phases.map((p) => p.name)).toEqual(["build", "plan"]);
+    const before = readFileSync(join(output, "before.env"), "utf-8");
+    for (const value of ["forge-token", ...Object.values(tokens)]) expect(before).not.toContain(value);
+    for (const name of FORGE_TOKEN_VARS) expect(env).not.toMatch(new RegExp(`^${name}=`, "m"));
+    expect(readFileSync(join(output, "pr-plan.args"), "utf-8").trimEnd().split("\n").at(-1)).toBe("--no-status");
+    expect(forge.statuses.map((p) => [p.sha, p.status.context, p.status.state])).toEqual([[sha, "chant/plan/app", "success"]]);
+    expect(forge.notes).toEqual([{ pr: 7, marker: "<!-- chant-pr:prod:app -->" }]);
+  });
+
+  test("a report the change forged for another head posts a failed status and no note", async () => {
+    const { app, base } = workspace();
+    const forge = recordingForge();
+    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...HOST, FAKE_REPORT: planReport("3".repeat(40)) }, passEnv: ["FAKE_REPORT"], planForge: forge.forge, push: false, output: join(scratchDir("chant-ci-handover-"), "pr") });
+    expect(r.warnings).toEqual([expect.stringMatching(/the plan report was not posted: the report is for head/)]);
+    expect(forge.statuses.map((p) => p.status.state)).toEqual(["failure"]);
+    expect(forge.notes).toEqual([]);
+  });
+
+  test("in place, a job generated before #4295 still holds a token: its step gets none, the runner posts, and says to regenerate", async () => {
+    const { app, base, sha } = workspace();
+    const forge = recordingForge();
+    const r = await ciRun({ cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...HOST, GITHUB_JOB: "plan", FAKE_REPORT: planReport(sha) }, inPlace: true, push: false, planForge: forge.forge });
+    expect(r.warnings).toEqual([expect.stringMatching(/regenerate the pipeline, whose plan-note job posts the note/)]);
+    const env = envFile(join(app, ".chant/pr"), "pr-plan");
+    expect(env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(env.NOT_FOR_JOBS).toBe("leak");
+    expect(forge.notes).toHaveLength(1);
+  });
+
+  test("the apply and the record keep their token: they run the target branch's code and post themselves", () => {
+    const [, apply, record] = prLoopJobs("forgejo", "prod");
+    expect(apply!.env.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(record!.env.GITHUB_TOKEN).toBe("${{ github.token }}");
+    const [plan] = prLoopJobs("forgejo", "prod");
+    expect(plan!.env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(plan!.run.env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(plan!.command.endsWith(" --no-status")).toBe(true);
   });
 });

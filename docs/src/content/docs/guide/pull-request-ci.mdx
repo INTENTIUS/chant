@@ -151,10 +151,11 @@ On GitLab, put the `node_modules/.bin` directory on the path with `export PATH="
 
 The workflow runs on `pull_request` and on `push` to the target branch.
 
-- The `plan` job measures from `github.event.pull_request.base.sha`. It may comment and set statuses, and it cannot push, since it runs the pull request's code.
+- The `plan` job measures from `github.event.pull_request.base.sha`. It runs the pull request's code, so its token may only read, and no step that runs that code holds it ([keep the forge token from the plan](/chant/guide/security-forge-token-handover/)).
+- The `plan-note` job runs after it, at the target branch's commit. It posts the note and the `chant/plan` status from the plan's report with `chant components pr-post`, and keeps the report as the `chant-pr-plan` artifact. It may comment and set statuses.
 - The `record` job measures from `github.event.before`, the commit the push replaced. That works for merge commits, squash merges and rebase merges. On a branch's first push GitHub sets it to forty zeros, so the job measures from the merge base of the target branch and the pushed commit, or from the pushed commit's parent when that merge base is the commit itself. A root commit is measured from the empty tree. It may push, to write the merge record and the change set on `chant/lifecycle`. One record runs at a time per environment, through the concurrency group `chant-record-<env>`.
 
-Both use the job's own `github.token`. On a pull request from a fork that token is read-only, so the note and the status are not posted. The run says so and its outcome stands.
+The note job and the record job use the job's own `github.token`. On a pull request from a fork that token is read-only, so the note and the status are not posted. The run says so and its outcome stands.
 
 ### Forgejo
 
@@ -164,7 +165,7 @@ The workflow is the GitHub one with the Forgejo dialect applied: the runner labe
 
 The pipeline runs `plan` in each merge request pipeline, measured from `CI_MERGE_REQUEST_DIFF_BASE_SHA`. It runs `record` on each push to the target branch, measured from `CI_COMMIT_BEFORE_SHA`, which a first push settles as on GitHub, one at a time per environment through `resource_group`. `GIT_DEPTH` is `0`.
 
-A CI job token cannot write merge request notes. Create a project access token with the `api` scope and set it as a masked CI/CD variable named `CHANT_FORGE_TOKEN`.
+A CI job token cannot write merge request notes. Create a project access token with the `api` scope and set it as a masked CI/CD variable named `CHANT_FORGE_TOKEN`. The `plan` job's script unsets it before its first line, and the `plan-note` job posts the note from the plan's artifact ([#4295](https://github.com/INTENTIUS/chant/issues/4295)).
 
 ### Your own commands around the plan and the apply
 
@@ -206,13 +207,13 @@ A component whose steps have no `plan`, such as a `helm-upgrade`, is bound by th
 
 ## What each run keeps
 
-Both jobs keep `.chant/pr` as an artifact:
+Each job keeps `.chant/pr` as an artifact. On GitHub and Forgejo the plan job hands it to the `plan-note` job as job outputs, and the note job keeps it, since no step may follow the plan's ([#4295](https://github.com/INTENTIUS/chant/issues/4295)):
 
 | File | Holds |
 |---|---|
 | `pr-plan.json`, `pr-record.json` | The report: the selection, every member's plan digest and counts, the digest the gate binds, where the approval stands and how the run ended. It follows the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/). |
 | `change-set.json` | The [change-set document](/chant/reference/change-set/) over every member. [`chant change-set summary`](/chant/cli/change-set/) prints its grouped summary. |
-| `pr-note.md` | The note as posted. |
+| `pr-note.md` | The note as the plan rendered it. The note job renders it again from the report before it posts. |
 | `run-events/<run id>.jsonl` | With `--events-json`: the stage's run events, the lines it printed on stdout. |
 
 The merge record goes to `_merges/<commit>.json` on `chant/lifecycle`, keyed by the merged commit. Its fields follow the `merge-record` schema, and [`chant components pr-record`](/chant/cli/components/#components-pr-record) lists them. The change set itself is stored under `_change-sets/`.

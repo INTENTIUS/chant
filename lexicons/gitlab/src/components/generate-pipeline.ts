@@ -52,11 +52,14 @@ import {
   prApplyRecordKey,
   prApplyWaveJobName,
   prLoopJobs,
+  prLoopPostJob,
   prLoopSetup,
+  PR_PLAN_NOTE_JOB,
   prLoopWaveJobs,
   prLoopWithWaves,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
+import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGitlabOptions,
@@ -301,6 +304,16 @@ function gatedWaveGitlabPipeline(
  * before. They share the commit's cache key, so wave k pulls the record wave
  * k-1 pushed, and a retry of a wave that stopped at its gate pulls the one it
  * pushed itself.
+ *
+ * The plan job holds no forge token while the merge request's code runs
+ * (#4295, `@intentius/chant/ci-handover`): its script starts by unsetting
+ * the token variables, and `pr-plan --no-status` writes the note and the
+ * status into its report. The `plan-note` job after it, which GitLab hands
+ * the report artifact, checks out the target branch's commit and posts them
+ * with `chant components pr-post`. A CI/CD variable reaches every job of a
+ * merge request pipeline, so `unset` keeps it from the plan's code, and
+ * `CHANT_FORGE_TOKEN` as a protected variable keeps it from the pipeline
+ * altogether.
  */
 /** The dotenv report a gated apply wave hands the green commit it applies through (#4221). */
 const WAVE_GREEN_DOTENV = "chant-green.env";
@@ -341,7 +354,9 @@ function prLoopGitlabPipeline(
   // #4221: a wave job hands the commit it applies to the next wave as GREEN_SHA, through a dotenv report.
   const handOff = (job: typeof plan): string[] => (job.wave ? [`echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/${WAVE_GREEN_DOTENV}"`] : []);
   const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
-  const stages = ["plan", ...applies.map((a) => a.stage)];
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage)];
+  const noteJob = named(PR_PLAN_NOTE_JOB);
+  const post = prLoopPostJob("gitlab", env, member?.name);
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
@@ -353,8 +368,18 @@ function prLoopGitlabPipeline(
       image,
       rules: [{ if: onMergeRequest }],
       variables: plan.run.env,
-      script: script(plan),
+      // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
+      script: [GITLAB_DROP_FORGE_TOKENS, ...script(plan)],
       artifacts: { when: "always", paths: [reportPath] },
+    },
+    // #4295: a fresh job at the target branch's commit posts the note and the status from the plan's report.
+    [noteJob]: {
+      stage: PR_PLAN_NOTE_JOB,
+      image,
+      needs: [planJob],
+      rules: [{ if: onMergeRequest, when: "always" }],
+      variables: post.env,
+      script: ['git checkout --quiet --detach "$BASE_SHA"', ...enter, ...beforeScript, post.command],
     },
     ...Object.fromEntries(
       applies.map(({ job, name, stage }, i) => [
@@ -387,6 +412,7 @@ function prLoopGitlabPipeline(
   };
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
+    { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [planJob] },
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
       component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : "green apply",
@@ -394,7 +420,7 @@ function prLoopGitlabPipeline(
       needs: i > 1 ? [applies[i - 1]!.name] : [],
     })),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, ...applies.map((a) => a.name)].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name)].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

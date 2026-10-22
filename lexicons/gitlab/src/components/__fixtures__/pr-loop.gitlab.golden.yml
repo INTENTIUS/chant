@@ -7,6 +7,7 @@ workflow:
 
 stages:
   - plan
+  - plan-note
   - record
   - apply
 
@@ -23,12 +24,29 @@ plan:
     BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
     PR_NUMBER: '$CI_MERGE_REQUEST_IID'
   script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
     - chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge gitlab
   artifacts:
     when: always
     paths:
       - .chant/pr
+
+plan-note:
+  stage: plan-note
+  image: node:22
+  needs:
+    - plan
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+  variables:
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
+    HEAD_SHA: '$CI_COMMIT_SHA'
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+  script:
+    - git checkout --quiet --detach "$BASE_SHA"
+    - chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env prod --output .chant/pr --forge gitlab
 
 record:
   stage: record

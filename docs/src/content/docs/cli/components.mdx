@@ -21,6 +21,8 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
 chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--member <name>]
                                 [--output <dir>] [--json] [--events-json] [--report-url <url>]
+chant components pr-post --pr <n> --head <sha> --env <env> --forge github|gitlab|forgejo
+                                [--member <name>] [--output <dir>] [--result <result>]
 chant components pr-apply (--base <ref> [--pr <n>] | --green [--base <ref>]) [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
@@ -370,7 +372,35 @@ With `--events-json` each stage also keeps its stream in a file on the host, as 
 
 Pass `--forge` to post the note on the pull request and set the `chant/plan`, `chant/record` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, the forge names the pull request that merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
 
-With `--forge`, `pr-plan` also asks when each scheduled watch or reconcile Op last ran, and the note warns about one whose cron fired twice since ([#4289](https://github.com/INTENTIUS/chant/issues/4289), [Catch a Stopped Watch Schedule](/chant/guide/overdue-scheduled-ops/)).
+With `--forge`, `pr-plan` and `pr-post` also ask when each scheduled watch or reconcile Op last ran, and the note warns of one whose cron fired twice since ([#4289](https://github.com/INTENTIUS/chant/issues/4289), [Catch a Stopped Watch Schedule](/chant/guide/overdue-scheduled-ops/)).
+
+`--no-status` posts neither. The generated plan job passes it, since the plan runs the pull request's code and its job holds no forge token ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). The `plan-note` job then posts with `pr-post`.
+
+#### `components pr-post`
+
+`pr-post` posts the plan's note and its `chant/plan` status from the report a `pr-plan --no-status` wrote under `--output` ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). The generated `plan-note` job runs it, at the target branch's commit, with the forge token the plan job never held. It loads no plugins and runs none of the change's code.
+
+```bash
+chant components pr-post --pr 12 --head "$HEAD_SHA" --env prod --forge github --result "$PLAN_RESULT"
+```
+
+The change's code wrote the report, so `pr-post` reads it as data (`packages/core/src/pr-post.ts`):
+
+- The pull request, the head, the environment and the member come from the flags. A report that names another refuses: the status fails and no note is posted (`readPlanReport`).
+- The note is rendered again from the report. Every `<!--` after its marker line becomes `&lt;!--`, so the note carries no hidden marker but its own (`planNoteFor`).
+- `--result failure` or `cancelled`, the plan job's own result, fails the status whatever the report says.
+
+It exits 0 once it has posted, and a forge that refuses a call is a warning. The plan job's result stays the one that fails the run.
+
+| Flag | Meaning |
+|---|---|
+| `--pr <n>` | The pull or merge request. Required. |
+| `--head <sha>` | The full commit the plan job checked out. Required. The status goes on it. |
+| `--env <env>` | The environment the plan was for. Required. |
+| `--forge <kind>` | `github`, `gitlab` or `forgejo`, with the client read from the job's environment. Required. |
+| `--member <name>` | The workspace member whose plan it was. |
+| `--output <dir>` | The report directory. Defaults to `.chant/pr`. |
+| `--result <result>` | The plan job's result, `needs.plan.result` on GitHub and Forgejo. |
 
 #### Finishing an apply that failed partway
 

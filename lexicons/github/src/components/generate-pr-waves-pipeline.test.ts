@@ -80,9 +80,10 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
   });
 
   test("keeps the plan and record jobs, and writes one apply job per wave, each needing the one before", () => {
-    expect(Object.keys(doc.jobs)).toEqual(["plan", "record", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
+    expect(Object.keys(doc.jobs)).toEqual(["plan", "plan-note", "record", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
     expect(result.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["plan", []],
+      ["plan-note", ["plan"]],
       ["record", []],
       ["apply-wave-1", []],
       ["apply-wave-2", ["apply-wave-1"]],
@@ -123,7 +124,7 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
 
   test("without --wave-gate the workflow is the one apply job it was", () => {
     const plain = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } });
-    expect(plain.jobs.map((j) => j.jobName)).toEqual(["plan", "record", "apply"]);
+    expect(plain.jobs.map((j) => j.jobName)).toEqual(["plan", "plan-note", "record", "apply"]);
     expect(plain.yaml).not.toContain("--wave");
   });
 

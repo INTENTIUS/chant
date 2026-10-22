@@ -54,10 +54,13 @@ describe("fan-out-estate chant-pr.yml", () => {
     // #4156: each job runs its command through chant ci run, which writes the job's run record.
     expect(text).toContain("chant ci run plan --in-place");
     expect(text).toContain("chant ci run apply --in-place");
-    expect(text).not.toContain("chant components pr-");
+    expect(text).not.toContain("chant components pr-plan");
+    expect(text).not.toContain("chant components pr-apply");
+    // #4295: the plan-note job posts the plan from the report, in a job that runs none of the change's code.
+    expect(text).toContain("chant components pr-post");
     expect(text).toContain("chant ci run record --in-place");
-    // One job per stage: the 15 stacks are the members of one pr-plan, one pr-record and one pr-apply (#4168 step 9).
-    expect(text.split("\njobs:\n")[1].match(/^ {2}[a-z-]+:$/gm)).toEqual(["  plan:", "  record:", "  apply:"]);
+    // One job per stage: the 15 stacks are the members of one pr-plan, one pr-record and one pr-apply (#4168 step 9), and the plan's note job (#4295).
+    expect(text.split("\njobs:\n")[1].match(/^ {2}[a-z-]+:$/gm)).toEqual(["  plan:", "  plan-note:", "  record:", "  apply:"]);
     expect(text).not.toContain("fan-out ");
   });
 });

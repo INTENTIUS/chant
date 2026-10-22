@@ -12,6 +12,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { githubBaseFallback, greenCheckout, prApplyGroup, prApplyRecordKey, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
+import { dropForgeTokens } from "@intentius/chant/ci-handover";
 import { generateGithubPipeline } from "./generate-pipeline";
 
 const ESTATE: DriverComponent[] = [
@@ -38,6 +39,14 @@ interface Step {
   env?: Record<string, string>;
   with?: Record<string, unknown>;
 }
+/** A plan job's run step without the line that drops the forge tokens (#4295). */
+const headLines = (run: string | undefined): string[] => {
+  const lines = (run ?? "").trimEnd().split("\n");
+  return lines[0] === dropForgeTokens("sh") ? lines.slice(1) : lines;
+};
+/** The plan step's command: its last line. */
+const lastLine = (run: string | undefined): string | undefined => (run ?? "").trimEnd().split("\n").at(-1);
+
 interface Job {
   if: string;
   permissions: Record<string, string>;
@@ -61,18 +70,20 @@ describe("the GitHub pull-request workflow", () => {
     expect(doc.jobs.plan.if).toBe("github.event_name == 'pull_request'");
     expect(doc.jobs.record.if).toBe("github.event_name == 'push'");
     expect(doc.jobs.apply.if).toBe("github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'");
-    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "record", "apply"]);
+    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "plan-note", "record", "apply"]);
     expect(result.jobs.find((j) => j.jobName === "apply")!.needs).toEqual([]);
   });
 
   test("the plan job measures from the pull request's base and cannot push; the apply job can, one at a time", () => {
     const plan = doc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
     // #4156: the job runs pr-plan through chant ci run, in its own checkout, and pushes no record from the pull request's code.
-    expect(plan.run).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
+    expect(lastLine(plan.run)).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
     expect(plan.env).toMatchObject({ BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}" });
     // The runner key is an optional secret: unset, the expression is empty and the record is unsigned.
     expect(plan.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
-    expect(doc.jobs.plan.permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "write", statuses: "write" });
+    // #4295: the plan job only reads; the plan-note job writes the note and the status.
+    expect(doc.jobs.plan.permissions).toEqual({ contents: "read" });
+    expect(doc.jobs["plan-note"].permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "write", statuses: "write" });
 
     const apply = doc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
     // #4168: ci run builds pr-apply without --require-review unless the pipeline asks for it.
@@ -82,7 +93,10 @@ describe("the GitHub pull-request workflow", () => {
     expect(apply.env).toEqual({ GITHUB_TOKEN: "${{ github.token }}", CHANT_RUNNER_KEY: "${{ secrets.CHANT_RUNNER_KEY }}" });
     expect(doc.jobs.apply.permissions.contents).toBe("write");
     expect(doc.jobs.apply.concurrency).toEqual({ group: "chant-apply-prod", "cancel-in-progress": false });
-    for (const job of Object.values(doc.jobs)) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
+    for (const [name, job] of Object.entries(doc.jobs)) if (!name.startsWith("plan")) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
+    // #4295: the plan job checks out with a script, and the note job checks out the target branch's commit.
+    expect(doc.jobs.plan.steps[0].uses).toBeUndefined();
+    expect(doc.jobs["plan-note"].steps[0].with).toEqual({ ref: "${{ github.event.pull_request.base.sha }}" });
   });
 
   test("a first push's all-zero github.event.before is settled in the record's own shell, before pr-record reads it (#4004)", () => {
@@ -179,7 +193,7 @@ describe("the GitHub pull-request workflow", () => {
     expect(mdoc.defaults).toEqual({ run: { "working-directory": "infra/network" } });
     const plan = mdoc.jobs.plan.steps.find((s) => s.run?.includes("ci run plan"))!;
     // ci run finds the member from the directory it runs in and passes --member to pr-plan and pr-apply.
-    expect(plan.run).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
+    expect(lastLine(plan.run)).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
     expect(prLoopJobs("github", "prod", {}, "network")[0]!.command).toContain("--member network");
     const apply = mdoc.jobs.apply.steps.find((s) => s.run?.includes("ci run apply"))!;
     expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply.network.prod", "cancel-in-progress": false });
@@ -187,10 +201,16 @@ describe("the GitHub pull-request workflow", () => {
     expect(apply.run).toContain("--in-place");
     const restore = mdoc.jobs.apply.steps.find((s) => s.uses === "actions/cache/restore@v4")!;
     expect(restore.with).toMatchObject({ path: "infra/network/.chant/pr-resume/pr-apply.json", "restore-keys": "chant-apply.network.prod-${{ github.sha }}-" });
-    for (const job of Object.values(mdoc.jobs)) {
+    // #4295: the plan job uploads nothing; the plan-note job keeps its report.
+    expect(mdoc.jobs.plan.steps.some((s) => s.uses?.startsWith("actions/upload-artifact"))).toBe(false);
+    for (const [name, job] of Object.entries(mdoc.jobs)) {
+      if (name === "plan") continue;
       const keep = job.steps.find((s) => s.uses?.startsWith("actions/upload-artifact"))!;
       expect(keep.with?.path).toBe("infra/network/.chant/pr");
     }
+    // The checkout runs at the repository's root, before the member's directory exists.
+    expect((mdoc.jobs.plan.steps[0] as Record<string, unknown>)["working-directory"]).toBe(".");
+    expect(mdoc.jobs["plan-note"].steps.at(-1)!.run).toContain("--member network");
   });
 
   test("no two member and environment pairs share an apply group or record key", () => {
@@ -236,8 +256,8 @@ describe("the github pull-request pipeline with build (#4088)", () => {
 
   test("builds, then lints, before pr-plan and pr-apply", () => {
     for (const job of ["plan", "apply"]) {
-      const runs = doc.jobs[job].steps.map((s: { run?: string }) => s.run ?? "").filter(Boolean);
-      const i = runs.findIndex((r: string) => r.startsWith("chant components pr-"));
+      const runs = doc.jobs[job].steps.map((s: { run?: string }) => headLines(s.run).join("\n")).filter(Boolean);
+      const i = runs.findIndex((r: string) => r.includes(`chant ci run ${job}`));
       expect(runs.slice(i - 2, i)).toEqual(["chant build --env prod", "chant lint"]);
     }
   });
@@ -266,7 +286,7 @@ describe("the GitHub pull-request workflow records on merge by default (#4168)",
   });
 
   test("a push runs the record job, which applies nothing and keeps no resume record", () => {
-    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "record"]);
+    expect(result.jobs.map((j) => j.jobName)).toEqual(["plan", "plan-note", "record"]);
     expect(doc.jobs.apply).toBeUndefined();
     expect(doc.jobs.record.if).toBe("github.event_name == 'push'");
     const run = doc.jobs.record.steps.find((s) => s.run?.includes("ci run record"))!;

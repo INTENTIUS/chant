@@ -1,0 +1,57 @@
+---
+title: Keep the Forge Token From the Plan
+description: Regenerate the pull-request pipeline so no step that runs the pull request's code holds a forge token, and a fresh job posts the plan's note and status.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/security-forge-token-handover/.
+  Regenerate this repository's pull-request pipeline with the same `chant build --components --generate <forge> --pr-loop` flags it was generated with, and open a pull request with the pipeline.
+  Check that its plan job has a `plan-note` job after it, and list any `--before-script` line the note job needs that only works in the pull request's checkout.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The plan job of a [pull-request pipeline](/chant/guide/pull-request-ci/) runs the pull request's code. That is the synth of its components, the plans their capabilities run, its build and lint, and its hooks. A token that can post a note or set a status can also push. So since [#4295](https://github.com/INTENTIUS/chant/issues/4295) no step that runs that code holds a forge token, and a fresh job posts the plan. The order of the steps is terragucci's `handover.ts`.
+
+This is on in every pipeline chant generates. It is in the [security features](/chant/reference/security-features/) table as a listed exception, like the environment allowlist, and no group turns it on.
+
+## Regenerate the pipeline
+
+Run the command the pipeline was generated with again, and commit the file:
+
+```bash
+chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
+```
+
+The plan job's report now reaches the forge through a second job, `plan-note`. The note job runs the chant of the target branch's commit, and that commit's `chant` has to have `components pr-post`. So on the pull request that brings the regenerated pipeline, the note job can fail where the target branch's chant is older. The next pull request posts.
+
+A pipeline generated before #4295 still works. Its plan job holds the token, so `chant ci run plan --in-place` leaves every token out of the plan's steps, posts the note itself once they settle, and warns to regenerate (`planPoster` in `packages/core/src/workspace/ci-run.ts:735`).
+
+## What the plan job does on GitHub and Forgejo
+
+1. It checks the change out with a script in place of `actions/checkout`, whose post step runs at the job's end with the token as its input. The job's token reaches the script's fetches through the environment and never the git config (`checkoutScript` in `packages/core/src/ci-handover.ts:205`). While it holds the token it also fetches `chant/lifecycle`, which the plan reads the approval from (`ci-handover.ts:229`).
+2. Every later step starts by running its shell again without the token variables (`dropForgeTokens`, `ci-handover.ts:79`). Unsetting a variable leaves it in the shell's own starting environment, which a child process can read on Linux from `/proc/<pid>/environ`. A shell that cannot start again unsets them. The variables are those of `FORGE_TOKEN_VARS` (`ci-handover.ts:40`), from `GITHUB_TOKEN` and `ACTIONS_RUNTIME_TOKEN` to chant's own `CHANT_FORGE_TOKEN`.
+3. The plan step is the job's last (`lexicons/github/src/components/generate-pipeline.ts:324`). A step after it would start beside whatever the change's code left running, with what it wrote to `GITHUB_ENV` and `GITHUB_PATH`. So there is no artifact upload, no cache save and no checkout post step. Lines the generator's `extraScript` option adds run inside the plan step. The step hands `.chant/pr` on as the job's outputs when it ends, failed or not (`handoverTrap`, `ci-handover.ts:162`). GitHub keeps a job's outputs to 1 MB and Forgejo each output to 1 MiB, so a report too large is cut to `pr-plan.json` and `pr-note.md` (`HANDOVER_LIMITS`, `ci-handover.ts:98`).
+4. The job's token may only read: its `permissions` are `contents: read` (`generate-pipeline.ts:343`).
+
+The `plan-note` job (`generate-pipeline.ts:347`) needs the plan job and runs when it passed or failed. It checks out the target branch's commit, `github.event.pull_request.base.sha` (`generate-pipeline.ts:332`), and runs your `--before-script` lines. Then it takes the report back from the plan job's outputs, keeps it as the `chant-pr-plan` artifact, and runs `chant components pr-post`. It may write pull requests and statuses. Forgejo's dialect drops the `permissions` blocks, which its runner ignores.
+
+## What the plan job does on GitLab
+
+GitLab runs a job's script in one shell, so the plan's script starts by unsetting the token variables (`lexicons/gitlab/src/components/generate-pipeline.ts:370`). GitLab hands the plan's artifact to the `plan-note` job, which checks out `CI_MERGE_REQUEST_DIFF_BASE_SHA` before it runs anything (`generate-pipeline.ts:380`) and posts with `chant components pr-post`.
+
+<Aside type="caution" title="What GitLab still gives the plan job">
+A CI/CD variable reaches every job of a merge request pipeline, so the plan job starts with `CHANT_FORGE_TOKEN` and unsets it. Unsetting leaves the value in the shell's starting environment on Linux. To keep it from the merge request's pipeline altogether, make the variable protected; then no merge request pipeline gets it, and the note is not posted from one either. GitLab's own checkout keeps `CI_JOB_TOKEN` in the remote's URL, and that token cannot write notes.
+</Aside>
+
+## What the note job trusts
+
+The pull request's code wrote the report, so the note job reads it as data (`packages/core/src/pr-post.ts`). The pull request, the head, the environment and the member come from the event, never the report. A report that names another fails the status and posts no note (`readPlanReport`, `pr-post.ts:61`). The note is rendered again from the report, and every `<!--` after its marker line becomes `&lt;!--`, so the note carries no hidden marker but its own (`planNoteFor`, `pr-post.ts:87`). A plan job that failed fails the status whatever the report says (`pr-post.ts:130`).
+
+`chant ci run plan` on your own host keeps the same rule. No step of the plan gets a forge token from the host, `--pass-env`, a secret or the job (`packages/core/src/workspace/ci-run.ts:710`). The plan's `pr-plan` runs with `--no-status` (`packages/core/src/components/pr-pipeline.ts:282`), and `ci run` posts from the report once the steps settle. The steps run as the same user as `ci run`, which started with the token, so give a host runner only repositories whose authors you trust, as [`ci serve`](/chant/cli/ci/#ci-serve) says.
+
+## What it does not cover
+
+- The plan job still holds `CHANT_RUNNER_KEY` when the pipeline signs its runs, and its cloud credentials. Splitting the plan and apply cloud identities is [#4296](https://github.com/INTENTIUS/chant/issues/4296).
+- The `chant` the plan job runs is whatever the image or your `--before-script` puts on the path. When that is the pull request's own `node_modules`, the pull request chooses it, as it chooses the rest of its code.
+- On every forge a pull request from the repository can change the workflow file itself. A reviewer sees that change; the handover covers the code a reviewer is less likely to read.

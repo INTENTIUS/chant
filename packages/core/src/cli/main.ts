@@ -1008,6 +1008,11 @@ Component release ledger + status:
                             report and note (--base <ref> --pr <n>
                             [--forge github|gitlab|forgejo] posts them);
                             applies nothing
+  components pr-post       Post the plan note and the chant/plan status
+                            from the report pr-plan --no-status wrote
+                            (--pr <n> --head <sha> --env <env> --forge
+                            <kind>), in a job that runs none of the
+                            change's code (#4295)
   components pr-record     On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses
@@ -1620,6 +1625,8 @@ export const commandRegistry: CommandDef[] = [
   // #3183 — the pull-request loop the generated CI runs. Imported on first use.
   { name: "components pr-plan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPlan(ctx) },
   { name: "components pr-apply", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrApply(ctx) },
+  // #4295: posts from the plan report in a job that runs none of the change's code, so it loads no plugins.
+  { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
