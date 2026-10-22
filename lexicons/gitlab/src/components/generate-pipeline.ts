@@ -52,6 +52,7 @@ import {
   prApplyRecordKey,
   prApplyWaveJobName,
   prLoopJobs,
+  GITLAB_APPLY_PR_VAR,
   prLoopPostJob,
   prLoopSetup,
   PR_PLAN_NOTE_JOB,
@@ -329,6 +330,18 @@ function gatedWaveGitlabPipeline(
 /** The dotenv report a gated apply wave hands the green commit it applies through (#4221). */
 const WAVE_GREEN_DOTENV = "chant-green.env";
 
+/**
+ * The rule of the apply before merge (#4301, ws-106): a pipeline of `branch`
+ * that a person started from the UI, the API or a trigger with
+ * `CHANT_APPLY_PR` set to the merge request's iid. GitLab builds a merge
+ * request's own pipeline from its own files, so the apply runs in one of the
+ * target branch's. The variable only names the merge request; `pr-apply
+ * --before-merge` reads the rest from GitLab.
+ */
+function gitlabApplyPrRule(branch: string): string {
+  return `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${GITLAB_APPLY_PR_VAR} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${branch}`;
+}
+
 /** The rule of a pipeline for a pushed `ci/green/` tag (#4168 step 9), which runs the apply under apply on merge. */
 const GITLAB_GREEN_TAG_RULE = '$CI_COMMIT_TAG =~ /^ci\\/green\\//';
 
@@ -351,14 +364,15 @@ function prLoopGitlabPipeline(
   // #4168 step 9: a push to the branch records, and under apply on merge a ci/green/ tag pipeline applies.
   const greens = loop.waveGate
     ? waveJobs.map((job) => ({ job, name: named(prApplyWaveJobName(job.wave!)), stage: prApplyWaveJobName(job.wave!) }))
-    : loop.applyOnMerge
+    : loop.applyOnMerge || loop.applyBeforeMerge
       ? [{ job: apply, name: named("apply"), stage: "apply" }]
       : [];
   const applies = [{ job: record, name: named("record"), stage: "record" }, ...greens];
   const onMergeRequest = GITLAB_MERGE_REQUEST_SOURCE;
   if (loop.branch !== undefined) assertGitlabBranch("The merge-request pipeline", loop.branch);
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
-  const onGreen = GITLAB_GREEN_TAG_RULE;
+  // #4301: the apply before merge runs in a pipeline of the target branch a person starts with CHANT_APPLY_PR set.
+  const onGreen = loop.applyBeforeMerge ? gitlabApplyPrRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH") : GITLAB_GREEN_TAG_RULE;
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
   // The command runs through chant ci run (#4156), which writes the job's run record, signed when the CHANT_RUNNER_KEY variable is set.
@@ -438,7 +452,7 @@ function prLoopGitlabPipeline(
     { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [planJob] },
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
-      component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : "green apply",
+      component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : "green apply",
       stage,
       needs: i > 1 ? [applies[i - 1]!.name] : [],
     })),

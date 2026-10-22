@@ -501,7 +501,7 @@ The jobs take the block from the declaration at the pull request's base, which k
 
 ### Workflow
 
-`ci.workflow` names a prescribed delivery workflow, `trunk-curated` or `trunk-curated+apply-on-merge` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). At the top level it covers every member that builds with chant. A member's own `"ci": { "workflow": ... }` wins over it. `chant ci init` writes it, and `chant workspace check` reports what a member under it still lacks as `WSP151`. The requirements are on [CI Workflows](/chant/reference/ci-workflows/).
+`ci.workflow` names a prescribed delivery workflow, `trunk-curated`, `trunk-curated+apply-on-merge` or `apply-before-merge` ([#4168](https://github.com/INTENTIUS/chant/issues/4168), [#4301](https://github.com/INTENTIUS/chant/issues/4301)). `apply-before-merge` is `trunk-curated` with one more path: a person may apply an open pull request's plan from its head under its gate, once it is approved, mergeable, undiverged and green. It needs `minReader` 0.124.42 or newer, and [Apply a Pull Request Before It Merges](/chant/guide/apply-before-merge/) sets it up. At the top level it covers every member that builds with chant. A member's own `"ci": { "workflow": ... }` wins over it. `chant ci init` writes it, and `chant workspace check` reports what a member under it still lacks as `WSP151`. The requirements are on [CI Workflows](/chant/reference/ci-workflows/).
 
 ## Security
 

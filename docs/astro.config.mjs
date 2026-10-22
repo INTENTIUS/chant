@@ -215,6 +215,7 @@ export default defineConfig({
 								{ label: 'Lock the Targets a Pull Request Reaches', slug: 'guide/target-locks' },
 								{ label: 'An Environment per Pull Request', slug: 'guide/pr-environments' },
 								{ label: 'Plan and Apply a Few Resources', slug: 'guide/resource-targeting' },
+								{ label: 'Apply a Pull Request Before It Merges', slug: 'guide/apply-before-merge' },
 							],
 						},
 						{

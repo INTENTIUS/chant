@@ -63,6 +63,7 @@ import { CI_IMAGE, ciJobName, dirnameOf, fillCommand, GITHUB_JOB_TOKEN, GITHUB_R
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import {
+  APPLY_COMMENT,
   GREEN_TAG_PATTERN,
   GREEN_TICK_WORKFLOW,
   PR_APPLY_RECORD,
@@ -237,6 +238,15 @@ function gatedWaveGithubDoc(
  * variables a token is requested with, so the pull request's code holds no
  * OIDC token and cannot request one, and the plan job names no apply
  * identity.
+ *
+ * With `applyBeforeMerge` (#4301, ws-106) the apply job runs on a
+ * `/chant apply` comment on a pull request (`issue_comment`), from the
+ * default branch's workflow file, so a pull request cannot change the job
+ * that applies it. It checks out the pull request's head after the setup
+ * and `beforeScript` ran at the default branch's commit, and runs `pr-apply
+ * --before-merge`, which asks the forge the requires checks before any of
+ * the head's code loads. On GitHub the commenter must be an owner, member
+ * or collaborator. A push still records.
  */
 function prLoopGithubDoc(
   components: DriverComponent[],
@@ -310,6 +320,14 @@ function prLoopGithubDoc(
   const forgejo = loop.forge === "forgejo";
   const onGreen = forgejo ? "startsWith(github.ref, 'refs/tags/ci/green/')" : "github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'";
   const onPush = loop.applyOnMerge && forgejo ? "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')" : "github.event_name == 'push'";
+  // #4301: a `/chant apply` comment on a pull request starts the apply before merge. GitHub also asks for a commenter who can write.
+  const onComment = [
+    "github.event_name == 'issue_comment'",
+    // Forgejo's payload says so with is_pull (terragucci comment-apply.ts:129 at e6cb431).
+    forgejo ? "(github.event.issue.pull_request || github.event.is_pull)" : "github.event.issue.pull_request",
+    `startsWith(github.event.comment.body, '${APPLY_COMMENT}')`,
+    ...(forgejo ? [] : ["contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)"]),
+  ].join(" && ");
   const applyJob = (job: typeof plan, needs: string[], name: string) => ({
     // #4291: a wave after the first runs after one that failed, and blocks only what depends on the failure.
     if: job.jobName === "record" ? onPush : needs.length > 0 && job.wave ? afterEarlierWave(needs[0]!, onGreen) : onGreen,
@@ -330,7 +348,9 @@ function prLoopGithubDoc(
       ])
     : loop.applyOnMerge
       ? [["apply", applyJob(apply, [], "Apply the newest green commit under the merged changes' approvals")]]
-      : [];
+      : loop.applyBeforeMerge
+        ? [["apply", { ...applyJob(apply, [], "Apply the pull request's head under its gate, once it is approved, mergeable, undiverged and green"), if: onComment }]]
+        : [];
   const applyJobs: Array<[string, Record<string, unknown>]> = [recordJob, ...greenJobs];
   // #4295: the plan job runs the pull request's code and holds no forge token while it does.
   const forgeName = loop.forge ?? "github";
@@ -399,6 +419,8 @@ function prLoopGithubDoc(
     on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
     on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
   }
+  // #4301: a /chant apply comment starts the apply before merge.
+  if (loop.applyBeforeMerge) on.issue_comment = { types: ["created"] };
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
@@ -412,7 +434,7 @@ function prLoopGithubDoc(
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
       ...applyNames.map((name, i) => ({
         jobName: name,
-        component: name === "record" ? "merge record" : loop.waveGate ? `green apply, wave ${i}` : "green apply",
+        component: name === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : loop.waveGate ? `green apply, wave ${i}` : "green apply",
         stage: name,
         // The record runs on a push and the apply on a green commit, so only the waves need each other.
         needs: i > 1 ? [applyNames[i - 1]] : [],

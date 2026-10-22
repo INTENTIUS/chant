@@ -106,6 +106,7 @@ import {
   prStatusState,
   renderPrNote,
   type PrApproval,
+  type PrBeforeMerge,
   type PrMember,
   type PrPolicyReport,
   type PrReport,
@@ -173,6 +174,8 @@ export interface Prepared {
   policy: PrLoopPolicy;
   /** What the policy said about the plan, for the report's `policy`. */
   policyReport?: PrPolicyReport;
+  /** `pr-apply --before-merge` (#4301): the requires checks, for the report's `beforeMerge`. */
+  beforeMerge?: PrBeforeMerge;
 }
 
 const fail = (message: string, hint?: string): number => {
@@ -495,6 +498,7 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   if (p.hookFailed) report = { ...report, message: p.hookFailed };
   if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
   if (p.policyReport) report = { ...report, policy: p.policyReport };
+  if (p.beforeMerge) report = { ...report, beforeMerge: p.beforeMerge };
   const note = noteFor(report, p.forge);
   writeOutputs(ctx, report, note, upload);
   if (!ctx.args.noStatus) await publish(p.forge, report, note);
@@ -730,10 +734,19 @@ async function overdueOps(forge: PrForge | undefined, member: string | undefined
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
 export function runComponentsPrApply(ctx: CommandContext): Promise<number> {
   if (refusesEventsWithJson(ctx.args, "the stage's report")) return Promise.resolve(1);
-  return withStageEvents("pr-apply", ctx, (events) => withComponentEndpoint(ctx, () => prApply(ctx, events)));
+  return withStageEvents("pr-apply", ctx, async (events) => {
+    // #4301: an apply before merge asks the forge its requires checks before any of the head's code loads, the config included.
+    let beforeMerge: PrBeforeMerge | undefined;
+    if (ctx.args.beforeMerge) {
+      const checked = await beforeMergeChecks(ctx);
+      if (typeof checked === "number") return checked;
+      beforeMerge = checked;
+    }
+    return withComponentEndpoint(ctx, () => prApply(ctx, events, beforeMerge));
+  });
 }
 
-async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number> {
+async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: PrBeforeMerge): Promise<number> {
   // #4168: the review-rules security group turns --require-review on, read from the declaration at base.
   const { securityGroupsAt } = await import("../../workspace/security");
   const reviewRules = !ctx.args.requireReview && securityGroupsAt(process.cwd(), ctx.args.base).has("review-rules");
@@ -756,6 +769,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   }
   const p = await prepare(ctx, "apply");
   if (typeof p === "number") return p;
+  if (beforeMerge) p.beforeMerge = beforeMerge;
 
   let pr: number | null = args.pr ?? null;
   if (pr === null && !green && p.forge && p.plan.order.length > 0) {
@@ -876,6 +890,12 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   }
   const unspent = await spendPolicy(op, judged, p.head);
   if (unspent) return stop(prReport({ ...base, approval, status: "refused", refusal: "policy-denied", message: unspent }), 1);
+  // #4293, #4301: under ci.locks an apply before merge holds its targets until the pull request merges or closes.
+  if (locks && beforeMerge && pr !== null) {
+    const taken = await takeApplyLocks(p, pr);
+    if (typeof taken === "number") return taken;
+    if (taken) return stop(prReport({ ...base, approval, status: "refused", refusal: "locked", message: taken }), GATED_EXIT_CODE);
+  }
 
   // The record is written before the first component runs and again as each
   // one settles, so a run killed partway still knows what applied.
@@ -1012,6 +1032,93 @@ async function heldLocksOf(p: Prepared, pr: number | null): Promise<string | nul
   const name = (n: number) => (p.forge?.kind === "gitlab" ? `merge request !${n}` : `pull request ${n}`);
   const holders = [...new Set(held.map((h) => h.pr))].sort((a, b) => a - b);
   return `${describeHeldTargetLocks(held, name)}, so nothing was applied. Apply again once ${holders.length === 1 ? "it merges or closes" : "they merge or close"}, or after \`chant unlock --pr ${holders[0]}${p.gate === PR_APPLY_GATE ? "" : ` --gate ${p.gate}`}\`${isOpen ? "" : ". Without --forge every lock counts as held"}.`;
+}
+
+/**
+ * `pr-apply --before-merge` (#4301, ws-106), before any of the head's code
+ * loads: the declaration at base must set `ci.workflow: "apply-before-merge"`
+ * for the member, and the forge must say the pull request is approved,
+ * mergeable, undiverged and green at the commit checked out. Returns the
+ * checks for the report, or the exit code once it wrote a refusal.
+ */
+async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | number> {
+  const { args } = ctx;
+  if (args.green) return fail("--before-merge applies an open pull request's head and --green a green commit; pass one of them");
+  if (args.waveGate) return fail("--before-merge applies the pull request's plan in one run, so it takes no --wave-gate");
+  if (args.pr === undefined) return fail("--before-merge applies an open pull request, so it needs --pr <n>");
+  if (!args.forge || !(FORGE_KINDS as readonly string[]).includes(args.forge)) return fail("--before-merge asks the forge whether the pull request is ready, so it needs --forge github|gitlab|forgejo");
+  if (!args.base) return fail("pr-apply needs the commit the change is measured from: --base <ref>", "Before merge, the target branch's commit.");
+  const cwd = resolve(".");
+  let forge: PrForge;
+  let head: string;
+  let base: string;
+  try {
+    forge = forgeFromEnv(args.forge as ForgeKind);
+    head = await resolveCommit(cwd, args.head ?? "HEAD");
+    base = await resolveMergeBase(cwd, args.base, head);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const member = args.members?.[0];
+  const gate = args.gate ?? PR_APPLY_GATE;
+  const { ciWorkflowAt } = await import("../../workspace/ci-workflow-at");
+  const { appliesBeforeMerge } = await import("../../workspace/ci-workflow");
+  const { checkPrRequires, unmetRequires } = await import("../../pr-requires");
+  const workflow = ciWorkflowAt(cwd, args.base, member);
+  const early = earlyStop(ctx, forge, { pr: args.pr, base, head, gate, ...(member ? { member } : {}) });
+  if (!appliesBeforeMerge(workflow)) {
+    return early(
+      { requires: [] },
+      "before-merge-off",
+      `The declaration at base sets ci.workflow to ${workflow ?? "nothing"}${member ? ` for ${member}` : ""}, and only apply-before-merge applies a pull request before it merges (ws-106). Nothing was applied.`,
+      1,
+    );
+  }
+  // The apply's own statuses never hold it back: chant ci run's, and the report's.
+  const ignore = [`chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member)];
+  const requires = await checkPrRequires(forge, args.pr, head, { ignore });
+  for (const r of requires) console.error(formatInfo(`${r.name}: ${r.passed ? "passed" : r.pending ? "pending" : "unmet"}, ${r.reason}`));
+  const unmet = unmetRequires(requires);
+  if (unmet) {
+    return early({ requires }, "requires-unmet", `${forge.kind === "gitlab" ? `Merge request !${args.pr}` : `Pull request ${args.pr}`} is not ready to apply before merge: ${unmet}. Nothing was applied.`, GATED_EXIT_CODE);
+  }
+  return { requires };
+}
+
+/** The refusal report of an apply before merge stopped before it planned (#4301): nothing selected, nothing planned. */
+function earlyStop(ctx: CommandContext, forge: PrForge, at: { pr: number; base: string; head: string; gate: string; member?: string }) {
+  return async (beforeMerge: PrBeforeMerge, refusal: "requires-unmet" | "before-merge-off", message: string, code: number): Promise<number> => {
+    const plan = { order: [], waves: [], skipped: [], seeds: [], indeterminate: [] } as unknown as FanOutPlan;
+    const signal = { changed: [], indeterminate: [], unclaimed: [] } as unknown as ComponentChangeSignal;
+    const p = { env: ctx.args.env ?? "local", base: at.base, head: at.head, gate: at.gate, forge, hookOutcomes: [], beforeMerge, ...(at.member ? { member: at.member } : {}) } as unknown as Prepared;
+    const set: PrPlanSet = { doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: false };
+    const report = prReport({ stage: "apply", pr: at.pr, env: p.env, ...(at.member ? { member: at.member } : {}), base: at.base, head: at.head, op: prOp(at.pr, at.member), gate: at.gate, plan, signal, set, approval: { status: "pending" }, status: "refused", refusal, message });
+    return stopper(ctx, p, undefined, undefined)(report, code);
+  };
+}
+
+/**
+ * Take `apply` locks on the targets an apply before merge reaches (#4293,
+ * #4301), held for pull request `pr` until it merges or closes. Returns the
+ * refusal when another open pull request holds one, null once taken, or the
+ * exit code when the locks could not be written.
+ */
+async function takeApplyLocks(p: Prepared, pr: number): Promise<string | null | number> {
+  const { takeTargetLocks, describeHeldTargetLocks } = await import("../../lifecycle/target-lock");
+  const isOpen = p.forge?.pullRequestOpen?.bind(p.forge);
+  const by = process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER ?? "unknown";
+  let result;
+  try {
+    result = await takeTargetLocks(p.gate, p.plan.order, { pr, by, at: new Date().toISOString(), stage: "apply", head: p.head }, { ...(isOpen ? { isOpen } : {}) });
+  } catch (err) {
+    return fail(`could not take the target locks of ${p.gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (result.ok) {
+    if (result.taken.length > 0) console.error(formatInfo(`pull request ${pr} holds ${result.taken.join(", ")} on ${p.gate} until it merges or closes`));
+    return null;
+  }
+  const name = (n: number) => (p.forge?.kind === "gitlab" ? `merge request !${n}` : `pull request ${n}`);
+  return `${describeHeldTargetLocks(result.held, name)}, so nothing was applied.`;
 }
 
 /** #4274: a component that published nothing is recorded by the plan digest its approval bound. */

@@ -7,6 +7,8 @@
  * from a green commit and promoted through the member's environments, gated
  * in the last (4.2). `trunk-curated+apply-on-merge` is the same, and each
  * newest green commit is also applied (section 5, step 9).
+ * `apply-before-merge` (#4301, ws-106) is `trunk-curated`, and a person may
+ * also apply an open pull request's plan from its head before it merges.
  *
  * A workflow requires no security group: those are opt-in on their own
  * (./security.ts). `chant workspace check` reports what a member under a
@@ -19,11 +21,20 @@ import type { CiWorkflow, Declaration, Member } from "./declaration";
 /** The marker a component stub `chant ci init` writes carries until someone fills it in. WSP151 reports a member whose only components carry it. */
 export const STUB_MARKER = "TODO(chant ci init)";
 
-export const CI_WORKFLOWS = ["trunk-curated", "trunk-curated+apply-on-merge"] as const satisfies readonly CiWorkflow[];
+export const CI_WORKFLOWS = ["trunk-curated", "trunk-curated+apply-on-merge", "apply-before-merge"] as const satisfies readonly CiWorkflow[];
 
 /** Whether `workflow` turns the apply on merge back on. */
 export function appliesOnMerge(workflow: CiWorkflow): boolean {
   return workflow === "trunk-curated+apply-on-merge";
+}
+
+/**
+ * Whether `workflow` lets an open pull request's plan apply from its head
+ * before it merges (#4301, ws-106). Only `apply-before-merge` does, so with
+ * no workflow or either trunk-curated one nothing applies before merge.
+ */
+export function appliesBeforeMerge(workflow: CiWorkflow | null): boolean {
+  return workflow === "apply-before-merge";
 }
 
 /** The workflow `member` follows: its own `ci.workflow`, else the top level's, else null. */
@@ -56,7 +67,7 @@ export const CI_WORKFLOW_REQUIREMENTS = [
   { code: "ci-workflow-no-environments", requirement: "the member's `chant.config.ts` declares `environments`, the promotion order", fix: "`environments` in `chant.config.ts`", perMember: true },
   { code: "ci-workflow-ungated-env", requirement: "each component has a gate, so a promote to the last environment waits on an approval", fix: "a `gate()` step in the component", perMember: true },
   { code: "ci-workflow-pipeline-missing", requirement: "a pipeline file runs the plan job, the record job (`ci run record`) and `chant ci tick`", fix: "`chant build --components --generate <forge> --pr-loop` and `chant ci workflow`", perMember: false },
-  { code: "ci-workflow-pipeline-differs", requirement: "the pipeline matches the workflow: no apply job under `trunk-curated`, and under `trunk-curated+apply-on-merge` an apply job that applies the newest green commit, not each merge", fix: "regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge", perMember: false },
+  { code: "ci-workflow-pipeline-differs", requirement: "the pipeline matches the workflow: no apply job under `trunk-curated`, and under `trunk-curated+apply-on-merge` an apply job that applies the newest green commit, not each merge; a job that applies before merge only, and always, under `apply-before-merge`", fix: "regenerate the pull-request pipeline, with `--apply-on-merge` only under apply on merge and `--apply-before-merge` only under apply before merge", perMember: false },
   { code: "ci-workflow-publish-missing", requirement: "a pipeline file runs `chant release publish`", fix: "`chant release workflow`", perMember: false },
 ] as const satisfies readonly CiWorkflowRequirement[];
 

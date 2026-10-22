@@ -347,7 +347,7 @@ CI:
                         key. --trust commits its runner entry on a branch of its
                         own and pushes it for review; the target branch is never
                         written
-  ci init --workflow trunk-curated|trunk-curated+apply-on-merge
+  ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge
               [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
                         Set the workspace up for a prescribed delivery workflow:
                         print what it would write as a diff, then write it on
@@ -1056,6 +1056,11 @@ Component release ledger + status:
                             from the one last applied to --env, under the
                             approved plans of the merges since, else at gate
                             op green-<sha>;
+                            --before-merge --pr <n>: apply the open pull
+                            request's head under its gate, once the
+                            declaration at base sets ci.workflow to
+                            apply-before-merge and the forge says it is
+                            approved, mergeable, undiverged and green;
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set

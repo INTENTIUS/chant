@@ -1,0 +1,76 @@
+---
+title: Apply a Pull Request Before It Merges
+description: Opt into ci.workflow apply-before-merge, generate the job a /chant apply comment starts, and read why an apply before merge refused
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/apply-before-merge/.
+  Set `ci.workflow` to `apply-before-merge` in `chant.workspace.json`, raise `minReader` to `0.124.42`, regenerate the pull-request pipeline with `--apply-before-merge`, and open a pull request with both.
+  Show me `npx chant workspace check` before and after.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+By default a merge records its plan and deploys nothing, and a release deploys a green commit ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The `apply-before-merge` workflow adds one more path. A person can apply an open pull request's plan from its head, before it merges, under the pull request's own gate ([#4301](https://github.com/INTENTIUS/chant/issues/4301)). [ws-106](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-106-apply-before-merge-as-an-opt-in-workflow.md) records why it is opt-in and what it requires. terragucci's `apply.when: pull-request` maps to it.
+
+This page assumes the [generated pull-request pipeline](/chant/guide/pull-request-ci/) already runs.
+
+## Turn it on
+
+Set `ci.workflow` in `chant.workspace.json`, at the top level or on one member:
+
+```json
+"minReader": "0.124.42",
+"ci": {
+  "workflow": "apply-before-merge"
+}
+```
+
+`chant components pr-apply --before-merge` reads the workflow from the declaration at base, the target branch's commit ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ci-workflow-at.ts#L17)). Only `apply-before-merge` lets it go on ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ci-workflow.ts#L36)). With another workflow or none it refuses with `before-merge-off` and exits 1 ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L1069)). So the pull request that sets the workflow cannot apply itself.
+
+A merge still records and deploys nothing, as under `trunk-curated`. Releases are cut and promoted the same way.
+
+## Generate the job
+
+```sh
+npx chant build --components --generate github --pr-loop --apply-before-merge --env prod
+```
+
+The same flag works with `--generate forgejo` and `--generate gitlab`. `chant ci init --workflow apply-before-merge` passes it for you. The flag takes no `--apply-on-merge`, `--wave-gate` or `--pr-build` ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/pr-pipeline.ts#L266)).
+
+On GitHub and Forgejo the apply job runs on a new `issue_comment` that starts with `/chant apply` ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/src/components/generate-pipeline.ts#L320)). On GitHub the commenter must be an owner, member or collaborator. A comment's workflow file is the default branch's, so the pull request cannot change the job that applies it. The job checks out the pull request's head with `refs/pull/<n>/head` after its setup ran at the default branch's commit ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/components/pr-pipeline.ts#L499)). The base it measures from is the default branch's commit, so the workflow assumes pull requests into the default branch.
+
+GitLab builds a merge request's pipeline from the merge request's own files, so the job runs in a pipeline of the target branch instead. Start one from **Build > Pipelines > Run pipeline** on the target branch, with the variable `CHANT_APPLY_PR` set to the merge request's iid. The job runs only for a pipeline started from the UI, the API or a trigger, with a number in the variable ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/src/components/generate-pipeline.ts#L338)). Who may run a pipeline on a protected branch is GitLab's setting.
+
+## What it checks first
+
+Before any of the head's code loads, the chant config included, the apply asks the forge four things ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L741)). Each is a `PrForge` method on GitHub, GitLab and Forgejo ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/pr-forge.ts#L797)):
+
+| Require | Passes when |
+|---|---|
+| `approved` | someone other than the pull request's authors approved its current head, and nobody asks for changes. On GitLab, the approval came after the latest push. |
+| `mergeable` | the forge says it merges as it stands. On GitHub, branch protection blocking the merge also refuses. |
+| `undiverged` | the head contains the target branch's tip |
+| `checks` | every status and check on the head passed, and at least one reported |
+
+The apply's own statuses do not count toward `checks` ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L1078)). A check the forge has not settled is asked up to five times, three seconds apart ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/pr-requires.ts#L66)). Every check must also find the forge's head equal to the commit the job checked out.
+
+When one fails, the apply refuses with `requires-unmet` and exits 3. The report's `beforeMerge.requires` lists all four, each with `passed` and `reason`. Fix what it names and comment `/chant apply` again.
+
+## Then the gate
+
+Once the four pass, the apply is the one a merge would run, at the head. The pull request's gate decides, `pr-<n>` or `pr-<n>-<member>`. An approval counts only for the digest this run plans, and only a person's approval counts ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/gate-ledger.ts#L207)). Approve as the plan note says, then comment again.
+
+[`ci.policy`](/chant/guide/gate-policy/) at base judges the change set as it does on merge. Under [`ci.locks`](/chant/guide/target-locks/), another open pull request's lock refuses the apply with `locked`. When no lock stops it, the apply takes `apply` locks on what it reaches and holds them until the pull request merges or closes ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L894)).
+
+With [`ci.identity.cloud`](/chant/guide/security-cloud-identities/) the job takes the apply identity. It runs the head's code with it, which is why `approved` asks for an approval of that exact head.
+
+The apply writes deploy records with no release, so `chant workspace status` shows the environment running something no release names. The merge then records its plan as usual.
+
+## Run it by hand
+
+`chant ci run apply --apply-before-merge` runs the same job outside a forge:
+
+```sh
+npx chant ci run apply --apply-before-merge --env prod --forge github --base "$(git rev-parse origin/main)" --pr 12
+```
+
+Run it from a checkout of the pull request's head, with the forge's token in the environment.

@@ -359,6 +359,19 @@ export interface ParsedArgs {
   green?: boolean;
   /** `chant build --pr-loop --pr-env` (#4298) — add the env-up, env-down and env-sweep jobs of a pull request's environment. */
   prEnv?: boolean;
+  /**
+   * `chant components pr-apply --before-merge` (#4301, ws-106): apply an open
+   * pull request's plan from its head, once the declaration at base sets
+   * `ci.workflow: "apply-before-merge"` and the pull request is approved,
+   * mergeable, undiverged and green.
+   */
+  beforeMerge?: boolean;
+  /**
+   * `chant build --pr-loop --apply-before-merge` and `chant ci run apply
+   * --apply-before-merge` (#4301): the pipeline's apply job applies an open
+   * pull request before it merges, and a merge records.
+   */
+  applyBeforeMerge?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */

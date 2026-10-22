@@ -14,7 +14,7 @@
 
 import type { WorkspaceCheck, WorkspaceDiagnostic } from "../checks";
 import type { CiWorkflow, Member } from "../declaration";
-import { appliesOnMerge, STUB_MARKER, workflowOf, type CiWorkflowCode } from "../ci-workflow";
+import { appliesBeforeMerge, appliesOnMerge, STUB_MARKER, workflowOf, type CiWorkflowCode } from "../ci-workflow";
 import { matchesCheckRun } from "../ci-green";
 import { staticPromotionOrder } from "../promotion-order";
 import { joinPath } from "../tree";
@@ -27,6 +27,8 @@ const memberDir = (dir: string) => (dir === "." ? "" : dir);
 const PLAN = /\bci\s+run\s+plan\b|\bcomponents\s+pr-plan\b/;
 const RECORD = /\bci\s+run\s+record\b|\bcomponents\s+pr-record\b/;
 const APPLY = /\bci\s+run\s+apply\b|\bcomponents\s+pr-apply\b/;
+/** An apply before merge (#4301): `pr-apply --before-merge`, or `ci run apply --apply-before-merge`. */
+const BEFORE_MERGE = /--(?:apply-)?before-merge\b/;
 const TICK = /\bci\s+tick\b/;
 const PUBLISH = /\brelease\s+publish\b/;
 
@@ -113,16 +115,28 @@ export const CI_WORKFLOW_CHECKS: readonly WorkspaceCheck[] = [
       if (missing.length > 0) {
         finding("ci-workflow-pipeline-missing", `no pipeline file runs ${missing.join(", ")}; generate them with chant build --components --generate <forge> --pr-loop and chant ci workflow`);
       }
+      // #4301: an apply before merge is its own job, allowed only under apply-before-merge.
+      const beforeMerge = under.some((u) => appliesBeforeMerge(u.workflow)) || appliesBeforeMerge(d.ci?.workflow ?? null);
+      const earlyLines = commandLines(ctx, APPLY).filter((c) => BEFORE_MERGE.test(c.text));
+      if (!beforeMerge) {
+        for (const l of earlyLines) {
+          finding("ci-workflow-pipeline-differs", `${l.path} applies before merge, and no member's workflow is apply-before-merge; regenerate without --apply-before-merge, or set ci.workflow to apply-before-merge`, { treeFile: l.path, line: l.line });
+        }
+      } else if (earlyLines.length === 0 && has(PLAN)) {
+        const l = commandLines(ctx, PLAN)[0]!;
+        finding("ci-workflow-pipeline-differs", `${l.path} has no job that applies before merge, and the workflow is apply-before-merge; regenerate with --apply-before-merge`, { treeFile: l.path, line: l.line });
+      }
+      const mergeApply = (l: { text: string }) => !BEFORE_MERGE.test(l.text);
       if (!applyOnMerge) {
-        for (const l of commandLines(ctx, APPLY)) {
+        for (const l of commandLines(ctx, APPLY).filter(mergeApply)) {
           finding("ci-workflow-pipeline-differs", `${l.path} applies on merge, and the workflow is trunk-curated, where a merge records the plan and deploys nothing; regenerate without --apply-on-merge, or set ci.workflow to trunk-curated+apply-on-merge`, { treeFile: l.path, line: l.line });
         }
-      } else if (!has(APPLY) && has(RECORD)) {
+      } else if (!commandLines(ctx, APPLY).some(mergeApply) && has(RECORD)) {
         const l = commandLines(ctx, RECORD)[0]!;
         finding("ci-workflow-pipeline-differs", `${l.path} records on merge, and the workflow is trunk-curated+apply-on-merge; regenerate with --apply-on-merge`, { treeFile: l.path, line: l.line });
       } else {
         // #4168 step 9: an apply measured from a push's base applies each merge; the workflow applies green commits.
-        for (const l of commandLines(ctx, APPLY).filter((c) => /--base\b/.test(c.text) || (/\bcomponents\s+pr-apply\b/.test(c.text) && !/--green\b/.test(c.text)))) {
+        for (const l of commandLines(ctx, APPLY).filter(mergeApply).filter((c) => /--base\b/.test(c.text) || (/\bcomponents\s+pr-apply\b/.test(c.text) && !/--green\b/.test(c.text)))) {
           finding("ci-workflow-pipeline-differs", `${l.path} applies each merge, and under trunk-curated+apply-on-merge the apply applies the newest green commit; regenerate with --apply-on-merge`, { treeFile: l.path, line: l.line });
         }
       }

@@ -411,6 +411,49 @@ export interface PrForge {
    * pipelines. Throws a {@link ForgeApiError} when the forge will not say.
    */
   scheduledRuns?(query: ScheduledRunsQuery): Promise<ScheduledRuns>;
+  /**
+   * The four checks an apply before merge requires (#4301, ws-106), each
+   * about pull request `pr` at `head`, the commit the job checked out. Each
+   * fails when the forge's head for `pr` is another commit. `approved`:
+   * someone other than the pull request's authors ({@link authors}) approved
+   * `head`, and no standing review asks for changes. On GitLab an approval
+   * counts when it came after the merge request's latest push, read from its
+   * system notes, and never from the token's own user.
+   */
+  prApproved?(pr: number, head: string): Promise<PrRequireResult>;
+  /** The forge says `pr` merges as it stands: no conflicts, and on GitHub no branch protection blocking it. Pending while the forge works it out. */
+  prMergeable?(pr: number, head: string): Promise<PrRequireResult>;
+  /** `head` contains the tip of the branch `pr` merges into. */
+  prUndiverged?(pr: number, head: string): Promise<PrRequireResult>;
+  /**
+   * Every status and check reported on `head` passed, and at least one did.
+   * Statuses named in `ignore` are left out, such as the apply's own.
+   * Pending while one still runs or none has reported.
+   */
+  prChecksPassed?(pr: number, head: string, ignore?: readonly string[]): Promise<PrRequireResult>;
+}
+
+/** What one of the requires checks (#4301) found. */
+export interface PrRequireResult {
+  passed: boolean;
+  /** Not settled yet: the forge is still working it out, or a check still runs. Asking again may pass. */
+  pending?: boolean;
+  /** One line for a person. */
+  reason: string;
+}
+
+const short = (sha: string | undefined): string => (sha ?? "nothing").slice(0, 8);
+const pass = (reason: string): PrRequireResult => ({ passed: true, reason });
+const refuse = (reason: string, pending = false): PrRequireResult => ({ passed: false, ...(pending ? { pending: true } : {}), reason });
+const moved = (what: string, head: string, now: string | undefined): PrRequireResult => refuse(`${what}'s head is ${short(now)}, not ${short(head)}, the commit this job checked out`);
+
+/** The verdict over statuses and checks: failing and still-running names, and how many reported. */
+function checksVerdict(what: string, head: string, failing: string[], waiting: string[], count: number): PrRequireResult {
+  const names = (l: string[]) => [...new Set(l)].sort().join(", ");
+  if (failing.length > 0) return refuse(`${names(failing)} failed on ${short(head)}`);
+  if (waiting.length > 0) return refuse(`${names(waiting)} still running on ${short(head)}`, true);
+  if (count === 0) return refuse(`no check has reported on ${what}'s head ${short(head)} yet`, true);
+  return pass(`${count} check${count === 1 ? "" : "s"} passed on ${short(head)}`);
 }
 
 /** Which scheduled Op job {@link PrForge.scheduledRuns} asks about. */
@@ -624,6 +667,11 @@ export interface GithubForgeOptions {
   fetch?: ForgeFetch;
 }
 
+/** GitLab's merge statuses while it works out whether a merge request can merge (#4301). */
+const GITLAB_CHECKING = new Set(["checking", "unchecked", "preparing", "approvals_syncing", "cannot_be_merged_recheck"]);
+/** GitLab's commit statuses still running. */
+const GITLAB_RUNNING = new Set(["created", "waiting_for_resource", "preparing", "pending", "running", "scheduled"]);
+
 /** GitHub keeps a status description to 140 characters; Forgejo follows. */
 const GITHUB_DESCRIPTION = 140;
 /** GitLab keeps a status description to 255 characters. */
@@ -693,6 +741,33 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       ...(url ? { target_url: url } : {}),
     });
   };
+  const authorsOf = async (pr: number): Promise<string[]> => {
+    const logins = new Set<string>();
+    const add = (v: unknown) => {
+      if (isObject(v) && typeof v.login === "string" && v.login !== "") logins.add(v.login);
+    };
+    const opened = await api.call("GET", `${repo}/pulls/${pr}`);
+    if (isObject(opened)) add(opened.user);
+    for (const c of await api.list(`${repo}/pulls/${pr}/commits`, pageParams, pageSize)) {
+      if (!isObject(c)) continue;
+      add(c.author);
+      add(c.committer);
+    }
+    return [...logins].sort();
+  };
+  const branchTip = async (branch: string): Promise<string | undefined> => {
+    let b: unknown;
+    try {
+      b = await api.call("GET", `${repo}/branches/${branch.split("/").map(encodeURIComponent).join("/")}`);
+    } catch (err) {
+      if (err instanceof ForgeApiError && err.status === 404) return undefined;
+      throw err;
+    }
+    // GitHub names the commit `sha`, Forgejo `id`.
+    const commit = isObject(b) && isObject(b.commit) ? b.commit : undefined;
+    return commit ? str(commit.sha) ?? str(commit.id) : undefined;
+  };
+  const headOf = (v: unknown): string | undefined => (isObject(v) && isObject(v.head) ? str(v.head.sha) : undefined);
   return {
     kind,
     host,
@@ -720,19 +795,84 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       }
       return [...standing].filter(([, state]) => state === "APPROVED").map(([login]) => login).sort();
     },
-    async authors(pr) {
-      const logins = new Set<string>();
-      const add = (v: unknown) => {
-        if (isObject(v) && typeof v.login === "string" && v.login !== "") logins.add(v.login);
-      };
-      const opened = await api.call("GET", `${repo}/pulls/${pr}`);
-      if (isObject(opened)) add(opened.user);
-      for (const c of await api.list(`${repo}/pulls/${pr}/commits`, pageParams, pageSize)) {
-        if (!isObject(c)) continue;
-        add(c.author);
-        add(c.committer);
+    authors: authorsOf,
+    async prApproved(pr, head) {
+      const got = await api.call("GET", `${repo}/pulls/${pr}`);
+      const at = headOf(got);
+      if (at !== head) return moved(`pull request ${pr}`, head, at);
+      // A reviewer's newest deciding review stands, as in approvers; an approval counts only of this head.
+      const standing = new Map<string, { state: string; commit?: string }>();
+      for (const r of await api.list(`${repo}/pulls/${pr}/reviews`, pageParams, pageSize)) {
+        const login = loginOf(r);
+        if (!login || !isObject(r) || typeof r.state !== "string") continue;
+        const state = r.dismissed === true ? "DISMISSED" : r.state.toUpperCase();
+        if (state === "COMMENTED" || state === "COMMENT" || state === "PENDING") continue;
+        const commit = str(r.commit_id);
+        standing.set(login, { state, ...(commit ? { commit } : {}) });
       }
-      return [...logins].sort();
+      const changes = [...standing].filter(([, r]) => r.state === "CHANGES_REQUESTED" || r.state === "REQUEST_CHANGES").map(([l]) => l).sort();
+      if (changes.length > 0) return refuse(`${changes.join(", ")} asked for changes`);
+      const authors = new Set(await authorsOf(pr));
+      const by = [...standing].filter(([l, r]) => r.state === "APPROVED" && r.commit === head && !authors.has(l)).map(([l]) => l).sort();
+      if (by.length === 0) return refuse(`no reviewer other than its authors approved its head ${short(head)}`);
+      return pass(`approved at ${short(head)} by ${by.join(", ")}`);
+    },
+    async prMergeable(pr, head) {
+      const got = await api.call("GET", `${repo}/pulls/${pr}`);
+      const at = headOf(got);
+      if (at !== head) return moved(`pull request ${pr}`, head, at);
+      const m = isObject(got) ? got : {};
+      const into = isObject(m.base) ? str(m.base.ref) : undefined;
+      if (m.mergeable === false || m.mergeable_state === "dirty") return refuse(`the forge reports conflicts with ${into ?? "its base"}`);
+      if (m.mergeable !== true) return refuse("the forge has not worked out yet whether it can merge", true);
+      if (kind === "github" && m.mergeable_state === "blocked") return refuse(`branch protection on ${into ?? "its base"} blocks its merge`);
+      return pass(`it merges into ${into ?? "its base"} as it stands`);
+    },
+    async prUndiverged(pr, head) {
+      const got = await api.call("GET", `${repo}/pulls/${pr}`);
+      const at = headOf(got);
+      if (at !== head) return moved(`pull request ${pr}`, head, at);
+      const into = isObject(got) && isObject(got.base) ? str(got.base.ref) : undefined;
+      if (!into) return refuse(`the forge names no branch pull request ${pr} merges into`);
+      if (kind === "github") {
+        // behind_by: the commits on the base branch that the head does not contain.
+        const cmp = await api.call("GET", `${repo}/compare/${encodeURIComponent(into)}...${head}`);
+        const behind = isObject(cmp) ? num(cmp.behind_by) : undefined;
+        if (behind === undefined) return refuse(`the forge did not say how far ${short(head)} is behind ${into}`);
+        return behind === 0 ? pass(`${short(head)} contains ${into}`) : refuse(`${short(head)} is ${behind} commit${behind === 1 ? "" : "s"} behind ${into}`);
+      }
+      // Forgejo: the pull request's merge base is the base branch's tip exactly when the head contains it.
+      const tip = await branchTip(into);
+      const base = isObject(got) ? str(got.merge_base) : undefined;
+      if (!tip || !base) return refuse(`the forge did not say where ${into} is or where ${short(head)} left it`);
+      return base === tip ? pass(`${short(head)} contains ${into} at ${short(tip)}`) : refuse(`${short(head)} does not contain ${into} at ${short(tip)}`);
+    },
+    async prChecksPassed(_pr, head, ignore = []) {
+      const skip = new Set(ignore);
+      const failing: string[] = [];
+      const waiting: string[] = [];
+      let count = 0;
+      // The combined status holds each context's newest status.
+      const combined = await api.call("GET", `${repo}/commits/${head}/status`);
+      for (const st of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses : []) {
+        const context = isObject(st) ? str(st.context) : undefined;
+        if (!context || skip.has(context)) continue;
+        const state = str(st.state) ?? str(st.status) ?? "";
+        count++;
+        if (state === "failure" || state === "error" || state === "failed") failing.push(context);
+        else if (state === "pending" || state === "running" || state === "") waiting.push(context);
+      }
+      if (kind === "github") {
+        const runs = await api.call("GET", `${repo}/commits/${head}/check-runs?per_page=100`);
+        for (const run of isObject(runs) && Array.isArray(runs.check_runs) ? runs.check_runs : []) {
+          const name = (isObject(run) ? str(run.name) : undefined) ?? "a check";
+          if (skip.has(name) || !isObject(run)) continue;
+          count++;
+          if (run.status !== "completed") waiting.push(name);
+          else if (!["success", "neutral", "skipped"].includes(String(run.conclusion))) failing.push(name);
+        }
+      }
+      return checksVerdict(`pull request ${_pr}`, head, failing, waiting, count);
     },
     async pullRequestOpen(pr) {
       try {
@@ -817,18 +957,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       }
       return out.sort((a, b) => a.number - b.number);
     },
-    async branchHead(branch) {
-      let b: unknown;
-      try {
-        b = await api.call("GET", `${repo}/branches/${branch.split("/").map(encodeURIComponent).join("/")}`);
-      } catch (err) {
-        if (err instanceof ForgeApiError && err.status === 404) return undefined;
-        throw err;
-      }
-      // GitHub names the commit `sha`, Forgejo `id`.
-      const commit = isObject(b) && isObject(b.commit) ? b.commit : undefined;
-      return commit ? str(commit.sha) ?? str(commit.id) : undefined;
-    },
+    branchHead: branchTip,
     async scheduledRuns(q) {
       const file = encodeURIComponent(q.workflow);
       if (kind === "github") {
@@ -998,6 +1127,22 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       await api.call("PUT", `${project}/issues/${n}`, { state_event: "close" });
     },
   };
+  const authorsOf = async (mr: number): Promise<string[]> => {
+    const logins = new Set<string>();
+    const merge = await api.call("GET", `${notes}/${mr}`);
+    const author = isObject(merge) ? authorOf(merge) : undefined;
+    if (author) logins.add(author);
+    const emails = new Set<string>();
+    for (const c of await api.list(`${notes}/${mr}/commits`, pageParams, 100)) {
+      if (!isObject(c)) continue;
+      for (const email of [str(c.author_email), str(c.committer_email)]) if (email) emails.add(email.toLowerCase());
+    }
+    for (const email of [...emails].sort()) {
+      const users = await api.call("GET", `/users?search=${encodeURIComponent(email)}`);
+      for (const u of Array.isArray(users) ? users : []) if (isObject(u) && typeof u.username === "string") logins.add(u.username);
+    }
+    return [...logins].sort();
+  };
   return {
     kind: "gitlab",
     host,
@@ -1029,21 +1174,74 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         .filter((l): l is string => l !== undefined);
       return [...new Set(logins)].sort();
     },
-    async authors(mr) {
-      const logins = new Set<string>();
-      const merge = await api.call("GET", `${notes}/${mr}`);
-      const author = isObject(merge) ? authorOf(merge) : undefined;
-      if (author) logins.add(author);
-      const emails = new Set<string>();
-      for (const c of await api.list(`${notes}/${mr}/commits`, pageParams, 100)) {
-        if (!isObject(c)) continue;
-        for (const email of [str(c.author_email), str(c.committer_email)]) if (email) emails.add(email.toLowerCase());
+    authors: authorsOf,
+    async prApproved(mr, head) {
+      const got = await api.call("GET", `${notes}/${mr}`);
+      const at = isObject(got) ? str(got.sha) : undefined;
+      if (at !== head) return moved(`merge request !${mr}`, head, at);
+      // The token's own user approves for the pipeline, never as a reviewer.
+      const me = await api.call("GET", "/user");
+      const self = isObject(me) ? str(me.username) : undefined;
+      if (!self) return refuse("GitLab did not say which user the job's token acts as, so no approval counts");
+      // An approval counts once it came after the latest push: the newest version of the diff.
+      const versions = await api.call("GET", `${notes}/${mr}/versions`);
+      const since = Math.max(-Infinity, ...(Array.isArray(versions) ? versions : []).map((v) => Date.parse((isObject(v) ? str(v.created_at) : undefined) ?? "")).filter(Number.isFinite));
+      const said = new Map<string, { what: string; at: number }>();
+      for (const n of await api.list(`${notes}/${mr}/notes?sort=asc&order_by=created_at`, pageParams, 100)) {
+        if (!isObject(n) || n.system !== true) continue;
+        const who = authorOf(n);
+        const body = (str(n.body) ?? "").trim();
+        const what = /^approved this merge request/.test(body) ? "approved" : /^unapproved this merge request/.test(body) ? "unapproved" : /^requested changes/.test(body) ? "changes" : undefined;
+        const when = Date.parse(str(n.created_at) ?? "");
+        if (!who || who === self || !what || !Number.isFinite(when)) continue;
+        const before = said.get(who);
+        if (!before || when >= before.at) said.set(who, { what, at: when });
       }
-      for (const email of [...emails].sort()) {
-        const users = await api.call("GET", `/users?search=${encodeURIComponent(email)}`);
-        for (const u of Array.isArray(users) ? users : []) if (isObject(u) && typeof u.username === "string") logins.add(u.username);
+      const changes = [...said].filter(([, v]) => v.what === "changes").map(([w]) => w).sort();
+      if (changes.length > 0) return refuse(`${changes.join(", ")} requested changes`);
+      const authors = new Set(await authorsOf(mr));
+      const by = [...said].filter(([w, v]) => v.what === "approved" && v.at > since && !authors.has(w)).map(([w]) => w).sort();
+      if (by.length === 0) return refuse(`no member other than its authors approved it after its latest push, ${short(head)}`);
+      return pass(`approved after ${short(head)} by ${by.join(", ")}`);
+    },
+    async prMergeable(mr, head) {
+      const got = await api.call("GET", `${notes}/${mr}`);
+      const m = isObject(got) ? got : {};
+      if (str(m.sha) !== head) return moved(`merge request !${mr}`, head, str(m.sha));
+      const status = str(m.detailed_merge_status) ?? (m.merge_status === "can_be_merged" ? "mergeable" : (str(m.merge_status) ?? ""));
+      const into = str(m.target_branch) ?? "its target branch";
+      if (status === "conflict" || m.has_conflicts === true) return refuse(`GitLab reports conflicts with ${into}`);
+      if (GITLAB_CHECKING.has(status)) return refuse("GitLab has not worked out yet whether it can merge", true);
+      if (status !== "mergeable") return refuse(`GitLab says ${status || "nothing"} about merging it`);
+      return pass(`it merges into ${into} as it stands`);
+    },
+    async prUndiverged(mr, head) {
+      const got = await api.call("GET", `${notes}/${mr}?include_diverged_commits_count=true`);
+      const m = isObject(got) ? got : {};
+      if (str(m.sha) !== head) return moved(`merge request !${mr}`, head, str(m.sha));
+      const into = str(m.target_branch) ?? "its target branch";
+      const behind = num(m.diverged_commits_count);
+      if (behind === undefined) return refuse(`GitLab did not say how far ${short(head)} is behind ${into}`);
+      return behind === 0 ? pass(`${short(head)} contains ${into}`) : refuse(`${short(head)} is ${behind} commit${behind === 1 ? "" : "s"} behind ${into}`);
+    },
+    async prChecksPassed(mr, head, ignore = []) {
+      const skip = new Set(ignore);
+      // Each name's newest status; a job allowed to fail holds nothing back.
+      const newest = new Map<string, Record<string, unknown>>();
+      for (const st of await api.list(`${project}/repository/commits/${head}/statuses?all=true`, pageParams, 100)) {
+        const name = isObject(st) ? str(st.name) : undefined;
+        if (!name || skip.has(name) || !isObject(st)) continue;
+        const had = newest.get(name);
+        if (!had || (num(st.id) ?? 0) > (num(had.id) ?? 0)) newest.set(name, st);
       }
-      return [...logins].sort();
+      const failing: string[] = [];
+      const waiting: string[] = [];
+      for (const [name, st] of newest) {
+        const state = str(st.status) ?? "";
+        if ((state === "failed" || state === "canceled") && st.allow_failure !== true) failing.push(name);
+        else if (GITLAB_RUNNING.has(state)) waiting.push(name);
+      }
+      return checksVerdict(`merge request !${mr}`, head, failing, waiting, newest.size);
     },
     async pullRequestOpen(mr) {
       try {
