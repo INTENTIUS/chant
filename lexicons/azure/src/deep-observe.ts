@@ -67,7 +67,7 @@ import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
 
 
 /** The full `az resource show -o json` shape this reader reads (a superset of the thin path's `AzResourceShowResponse`). */
-interface ArmResourceShowResponse {
+export interface ArmResourceShowResponse {
   id?: string;
   name?: string;
   type?: string;
@@ -96,7 +96,7 @@ interface ArmResourceShowResponse {
  * returned 200 is the declared name. The leaf is folded back to the declared
  * spelling; a name that is not the leaf of the query is kept as returned.
  */
-function buildLiveProperties(obj: ArmResourceShowResponse, queriedName?: string): Record<string, unknown> {
+export function buildLiveProperties(obj: ArmResourceShowResponse, queriedName?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (obj.name !== undefined) {
     out.name =

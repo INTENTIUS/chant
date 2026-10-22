@@ -19,6 +19,7 @@ import type { Capability } from "../packages/core/src/components/capability";
 import type { CapabilityPlugin } from "../packages/core/src/components/capability-plugin";
 import { starterCapabilityPlugin } from "../packages/core/src/components/starter-plugin";
 import { awsCapabilityPlugin } from "../lexicons/aws/src/components/capability-plugin";
+import { azureCapabilityPlugin } from "../lexicons/azure/src/components/capability-plugin";
 import { flyCapabilityPlugin } from "../lexicons/fly/src/components/capability-plugin";
 import { helmCapabilityPlugin } from "../lexicons/helm/src/components/capability-plugin";
 import { k8sCapabilityPlugin } from "../lexicons/k8s/src/components/capability-plugin";
@@ -32,6 +33,7 @@ import { terraformCapabilityPlugin } from "../lexicons/terraform/src/components/
 export const PLUGINS: ReadonlyArray<{ lexicon: string; exportName: string; plugin: CapabilityPlugin }> = [
   { lexicon: "core", exportName: "starterCapabilityPlugin", plugin: starterCapabilityPlugin },
   { lexicon: "aws", exportName: "awsCapabilityPlugin", plugin: awsCapabilityPlugin },
+  { lexicon: "azure", exportName: "azureCapabilityPlugin", plugin: azureCapabilityPlugin },
   { lexicon: "fly", exportName: "flyCapabilityPlugin", plugin: flyCapabilityPlugin },
   { lexicon: "helm", exportName: "helmCapabilityPlugin", plugin: helmCapabilityPlugin },
   { lexicon: "k8s", exportName: "k8sCapabilityPlugin", plugin: k8sCapabilityPlugin },
@@ -51,6 +53,12 @@ export interface PlannerNote {
 
 /** One entry per capability with `plan`. */
 export const PLANNERS: Record<string, PlannerNote> = {
+  "arm-deploy": {
+    source: "lexicons/azure/src/components/arm-deploy.ts",
+    reads: "each template resource from ARM by its id, compared with the body the apply would PUT",
+    shows: "a create, update, no-op or delete per resource, and each changed property path with its value before and after",
+    anchor: "arm-deploy",
+  },
   "cfn-deploy": {
     source: "lexicons/aws/src/components/apply.ts",
     reads: "a CloudFormation change set for the template and parameters, deleted without executing it",

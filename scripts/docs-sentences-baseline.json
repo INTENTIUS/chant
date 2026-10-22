@@ -893,7 +893,7 @@
   "formatting/em-dash-density": 5
  },
  "docs/src/content/docs/local-testing/gcp.mdx": {
-  "formatting/em-dash-density": 6,
+  "formatting/em-dash-density": 5,
   "tricolon/comma-series": 1,
   "anaphora/repeated-opening": 1,
   "formatting/bold-first-bullet": 1

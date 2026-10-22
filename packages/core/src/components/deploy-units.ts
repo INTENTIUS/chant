@@ -59,6 +59,8 @@ export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   // A Terraform-family root (#3049). Its unit is the root's name in
   // `terraform.roots`, which is also the member a gated wave's digest names.
   { kind: "terraform-apply", field: "root", lexicon: "terraform" },
+  // An ARM template applied into one resource group (#4273). Its unit is the group.
+  { kind: "arm-deploy", field: "resourceGroup", lexicon: "azure" },
 ];
 
 /** One resolved unit a component's deploy composition targets. */
