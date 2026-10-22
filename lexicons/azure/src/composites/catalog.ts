@@ -173,6 +173,126 @@ export const compositeCatalog: CompositeEntry[] = [
     ]
   },
   {
+    "name": "ContainerAppNetwork",
+    "lexicon": "azure",
+    "description": "A VNet with a subnet delegated to `Microsoft.App/environments`, for ContainerAppSite environments to sit in.",
+    "bundles": [
+      "Subnet",
+      "VirtualNetwork"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "Network name prefix: the VNet is `<name>-vnet`, its subnet `apps`."
+      },
+      {
+        "name": "location",
+        "type": "string",
+        "required": false,
+        "description": "Azure region (default: resource group location)."
+      },
+      {
+        "name": "addressSpace",
+        "type": "string",
+        "required": false,
+        "description": "VNet address space (default: \"10.0.0.0/16\")."
+      },
+      {
+        "name": "subnetPrefix",
+        "type": "string",
+        "required": false,
+        "description": "The environment subnet's prefix, a /23 or larger (default: \"10.0.0.0/23\")."
+      },
+      {
+        "name": "tags",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "Resource tags."
+      },
+      {
+        "name": "defaults",
+        "type": "{ virtualNetwork?: Partial<ConstructorParameters<typeof VirtualNetwork>[0]>; subnet?: Partial<ConstructorParameters<t...",
+        "required": false,
+        "description": "Per-member defaults."
+      }
+    ]
+  },
+  {
+    "name": "ContainerAppSite",
+    "lexicon": "azure",
+    "description": "A Container Apps environment in a subnet, shipping logs to its own Log Analytics workspace, with one app running as a user-assigned identity.",
+    "bundles": [
+      "LogAnalyticsWorkspace",
+      "ManagedIdentity",
+      "containerApps",
+      "managedEnvironments"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "Environment name; the workspace is `<name>-logs` and the identity `<name>-<app>`."
+      },
+      {
+        "name": "app",
+        "type": "string",
+        "required": true,
+        "description": "Container app name."
+      },
+      {
+        "name": "subnetId",
+        "type": "string",
+        "required": true,
+        "description": "Subnet resource ID for the environment, such as a ContainerAppNetwork's `subnet.id`."
+      },
+      {
+        "name": "location",
+        "type": "string",
+        "required": false,
+        "description": "Azure region (default: resource group location)."
+      },
+      {
+        "name": "image",
+        "type": "string",
+        "required": false,
+        "description": "Container image (default: \"mcr.microsoft.com/k8se/quickstart:latest\")."
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": false,
+        "description": "Port the container listens on; ingress forwards to it (default: 80)."
+      },
+      {
+        "name": "replicas",
+        "type": "number",
+        "required": false,
+        "description": "Fixed replica count (default: 1)."
+      },
+      {
+        "name": "internal",
+        "type": "boolean",
+        "required": false,
+        "description": "Make the environment reachable only from its VNet (default: false)."
+      },
+      {
+        "name": "tags",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "Resource tags."
+      },
+      {
+        "name": "defaults",
+        "type": "{ workspace?: Partial<ConstructorParameters<typeof LogAnalyticsWorkspace>[0]>; identity?: Partial<ConstructorParamete...",
+        "required": false,
+        "description": "Per-member defaults."
+      }
+    ]
+  },
+  {
     "name": "ContainerInstance",
     "lexicon": "azure",
     "description": "ContainerInstance composite — Container Group.",

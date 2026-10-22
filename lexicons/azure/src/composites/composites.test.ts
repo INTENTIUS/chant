@@ -14,6 +14,7 @@ import { ApplicationGateway } from "./application-gateway";
 import { ContainerInstance } from "./container-instance";
 import { RedisCache } from "./redis-cache";
 import { PrivateEndpoint } from "./private-endpoint";
+import { ContainerAppNetwork, ContainerAppSite } from "./container-app";
 import { isCompositeInstance } from "@intentius/chant";
 
 /** Helper to get flat props from a generated resource instance. */
@@ -742,5 +743,93 @@ describe("PrivateEndpoint", () => {
     expect(peTags.env).toBe("prod");
     expect(dnsTags.env).toBe("prod");
     expect(peTags["managed-by"]).toBe("chant");
+  });
+});
+
+// --- ContainerAppNetwork ---
+
+describe("ContainerAppNetwork", () => {
+  test("returns a VNet and its subnet", () => {
+    const result = ContainerAppNetwork({ name: "web" });
+    expect(Object.keys(result.members)).toEqual(["virtualNetwork", "subnet"]);
+    expect(et(result.virtualNetwork)).toBe("Microsoft.Network/virtualNetworks");
+    expect(et(result.subnet)).toBe("Microsoft.Network/virtualNetworks_subnets");
+  });
+
+  test("names the subnet as a child of <name>-vnet and delegates it to Container Apps", () => {
+    const { virtualNetwork, subnet } = ContainerAppNetwork({ name: "web", subnetPrefix: "10.1.0.0/23" });
+    expect(p(virtualNetwork).name).toBe("web-vnet");
+    expect(p(subnet).name).toBe("web-vnet/apps");
+    expect(p(subnet).addressPrefix).toBe("10.1.0.0/23");
+    const delegations = p(subnet).delegations as Array<{ properties: { serviceName: string } }>;
+    expect(delegations[0].properties.serviceName).toBe("Microsoft.App/environments");
+  });
+
+  test("lists the subnet inline on the VNet too", () => {
+    const { virtualNetwork } = ContainerAppNetwork({ name: "web" });
+    const subnets = p(virtualNetwork).subnets as Array<{ name: string; properties: { addressPrefix: string } }>;
+    expect(subnets).toHaveLength(1);
+    expect(subnets[0].name).toBe("apps");
+    expect(subnets[0].properties.addressPrefix).toBe("10.0.0.0/23");
+  });
+
+  test("defaults override a member's props", () => {
+    const { virtualNetwork } = ContainerAppNetwork({ name: "web", defaults: { virtualNetwork: { location: "westeurope" } } });
+    expect(p(virtualNetwork).location).toBe("westeurope");
+  });
+});
+
+// --- ContainerAppSite ---
+
+describe("ContainerAppSite", () => {
+  const subnetId = "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'web-vnet', 'apps')]";
+
+  test("returns a workspace, identity, environment and app", () => {
+    const result = ContainerAppSite({ name: "web", app: "frontend", subnetId });
+    expect(Object.keys(result.members)).toEqual(["workspace", "identity", "environment", "containerApp"]);
+    expect(et(result.workspace)).toBe("Microsoft.OperationalInsights/workspaces");
+    expect(et(result.identity)).toBe("Microsoft.ManagedIdentity/userAssignedIdentities");
+    expect(et(result.environment)).toBe("Microsoft.App/managedEnvironments");
+    expect(et(result.containerApp)).toBe("Microsoft.App/containerApps");
+  });
+
+  test("puts the environment in the subnet on the Consumption profile, logging to the workspace", () => {
+    const { workspace, environment } = ContainerAppSite({ name: "web", app: "frontend", subnetId });
+    expect(p(workspace).name).toBe("web-logs");
+    const env = p(environment);
+    expect(env.vnetConfiguration).toEqual({ infrastructureSubnetId: subnetId, internal: false });
+    expect(env.workloadProfiles).toEqual([{ name: "Consumption", workloadProfileType: "Consumption" }]);
+    const logs = (env.appLogsConfiguration as { logAnalyticsConfiguration: Record<string, string> }).logAnalyticsConfiguration;
+    expect(logs.customerId).toContain("reference(resourceId('Microsoft.OperationalInsights/workspaces', 'web-logs')");
+    expect(logs.sharedKey).toContain("listKeys(resourceId('Microsoft.OperationalInsights/workspaces', 'web-logs')");
+  });
+
+  test("runs the app as the identity behind external ingress", () => {
+    const { identity, containerApp } = ContainerAppSite({ name: "web", app: "frontend", subnetId, image: "nginx:1.27", port: 8080, replicas: 2 });
+    expect(p(identity).name).toBe("web-frontend");
+    const app = p(containerApp);
+    expect(app.name).toBe("frontend");
+    const ids = (app.identity as { userAssignedIdentities: Record<string, unknown> }).userAssignedIdentities;
+    expect(Object.keys(ids)).toEqual(["[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'web-frontend')]"]);
+    expect(app.configuration).toEqual({ ingress: { external: true, targetPort: 8080, transport: "auto" } });
+    const template = app.template as { containers: Array<{ image: string }>; scale: Record<string, number> };
+    expect(template.containers[0].image).toBe("nginx:1.27");
+    expect(template.scale).toEqual({ minReplicas: 2, maxReplicas: 2 });
+  });
+
+  test("internal makes the environment VNet-only", () => {
+    const { environment } = ContainerAppSite({ name: "web", app: "frontend", subnetId, internal: true });
+    expect((p(environment).vnetConfiguration as Record<string, unknown>).internal).toBe(true);
+  });
+
+  test("defaults override a member's props", () => {
+    const { workspace } = ContainerAppSite({ name: "web", app: "frontend", subnetId, defaults: { workspace: { retentionInDays: 90 } } });
+    expect(p(workspace).retentionInDays).toBe(90);
+  });
+
+  test("takes a ContainerAppNetwork's subnet id", () => {
+    const network = ContainerAppNetwork({ name: "web" });
+    const { environment } = ContainerAppSite({ name: "web", app: "frontend", subnetId: network.subnet.id });
+    expect((p(environment).vnetConfiguration as Record<string, unknown>).infrastructureSubnetId).toBe(network.subnet.id);
   });
 });
