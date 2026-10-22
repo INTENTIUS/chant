@@ -205,7 +205,7 @@ export const CHECKOUT_TOKEN_ENV = "CHANT_CHECKOUT_TOKEN";
  * the local branch when the fetch fails).
  */
 export function checkoutScript(history: boolean, ledger = false): string {
-  const fetch = history
+  const fetchLine = history
     ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"`
     : 'git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"';
   return [
@@ -227,7 +227,7 @@ export function checkoutScript(history: boolean, ledger = false): string {
     '  *) target="refs/remotes/origin/chant-head" ;;',
     "esac",
     "if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi",
-    fetch,
+    fetchLine,
     ...(ledger ? ["git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true"] : []),
     'case "$ref" in',
     '  refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;',
