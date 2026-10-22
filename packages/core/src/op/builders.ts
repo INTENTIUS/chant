@@ -21,6 +21,7 @@ import type { GuardValidateArgs } from "./activities/guard-validate";
 import type { WorkEvidenceArgs } from "./activities/work-evidence";
 import type { DecideArgs } from "./activities/decide";
 import type { ComposeChangeSetArgs, LifecyclePlanChangeSetArgs, ReadChangeSetPartArgs } from "./activities/change-set";
+import type { ReviewAgentArgs } from "./activities/review-agent";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
@@ -447,6 +448,18 @@ export const releasePlan = (args: WithStepRefs<ReleasePlanArgs> & StepOpts): Nam
 export const composeChangeSet = (args: WithStepRefs<ComposeChangeSetArgs> & StepOpts): NamedActivityStep => {
   const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
   return activity("composeChangeSet", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * A model reviews the pull request's title and description against a change
+ * set and posts one sticky note (#4299): `reviewAgent({ op: "pr-review",
+ * changeSet: changeSet.out.document })`. It never approves and never gates.
+ * Defaults to the `longInfra` profile, since the model command may take
+ * minutes.
+ */
+export const reviewAgent = (args: WithStepRefs<ReviewAgentArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("reviewAgent", rest, { profile: profile ?? "longInfra", ...(id ? { id } : {}) });
 };
 
 /** A chant member's change-set part, from `chant lifecycle plan <env> --json` (#3181). Its `part` feeds {@link composeChangeSet}. */

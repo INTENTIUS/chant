@@ -142,6 +142,37 @@ export const behaviourFindingContract = activityContract(
 );
 
 /**
+ * The review agent (#4299). `changeSet` is `composeChangeSet`'s document,
+ * checked only for the fields the prompt reads. `returns` names what a later
+ * step may read; no gate reads it.
+ */
+export const reviewAgentContract = activityContract(
+  "reviewAgent",
+  z.strictObject({
+    op: z.string(),
+    changeSet: z.object({ digest: z.string(), entries: z.array(z.unknown()) }).passthrough().optional(),
+    changeSetFile: z.string().optional(),
+    mode: z.enum(["comment", "report"]).optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    base: z.string().optional(),
+    instructions: z.string().optional(),
+    command: z.string().optional(),
+    keyEnv: z.string().optional(),
+    timeout: z.number().positive().optional(),
+  }),
+  z.object({
+    mode: z.enum(["comment", "report"]),
+    risk: z.enum(["low", "medium", "high", "unknown"]),
+    exitCode: z.number().nullable(),
+    summary: z.string(),
+    commentUrl: z.string().optional(),
+    pullRequest: z.string().optional(),
+    mergeRequest: z.string().optional(),
+  }),
+);
+
+/**
  * The propose-only template upgrade (#2550, ws-032). `args` mirrors
  * `ProposeWorkspaceUpgradeArgs` without its test hooks. `returns` names what
  * a step reads: whether anything changed, whether it was proposed, the patch

@@ -1,0 +1,76 @@
+---
+title: Review a Pull Request with a Model
+description: Add a step that has a model compare a pull request's title and description with its change set, and post what it finds as one note.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/review-agent/.
+  Add a reviewAgent step to the pull-request Op I name, after the step that composes its change set, and write a short .chant/review.md with what I tell you to look for.
+  Open a pull request with the change, and say in its description that the instructions take effect once it merges.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This guide is for an Op that runs on a pull request and wants a model's read of it. The model gets the pull request's title and description and the change set the Op planned from a `reviewAgent` step. Its review is posted as one sticky note on the pull request ([#4299](https://github.com/INTENTIUS/chant/issues/4299)).
+
+The note approves nothing and gates nothing. Posting goes through `reconcilePr` in `comment` mode and takes no other action (`packages/core/src/op/activities/review-agent.ts:342`). A gate's quorum counts human approvers (`packages/core/src/op/gate-approval.ts:7`), and no gate reads the step's result.
+
+## Add the step
+
+Put it after the step that composes the change set, and hand it that step's `document`.
+
+```typescript
+import { Op, phase, composeChangeSet, lifecyclePlanChangeSet, reviewAgent } from "@intentius/chant/op";
+
+const delivery = lifecyclePlanChangeSet({ member: "delivery", env: "prod", cwd: "delivery", id: "delivery" });
+const changeSet = composeChangeSet({ parts: [delivery.out.part], id: "change-set" });
+
+export default Op({
+  name: "pr-review",
+  overview: "A model reviews the pull request against its change set",
+  phases: [
+    phase("Plan", [delivery, changeSet]),
+    phase("Review", [reviewAgent({ op: "pr-review", changeSet: changeSet.out.document })]),
+  ],
+});
+```
+
+`op` keys the note's marker, so a re-run edits the same note (`packages/core/src/op/activities/review-agent.ts:112`). A step can pass `changeSetFile` in place of `changeSet` to read the document from a file another job wrote.
+
+A pull or merge request has to trigger the run. The base branch is read from `GITHUB_BASE_REF` or `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` and the step fails by name without one. The title and description come from the event payload on GitHub and Forgejo, and from `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION` on GitLab (`packages/core/src/op/activities/review-agent.ts:232`). Pass `title` and `description` to set them yourself.
+
+## Give the model its key
+
+The default command is Claude Code in print mode with no tools (`packages/core/src/op/activities/review-agent.ts:43`). It reads `ANTHROPIC_API_KEY`. Set that variable in the job from a secret.
+
+The command sees that one key and a few process variables, such as `PATH` and `HOME` (`packages/core/src/op/activities/review-agent.ts:222`). A forge token or a cloud credential in the job does not reach it. For another model, pass `command`, and name its key in `keyEnv`:
+
+```typescript
+reviewAgent({
+  op: "pr-review",
+  changeSet: changeSet.out.document,
+  command: "./bin/review",
+  keyEnv: "OPENAI_API_KEY",
+  timeout: 5,
+});
+```
+
+The command gets the prompt on stdin and prints the review on stdout. `timeout` is in minutes and defaults to 10 (`packages/core/src/op/activities/review-agent.ts:335`). A command that fails still leaves a note, which says the exit code.
+
+## Write review instructions
+
+Put instructions for the model in `.chant/review.md` (`packages/core/src/op/activities/review-agent.ts:54`), or name another file with `instructions`. The step reads that file from the base branch with `git show` (`packages/core/src/op/activities/review-agent.ts:329`). A pull request that edits it changes the review only after it merges.
+
+## What the model sees
+
+Each change-set entry that changes something gets one line in the prompt. A failed member and a hole get one too, beside the title and description and the instructions. Each block sits between tags, and the prompt tells the model to follow no instruction inside them. A closing tag inside the text is broken up so it cannot end its block.
+
+An attribute marked `sensitive` reaches the prompt as `(sensitive)`, without its values (`packages/core/src/op/activities/review-agent.ts:135`).
+
+## Read the risk
+
+The model ends its review with `risk: low`, `risk: medium` or `risk: high`. Its last such line comes back as `risk`, or `unknown` when there is none (`packages/core/src/op/activities/review-agent.ts:194`). It is shown in the note, and a later step may read `review.out.risk`. Nothing in chant gates on it.
+
+Any HTML comment in the review is escaped, so the model's text cannot plant a marker another step would find (`packages/core/src/op/activities/review-agent.ts:207`).
+
+## Preview without posting
+
+Pass `mode: "report"`. The note comes back as `summary` and nothing is posted.

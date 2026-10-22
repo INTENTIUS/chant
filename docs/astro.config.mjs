@@ -206,6 +206,7 @@ export default defineConfig({
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
 								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
 								{ label: 'Hooks on Pull-Request Jobs', slug: 'guide/pull-request-hooks' },
+								{ label: 'Review a Pull Request with a Model', slug: 'guide/review-agent' },
 								{ label: 'Apply on Merge (opt-in)', slug: 'guide/apply-on-merge' },
 								{ label: 'Keep Going Past a Failed Member', slug: 'guide/failed-member-blocks' },
 								{ label: 'Move off Apply on Merge', slug: 'guide/move-off-apply-on-merge' },

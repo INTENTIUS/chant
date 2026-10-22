@@ -161,6 +161,12 @@ export type {
   BaseCheckout,
 } from "./predict-behaviour";
 
+// The review agent (#4299): a model reviews the change set against the pull
+// request's own text and posts one sticky note. Only the activity and its
+// marker are re-exported, since the registry collects every exported function.
+export { reviewAgent, reviewMarker } from "./review-agent";
+export type { ReviewAgentArgs, ReviewAgentResult, ReviewAgentMode, ReviewRisk } from "./review-agent";
+
 // The propose-only template upgrade (#2550). Loads the workspace code on first
 // call only, so importing this module loads nothing under `workspace/`.
 export { proposeWorkspaceUpgrade } from "./propose-upgrade";
