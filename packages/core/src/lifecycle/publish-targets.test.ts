@@ -486,7 +486,8 @@ describe("SBOMs and provenance (#4049)", () => {
   });
 
   describe("npm: the reveal waits for the registry to serve what it published (#4244)", () => {
-    function lagged(env: Record<string, string>, registryWait?: number) {
+    // `step` is how far the clock moves per sleep, so a long wait costs few npm runs.
+    function lagged(env: Record<string, string>, registryWait?: number, step?: number) {
       const dir = temp();
       writePackage(join(dir, "core"), "@acme/core", "1.0.0");
       writePackage(join(dir, "cli"), "@acme/cli", "1.0.0");
@@ -494,7 +495,7 @@ describe("SBOMs and provenance (#4049)", () => {
       const npm = writeFakeNpm(join(dir, "bin"), log);
       let clock = 0;
       const sleeps: number[] = [];
-      const deps = { npm, now: () => clock, sleep: async (ms: number) => { sleeps.push(ms); clock += ms; } };
+      const deps = { npm, now: () => clock, sleep: async (ms: number) => { sleeps.push(ms); clock += step ?? ms; } };
       const ctx = context(dir, { env: { PATH: process.env.PATH, ...env }, provenance: OIDC });
       const d = decl({ type: "npm", packages: ["core", "cli"], stage: false, ...(registryWait !== undefined ? { registryWait } : {}) });
       return { log, deps, ctx, d, sleeps };
@@ -519,16 +520,16 @@ describe("SBOMs and provenance (#4049)", () => {
     });
 
     test("with no registryWait it waits past 600 seconds until npm serves, naming what is missing about once a minute (#4271)", async () => {
-      // 120 polls of 10s: 20 minutes, as chant-lexicon-aws took on 0.124.39.
-      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_LAG: "@acme/core=120,@acme/cli=3" });
+      // 21 polls, the clock moving 30s each: served after 630s.
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_LAG: "@acme/core=21,@acme/cli=1" }, undefined, 30_000);
       const [target] = await createPublishTargets([d], deps);
       await target!.reveal(ctx, await target!.stage(ctx));
-      expect(sleeps.length).toBe(120);
+      expect(sleeps.length).toBe(21);
       const progress = ctx.lines.filter((l) => l.startsWith("waiting for the registry to serve"));
       expect(progress[0]).toBe("waiting for the registry to serve @acme/core@1.0.0, @acme/cli@1.0.0");
       expect(progress[1]).toBe("waiting for the registry to serve @acme/core@1.0.0 (60s so far)");
-      expect(progress.at(-1)).toBe("waiting for the registry to serve @acme/core@1.0.0 (1140s so far)");
-      expect(progress.length).toBe(20);
+      expect(progress.at(-1)).toBe("waiting for the registry to serve @acme/core@1.0.0 (600s so far)");
+      expect(progress.length).toBe(11);
       expect(installs(log)).toBe(1);
     });
 
