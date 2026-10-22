@@ -160,10 +160,12 @@ function run(bin: string, args: string[], ctx: PublishContext, cwd: string = ctx
   });
 }
 
-/** Seconds the reveal waits for the registry to serve what it published, by default (#4244). */
-export const NPM_REGISTRY_WAIT_SECONDS = 600;
 /** Between polls of the registry while it waits. */
 export const NPM_REGISTRY_POLL_MS = 10_000;
+/** Between progress lines while the reveal waits for the registry (#4271). */
+export const NPM_REGISTRY_PROGRESS_MS = 60_000;
+/** `npm view`'s answers for a version the registry does not serve yet; any other failure is the registry's error. */
+const NPM_VIEW_NOT_YET = /\bE404\b|\b404 Not Found\b|is not in (this|the npm) registry|No match found for version|\b(ETARGET|notarget)\b/;
 /** npm's errors for a version the registry does not serve yet. */
 const NPM_NOT_SERVED = /\b(ETARGET|ERESOLVE|notarget)\b|No matching version found/;
 
@@ -226,28 +228,51 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
    * registry signature and provenance attestation.
    */
   /**
+   * Whether the registry serves the version yet, while the reveal waits for
+   * it (#4271). A 404, or an answer without the version, is not yet; any other
+   * failure of `npm view` is the registry's error and ends the wait.
+   */
+  const probe = async (ctx: PublishContext, pkg: NpmPackage): Promise<boolean> => {
+    const r = await npm(ctx, ["view", `${pkg.name}@${pkg.version}`, "version", ...(decl.registry ? ["--registry", decl.registry] : [])]);
+    if (r.code === 0) return r.output.some((l) => l.trim() === pkg.version || l.trim() === JSON.stringify(pkg.version));
+    if (r.output.some((l) => NPM_VIEW_NOT_YET.test(l))) return false;
+    const said = r.output.filter((l) => /^npm (error|ERR!)/.test(l)).at(-1) ?? r.output.at(-1) ?? "npm printed nothing";
+    throw new PublishTargetError(
+      "publish-npm-registry-failed",
+      `npm view ${pkg.name}@${pkg.version} exited ${r.code} while the reveal waited for the registry to serve it, so nothing was audited: ${said}`,
+      "Each package was published. Once the registry answers, run the publish again: it publishes nothing twice and audits again.",
+    );
+  };
+  /**
    * Wait until the registry serves every version (#4244): npm accepts a
    * publish minutes before `npm view` and `npm install` find it, so an
-   * install straight after fails with ETARGET or ERESOLVE.
+   * install straight after fails with ETARGET or ERESOLVE. The wait ends when
+   * every version is served or the registry fails (#4271), with a progress
+   * line about once a minute. `registryWait` caps it only when declared.
    */
   const served = async (ctx: PublishContext, pkgs: NpmPackage[]): Promise<void> => {
-    const wait = (decl.registryWait ?? NPM_REGISTRY_WAIT_SECONDS) * 1000;
+    const cap = decl.registryWait === undefined ? undefined : decl.registryWait * 1000;
     const start = now();
+    let logged: number | undefined;
     let missing = pkgs;
     for (;;) {
       const still: NpmPackage[] = [];
-      for (const pkg of missing) if (!(await onRegistry(ctx, pkg))) still.push(pkg);
+      for (const pkg of missing) if (!(await probe(ctx, pkg))) still.push(pkg);
       missing = still;
       if (missing.length === 0) return;
       const names = missing.map((p) => `${p.name}@${p.version}`).join(", ");
-      if (now() - start >= wait) {
+      const waited = now() - start;
+      if (cap !== undefined && waited >= cap) {
         throw new PublishTargetError(
           "publish-npm-not-served",
-          `the registry did not serve ${names} within ${Math.round(wait / 1000)}s of the publish, so nothing was audited`,
+          `the registry did not serve ${names} within ${Math.round(cap / 1000)}s of the publish, so nothing was audited`,
           "Each package was published. Once npm serves them, run the publish again: it publishes nothing twice and audits again. `registryWait` sets the wait.",
         );
       }
-      ctx.log(`waiting for the registry to serve ${names}`);
+      if (logged === undefined || now() - logged >= NPM_REGISTRY_PROGRESS_MS) {
+        ctx.log(`waiting for the registry to serve ${names}${waited > 0 ? ` (${Math.round(waited / 1000)}s so far)` : ""}`);
+        logged = now();
+      }
       await sleep(NPM_REGISTRY_POLL_MS);
     }
   };
