@@ -156,20 +156,30 @@ export interface OpWaveHook {
   onFailure?: OpWaveHookFailure;
   /** Run once per run of the wave, rather than once for the wave. */
   perRun?: boolean;
+  /**
+   * The runs the hook is for (#4288): targets, or patterns where `*` matches
+   * within one `/` segment and `**` across segments, as a job group's `runs`.
+   * A `perRun` hook runs for the matching runs only. A hook that runs once
+   * for the wave runs when any run matches, or when no run is known yet (a
+   * `discover` wave before its plan). Absent: every run.
+   */
+  targets?: string[];
 }
 
 /** The stages a hook runs around. */
-export type OpWaveHookStage = "plan" | "apply" | "gate";
+export type OpWaveHookStage = "observe" | "plan" | "apply" | "gate";
 
 /** When a hook runs. */
-export type OpWaveHookMoment = "before-plan" | "after-plan" | "after-gate" | "before-apply" | "after-apply";
+export type OpWaveHookMoment = "before-observe" | "before-plan" | "after-plan" | "after-gate" | "before-apply" | "after-apply";
 
 /**
- * Every moment, in the order a wave reaches them. `after-gate` (#3821) runs
+ * Every moment, in the order a wave reaches them. `before-observe` (#4288)
+ * runs before anything reads live state: ahead of `before-plan` in every job
+ * that plans, the deciding job's and each share's. `after-gate` (#3821) runs
  * once the gate decided, whatever it decided: approved, let through,
  * waiting, or refused by a policy denial.
  */
-export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
+export const OP_WAVE_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
 
 /**
  * Who runs the `before.apply` and `after.apply` hooks (#3804). `chant`: the
@@ -183,7 +193,8 @@ export const OP_WAVE_APPLY_HOOKS_RUNNERS: readonly OpWaveApplyHooksRunner[] = ["
 
 /** Stage hooks (#3762), read from the spec at the base commit like the gate policy. */
 export interface OpWaveHooks {
-  before?: { plan?: OpWaveHook[]; apply?: OpWaveHook[] };
+  /** `before.observe` (#4288) runs before anything reads live state, ahead of `before.plan`. */
+  before?: { observe?: OpWaveHook[]; plan?: OpWaveHook[]; apply?: OpWaveHook[] };
   /** `after.gate` (#3821) runs once the gate decided, whatever it decided, with the decision in its environment. */
   after?: { plan?: OpWaveHook[]; gate?: OpWaveHook[]; apply?: OpWaveHook[] };
   /** Who runs the apply-stage hooks (#3804). Default `{ runBy: "chant" }`. A wave's own setting wins over the spec's. */
@@ -720,6 +731,15 @@ export function opWaveRunMatches(pattern: string, target: string): boolean {
   return new RegExp(`^${re}$`).test(target);
 }
 
+/**
+ * The runs of `runs` hook `hook` is for (#4288): those its `targets` match,
+ * or every run when it names none.
+ */
+export function opWaveHookRuns<T extends { target: string }>(hook: Pick<OpWaveHook, "targets">, runs: readonly T[]): T[] {
+  if (!hook.targets) return [...runs];
+  return runs.filter((run) => hook.targets!.some((pattern) => opWaveRunMatches(pattern, run.target)));
+}
+
 /** The runs of `runs` that job group `group` holds (#3914). */
 export function opWaveGroupRuns<T extends { target: string }>(group: Pick<OpWaveJobGroup, "runs">, runs: readonly T[]): T[] {
   return runs.filter((run) => group.runs.some((pattern) => opWaveRunMatches(pattern, run.target)));
@@ -748,7 +768,7 @@ function assertArgv(where: string, field: string, argv: unknown): void {
 export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined): void {
   if (hooks === undefined) return;
   if (hooks === null || typeof hooks !== "object" || Array.isArray(hooks)) {
-    throw new Error(`${where}: \`hooks\` must be { "before"?: { "plan"?, "apply"? }, "after"?: { "plan"?, "apply"? } }.`);
+    throw new Error(`${where}: \`hooks\` must be { "before"?: { "observe"?, "plan"?, "apply"? }, "after"?: { "plan"?, "gate"?, "apply"? } }.`);
   }
   for (const [side, stages] of Object.entries(hooks as Record<string, unknown>)) {
     if (side === "apply") {
@@ -766,7 +786,8 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
     for (const [stage, list] of Object.entries(stages as Record<string, unknown>)) {
       const at = `hooks.${side}.${stage}`;
       if (stage === "gate" && side === "before") throw new Error(`${where}: ${at} is not a moment; a hook runs after the gate (hooks.after.gate), or before the plan or the apply.`);
-      if (stage !== "plan" && stage !== "apply" && stage !== "gate") throw new Error(`${where}: ${at} is not a stage; a hook runs before or after plan or apply, or after the gate.`);
+      if (stage === "observe" && side === "after") throw new Error(`${where}: ${at} is not a moment; a hook runs before the observe (hooks.before.observe), or after the plan, which reads what the observe saw.`);
+      if (stage !== "observe" && stage !== "plan" && stage !== "apply" && stage !== "gate") throw new Error(`${where}: ${at} is not a stage; a hook runs before the observe, before or after plan or apply, or after the gate.`);
       if (!Array.isArray(list)) throw new Error(`${where}: ${at} must be a list of hooks.`);
       list.forEach((hook: OpWaveHook, i: number) => {
         const which = `${at}[${i}]${hook && typeof hook === "object" && typeof hook.name === "string" ? ` (${hook.name})` : ""}`;
@@ -782,15 +803,36 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
           throw new Error(`${where}: ${which} has onFailure "approve", but the gate has already decided when it runs. Use "fail", or hold the wave from an after.plan hook.`);
         }
         if (hook.perRun !== undefined && typeof hook.perRun !== "boolean") throw new Error(`${where}: ${which}.perRun must be true or false.`);
+        if (hook.targets !== undefined && (!Array.isArray(hook.targets) || hook.targets.length === 0 || !hook.targets.every((t) => typeof t === "string" && t !== ""))) {
+          throw new Error(`${where}: ${which}.targets must be a non-empty list of targets or patterns, such as ["prod/*"].`);
+        }
         if (!hook.perRun) {
           const named = hook.command.find((part) => part.includes("{target}") || part.includes("{plan}"));
           if (named) throw new Error(`${where}: ${which} runs once for the wave, so it has no {target} or {plan} ("${named}"). Set "perRun": true, or read the runs from {runs}.`);
-        } else if (side === "before" && stage === "plan" && hook.command.some((part) => part.includes("{plan}"))) {
+        } else if (side === "before" && (stage === "plan" || stage === "observe") && hook.command.some((part) => part.includes("{plan}"))) {
           throw new Error(`${where}: ${which} runs before the plan, so it has no {plan} yet.`);
         }
       });
     }
   }
+}
+
+/**
+ * The moments a pull-request job runs hooks at (#4288): `pr-plan` and
+ * `pr-record` run the observe and plan moments, and `pr-apply` the apply
+ * moments too. The pull request's gate has no `after-gate` moment.
+ */
+export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "before-apply", "after-apply"];
+
+/**
+ * Refuse `ci.hooks` a pull-request job could not run (#4288): what
+ * {@link assertOpWaveHooks} refuses, plus `after.gate` and `apply.runBy`,
+ * since chant itself runs a pull request's apply.
+ */
+export function assertPrLoopHooks(where: string, hooks: OpWaveHooks | undefined): void {
+  assertOpWaveHooks(where, hooks);
+  if (hooks?.after?.gate !== undefined) throw new Error(`${where}: hooks.after.gate runs in an Op waves job only; a pull-request job runs hooks before the observe, before and after the plan, and before and after the apply.`);
+  if (hooks?.apply !== undefined) throw new Error(`${where}: hooks.apply.runBy is for an Op waves spec; chant runs a pull request's apply, so it runs the apply-stage hooks itself.`);
 }
 
 /** The hooks of each moment for wave `name`: the spec's, then the wave's own. */

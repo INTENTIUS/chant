@@ -166,6 +166,10 @@ The pipeline runs `plan` in each merge request pipeline, measured from `CI_MERGE
 
 A CI job token cannot write merge request notes. Create a project access token with the `api` scope and set it as a masked CI/CD variable named `CHANT_FORGE_TOKEN`.
 
+### Your own commands around the plan and the apply
+
+The jobs run the stage hooks in `ci.hooks` of the workspace declaration at base, before and after the plan and the apply ([Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/), [#4288](https://github.com/INTENTIUS/chant/issues/4288)).
+
 ## Approve a plan
 
 The note on the pull request lists each member with its creates, updates, replaces and deletes. The plan digest and the grouped plan summary follow, with every destroy named. The last block is the command that approves this plan:

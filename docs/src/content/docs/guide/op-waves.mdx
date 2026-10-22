@@ -250,11 +250,13 @@ Hooks are commands that run before and after a wave's plan and apply, inside the
 | `name` | The hook's name in the log and in `--json`. Default: its command |
 | `perRun` | Run the hook once per run, rather than once for the wave |
 | `onFailure` | `fail` (default) or `approve` |
+| `targets` | Runs the hook is for: targets, or patterns where `*` matches within one `/` segment and `**` across segments ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). A `perRun` hook runs for the matching runs. A hook that runs once runs when any run matches, or before a `discover` wave's plan, when no run is known yet. Default: every run |
 
 The spec's `hooks` run first, then the wave's own `hooks`. The environment carries `CHANT_OP_WAVES`, `CHANT_WAVE`, `CHANT_WAVE_NUMBER`, `CHANT_HOOK` (such as `after-plan`) and `CHANT_RUNS`, plus `CHANT_TARGET` and, once the run is planned, `CHANT_PLAN` for a `perRun` hook. The runs file at `{runs}` lists each run, with its plan once planned.
 
 | When | Runs | A failure with `fail` |
 |---|---|---|
+| `before.observe` | before anything reads live state, ahead of `before.plan`, in the deciding job and in each share ([#4288](https://github.com/INTENTIUS/chant/issues/4288)) | the wave exits 1; nothing is planned |
 | `before.plan` | before the wave is planned | the wave exits 1; nothing is planned |
 | `after.plan` | after the plan, before the gate decides | the wave exits 1; nothing is applied |
 | `after.gate` | once the gate decided, whatever it decided ([After the gate](#after-the-gate)) | the wave exits 1 if it would have applied; a waiting or refused wave keeps its exit code |

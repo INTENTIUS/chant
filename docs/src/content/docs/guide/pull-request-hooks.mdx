@@ -1,0 +1,79 @@
+---
+title: Hooks on Pull-Request Jobs
+description: Run your own commands before and after the plan and the apply in the generated pull-request jobs, read from the declaration at base.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/pull-request-hooks/.
+  Add the `ci.hooks` I describe to `chant.workspace.json`, raise `minReader` to 0.124.35 if it is lower, and open a pull request with the change.
+  Say in its description that the hooks run from the next pull request after this one merges.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+This guide is for a workspace whose pull-request jobs must run a command of their own around the plan or the apply. A provider init before the plan is one such command. A backup before the apply is another. The jobs are `chant components pr-plan`, `pr-record` and `pr-apply` ([Generated CI for Pull Requests](/chant/guide/pull-request-ci/)). They run the same stage hooks an [Op waves](/chant/guide/op-waves/#stage-hooks) job runs ([#4288](https://github.com/INTENTIUS/chant/issues/4288)).
+
+## Declare the hooks
+
+Put them under `ci.hooks` in `chant.workspace.json`. The shape is the one an Op waves spec's `hooks` takes.
+
+```json
+{
+  "ci": {
+    "hooks": {
+      "before": {
+        "observe": [{ "name": "init", "command": ["./bin/init", "{target}"], "perRun": true }],
+        "plan": [{ "name": "lint", "command": ["./bin/lint-config"] }],
+        "apply": [{ "name": "backup", "command": ["./bin/backup", "{runs}"], "targets": ["db-*"] }]
+      },
+      "after": {
+        "plan": [{ "name": "policy", "command": ["./bin/policy", "{target}", "{plan}"], "perRun": true, "onFailure": "approve" }],
+        "apply": [{ "name": "smoke", "command": ["./bin/smoke", "{wave}"] }]
+      }
+    }
+  }
+}
+```
+
+A member can set its own `ci.hooks`. They run after the top level's (`packages/core/src/components/pr-hooks.ts:46`). Set `minReader` to 0.124.35 or newer with either.
+
+## When each moment runs
+
+| Moment | Runs in | When |
+|---|---|---|
+| `before.observe` | pr-plan, pr-record, pr-apply | before anything reads live state |
+| `before.plan` | pr-plan, pr-record, pr-apply | after `before.observe`, before the plan |
+| `after.plan` | pr-plan, pr-record, pr-apply | once every component planned |
+| `before.apply` | pr-apply | once the gate and the review let the apply through |
+| `after.apply` | pr-apply | after the apply, for the components that applied |
+
+The plan-side moments wrap the plan in `hookedPlan` (`packages/core/src/cli/handlers/pr.ts:307`). The apply-side moments wrap `applyPrSet` (`packages/core/src/cli/handlers/pr.ts:715`, `:774`). With `--wave-gate`, each wave runs its own plan-side and apply-side hooks for its components.
+
+`after.gate` and `hooks.apply.runBy` are refused, since a pull request's gate and apply belong to chant (`packages/core/src/op/op-waves.ts:832`).
+
+## What a hook sees
+
+The runs are the components the change selects, in apply order. A `perRun` hook runs once per component, with `{target}` and `CHANT_TARGET`. After the plan, its `{plan}` is a JSON file with the component's members and the plans its steps hand the apply (`packages/core/src/components/pr-hooks.ts:130`).
+
+`targets` limits a hook to the components whose names match. A name matches itself. In a pattern, `*` matches within one `/` segment and `**` across segments. A hook that runs once for the job runs when any component matches (`packages/core/src/op/op-waves-run.ts:914`).
+
+`{op}` is the gate's op, such as `pr-12`, and `{wave}` is the environment. The environment adds `CHANT_HOOK`, `CHANT_RUNS`, `CHANT_ENV`, `CHANT_PR_STAGE` (`plan`, `record` or `apply`) and `CHANT_HOOKS_BASE`, the commit the hooks were read at (`packages/core/src/components/pr-hooks.ts:144`). The runs file and the plan files go under `<output>/hooks`, by default `.chant/pr/hooks`.
+
+## Read at base
+
+The jobs read `ci.hooks` from the declaration at the base the change is measured from (`packages/core/src/cli/handlers/pr.ts:253`). A pull request cannot add, edit or remove a hook its own jobs run. A hook it adds runs on the next pull request after it merges.
+
+When the base has no declaration, no hook runs. When the declaration at base cannot be read and the checkout names hooks, the job refuses to start (`packages/core/src/components/pr-hooks.ts:81`).
+
+## A hook that fails
+
+With `onFailure: "fail"`, the default, a failure ends the stage as follows.
+
+| Moment that failed | The stage ends | What applied |
+|---|---|---|
+| `before.observe` or `before.plan` | `plan-failed`, with no members | nothing |
+| `after.plan` | `plan-failed` | nothing |
+| `before.apply` | `failed` | nothing |
+| `after.apply` | `failed` | the components that applied stay applied |
+
+The report's `message` names the hook and its exit code. Every hook outcome goes in the report's `hooks` list, and the note counts those that passed and names the rest.
+
+With `onFailure: "approve"`, a failure is recorded as `held` and the job goes on. The pull request's gate already waits for a person to approve the digest, so a hold asks for nothing more. A hook that writes `CHANT_HOLD` to name another gate counts as a plain hold here. Only an Op waves job settles another gate.

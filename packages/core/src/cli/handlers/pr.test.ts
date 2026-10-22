@@ -26,6 +26,13 @@ vi.mock("../../workspace/security", async (original) => ({
   securityGroupsAt: () => new Set(groups),
 }));
 
+/** The ci.hooks pr-plan and pr-apply read at base (#4288); none unless a test sets them. */
+let hooksAtBase: Record<string, unknown> = {};
+vi.mock("../../components/pr-hooks", async (original) => ({
+  ...(await original<typeof import("../../components/pr-hooks")>()),
+  prLoopHooksAt: (_cwd: string, base: string) => ({ hooks: hooksAtBase, base }),
+}));
+
 vi.mock("../../components/changed-files", () => ({
   resolveCommit: async () => HEAD,
   resolveMergeBase: async () => BASE,
@@ -134,6 +141,7 @@ beforeEach(async () => {
   refusal.clear();
   onRun = () => {};
   groups = [];
+  hooksAtBase = {};
   gateLedger = memoryGateLedgerPort();
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
   vi.spyOn(console, "error").mockImplementation((...m: unknown[]) => { errors.push(m.map(String).join(" ")); });
@@ -493,5 +501,60 @@ describe("pr-apply: a step that refuses its plan because the plan moved (#3997)"
     refusal.set("app", Object.assign(new Error("app: refusing to apply, the plan moved"), mark));
     expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(code);
     expect(logLines()).toEqual(["wave 1/2: net", "  net: applied", "wave 2/2: app", "  app: failed"]);
+  });
+});
+
+describe("ci.hooks on the pull-request path (#4288)", () => {
+  const logged = (): string[] => {
+    try {
+      return readFileSync(join(dir, "hooks.log"), "utf8").trim().split("\n");
+    } catch {
+      return [];
+    }
+  };
+  const hook = (name: string, extra: Record<string, unknown> = {}) => ({ name, command: ["sh", "-c", `echo ${name} $CHANT_HOOK \${CHANT_TARGET:-wave} >> ${join(dir, "hooks.log")}`], ...extra });
+
+  test("pr-plan runs before-observe, before-plan and after-plan around the plan, each for the components its targets match", async () => {
+    hooksAtBase = {
+      "before-observe": [hook("init", { perRun: true })],
+      "before-plan": [hook("lint", { targets: ["app"] })],
+      "after-plan": [hook("check", { perRun: true, targets: ["net"] })],
+    };
+    expect(await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }))).toBe(0);
+    expect(logged()).toEqual(["init before-observe net", "init before-observe app", "lint before-plan wave", "check after-plan net"]);
+    const report = JSON.parse(readFileSync(join(dir, "pr-plan.json"), "utf8"));
+    expect(report.hooks.map((h: { moment: string; name: string; outcome: string }) => `${h.moment} ${h.name} ${h.outcome}`)).toEqual([
+      "before-observe init passed",
+      "before-observe init passed",
+      "before-plan lint passed",
+      "after-plan check passed",
+    ]);
+    expect(readFileSync(join(dir, "pr-note.md"), "utf8")).toContain("Hooks: 4 passed.");
+  });
+
+  test("a failed before-plan hook fails pr-plan before anything plans, and the note says which", async () => {
+    hooksAtBase = { "before-plan": [{ name: "lint", command: ["sh", "-c", "exit 4"] }] };
+    expect(await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }))).toBe(1);
+    const report = JSON.parse(readFileSync(join(dir, "pr-plan.json"), "utf8"));
+    expect(report).toMatchObject({ status: "plan-failed", members: [], message: "The before-plan hook lint exited 4, so nothing was planned or applied." });
+    expect(readFileSync(join(dir, "pr-note.md"), "utf8")).toContain("A hook failed, so nothing can apply.");
+  });
+
+  test("pr-apply runs before-apply and after-apply around an approved apply; a failed before-apply applies nothing", async () => {
+    await runComponentsPrPlan(ctx({ pr: 12, eventsJson: false }));
+    const digest = await plannedDigest();
+    gateLedger = memoryGateLedgerPort({
+      resolutions: [{ version: 1, kind: "resolution", op: "pr-12", gate: "pr-apply", resolvedBy: "github:alice", timestamp: new Date().toISOString(), planDigest: digest }],
+    });
+    hooksAtBase = { "before-apply": [hook("backup")], "after-apply": [hook("smoke", { perRun: true })] };
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(0);
+    expect(logged()).toEqual(["backup before-apply wave", "smoke after-apply net", "smoke after-apply app"]);
+
+    const ran: string[] = [];
+    onRun = (r) => ran.push(r);
+    hooksAtBase = { "before-apply": [{ name: "backup", command: ["sh", "-c", "exit 1"] }] };
+    expect(await runComponentsPrApply(ctx({ pr: 12, eventsJson: false }))).toBe(1);
+    expect(ran).toEqual([]);
+    expect(JSON.parse(readFileSync(join(dir, "pr-apply.json"), "utf8"))).toMatchObject({ status: "failed", message: "The before-apply hook backup exited 1, so nothing was applied." });
   });
 });

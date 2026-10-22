@@ -124,6 +124,9 @@ import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import type { CapabilityRegistry } from "../../components/capability";
+import { prLoopHooksAt, runPrHooks, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
+import type { OpWaveHookMoment } from "../../op/op-waves";
+import type { PrHookOutcome } from "../../pr-loop";
 
 
 /** Where the reports land unless `--output` says. */
@@ -148,6 +151,14 @@ interface Prepared {
   signal: ComponentChangeSignal;
   registry: CapabilityRegistry;
   seededOutputs: Record<string, Record<string, unknown>>;
+  /** `ci.hooks` from the declaration at base (#4288). */
+  hooks: PrLoopHooks;
+  /** Every hook the stage ran so far, for the report's `hooks`. */
+  hookOutcomes: PrHookOutcome[];
+  /** Set when a hook failed: the report's message. */
+  hookFailed?: string;
+  /** Where the stage's hooks run, once its op is known. */
+  hookPlace?: PrHookPlace;
 }
 
 const fail = (message: string, hint?: string): number => {
@@ -236,6 +247,15 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"):
     }
   }
 
+  // #4288: the stage hooks, read from the declaration at base so the change cannot edit what its own jobs run.
+  let hooks: PrLoopHooks;
+  try {
+    hooks = prLoopHooksAt(projectPath, base);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  if (hooks.note) console.error(formatInfo(hooks.note));
+
   const env = args.env ?? "local";
   const registry = await fanOutRegistry(projectPath, config);
   return {
@@ -251,7 +271,46 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "record"):
     signal: derived.signal,
     registry,
     seededOutputs,
+    hooks,
+    hookOutcomes: [],
   };
+}
+
+/** Set where `p`'s hooks run, once the stage knows its op (#4288). */
+function placeHooks(ctx: CommandContext, p: Prepared, stage: PrHookPlace["stage"], op: string): void {
+  p.hookPlace = { op, env: p.env, stage, dir: ctx.args.output ?? PR_REPORT_DIR, cwd: resolve("."), log: (line) => console.error(line) };
+}
+
+/**
+ * Run one moment's hooks for `components` (#4288), keeping their outcomes
+ * for the report. Returns the failure as the report's message, or undefined
+ * when no hook failed. A hold is logged: the pull request's gate already
+ * waits for a person's approval of the digest.
+ */
+function runStageHook(p: Prepared, moment: OpWaveHookMoment, components: readonly string[], planned?: PrPlanSet, what = "nothing was applied"): string | undefined {
+  if (!p.hookPlace || components.length === 0) return undefined;
+  const ran = runPrHooks(p.hooks, moment, p.hookPlace, components, planned ? { members: planned.members, plans: planned.plans } : undefined);
+  p.hookOutcomes.push(...ran.outcomes);
+  for (const hold of ran.holds) console.error(formatInfo(`${hold} held, and the pull request's gate asks for an approval of the digest either way`));
+  if (!ran.failed) return undefined;
+  p.hookFailed = `The ${ran.failed}, so ${what}.`;
+  return p.hookFailed;
+}
+
+const EMPTY_SET = (): PrPlanSet => ({ doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: true });
+
+/**
+ * Plan with the plan-side hooks around it (#4288): before-observe and
+ * before-plan, then the plan, then after-plan. A failed hook gives a failed
+ * set, so the stage reports `plan-failed` and nothing applies.
+ */
+async function hookedPlan(p: Prepared, components: readonly string[], plan: () => Promise<PrPlanSet>): Promise<PrPlanSet> {
+  if (runStageHook(p, "before-observe", components, undefined, "nothing was planned or applied")) return EMPTY_SET();
+  if (runStageHook(p, "before-plan", components, undefined, "nothing was planned or applied")) return EMPTY_SET();
+  const set = await plan();
+  if (set.failed) return set;
+  if (runStageHook(p, "after-plan", components, set)) return { ...set, failed: true };
+  return set;
 }
 
 /**
@@ -280,8 +339,12 @@ async function checkMember(projectPath: string, names: string[]): Promise<string
   return name;
 }
 
-/** Plan every member the derivation selects. */
+/** Plan every member the derivation selects, between the plan-side hooks (#4288). */
 function planAll(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
+  return hookedPlan(p, p.plan.order, () => planBare(p, onRunEvent));
+}
+
+function planBare(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
   return planPrSet({
     components: p.components,
     plan: p.plan,
@@ -366,6 +429,9 @@ function printMembers(report: PrReport): void {
 }
 
 async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload?: PrReportUpload): Promise<void> {
+  // #4288: the hooks the stage ran, and a failed hook's message in place of the stage's own.
+  if (p.hookOutcomes.length > 0) report = { ...report, hooks: [...p.hookOutcomes] };
+  if (p.hookFailed) report = { ...report, message: p.hookFailed };
   const note = noteFor(report, p.forge);
   writeOutputs(ctx, report, note, upload);
   if (!ctx.args.noStatus) await publish(p.forge, report, note);
@@ -433,6 +499,7 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
   const op = prOp(ctx.args.pr, p.member);
+  placeHooks(ctx, p, "plan", op);
   const upload = openUpload(stage, "plan", ctx.args.pr, p);
   // `--events-json` (#4041): planning, then where the approval stands.
   const events = await openCliRunEvents(ctx.args, { kind: "component", name: `pr-plan ${op}`, cwd: resolve(".") }, upload?.line);
@@ -517,6 +584,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
     }
   }
   const op = green ? greenOp(green.commit, p.member) : pr === null ? "pr-unknown" : prOp(pr, p.member);
+  placeHooks(ctx, p, "apply", op);
   // The run id the release records carry, chosen before the run so that
   // `--events-json` (#4041, #4007) names the run by it too.
   const release = autoReleaseRun(`${op}-${Date.now()}`);
@@ -642,6 +710,11 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   };
   recordAttempt();
 
+  // #4288: the before-apply hooks, once the gate and the review let the apply through.
+  const toApply = (resumed?.plan ?? p.plan).order.filter((name) => !completedSoFar.has(name));
+  const beforeFailed = runStageHook(p, "before-apply", toApply);
+  if (beforeFailed) return stop(prReport({ ...base, approval, status: "failed", message: beforeFailed }), 1);
+
   // #3999: a round planned after an upstream applied waits on a gate of its
   // own, under the same identity.gates rule and the same review checks.
   const roundLedger = gitGateLedgerPort();
@@ -697,11 +770,13 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
       : {}),
   });
   recordAttempt();
+  // #4288: the after-apply hooks, for the components that applied.
+  const afterFailed = runStageHook(p, "after-apply", toApply.filter((name) => applied.run.completed.includes(name)), undefined, "the apply counts as failed though its components applied");
   await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
   const report = prReport({
     ...base,
     approval,
-    status: applied.status,
+    status: afterFailed ? "failed" : applied.status,
     members: applied.members,
     ...(resumed ? { resumed: resumed.completed } : {}),
     ...(applied.rounds ? { rounds: applied.rounds } : {}),
@@ -710,10 +785,10 @@ async function prApply(ctx: CommandContext, stage: StageEvents): Promise<number>
   // A component that stopped at a gate of its own leaves the apply waiting on
   // a person. A step that refused its plan because the target moved since
   // the approval exits 3, as a moved digest does before anything applies (#3997).
-  const exit = applied.status === "applied" ? 0 : applied.status === "waiting" ? GATED_EXIT_CODE : failedRunExitCode(applied.run.results);
+  const exit = afterFailed ? 1 : applied.status === "applied" ? 0 : applied.status === "waiting" ? GATED_EXIT_CODE : failedRunExitCode(applied.run.results);
   if (green && applied.status === "applied") await recordGreenApplied(p, green, set.doc.digest, approval, via);
   const code = await stop(report, exit, applied.run.status === "gated" ? "gated" : undefined);
-  if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
+  if (applied.status === "applied" && !afterFailed) console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
 }
 
@@ -752,6 +827,7 @@ async function prRecord(ctx: CommandContext, stage: StageEvents): Promise<number
     }
   }
   const op = pr === null ? "pr-unknown" : prOp(pr, p.member);
+  placeHooks(ctx, p, "record", op);
   const upload = openUpload(stage, "record", pr, p);
   const events = await openCliRunEvents(args, { kind: "component", name: `pr-record ${op}`, cwd: resolve(".") }, upload?.line);
   stage.stream = events;
@@ -1396,14 +1472,16 @@ async function prApplyWaves(
       entry = { wave: k, components: wavePlan.order, status: "applied", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
     } else {
       const notApplied = Object.fromEntries(Object.entries(approvedSet.outputs).filter(([name]) => !completed.has(name)));
-      const fresh = await planPrSet({
-        components: p.components,
-        plan: wavePlan,
-        registry: p.registry,
-        env: p.env,
-        seededOutputs: { ...p.seededOutputs, ...notApplied, ...outputsSoFar },
-        ...(events ? { onRunEvent: (body: RunEventBody) => events.emit(body) } : {}),
-      });
+      const fresh = await hookedPlan(p, wavePlan.order, () =>
+        planPrSet({
+          components: p.components,
+          plan: wavePlan,
+          registry: p.registry,
+          env: p.env,
+          seededOutputs: { ...p.seededOutputs, ...notApplied, ...outputsSoFar },
+          ...(events ? { onRunEvent: (body: RunEventBody) => events.emit(body) } : {}),
+        }),
+      );
       if (fresh.failed) {
         for (const m of fresh.members) after.set(m.member, m);
         setWave({ wave: k, components: wavePlan.order, status: "plan-failed", approval: "pull-request", gate: p.gate, digest: approvedSet.doc.digest });
@@ -1462,6 +1540,12 @@ async function prApplyWaves(
       }
     }
 
+    // #4288: the wave's apply-side hooks, around its apply.
+    const waveBefore = runStageHook(p, "before-apply", wavePlan.order, undefined, `nothing in wave ${k} was applied`);
+    if (waveBefore) {
+      setWave({ ...entry, status: "failed" });
+      return stop(report({ status: "failed", message: waveBefore }), 1);
+    }
     const applied = await applyPrSet({
       components: p.components,
       plan: wavePlan,
@@ -1491,11 +1575,13 @@ async function prApplyWaves(
       const outputs = applied.run.componentOutputs[name];
       if (outputs) outputsSoFar[name] = outputs;
     }
-    setWave({ ...entry, status: applied.status === "applied" ? "applied" : "failed" });
+    const waveAfter = runStageHook(p, "after-apply", wavePlan.order.filter((name) => applied.run.completed.includes(name)), undefined, `wave ${k} counts as failed though its components applied`);
+    setWave({ ...entry, status: applied.status === "applied" && !waveAfter ? "applied" : "failed" });
     await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
     if (applied.status !== "applied") {
       return stop(report({ status: "failed" }), failedRunExitCode(applied.run.results), applied.run.status === "gated" ? "gated" : undefined);
     }
+    if (waveAfter) return stop(report({ status: "failed", message: waveAfter }), 1);
     console.error(formatSuccess(`applied wave ${k} of ${total} under ${entry.approval === "pull-request" ? `the pull request's approval of ${approvedSet.doc.digest}` : `${entry.gate}, approved for ${entry.digest}`} by ${(entry.approvedBy ?? []).join(", ")}`));
   }
 
