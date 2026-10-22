@@ -78,6 +78,10 @@ const site = {
 };
 
 describe("arm-deploy (#4273)", () => {
+  test("mutates with no undo, so COMP003 needs the component to opt out of rollback", () => {
+    expect(createArmDeployCapability().rollbackPolicy).toBe("needs-opt-out");
+  });
+
   let dir: string;
   let template: string;
   const ctx: DeployContext = { env: "local", component: "app" };

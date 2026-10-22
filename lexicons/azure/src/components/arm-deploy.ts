@@ -443,7 +443,8 @@ async function planArmDeploy(http: AzHttp, ctx: DeployContext, input: ArmDeployI
 /**
  * The `arm-deploy` capability over an injectable HTTP transport (the
  * `AzHttp` seam `azApply` and the read client share). Tests pass a fake;
- * the default is `fetch`.
+ * the default is `fetch`. There is no rollback: like `gcp-apply`, it mutates
+ * with no undo, so COMP003 has a component acknowledge the gap.
  */
 export function createArmDeployCapability(options: { http?: AzHttp } = {}): Capability<ArmDeployInput, ArmDeployOutput> {
   const http: AzHttp = options.http ?? (async (method, url, body, signal) => {
@@ -457,6 +458,7 @@ export function createArmDeployCapability(options: { http?: AzHttp } = {}): Capa
   });
   return {
     kind: "arm-deploy",
+    rollbackPolicy: "needs-opt-out",
     plan(ctx, input) {
       return planArmDeploy(http, ctx, input);
     },
