@@ -30,10 +30,10 @@ import type { SealCode } from "../records";
 import { type TrustPolicy } from "./policy";
 import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
-import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "./gate-seal";
+import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "../../lifecycle/gate-seal";
 import { RELEASE_SEAL_NAMESPACE, releaseSealPayload } from "../identity-gate-rule";
 
-export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "./gate-seal";
+export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "../../lifecycle/gate-seal";
 
 /** The ssh signature namespace of a verdict seal. */
 export const REVIEW_SEAL_NAMESPACE = "chant-review";

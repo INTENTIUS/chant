@@ -6,7 +6,7 @@
  * The run writes the file just before it appends the pending fact, and puts
  * the file's digest on that fact as `checkpointDigest`. `chant approve`
  * copies the digest onto the approval, the way it copies the plan digest, and
- * a seal covers it (`../workspace/trust/gate-seal.ts`). A later run that
+ * a seal covers it (`./gate-seal.ts`). A later run that
  * resumes at the gate reads the file back and checks it against the digest
  * the approver saw, so a value pushed onto the branch after the approval is
  * refused rather than carried into the steps after the gate.

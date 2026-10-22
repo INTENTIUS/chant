@@ -34,10 +34,10 @@ describe("the override-gate bundle", () => {
       "packages/core/src/effect-receipt.ts",
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/gate-ledger-select.ts",
+      "packages/core/src/lifecycle/gate-seal.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/op/gate-name.ts",
       "packages/core/src/override-gate.ts",
-      "packages/core/src/workspace/trust/gate-seal.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
     // About 16 KB today.

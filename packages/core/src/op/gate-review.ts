@@ -30,7 +30,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { gateSealRefusal } from "../workspace/trust/gate-seal";
+import { gateSealRefusal } from "../lifecycle/gate-seal";
 import { readTrustPolicy, type TrustPolicy } from "../workspace/trust/policy";
 import { gitRevisionSource } from "../workspace/record-source";
 import { forgePrincipalOf, ForgeApiError, type ForgeFetch, type ForgeKind } from "../pr-forge";

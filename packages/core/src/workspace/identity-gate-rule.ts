@@ -14,7 +14,7 @@
  * else: no zod, no ajv, no package loading, so it bundles small.
  */
 
-import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshKeyFingerprint, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "./trust/gate-seal";
+import { GATE_SEAL_NAMESPACE, gateSealPayload, namespaceAllowed, sshKeyFingerprint, sshSignatureKey, verifySshSignatureWith, type SealedGateApproval } from "../lifecycle/gate-seal";
 import type { Signer } from "./trust/trust-files";
 
 /** The core classes, in the order a principal's roles are tried; `human` holds no role and is the rest. */

@@ -31,7 +31,7 @@ import { classesOf, coreClassRegistry, roleGrants, type ClassRegistry } from "./
 import type { ReasonCode } from "./reason-codes";
 import { normalisePrincipal } from "./records";
 import type { TrustPolicy } from "./trust/policy";
-import type { SealedGateApproval } from "./trust/gate-seal";
+import type { SealedGateApproval } from "../lifecycle/gate-seal";
 import { scopeSource } from "./write-scope";
 
 /** The forges a forge identity can name. */

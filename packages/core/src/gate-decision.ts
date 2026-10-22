@@ -51,7 +51,7 @@ import {
 } from "./lifecycle/gate-ledger-select";
 import { samePlanDigest } from "./lifecycle/plan-digest";
 import { isApprovalSpent, type AppliedGateRecord } from "./lifecycle/gate-applied";
-import { gateSealRefusal, type GateSigners, type SealedGateApproval } from "./workspace/trust/gate-seal";
+import { gateSealRefusal, type GateSigners, type SealedGateApproval } from "./lifecycle/gate-seal";
 import {
   DEFAULT_SIGNERS_PATH,
   TRUST_CONFIG_PATH,
@@ -84,7 +84,7 @@ export {
   type GateSigners,
   type SealedGateApproval,
   type SshSignatureCheck,
-} from "./workspace/trust/gate-seal";
+} from "./lifecycle/gate-seal";
 export {
   DEFAULT_SIGNERS_PATH,
   TRUST_CONFIG_PATH,
