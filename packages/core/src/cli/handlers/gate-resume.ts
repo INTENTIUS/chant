@@ -27,6 +27,7 @@ import {
 import { appliedGatePath, parseAppliedGateFile, type AppliedGateLine, type FinishedGateRecord } from "../../lifecycle/gate-applied";
 import { listFilesInDir, pushLifecycleStatus, readBlobFromPath, requireLifecycleLedger } from "../../lifecycle/git";
 import { parseGateSubject } from "../../op/gate-point";
+import { quorumRules, ruleNeedsProof, trustQuorumJudge, type GateQuorumJudge } from "../../op/gate-quorum";
 import {
   resolutionAnswering,
   resumeGateRun,
@@ -91,6 +92,17 @@ export interface ResumeGateOptions {
   /** The lines of `_gates/<op>/applied.jsonl` (#3858). Read from `chant/lifecycle` by {@link resumeOpGates} when not given. */
   applied?: readonly AppliedGateLine[];
   finished?: readonly FinishedGateRecord[];
+  /** Proves approvers for approval rules that name roles (#4290). Read from the trust policy at base when a fact needs one and none is given. */
+  judge?: GateQuorumJudge;
+}
+
+/** The judge a fact's approval rules are met by (#4290): the trust policy at base, read only when a rule names roles or notAuthor. */
+async function judgeFor(pending: readonly PendingGateRecord[], opts: ResumeGateOptions): Promise<GateQuorumJudge | undefined> {
+  if (opts.judge) return opts.judge;
+  if (!pending.some((p) => quorumRules(p.approval?.quorum).some(ruleNeedsProof))) return undefined;
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const { policy } = scopeSource(process.cwd());
+  return trustQuorumJudge({ signers: policy, roles: policy.roles });
 }
 
 /** Every question the workspace at `cwd` lists, by id, the lifecycle ledger's included. Empty when the workspace can't be read. */
@@ -108,6 +120,7 @@ export async function resumeStanding(
   opts: ResumeGateOptions = {},
   pending: readonly PendingGateRecord[] = [standing],
 ): Promise<GateResumeReport> {
+  const judge = await judgeFor([standing], opts);
   const [candidate] = planGateResumes({
     op: standing.op,
     pending: [standing],
@@ -115,7 +128,7 @@ export async function resumeStanding(
     applied: opts.applied ?? [],
     now: standing.timestamp,
     ...(opts.questions ? { questions: opts.questions } : {}),
-    answering: (r, s) => resolutionAnswering(r, s, pending),
+    answering: (r, s) => resolutionAnswering(r, s, pending, judge),
   });
   return resumeCandidate(candidate!, opts);
 }
@@ -199,6 +212,7 @@ export async function resumeOpGates(op: string, gate: string | undefined, opts: 
   const now = opts.now ?? new Date().toISOString();
   // Read the workspace's questions once, and only when a fact waits on one (#3835).
   const questions = opts.questions ?? (ledger.pending.some((p) => p.answer) ? await workspaceQuestions(process.cwd()) : undefined);
+  const judge = await judgeFor(ledger.pending, opts);
   const candidates = planGateResumes({
     op,
     pending: ledger.pending,
@@ -208,7 +222,7 @@ export async function resumeOpGates(op: string, gate: string | undefined, opts: 
     now,
     ...(gate !== undefined ? { gate } : {}),
     ...(questions ? { questions } : {}),
-    answering: resolutionAnswering,
+    answering: (r, s, p) => resolutionAnswering(r, s, p, judge),
   });
   const reports: GateResumeReport[] = [];
   for (const c of candidates) reports.push(await resumeCandidate(c, opts));

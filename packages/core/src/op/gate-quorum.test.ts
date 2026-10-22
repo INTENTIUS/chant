@@ -12,7 +12,9 @@ import {
 } from "./gate-quorum";
 import { evaluateGate, memoryGateLedgerPort, tallyGateApprovals } from "./gate";
 import { gateApprovalProblems } from "./gate-approval";
-import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
+import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
+import { gatesInLedger } from "../workspace/status-gates";
+import { resolutionAnswering } from "./gate-resume";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const approval = (who: string, at: string, extra: Partial<GateResolutionRecord> = {}): GateResolutionRecord => ({
@@ -119,5 +121,19 @@ describe("approval rules (#4290)", () => {
       "`approvals.quorum[0].targets` must be a non-empty list of globs",
       "`approvals.quorum[0].who` is not a quorum field; use targets, count, roles or notAuthor",
     ]);
+  });
+
+  test("workspace status and the resume check count a role rule with the judge, as the run does", () => {
+    const quorum: GateQuorumRule[] = [{ count: 1, roles: ["platform"] }];
+    const standing: PendingGateRecord = {
+      version: 1, kind: "pending", op: "ship", gate: "prod", timestamp: "2026-10-22T00:00:00Z", expiresAt: "2026-10-24T00:00:00Z", planDigest: digest, approval: { mode: "log-only", quorum },
+    };
+    const alice = approval("github:alice", "2026-10-22T01:00:00Z");
+    const judge = judgeOf(["github:alice"], { platform: ["github:alice"] });
+    const content = [standing, alice].map((r) => JSON.stringify(r)).join("\n") + "\n";
+    expect(gatesInLedger("ship", content, [], "2026-10-22T02:00:00Z").gates[0]?.state).toBe("pending");
+    expect(gatesInLedger("ship", content, [], "2026-10-22T02:00:00Z", () => null, judge).gates[0]?.state).toBe("approved");
+    expect(resolutionAnswering([alice], standing)).toBeUndefined();
+    expect(resolutionAnswering([alice], standing, [standing], judge)?.resolvedBy).toBe("github:alice");
   });
 });
