@@ -27,7 +27,7 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import type { ChangeSetDocument, ChangeSetEntry } from "../../change-set";
-import { baseRefFrom } from "./predict-behaviour";
+import { baseRefFrom } from "./pr-refs";
 import { markerSlug, reconcilePr, suppliedMarker } from "./reconcile";
 
 const execFileAsync = promisify(execFile);
