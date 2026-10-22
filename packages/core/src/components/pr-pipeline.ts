@@ -89,6 +89,7 @@ import { EMPTY_TREE_SHA } from "./changed-files";
 import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
+import type { PipelineCloudIdentity } from "../ci-identity";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -179,6 +180,15 @@ export interface PrLoopPipelineOptions {
    * wave. Set from `--wave-gate` beside `--pr-loop` ({@link prLoopWithWaves}).
    */
   waveGate?: string;
+  /**
+   * The plan and apply cloud identities (#4296), from `ci.identity.cloud`
+   * resolved for the pipeline's environment and member
+   * (`resolveCloudIdentity` in ../ci-identity.ts). The plan job trades its
+   * OIDC token for the plan identity before the checkout, the record job
+   * for the plan identity, and the apply jobs for the apply identity.
+   * Absent: no job requests an OIDC token.
+   */
+  identity?: PipelineCloudIdentity;
   /**
    * Which GitHub-shaped forge the workflow is for. Set by the forgejo
    * generator, which reuses the github one; a caller never needs to.

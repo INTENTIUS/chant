@@ -59,7 +59,8 @@ import {
   prLoopWithWaves,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
-import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
+import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
+import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type {
   ComponentPipelineJob as GeneratedJob,
   ComponentPipelineOptions as GenerateGitlabOptions,
@@ -314,6 +315,13 @@ function gatedWaveGitlabPipeline(
  * merge request pipeline, so `unset` keeps it from the plan's code, and
  * `CHANT_FORGE_TOKEN` as a protected variable keeps it from the pipeline
  * altogether.
+ *
+ * With `identity` (#4296, `@intentius/chant/ci-identity`) the plan, record
+ * and apply jobs take an `id_tokens:` entry per cloud, and each script
+ * starts by trading it for the job's cloud identity: the plan and record
+ * jobs for the plan identity, the apply jobs for the apply identity. The
+ * plan job trades before any of the merge request's code runs, then unsets
+ * the token variables with the forge tokens and sources the credentials.
  */
 /** The dotenv report a gated apply wave hands the green commit it applies through (#4221). */
 const WAVE_GREEN_DOTENV = "chant-green.env";
@@ -354,6 +362,12 @@ function prLoopGitlabPipeline(
   // #4221: a wave job hands the commit it applies to the next wave as GREEN_SHA, through a dotenv report.
   const handOff = (job: typeof plan): string[] => (job.wave ? [`echo "GREEN_SHA=$GREEN_SHA" > "$CI_PROJECT_DIR/${WAVE_GREEN_DOTENV}"`] : []);
   const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.checkout ?? []), ...handOff(job), ...(job.setup ?? []), ...(job.build ?? []), job.run.command, ...extraScript];
+  // #4296: each job trades its OIDC token for its cloud identity before anything else in its script.
+  const identity = loop.identity;
+  const trading = (spec: CloudTradeSpec | undefined): Record<string, unknown> =>
+    spec ? { id_tokens: gitlabTradeIdTokens(spec) } : {};
+  const tradeVars = (spec: CloudTradeSpec | undefined): Record<string, string> => (spec ? { [TRADE_SPEC_ENV]: JSON.stringify(spec) } : {});
+  const applySpec = (job: typeof plan): CloudTradeSpec | undefined => (identity ? (job.jobName === "record" ? identity.plan : identity.apply) : undefined);
   const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage)];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name);
@@ -367,9 +381,11 @@ function prLoopGitlabPipeline(
       stage: "plan",
       image,
       rules: [{ if: onMergeRequest }],
-      variables: plan.run.env,
+      ...trading(identity?.plan),
+      variables: { ...plan.run.env, ...tradeVars(identity?.plan) },
       // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
-      script: [GITLAB_DROP_FORGE_TOKENS, ...script(plan)],
+      // #4296: with identity, the trade runs before that, and the same unset drops the token variables too.
+      script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...script(plan)],
       artifacts: { when: "always", paths: [reportPath] },
     },
     // #4295: a fresh job at the target branch's commit posts the note and the status from the plan's report.
@@ -391,8 +407,9 @@ function prLoopGitlabPipeline(
           resource_group: job.jobName === "record" ? prRecordGroup(env, member?.name) : prApplyGroup(env, member?.name),
           // #4291: a wave after the first runs after one that failed, and blocks only what depends on the failure.
           rules: [{ if: job.jobName === "record" ? onMerge : onGreen, ...(job.wave && i > 1 ? { when: "always" } : {}) }],
-          variables: job.run.env,
-          script: script(job),
+          ...trading(applySpec(job)),
+          variables: { ...job.run.env, ...tradeVars(applySpec(job)) },
+          script: [...(applySpec(job) ? gitlabTradeLines() : []), ...script(job)],
           // The attempt record (#3543), kept under the pushed commit even when
           // the job fails, so a retry finishes the apply under the same approval.
           // The record job (#4168) applies nothing and keeps none.

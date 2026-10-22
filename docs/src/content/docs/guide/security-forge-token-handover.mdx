@@ -52,6 +52,6 @@ The pull request's code wrote the report, so the note job reads it as data (`pac
 
 ## What it does not cover
 
-- The plan job still holds `CHANT_RUNNER_KEY` when the pipeline signs its runs, and its cloud credentials. Splitting the plan and apply cloud identities is [#4296](https://github.com/INTENTIUS/chant/issues/4296).
+- The plan job still holds `CHANT_RUNNER_KEY` when the pipeline signs its runs. Its cloud credentials are its own unless `ci.identity.cloud` splits them, as [Plan and Apply as Separate Cloud Identities](/chant/guide/security-cloud-identities/) describes.
 - The `chant` the plan job runs is whatever the image or your `--before-script` puts on the path. When that is the pull request's own `node_modules`, the pull request chooses it, as it chooses the rest of its code.
 - On every forge a pull request from the repository can change the workflow file itself. A reviewer sees that change; the handover covers the code a reviewer is less likely to read.

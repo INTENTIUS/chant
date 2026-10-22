@@ -28,6 +28,7 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Secrets file | off | `--secrets` | none | none |
 | Env allowlist and log redaction | on: `ci run`'s contract, a listed exception | `--pass-env` | none | none |
 | Plan steps hold no forge token | on: the plan job's contract, a listed exception | regenerate the pipeline | none | none |
+| Separate plan and apply cloud identities | off: no job requests an OIDC token | `ci.identity.cloud` | none | none |
 
 ## Groups
 

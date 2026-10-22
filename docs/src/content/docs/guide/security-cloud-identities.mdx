@@ -1,0 +1,105 @@
+---
+title: Plan and Apply as Separate Cloud Identities
+description: "Give each workspace member's pull-request jobs a plan identity and an apply identity per cloud with ci.identity.cloud, traded from the job's OIDC token before the change is checked out."
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/security-cloud-identities/.
+  Add a ci.identity.cloud block to this workspace's chant.workspace.json with the plan and apply identities named in the request, regenerate each member's pull-request pipeline, and open a pull request with the declaration and the pipelines.
+  List the trust policy each plan and apply identity needs. Create or change no cloud principal yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The plan job of a [pull-request pipeline](/chant/guide/pull-request-ci/) runs the pull request's code. If it holds the identity the apply uses, a pull request can change the cloud before anyone approves it. `ci.identity.cloud` gives the plan and the apply an identity each, per cloud ([#4296](https://github.com/INTENTIUS/chant/issues/4296)). The plan job trades its OIDC token for the plan identity before the change is checked out. After that no step of the job holds a token or can ask for one.
+
+The three clouds AWS, GCP and Azure are covered on the three forges. It is off until the block is in the declaration, and no security group turns it on.
+
+## Declare the identities
+
+Each cloud takes a list of rules. Each rule has `environments` and `members` globs and two identities, `plan` and `apply`. `chant build --pr-loop` takes the first rule that matches the pipeline's environment and member (`ruleFor` in `packages/core/src/ci-identity.ts:119`). Leave out `environments` to match every environment. Leave out `members` to match every member, and also a pipeline outside a member.
+
+```json
+"ci": {
+  "identity": {
+    "cloud": {
+      "aws": {
+        "region": "eu-west-1",
+        "rules": [
+          { "environments": ["prod"], "plan": "arn:aws:iam::111111111111:role/prod-plan", "apply": "arn:aws:iam::111111111111:role/prod-apply" },
+          { "environments": ["staging-*"], "plan": "arn:aws:iam::222222222222:role/staging-plan", "apply": "arn:aws:iam::222222222222:role/staging-apply" }
+        ]
+      },
+      "gcp": {
+        "provider": "projects/123/locations/global/workloadIdentityPools/ci/providers/forge",
+        "rules": [{ "plan": "plan@acme.iam.gserviceaccount.com", "apply": "apply@acme.iam.gserviceaccount.com" }]
+      },
+      "azure": {
+        "tenantId": "<tenant id>",
+        "rules": [{ "members": ["app"], "plan": "<plan client id>", "apply": "<apply client id>" }]
+      }
+    }
+  }
+}
+```
+
+A rule whose plan and apply are the same identity is refused with `declaration-invalid`. So is a rule that plans as an identity another rule applies as (`cloudIdentityProblems`, `ci-identity.ts:183`). Either would let the change's code act as an apply identity. chant 0.124.36 is the first reader, so set `minReader` to it.
+
+Then regenerate each member's pipeline with the flags it was generated with:
+
+```bash
+chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
+```
+
+A workspace has one pull-request pipeline per member and environment. Each member's apply jobs hold that member's apply identity alone, so a rule per member keeps one member's apply from reaching another's state.
+
+## Which job takes which identity
+
+| Job | Identity | Runs |
+|---|---|---|
+| `plan` | plan | the pull request's code |
+| `plan-note` | none | the target branch's commit |
+| `record` | plan | the merged commit |
+| `apply`, `apply-wave-<k>` | apply | the newest green commit |
+
+On GitHub and Forgejo the plan, record and apply jobs get `id-token: write` (`withIdToken` in `lexicons/github/src/components/generate-pipeline.ts:276`). Forgejo's dialect keeps that one permission. Each job's first step is the trade, ahead of its checkout (`generate-pipeline.ts:279` and `:338`). On GitLab the same jobs take an `id_tokens:` entry per cloud, and the trade is the first line of the script (`lexicons/gitlab/src/components/generate-pipeline.ts:388`).
+
+## What the trade does
+
+The trade is a script run with `node -e` from `/`, so it reads none of the checkout's files and needs nothing installed (`TRADE_JS`, `ci-identity.ts:237`). It gets one OIDC token per cloud with that cloud's audience. The token comes from the forge's request URL on GitHub and Forgejo, and from the `id_tokens` variable on GitLab (`ci-identity.ts:247`).
+
+| Cloud | Trade | Variables it sets |
+|---|---|---|
+| AWS | STS `AssumeRoleWithWebIdentity` (`ci-identity.ts:256`) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` |
+| GCP | Google's STS token exchange, then IAM `generateAccessToken` for the service account (`ci-identity.ts:262`) | `GOOGLE_OAUTH_ACCESS_TOKEN`, `CLOUDSDK_AUTH_ACCESS_TOKEN` |
+| Azure | Entra's client credentials grant with the token as the client assertion (`ci-identity.ts:269`) | `AZURE_ACCESS_TOKEN`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the `ARM_` spellings |
+
+On GitHub and Forgejo the trade appends the variables to `GITHUB_ENV` and masks each secret in the job's log (`ci-identity.ts:276`). GitLab's script sources a file of `export` lines and then deletes it. The file sits outside the project directory with mode 0600. A value with a space, a newline or anything outside printable ASCII is refused, so a reply cannot add a variable of its own (`ci-identity.ts:243`). The minted token is written nowhere.
+
+terragucci leaves Azure untraded, since the azurerm provider takes only the OIDC token. chant trades it, so the plan job holds an ARM access token and no token another client could be traded for. A tool that needs the OIDC token itself cannot plan under this block.
+
+## What the change's code can reach
+
+After the checkout, every step of the plan job starts again without the forge tokens and without the variables a token is requested with (`OIDC_REQUEST_VARS`, `ci-identity.ts:210`, dropped at `generate-pipeline.ts:334`). Those are `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_URL` and GitLab's `CHANT_ID_TOKEN_<CLOUD>`. The way the step starts again is the forge token handover's ([Keep the Forge Token From the Plan](/chant/guide/security-forge-token-handover/)). On GitLab the same `unset` line covers both (`gitlabTradeLines`, `ci-identity.ts:299`). The plan job's file names no apply identity.
+
+The tests run the generated jobs against a local emulator of the token URL and the three clouds (`packages/core/src/__fixtures__/oidc-emulator.ts`). `lexicons/github/src/components/generate-pr-pipeline.identity.test.ts` runs the GitHub plan job step by step. Each later step tries to request a token and prints what it sees. The plan credentials are there and the apply identity is not. No step holds a token or a request variable, and the emulator mints nothing after the trade. The GitLab test does the same with the plan script.
+
+## Trust each identity to its job
+
+The trade only asks. The cloud decides whom to answer, so each identity's trust has to name its job.
+
+| Forge | Plan identity trusts | Apply identity trusts |
+|---|---|---|
+| GitHub | the subject `repo:<owner>/<repo>:pull_request` | the subject `repo:<owner>/<repo>:ref:refs/heads/<branch>`, which the push and green runs carry |
+| GitLab | the merge request pipeline's claims | the protected target branch's `ref` and `ref_protected` claims |
+| Forgejo | the pull request's ref | the target branch's ref, the one claim its token has |
+
+Never trust an apply identity to the pull request's subject.
+
+<Aside type="caution" title="A pull request can edit its own workflow">
+On every forge a pull request from the repository can change the workflow file. A changed plan job could skip the drop, but its token still carries the pull request's subject. The apply identity's trust is what refuses it, so check that trust before you rely on the split.
+</Aside>
+
+## What it does not cover
+
+The plan job still holds `CHANT_RUNNER_KEY` when the pipeline signs its runs. `chant ci run` and `chant ci serve` use the host's own credentials and trade nothing. GitHub gives a pull request from a fork no OIDC token, so its plan job fails at the trade.

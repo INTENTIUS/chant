@@ -429,6 +429,29 @@ Under either value, `chant components pr-apply` refuses with `locked` when anoth
 
 `ci.policy` names the policy engine the pull-request jobs run over the change set ([#4294](https://github.com/INTENTIUS/chant/issues/4294)). Its settings are those the [table in Policy at the Gate](/chant/guide/gate-policy/#declare-the-policy) lists. Any other key is refused with `declaration-invalid` at `/ci/policy`, and so are `outcomes` and `allow_unattended`, since no rule lets a plan apply with nobody approving it (`packages/core/src/gate-policy.ts:293`). The jobs read the block and the policy directory at base, as [Policy at the Gate](/chant/guide/gate-policy/) describes. A declaration that sets it needs a `minReader` of `0.124.36` or newer, since an older chant refuses it.
 
+### Cloud identities
+
+`ci.identity.cloud` gives the pull-request jobs a plan identity and an apply identity per cloud ([#4296](https://github.com/INTENTIUS/chant/issues/4296)). See [plan and apply as separate cloud identities](/chant/guide/security-cloud-identities/).
+
+```json
+"ci": {
+  "identity": {
+    "cloud": {
+      "aws": { "rules": [{ "environments": ["prod"], "plan": "arn:aws:iam::111111111111:role/prod-plan", "apply": "arn:aws:iam::111111111111:role/prod-apply" }] }
+    }
+  }
+}
+```
+
+| Key | What it holds |
+|---|---|
+| `aws` | Its identities are role ARNs. It takes `rules`, and may set `region` (default `us-east-1`), `audience` (default `sts.amazonaws.com`) and an emulator's `endpoint`. |
+| `gcp` | Its identities are service account emails. It takes `provider`, the workload identity provider's name, and `rules`, and may set `audience` (default `https://iam.googleapis.com/<provider>`), `stsEndpoint` and `iamEndpoint`. |
+| `azure` | Its identities are client ids. It takes `tenantId` and `rules`, and may set `subscriptionId`, `audience` (default `api://AzureADTokenExchange`) and `authority`. |
+| `rules[]` | Each rule has a `plan` and an `apply` identity and may set `environments` and `members` globs. The first rule that matches the pipeline's environment and member wins. |
+
+A rule that plans as an identity any rule applies as is refused with `declaration-invalid` at that rule (`packages/core/src/workspace/declaration.ts:1207`). Keys starting with `x-` are skipped, and a declaration that sets the block needs chant 0.124.36 or newer as its `minReader`.
+
 ## Retention
 
 `retention` sets how long [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) keeps each kind of stored record ([#4036](https://github.com/INTENTIUS/chant/issues/4036)). A kind or field left out keeps its default. `gc` takes the block from the declaration at base, the way `identity` is taken.
