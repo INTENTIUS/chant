@@ -1027,6 +1027,16 @@ Component release ledger + status:
                             _merges/<commit>.json; applies and refuses
                             nothing, and a plan that differs from the
                             approved one sets a failing chant/record status
+  components pr-env        An environment per open pull request (#4298): up
+                            --base <ref> --pr <n> applies the change to pr-<n>,
+                            derived from ci.prEnvironment.template, once an
+                            approval of its plan stands (chant approve pr-<n>
+                            pr-env --plan <digest>); post --pr <n> --head
+                            <sha> keeps the record up --no-push handed on and
+                            posts the note; down --pr <n> tears down
+                            only what carries pr-<n>'s ownership marker; sweep
+                            tears down each one whose TTL passed or whose pull
+                            request closed. Never a release target
   components pr-apply      With --apply-on-merge: plan the same members again and apply
                             them only if an approval stands for that digest
                             (chant approve pr-<n> pr-apply --plan <digest>);
@@ -1220,7 +1230,8 @@ Options:
                         chant.config.ts's build.sandbox: true; #1045)
   --param <name=value>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
-                        components redeploy, release cut) Bind a
+                        components redeploy, components pr-env up,
+                        release cut) Bind a
                         declared build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -1232,7 +1243,8 @@ Options:
                         chant.template.json declares instead (#2627).
   --params-file <path>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
-                        components redeploy, release cut) JSON file
+                        components redeploy, components pr-env up,
+                        release cut) JSON file
                         of { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
                         init --from refuses it: pass --param instead.
@@ -1640,6 +1652,7 @@ export const commandRegistry: CommandDef[] = [
   // #4295: posts from the plan report in a job that runs none of the change's code, so it loads no plugins.
   { name: "components pr-post", handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPost(ctx) },
   { name: "components pr-record", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrRecord(ctx) },
+  { name: "components pr-env", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr-env")).runComponentsPrEnv(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },

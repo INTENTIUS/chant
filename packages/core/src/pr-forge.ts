@@ -386,6 +386,8 @@ export interface PrForge {
   addLabels(pr: number, labels: readonly string[]): Promise<void>;
   /** The names of the labels pull request `pr` carries (#4292), for `ci.labels`. */
   labels?(pr: number): Promise<string[]>;
+  /** Whether pull request `pr` is open, closed unmerged, or merged (#4298), for `pr-env sweep`. */
+  pullRequestState?(pr: number): Promise<"open" | "closed" | "merged">;
   /**
    * Merge pull request `pr` only if its head is still `opts.sha`. A moved
    * head, a conflict or a branch rule the forge enforces comes back as
@@ -859,6 +861,12 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       const listed = await api.list(`${repo}/issues/${pr}/labels`, pageParams, pageSize);
       return listed.map((l) => (isObject(l) ? str(l.name) : undefined)).filter((n): n is string => n !== undefined);
     },
+    async pullRequestState(pr) {
+      const p = await api.call("GET", `${repo}/pulls/${pr}`);
+      if (!isObject(p)) return "open";
+      if (p.merged === true || (typeof p.merged_at === "string" && p.merged_at !== "")) return "merged";
+      return p.state === "closed" ? "closed" : "open";
+    },
     async mergePullRequest(pr, m) {
       const method = m.method ?? "merge";
       let res: unknown;
@@ -1091,6 +1099,11 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async labels(mr) {
       const m = await api.call("GET", `${notes}/${mr}`);
       return isObject(m) && Array.isArray(m.labels) ? m.labels.filter((l): l is string => typeof l === "string") : [];
+    },
+    async pullRequestState(mr) {
+      const m = await api.call("GET", `${notes}/${mr}`);
+      if (!isObject(m)) return "open";
+      return m.state === "merged" ? "merged" : m.state === "closed" ? "closed" : "open";
     },
     async mergePullRequest(mr, m) {
       const method = m.method ?? "merge";

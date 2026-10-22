@@ -77,6 +77,10 @@ import {
   PR_PLAN_NOTE_JOB,
   prLoopWaveJobs,
   prLoopWithWaves,
+  prEnvJobs,
+  PR_ENV_REPORT_DIR,
+  PR_ENV_SWEEP_CRON,
+  PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
@@ -362,9 +366,11 @@ function prLoopGithubDoc(
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
     { name: "Post the plan note and chant/plan", if: "always()", env: post.env, run: post.command },
   ];
+  // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
+  const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
   const jobsDoc: Record<string, unknown> = {
     plan: {
-      if: "github.event_name == 'pull_request'",
+      if: prEnv ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
       "runs-on": GITHUB_RUNNER,
       container: image,
       permissions: withIdToken({ contents: "read" }),
@@ -381,20 +387,26 @@ function prLoopGithubDoc(
       steps: noteSteps,
     },
     ...Object.fromEntries(applyJobs),
+    ...(prEnv ? prEnv.jobs : {}),
   };
   const applyNames = applyJobs.map(([name]) => name);
+  const on: Record<string, unknown> = !loop.applyOnMerge
+    ? { pull_request: { branches: [branch] }, push: { branches: [branch] } }
+    : forgejo
+      ? { pull_request: { branches: [branch] }, push: { branches: [branch], tags: [GREEN_TAG_PATTERN] } }
+      : { pull_request: { branches: [branch] }, push: { branches: [branch] }, workflow_run: { workflows: [GREEN_TICK_WORKFLOW], types: ["completed"] }, workflow_dispatch: {} };
+  if (prEnv) {
+    on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
+    on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
+  }
   return {
     name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
-    on: !loop.applyOnMerge
-      ? { pull_request: { branches: [branch] }, push: { branches: [branch] } }
-      : forgejo
-        ? { pull_request: { branches: [branch] }, push: { branches: [branch], tags: [GREEN_TAG_PATTERN] } }
-        : { pull_request: { branches: [branch] }, push: { branches: [branch] }, workflow_run: { workflows: [GREEN_TICK_WORKFLOW], types: ["completed"] }, workflow_dispatch: {} },
+    on,
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...applyNames],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...applyNames, ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
@@ -405,9 +417,119 @@ function prLoopGithubDoc(
         // The record runs on a push and the apply on a green commit, so only the waves need each other.
         needs: i > 1 ? [applyNames[i - 1]] : [],
       })),
+      ...(prEnv ? prEnv.listed : []),
     ],
   };
 }
+
+/**
+ * The jobs of a pull request's environment (#4298). `env-up` runs on an
+ * opened, updated or reopened pull request and runs the change's code, so it
+ * follows the plan job's handover (#4295): a checkout script that alone sees
+ * the job's token, every later step started without the token variables,
+ * and the `pr-env up` step last, handing its report and record on as the
+ * job's outputs. `env-post` checks out the target branch's commit, takes
+ * them back, keeps the record on chant/lifecycle and posts the note.
+ * `env-down` runs when the pull request closes and `env-sweep` on the
+ * schedule, both from the base branch's code: a teardown reads the markers
+ * off the live resources and builds nothing of the change. `env-up` and
+ * `env-down` run one at a time per pull request, and a close waits for an
+ * apply still running rather than cancelling it.
+ */
+function prEnvGithubJobs(
+  forge: "github" | "forgejo",
+  image: string,
+  beforeScript: string[],
+  extraScript: string[],
+  loop: NonNullable<GenerateGithubOptions["prLoop"]>,
+  member: GenerateGithubOptions["member"],
+): { jobs: Record<string, unknown>; listed: GeneratedJob[] } {
+  const [up, post, down, sweep] = prEnvJobs(forge, loop, member?.name);
+  const rooted = !member || member.dir === "." || member.dir === "";
+  const reportPath = member ? memberRepoPath(member, PR_ENV_REPORT_DIR) : PR_ENV_REPORT_DIR;
+  const prNumber = "${{ github.event.pull_request.number }}";
+  const group = `chant-pr-env-${member ? `${member.name}-` : ""}${prNumber}`;
+  const writes = { contents: "write", "pull-requests": "write", statuses: "write" };
+  const keep = (name: string) => ({ name: `Keep the ${name} report`, if: "always()", uses: UPLOAD_ARTIFACT, with: { name: `chant-pr-${name}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } });
+  const opened = "github.event_name == 'pull_request' && github.event.action != 'closed'";
+
+  // #4295: env-up runs the change's code and holds no forge token while it does.
+  const drop = dropForgeTokens("sh");
+  const headStep = (line: string, name?: string, env?: Record<string, string>): Record<string, unknown> => ({ ...(name ? { name } : {}), ...(env ? { env } : {}), run: `${drop}\n${line}` });
+  const upJob = {
+    if: opened,
+    "runs-on": GITHUB_RUNNER,
+    container: image,
+    concurrency: concurrency(group),
+    permissions: { contents: "read" },
+    outputs: handoverOutputs(PR_ENV_UP_STEP_ID, forge),
+    steps: [
+      {
+        name: "Check out the change",
+        ...(rooted ? {} : { "working-directory": "." }),
+        env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN },
+        run: checkoutScript(true, true),
+      },
+      ...[...prLoopSetup(image), ...beforeScript].map((line) => headStep(line)),
+      ...(up.build ? [headStep(up.build[0]!, "Build the templates", { CHANT_ENV: up.env.CHANT_ENV! }), headStep(up.build[1]!, "Lint the project")] : []),
+      // The job's last step: a step after it would start beside whatever the change's code left running.
+      {
+        name: "Apply this pull request's environment once its plan is approved",
+        id: PR_ENV_UP_STEP_ID,
+        env: up.env,
+        run: [drop, ...handoverTrap(PR_ENV_REPORT_DIR, forge), up.command, ...extraScript].join("\n"),
+      },
+    ],
+  };
+  const postJob = {
+    needs: ["env-up"],
+    if: `always() && ${opened} && (needs.env-up.result == 'success' || needs.env-up.result == 'failure')`,
+    "runs-on": GITHUB_RUNNER,
+    container: image,
+    concurrency: concurrency(`chant-pr-env-post-${member ? `${member.name}-` : ""}${prNumber}`),
+    permissions: writes,
+    steps: [
+      // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
+      { name: "Check out the target branch's commit", uses: actionRef("actions/checkout"), with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+      ...runSteps(beforeScript),
+      { name: "Take the environment's report from the env-up job", run: takeOverScript("env-up", PR_ENV_REPORT_DIR, forge) },
+      keep("env-up"),
+      { name: "Keep the environment's record and post its note", if: "always()", env: post.env, run: post.command },
+    ],
+  };
+  const baseJob = (j: typeof up, condition: string, ref: string, name: string, groupName: string) => ({
+    if: condition,
+    "runs-on": GITHUB_RUNNER,
+    container: image,
+    concurrency: concurrency(groupName),
+    permissions: writes,
+    steps: [
+      { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0, ...(ref ? { ref } : {}) } },
+      ...runSteps(prLoopSetup(image)),
+      ...runSteps(beforeScript),
+      { name, env: j.env, run: j.command },
+      ...runSteps(extraScript),
+      keep(j.jobName),
+    ],
+  });
+  return {
+    jobs: {
+      "env-up": upJob,
+      [PR_ENV_POST_JOB]: postJob,
+      "env-down": baseJob(down, "github.event_name == 'pull_request' && github.event.action == 'closed'", "${{ github.event.pull_request.base.ref }}", "Tear down what this pull request's environment owns", group),
+      "env-sweep": baseJob(sweep, "github.event_name == 'schedule'", "", "Tear down the environments whose TTL passed or whose pull request closed", `chant-pr-env-sweep${member ? `-${member.name}` : ""}`),
+    },
+    listed: [
+      { jobName: "env-up", component: "pull request environment", stage: "env-up", needs: [] },
+      { jobName: PR_ENV_POST_JOB, component: "pull request environment note", stage: PR_ENV_POST_JOB, needs: ["env-up"] },
+      { jobName: "env-down", component: "pull request environment teardown", stage: "env-down", needs: [] },
+      { jobName: "env-sweep", component: "pull request environment sweep", stage: "env-sweep", needs: [] },
+    ],
+  };
+}
+
+/** The id of the `pr-env up` step, whose outputs carry the report (#4295). */
+const PR_ENV_UP_STEP_ID = "env-up";
 
 /** The file a producer dumps its resolved outputs to, and a dependent seeds from — one per component, matching gitlab's naming so both generators produce interchangeable artifacts. */
 function outputsFile(name: string): string {

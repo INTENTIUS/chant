@@ -57,6 +57,9 @@ import {
   PR_PLAN_NOTE_JOB,
   prLoopWaveJobs,
   prLoopWithWaves,
+  prEnvJobs,
+  PR_ENV_REPORT_DIR,
+  PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
@@ -368,13 +371,15 @@ function prLoopGitlabPipeline(
     spec ? { id_tokens: gitlabTradeIdTokens(spec) } : {};
   const tradeVars = (spec: CloudTradeSpec | undefined): Record<string, string> => (spec ? { [TRADE_SPEC_ENV]: JSON.stringify(spec) } : {});
   const applySpec = (job: typeof plan): CloudTradeSpec | undefined => (identity ? (job.jobName === "record" ? identity.plan : identity.apply) : undefined);
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage)];
+  // #4298: a pull request environment's jobs, in a stage of their own after the plan.
+  const prEnv = loop.prEnvironment ? prEnvGitlabJobs(image, beforeScript, extraScript, enter, loop, member, named, onMergeRequest) : undefined;
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name);
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
-    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, ...(greens.length > 0 ? [{ if: onGreen }] : [])] },
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
@@ -426,6 +431,7 @@ function prLoopGitlabPipeline(
         },
       ]),
     ),
+  ...(prEnv ? prEnv.jobs : {}),
   };
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
@@ -436,10 +442,100 @@ function prLoopGitlabPipeline(
       stage,
       needs: i > 1 ? [applies[i - 1]!.name] : [],
     })),
+    ...(prEnv ? prEnv.listed : []),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name)].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
+
+/** The stage a pull request environment's jobs run in (#4298). */
+const PR_ENV_STAGE = "env";
+
+/** The rule of a scheduled pipeline, which runs `env-sweep` (#4298). */
+const GITLAB_SCHEDULE_RULE = '$CI_PIPELINE_SOURCE == "schedule"';
+
+/**
+ * A pull request environment's jobs on GitLab (#4298). `env-up` runs in the
+ * merge request pipeline and runs the change's code, so its script drops the
+ * forge tokens first, as the plan job's does (#4295), and it keeps its report
+ * and record as the artifact. `env-post`, at the target branch's commit,
+ * keeps the record on chant/lifecycle and posts the note. `env-up` starts a
+ * GitLab environment `pr-<iid>` whose stop job is `env-down`, so the
+ * environment's Stop button tears it down. GitLab starts no pipeline when a
+ * merge request closes, so `env-sweep`, from a pipeline schedule, is what
+ * tears down a closed merge request's environment unattended, as it does one
+ * whose TTL passed.
+ */
+function prEnvGitlabJobs(
+  image: string,
+  beforeScript: string[],
+  extraScript: string[],
+  enter: string[],
+  loop: NonNullable<GenerateGitlabOptions["prLoop"]>,
+  member: GenerateGitlabOptions["member"],
+  named: (job: string) => string,
+  onMergeRequest: string,
+): { jobs: Record<string, unknown>; listed: GeneratedJob[] } {
+  const [up, post, down, sweep] = prEnvJobs("gitlab", loop, member?.name);
+  const reportPath = member ? memberRepoPath(member, PR_ENV_REPORT_DIR) : PR_ENV_REPORT_DIR;
+  const environment = "pr-$CI_MERGE_REQUEST_IID";
+  const group = `chant-pr-env-${member ? `${member.name}-` : ""}$CI_MERGE_REQUEST_IID`;
+  const script = (j: typeof up): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(j.build ?? []), j.command, ...extraScript];
+  const artifacts = { when: "always", paths: [reportPath] };
+  return {
+    jobs: {
+      [named("env-up")]: {
+        stage: PR_ENV_STAGE,
+        image,
+        rules: [{ if: onMergeRequest }],
+        resource_group: group,
+        environment: { name: environment, on_stop: named("env-down") },
+        variables: up.env,
+        // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
+        script: [GITLAB_DROP_FORGE_TOKENS, ...script(up)],
+        artifacts,
+      },
+      [named(PR_ENV_POST_JOB)]: {
+        stage: PR_ENV_POST_STAGE,
+        image,
+        needs: [named("env-up")],
+        rules: [{ if: onMergeRequest, when: "always" }],
+        variables: post.env,
+        script: ['git checkout --quiet --detach "$BASE_SHA"', ...enter, ...beforeScript, post.command],
+        artifacts,
+      },
+      [named("env-down")]: {
+        stage: PR_ENV_STAGE,
+        image,
+        rules: [{ if: onMergeRequest, when: "manual" }],
+        allow_failure: true,
+        resource_group: group,
+        environment: { name: environment, action: "stop" },
+        variables: down.env,
+        script: script(down),
+        artifacts,
+      },
+      [named("env-sweep")]: {
+        stage: PR_ENV_STAGE,
+        image,
+        rules: [{ if: GITLAB_SCHEDULE_RULE }],
+        resource_group: `chant-pr-env-sweep${member ? `-${member.name}` : ""}`,
+        variables: sweep.env,
+        script: script(sweep),
+        artifacts,
+      },
+    },
+    listed: [
+      { jobName: named("env-up"), component: "merge request environment", stage: PR_ENV_STAGE, needs: [] },
+      { jobName: named(PR_ENV_POST_JOB), component: "merge request environment note", stage: PR_ENV_POST_STAGE, needs: [named("env-up")] },
+      { jobName: named("env-down"), component: "merge request environment teardown", stage: PR_ENV_STAGE, needs: [] },
+      { jobName: named("env-sweep"), component: "merge request environment sweep", stage: PR_ENV_STAGE, needs: [] },
+    ],
+  };
+}
+
+/** The stage the post job runs in, after `env-up` (#4295). */
+const PR_ENV_POST_STAGE = "env-post";
 
 /**
  * Scope a pipeline to one workspace member (#2542, #2524 D19), in place on

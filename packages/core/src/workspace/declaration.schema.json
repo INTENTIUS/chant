@@ -270,6 +270,27 @@
               }
             }
           }
+        },
+        "prEnvironment": {
+          "type": "object",
+          "description": "An environment per open pull request (#4298): chant components pr-env up applies the pull request's components to pr-<number>, which takes the template environment's declared endpoint, and pr-env down tears down only what carries that environment's ownership marker. A pull request's environment is never a release target. Read from the declaration at base, so a pull request cannot change its own template or TTL. Added in schema 1 by chant 0.124.42, so a declaration that uses it sets minReader to 0.124.42 or newer.",
+          "required": ["template"],
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": true
+          },
+          "properties": {
+            "template": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "description": "The declared environment a pull request's environment is derived from: pr-<number> takes its endpoint unless a pr-* entry declares one."
+            },
+            "ttl": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(m|h|d)$",
+              "description": "How long a pull request's environment lives after its last apply, such as 72h, 90m or 7d. chant components pr-env sweep tears down one whose TTL passed. 72h when absent."
+            }
+          }
         }
       }
     },

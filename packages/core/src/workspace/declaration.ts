@@ -318,7 +318,24 @@ export interface CiDeclaration {
    * Absent when unset.
    */
   identity?: { cloud: CloudIdentityDeclaration };
+  /**
+   * `ci.prEnvironment` (#4298): an environment per open pull request,
+   * derived from `template`, torn down on close or after `ttl`
+   * (../components/pr-environment.ts). Absent when unset.
+   */
+  prEnvironment?: CiPrEnvironment;
 }
+
+/** The `ci.prEnvironment` block (#4298), with its default TTL. */
+export interface CiPrEnvironment {
+  /** The declared environment `pr-<n>` takes its endpoint from. */
+  template: string;
+  /** How long the environment lives after its last apply: `72h` when absent. */
+  ttl: string;
+}
+
+/** The default `ci.prEnvironment.ttl`. */
+export const DEFAULT_PR_ENVIRONMENT_TTL = "72h";
 
 export interface MemberRole {
   name: string;
@@ -1240,7 +1257,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; prEnvironment?: { template: string; ttl?: string }; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1251,6 +1268,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     ...(block.locks !== undefined ? { locks: block.locks } : {}),
     ...(policy ? { policy } : {}),
     ...(block.identity?.cloud !== undefined ? { identity: { cloud: cloudIdentityOf(block.identity.cloud, at) } } : {}),
+    ...(block.prEnvironment !== undefined ? { prEnvironment: { template: block.prEnvironment.template, ttl: block.prEnvironment.ttl ?? DEFAULT_PR_ENVIRONMENT_TTL } } : {}),
   };
   let reportUrl: string | null = null;
   if (block.reportUrl !== undefined) {

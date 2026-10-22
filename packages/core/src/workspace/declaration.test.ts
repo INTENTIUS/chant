@@ -551,3 +551,17 @@ describe("ci.identity.cloud (#4296)", () => {
     expect(failure(base(members, { ci: { identity: { cloud: { gcp: { provider: "forge", rules: [{ plan: "p", apply: "a" }] } } } } })).code).toBe("declaration-invalid");
   });
 });
+
+describe("ci.prEnvironment (#4298)", () => {
+  const members = [{ name: "api", dir: "api", kind: "chant" }];
+
+  test("is read with its template and a 72h TTL by default", () => {
+    expect(parse(base(members, { ci: { prEnvironment: { template: "staging" } } })).ci?.prEnvironment).toEqual({ template: "staging", ttl: "72h" });
+    expect(parse(base(members, { ci: { prEnvironment: { template: "staging", ttl: "7d" } } })).ci?.prEnvironment).toEqual({ template: "staging", ttl: "7d" });
+  });
+
+  test("a block with no template, or a TTL in another form, is declaration-invalid", () => {
+    expect(failure(base(members, { ci: { prEnvironment: {} } })).code).toBe("declaration-invalid");
+    expect(failure(base(members, { ci: { prEnvironment: { template: "staging", ttl: "1w" } } })).code).toBe("declaration-invalid");
+  });
+});

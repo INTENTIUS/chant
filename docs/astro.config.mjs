@@ -213,6 +213,7 @@ export default defineConfig({
 								{ label: 'Move off Apply on Merge', slug: 'guide/move-off-apply-on-merge' },
 								{ label: 'Route Members to Branches', slug: 'guide/branch-routing' },
 								{ label: 'Lock the Targets a Pull Request Reaches', slug: 'guide/target-locks' },
+								{ label: 'An Environment per Pull Request', slug: 'guide/pr-environments' },
 							],
 						},
 						{

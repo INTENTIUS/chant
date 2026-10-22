@@ -21,6 +21,7 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
  * `review-rules` security group (#4168); off otherwise. `requireRunnerStart`
  * is `--require-runner-start`, or the `isolated-runners` group. `--apply-on-merge`
  * (#4168) writes the apply job on merge in place of the record job.
+ * `--pr-env` (#4298) adds the jobs of a pull request's environment.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
   return {
@@ -33,6 +34,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.requireReview === true || requireReview ? { requireReview: true } : {}),
     ...(args.requireRunnerStart === true || requireRunnerStart ? { requireRunnerStart: true } : {}),
     ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
+    ...(args.prEnv ? { prEnvironment: true } : {}),
   };
 }
 

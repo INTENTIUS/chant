@@ -351,6 +351,8 @@ export interface ParsedArgs {
    * approved plans of the merges between or a gate of its own.
    */
   green?: boolean;
+  /** `chant build --pr-loop --pr-env` (#4298) — add the env-up, env-down and env-sweep jobs of a pull request's environment. */
+  prEnv?: boolean;
   /** `chant build --pr-loop --pr-build` (#4088) — build and lint before pr-plan and pr-apply. */
   prBuild?: boolean;
   /** `chant ci serve --build-command <line>` (#4169) — the line that builds a commit a `ci/build/<sha>` tag asks for, in a worktree of it. */

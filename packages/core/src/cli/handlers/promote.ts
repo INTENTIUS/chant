@@ -26,6 +26,7 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadChantConfig, type ChantConfig } from "../../config";
 import { promotionOrder } from "../../workspace/promotion-order";
+import { releaseTargetRefusal } from "../../components/pr-environment";
 import { resolvePromotionSource } from "../../components/promote-order";
 import { fetchLifecycle, getHeadCommit, pushLifecycle } from "../../lifecycle/git";
 import {
@@ -896,6 +897,14 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   if (!to) {
     console.error(formatError({ message: "--to <env> is required", hint: PROMOTE_USAGE }));
     return 1;
+  }
+  // #4298: a pull request's environment is neither a release's target nor its source.
+  for (const env of [to, args.migrateFrom]) {
+    const refusal = env ? releaseTargetRefusal(env) : undefined;
+    if (refusal) {
+      console.error(formatError({ message: refusal }));
+      return 1;
+    }
   }
   const who = actorOrRefuse(ctx);
   if (typeof who === "number") return who;
