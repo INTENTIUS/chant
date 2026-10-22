@@ -14,7 +14,7 @@ import { runOpLocally } from "./local-executor";
 import { renderHuman } from "./local-output";
 import { stepOutput } from "./step-output-ref";
 import { parseGateLedger, type GateResolutionRecord, type PendingGateRecord } from "../lifecycle/gate-ledger";
-import { gateSealPayload, gateSealVersion } from "../workspace/trust/gate-seal";
+import { gateSealPayload, gateSealVersion } from "../lifecycle/gate-seal";
 import { deriveGateAudit } from "../lifecycle/gate-audit";
 import type { AppliedGateRecord } from "../lifecycle/gate-applied";
 import type { ActivityFn } from "./activity-registry";

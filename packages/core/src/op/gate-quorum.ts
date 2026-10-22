@@ -27,7 +27,7 @@
  * caller from the trust policy it read at base ({@link trustQuorumJudge}).
  */
 
-import { gateSealRefusal, type GateSigners } from "../workspace/trust/gate-seal";
+import { gateSealRefusal, type GateSigners } from "../lifecycle/gate-seal";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 
 /** One approval rule. */

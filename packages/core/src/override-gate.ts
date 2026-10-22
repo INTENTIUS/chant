@@ -38,14 +38,14 @@ import { spawnSync } from "node:child_process";
 import { OVERRIDE_GATE_OP } from "./op/gate-name";
 import { latestPendingGate } from "./lifecycle/gate-ledger-select";
 import { samePlanDigest } from "./lifecycle/plan-digest";
-import { gateSealRefusal, type GateSigners } from "./workspace/trust/gate-seal";
+import { gateSealRefusal, type GateSigners } from "./lifecycle/gate-seal";
 import { DEFAULT_SIGNERS_PATH } from "./workspace/trust/trust-files";
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
 import type { GateApprovalSource } from "./op/op-waves";
 import type { GateAuditApply } from "./lifecycle/gate-audit";
 
 export type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
-export type { GateSigners } from "./workspace/trust/gate-seal";
+export type { GateSigners } from "./lifecycle/gate-seal";
 
 /** The op every override and denial is recorded under. `./lifecycle/gate-audit.ts` reads this op as overrides by default. */
 export const OVERRIDE_OP = OVERRIDE_GATE_OP;

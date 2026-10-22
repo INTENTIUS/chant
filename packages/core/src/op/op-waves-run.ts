@@ -72,7 +72,7 @@ import { samePlanDigest } from "../lifecycle/plan-digest";
 import { isLifecycleLocalNote } from "../lifecycle/local-note";
 import type { HeadPlans, MergedReview, ReviewSource } from "./gate-review";
 import type { TrustPolicy } from "../workspace/trust/policy";
-import type { GateSigners } from "../workspace/trust/gate-seal";
+import type { GateSigners } from "../lifecycle/gate-seal";
 import { ciRunIdFromEnv } from "./gate-run-locator";
 import {
   quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, ruleNeedsProof, samePrincipal, trustQuorumJudge,

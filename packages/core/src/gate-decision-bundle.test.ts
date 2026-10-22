@@ -41,6 +41,7 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/gate-applied.ts",
       "packages/core/src/lifecycle/gate-ledger-select.ts",
+      "packages/core/src/lifecycle/gate-seal.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/notify-verify.ts",
       "packages/core/src/notify.ts",
@@ -51,7 +52,6 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/workspace/class-data.ts",
       "packages/core/src/workspace/identity-gate-rule.ts",
       "packages/core/src/workspace/jsonc.ts",
-      "packages/core/src/workspace/trust/gate-seal.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
     // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290).

@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealRefusal, gateSealVersion, sshKeyFingerprint, verifySshSignatureWith, type GateSigners, type SealedGateApproval } from "./gate-seal";
+import { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealRefusal, gateSealVersion, sshKeyFingerprint, verifySshSignatureWith, type GateSigners, type SealedGateApproval } from "../../lifecycle/gate-seal";
 import { checkGateSeal } from "./seal";
 import { emptyPolicy, parseAllowedSigners, type TrustPolicy } from "./policy";
 import { hasSshKeygen } from "./test-repo";

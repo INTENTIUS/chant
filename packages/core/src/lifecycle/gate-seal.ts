@@ -19,7 +19,7 @@
  */
 
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
-import type { Signer } from "./trust-files";
+import type { Signer } from "../workspace/trust/trust-files";
 
 /**
  * The ssh signature namespace of a gate approval's seal (#3163, ws-080), so a
