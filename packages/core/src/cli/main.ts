@@ -173,6 +173,11 @@ Commands:
                         terms; --live or --at <ref> with --env <name> reads the
                         estate or a recorded snapshot; --show <attr>,
                         --check-live, --check-snapshot, --fail-on-drift)
+  query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
+                        the resources and snapshots each lexicon observed, Op
+                        runs, gates, deploys, releases and cuts, loaded into
+                        node:sqlite (schema v1, listed in chant_schema).
+                        --member <name> keeps members; --json prints rows
   generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
@@ -1441,6 +1446,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "describe", handler: runDescribe },
   { name: "explain", handler: runExplain },
   { name: "search", handler: runSearch },
+  // #4297 — SQL over the snapshots, runs, gates, deploys and releases on chant/lifecycle. Imported on first use.
+  { name: "query", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/query")).runQueryCommand(ctx) },
   // chant#2591 — `import --agents` and `audit` read chant.config statically
   // and never evaluate it (chant#2589 for audit, which audits code it must not run).
   { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },

@@ -222,6 +222,7 @@ export default defineConfig({
 								{ label: 'Promote a Release', slug: 'guide/promote-a-release' },
 								{ label: 'Prune chant/lifecycle', slug: 'guide/prune-lifecycle' },
 								{ label: 'Read Delivery Metrics', slug: 'guide/delivery-metrics' },
+								{ label: 'Query chant/lifecycle with SQL', slug: 'guide/query-lifecycle' },
 							],
 						},
 						{
@@ -334,6 +335,7 @@ export default defineConfig({
 								{ label: 'list', slug: 'cli/list' },
 								{ label: 'describe', slug: 'cli/describe' },
 								{ label: 'search', slug: 'cli/search' },
+								{ label: 'query', slug: 'cli/query' },
 								{ label: 'vendor', slug: 'cli/vendor' },
 								{ label: 'generate', slug: 'cli/codegen' },
 								{ label: 'import', slug: 'cli/import' },

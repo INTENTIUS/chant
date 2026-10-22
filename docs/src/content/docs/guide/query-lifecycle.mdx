@@ -1,0 +1,85 @@
+---
+title: Query chant/lifecycle with SQL
+description: Answer questions about what is deployed and who approved it with chant query, one SQL statement over the records chant already keeps on chant/lifecycle.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/query-lifecycle/.
+  Fetch chant/lifecycle with `git fetch origin chant/lifecycle:chant/lifecycle`, answer the question I ask with `npx chant query "<sql>"`, and show me the statement you ran with its rows.
+  Change no file and open no pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+chant keeps its records on the `chant/lifecycle` branch. [`chant query`](/chant/cli/query/) loads them into SQLite in memory and runs one statement. Nothing is written, and the database is gone when the command exits.
+
+## Get the records
+
+The command reads the local branch. To query what CI recorded, fetch it first:
+
+```
+git fetch origin chant/lifecycle:chant/lifecycle
+```
+
+## List what is deployed
+
+The `resources` table has one row per resource in each environment's snapshot, from the lexicon that observed it:
+
+```
+chant query "SELECT env, lexicon, type, count(*) AS n FROM resources GROUP BY env, lexicon, type ORDER BY n DESC"
+```
+
+An attribute a lexicon read is in the `attributes` JSON:
+
+```
+chant query "SELECT name, json_extract(attributes, '$.Arn') AS arn FROM resources WHERE env = 'prod' AND lexicon = 'aws'"
+```
+
+`snapshots` says when each environment was last observed, and at which commit:
+
+```
+chant query "SELECT env, lexicon, observed_at, git_sha FROM snapshots ORDER BY observed_at"
+```
+
+## Find failed runs
+
+```
+chant query "SELECT op, env, started, failure_code, failure_reason FROM runs WHERE status = 'fail' ORDER BY started DESC LIMIT 10"
+```
+
+## See who approved a deploy
+
+A deploy record names its release, and a gate resolution names the release it approved. Join them:
+
+```
+chant query "SELECT d.env, d.component, d.timestamp, g.resolved_by FROM deploys d LEFT JOIN gates g ON g.kind = 'resolution' AND g.release_digest = d.release_digest AND g.environment = d.env ORDER BY d.timestamp DESC"
+```
+
+Gates still waiting:
+
+```
+chant query "SELECT op, gate, timestamp, expires_at FROM gates WHERE kind = 'pending' AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+```
+
+## Label deploys with their release
+
+```
+chant query "SELECT d.env, d.component, c.label, d.timestamp FROM deploys d JOIN cuts c ON c.release_digest = d.release_digest ORDER BY d.timestamp DESC"
+```
+
+## Query a workspace
+
+In a workspace every row has the member it came from. `--member` reads only the members it names:
+
+```
+chant query "SELECT member, count(*) FROM deploys GROUP BY member"
+chant query "SELECT * FROM runs" --member api
+```
+
+## Use the rows in a script
+
+`--json` prints the columns, the rows and the schema version. A script that depends on the columns can check the version first:
+
+```
+chant query "SELECT DISTINCT version FROM chant_schema" --json
+```
+
+The [reference](/chant/cli/query/#tables) lists every table and column.
