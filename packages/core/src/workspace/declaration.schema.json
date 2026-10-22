@@ -273,7 +273,7 @@
         },
         "prEnvironment": {
           "type": "object",
-          "description": "An environment per open pull request (#4298): chant components pr-env up applies the pull request's components to pr-<number>, which takes the template environment's declared endpoint, and pr-env down tears down only what carries that environment's ownership marker. A pull request's environment is never a release target. Read from the declaration at base, so a pull request cannot change its own template or TTL. Added in schema 1 by chant 0.124.37, so a declaration that uses it sets minReader to 0.124.37 or newer.",
+          "description": "An environment per open pull request (#4298): chant components pr-env up applies the pull request's components to pr-<number>, which takes the template environment's declared endpoint, and pr-env down tears down only what carries that environment's ownership marker. A pull request's environment is never a release target. Read from the declaration at base, so a pull request cannot change its own template or TTL. Added in schema 1 by chant 0.124.42, so a declaration that uses it sets minReader to 0.124.42 or newer.",
           "required": ["template"],
           "additionalProperties": false,
           "patternProperties": {

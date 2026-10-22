@@ -51,6 +51,9 @@ export const PR_ENV_LEDGER_FILE = "records.jsonl";
 /** Where `pr-env` writes its report and note unless `--output` says. */
 export { PR_ENV_REPORT_DIR } from "./pr-pipeline";
 
+/** The file `pr-env up --no-push` writes its record to under `--output`, for `pr-env post` (#4295). */
+export const PR_ENV_RECORD_FILE = "pr-env-record.json";
+
 /** The commit status context the up and down jobs set. */
 export const PR_ENV_STATUS_CONTEXT = "chant/pr-env";
 
@@ -351,6 +354,101 @@ export function teardownCounts(report: TeardownReport): NonNullable<PrEnvRecord[
 export function teardownComplete(report: TeardownReport): boolean {
   const c = teardownCounts(report);
   return c.failed === 0 && c.skipped === 0 && c.holes === 0;
+}
+
+// ── the handover (#4295) ─────────────────────────────────────────────────────
+
+/** What {@link acceptHandedRecord} checks a handed-on record against: the job's own values and the settings at its commit. */
+export interface HandedRecordCheck {
+  pr: number;
+  member?: string;
+  /** The commit the up job checked out, from the forge, not from the record. */
+  head: string;
+  /** `ci.prEnvironment` at the commit the post job runs at. */
+  template: string;
+  ttlMs: number;
+  now: Date;
+  by: string;
+  runUrl?: string;
+}
+
+/**
+ * The record `pr-env up --no-push` handed on, checked as data: the up job ran
+ * the change's code, so what it wrote is the change's. It must be an `up`
+ * line for this pull request's `pr-<n>`, with that marker env, the template
+ * the base declares, and string components. The commit, the actor, the run
+ * and the expiry are the post job's own, so a change cannot keep its
+ * environment past the TTL its base set. Refused otherwise, and kept nowhere.
+ */
+export function acceptHandedRecord(raw: unknown, check: HandedRecordCheck): { record: PrEnvRecord } | { refusal: string } {
+  const env = prEnvironmentName(check.pr);
+  const [r] = parsePrEnvRecords(typeof raw === "object" && raw !== null ? JSON.stringify(raw) : "");
+  if (!r) return { refusal: "The env-up job handed on a record that does not read, so it was not kept." };
+  const why =
+    r.kind !== "up" ? `is a ${r.kind} record`
+    : r.pr !== check.pr || r.env !== env ? `names ${r.env} of pull request ${r.pr}, not ${env}`
+    : r.marker.env !== env ? `names the marker env ${JSON.stringify(r.marker.env)}, not ${env}`
+    : r.template !== check.template ? `names the template ${r.template}, and the base declares ${check.template}`
+    : (r.member ?? undefined) !== check.member ? `names the member ${r.member ?? "(none)"}`
+    : !Array.isArray(r.components) || r.components.some((c) => typeof c !== "string") ? "lists components that are not names"
+    : r.result !== "applied" && r.result !== "failed" ? `has the result ${r.result}`
+    : undefined;
+  if (why) return { refusal: `The env-up job handed on a record that ${why}, so it was not kept.` };
+  return {
+    record: {
+      version: 1,
+      kind: "up",
+      pr: check.pr,
+      env,
+      ...(check.member ? { member: check.member } : {}),
+      template: check.template,
+      marker: { stack: r.marker.stack, env },
+      commit: check.head,
+      components: [...r.components],
+      planDigest: typeof r.planDigest === "string" ? r.planDigest : "",
+      result: r.result,
+      by: check.by,
+      timestamp: check.now.toISOString(),
+      expiresAt: new Date(check.now.getTime() + check.ttlMs).toISOString(),
+      ...(Array.isArray(r.approvedBy) ? { approvedBy: r.approvedBy.filter((a): a is string => typeof a === "string") } : {}),
+      releaseTarget: false,
+      ...(check.runUrl ? { runUrl: check.runUrl } : {}),
+    },
+  };
+}
+
+/**
+ * The report `pr-env up` handed on, checked as data before the post job
+ * renders a note from it: an `up` report for this pull request's `pr-<n>`.
+ * Its head is the post job's own.
+ */
+export function handedPrEnvReport(raw: unknown, check: { pr: number; head: string; member?: string }): { report: PrEnvReport } | { refusal: string } {
+  const env = prEnvironmentName(check.pr);
+  if (typeof raw !== "object" || raw === null) return { refusal: "The env-up job handed on no report." };
+  const r = raw as Partial<PrEnvReport>;
+  if (r.stage !== "up" || r.pr !== check.pr || r.env !== env) return { refusal: `The env-up job handed on a report that is not ${env}'s.` };
+  const statuses: PrEnvReport["status"][] = ["applied", "nothing", "waiting", "changed", "plan-failed", "failed", "refused"];
+  if (!r.status || !statuses.includes(r.status)) return { refusal: "The env-up job handed on a report with no status it could have." };
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    report: {
+      stage: "up",
+      pr: check.pr,
+      env,
+      ...(check.member ? { member: check.member } : {}),
+      template: str(r.template),
+      head: check.head,
+      op: check.member ? `pr-${check.pr}-${check.member}` : `pr-${check.pr}`,
+      gate: PR_ENV_GATE,
+      digest: str(r.digest),
+      status: r.status,
+      ...(typeof r.message === "string" ? { message: r.message } : {}),
+      ...(typeof r.endpoint === "string" ? { endpoint: r.endpoint } : {}),
+      components: (Array.isArray(r.components) ? r.components : []).map((c) => ({ component: str(c?.component), status: str(c?.status), create: num(c?.create), update: num(c?.update), replace: num(c?.replace), delete: num(c?.delete) })),
+      ...(Array.isArray(r.approvedBy) ? { approvedBy: r.approvedBy.filter((a): a is string => typeof a === "string") } : {}),
+    },
+  };
 }
 
 // ── the note ───────────────────────────────────────────────────────────────

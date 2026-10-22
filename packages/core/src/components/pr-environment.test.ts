@@ -9,7 +9,9 @@ import type { ChantConfig } from "../config";
 import type { TeardownPlan, TeardownReport } from "../lifecycle/teardown";
 import type { ObservationLexicon, TeardownCandidate } from "../lexicon";
 import {
+  acceptHandedRecord,
   derivePrEnvironment,
+  handedPrEnvReport,
   expired,
   isPrEnvironmentName,
   livePrEnvironments,
@@ -217,4 +219,31 @@ test("ttlMs reads minutes, hours and days", () => {
   expect(ttlMs("72h")).toBe(259_200_000);
   expect(ttlMs("7d")).toBe(604_800_000);
   expect(ttlMs("1w")).toBeUndefined();
+});
+
+describe("what env-up hands on is checked as data (#4295)", () => {
+  const check = { pr: 7, head: "c".repeat(40), template: "staging", ttlMs: 3_600_000, now: new Date("2026-10-22T12:00:00.000Z"), by: "github-actions" };
+
+  test("a record for this pull request is kept with the post job's own commit, actor and expiry", () => {
+    const accepted = acceptHandedRecord(up({ expiresAt: "2099-01-01T00:00:00.000Z", commit: "d".repeat(40), by: "mallory" }), check);
+    if ("refusal" in accepted) throw new Error(accepted.refusal);
+    expect(accepted.record).toMatchObject({ pr: 7, env: "pr-7", commit: check.head, by: "github-actions", expiresAt: "2026-10-22T13:00:00.000Z", marker: { stack: "shop", env: "pr-7" }, releaseTarget: false });
+  });
+
+  test("a record for another environment, marker, template or member is refused", () => {
+    expect(acceptHandedRecord(up({ pr: 8, env: "pr-8" }), check)).toMatchObject({ refusal: expect.stringContaining("not pr-7") });
+    expect(acceptHandedRecord(up({ marker: { stack: "shop", env: "staging" } }), check)).toMatchObject({ refusal: expect.stringContaining("marker env") });
+    expect(acceptHandedRecord(up({ template: "prod" }), check)).toMatchObject({ refusal: expect.stringContaining("template") });
+    expect(acceptHandedRecord(up({ member: "api" }), check)).toMatchObject({ refusal: expect.stringContaining("member") });
+    expect(acceptHandedRecord({ ...up(), kind: "down", result: "destroyed" }, check)).toMatchObject({ refusal: expect.stringContaining("down record") });
+    expect(acceptHandedRecord("nonsense", check)).toMatchObject({ refusal: expect.stringContaining("does not read") });
+  });
+
+  test("a report for another environment is refused, and a kept one takes the post job's head and op", () => {
+    expect(handedPrEnvReport({ stage: "up", pr: 8, env: "pr-8", status: "applied" }, { pr: 7, head: "h" })).toMatchObject({ refusal: expect.any(String) });
+    expect(handedPrEnvReport(undefined, { pr: 7, head: "h" })).toMatchObject({ refusal: "The env-up job handed on no report." });
+    const kept = handedPrEnvReport({ stage: "up", pr: 7, env: "pr-7", status: "waiting", op: "pr-99", head: "x", digest: "sha256:aa", components: [{ component: "app", status: "planned", create: 1 }] }, { pr: 7, head: "h" });
+    if ("refusal" in kept) throw new Error(kept.refusal);
+    expect(kept.report).toMatchObject({ head: "h", op: "pr-7", status: "waiting", components: [{ component: "app", create: 1, delete: 0 }] });
+  });
 });

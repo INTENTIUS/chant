@@ -303,7 +303,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
 }
 
 /** Set where `p`'s hooks run, once the stage knows its op (#4288). */
-function placeHooks(ctx: CommandContext, p: Prepared, stage: PrHookPlace["stage"], op: string): void {
+export function placeHooks(ctx: CommandContext, p: Prepared, stage: PrHookPlace["stage"], op: string): void {
   p.hookPlace = { op, env: p.env, stage, dir: ctx.args.output ?? PR_REPORT_DIR, cwd: resolve("."), log: (line) => console.error(line) };
 }
 
@@ -313,7 +313,7 @@ function placeHooks(ctx: CommandContext, p: Prepared, stage: PrHookPlace["stage"
  * when no hook failed. A hold is logged: the pull request's gate already
  * waits for a person's approval of the digest.
  */
-function runStageHook(p: Prepared, moment: OpWaveHookMoment, components: readonly string[], planned?: PrPlanSet, what = "nothing was applied"): string | undefined {
+export function runStageHook(p: Prepared, moment: OpWaveHookMoment, components: readonly string[], planned?: PrPlanSet, what = "nothing was applied"): string | undefined {
   if (!p.hookPlace || components.length === 0) return undefined;
   const ran = runPrHooks(p.hooks, moment, p.hookPlace, components, planned ? { members: planned.members, plans: planned.plans } : undefined);
   p.hookOutcomes.push(...ran.outcomes);
@@ -401,7 +401,7 @@ async function checkMember(projectPath: string, names: string[]): Promise<string
 }
 
 /** Plan every member the derivation selects, between the plan-side hooks (#4288). */
-function planAll(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
+export function planAll(p: Prepared, onRunEvent?: RunEventSink): Promise<PrPlanSet> {
   return hookedPlan(p, p.plan.order, () => planBare(p, onRunEvent));
 }
 

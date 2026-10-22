@@ -59,6 +59,7 @@ import {
   prLoopWithWaves,
   prEnvJobs,
   PR_ENV_REPORT_DIR,
+  PR_ENV_POST_JOB,
 } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
@@ -372,7 +373,7 @@ function prLoopGitlabPipeline(
   const applySpec = (job: typeof plan): CloudTradeSpec | undefined => (identity ? (job.jobName === "record" ? identity.plan : identity.apply) : undefined);
   // #4298: a pull request environment's jobs, in a stage of their own after the plan.
   const prEnv = loop.prEnvironment ? prEnvGitlabJobs(image, beforeScript, extraScript, enter, loop, member, named, onMergeRequest) : undefined;
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(prEnv ? [PR_ENV_STAGE] : [])];
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name);
   const doc: Record<string, unknown> = {
@@ -455,11 +456,15 @@ const GITLAB_SCHEDULE_RULE = '$CI_PIPELINE_SOURCE == "schedule"';
 
 /**
  * A pull request environment's jobs on GitLab (#4298). `env-up` runs in the
- * merge request pipeline and starts a GitLab environment `pr-<iid>` whose
- * stop job is `env-down`, so the environment's Stop button tears it down.
- * GitLab starts no pipeline when a merge request closes, so `env-sweep`,
- * from a pipeline schedule, is what tears down a closed merge request's
- * environment unattended, as it does one whose TTL passed.
+ * merge request pipeline and runs the change's code, so its script drops the
+ * forge tokens first, as the plan job's does (#4295), and it keeps its report
+ * and record as the artifact. `env-post`, at the target branch's commit,
+ * keeps the record on chant/lifecycle and posts the note. `env-up` starts a
+ * GitLab environment `pr-<iid>` whose stop job is `env-down`, so the
+ * environment's Stop button tears it down. GitLab starts no pipeline when a
+ * merge request closes, so `env-sweep`, from a pipeline schedule, is what
+ * tears down a closed merge request's environment unattended, as it does one
+ * whose TTL passed.
  */
 function prEnvGitlabJobs(
   image: string,
@@ -471,7 +476,7 @@ function prEnvGitlabJobs(
   named: (job: string) => string,
   onMergeRequest: string,
 ): { jobs: Record<string, unknown>; listed: GeneratedJob[] } {
-  const [up, down, sweep] = prEnvJobs("gitlab", loop, member?.name);
+  const [up, post, down, sweep] = prEnvJobs("gitlab", loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_ENV_REPORT_DIR) : PR_ENV_REPORT_DIR;
   const environment = "pr-$CI_MERGE_REQUEST_IID";
   const group = `chant-pr-env-${member ? `${member.name}-` : ""}$CI_MERGE_REQUEST_IID`;
@@ -486,7 +491,17 @@ function prEnvGitlabJobs(
         resource_group: group,
         environment: { name: environment, on_stop: named("env-down") },
         variables: up.env,
-        script: script(up),
+        // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
+        script: [GITLAB_DROP_FORGE_TOKENS, ...script(up)],
+        artifacts,
+      },
+      [named(PR_ENV_POST_JOB)]: {
+        stage: PR_ENV_POST_STAGE,
+        image,
+        needs: [named("env-up")],
+        rules: [{ if: onMergeRequest, when: "always" }],
+        variables: post.env,
+        script: ['git checkout --quiet --detach "$BASE_SHA"', ...enter, ...beforeScript, post.command],
         artifacts,
       },
       [named("env-down")]: {
@@ -512,11 +527,15 @@ function prEnvGitlabJobs(
     },
     listed: [
       { jobName: named("env-up"), component: "merge request environment", stage: PR_ENV_STAGE, needs: [] },
+      { jobName: named(PR_ENV_POST_JOB), component: "merge request environment note", stage: PR_ENV_POST_STAGE, needs: [named("env-up")] },
       { jobName: named("env-down"), component: "merge request environment teardown", stage: PR_ENV_STAGE, needs: [] },
       { jobName: named("env-sweep"), component: "merge request environment sweep", stage: PR_ENV_STAGE, needs: [] },
     ],
   };
 }
+
+/** The stage the post job runs in, after `env-up` (#4295). */
+const PR_ENV_POST_STAGE = "env-post";
 
 /**
  * Scope a pipeline to one workspace member (#2542, #2524 D19), in place on

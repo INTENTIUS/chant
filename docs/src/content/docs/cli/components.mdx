@@ -30,6 +30,8 @@ chant components pr-apply (--base <ref> [--pr <n>] | --green [--base <ref>]) [--
                                 [--wave-gate <name> [--wave <k>]]
 chant components pr-env up --base <ref> --pr <n> [--forge github|gitlab|forgejo]
                                 [--member <name>] [--output <dir>] [--no-push] [--json]
+chant components pr-env post --pr <n> --head <sha> [--result <result>] [--forge <kind>]
+                                [--member <name>] [--output <dir>]
 chant components pr-env down --pr <n> [--reason closed|expired] [--forge <kind>]
                                 [--member <name>] [--output <dir>] [--no-push] [--json]
 chant components pr-env sweep [--forge <kind>] [--member <name>] [--output <dir>] [--no-push]
@@ -461,7 +463,9 @@ The [generated pull-request pipeline](/chant/guide/apply-on-merge/#finish-an-app
 
 An environment per open pull request, `pr-<n>`, derived from `ci.prEnvironment.template` in the workspace declaration at `--base` ([#4298](https://github.com/INTENTIUS/chant/issues/4298)). See [an environment per pull request](/chant/guide/pr-environments/) for the setup.
 
-`pr-env up` measures the change as `pr-plan` does and plans it into `pr-<n>`, with the build parameter `ownership.env` reads set to `pr-<n>`. An empty plan applies at once. Any other applies once an approval of its digest stands under gate `pr-env` on op `pr-<n>`, and until then the command exits 3. A project whose ownership marker could not name `pr-<n>` is refused, as is a config that does not declare the template or cover `pr-<n>`. Each apply appends an `up` record to `_pr-envs/records.jsonl` on `chant/lifecycle`, which names the marker and the expiry.
+`pr-env up` measures the change as `pr-plan` does and plans it into `pr-<n>`, with the build parameter `ownership.env` reads set to `pr-<n>`. An empty plan applies at once. Any other applies once an approval of its digest stands under gate `pr-env` on op `pr-<n>`, and until then the command exits 3. A project whose ownership marker could not name `pr-<n>` is refused, as is a config that does not declare the template or cover `pr-<n>`. Each apply appends an `up` record to `_pr-envs/records.jsonl` on `chant/lifecycle`, which names the marker and the expiry. With `--no-push` the record goes to `pr-env-record.json` under `--output` instead. The `ci.hooks` at base run around the plan and the apply.
+
+`pr-env post` is the generated pipeline's second half ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). It runs at the target branch's commit, takes the report and the record `up --no-push` left under `--output`, and checks them as data. A kept record gets the post job's own commit, actor and expiry, and is appended to `chant/lifecycle`. Then the note and the status are posted.
 
 `pr-env down` tears down what carries the marker `{ stack, env: "pr-<n>" }` that the environment's record names, after checking the record is this pull request's. It drops any candidate with another marker before anything is deleted, and appends a `down` record. An environment whose teardown left something stays live. With no live record it exits 0.
 
@@ -477,7 +481,9 @@ The report goes to `pr-env-<stage>.json` under `--output`, beside `pr-env-note.m
 | `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status; `sweep` also reads whether each pull request is open. |
 | `--member <name>` | A workspace member's environment, run in the member's directory. The op is `pr-<n>-<member>`. |
 | `--output <dir>` | Where the report and the note go. Defaults to `.chant/pr-env`. |
-| `--no-push` | Write the record to the local `chant/lifecycle` and do not push it. |
+| `--no-push` | `up` only. Write the record to `pr-env-record.json` under `--output`, for `pr-env post`, and touch no `chant/lifecycle`. |
+| `--head <sha>` | `post` only. The commit `up` applied from, which the record and the status name. Required. |
+| `--result <result>` | `post` only. The `up` job's result, said in the note when it handed on no report. |
 | `--json` | Print the report on stdout. |
 
 ### `components promote`

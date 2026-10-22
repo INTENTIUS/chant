@@ -1031,7 +1031,9 @@ Component release ledger + status:
                             --base <ref> --pr <n> applies the change to pr-<n>,
                             derived from ci.prEnvironment.template, once an
                             approval of its plan stands (chant approve pr-<n>
-                            pr-env --plan <digest>); down --pr <n> tears down
+                            pr-env --plan <digest>); post --pr <n> --head
+                            <sha> keeps the record up --no-push handed on and
+                            posts the note; down --pr <n> tears down
                             only what carries pr-<n>'s ownership marker; sweep
                             tears down each one whose TTL passed or whose pull
                             request closed. Never a release target

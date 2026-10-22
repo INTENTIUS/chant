@@ -467,7 +467,7 @@ A rule that plans as an identity any rule applies as is refused with `declaratio
 | `template` | The declared environment of the project that `pr-<n>` takes its endpoint from, unless a `pr-*` entry declares one. Required. |
 | `ttl` | How long the environment lives after its last apply, as `90m`, `72h` or `7d`, and 72h when absent. `chant components pr-env sweep` tears down one whose TTL passed. |
 
-The jobs take the block from the declaration at the pull request's base, which keeps a change from naming its own template or TTL. Releases come from green commits, so a release never targets a pull request's environment. A declaration that uses the block needs `minReader` set to 0.124.37 or newer, the first chant that reads it.
+The jobs take the block from the declaration at the pull request's base, which keeps a change from naming its own template or TTL. Releases come from green commits, so a release never targets a pull request's environment. A declaration that uses the block needs `minReader` set to 0.124.42 or newer, the first chant that reads it.
 
 ## Retention
 

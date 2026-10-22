@@ -7,8 +7,14 @@
  * chant components pr-env up    --base <ref> --pr <n> [--forge <kind>] [--member <name>] [--output <dir>] [--no-push]
  * chant approve pr-<n> pr-env --plan <digest> --approver <you> --sign
  * chant components pr-env down  --pr <n> [--reason closed|expired] [--forge <kind>] [--member <name>]
+ * chant components pr-env post  --pr <n> --head <sha> [--result <r>] --forge <kind>
  * chant components pr-env sweep [--forge <kind>]
  * ```
+ *
+ * In the generated jobs (#4295) `up` runs the change's code with no forge
+ * token, so it passes `--no-push` and hands its report and record on, and
+ * `post` runs in a fresh job at the target branch's commit, appends the
+ * record and posts the note.
  *
  * `up` prepares the change as `pr-plan` does, with `--env pr-<n>` and the
  * build parameter `ownership.env` reads set to `pr-<n>`, so every resource
@@ -23,7 +29,7 @@
  * decision, as is the TTL the base set for `sweep`.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadChantConfig, type ChantConfig } from "../../config";
 import { ENV_VAR } from "../../env";
@@ -33,7 +39,10 @@ import {
   PR_ENV_GATE,
   PR_ENV_LEDGER_DIR,
   PR_ENV_LEDGER_FILE,
+  PR_ENV_RECORD_FILE,
   PR_ENV_REPORT_DIR,
+  acceptHandedRecord,
+  handedPrEnvReport,
   PR_ENV_TEMPLATE_VAR,
   derivePrEnvironment,
   expired,
@@ -62,7 +71,7 @@ import { formatError, formatInfo, formatWarning } from "../format";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { CommandContext } from "../registry";
 
-const USAGE = "chant components pr-env up --base <ref> --pr <n> | down --pr <n> [--reason closed|expired] | sweep";
+const USAGE = "chant components pr-env up --base <ref> --pr <n> [--no-push] | post --pr <n> --head <sha> | down --pr <n> [--reason closed|expired] | sweep";
 
 const fail = (message: string, hint?: string): number => {
   console.error(formatError({ message, ...(hint ? { hint } : {}) }));
@@ -75,7 +84,8 @@ export async function runComponentsPrEnv(ctx: CommandContext): Promise<number> {
   if (action === "up") return prEnvUp(ctx);
   if (action === "down") return prEnvDown(ctx);
   if (action === "sweep") return prEnvSweep(ctx);
-  return fail(action ? `pr-env ${action} is not one of up, down or sweep` : "pr-env needs an action: up, down or sweep", USAGE);
+  if (action === "post") return prEnvPost(ctx);
+  return fail(action ? `pr-env ${action} is not one of up, post, down or sweep` : "pr-env needs an action: up, post, down or sweep", USAGE);
 }
 
 function forgeOf(ctx: CommandContext): PrForge | undefined | number {
@@ -105,12 +115,23 @@ async function readRecords(): Promise<PrEnvRecord[]> {
   return parsePrEnvRecords(await readBlobFromPath(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE));
 }
 
-/** Append `record` and push chant/lifecycle, unless `--no-push`. A failure warns: what was applied or torn down stands. */
+/**
+ * Append `record` to chant/lifecycle and push it. With `--no-push` (#4295)
+ * the record is written to `pr-env-record.json` under `--output` instead,
+ * for `pr-env post` to append from a job that runs none of the change's
+ * code. A failure warns: what was applied or torn down stands.
+ */
 async function appendRecord(ctx: CommandContext, record: PrEnvRecord): Promise<void> {
-  const { appendLedgerLine, pushLifecycleReport } = await import("../../lifecycle/git");
+  if (ctx.args.noPush) {
+    const dir = resolve(ctx.args.output ?? PR_ENV_REPORT_DIR);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, PR_ENV_RECORD_FILE), JSON.stringify(record, null, 2) + "\n");
+    return;
+  }
+  const { appendLedgerLine, fetchLifecycle, pushLifecycleReport } = await import("../../lifecycle/git");
   try {
+    await fetchLifecycle().catch(() => false);
     await appendLedgerLine(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, JSON.stringify(record), `Pull request environment ${record.env} ${record.kind} (${record.result})`);
-    if (ctx.args.noPush) return;
     const pushed = await pushLifecycleReport();
     if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
   } catch (err) {
@@ -183,11 +204,13 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
 }
 
 async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<typeof derivePrEnvironment>, { refusal: string }>, ttl: number): Promise<number> {
-  const { prepare, planBare } = await import("./pr");
+  const { prepare, planAll, placeHooks, runStageHook } = await import("./pr");
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
   const forge = p.forge;
   const op = prOp(pr, p.member);
+  // ci.hooks (#4288), read at base as the other pull-request jobs read them, around the plan and the apply.
+  placeHooks(ctx, p, "apply", op);
   const base: PrEnvReport = {
     stage: "up",
     pr,
@@ -208,7 +231,7 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
     return PR_ENV_EXIT.done;
   }
 
-  const set = await planBare(p);
+  const set = await planAll(p);
   const rows = (status: (component: string) => string) =>
     p.plan.order.map((component) => {
       const ms = set.members.filter((m) => m.component === component);
@@ -217,7 +240,7 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
     });
   const digest = set.doc.digest;
   if (set.failed) {
-    await finish(ctx, forge, { ...base, digest, status: "plan-failed", components: rows((c) => (set.members.some((m) => m.component === c && m.status === "plan-failed") ? "plan failed" : "planned")) });
+    await finish(ctx, forge, { ...base, digest, status: "plan-failed", ...(p.hookFailed ? { message: p.hookFailed } : {}), components: rows((c) => (set.members.some((m) => m.component === c && m.status === "plan-failed") ? "plan failed" : "planned")) });
     return PR_ENV_EXIT.failed;
   }
 
@@ -240,7 +263,13 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
     approvedBy = approval.approvedBy ?? [];
   }
 
+  const hookStop = runStageHook(p, "before-apply", p.plan.order, set);
+  if (hookStop) {
+    await finish(ctx, forge, { ...base, digest, status: "failed", message: hookStop, components: rows(() => "planned"), ...(approvedBy ? { approvedBy } : {}) });
+    return PR_ENV_EXIT.failed;
+  }
   const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: derived.env, set, gate: PR_ENV_GATE });
+  const afterHook = runStageHook(p, "after-apply", p.plan.order, set, "the environment stands as applied");
   const status = (component: string) => applied.members.find((m) => m.component === component)?.status ?? "planned";
   const ok = applied.status === "applied";
   const now = new Date();
@@ -272,10 +301,64 @@ async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<t
     components: rows(status),
     ...(approvedBy ? { approvedBy } : {}),
     expiresAt,
-    ...(ok ? {} : { message: applied.status === "waiting" ? "A component read an upstream output that moved when it applied; run the job again to plan it against the new value." : "A component failed to apply; what applied stays in the environment and is torn down with it." }),
+    ...(ok ? (afterHook ? { message: afterHook } : {}) : { message: applied.status === "waiting" ? "A component read an upstream output that moved when it applied; run the job again to plan it against the new value." : "A component failed to apply; what applied stays in the environment and is torn down with it." }),
   });
   console.error((ok ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-env up: ${derived.env} ${ok ? "applied" : applied.status}; it expires ${expiresAt}`));
-  return ok ? PR_ENV_EXIT.done : PR_ENV_EXIT.failed;
+  return ok && !afterHook ? PR_ENV_EXIT.done : PR_ENV_EXIT.failed;
+}
+
+// ── post ───────────────────────────────────────────────────────────────────
+
+/**
+ * `pr-env post --pr <n> --head <sha> [--result <r>]` (#4295): from a job at
+ * the target branch's commit that runs none of the change's code, take the
+ * report and the record `pr-env up --no-push` handed on, check the record
+ * as data against the settings at this commit, append it to chant/lifecycle,
+ * and post the note and the `chant/pr-env` status with the forge token the
+ * up job never held.
+ */
+async function prEnvPost(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  if (args.pr === undefined || !args.head) return fail("pr-env post needs the pull request and the commit its environment was applied from: --pr <n> --head <sha>");
+  const forge = forgeOf(ctx);
+  if (typeof forge === "number") return forge;
+  const pr = args.pr;
+  const env = prEnvironmentName(pr);
+  const member = memberOf(ctx);
+  const dir = resolve(args.output ?? PR_ENV_REPORT_DIR);
+  const read = (name: string): unknown => {
+    try {
+      return JSON.parse(readFileSync(join(dir, name), "utf-8"));
+    } catch {
+      return undefined;
+    }
+  };
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const setting = scopeSource(resolve("."), "HEAD").declaration?.ci?.prEnvironment;
+  const handed = handedPrEnvReport(read("pr-env-up.json"), { pr, head: args.head, ...(member ? { member } : {}) });
+  const report: PrEnvReport =
+    "report" in handed
+      ? handed.report
+      : { stage: "up", pr, env, ...(member ? { member } : {}), template: setting?.template ?? "", head: args.head, op: prOp(pr, member), gate: PR_ENV_GATE, digest: "", status: "failed", components: [], message: handed.refusal + (args.planResult && args.planResult !== "success" ? ` The env-up job's result is ${args.planResult}.` : "") };
+  const raw = read(PR_ENV_RECORD_FILE);
+  let code: number = "report" in handed ? (report.status === "waiting" || report.status === "changed" ? PR_ENV_EXIT.waiting : prEnvStatusState(report) === "failure" ? PR_ENV_EXIT.failed : PR_ENV_EXIT.done) : PR_ENV_EXIT.failed;
+  if (raw !== undefined) {
+    if (!setting) {
+      report.message = `${report.message ? `${report.message} ` : ""}The declaration here names no ci.prEnvironment, so the record was not kept.`;
+      code = PR_ENV_EXIT.failed;
+    } else {
+      const accepted = acceptHandedRecord(raw, { pr, head: args.head, template: setting.template, ttlMs: ttlMs(setting.ttl) ?? ttlMs("72h")!, now: new Date(), by: actor(), ...(member ? { member } : {}), ...(forge?.runUrl ? { runUrl: forge.runUrl } : {}) });
+      if ("refusal" in accepted) {
+        report.message = `${report.message ? `${report.message} ` : ""}${accepted.refusal}`;
+        code = PR_ENV_EXIT.failed;
+      } else {
+        await appendRecord({ ...ctx, args: { ...args, noPush: false } }, accepted.record);
+        if (accepted.record.expiresAt) report.expiresAt = accepted.record.expiresAt;
+      }
+    }
+  }
+  await finish(ctx, forge, report);
+  return code;
 }
 
 // ── down ───────────────────────────────────────────────────────────────────
