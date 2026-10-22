@@ -28,8 +28,8 @@ The attempt record is kept even when a job fails. That is how the next wave lear
 Say wave 1 holds `net` and `db`, and wave 2 holds `app`, which reads `net`, and `web`, which reads `db`. `db` fails to apply.
 
 - Wave 1 applies `net`, records `db` as failed, and exits 1.
-- Wave 2 runs anyway. It blocks `web` behind `db` and deploys `app` (`packages/core/src/cli/handlers/pr.ts:1426`).
-- Since a member of wave 2 is blocked, that job exits 1 too (`packages/core/src/cli/handlers/pr.ts:1564`).
+- Wave 2 runs anyway. It blocks `web` behind `db` and deploys `app` (`packages/core/src/cli/handlers/pr.ts:1584`).
+- Since a member of wave 2 is blocked, that job exits 1 too (`packages/core/src/cli/handlers/pr.ts:1732`).
 
 A component blocked behind a blocked component names the one that failed, not the one in between (`blockedMembers`, `packages/core/src/wave-blocked.ts:85`). The job log prints the blocked set:
 
@@ -37,13 +37,13 @@ A component blocked behind a blocked component names the one that failed, not th
 wave 2: web (blocked by db), so not planned or applied
 ```
 
-A member of a later wave that fails to plan stops its own wave from applying. The waves after it still run what does not read from it (`packages/core/src/cli/handlers/pr.ts:1466`).
+A member of a later wave that fails to plan stops its own wave from applying. The waves after it still run what does not read from it (`packages/core/src/cli/handlers/pr.ts:1626`).
 
-A wave that waits at its gate still stops every wave after it. The next wave's job refuses with exit 3 and applies nothing until that gate is approved and its job runs again (`packages/core/src/cli/handlers/pr.ts:1324`, `packages/core/src/components/fan-out-run.ts:554`).
+A wave that waits at its gate still stops every wave after it. The next wave's job refuses with exit 3 and applies nothing until that gate is approved and its job runs again (`packages/core/src/cli/handlers/pr.ts:1482`, `packages/core/src/components/fan-out-run.ts:554`).
 
 ## Read the blocked set in the note
 
-The pull-request note gives each blocked member's status as `blocked by <component>`, and lists the set below the table (`blockedLine`, `packages/core/src/pr-loop.ts:452`):
+The pull-request note gives each blocked member's status as `blocked by <component>`, and lists the set below the table (`blockedLine`, `packages/core/src/pr-loop.ts:497`):
 
 ```text
 | `web` | web | blocked by `db` | 0 | 1 | 0 | 0 |
