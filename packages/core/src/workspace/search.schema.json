@@ -651,6 +651,13 @@
           "count": {
             "type": "integer",
             "minimum": 0
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ids of the matches in the group, in match order (#4382); `count` is its length. In the workspace form they are `<member>/<id>`, and a merged group lists them only when every member that counted into it listed its own (an older member chant lists none). Written by chant 0.124.46 and newer."
           }
         }
       }

@@ -3,6 +3,7 @@ import type { GraphIR, IRNode } from "../../graph-ir";
 import {
   countGroups,
   formatCounts,
+  groupMembers,
   groupOf,
   hasManyTerraformRoots,
   parseCountBy,
@@ -169,5 +170,22 @@ describe("grouped output", () => {
       " 1  Z",
       "— 11 total · 2 groups by kind",
     ]);
+  });
+});
+
+describe("--count-by --json lists each group's ids (#4382)", () => {
+  it("lists the matches of each group in match order, the count is their number, and the groups are countGroups'", () => {
+    for (const by of [{ by: "kind" }, { by: "module" }, { by: "attr", name: "expansion" }] as CountBy[]) {
+      const groups = groupMembers(app, by);
+      expect(groups.map(({ group, count }) => ({ group, count }))).toEqual(countGroups(app, by));
+      for (const g of groups) expect(g.ids).toHaveLength(g.count);
+      // Every match is in exactly one group.
+      expect(groups.flatMap((g) => g.ids).sort()).toEqual(app.map((n) => n.id).sort());
+    }
+    expect(groupMembers(app, { by: "module" })[0]).toEqual({
+      group: "(root)",
+      count: 5,
+      ids: ["app/aws_instance.web", "app/aws_instance.worker", "app/aws_s3_bucket.assets", "app/data.aws_iam_policy.boundary", "app/var.region"],
+    });
   });
 });

@@ -94,7 +94,7 @@ interface MemberAnswer {
   source: Record<string, unknown>;
   matches?: MemberMatch[];
   countBy?: string;
-  groups?: { group: string; count: number }[];
+  groups?: { group: string; count: number; ids?: string[] }[];
   total?: number;
   provenance?: string;
   liveFailures?: string[];
@@ -123,7 +123,7 @@ export interface SearchMember {
   source?: Record<string, unknown>;
   /** The member's matched ids, `<member>/<id>`. */
   matches?: string[];
-  groups?: { group: string; count: number }[];
+  groups?: { group: string; count: number; ids?: string[] }[];
   total?: number;
   provenance?: string;
   liveFailures?: string[];
@@ -143,7 +143,7 @@ interface WorkspaceHead extends SearchHead {
 
 export type WorkspaceSearchDocument =
   | (WorkspaceHead & { matches: (MemberMatch & { member: string })[] })
-  | (WorkspaceHead & { countBy: string; groups: { group: string; count: number }[]; total: number })
+  | (WorkspaceHead & { countBy: string; groups: { group: string; count: number; ids?: string[] }[]; total: number })
   | (SearchHead & { query: string; error: { code: WorkspaceSearchErrorCode | SearchErrorCode; message: string; hint?: string } });
 
 export interface WorkspaceSearchResult {
@@ -264,10 +264,15 @@ function prefixMatch(member: string, m: MemberMatch): MemberMatch & { member: st
   };
 }
 
-/** Sort groups by count, highest first, then by name: the order `--count-by` prints. */
-function sortGroups(groups: Map<string, number>): { group: string; count: number }[] {
+/**
+ * Sort groups by count, highest first, then by name: the order `--count-by`
+ * prints. A group carries `ids` (#4382) when every member that counted into it
+ * listed its own; a member on an older chant lists none, and then the merged
+ * group has a count and no ids, rather than ids that fall short of it.
+ */
+function sortGroups(groups: Map<string, { count: number; ids: string[] | null }>): { group: string; count: number; ids?: string[] }[] {
   return [...groups]
-    .map(([group, count]) => ({ group, count }))
+    .map(([group, g]) => ({ group, count: g.count, ...(g.ids ? { ids: g.ids } : {}) }))
     .sort((a, b) => b.count - a.count || (a.group < b.group ? -1 : a.group > b.group ? 1 : 0));
 }
 
@@ -325,7 +330,7 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
     const byId = new Map(results.map((r) => [r.id, r]));
     const members: SearchMember[] = [];
     const matches: (MemberMatch & { member: string })[] = [];
-    const groups = new Map<string, number>();
+    const groups = new Map<string, { count: number; ids: string[] | null }>();
     let failed = plan.unreadable.length > 0;
     for (const m of declaration.members) {
       if (q.members?.length && !q.members.includes(m.name)) continue;
@@ -361,12 +366,15 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
         entry.matches = rows.map((x) => x.id);
       }
       if (Array.isArray(a.groups)) {
-        entry.groups = a.groups;
+        // Each group's ids (#4382) as `workspace graph` gives the same nodes: `<member>/<id>`.
+        entry.groups = a.groups.map((g) => (Array.isArray(g.ids) ? { ...g, ids: g.ids.map((id) => composedId(m.name, id)) } : g));
         entry.total = a.total ?? a.groups.reduce((n, g) => n + g.count, 0);
         // A module is a member's own: `module.vpc` in two members is two modules.
-        for (const g of a.groups) {
+        for (const g of entry.groups) {
           const name = checked.countBy?.by === "module" ? composedId(m.name, g.group) : g.group;
-          groups.set(name, (groups.get(name) ?? 0) + g.count);
+          const was = groups.get(name);
+          const ids = Array.isArray(g.ids) && (!was || was.ids) ? [...(was?.ids ?? []), ...g.ids] : null;
+          groups.set(name, { count: (was?.count ?? 0) + g.count, ids });
         }
       }
       if (a.provenance !== undefined) entry.provenance = a.provenance;

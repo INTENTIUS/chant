@@ -20,7 +20,7 @@ import { readChantPackageVersion } from "../../package-version";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
-import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
+import { parseCountBy, countGroups, countsJson, formatCounts, groupMembers, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode, type SearchFailure, type SearchHead } from "../../workspace/search-contract";
@@ -378,7 +378,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const payload = countBy
       ? {
           ...head,
-          ...countsJson(query, env ? { ...source, env } : source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
+          ...countsJson(query, env ? { ...source, env } : source, groupMembers(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
           provenance: provenanceText,
           ...(driftJson ? { drift: driftJson } : {}),
         }
