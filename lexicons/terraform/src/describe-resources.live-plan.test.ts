@@ -13,7 +13,8 @@
  * is `live-plan-depth.acceptance.test.ts`.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -21,7 +22,7 @@ import { normalizeObservation } from "@intentius/chant/observation";
 import type { Declarable } from "@intentius/chant/declarable";
 import { buildLiveGraphIr } from "@intentius/chant/graph-ir";
 import { __searchInternals } from "@intentius/chant/cli/handlers/search";
-import { describeResources, type TerraformReadDeps } from "./describe-resources";
+import { describeResources, livePlanDocumentFile, TERRAFORM_LIVE_PLAN_DIR_ENV, type TerraformReadDeps } from "./describe-resources";
 import { TerraformPlanReadError } from "./op/activities/terraform";
 import { PLAN_ATTRIBUTE_NAMES, SENSITIVE_VALUE } from "./plan-observation";
 import { renderTerraformRoots } from "./hcl/roots";
@@ -238,5 +239,49 @@ describe("sensitive values on a live root (#4371)", () => {
         { path: "tags_all.token", before: SENSITIVE_VALUE, after: SENSITIVE_VALUE },
       ]),
     );
+  });
+});
+
+describe("the live-plan document, handed to a caller that asks (behold#924)", () => {
+  const withEnv = async <T>(value: string | undefined, fn: () => Promise<T>): Promise<T> => {
+    const before = process.env[TERRAFORM_LIVE_PLAN_DIR_ENV];
+    if (value === undefined) delete process.env[TERRAFORM_LIVE_PLAN_DIR_ENV];
+    else process.env[TERRAFORM_LIVE_PLAN_DIR_ENV] = value;
+    try {
+      return await fn();
+    } finally {
+      if (before === undefined) delete process.env[TERRAFORM_LIVE_PLAN_DIR_ENV];
+      else process.env[TERRAFORM_LIVE_PLAN_DIR_ENV] = before;
+    }
+  };
+
+  it("writes the document the verdicts came from, at either depth, as <root>.live-plan.json", async () => {
+    for (const depth of ["plan", "state"] as const) {
+      const out = mkdtempSync(join(tmpdir(), "chant-live-plan-dir-"));
+      try {
+        const result = await withEnv(out, async () => describeResources(await options("choudoufu", depth), deps()));
+        expect(normalizeObservation(result).resources["estate/aws_vpc.main"]!.ownership).toBe("owned");
+        expect(readdirSync(out)).toEqual([livePlanDocumentFile("estate")]);
+        expect(JSON.parse(readFileSync(join(out, "estate.live-plan.json"), "utf-8"))).toEqual(LIVE_PLAN);
+      } finally {
+        rmSync(out, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("writes nothing unless asked, and nothing for a relative path", async () => {
+    const out = mkdtempSync(join(tmpdir(), "chant-live-plan-dir-"));
+    try {
+      await withEnv(undefined, async () => describeResources(await options(), deps()));
+      await withEnv("relative/dir", async () => describeResources(await options(), deps()));
+      expect(readdirSync(out)).toEqual([]);
+      expect(existsSync(join(ROOT_DIR, "relative"))).toBe(false);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("a root name that is not a file name is made one", () => {
+    expect(livePlanDocumentFile("app/prod")).toBe("app_prod.live-plan.json");
   });
 });

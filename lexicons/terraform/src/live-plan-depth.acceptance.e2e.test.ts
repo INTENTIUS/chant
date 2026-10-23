@@ -28,7 +28,7 @@ import { normalizeObservation } from "@intentius/chant/observation";
 import type { Declarable } from "@intentius/chant/declarable";
 import { describeResources } from "./describe-resources";
 import { renderTerraformRoots } from "./hcl/roots";
-import { DEFAULT_LIVE_PLAN_DOCUMENT_FILE, PLAN_READ_DIR_PREFIX } from "./op/activities/terraform";
+import { PLAN_READ_DIR_PREFIX } from "./op/activities/terraform";
 import { SENSITIVE_VALUE } from "./plan-observation";
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "__fixtures__", "live-estate");
@@ -156,10 +156,9 @@ describe.skipIf(missing !== undefined)(
       }
       const result = normalizeObservation(raw);
 
-      // The plan read adds nothing to the root. `chant.live-plan.json` is the
-      // live-plan read's own document file, written at the default depth too
-      // (`choudoufuLivePlanDocument`); it is the one new entry.
-      expect(snapshot(root).filter((e) => !e.startsWith(`${DEFAULT_LIVE_PLAN_DOCUMENT_FILE} `))).toEqual(before);
+      // The read adds nothing to the root: neither the plan file nor the
+      // live-plan document (#4379).
+      expect(snapshot(root)).toEqual(before);
       expect(planDirs()).toEqual(tempBefore);
       expect(result.notes.join("\n")).toMatch(/estate: the plan read answered \(`choudoufu plan -input=false -lock=false -out=<tmp>\/plan\.tfplan`\)/);
       expect(new Set(Object.values(result.sources))).toEqual(new Set(["live+plan"]));

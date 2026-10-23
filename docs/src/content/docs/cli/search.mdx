@@ -277,7 +277,10 @@ holds. The provenance line still follows, so a grouped live answer says what
 backed it.
 
 With `--json`, the object carries the groups in the same order and the total
-in place of `matches`, plus `provenance`, `liveFailures` and `drift` as the
+in place of `matches`. Each group lists the ids of its matches in `ids`, in
+match order, so a reader can draw a group without working out which group a
+node is in ([#4382](https://github.com/INTENTIUS/chant/issues/4382)). It
+also carries `provenance`, `liveFailures` and `drift` as the
 [`--json`](#--json) document has them (`explain` is not carried here):
 
 ```json
@@ -290,9 +293,9 @@ in place of `matches`, plus `provenance`, `liveFailures` and `drift` as the
   "source": { "kind": "declared" },
   "countBy": "module",
   "groups": [
-    { "group": "app/(root)", "count": 2 },
-    { "group": "app/module.cdn", "count": 1 },
-    { "group": "network/(root)", "count": 1 }
+    { "group": "app/(root)", "count": 2, "ids": ["app/aws_instance.web", "app/aws_s3_bucket.assets"] },
+    { "group": "app/module.cdn", "count": 1, "ids": ["app/module.cdn/aws_cloudfront_distribution.edge"] },
+    { "group": "network/(root)", "count": 1, "ids": ["network/aws_vpc.main"] }
   ],
   "total": 4,
   "provenance": "declared only · no observation · physical ids unavailable"
