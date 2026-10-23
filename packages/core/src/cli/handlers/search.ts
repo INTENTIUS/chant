@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
-import { build } from "../../build";
+import { build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
-import { enrichEffectiveTopology } from "../../graph-effective";
+import { enrichEffectiveTopology, terraformResourceType } from "../../graph-effective";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -14,7 +14,8 @@ import type { ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
+import type { Declarable } from "../../declarable";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -317,6 +318,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
   } else {
     const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+    await joinBuildRoots(discovered.entities, ctx, projectPath, config);
     ir = buildGraphIr(discovered.entities);
   }
 
@@ -345,7 +347,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
-  provenance(matches, source, recorded, liveFailures);
+  provenance(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir));
   // Qualifies the provenance line, so it sits with it: one line per distinct
   // note for the whole run, not one per stack, and after the rows (#1265).
   for (const n of liveNotes) console.error(formatWarning({ message: n }));
@@ -394,6 +396,33 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
+
+/**
+ * Join build-root entities (a terraform root's blocks, a rendered kustomize
+ * root) to the discovered set, the way `chant graph` and `build()` do (#4362).
+ * A terraform estate has no typed source at all, so without this a declared
+ * search over one had nothing to search. Best-effort: a project whose lexicons
+ * cannot be loaded is searched over its typed source alone, with a warning.
+ */
+async function joinBuildRoots(
+  entities: Map<string, Declarable>,
+  ctx: CommandContext,
+  projectPath: string,
+  config: object,
+): Promise<void> {
+  let plugins = ctx.plugins;
+  if (plugins.length === 0) {
+    try {
+      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
+    } catch {
+      return;
+    }
+  }
+  const contributors = collectBuildRootContributors(plugins, config as Record<string, unknown>, projectPath);
+  if (contributors.length === 0) return;
+  const merged = await mergeBuildRootEntities(entities, contributors);
+  for (const message of [...merged.warnings, ...merged.errors]) console.error(formatWarning({ message }));
+}
 
 /** Where an answer's facts came from, for the provenance line (#1266). */
 type AnswerSource =
@@ -510,9 +539,18 @@ function ambientHint(
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, liveFailures: string[] = []): void {
+function provenance(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): void {
   if (source.kind === "declared") {
-    console.log("— declared only · no observation · physical ids unavailable");
+    // A derived fact the query relied on (#4362) was folded from declared
+    // references alone, so it describes the source, not the account.
+    const from = derived.length > 0 ? ` · ${derived.join(", ")} derived from declared references` : "";
+    console.log(`— declared only · no observation · physical ids unavailable${from}`);
     return;
   }
   const bound = matches.filter((n) => n.physicalId).length;
@@ -634,14 +672,25 @@ function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR, backed = 
   if (!derived || matches.length === 0 || !backed) return;
   const used = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
   const unused = new Set<string>();
-  for (const n of matches) {
-    for (const [kind, names] of Object.entries(derived)) {
-      if (!n.kind?.includes(kind)) continue;
-      for (const name of names) if (!used.has(name)) unused.add(name);
-    }
-  }
+  for (const n of matches) for (const name of derivedNames(n, ir)) if (!used.has(name)) unused.add(name);
   if (unused.size === 0) return;
   console.log(`— also derived for these resources: ${[...unused].sort().join(", ")}`);
+}
+
+/** The derived attributes recorded for a node's kind (or its terraform resource type, #4362). */
+function derivedNames(n: IRNode, ir: GraphIR): string[] {
+  const tfType = terraformResourceType(n);
+  return Object.entries(ir.derivedAttrs ?? {})
+    .filter(([kind]) => n.kind?.includes(kind) || kind === tfType)
+    .flatMap(([, names]) => names);
+}
+
+/** The derived attributes the query's `attr:` terms relied on, for the provenance line. */
+function derivedUsed(terms: Term[], matches: IRNode[], ir: GraphIR): string[] {
+  const queried = new Set(terms.filter((t) => t.kind === "attr" && !t.negated).map((t) => t.a));
+  const out = new Set<string>();
+  for (const n of matches) for (const name of derivedNames(n, ir)) if (queried.has(name)) out.add(name);
+  return [...out].sort();
 }
 
 /**
