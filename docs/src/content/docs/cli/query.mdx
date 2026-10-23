@@ -1,13 +1,13 @@
 ---
 title: "chant query"
-description: Run one read-only SQL statement over the snapshots, Op runs, gates, deploys and releases on chant/lifecycle, loaded into node:sqlite with a versioned table schema
+description: Run one read-only SQL statement over the records on chant/lifecycle, at its tip or an earlier commit, loaded into node:sqlite with a versioned table schema
 diataxis: reference
 ---
 
 ## Synopsis
 
 ```
-chant query "<sql>" [dir] [--member <name>] [--json]
+chant query "<sql>" [dir] [--member <name>] [--at <rev>] [--json]
 ```
 
 ## Description
@@ -23,9 +23,9 @@ prod  k8s      6
 (2 rows)
 ```
 
-Only a statement that begins with `SELECT`, `WITH` or `VALUES` runs, and the database takes `PRAGMA query_only`, so nothing is written (`packages/core/src/lifecycle/query.ts:270` and `:285`). It reads the local branch and never fetches. Run `git fetch origin chant/lifecycle:chant/lifecycle` first to query what CI recorded.
+Only a statement that begins with `SELECT`, `WITH` or `VALUES` runs, and the database takes `PRAGMA query_only`, so nothing is written (`packages/core/src/lifecycle/query.ts:435` and `:457`). It reads the local branch and never fetches. Run `git fetch origin chant/lifecycle:chant/lifecycle` first to query what CI recorded.
 
-Inside a workspace the command reads every member's ledger and each row names its member, as `packages/core/src/cli/handlers/query.ts:44` sets it. Outside a workspace it reads the project's own ledger and leaves `member` NULL. The engine is the SQLite built into Node from version `22.13`, `node:sqlite`.
+Inside a workspace the command reads every member's ledger and each row names its member, as `packages/core/src/lifecycle/query-ledgers.ts:47` sets it. Outside a workspace it reads the project's own ledger and leaves `member` NULL. The engine is the SQLite built into Node from version `22.13`, `node:sqlite`.
 
 ## Tables
 
@@ -40,9 +40,18 @@ Every table starts with `member`. A column marked JSON holds JSON text for `json
 | `deploys` | deploy record, `<env>/releases.jsonl` | `env`, `component`, `digest`, `git_sha`, `run_id`, `forge`, `run_url`, `timestamp`, `actor`, `approver`, `release_digest`, `digest_kind`, `promoted_from` (JSON), `restores` (JSON), `redeploys` (JSON) |
 | `releases` | release file, `_releases/<digest>.json` | `release_digest`, `release_member`, `git_sha`, `envs` (comma list), `artifacts` (JSON) |
 | `cuts` | line of `_releases/cuts.jsonl` | `release_digest`, `label`, `actor`, `timestamp`, `run_id`, `forge`, `channel`, `signed` (INTEGER), `composed_base` |
-| `chant_schema` | column of every table above | `version` (INTEGER), `table_name`, `column_name`, `type`, `position` (INTEGER) |
+| `converge` | ConvergeOp tick, `<env>/converge.jsonl` | `env`, `id`, `op`, `timestamp`, `fired_rule_ids` (JSON), `outcomes` (JSON), `components` (JSON), `resources` (JSON), `drifted`, `remediated`, `reported`, `skipped_budget`, `skipped_flap`, `unobserved`, `adopted`, `gated` (all INTEGER), `log` |
+| `deploy_outcomes` | component of a deploy outcome, `<env>/outcomes.jsonl` | `env`, `verb`, `run_id`, `timestamp`, `actor`, `release_digest`, `status`, `component`, `outcome`, `digest`, `component_release_digest` |
+| `builds` | build manifest, `_builds/<digest>.json` | `manifest_digest`, `component`, `created_at`, `artifacts` (INTEGER), `legacy_digest` (INTEGER) |
+| `build_artifacts` | entry of a build manifest | `manifest_digest`, `component`, `kind`, `path`, `digest`, `media_type`, `subject_digest`, `package_count` (INTEGER), `generator` |
+| `change_sets` | stored change set, `_change-sets/<digest>.json` | `digest`, `release_digest`, `environment`, `chant`, `plans` (JSON), `entries` (INTEGER), `holes` (INTEGER), `actions` (JSON), `failed` (JSON), `graph_member`, `graph_at` |
+| `change_set_entries` | entry of a stored change set | `digest`, `set_member`, `lexicon`, `planner`, `address`, `type`, `name`, `module`, `deposed`, `physical_id`, `action`, `importing` (INTEGER), `disruption`, `region`, `scope`, `node`, `source`, `plan_digest`, `attributes` (JSON) |
+| `leases` | line of a work lease history, `_leases/<item>.jsonl` | `item`, `event`, `holder`, `written_by`, `token`, `acquired_at`, `expires_at`, `timestamp`, `outcome`, `note` |
+| `chant_schema` | column of every table above | `version` (INTEGER), `table_name`, `column_name`, `type`, `position` (INTEGER), `source` |
 
-The columns are listed in `QUERY_TABLES` (`packages/core/src/lifecycle/query.ts:49`).
+The columns are listed in `QUERY_TABLES` (`packages/core/src/lifecycle/query.ts:67`). The tables from `converge` down came in [#4329](https://github.com/INTENTIUS/chant/issues/4329), within version 1.
+
+`deploy_outcomes` has one row per component. `status` is how the run ended (`fail` or `gated`) and `outcome` is what happened to that component. In `change_set_entries`, `set_member` is the member an entry plans for inside the document, and `plan_digest` is that member's plan digest. `chant_schema.source` is `chant` for these tables and a product's name for its own.
 
 ## Schema version
 
@@ -54,7 +63,28 @@ chant query "SELECT DISTINCT version FROM chant_schema"
 
 ## What is left out
 
-Each ledger is parsed by the reader its own commands use, and a line or file that is not its kind is left out and counted. The text output warns with the counts on stderr, and `--json` prints them under `malformed`. A release file whose content does not hash to its digest counts as malformed, as `readAllReleases` counts it (`packages/core/src/lifecycle/query.ts:223`). Other JSON files beside the snapshots, such as the observation baseline, are skipped (`packages/core/src/lifecycle/query.ts:175`).
+Each ledger is parsed by the reader its own commands use, and a line or file that is not its kind is left out and counted. The text output warns with the counts on stderr, and `--json` prints them under `malformed`. A release file whose content does not hash to its digest counts as malformed, as `readAllReleases` counts it (`packages/core/src/lifecycle/query.ts:296`). A stored change set whose content does not hash to the digest it is filed under counts the same way (`packages/core/src/lifecycle/query.ts:326`). Other JSON files beside the snapshots, such as the observation baseline, are skipped (`packages/core/src/lifecycle/query.ts:230`).
+
+## Reading an earlier commit
+
+`--at <rev>` reads the branch at an earlier commit instead of its tip. The revision is a sha, a ref such as `chant/lifecycle~3`, or a date. A date picks the newest ledger commit at or before it. A bare date counts to the end of that day (`packages/core/src/lifecycle/git.ts:1566`). A revision that is not on `chant/lifecycle` is refused (`packages/core/src/lifecycle/git.ts:1573`). The text output names the commit on stderr, and `--json` adds it as `at` (`packages/core/src/cli/handlers/query.ts:43`).
+
+## A product's own tables
+
+A product with records kept somewhere else can put them beside chant's tables. It reads its records and passes them to `runQuery` as a `QuerySource` (`packages/core/src/lifecycle/query.ts:129`):
+
+```ts
+import { loadQueryData, runQuery, formatQueryResult } from "@intentius/chant/lifecycle/query";
+import { queryLedgers } from "@intentius/chant/lifecycle/query-ledgers";
+
+const { ledgers } = await queryLedgers(process.cwd(), { at: "2026-10-01" });
+const result = await runQuery(sql, await loadQueryData(ledgers), {
+  sources: [{ name: "myproduct", version: 1, tables: { inventory: { columns: [["root", "TEXT"], ["wave", "INTEGER"]], rows } } }],
+});
+console.log(formatQueryResult(result));
+```
+
+A column is `TEXT`, `INTEGER` or `REAL`. A table or column name is lower-case letters, digits and `_`. A table that takes the name of a chant table, of `chant_schema` or of another source's table is refused (`packages/core/src/lifecycle/query.ts:401`). The source's tables appear in `chant_schema` with its name and version, and in `tables` in the result. When a bare column name is an SQL keyword, such as `commit`, the error says to quote it (`packages/core/src/lifecycle/query.ts:423`).
 
 ## Options
 
@@ -63,14 +93,15 @@ Each ledger is parsed by the reader its own commands use, and a line or file tha
 | `"<sql>"` | The statement, quoted as one argument. |
 | `dir` | Where to read from. The default is the current directory. |
 | `--member <name>` | Only this member. Repeat it, or give a comma list, for several. |
-| `--json` | Print `{ schemaVersion, columns, rows, tables, malformed }`. `tables` counts each table's rows. |
+| `--at <rev>` | Read the branch at this commit: a sha, a ref or a date. |
+| `--json` | Print `{ schemaVersion, columns, rows, tables, malformed }`, and `at` with `--at`. `tables` counts each table's rows. |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | The statement ran. |
-| 1 | No statement, a statement that writes or does not parse, a `--member` that names no member, or a Node with no `node:sqlite`. |
+| 1 | No statement, a statement that writes or does not parse, a `--member` that names no member, an `--at` that names no ledger commit, or a Node with no `node:sqlite`. |
 
 ## See also
 
