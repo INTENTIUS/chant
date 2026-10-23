@@ -94,6 +94,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // on this path" — printed with the provenance footer, after the rows, so the
   // answer is not preceded by what qualifies it.
   let liveNotes: string[] = [];
+  // Which read answered each entity (#2267), from a live read.
+  let readSources: Record<string, string> = {};
   // Kinds that can exist in the account without being declared (#1278). Known
   // without a scan, so it costs nothing to mention.
   let ambientKinds: string[] = [];
@@ -185,6 +187,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       }
       observations = observed.observations;
       annotations = observed.annotations;
+      readSources = observed.sources ?? {};
       liveNotes = observed.notes ?? [];
       source = { kind: "live" };
       if (args.checkSnapshot) {
@@ -354,6 +357,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       unobserved: pickResources(collectUnobserved(nowObservations), matchedIds),
     });
   }
+  // Name the plan read when it answered (#4384).
+  if (source.kind === "live") source = withReadDepth(source, matches, readSources, liveNotes);
   const driftAgainst: "live" | "snapshot" = args.checkLive ? "live" : "snapshot";
   // Machine-readable answer (#4359, #4367): the rows, their paths, and every
   // footer the text prints as prose, as one document for a caller that draws
@@ -747,10 +752,61 @@ function checkCapabilityTerms(engine: CapabilityEngine, terms: Term[]): { messag
   return undefined;
 }
 
+/**
+ * Which read answered a live search's matches, when the lexicon reports it
+ * (#2267) and at least one answer came from the plan (#4384). Absent for a
+ * plain live or state answer, so those documents are unchanged.
+ */
+export interface ReadDepth {
+  /** `plan` or `live+plan` when every read match came that way, else `mixed`. */
+  depth?: "plan" | "live+plan" | "mixed";
+  /** The distinct reads that answered the matches, sorted. */
+  reads?: string[];
+  /** The plan read was asked for and failed: the read that answered instead. */
+  planFellBackTo?: "state" | "declared";
+}
+
+/** The terraform lexicon's plan-fallback notes (describe-resources.ts, `planAdapter`). */
+function planFallback(notes: string[]): "state" | "declared" | undefined {
+  if (notes.some((n) => /the plan read failed .*so the state read answered/.test(n))) return "state";
+  if (notes.some((n) => /no read answered, declared only \(the plan read/.test(n))) return "declared";
+  return undefined;
+}
+
+/**
+ * Add the read depth to a live source (#4384). Only bound matches count: a
+ * row nobody read has no read to name. Nothing is added when no match was
+ * answered by the plan and the plan did not fall back.
+ */
+function withReadDepth(
+  source: AnswerSource & { kind: "live" },
+  matches: IRNode[],
+  sources: Record<string, string>,
+  notes: string[],
+): AnswerSource {
+  const reads = [...new Set(matches.filter((n) => n.physicalId).map((n) => sources[n.id]).filter((r): r is string => !!r))].sort();
+  const fellBack = planFallback(notes);
+  const planned = reads.filter((r) => r === "plan" || r === "live+plan");
+  if (planned.length === 0 && !fellBack) return source;
+  return {
+    ...source,
+    ...(planned.length > 0 ? { depth: reads.length === 1 ? (reads[0] as "plan" | "live+plan") : ("mixed" as const) } : {}),
+    ...(reads.length > 0 ? { reads } : {}),
+    ...(fellBack ? { planFellBackTo: fellBack } : {}),
+  };
+}
+
+const READ_PHRASE: Record<string, string> = {
+  plan: "at the plan depth (terraform plan -lock=false)",
+  "live+plan": "live and at the plan depth (live-plan -json, terraform plan -lock=false)",
+  state: "from state",
+  live: "live",
+};
+
 /** Where an answer's facts came from, for the provenance line (#1266). */
 export type AnswerSource =
   | { kind: "declared" }
-  | { kind: "live" }
+  | ({ kind: "live" } & ReadDepth)
   /** `snapshot` is the ref asked for (`latest`), `commit` the snapshot commit it named (#4374). */
   | { kind: "snapshot"; snapshot?: string; commit: string; timestamp: string };
 
@@ -870,6 +926,23 @@ function provenanceLine(
   liveFailures: string[] = [],
   derived: string[] = [],
 ): string {
+  const line = provenanceBase(matches, source, recorded, liveFailures, derived);
+  // The plan read fell back (#4384): say to what, on whichever line this is.
+  return source.kind === "live" ? line + fellBackText(source) : line;
+}
+
+/** ` · the plan read fell back to state`, or nothing. */
+function fellBackText(source: ReadDepth): string {
+  return source.planFellBackTo ? ` · the plan read fell back to ${source.planFellBackTo}` : "";
+}
+
+function provenanceBase(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): string {
   if (source.kind === "declared") {
     // A derived fact the query relied on (#4362) was folded from declared
     // references alone, so it describes the source, not the account.
@@ -911,6 +984,10 @@ function provenanceLine(
     );
   }
   if (source.kind === "live") {
+    // The plan answered some or all of it (#4384): say so, and name each read.
+    if (source.depth && source.reads) {
+      return `— observed ${source.reads.map((r) => READ_PHRASE[r] ?? r).join(" and ")} · bound ${bound}/${matches.length}`;
+    }
     return `— observed live · bound ${bound}/${matches.length}`;
   }
   // Time is the whole risk of a recorded answer, so it leads. A caller can see

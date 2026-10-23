@@ -44,6 +44,7 @@ vi.mock("../../build", async () => {
   };
 });
 
+import type { ResourceMetadata } from "../../lexicon";
 import searchSchema from "../../workspace/search.schema.json";
 import { contract } from "../../workspace/__fixtures__/contract-repo";
 const { expectValid } = contract(searchSchema);
@@ -402,5 +403,138 @@ describe("search --live provenance when every match is a planned create (#4381)"
     expectValid(doc);
     expect(doc.provenance).toContain("live read returned no bound resources");
     expect(doc.plannedCreates).toBeUndefined();
+  });
+});
+
+// #4384 - a plan-depth answer said "observed live". Each row carries the read
+// that answered it (`sources`, #2267), and the line and --json name it.
+describe("search --live names the plan read (#4384)", () => {
+  let out: string[];
+  const entities = new Map<string, Declarable>([
+    ["orders", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+  ]);
+  const PLAN_NOTE = "terraform.roots.app: the plan read answered (`terraform plan -input=false -lock=false -out=<tmp>/plan.tfplan`)";
+  const STATE_NOTE = "terraform.roots.app: the plan read failed (no provider credentials: x), so the state read answered; plan attributes are absent";
+  const DECLARED_NOTE = "terraform.roots.app: no read answered, declared only (the plan read could not reach the backend)";
+
+  function setup(sources: Record<string, string>, notes: string[], resources: Record<string, ResourceMetadata> | null = null) {
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "terraform",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: resources ?? { orders: { type: "Terraform::Resource", physicalId: "db-1", status: "OK", ownership: "owned" as const } },
+          sources,
+          notes,
+        }),
+      }),
+    ]);
+  }
+
+  async function run(json = false) {
+    out = [];
+    const exit = await runSearch({ args: makeArgs({ path: "kind:Terraform::Resource", json }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    return out.filter((l) => !l.startsWith("ERR ")).join("\n");
+  }
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockResolvedValue({ entities, errors: [], sourceFiles: [] });
+    buildResultMock.mockReset();
+    buildResultMock.mockReturnValue({ errors: [], entities, outputs: new Map([["terraform", ""]]), warnings: [] });
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  test("a plan answer names the plan depth in the line and in --json", async () => {
+    setup({ orders: "plan" }, [PLAN_NOTE]);
+    expect(await run()).toContain("observed at the plan depth (terraform plan -lock=false) · bound 1/1");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source).toMatchObject({ kind: "live", depth: "plan", reads: ["plan"] });
+    expect(doc.provenance).toBe("observed at the plan depth (terraform plan -lock=false) · bound 1/1");
+  });
+
+  test("a live+plan answer names both reads", async () => {
+    setup({ orders: "live+plan" }, [PLAN_NOTE]);
+    const text = await run();
+    expect(text).toContain("observed live and at the plan depth (live-plan -json, terraform plan -lock=false) · bound 1/1");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.depth).toBe("live+plan");
+  });
+
+  test("matches read at different depths name both", async () => {
+    setup(
+      { a: "plan", b: "state" },
+      [PLAN_NOTE],
+      {
+        a: { type: "Terraform::Resource", physicalId: "x", status: "OK", ownership: "owned" as const },
+        b: { type: "Terraform::Resource", physicalId: "y", status: "OK", ownership: "owned" as const },
+      },
+    );
+    entities.set("a", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} }));
+    entities.set("b", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} }));
+    try {
+      const doc = JSON.parse(await run(true));
+      expectValid(doc);
+      expect(doc.source).toMatchObject({ depth: "mixed", reads: ["plan", "state"] });
+      expect(doc.provenance).toContain("at the plan depth (terraform plan -lock=false) and from state");
+    } finally {
+      entities.delete("a");
+      entities.delete("b");
+    }
+  });
+
+  test("a plan read that fell back to state says so", async () => {
+    setup({ orders: "state" }, [STATE_NOTE]);
+    const text = await run();
+    expect(text).toContain("observed live · bound 1/1 · the plan read fell back to state");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("state");
+    expect(doc.source.depth).toBeUndefined();
+  });
+
+  test("a plan read that fell back to declared says so", async () => {
+    setup(
+      { orders: "plan" },
+      [DECLARED_NOTE],
+      null,
+    );
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "terraform",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: {},
+          unobserved: { orders: { reason: "no-binding" as const, type: "Terraform::Resource" } },
+          sources: { orders: "plan" },
+          notes: [DECLARED_NOTE],
+        }),
+      }),
+    ]);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("declared");
+    expect(doc.source.depth).toBeUndefined();
+    expect(doc.provenance).toContain("the plan read fell back to declared");
+  });
+
+  test("a plain live or state answer is unchanged", async () => {
+    setup({ orders: "state" }, []);
+    expect(await run()).toContain("observed live · bound 1/1");
+    expect(await run()).not.toContain("plan");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source).toEqual({ kind: "live", env: "dev" });
   });
 });

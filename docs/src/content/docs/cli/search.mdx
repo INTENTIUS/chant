@@ -407,6 +407,9 @@ by its endpoints. Optional fields are left out when unknown.
 | `source.env` | the `--env` of a `live` or `snapshot` answer |
 | `source.snapshot` | the snapshot ref asked for with `--snapshot` or `--at`, such as `latest` |
 | `source.commit`, `source.timestamp` | a snapshot's commit and when it was taken |
+| `source.depth` | a `live` answer only, when the Terraform plan read (`CHANT_TERRAFORM_OBSERVE=plan`) answered a bound match: `plan`, `live+plan`, or `mixed` when matches were read at different depths. Absent otherwise |
+| `source.reads` | with `depth` or `planFellBackTo`: the distinct reads that answered the bound matches (`live`, `state`, `plan`, `live+plan`) |
+| `source.planFellBackTo` | the plan read was asked for and failed: `state` if the state read answered, `declared` if nothing did |
 | `matches[].id` | the graph's full node id, stack-qualified (`<stack>::<name>`) when the project has side-by-side stacks and the answer is live or from a snapshot; two stacks' resources of the same name have two ids |
 | `matches[].displayId` | the bare name the text row prints |
 | `matches[].kind` | the node's IR kind; a Terraform block's is `Terraform::Resource`, and `kind:aws_instance` matches it by its resource type |
@@ -486,7 +489,11 @@ Multi-stack projects are observed per stack, and results display the bare
 logical id without the stack qualifier.
 
 Every answer ends with a provenance line saying what backed it: `declared only`,
-`observed live · bound N/M`, or `observed from snapshot`. A live read that fails
+`observed live · bound N/M`, or `observed from snapshot`. When the Terraform
+plan read answered, the line says so: `observed at the plan depth (terraform plan
+-lock=false) · bound N/M`, or `observed live and at the plan depth (...)` for a
+live root. Matches read at different depths name each. If the plan read fell
+back, the line ends `the plan read fell back to state` (or `declared`). A live read that fails
 (unreachable endpoint, denied credentials) is reported as a failure rather than
 an empty estate. Each row the read could not cover prints `(unobserved:
 read-failed)` where its physical id would go, stderr names the lexicon and the

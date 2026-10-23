@@ -317,6 +317,33 @@
         "timestamp": {
           "type": "string",
           "description": "When that snapshot was taken."
+        },
+        "depth": {
+          "enum": [
+            "plan",
+            "live+plan",
+            "mixed"
+          ],
+          "description": "`live` only, present when the plan read (CHANT_TERRAFORM_OBSERVE=plan) answered at least one bound match (#4384): `plan` or `live+plan` when every read match came that way, `mixed` when the matches were read at different depths (see `reads`). Absent for a plain live or state answer."
+        },
+        "reads": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "live",
+              "state",
+              "plan",
+              "live+plan"
+            ]
+          },
+          "description": "`live` only, with `depth` or `planFellBackTo`: the distinct reads that answered the bound matches, sorted. These are the lexicon's per-entity `sources` values (#2267)."
+        },
+        "planFellBackTo": {
+          "enum": [
+            "state",
+            "declared"
+          ],
+          "description": "`live` only: the plan read was asked for and failed, and this read answered instead. `declared` means no read answered and the rows are unobserved."
         }
       }
     },
