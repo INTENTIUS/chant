@@ -870,6 +870,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace points",
       "workspace records",
       "workspace runs",
+      "workspace search",
       "workspace signers",
       "workspace status",
       "workspace trust",

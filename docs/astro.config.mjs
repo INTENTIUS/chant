@@ -391,6 +391,7 @@ export default defineConfig({
 								{ label: 'workspace lint', slug: 'cli/workspace-lint' },
 								{ label: 'workspace audit', slug: 'cli/workspace-audit' },
 								{ label: 'workspace graph', slug: 'cli/workspace-graph' },
+								{ label: 'workspace search', slug: 'cli/workspace-search' },
 								{ label: 'lifecycle', slug: 'cli/lifecycle' },
 								{ label: 'scenario', slug: 'cli/scenario' },
 								{ label: 'components', slug: 'cli/components' },

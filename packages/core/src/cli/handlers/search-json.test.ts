@@ -3,6 +3,14 @@ import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { createMockPlugin } from "../../../../test-utils/src/mock-plugin";
 import { parseArgs } from "../parse-args";
+import { contract } from "../../workspace/__fixtures__/contract-repo";
+import searchSchema from "../../workspace/search.schema.json";
+import { SEARCH_ERROR_CODES, SEARCH_OUTPUT_SCHEMA_ID } from "../../workspace/search-contract";
+import { readChantPackageVersion } from "../../package-version";
+
+// #4374: every document is the read contract's `search` document, and is held to its schema.
+const { expectValid } = contract(searchSchema);
+const HEAD = { $schema: SEARCH_OUTPUT_SCHEMA_ID, contract: 1, chant: readChantPackageVersion() };
 
 // #4367: `chant search --json` is the whole answer as one document on stdout:
 // full node ids, displayId, show, provenance, explain, drift, live failures
@@ -68,10 +76,15 @@ let out: string[];
 let err: string[];
 
 async function search(args: Partial<ParsedArgs>): Promise<{ exit: number; doc: ReturnType<typeof JSON.parse> }> {
+  out = [];
   const exit = await runSearch({ args: makeArgs(args), plugins: [], serializers: [] });
   // One document, and nothing else on stdout.
   expect(out).toHaveLength(1);
-  return { exit, doc: JSON.parse(out[0]) };
+  const doc = JSON.parse(out[0]);
+  expectValid(doc);
+  // A refusal's code is from the contract's closed list.
+  if (doc.error) expect(SEARCH_ERROR_CODES).toContain(doc.error.code);
+  return { exit, doc };
 }
 
 beforeEach(() => {
@@ -115,7 +128,8 @@ describe("search --json on two stacks with the same name (#4367)", () => {
     loadPluginsMock.mockResolvedValue([createMockPlugin({ name: "aws", describeResources: async () => ({}) })]);
     const { exit, doc } = await search({ path: "kind:EC2::Instance", at: "latest", env: "prod" });
     expect(exit).toBe(0);
-    expect(doc.source).toEqual({ kind: "snapshot", commit: "a1b2c3d4e5f6", timestamp: "2026-08-01T03:15:00.000Z", env: "prod" });
+    expect(doc.source).toEqual({ kind: "snapshot", snapshot: "latest", commit: "a1b2c3d4e5f6", timestamp: "2026-08-01T03:15:00.000Z", env: "prod" });
+    expect(doc).toMatchObject({ ...HEAD, at: null });
     expect(doc.matches.map((m: { id: string }) => m.id).sort()).toEqual(["east::web", "west::web"]);
     expect(doc.matches.map((m: { displayId: string }) => m.displayId)).toEqual(["web", "web"]);
     expect(doc.matches.map((m: { physicalId: string }) => m.physicalId).sort()).toEqual(["i-east", "i-west"]);
@@ -125,6 +139,34 @@ describe("search --json on two stacks with the same name (#4367)", () => {
     out = [];
     await runSearch({ args: makeArgs({ path: "kind:EC2::Instance", at: "latest", env: "prod", json: undefined }), plugins: [], serializers: [] });
     expect(out.filter((l) => l.startsWith("web  "))).toEqual(["web  AWS::EC2::Instance  i-east", "web  AWS::EC2::Instance  i-west"]);
+  });
+});
+
+describe("search --json is the read contract's search document (#4374)", () => {
+  test("a result: the head, at null, and the workspace the project is in (here the chant repository's own)", async () => {
+    const { doc } = await search({ path: "kind:EC2::Instance" });
+    expect(doc).toMatchObject({ ...HEAD, at: null, query: "kind:EC2::Instance", workspace: { root: "." } });
+  });
+
+  test("a --count-by result is the counts branch: countBy, groups and total, no matches", async () => {
+    const { exit, doc } = await search({ path: "", countBy: "kind" });
+    expect(exit).toBe(0);
+    expect(doc).toMatchObject({ ...HEAD, at: null, countBy: "kind", total: 3 });
+    expect(doc.groups).toEqual([{ group: "AWS::EC2::Instance", count: 2 }, { group: "AWS::S3::Bucket", count: 1 }]);
+    expect(doc).not.toHaveProperty("matches");
+  });
+
+  test("--snapshot <ref> is --at <ref> for plain search, and source.snapshot names it", async () => {
+    replaySnapshotsMock.mockResolvedValue({
+      observations: [{ lexicon: "aws", resources: { webServer: { type: "AWS::EC2::Instance", physicalId: "i-1", status: "OK" } } }],
+      commit: "a1b2c3d4e5f6", timestamp: "2026-08-01T03:15:00.000Z", depth: "identity",
+    });
+    loadPluginsMock.mockResolvedValue([createMockPlugin({ name: "aws", describeResources: async () => ({}) })]);
+    const viaSnapshot = await search({ path: "kind:EC2::Instance", snapshot: "latest", env: "dev" });
+    const viaAt = await search({ path: "kind:EC2::Instance", at: "latest", env: "dev" });
+    expect(viaSnapshot.doc).toEqual(viaAt.doc);
+    expect(viaSnapshot.doc.source).toMatchObject({ kind: "snapshot", snapshot: "latest", commit: "a1b2c3d4e5f6" });
+    expect(replaySnapshotsMock.mock.calls.map((c) => c[1])).toEqual(["latest", "latest"]);
   });
 });
 
@@ -180,8 +222,10 @@ describe("search --json refusals are a document with error, exit 1 (#4367)", () 
     const { exit, doc } = await search({ path: "effectiveIngress:tcp:22" });
     expect(exit).toBe(1);
     expect(doc).toEqual({
+      ...HEAD,
       query: "effectiveIngress:tcp:22",
       error: {
+        code: "query-invalid",
         message: "\"effectiveIngress:tcp:22\" is not a term — there is no \"effectiveIngress:\" prefix",
         hint: "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, and ->/<- for edges",
       },
@@ -192,7 +236,22 @@ describe("search --json refusals are a document with error, exit 1 (#4367)", () 
   test("--live without --env", async () => {
     const { exit, doc } = await search({ path: "kind:EC2::Instance", live: true });
     expect(exit).toBe(1);
-    expect(doc).toEqual({ query: "kind:EC2::Instance", error: { message: "chant search --live needs an environment: --live --env <name>" } });
+    expect(doc).toEqual({ ...HEAD, query: "kind:EC2::Instance", error: { code: "usage-invalid", message: "chant search --live needs an environment: --live --env <name>" } });
+  });
+
+  test("each refusal carries its code: grouping, flags, environment, snapshot (#4374)", async () => {
+    expect((await search({ path: "", countBy: "colour" })).doc.error.code).toBe("query-invalid");
+    expect((await search({ path: "kind:EC2::Instance", checkSnapshot: true })).doc.error.code).toBe("usage-invalid");
+    expect((await search({ path: "kind:EC2::Instance", snapshot: "latest", at: "other", env: "dev" })).doc.error.code).toBe("usage-invalid");
+    loadChantConfigMock.mockResolvedValue({ config: { environments: ["dev"] } });
+    expect((await search({ path: "kind:EC2::Instance", live: true, env: "prod" })).doc.error.code).toBe("environment-unknown");
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    replaySnapshotsMock.mockResolvedValue({ error: "No snapshots found for environment \"dev\"", hint: "Record one first: chant lifecycle snapshot dev" });
+    const snap = await search({ path: "kind:EC2::Instance", snapshot: "latest", env: "dev" });
+    expect(snap.exit).toBe(1);
+    expect(snap.doc.error).toEqual({ code: "snapshot-unavailable", message: "No snapshots found for environment \"dev\"", hint: "Record one first: chant lifecycle snapshot dev" });
+    buildResultMock.mockReturnValue({ errors: [new Error("bad")], entities, outputs: new Map(), warnings: [] });
+    expect((await search({ path: "kind:EC2::Instance", live: true, env: "dev" })).doc.error.code).toBe("build-failed");
   });
 
   test("without --json a refusal prints nothing on stdout, as before", async () => {

@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `run-event`, `delivery-metrics` and `merge-record`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `run-event`, `delivery-metrics`, `merge-record` and `search`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -54,8 +54,9 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 | [`chant workspace metrics`](/chant/cli/workspace-metrics/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json` |
+| [`chant workspace search`](/chant/cli/workspace-search/#output), and [`chant search`](/chant/cli/search/#--json) for one project | `--json`, floor chant 0.124.46 | `https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json` |
 
-Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
+Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)), and the `search` schema one for the grouped counts of `--count-by` ([#4374](https://github.com/INTENTIUS/chant/issues/4374)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
 ## Identity and revisions
 
@@ -72,6 +73,7 @@ A workspace is identified by its declared `name` and a git revision ([ws-016](ht
 | `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
 | `graph --intent` | the declaration, the region, the records and the files they pin at the revision, and the history reachable from it |
 | `graph --intent --record` | the declaration and the records at the revision, and the history of each path and member the record constrains, reachable from it |
+| `workspace search` | the declaration at the revision, and each member's search over its source at the revision, run from an export of the tree as `graph --at` runs it |
 
 A member's graph comes from running its chant config, so `graph --at` exports the workspace root's tree at the revision to a temporary directory with `git archive`, links the `node_modules` directories installed in the working tree into it, runs each member there and removes the directory. When no member runs, nothing is exported.
 
@@ -83,6 +85,10 @@ Some of what `--at` reads still comes from the working tree, which is how it sta
 - The exported tree is not a git repository, so a member's chant can't read git history there.
 - Remote revisions and URLs are not read. Fetch first.
 - `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
+
+### Revisions and snapshots
+
+A recorded lifecycle snapshot is a second kind of time: what the estate looked like when the snapshot was taken, not what the source said at a commit. `search` keeps the two apart ([#4374](https://github.com/INTENTIUS/chant/issues/4374)). In `chant workspace search`, `--at <rev>` is the git revision as in every read above, and `--snapshot <ref>` replays a snapshot. The document's `at` is the commit, and `source.snapshot` names the snapshot ref, with each member's `source.commit` the snapshot commit it replayed. `--at` given a snapshot ref such as `latest` fails with `revision-unknown` and a hint naming `--snapshot`, and `--snapshot` with `--at` fails with `snapshot-at-revision`. Plain `chant search` keeps `--at <ref>` as a snapshot for compatibility, takes `--snapshot` as the same flag, and always prints `at: null`, since it reads the working tree.
 
 ### Uncommitted records
 
@@ -123,7 +129,7 @@ A composed member in the `graph` document carries a `stamp`, `sha256:` and 64 he
 | `--at <rev>` | the commit id and the member's directory, which stand in for the files since a commit's tree never changes |
 | both | the install around the member: `node_modules/.package-lock.json` and the lockfiles (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`) by absolute path, mtime and size, in each directory from the member's up to the file-system root |
 
-`stamp` is `null` when no stamp could be taken, such as for a read that observes an account. A stamp is a fact about the source only. The toolchain, the command line and the environment are also part of the cache key, so an equal stamp does not by itself mean a cached read was served. `cached` says that.
+`stamp` is `null` when no stamp could be taken, such as for a read that observes an account. Each member of a `workspace search` document carries a stamp by the same rule, though a search is never served from the cache ([#4374](https://github.com/INTENTIUS/chant/issues/4374)). A stamp is a fact about the source only. The toolchain, the command line and the environment are also part of the cache key, so an equal stamp does not by itself mean a cached read was served. `cached` says that.
 
 ## Which chant reads the declaration
 
@@ -156,15 +162,22 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `root-chant-required` | error | The declaration pins another chant, and it is not installed at the workspace root. |
 | `not-a-git-repository` | error | `--at`, `status`, `work`, `release list` or `change-set show` needs a git repository and there is none. |
 | `revision-unknown` | error | `--at`, or `ci list --since`, names no commit. |
-| `live-at-revision` | error, `graph` | `--live` was given with `--at`. A live read is of the account now, not of a revision. |
+| `live-at-revision` | error, `graph` and `search` | `--live` was given with `--at`. A live read is of the account now, not of a revision. |
+| `query-invalid` | error, `search` | No query, a term the grammar can't parse, or a `--count-by` that is not a grouping. Also a member's reason when its own search refused the query. |
+| `usage-invalid` | error, `search` | A flag that needs another one it lacks, or two that don't go together, such as `--check-live` without `--snapshot`. |
+| `environment-unknown` | error and member, `search` | `--env` names an environment the project's chant config does not declare. |
+| `snapshot-unavailable` | error and member, `search` | `--snapshot` names a snapshot chant can't replay: none is recorded for the environment, or the ref is one replay does not take. |
+| `build-failed` | error and member, `search` | The project's build, or one of its build roots, failed, so the graph the search would answer over is incomplete. |
+| `snapshot-at-revision` | error, `search` | `workspace search` was given `--snapshot` and `--at`: a snapshot replays the estate as recorded over the source in the working tree, not at a revision. |
+| `member-chant-too-old` | member, `search` | The member's chant prints no search document of the read contract: it predates `workspace member-run`, has no such command or flag, or prints `search --json` from before the contract. |
 | `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
 | `dir-missing` | member, `ls` and `graph` | The member's directory does not exist. |
 | `unknown-kind` | member, `ls` and `graph` | No built-in kind or pinned package supplies the member's kind. |
 | `kind-probe-failed` | member, `ls` and `graph` | The member's directory is not what its kind reads. |
 | `no-matches` | group, `ls` | The example group matches no chant project. |
-| `kind-not-run` | member, `graph` | The member's kind is one the per-member commands don't run, such as `other`. |
-| `command-failed` | member, `graph` | The member's own `chant graph` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. |
-| `output-unreadable` | member, `graph` | The member's chant printed something that isn't a graph IR. |
+| `kind-not-run` | member, `graph` and `search` | The member's kind is one the per-member commands don't run, such as `other`. |
+| `command-failed` | member, `graph` and `search` | The member's own `chant graph` or `chant search` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. |
+| `output-unreadable` | member, `graph` and `search` | The member's chant printed something that isn't a graph IR, or for `search` a search document. |
 | `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
 | `ledger-unreadable` | ledger, `status`; error, `releases` and `change-set-show` | Reading the ledger failed, so nothing from it is listed. |
 | `ledger-malformed` | ledger, `status`, `releases` and `change-set-show` | Some ledger lines aren't release records, or for `releases` some release files or cut lines can't be read, and the rest are listed. For `change-set-show`, the file stored under the digest is not the change set that digest names. |
@@ -1144,6 +1157,8 @@ A reader such as hud or behold reads only through this contract and writes only 
 | `@intentius/chant/workspace/conformance/vitest` | vitest: `describeWorkspaceReaderConformance` adds one test per command. Only this entry imports vitest |
 
 `READ_CONTRACT_COMMANDS` lists the read commands covered, and since [#3160](https://github.com/INTENTIUS/chant/issues/3160) it includes `records --uncommitted`. Since [#3172](https://github.com/INTENTIUS/chant/issues/3172) it includes `wip`, run as `workspace wip --json`. A reader runs it as `workspace records --uncommitted <args> --json`. That document is held to the records schema, which requires `checkout` when `uncommitted` is true and a `worktree` on every record.
+
+`search` is listed since [#4374](https://github.com/INTENTIUS/chant/issues/4374). A reader runs it as `workspace search <query> --json`, the query `app` here, and the document is held to `search.schema.json`. Over MCP the `workspace-search` tool answers it. Plain `chant search --json` prints the same document for one project, and chant's own tests hold that one to the schema too.
 
 The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document. `commands` lists the commands the reader reads. The suite reads only those, and the report names the others in `skipped` as not applicable.
 

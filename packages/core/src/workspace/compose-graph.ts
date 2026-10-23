@@ -249,7 +249,9 @@ export interface ComposeInput {
   ir?: GraphIR;
 }
 
-const prefix = (member: string, id: string): string => `${member}/${id}`;
+/** A member's node id as the composed workspace documents give it: `<member>/<id>`. `workspace search` uses the same rule (#4374). */
+export const composedId = (member: string, id: string): string => `${member}/${id}`;
+const prefix = composedId;
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const records = (v: unknown): Record<string, unknown>[] =>

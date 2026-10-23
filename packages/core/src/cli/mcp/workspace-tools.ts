@@ -5,7 +5,7 @@
  * Served when the server starts at or inside a declared workspace. Each tool
  * is a thin call into the code the CLI runs:
  *
- * - The reads (`workspace-ls`, `workspace-status`, `workspace-graph`,
+ * - The reads (`workspace-ls`, `workspace-status`, `workspace-graph`, `workspace-search`,
  *   `workspace-changes`, `workspace-records`, `workspace-points`,
  *   `workspace-work-history`, `workspace-runs`) run `chant workspace <command>
  *   ... --json` with the chant this server runs as, in the server's
@@ -121,6 +121,27 @@ export const workspaceReadTools: ToolDefinition[] = [
         composites: { type: "boolean", description: "The composites document instead (--composites). Takes no kind or intent." },
         at: atProp,
       },
+    },
+  },
+  {
+    name: "workspace-search",
+    description:
+      "Answer an estate question over every chant member of the workspace with a few rows instead of the whole graph: chant workspace search <query> --json (search.schema.json, #4374). Returns that document unchanged. Each member is searched under its own chant and alone, ids are <member>/<id> as workspace-graph names the same nodes, and a member that can't be searched is listed with a reason code, never as zero matches. " +
+      "The query is space-separated terms that must all match: a bare word (substring of id, kind or attributes), kind:<substr> (a Terraform resource matches its type, kind:aws_instance), attr:<name>=<value>, tag:<key>=<value>, and edge terms ->X (this node references a node matching X) and <-X (referenced by one); ->*X is any depth, ->{2}X or ->{1,3}X a number of hops, ->[via=attr]X and ->[to=attr]X pick the edge by attribute, and !term negates. " +
+      "at is the git revision of the source; snapshot (with env) answers from a recorded lifecycle snapshot such as latest. They are two different times, and at refuses a snapshot ref.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search terms. May start with -> or <-." },
+        member: { type: "array", items: { type: "string" }, description: "Only these members (--member)." },
+        env: { type: "string", description: "The environment a snapshot was recorded for (--env)." },
+        snapshot: { type: "string", description: "Answer from this recorded lifecycle snapshot, such as latest (--snapshot). Needs env." },
+        countBy: { type: "string", description: "Group the matches: kind, module or attr:<name> (--count-by). The query may then be empty." },
+        show: { type: "string", description: "Comma-separated attributes to carry on each row (--show)." },
+        explain: { type: "boolean", description: "Add each member's universe and near misses (--explain)." },
+        at: atProp,
+      },
+      required: ["query"],
     },
   },
   {
@@ -415,6 +436,30 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
         ...(severity !== undefined ? ["--severity", severity] : []),
         ...kinds(params).flatMap((k) => ["--kind", k]),
         "--json",
+      ];
+    }
+    case "workspace-search": {
+      // The query is one argument after `--`, so one that opens with -> stays a query.
+      const query = params.query;
+      if (typeof query !== "string") throw new ToolInputError("query must be a string");
+      const members = params.member === undefined || params.member === null ? [] : Array.isArray(params.member) ? params.member : [params.member];
+      const memberArgs = members.flatMap((m, i) => ["--member", str({ [`member[${i}]`]: m }, `member[${i}]`, true)!]);
+      const flags = (["env", "snapshot", "show"] as const).flatMap((f) => {
+        const v = str(params, f);
+        return v !== undefined ? [`--${f}`, v] : [];
+      });
+      const countBy = str(params, "countBy");
+      return [
+        "workspace",
+        "search",
+        ...memberArgs,
+        ...flags,
+        ...(countBy !== undefined ? ["--count-by", countBy] : []),
+        ...(bool(params, "explain") ? ["--explain"] : []),
+        ...atArgs,
+        "--json",
+        "--",
+        query,
       ];
     }
     case "workspace-agent": {

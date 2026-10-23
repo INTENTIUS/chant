@@ -448,6 +448,13 @@ export interface ParsedArgs {
    * should win.
    */
   at?: string;
+  /**
+   * `chant search "<q>" --snapshot <ref> --env <name>` and `chant workspace
+   * search "<q>" --snapshot <ref>` (#4374): the recorded snapshot to answer
+   * from. Plain search also takes it as `--at <ref>`, for compatibility;
+   * everywhere else in the read contract `--at` is a git revision.
+   */
+  snapshot?: string;
   /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
   kind?: string;
   /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
