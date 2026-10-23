@@ -13,7 +13,7 @@
  * Like ./pr-forge.ts this imports nothing beyond it, so a product bundles it
  * without the TypeScript toolchain.
  */
-import type { PrApproverFilter, PrForge, PrRequireResult } from "./pr-forge";
+import type { PrApproverFilter, PrExcludedApprover, PrForge, PrRequireResult } from "./pr-forge";
 
 /** The four checks, in the order they run and the report lists them. */
 export const PR_APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] as const;
@@ -23,6 +23,10 @@ export type PrApplyRequire = (typeof PR_APPLY_REQUIRES)[number];
 /** One check as the pull-request report's `beforeMerge.requires` holds it. */
 export interface PrRequireOutcome extends PrRequireResult {
   name: PrApplyRequire;
+  /** `approved` only (#4287): the logins that counted, as {@link PrApprovalResult} gives them. */
+  approvers?: string[];
+  /** `approved` only (#4287): the logins left out, each with why. */
+  excluded?: PrExcludedApprover[];
 }
 
 export interface PrRequiresOptions {

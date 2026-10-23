@@ -420,8 +420,11 @@ export interface PrForge {
    * counts when it came after the merge request's latest push, read from its
    * system notes, and never from the token's own user. `approvers` narrows
    * who counts (#4337), and a refusal names each approver left out and why.
+   * The result also lists who counted and who was left out (#4287), so a
+   * caller never parses `reason`. On GitLab the newest diff version must be
+   * of `head`, or the check is pending.
    */
-  prApproved?(pr: number, head: string, approvers?: PrApproverFilter): Promise<PrRequireResult>;
+  prApproved?(pr: number, head: string, approvers?: PrApproverFilter): Promise<PrApprovalResult>;
   /**
    * The forge says `pr` merges as it stands: no conflicts, and on GitHub no
    * branch protection blocking it. Pending while the forge works it out. On
@@ -481,19 +484,26 @@ async function countApprovers(
   authors: ReadonlySet<string>,
   filter: PrApproverFilter | undefined,
   rule: (login: string) => Promise<string | undefined>,
-): Promise<{ by: string[]; not: string[] }> {
+): Promise<{ by: string[]; not: PrExcludedApprover[] }> {
   const by: string[] = [];
-  const not: string[] = [];
+  const not: PrExcludedApprover[] = [];
   for (const login of approved) {
     const why = authors.has(login) ? `${login} is one of its authors` : (excludedWhy(filter, login) ?? (filter?.forgeRule ? await rule(login) : undefined));
-    if (why) not.push(why);
+    if (why) not.push({ login, reason: why });
     else by.push(login);
   }
   return { by, not };
 }
 
-/** A refusal for no approver counted, naming each one left out. */
-const noApprover = (line: string, not: readonly string[]): PrRequireResult => refuse(not.length > 0 ? `${line}: ${not.join("; ")}` : line);
+/** The approved verdict over who counted: a pass naming them, or a refusal naming each one left out and why. */
+function approvalVerdict(by: string[], not: PrExcludedApprover[], passLine: string, noneLine: string): PrApprovalResult {
+  const fields = { approvers: by, excluded: not };
+  if (by.length > 0) return { ...pass(`${passLine} by ${by.join(", ")}`), ...fields };
+  return { ...refuse(not.length > 0 ? `${noneLine}: ${not.map((n) => n.reason).join("; ")}` : noneLine), ...fields };
+}
+
+/** An approved refusal before anyone was counted. */
+const notCounted = (r: PrRequireResult): PrApprovalResult => ({ ...r, approvers: [], excluded: [] });
 
 /** GitLab's access level for Developer, the least that may push. */
 const GITLAB_DEVELOPER = 30;
@@ -508,6 +518,18 @@ export interface PrRequireResult {
   pending?: boolean;
   /** One line for a person. */
   reason: string;
+}
+
+/**
+ * What {@link PrForge.prApproved} found (#4287). `approvers` and `excluded`
+ * are empty when it refused before counting, such as on a moved head or a
+ * request for changes.
+ */
+export interface PrApprovalResult extends PrRequireResult {
+  /** The logins whose approval of the head counted, sorted. */
+  approvers: string[];
+  /** The logins that approved and did not count, each with the reason the refusal gives. */
+  excluded: PrExcludedApprover[];
 }
 
 const short = (sha: string | undefined): string => (sha ?? "nothing").slice(0, 8);
@@ -867,7 +889,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
     async prApproved(pr, head, approvers) {
       const got = await api.call("GET", `${repo}/pulls/${pr}`);
       const at = headOf(got);
-      if (at !== head) return moved(`pull request ${pr}`, head, at);
+      if (at !== head) return notCounted(moved(`pull request ${pr}`, head, at));
       // A reviewer's newest deciding review stands, as in approvers; an approval counts only of this head.
       const standing = new Map<string, { state: string; commit?: string; official?: boolean }>();
       for (const r of await api.list(`${repo}/pulls/${pr}/reviews`, pageParams, pageSize)) {
@@ -879,7 +901,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
         standing.set(login, { state, ...(commit ? { commit } : {}), ...(typeof r.official === "boolean" ? { official: r.official } : {}) });
       }
       const changes = [...standing].filter(([, r]) => r.state === "CHANGES_REQUESTED" || r.state === "REQUEST_CHANGES").map(([l]) => l).sort();
-      if (changes.length > 0) return refuse(`${changes.join(", ")} asked for changes`);
+      if (changes.length > 0) return notCounted(refuse(`${changes.join(", ")} asked for changes`));
       const authors = new Set(await authorsOf(pr));
       const approved = [...standing].filter(([, r]) => r.state === "APPROVED" && r.commit === head).map(([l]) => l).sort();
       const rule = async (login: string): Promise<string | undefined> => {
@@ -895,8 +917,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
         return p.some((x) => x !== undefined && GITHUB_WRITERS.has(x)) ? undefined : `${login} has no write access`;
       };
       const { by, not } = await countApprovers(approved, authors, approvers, rule);
-      if (by.length === 0) return noApprover(`no reviewer other than its authors approved its head ${short(head)}`, not);
-      return pass(`approved at ${short(head)} by ${by.join(", ")}`);
+      return approvalVerdict(by, not, `approved at ${short(head)}`, `no reviewer other than its authors approved its head ${short(head)}`);
     },
     async prMergeable(pr, head) {
       const got = await api.call("GET", `${repo}/pulls/${pr}`);
@@ -1262,14 +1283,21 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     async prApproved(mr, head, approvers) {
       const got = await api.call("GET", `${notes}/${mr}`);
       const at = isObject(got) ? str(got.sha) : undefined;
-      if (at !== head) return moved(`merge request !${mr}`, head, at);
+      if (at !== head) return notCounted(moved(`merge request !${mr}`, head, at));
       // The token's own user approves for the pipeline, never as a reviewer.
       const me = await api.call("GET", "/user");
       const self = isObject(me) ? str(me.username) : undefined;
-      if (!self) return refuse("GitLab did not say which user the job's token acts as, so no approval counts");
-      // An approval counts once it came after the latest push: the newest version of the diff.
+      if (!self) return notCounted(refuse("GitLab did not say which user the job's token acts as, so no approval counts"));
+      // An approval counts once it came after the latest push: the newest version of the diff, which must be of head.
       const versions = await api.call("GET", `${notes}/${mr}/versions`);
-      const since = Math.max(-Infinity, ...(Array.isArray(versions) ? versions : []).map((v) => Date.parse((isObject(v) ? str(v.created_at) : undefined) ?? "")).filter(Number.isFinite));
+      let since = -Infinity;
+      let latest: string | undefined;
+      for (const v of Array.isArray(versions) ? versions : []) {
+        const when = Date.parse((isObject(v) ? str(v.created_at) : undefined) ?? "");
+        if (Number.isFinite(when) && when > since) [since, latest] = [when, isObject(v) ? str(v.head_commit_sha) : undefined];
+      }
+      // GitLab records a push's version after it moves the head, so an older one is asked again.
+      if (latest !== head) return notCounted(refuse(`merge request !${mr}'s newest diff version is of ${short(latest)}, not ${short(head)}`, true));
       const said = new Map<string, { what: string; at: number; id?: number }>();
       for (const n of await api.list(`${notes}/${mr}/notes?sort=asc&order_by=created_at`, pageParams, 100)) {
         if (!isObject(n) || n.system !== true) continue;
@@ -1283,7 +1311,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         if (!before || when >= before.at) said.set(who, { what, at: when, ...(id !== undefined ? { id } : {}) });
       }
       const changes = [...said].filter(([, v]) => v.what === "changes").map(([w]) => w).sort();
-      if (changes.length > 0) return refuse(`${changes.join(", ")} requested changes`);
+      if (changes.length > 0) return notCounted(refuse(`${changes.join(", ")} requested changes`));
       const authors = new Set(await authorsOf(mr));
       const approved = [...said].filter(([, v]) => v.what === "approved" && v.at > since).map(([w]) => w).sort();
       const least = approvers?.minAccessLevel ?? GITLAB_DEVELOPER;
@@ -1301,8 +1329,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         return level >= least ? undefined : `${login} has access level ${level}, under ${least}`;
       };
       const { by, not } = await countApprovers(approved, authors, approvers, rule);
-      if (by.length === 0) return noApprover(`no member other than its authors approved it after its latest push, ${short(head)}`, not);
-      return pass(`approved after ${short(head)} by ${by.join(", ")}`);
+      return approvalVerdict(by, not, `approved after ${short(head)}`, `no member other than its authors approved it after its latest push, ${short(head)}`);
     },
     async prMergeable(mr, head) {
       const got = await api.call("GET", `${notes}/${mr}`);

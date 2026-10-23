@@ -32,14 +32,14 @@ describe("github", () => {
 
   test("approved: a reviewer other than the authors approved this head", async () => {
     const f = forge({ [`GET ${repo}/pulls/7/reviews`]: [{ user: { login: "bob" }, state: "APPROVED", commit_id: HEAD }] });
-    expect(await f.prApproved!(7, HEAD)).toEqual({ passed: true, reason: "approved at aaaaaaaa by bob" });
+    expect(await f.prApproved!(7, HEAD)).toEqual({ passed: true, reason: "approved at aaaaaaaa by bob", approvers: ["bob"], excluded: [] });
   });
 
   test("approved: an approval of an older head, the author's own, or a request for changes does not pass", async () => {
     const older = forge({ [`GET ${repo}/pulls/7/reviews`]: [{ user: { login: "bob" }, state: "APPROVED", commit_id: OTHER }, { user: { login: "alice" }, state: "APPROVED", commit_id: HEAD }] });
     expect((await older.prApproved!(7, HEAD)).passed).toBe(false);
     const changes = forge({ [`GET ${repo}/pulls/7/reviews`]: [{ user: { login: "bob" }, state: "APPROVED", commit_id: HEAD }, { user: { login: "carol" }, state: "CHANGES_REQUESTED", commit_id: HEAD }] });
-    expect(await changes.prApproved!(7, HEAD)).toEqual({ passed: false, reason: "carol asked for changes" });
+    expect(await changes.prApproved!(7, HEAD)).toEqual({ passed: false, reason: "carol asked for changes", approvers: [], excluded: [] });
   });
 
   test("approved: forgeRule counts only writers, exclude leaves a login out, and the refusal says why (#4337)", async () => {
@@ -53,10 +53,24 @@ describe("github", () => {
       [`GET ${repo}/collaborators/bob/permission`]: { permission: "read", role_name: "triage" },
       [`GET ${repo}/collaborators/Carol/permission`]: { permission: "write", role_name: "maintain" },
     });
-    expect(await f.prApproved!(7, HEAD, { forgeRule: true })).toEqual({ passed: true, reason: "approved at aaaaaaaa by Carol" });
+    expect(await f.prApproved!(7, HEAD, { forgeRule: true })).toEqual({
+      passed: true,
+      reason: "approved at aaaaaaaa by Carol",
+      approvers: ["Carol"],
+      excluded: [
+        { login: "alice", reason: "alice is one of its authors" },
+        { login: "bob", reason: "bob has no write access" },
+      ],
+    });
     expect(await f.prApproved!(7, HEAD, { forgeRule: true, exclude: [{ login: "carol", reason: "carol asked for aaaaaaa" }] })).toEqual({
       passed: false,
       reason: "no reviewer other than its authors approved its head aaaaaaaa: carol asked for aaaaaaa; alice is one of its authors; bob has no write access",
+      approvers: [],
+      excluded: [
+        { login: "Carol", reason: "carol asked for aaaaaaa" },
+        { login: "alice", reason: "alice is one of its authors" },
+        { login: "bob", reason: "bob has no write access" },
+      ],
     });
     expect((await f.prApproved!(7, HEAD, { exclude: ["bob"] })).reason).toBe("approved at aaaaaaaa by Carol");
   });
@@ -112,7 +126,14 @@ describe("forgejo", () => {
     const f = forge({ [`GET ${repo}/pulls/4/reviews`]: [{ user: { login: "bob" }, state: "APPROVED", commit_id: HEAD, official: false }, { user: { login: "erin" }, state: "APPROVED", commit_id: HEAD, official: true }] });
     expect((await f.prApproved!(4, HEAD, { forgeRule: true })).reason).toBe("approved at aaaaaaaa by erin");
     const out = await checkPrRequires(f, 4, HEAD, { only: ["approved"], approvers: { forgeRule: true, exclude: ["erin"] } });
-    expect(out[0]!.reason).toBe("no reviewer other than its authors approved its head aaaaaaaa: bob's review is not official; erin is excluded");
+    expect(out[0]).toMatchObject({
+      reason: "no reviewer other than its authors approved its head aaaaaaaa: bob's review is not official; erin is excluded",
+      approvers: [],
+      excluded: [
+        { login: "bob", reason: "bob's review is not official" },
+        { login: "erin", reason: "erin is excluded" },
+      ],
+    });
   });
 
   test("undiverged: the pull request's merge base is the base branch's tip", async () => {
@@ -150,7 +171,7 @@ describe("gitlab", () => {
         [`GET ${project}/merge_requests/3`]: mr(),
         [`GET ${project}/merge_requests/3/commits`]: [],
         "GET /api/v4/user": { id: 1, username: "chant-bot" },
-        [`GET ${project}/merge_requests/3/versions`]: [{ created_at: "2026-10-01T10:00:00Z" }],
+        [`GET ${project}/merge_requests/3/versions`]: [{ created_at: "2026-10-01T10:00:00Z", head_commit_sha: HEAD }],
         ...routes,
       }),
     });
@@ -165,7 +186,7 @@ describe("gitlab", () => {
     });
     expect((await f.prApproved!(3, HEAD)).passed).toBe(false);
     const g = forge({ [`GET ${project}/merge_requests/3/notes`]: [note("bob", "approved this merge request", "2026-10-01T11:00:00Z")] });
-    expect(await g.prApproved!(3, HEAD)).toEqual({ passed: true, reason: "approved after aaaaaaaa by bob" });
+    expect(await g.prApproved!(3, HEAD)).toEqual({ passed: true, reason: "approved after aaaaaaaa by bob", approvers: ["bob"], excluded: [] });
     const h = forge({ [`GET ${project}/merge_requests/3/notes`]: [note("bob", "approved this merge request", "2026-10-01T11:00:00Z"), note("carol", "requested changes", "2026-10-01T12:00:00Z")] });
     expect((await h.prApproved!(3, HEAD)).reason).toBe("carol requested changes");
   });
@@ -185,6 +206,22 @@ describe("gitlab", () => {
     expect((await f.prApproved!(3, HEAD, { forgeRule: true, minAccessLevel: 50 })).reason).toBe(
       "no member other than its authors approved it after its latest push, aaaaaaaa: bob has access level 20, under 50; dan has access level 40, under 50; eve is not a member",
     );
+    expect((await f.prApproved!(3, HEAD, { forgeRule: true })).excluded).toEqual([
+      { login: "bob", reason: "bob has access level 20, under 30" },
+      { login: "eve", reason: "eve is not a member" },
+    ]);
+  });
+
+  test("approved: pending until GitLab's newest diff version is of the head, as terragucci checked (#4287)", async () => {
+    const approval = note("bob", "approved this merge request", "2026-10-01T11:00:00Z");
+    const versions = [
+      { created_at: "2026-10-01T10:00:00Z", head_commit_sha: HEAD },
+      { created_at: "2026-10-01T12:00:00Z", head_commit_sha: OTHER },
+    ];
+    const f = forge({ [`GET ${project}/merge_requests/3/notes`]: [approval], [`GET ${project}/merge_requests/3/versions`]: versions });
+    expect(await f.prApproved!(3, HEAD)).toEqual({ passed: false, pending: true, reason: "merge request !3's newest diff version is of cccccccc, not aaaaaaaa", approvers: [], excluded: [] });
+    const none = forge({ [`GET ${project}/merge_requests/3/notes`]: [approval], [`GET ${project}/merge_requests/3/versions`]: [] });
+    expect(await none.prApproved!(3, HEAD)).toMatchObject({ passed: false, pending: true });
   });
 
   test("mergeable and undiverged read the merge request", async () => {
