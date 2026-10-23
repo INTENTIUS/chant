@@ -1,8 +1,8 @@
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
-import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
-import { applyLexiconGraphEdges, applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconGraphEdges, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
+import { partitionByLexicon, computeStackGraph, build } from "../../build";
+import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
@@ -22,6 +22,12 @@ import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layou
 import { lintCommand, type LintResult } from "../commands/lint";
 import { reportUninstalledDependencies } from "../dependencies";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
+// One copy for graph and search (#4365): the build-root join and the lexicon edges.
+import {
+  declaredBuildRootContributors as graphBuildRootContributors,
+  mergeDeclaredBuildRoots as mergeGraphBuildRoots,
+  withLexiconEdges,
+} from "./declared-graph";
 import { isNoLexiconDetected } from "../../detectLexicon";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
@@ -76,69 +82,6 @@ async function graphBuildParams(
     return undefined;
   }
   return resolution.provenance;
-}
-
-/**
- * The build-root contributors this invocation's project configures (#1626) —
- * the same closures `chant build` and the lifecycle handlers hand to
- * `BuildOptions.buildRoots`, bound here for the graph command's
- * discover-based paths, which never run `build()` and so never ran the hook:
- * a `k8s.kustomize.roots` estate graphed only its typed source while its
- * built (and deployed) output carried the rendered manifests too.
- *
- * `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
- * lexicon), so plugins are loaded here when `ctx.plugins` is empty, mirroring
- * `runGraphLive`. Rooted at the config's own directory, like
- * `cli/commands/build.ts` — a relative kustomize root resolves against where
- * it was declared, not against a sourceDir-scoped graph path. A project that
- * fails to load plugins degrades to no contributors with a warning rather
- * than failing modes that never needed plugins at all.
- */
-async function graphBuildRootContributors(
-  ctx: CommandContext,
-  projectPath: string,
-): Promise<Array<import("../../lexicon").BuildRootContributor>> {
-  const { config, configPath } = await loadChantConfigUpward(projectPath).catch(
-    () => ({ config: {} as ChantConfig, configPath: undefined }),
-  );
-  let plugins = ctx.plugins;
-  if (plugins.length === 0) {
-    try {
-      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
-    } catch (err) {
-      console.error(formatWarning({
-        message: `could not load the project's lexicons — build-root entities (kustomize roots) will be missing from the graph (${err instanceof Error ? err.message : String(err)})`,
-      }));
-      return [];
-    }
-  }
-  return collectBuildRootContributors(
-    plugins,
-    config as unknown as Record<string, unknown>,
-    configPath ? dirname(configPath) : projectPath,
-  );
-}
-
-/**
- * Merge build-root contributions into a discovered entity set — the exact
- * merge `build()` performs (one implementation: `mergeBuildRootEntities`,
- * ../../build.ts), surfaced in the graph command's error style. Returns false
- * when a contributor failed or a name collided; the caller stops, matching
- * how the discover-based paths treat discovery errors — a graph missing the
- * entities the build would refuse over must not be emitted as if complete.
- */
-async function mergeGraphBuildRoots(
-  entities: Map<string, import("../../declarable").Declarable>,
-  contributors: Array<import("../../lexicon").BuildRootContributor>,
-): Promise<boolean> {
-  if (contributors.length === 0) return true;
-  const merged = await mergeBuildRootEntities(entities, contributors);
-  for (const w of merged.warnings) console.error(formatWarning({ message: w }));
-  if (merged.errors.length > 0) {
-    for (const message of merged.errors) console.error(formatError({ message }));
-    return false;
-  }
-  return true;
 }
 
 /** #1675 — join git-root ops into a discovered entity map; op-discovery
@@ -739,26 +682,6 @@ function withGraphMeta(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<stri
     }
   }
   return Object.keys(added).length === 0 ? ir : { ...ir, meta: { ...(ir.meta ?? {}), ...added } };
-}
-
-/**
- * Add the edges the lexicons' `graphEdges` hooks resolve (#3910): CI
- * dependencies written as strings (`needs`, `uses:`, `trigger:`, `include:`,
- * `extends`), which the AttrRef walk in `buildGraphIr` cannot see. A hook that
- * throws costs its own edges and a warning, not the graph.
- */
-function withLexiconEdges(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
-  const reports: LexiconGraphEdges[] = [];
-  for (const p of plugins) {
-    if (!p.graphEdges) continue;
-    try {
-      const report = p.graphEdges(entities);
-      if (report) reports.push(report);
-    } catch (err) {
-      console.error(formatWarning({ message: `the ${p.name} lexicon's graphEdges failed (${err instanceof Error ? err.message : String(err)}); its edges are left out` }));
-    }
-  }
-  return reports.length === 0 ? ir : applyLexiconGraphEdges(ir, reports);
 }
 
 /**
