@@ -82,6 +82,15 @@ export interface StatusGate {
    * `release-revoked`. Added by `workspace status`; absent otherwise.
    */
   revoked?: ReleaseRevocation;
+  /**
+   * The current decisions covering the gate's member (#3616), as
+   * `<kind>/<id>`, most relevant first: by a `path:` at or above the
+   * member's directory, by `member:`, then by a path inside it or through
+   * supersession, ranked as the intent graph's `why.decisions`. Read from
+   * the records only, without history. Added by `workspace status`; absent
+   * otherwise.
+   */
+  decisions?: string[];
   /** When the run recorded the pending fact the state is read against. */
   recordedAt: string;
   /** The commit the run reached the gate at (#4020), from the pending fact. Absent on a fact written before chant 0.124.28. */

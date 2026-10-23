@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
@@ -26,6 +26,8 @@ import {
   type StatusDocument,
 } from "./status";
 import schema from "./status.schema.json";
+import { REPO } from "./__fixtures__/contract-repo";
+import { parseFrontMatter } from "./records";
 import { appendRunRecord } from "../lifecycle/run-ledger";
 import { acquireStewardLease } from "../op/operator";
 import { stewardWorkHolder } from "../op/work-lease-run";
@@ -525,6 +527,8 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         approvals: [{ principal: "alice", channel: "cli", relayedBy: null, at: "2026-09-20T01:00:00.000Z" }],
         needed: 1,
         signed: null,
+        // No record kind is declared, so no decision covers web.
+        decisions: [],
         approve: `chant approve web deploy --env staging --plan ${D("1")}`,
       },
       {
@@ -538,6 +542,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         approvals: [],
         needed: 1,
         signed: null,
+        decisions: [],
         approve: `chant approve web deploy --env prod --plan ${D("2")}`,
       },
       {
@@ -552,6 +557,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         approvals: [{ principal: "bob", channel: "cli", relayedBy: null, at: "2026-09-20T02:00:00.000Z" }],
         needed: 2,
         signed: null,
+        decisions: [],
         approve: `chant approve web review --env staging --plan ${D("4")}`,
       },
     ]);
@@ -626,6 +632,45 @@ describe("gate state in chant workspace status --json (#2674)", () => {
     } finally {
       log.mockRestore();
     }
+  });
+});
+
+describe("the decisions covering a gate's member (#3616)", () => {
+  test("each gate names the current decisions covering its member, ranked as why ranks them", async () => {
+    const ref = join(REPO, "reference-workspace", "decisions");
+    const fm = parseFrontMatter(readFileSync(join(ref, "ref-001-how-the-app-is-deployed.md"), "utf-8"));
+    if (!fm.ok) throw new Error(fm.message);
+    const base = fm.value;
+    const decision = (id: string, fields: Record<string, unknown>) =>
+      `---\n${JSON.stringify({ ...base, id, title: `Decision ${id}`, state: "decided", supersedes: [], evidence: [], reviews: [], ...fields }, null, 2)}\n---\n\n# ${id}\n`;
+    const root = repo({
+      "chant.workspace.json": JSON.stringify({
+        name: "acme",
+        schema: 1,
+        records: [{ kind: "decisions/decision.kind.mjs" }],
+        members: [
+          { name: "web", dir: "apps/web", kind: "other", because: "the app" },
+          { name: "api", dir: "apps/api", kind: "other", because: "the api" },
+        ],
+      }),
+      "decisions/decision.kind.mjs": readFileSync(join(ref, "decision.kind.mjs"), "utf-8"),
+      "decisions/decision.schema.json": readFileSync(join(ref, "decision.schema.json"), "utf-8"),
+      "apps/web/server.ts": "export {};\n",
+      "decisions/s-001-d.md": decision("s-001", { constrains: ["member:web"] }),
+      "decisions/s-002-d.md": decision("s-002", { constrains: ["path:apps"] }),
+      "decisions/s-003-d.md": decision("s-003", { constrains: ["path:apps/web/server.ts"] }),
+      "decisions/s-004-d.md": decision("s-004", { constrains: ["path:apps/web"] }),
+      "decisions/s-005-d.md": decision("s-005", { constrains: ["path:elsewhere"], supersedes: [{ decision: "s-004" }] }),
+      "decisions/s-006-d.md": decision("s-006", { constrains: ["member:api"] }),
+    });
+    lifecycle(root, { "_members/web/_gates/web.jsonl": jsonl(pending("web", "deploy", "2026-09-20T00:00:00.000Z", { environment: "staging", planDigest: D("1") })) });
+    const doc = result(await workspaceStatus({ cwd: root, env: "staging", now: NOW }));
+    expectValid(doc);
+    const [web, api] = doc.members;
+    // s-002 by a path above, s-001 by member, s-003 by a path inside; s-004 stands for s-005, which supersedes it.
+    expect(web.gates.map((g) => g.decisions)).toEqual([["decision/s-002", "decision/s-001", "decision/s-003", "decision/s-005"]]);
+    // A member with no gate reads no decisions.
+    expect(api.gates).toEqual([]);
   });
 });
 
