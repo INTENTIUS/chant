@@ -246,8 +246,8 @@ one `describeResources` at the plan depth with the real activities: bound
 blocks carry the plan's attributes (the drift as a planned `update`),
 ownership and the marker still come from `live-plan`, the foreign and
 adoptable blocks carry none, `sources` reads `live+plan`, neither secret
-appears anywhere in the result, and the plan read adds nothing to the root or
-the temp directory.
+appears anywhere in the result, and the read adds nothing to the root (the
+plan file and the `live-plan` document included, #4379) or the temp directory.
 
 Gated on a `choudoufu` and an `aws` CLI on PATH and on
 `CHOUDOUFU_EMULATOR_ENDPOINT`.
