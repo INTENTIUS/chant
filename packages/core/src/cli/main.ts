@@ -175,9 +175,12 @@ Commands:
                         --check-live, --check-snapshot, --fail-on-drift)
   query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
                         the resources and snapshots each lexicon observed, Op
-                        runs, gates, deploys, releases and cuts, loaded into
-                        node:sqlite (schema v1, listed in chant_schema).
-                        --member <name> keeps members; --json prints rows
+                        runs, gates, deploys, releases and cuts, converge
+                        ticks, deploy outcomes, builds, change sets and work
+                        leases, loaded into node:sqlite (schema v1, listed in
+                        chant_schema). --member <name> keeps members; --at
+                        <rev> reads an earlier commit (a sha, a ref or a
+                        date); --json prints rows
   generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed

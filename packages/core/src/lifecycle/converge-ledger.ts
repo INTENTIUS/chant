@@ -259,14 +259,12 @@ export async function appendConvergeRecord(
   throw lastErr;
 }
 
-/** Read every tick record for `environment`, oldest first. Malformed lines are skipped, not thrown on — a corrupted or hand-edited ledger degrades gracefully, the same stance `readReleaseLedger` takes. */
-export async function readConvergeLedger(
-  environment: string,
-  opts?: { cwd?: string },
-): Promise<{ records: ConvergeTickRecord[]; malformed: number }> {
-  const content = await readBlobFromPath(environment, FILENAME, opts);
-  if (!content) return { records: [], malformed: 0 };
+/** The file a ConvergeOp's ticks are appended to, under the environment's directory. */
+export const CONVERGE_FILE = FILENAME;
 
+/** Parse the text of a `converge.jsonl`, oldest first (#4329: `chant query` reads it too). A line that is not a tick record is counted and skipped. */
+export function parseConvergeLedger(content: string | null): { records: ConvergeTickRecord[]; malformed: number } {
+  if (!content) return { records: [], malformed: 0 };
   const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
   const records: ConvergeTickRecord[] = [];
   let malformed = 0;
@@ -289,6 +287,14 @@ export async function readConvergeLedger(
     }
   }
   return { records, malformed };
+}
+
+/** Read every tick record for `environment`, oldest first. Malformed lines are skipped, not thrown on — a corrupted or hand-edited ledger degrades gracefully, the same stance `readReleaseLedger` takes. */
+export async function readConvergeLedger(
+  environment: string,
+  opts?: { cwd?: string },
+): Promise<{ records: ConvergeTickRecord[]; malformed: number }> {
+  return parseConvergeLedger(await readBlobFromPath(environment, FILENAME, opts));
 }
 
 /**

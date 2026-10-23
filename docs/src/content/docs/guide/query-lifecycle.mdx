@@ -1,6 +1,6 @@
 ---
 title: Query chant/lifecycle with SQL
-description: Answer questions about what is deployed and who approved it with chant query, one SQL statement over the records chant already keeps on chant/lifecycle.
+description: Answer questions about what is deployed, what failed and who approved it with chant query, one SQL statement over the records chant already keeps on chant/lifecycle.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/query-lifecycle/.
@@ -18,6 +18,15 @@ The command reads the local branch. To query what CI recorded, fetch it first:
 ```
 git fetch origin chant/lifecycle:chant/lifecycle
 ```
+
+To read the branch as it was at an earlier commit, pass `--at` with a ref or a date:
+
+```
+chant query "SELECT env, count(*) FROM resources GROUP BY env" --at chant/lifecycle~10
+chant query "SELECT env, count(*) FROM resources GROUP BY env" --at 2026-10-01
+```
+
+A date reads the newest ledger commit at or before the end of that day.
 
 ## List what is deployed
 
@@ -65,6 +74,38 @@ chant query "SELECT op, gate, timestamp, expires_at FROM gates WHERE kind = 'pen
 chant query "SELECT d.env, d.component, c.label, d.timestamp FROM deploys d JOIN cuts c ON c.release_digest = d.release_digest ORDER BY d.timestamp DESC"
 ```
 
+## Read the other ledgers
+
+The other ledgers chant writes have tables too. A ConvergeOp writes one `converge` row per tick, with the tick's counts:
+
+```
+chant query "SELECT env, op, timestamp, drifted, remediated, gated FROM converge WHERE drifted > 0 ORDER BY timestamp DESC LIMIT 20"
+```
+
+A promote, rollback or redeploy that failed or stopped at a gate writes a deploy outcome, and `deploy_outcomes` has a row for each of its components:
+
+```
+chant query "SELECT env, verb, component, outcome, timestamp FROM deploy_outcomes WHERE outcome IN ('failed', 'gated') ORDER BY timestamp DESC"
+```
+
+Each change set a gate stored is in `change_sets`, and its entries are in `change_set_entries`. This lists the deletes and replacements the gates bound:
+
+```
+chant query "SELECT digest, set_member, address, action FROM change_set_entries WHERE action IN ('delete', 'replace')"
+```
+
+`builds` has one row per build manifest and `build_artifacts` one per entry. An SBOM entry names the artifact it describes in `subject_digest`:
+
+```
+chant query "SELECT b.component, a.path, a.generator, a.package_count FROM builds b JOIN build_artifacts a ON a.manifest_digest = b.manifest_digest WHERE a.kind = 'sbom'"
+```
+
+`leases` holds every claim, renew and release of a work lease:
+
+```
+chant query "SELECT item, event, holder, timestamp, outcome FROM leases ORDER BY timestamp"
+```
+
 ## Query a workspace
 
 In a workspace every row has the member it came from. `--member` reads only the members it names:
@@ -82,4 +123,4 @@ chant query "SELECT * FROM runs" --member api
 chant query "SELECT DISTINCT version FROM chant_schema" --json
 ```
 
-The [reference](/chant/cli/query/#tables) lists every table and column.
+The [reference](/chant/cli/query/#tables) lists every table and column. A product that keeps records of its own can add its tables beside these, as the [reference](/chant/cli/query/#a-products-own-tables) shows.
