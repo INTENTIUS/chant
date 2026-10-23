@@ -16,6 +16,7 @@ import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import type { Declarable } from "../../declarable";
+import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -55,7 +56,15 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     if (args.json) console.log(JSON.stringify(searchErrorJson(query, error)));
     return 1;
   };
-  if (!query) {
+  // `--count-by` groups the matched set (#4360). It takes any query, and no
+  // query at all counts the whole graph: "which kinds does this estate hold".
+  let countBy: CountBy | undefined;
+  if (args.countBy !== undefined) {
+    const parsed = parseCountBy(args.countBy);
+    if ("error" in parsed) return refuse({ message: parsed.error, hint: parsed.hint });
+    countBy = parsed;
+  }
+  if (!query && !countBy) {
     return refuse({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" });
   }
   let terms: Term[];
@@ -360,31 +369,47 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
         ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
         : undefined;
+    const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
+    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir)).replace(/^— /, "");
     const driftJson = drift
       ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
       : driftUnavailable !== undefined
         ? { against: driftAgainst, unavailable: driftUnavailable }
         : undefined;
-    console.log(JSON.stringify(searchJson(query, source, matches, terms, ir, nodeById, liveFailures, {
-      ...(args.env && source.kind !== "declared" ? { env: String(args.env) } : {}),
-      show,
-      provenance: provenanceLine(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir)).replace(/^— /, ""),
-      ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
-      ...(driftJson ? { drift: driftJson } : {}),
-    })));
+    // With --count-by (#4360) the object carries the groups and the total in
+    // place of the matches, the same answer the grouped lines give, with the
+    // provenance line beside it (#4367).
+    const payload = countBy
+      ? {
+          ...countsJson(query, env ? { ...source, env } : source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
+          provenance: provenanceText,
+          ...(driftJson ? { drift: driftJson } : {}),
+        }
+      : searchJson(query, source, matches, terms, ir, nodeById, liveFailures, {
+          ...(env ? { env } : {}),
+          show,
+          provenance: provenanceText,
+          ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
+          ...(driftJson ? { drift: driftJson } : {}),
+        });
+    console.log(JSON.stringify(payload));
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     if (liveFailures.length > 0) return 1;
     return args.failOnDrift && drift && driftCountOf(drift) > 0 ? 1 : 0;
   }
   if (matches.length === 0) {
-    console.log("(no matches)");
+    console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
     availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     return 0;
   }
-  for (const n of matches) {
-    console.log(formatRow(n, show));
+  if (countBy) {
+    for (const line of formatCounts(countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy)) console.log(line);
+  } else {
+    for (const n of matches) {
+      console.log(formatRow(n, show));
+    }
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
   // Only worth asking when the live read came back empty — that is the one case
@@ -402,8 +427,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     if (args.failOnDrift && driftCount > 0) driftFailure = true;
   }
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
-  showMiss(matches, show);
-  regionSpread(terms, matches, show);
+  // Both point at `--show`, which a grouped count does not print (#4360).
+  if (!countBy) {
+    showMiss(matches, show);
+    regionSpread(terms, matches, show);
+  }
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   // The caller asked for a live answer and at least one lexicon could not be
