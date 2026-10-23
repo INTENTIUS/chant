@@ -42,6 +42,25 @@ describe("github", () => {
     expect(await changes.prApproved!(7, HEAD)).toEqual({ passed: false, reason: "carol asked for changes" });
   });
 
+  test("approved: forgeRule counts only writers, exclude leaves a login out, and the refusal says why (#4337)", async () => {
+    const reviews = [
+      { user: { login: "bob" }, state: "APPROVED", commit_id: HEAD },
+      { user: { login: "Carol" }, state: "APPROVED", commit_id: HEAD },
+      { user: { login: "alice" }, state: "APPROVED", commit_id: HEAD },
+    ];
+    const f = forge({
+      [`GET ${repo}/pulls/7/reviews`]: reviews,
+      [`GET ${repo}/collaborators/bob/permission`]: { permission: "read", role_name: "triage" },
+      [`GET ${repo}/collaborators/Carol/permission`]: { permission: "write", role_name: "maintain" },
+    });
+    expect(await f.prApproved!(7, HEAD, { forgeRule: true })).toEqual({ passed: true, reason: "approved at aaaaaaaa by Carol" });
+    expect(await f.prApproved!(7, HEAD, { forgeRule: true, exclude: [{ login: "carol", reason: "carol asked for aaaaaaa" }] })).toEqual({
+      passed: false,
+      reason: "no reviewer other than its authors approved its head aaaaaaaa: carol asked for aaaaaaa; alice is one of its authors; bob has no write access",
+    });
+    expect((await f.prApproved!(7, HEAD, { exclude: ["bob"] })).reason).toBe("approved at aaaaaaaa by Carol");
+  });
+
   test("every check fails when the forge's head is another commit", async () => {
     const f = forge({ [`GET ${repo}/pulls/7`]: pull({ head: { ref: "f", sha: OTHER } }) });
     const r = await f.prMergeable!(7, HEAD);
@@ -87,6 +106,13 @@ describe("forgejo", () => {
   test("approved: Forgejo's REQUEST_CHANGES state refuses", async () => {
     const f = forge({ [`GET ${repo}/pulls/4/reviews`]: [{ user: { login: "bob" }, state: "APPROVED", commit_id: HEAD }, { user: { login: "dave" }, state: "REQUEST_CHANGES" }] });
     expect((await f.prApproved!(4, HEAD)).reason).toBe("dave asked for changes");
+  });
+
+  test("approved: forgeRule counts an official review only, through checkPrRequires' approvers (#4337)", async () => {
+    const f = forge({ [`GET ${repo}/pulls/4/reviews`]: [{ user: { login: "bob" }, state: "APPROVED", commit_id: HEAD, official: false }, { user: { login: "erin" }, state: "APPROVED", commit_id: HEAD, official: true }] });
+    expect((await f.prApproved!(4, HEAD, { forgeRule: true })).reason).toBe("approved at aaaaaaaa by erin");
+    const out = await checkPrRequires(f, 4, HEAD, { only: ["approved"], approvers: { forgeRule: true, exclude: ["erin"] } });
+    expect(out[0]!.reason).toBe("no reviewer other than its authors approved its head aaaaaaaa: bob's review is not official; erin is excluded");
   });
 
   test("undiverged: the pull request's merge base is the base branch's tip", async () => {
@@ -142,6 +168,23 @@ describe("gitlab", () => {
     expect(await g.prApproved!(3, HEAD)).toEqual({ passed: true, reason: "approved after aaaaaaaa by bob" });
     const h = forge({ [`GET ${project}/merge_requests/3/notes`]: [note("bob", "approved this merge request", "2026-10-01T11:00:00Z"), note("carol", "requested changes", "2026-10-01T12:00:00Z")] });
     expect((await h.prApproved!(3, HEAD)).reason).toBe("carol requested changes");
+  });
+
+  test("approved: forgeRule reads each approver's access level, Developer by default (#4337)", async () => {
+    const at = "2026-10-01T11:00:00Z";
+    const f = forge({
+      [`GET ${project}/merge_requests/3/notes`]: [
+        { ...note("bob", "approved this merge request", at), author: { username: "bob", id: 5 } },
+        { ...note("dan", "approved this merge request", at), author: { username: "dan", id: 6 } },
+        { ...note("eve", "approved this merge request", at), author: { username: "eve", id: 7 } },
+      ],
+      [`GET ${project}/members/all/5`]: { access_level: 20 },
+      [`GET ${project}/members/all/6`]: { access_level: 40 },
+    });
+    expect((await f.prApproved!(3, HEAD, { forgeRule: true })).reason).toBe("approved after aaaaaaaa by dan");
+    expect((await f.prApproved!(3, HEAD, { forgeRule: true, minAccessLevel: 50 })).reason).toBe(
+      "no member other than its authors approved it after its latest push, aaaaaaaa: bob has access level 20, under 50; dan has access level 40, under 50; eve is not a member",
+    );
   });
 
   test("mergeable and undiverged read the merge request", async () => {
