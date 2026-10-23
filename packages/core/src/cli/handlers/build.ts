@@ -151,6 +151,10 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   if (found && args.prLoop) {
     try {
       identity = await (await import("../../workspace/ci-cloud-identity")).declaredCloudIdentity(resolve(args.path), args.env ?? "production", plan?.member.name);
+      // #4332: the pull-request pipeline applies a member in one job, which may hold one apply identity per cloud.
+      const applies = args.applyOnMerge || args.applyBeforeMerge;
+      const problem = identity && applies ? (await import("../../ci-identity")).oneApplyIdentityProblem(identity.apply) : undefined;
+      if (problem) throw new Error(`${problem}; the pull-request pipeline applies ${plan?.member.name ?? "the project"} in one job, so give its targets one apply identity, or apply them through Op waves with a job group per identity (cloudIdentityWave)`);
     } catch (err) {
       console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
       return 1;

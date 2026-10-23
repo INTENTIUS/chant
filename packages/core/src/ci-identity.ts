@@ -21,6 +21,17 @@
  * identity. The record job plans the merged commit with the plan identity,
  * and the apply jobs trade for the apply identity.
  *
+ * Per target (#4332): a rule with `targets` covers only the targets those
+ * globs match, the Terraform roots or Op wave runs inside one member, so
+ * one member's targets can plan and apply as different identities. A
+ * target takes the first rule that covers its environment, member and
+ * target ({@link resolveTargetCloudIdentity}). The plan job then trades for
+ * every plan identity the member's targets take, keeps the credentials of
+ * each in a file named by {@link CLOUD_TARGETS_ENV}, and a product hands
+ * each target's tool its own with {@link targetCloudEnv}. An apply splits
+ * into one job per apply identity ({@link cloudIdentityGroups},
+ * {@link cloudIdentityWave}), so no job holds two targets' apply tokens.
+ *
  * The trade is terragucci's `oidc-trade.ts` (INTENTIUS/terragucci e6cb431,
  * packages/terragucci/src/oidc-trade.ts) with these clients:
  *
@@ -39,19 +50,27 @@
  * itself cannot plan under this block.
  */
 
-// @ts-ignore: picomatch has no types declaration
-import picomatch from "picomatch";
+import { readFileSync } from "node:fs";
 
 /** The clouds `ci.identity.cloud` names. */
 export const CLOUDS = ["aws", "gcp", "azure"] as const;
 export type Cloud = (typeof CLOUDS)[number];
 
-/** One rule: the environments and members it covers, and their two identities. */
+/** One rule: the environments, members and targets it covers, and their two identities. */
 export interface CloudIdentityRule {
   /** Environment-name globs. Absent: every environment. */
   environments?: string[];
   /** Member-name globs. Absent: every member, and a pipeline outside a workspace member. */
   members?: string[];
+  /**
+   * Target globs (#4332): the targets inside the member the rule covers,
+   * such as Terraform roots or Op wave run targets. `*` matches within one
+   * `/` segment, `**` across segments, `?` one character. Absent: every
+   * target, and the pipeline as a whole.
+   */
+  targets?: string[];
+  /** The name of the apply job group its targets form (#4332). Default: from its first target glob. */
+  name?: string;
   /** The identity the plan and record jobs take. */
   plan: string;
   /** The identity the apply jobs take. */
@@ -99,12 +118,20 @@ export interface CloudIdentityDeclaration {
   azure?: AzureCloudIdentity;
 }
 
-/** What one job trades for: per cloud, the one identity and where to trade it. */
+/**
+ * What one job trades for, per cloud: the job's own identity and where to
+ * trade it, and with `targets` (#4332) the identities of the targets that
+ * take another, first match wins. A cloud names its own identity, or
+ * targets, or both.
+ */
 export interface CloudTradeSpec {
-  aws?: { role: string; region: string; audience: string; endpoint?: string };
-  gcp?: { serviceAccount: string; provider: string; audience: string; stsEndpoint?: string; iamEndpoint?: string };
-  azure?: { clientId: string; tenantId: string; audience: string; subscriptionId?: string; authority?: string };
+  aws?: { role?: string; targets?: Array<{ targets: string[]; role: string }>; region: string; audience: string; endpoint?: string };
+  gcp?: { serviceAccount?: string; targets?: Array<{ targets: string[]; serviceAccount: string }>; provider: string; audience: string; stsEndpoint?: string; iamEndpoint?: string };
+  azure?: { clientId?: string; targets?: Array<{ targets: string[]; clientId: string }>; tenantId: string; audience: string; subscriptionId?: string; authority?: string };
 }
+
+/** The key a cloud's trade names its identity under. */
+export const IDENTITY_KEY = { aws: "role", gcp: "serviceAccount", azure: "clientId" } as const;
 
 /** A pipeline's two trades: the plan and record jobs', and the apply jobs'. */
 export interface PipelineCloudIdentity {
@@ -112,56 +139,256 @@ export interface PipelineCloudIdentity {
   apply: CloudTradeSpec;
 }
 
-const matches = (globs: readonly string[] | undefined, name: string | undefined): boolean =>
-  globs === undefined || (name !== undefined && globs.some((g) => (picomatch(g) as (s: string) => boolean)(name)));
+/**
+ * A glob over a name (#4296): `*` and `?` within the name, `[...]` classes,
+ * `{a,b}` alternatives, a leading `!` negates. The grammar `ciMemberGlobs`
+ * documents, with no dependency, so this module bundles small (#4332).
+ */
+export function nameGlobMatch(glob: string, name: string): boolean {
+  if (glob.startsWith("!")) return !nameGlobMatch(glob.slice(1), name);
+  return expandBraces(glob).some((g) => new RegExp(`^${globBody(g, false)}$`).test(name));
+}
 
-/** The first rule that covers `env` and `member`, or undefined. */
-export function ruleFor(rules: readonly CloudIdentityRule[], env: string, member?: string): CloudIdentityRule | undefined {
-  return rules.find((r) => matches(r.environments, env) && matches(r.members, member));
+/**
+ * A glob over a target (#4332): `*` within one `/` segment, `**` across
+ * segments (and `a/**\/b` across none), `?` one character. The reading of
+ * `targetGlobMatch` in ./op/gate-quorum.ts and the terraform lexicon's unit
+ * globs, so a root's glob means one thing in each.
+ */
+export function targetGlobMatch(glob: string, target: string): boolean {
+  const trim = (v: string): string => v.replace(/\\/g, "/").replace(/\/+$/, "");
+  return new RegExp(`^${globBody(trim(glob), true)}$`).test(trim(target));
+}
+
+/** `{a,b}` alternatives, nested too, expanded into plain globs. */
+function expandBraces(glob: string): string[] {
+  const open = glob.indexOf("{");
+  if (open < 0) return [glob];
+  let depth = 0;
+  const cuts: number[] = [];
+  for (let i = open; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) {
+      const parts = cuts.length === 0 ? [glob.slice(open + 1, i)] : [open, ...cuts].map((at, k, all) => glob.slice(at + 1, k + 1 < all.length ? all[k + 1] : i));
+      const rest = expandBraces(glob.slice(i + 1));
+      return parts.flatMap((p) => expandBraces(glob.slice(0, open) + p)).flatMap((head) => rest.map((tail) => head + tail));
+    } else if (c === "," && depth === 1) cuts.push(i);
+  }
+  return [glob];
+}
+
+/** A glob's regular expression body. `paths`: `**` crosses `/`, and classes and braces are literal. */
+function globBody(g: string, paths: boolean): string {
+  let re = "";
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i]!;
+    if (c === "*" && g[i + 1] === "*" && paths) {
+      if (g[i + 2] === "/") {
+        re += "(?:.*/)?";
+        i += 2;
+      } else {
+        re += ".*";
+        i += 1;
+      }
+    } else if (c === "*") {
+      re += "[^/]*";
+      while (g[i + 1] === "*") i++;
+    } else if (c === "?") re += "[^/]";
+    else if (c === "[" && !paths && g.indexOf("]", i + 2) > i) {
+      const end = g.indexOf("]", i + 2);
+      const body = g.slice(i + 1, end);
+      re += `[${body.startsWith("!") ? `^${body.slice(1)}` : body}]`.replace(/\\/g, "\\\\");
+      i = end;
+    } else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return re;
+}
+
+const matches = (globs: readonly string[] | undefined, name: string | undefined): boolean => globs === undefined || (name !== undefined && globs.some((g) => nameGlobMatch(g, name)));
+
+const coversTarget = (r: CloudIdentityRule, target: string | undefined): boolean =>
+  r.targets === undefined || (target !== undefined && r.targets.some((g) => targetGlobMatch(g, target)));
+
+/**
+ * The first rule that covers `env`, `member` and `target`, or undefined.
+ * With no `target`, the first rule that names no targets: the pipeline's own.
+ */
+export function ruleFor(rules: readonly CloudIdentityRule[], env: string, member?: string, target?: string): CloudIdentityRule | undefined {
+  return rules.find((r) => matches(r.environments, env) && matches(r.members, member) && coversTarget(r, target));
 }
 
 /** The provider's resource name without the `//iam.googleapis.com/` prefix. */
 const providerPath = (p: string): string => p.replace(/^(https:)?\/\/iam\.googleapis\.com\//, "");
 
+/** Where each cloud trades, the same for every identity of the cloud. */
+function cloudPlace(decl: CloudIdentityDeclaration, cloud: Cloud): Record<string, string> {
+  if (cloud === "aws") {
+    const a = decl.aws!;
+    return { region: a.region ?? "us-east-1", audience: a.audience ?? "sts.amazonaws.com", ...(a.endpoint ? { endpoint: a.endpoint } : {}) };
+  }
+  if (cloud === "gcp") {
+    const g = decl.gcp!;
+    const provider = providerPath(g.provider);
+    return {
+      provider,
+      audience: g.audience ?? `https://iam.googleapis.com/${provider}`,
+      ...(g.stsEndpoint ? { stsEndpoint: g.stsEndpoint } : {}),
+      ...(g.iamEndpoint ? { iamEndpoint: g.iamEndpoint } : {}),
+    };
+  }
+  const z = decl.azure!;
+  return {
+    tenantId: z.tenantId,
+    audience: z.audience ?? "api://AzureADTokenExchange",
+    ...(z.subscriptionId ? { subscriptionId: z.subscriptionId } : {}),
+    ...(z.authority ? { authority: z.authority } : {}),
+  };
+}
+
+/** One cloud's trade: its own identity, the targets that take another, and where it trades. */
+function cloudTrade(decl: CloudIdentityDeclaration, cloud: Cloud, own: string | undefined, targets: Array<{ targets: string[]; id: string }>): Record<string, unknown> {
+  const key = IDENTITY_KEY[cloud];
+  return {
+    ...(own !== undefined ? { [key]: own } : {}),
+    ...(targets.length > 0 ? { targets: targets.map((t) => ({ targets: [...t.targets], [key]: t.id })) } : {}),
+    ...cloudPlace(decl, cloud),
+  };
+}
+
 /**
  * The plan and apply trades of the pipeline for `env` and `member`, or
  * undefined when no rule of any cloud covers them. A cloud no rule covers
- * is left out of both.
+ * is left out of both. Each cloud's own identity is the first rule with no
+ * `targets` that covers the pipeline; the rules with `targets` before it
+ * are the cloud's `targets` (#4332), so the plan trade holds every plan
+ * identity a target of the member takes, and the apply trade every apply
+ * identity.
  */
 export function resolveCloudIdentity(decl: CloudIdentityDeclaration | undefined, env: string, member?: string): PipelineCloudIdentity | undefined {
   if (!decl) return undefined;
-  const plan: CloudTradeSpec = {};
-  const apply: CloudTradeSpec = {};
-  const aws = decl.aws && ruleFor(decl.aws.rules, env, member);
-  if (decl.aws && aws) {
-    const at = { region: decl.aws.region ?? "us-east-1", audience: decl.aws.audience ?? "sts.amazonaws.com", ...(decl.aws.endpoint ? { endpoint: decl.aws.endpoint } : {}) };
-    plan.aws = { role: aws.plan, ...at };
-    apply.aws = { role: aws.apply, ...at };
+  const plan: Record<string, unknown> = {};
+  const apply: Record<string, unknown> = {};
+  for (const cloud of CLOUDS) {
+    const rules = decl[cloud]?.rules;
+    if (!rules) continue;
+    const covering = rules.filter((r) => matches(r.environments, env) && matches(r.members, member));
+    const cut = covering.findIndex((r) => r.targets === undefined);
+    const own = cut < 0 ? undefined : covering[cut];
+    const byTarget = (cut < 0 ? covering : covering.slice(0, cut)).filter((r) => r.targets !== undefined);
+    if (!own && byTarget.length === 0) continue;
+    plan[cloud] = cloudTrade(decl, cloud, own?.plan, byTarget.map((r) => ({ targets: r.targets!, id: r.plan })));
+    apply[cloud] = cloudTrade(decl, cloud, own?.apply, byTarget.map((r) => ({ targets: r.targets!, id: r.apply })));
   }
-  const gcp = decl.gcp && ruleFor(decl.gcp.rules, env, member);
-  if (decl.gcp && gcp) {
-    const provider = providerPath(decl.gcp.provider);
-    const at = {
-      provider,
-      audience: decl.gcp.audience ?? `https://iam.googleapis.com/${provider}`,
-      ...(decl.gcp.stsEndpoint ? { stsEndpoint: decl.gcp.stsEndpoint } : {}),
-      ...(decl.gcp.iamEndpoint ? { iamEndpoint: decl.gcp.iamEndpoint } : {}),
-    };
-    plan.gcp = { serviceAccount: gcp.plan, ...at };
-    apply.gcp = { serviceAccount: gcp.apply, ...at };
+  return Object.keys(plan).length > 0 ? { plan: plan as CloudTradeSpec, apply: apply as CloudTradeSpec } : undefined;
+}
+
+/**
+ * The plan and apply trades of one target (#4332): per cloud, the first
+ * rule that covers `env`, `member` and `target`. Undefined when no rule of
+ * any cloud covers it. Each trade names one identity per cloud and no
+ * `targets`.
+ */
+export function resolveTargetCloudIdentity(decl: CloudIdentityDeclaration | undefined, env: string, member: string | undefined, target: string): PipelineCloudIdentity | undefined {
+  if (!decl) return undefined;
+  const plan: Record<string, unknown> = {};
+  const apply: Record<string, unknown> = {};
+  for (const cloud of CLOUDS) {
+    const rule = decl[cloud] && ruleFor(decl[cloud]!.rules, env, member, target);
+    if (!rule) continue;
+    plan[cloud] = cloudTrade(decl, cloud, rule.plan, []);
+    apply[cloud] = cloudTrade(decl, cloud, rule.apply, []);
   }
-  const azure = decl.azure && ruleFor(decl.azure.rules, env, member);
-  if (decl.azure && azure) {
-    const at = {
-      tenantId: decl.azure.tenantId,
-      audience: decl.azure.audience ?? "api://AzureADTokenExchange",
-      ...(decl.azure.subscriptionId ? { subscriptionId: decl.azure.subscriptionId } : {}),
-      ...(decl.azure.authority ? { authority: decl.azure.authority } : {}),
-    };
-    plan.azure = { clientId: azure.plan, ...at };
-    apply.azure = { clientId: azure.apply, ...at };
+  return Object.keys(plan).length > 0 ? { plan: plan as CloudTradeSpec, apply: apply as CloudTradeSpec } : undefined;
+}
+
+/** One apply job's targets (#4332): those that take the same identities, per cloud. */
+export interface CloudIdentityGroup {
+  /** A job-name-safe name: the first rule with `targets` they took (its `name`, or one from its first glob), else `default`. */
+  name: string;
+  /** The group's targets, in the order given. */
+  targets: string[];
+  /** Their plan and apply trades, one identity per cloud. Undefined when no rule covers them. */
+  identity?: PipelineCloudIdentity;
+}
+
+/** The group name a glob gives: `envs/prod/**` is `envs-prod`. terragucci's `nameFrom` (groups.ts at INTENTIUS/terragucci ca05bd9). */
+const nameFrom = (glob: string): string => glob.toLowerCase().replace(/\*+/g, "").replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+
+/** The name of the apply job group for {@link CloudIdentityGroup}s with no rule of their own. */
+export const DEFAULT_IDENTITY_GROUP = "default";
+
+/**
+ * `targets` grouped by the identities they take (#4332), so each group's
+ * apply runs in a job of its own with its group's identities alone.
+ * Targets that take the same plan and apply identity in every cloud are one
+ * group. The groups come in the order their first target comes, with
+ * `default` (the targets no rule with `targets` took) last. Names are
+ * unique: a second group of one name gets `-2`.
+ */
+export function cloudIdentityGroups(decl: CloudIdentityDeclaration | undefined, env: string, member: string | undefined, targets: readonly string[]): CloudIdentityGroup[] {
+  const byKey = new Map<string, { base: string; group: CloudIdentityGroup }>();
+  for (const target of targets) {
+    const identity = resolveTargetCloudIdentity(decl, env, member, target);
+    const key = JSON.stringify(identity ? CLOUDS.map((c) => [identity.plan[c] ? tradeIdentities({ [c]: identity.plan[c] }) : [], identity.apply[c] ? tradeIdentities({ [c]: identity.apply[c] }) : []]) : null);
+    const at = byKey.get(key);
+    if (at) {
+      at.group.targets.push(target);
+      continue;
+    }
+    const rule = CLOUDS.map((c) => decl?.[c] && ruleFor(decl[c]!.rules, env, member, target)).find((r) => r?.targets !== undefined);
+    const named = rule ? (rule.name ?? (nameFrom(rule.targets![0]!) || "group")) : DEFAULT_IDENTITY_GROUP;
+    // An Op wave's own jobs are `decide` and `share-<i>` (./op/op-waves.ts), so a group takes neither name.
+    const base = named === "decide" || /^share-\d+$/.test(named) ? `${named}-targets` : named;
+    byKey.set(key, { base, group: { name: base, targets: [target], ...(identity ? { identity } : {}) } });
   }
-  return Object.keys(plan).length > 0 ? { plan, apply } : undefined;
+  const all = [...byKey.values()];
+  const ordered = [...all.filter((g) => g.base !== DEFAULT_IDENTITY_GROUP), ...all.filter((g) => g.base === DEFAULT_IDENTITY_GROUP)];
+  const taken = new Set<string>();
+  return ordered.map(({ base, group }) => {
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
+    taken.add(name);
+    return { ...group, name };
+  });
+}
+
+/**
+ * An Op wave's cloud identities over its run targets (#4332), as
+ * `OpWave.cloud` and `OpWave.jobs` (./op/op-waves.ts) take them. With two
+ * or more {@link cloudIdentityGroups}, the deciding job trades for every
+ * plan identity of the targets and each group's job for its group's apply
+ * identities alone. With one group, the wave's one job trades for that
+ * group's apply identities, and `jobs` is absent. Neither, when no rule
+ * covers a target.
+ */
+export function cloudIdentityWave(
+  decl: CloudIdentityDeclaration | undefined,
+  env: string,
+  member: string | undefined,
+  targets: readonly string[],
+): { cloud?: CloudTradeSpec; jobs?: Array<{ name: string; runs: string[]; cloud?: CloudTradeSpec }> } {
+  const groups = cloudIdentityGroups(decl, env, member, targets);
+  if (groups.length === 0) return {};
+  if (groups.length === 1) return groups[0]!.identity ? { cloud: groups[0]!.identity.apply } : {};
+  const plan = resolveCloudIdentity(decl, env, member)?.plan;
+  return {
+    ...(plan ? { cloud: plan } : {}),
+    jobs: groups.map((g) => ({ name: g.name, runs: [...g.targets], ...(g.identity ? { cloud: g.identity.apply } : {}) })),
+  };
+}
+
+/**
+ * Why one job may not apply under `spec` (#4332), or undefined: a cloud
+ * whose trade names more than one identity would hand one job the apply
+ * tokens of targets that apply as different identities.
+ */
+export function oneApplyIdentityProblem(spec: CloudTradeSpec): string | undefined {
+  for (const cloud of tradedClouds(spec)) {
+    const ids = tradeIdentities({ [cloud]: spec[cloud] });
+    if (ids.length > 1) return `ci.identity.cloud gives the targets of one apply job ${ids.length} ${cloud} apply identities (${ids.join(", ")}); a job may hold one, so apply them in a job per identity (cloudIdentityGroups)`;
+  }
+  return undefined;
 }
 
 /** The clouds a trade covers, in {@link CLOUDS} order. */
@@ -169,9 +396,15 @@ export function tradedClouds(spec: CloudTradeSpec): Cloud[] {
   return CLOUDS.filter((c) => spec[c] !== undefined);
 }
 
-/** Every identity a trade names: the role, the service account, the client id. */
+/** Every identity a trade names, once each: the roles, the service accounts, the client ids, its targets' too (#4332). */
 export function tradeIdentities(spec: CloudTradeSpec): string[] {
-  return [spec.aws?.role, spec.gcp?.serviceAccount, spec.azure?.clientId].filter((v): v is string => v !== undefined);
+  const out: string[] = [];
+  for (const cloud of tradedClouds(spec)) {
+    const c = spec[cloud] as Record<string, unknown> & { targets?: Array<Record<string, string>> };
+    const key = IDENTITY_KEY[cloud];
+    for (const id of [c[key] as string | undefined, ...(c.targets ?? []).map((t) => t[key])]) if (id !== undefined && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 /**
@@ -225,14 +458,31 @@ export const TRADED_VARS: Record<Cloud, readonly string[]> = {
 export type TradeFormat = "github-env" | "sh";
 
 /**
+ * The variable the trade sets when a cloud names `targets` (#4332): the
+ * path of a JSON file, mode 0600 and outside the checkout, with each
+ * identity's credentials and which targets take it. {@link targetCloudEnv}
+ * reads it.
+ */
+export const CLOUD_TARGETS_ENV = "CHANT_CLOUD_TARGETS";
+
+/** The file {@link CLOUD_TARGETS_ENV} names: per cloud, the job's own identity, the targets that take another, and each identity's variables. */
+export interface CloudTargetsFile {
+  version: 1;
+  clouds: Partial<Record<Cloud, { default?: string; targets: Array<{ targets: string[]; identity: string }>; vars: Record<string, Record<string, string>> }>>;
+}
+
+/**
  * The trade, a script for `node -e` with no dependency, so it runs before
  * the checkout and reads none of the change's files. argv 1 is the file it
  * writes and argv 2 its {@link TradeFormat}; {@link TRADE_SPEC_ENV} is the
  * spec. The token comes from a cloud's {@link idTokenVar} when the job has
  * it (GitLab's `id_tokens`), else from the forge's request URL with the
- * cloud's audience. A value that holds anything but printable ASCII with no
- * space is refused, so no answer can add a line of its own to the file. The
- * script never prints a token.
+ * cloud's audience, once per cloud. Each identity of a cloud (its own, and
+ * its targets', #4332) is traded with that one token. The job's own
+ * identity's variables go in the file; with targets, every identity's go in
+ * the {@link CLOUD_TARGETS_ENV} file too. A value that holds anything but
+ * printable ASCII with no space is refused, so no answer can add a line of
+ * its own to the file. The script never prints a token.
  */
 export const TRADE_JS = [
   'const fs=require("fs");',
@@ -251,27 +501,40 @@ export const TRADE_JS = [
   'const r=await fetch(u+(u.includes("?")?"&":"?")+"audience="+encodeURIComponent(aud),{headers:{authorization:"bearer "+k,accept:"application/json"}});',
   'if(!r.ok)throw new Error("the OIDC token request answered "+r.status);',
   'const v=json(await r.text(),"the OIDC token request").value;if(!clean(v))throw new Error("the OIDC token request gave no token");return v};',
-  "const vars={},secrets=[],said=[];",
+  `const KEY=${JSON.stringify(IDENTITY_KEY)};`,
+  // #4332: a cloud's identities, its own first, then its targets', once each.
+  'const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);if(!l.length)throw new Error(c+" names no identity");return l};',
+  "const vars={},secrets=[],said=[],by={};",
   "const run=async()=>{",
-  "if(spec.aws){const a=spec.aws;const tok=await idToken(\"aws\",a.audience);",
+  'if(spec.aws){const a=spec.aws;const tok=await idToken("aws",a.audience);by.aws={};',
   'const ep=trim(a.endpoint||process.env.AWS_ENDPOINT_URL_STS||("https://sts."+a.region+".amazonaws.com"+(a.region.startsWith("cn-")?".cn":"")));',
-  'const t=await post(ep+"/",{"content-type":"application/x-www-form-urlencoded",accept:"application/xml"},new URLSearchParams({Action:"AssumeRoleWithWebIdentity",Version:"2011-06-15",RoleArn:a.role,RoleSessionName:"chant-"+(process.env.GITHUB_RUN_ID||process.env.CI_JOB_ID||"job"),WebIdentityToken:tok}).toString());',
+  'for(const role of ids("aws")){',
+  'const t=await post(ep+"/",{"content-type":"application/x-www-form-urlencoded",accept:"application/xml"},new URLSearchParams({Action:"AssumeRoleWithWebIdentity",Version:"2011-06-15",RoleArn:role,RoleSessionName:"chant-"+(process.env.GITHUB_RUN_ID||process.env.CI_JOB_ID||"job"),WebIdentityToken:tok}).toString());',
   'const g=(k)=>{const m=new RegExp("<"+k+">([^<]+)</"+k+">").exec(t);return m?m[1].trim():undefined};',
-  'const id=g("AccessKeyId"),key=g("SecretAccessKey"),st=g("SessionToken");if(!clean(id)||!clean(key)||!clean(st))throw new Error("STS gave no credentials for "+a.role);',
-  'Object.assign(vars,{AWS_ACCESS_KEY_ID:id,AWS_SECRET_ACCESS_KEY:key,AWS_SESSION_TOKEN:st,AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region});secrets.push(key,st);said.push(a.role)}',
-  "if(spec.gcp){const c=spec.gcp;const tok=await idToken(\"gcp\",c.audience);",
+  'const id=g("AccessKeyId"),key=g("SecretAccessKey"),st=g("SessionToken");if(!clean(id)||!clean(key)||!clean(st))throw new Error("STS gave no credentials for "+role);',
+  "by.aws[role]={AWS_ACCESS_KEY_ID:id,AWS_SECRET_ACCESS_KEY:key,AWS_SESSION_TOKEN:st,AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region};secrets.push(key,st);said.push(role)}",
+  "if(a.role)Object.assign(vars,by.aws[a.role])}",
+  'if(spec.gcp){const c=spec.gcp;const tok=await idToken("gcp",c.audience);by.gcp={};',
   'const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");',
   'const fed=json(await post(sts+"/v1/token",{"content-type":"application/json"},JSON.stringify({grantType:"urn:ietf:params:oauth:grant-type:token-exchange",audience:"//iam.googleapis.com/"+c.provider,scope:"https://www.googleapis.com/auth/cloud-platform",requestedTokenType:"urn:ietf:params:oauth:token-type:access_token",subjectToken:tok,subjectTokenType:"urn:ietf:params:oauth:token-type:jwt"})),"Google STS").access_token;',
   'if(!clean(fed))throw new Error("Google STS gave no token");',
-  'const at=json(await post(iam+"/v1/projects/-/serviceAccounts/"+encodeURIComponent(c.serviceAccount)+":generateAccessToken",{"content-type":"application/json",authorization:"Bearer "+fed},JSON.stringify({scope:["https://www.googleapis.com/auth/cloud-platform"]})),"IAM credentials").accessToken;',
-  'if(!clean(at))throw new Error("IAM credentials gave no token for "+c.serviceAccount);',
-  "Object.assign(vars,{GOOGLE_OAUTH_ACCESS_TOKEN:at,CLOUDSDK_AUTH_ACCESS_TOKEN:at});secrets.push(at);said.push(c.serviceAccount)}",
-  "if(spec.azure){const z=spec.azure;const tok=await idToken(\"azure\",z.audience);",
+  'for(const sa of ids("gcp")){',
+  'const at=json(await post(iam+"/v1/projects/-/serviceAccounts/"+encodeURIComponent(sa)+":generateAccessToken",{"content-type":"application/json",authorization:"Bearer "+fed},JSON.stringify({scope:["https://www.googleapis.com/auth/cloud-platform"]})),"IAM credentials").accessToken;',
+  'if(!clean(at))throw new Error("IAM credentials gave no token for "+sa);',
+  "by.gcp[sa]={GOOGLE_OAUTH_ACCESS_TOKEN:at,CLOUDSDK_AUTH_ACCESS_TOKEN:at};secrets.push(at);said.push(sa)}",
+  "if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}",
+  'if(spec.azure){const z=spec.azure;const tok=await idToken("azure",z.audience);by.azure={};',
   'const host=trim(z.authority||"https://login.microsoftonline.com");',
-  'const at=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:z.clientId,scope:"https://management.azure.com/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;',
-  'if(!clean(at))throw new Error("Entra gave no token for "+z.clientId);',
-  "Object.assign(vars,{AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:z.clientId,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:z.clientId,ARM_TENANT_ID:z.tenantId});",
-  "if(z.subscriptionId)Object.assign(vars,{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId});secrets.push(at);said.push(z.clientId)}",
+  'for(const cid of ids("azure")){',
+  'const at=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:"https://management.azure.com/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;',
+  'if(!clean(at))throw new Error("Entra gave no token for "+cid);',
+  "by.azure[cid]={AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{})};secrets.push(at);said.push(cid)}",
+  "if(z.clientId)Object.assign(vars,by.azure[z.clientId])}",
+  // #4332: with targets, every identity's variables go in a file of their own, outside the checkout.
+  'const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){',
+  'const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}',
+  'const tf=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp")+"/chant-cloud-targets-"+require("crypto").randomBytes(8).toString("hex")+".json";',
+  `fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.${CLOUD_TARGETS_ENV}=tf}`,
   'for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");',
   'if(format==="github-env"){for(const s of secrets)console.log("::add-mask::"+s);fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\\n").join(""))}',
   'else fs.writeFileSync(out,Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\\\"+Q+Q)+Q+"\\n").join(""),{mode:0o600});',
@@ -307,4 +570,51 @@ export function gitlabTradeLines(extraUnset: readonly string[] = []): string[] {
 /** GitLab's `id_tokens:` for a trade: one per cloud, with the cloud's audience. */
 export function gitlabTradeIdTokens(spec: CloudTradeSpec): Record<string, { aud: string }> {
   return Object.fromEntries(tradedClouds(spec).map((c) => [idTokenVar(c), { aud: spec[c]!.audience }]));
+}
+
+/**
+ * `env` for one target's tool (#4332): the job's environment with each
+ * cloud's credentials replaced by those of the identity `target` takes, as
+ * the trade left them in the {@link CLOUD_TARGETS_ENV} file. A target that
+ * no rule with `targets` covers keeps the job's own identity. Without the
+ * file (no cloud names targets), `env` as it is. terragucci's `rootRoleEnv`
+ * (roles.ts at INTENTIUS/terragucci ca05bd9).
+ */
+export function targetCloudEnv(env: Readonly<Record<string, string | undefined>>, target: string, read: (path: string) => string = (p) => readFileSync(p, "utf-8")): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = { ...env };
+  const path = env[CLOUD_TARGETS_ENV];
+  if (!path) return out;
+  const file = readTargetsFile(path, read);
+  for (const cloud of CLOUDS) {
+    const c = file.clouds[cloud];
+    if (!c) continue;
+    const id = targetIdentityIn(c, target);
+    if (id === undefined || id === c.default) continue;
+    const vars = c.vars[id];
+    if (!vars) throw new Error(`${CLOUD_TARGETS_ENV} (${path}) holds no ${cloud} credentials for ${id}`);
+    for (const k of TRADED_VARS[cloud]) delete out[k];
+    Object.assign(out, vars);
+  }
+  return out;
+}
+
+/**
+ * The identity `target` takes in one cloud of a {@link CloudTargetsFile}:
+ * the first entry whose globs match, else the job's own. Undefined when
+ * the job has none for that cloud.
+ */
+export function targetIdentityIn(cloud: { default?: string; targets: Array<{ targets: string[]; identity: string }> }, target: string): string | undefined {
+  return cloud.targets.find((t) => t.targets.some((g) => targetGlobMatch(g, target)))?.identity ?? cloud.default;
+}
+
+/** The {@link CloudTargetsFile} at `path`, refused when it is not one. */
+export function readTargetsFile(path: string, read: (path: string) => string = (p) => readFileSync(p, "utf-8")): CloudTargetsFile {
+  let file: CloudTargetsFile;
+  try {
+    file = JSON.parse(read(path)) as CloudTargetsFile;
+  } catch (err) {
+    throw new Error(`${CLOUD_TARGETS_ENV} names ${path}, which cannot be read as the trade's targets file: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!file || file.version !== 1 || typeof file.clouds !== "object" || file.clouds === null) throw new Error(`${CLOUD_TARGETS_ENV} names ${path}, which is not a version 1 targets file`);
+  return file;
 }

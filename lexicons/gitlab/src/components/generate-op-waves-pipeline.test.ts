@@ -109,3 +109,24 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
     expect(() => generateGitlabOpWavesPipeline({ ...spec, runner: { group: "apply" } }, { specFile: "waves.json" })).toThrow(/Op waves "migrations": runner is the runner group/);
   });
 });
+
+describe("an Op wave's jobs by cloud identity (#4332)", () => {
+  test("each job takes an id_tokens entry per cloud and starts its script with the trade, the deciding job for the plan identities", async () => {
+    const { parseYAML } = await import("@intentius/chant/yaml");
+    const { cloudIdentityWave, gitlabTradeLines, TRADE_SPEC_ENV, tradeIdentities } = await import("@intentius/chant/ci-identity");
+    const decl = { aws: { rules: [{ targets: ["envs/prod/**"], plan: "prod-plan", apply: "prod-apply" }, { plan: "own-plan", apply: "own-apply" }] } };
+    const roots = ["envs/prod/net", "shared/dns"];
+    const grouped: OpWavesSpec = { ...spec, waves: [{ name: "prod", runs: roots.map((target) => ({ target })), idTokens: { OTHER_TOKEN: "other.example" }, ...cloudIdentityWave(decl, "prod", "infra", roots) }] };
+    const doc = parseYAML(generateGitlabOpWavesPipeline(grouped, { specFile: "waves.json", beforeScript: ["npm ci"] }).files[0]!.yaml) as Record<string, { id_tokens?: Record<string, { aud: string }>; variables: Record<string, string>; script: string[] }>;
+    const want: Record<string, string[]> = { "wave-1-prod-decide": ["own-plan", "prod-plan"], "wave-1-prod-envs-prod": ["prod-apply"], "wave-1-prod-default": ["own-apply"] };
+    for (const [name, ids] of Object.entries(want)) {
+      const job = doc[name]!;
+      expect(job.id_tokens).toEqual({ OTHER_TOKEN: { aud: "other.example" }, CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
+      expect(job.script.slice(0, 3)).toEqual(gitlabTradeLines());
+      expect(job.script[3]).toBe("npm ci");
+      expect(tradeIdentities(JSON.parse(job.variables[TRADE_SPEC_ENV]!))).toEqual(ids);
+    }
+    expect(JSON.stringify(doc["wave-1-prod-decide"])).not.toContain("apply\"");
+    expect(JSON.stringify(doc["wave-1-prod-default"])).not.toContain("prod-apply");
+  });
+});

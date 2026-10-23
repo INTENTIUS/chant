@@ -363,7 +363,7 @@
     "ciCloudIdentityRules": {
       "type": "array",
       "minItems": 1,
-      "description": "Rules, first match wins: a rule matches a pipeline when its environments match the pipeline's environment and its members match the pipeline's member. A rule with no environments matches every environment, and one with no members every member and a pipeline outside a member.",
+      "description": "Rules, first match wins: a rule matches a pipeline when its environments match the pipeline's environment and its members match the pipeline's member, and a target inside the member when its targets match the target too. A rule with no environments matches every environment, one with no members every member and a pipeline outside a member, and one with no targets every target.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -378,6 +378,14 @@
             "description": "Environment-name globs, such as prod or staging-*."
           },
           "members": { "$ref": "#/$defs/ciMemberGlobs" },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Target globs inside the member (#4332), such as Terraform roots or Op wave run targets: * within one / segment, ** across segments, ? one character. The plan job trades for every plan identity the member's targets take, and an apply splits into one job per apply identity. Added in schema 1 by chant 0.124.45, so a declaration that uses it sets minReader to 0.124.45 or newer."
+          },
+          "name": { "type": "string", "pattern": "^[a-z0-9_-]+$", "description": "The name of the apply job group the rule's targets form (#4332). Default: from its first target glob. Added by chant 0.124.45." },
           "plan": { "type": "string", "minLength": 1, "description": "The identity the plan and record jobs take: a role ARN, a service account email or a client id." },
           "apply": { "type": "string", "minLength": 1, "description": "The identity the apply jobs take." }
         }

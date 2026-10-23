@@ -34,6 +34,13 @@
  * environment, variables over the wave's, setup after the wave's, and id
  * tokens. A job with id tokens gets `permissions:` of its own, the
  * workflow's plus `id-token: write`, and each audience as `<NAME>_AUDIENCE`.
+ *
+ * A job whose wave or group gives `cloud` (#4332, `cloudIdentityWave` in
+ * `@intentius/chant/ci-identity`) gets `id-token: write` and starts with a
+ * step that trades the job's OIDC token for those identities, before the
+ * checkout. Every later run step starts with an unset of the variables a
+ * token is requested with, so the code the job runs holds no OIDC token
+ * and cannot request one for another group's identity.
  */
 
 import { notifyVariables, opWaveGroupOf, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
@@ -52,6 +59,7 @@ import {
   pushBranches,
   setupStepDoc,
 } from "@intentius/chant/ci-jobs";
+import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { checkoutStep, concurrency, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
@@ -86,25 +94,30 @@ export function buildGithubOpWavesDoc(
     const wave = spec.waves[job.wave - 1]!;
     // #3914: a job group's job runs with the group's settings over the wave's.
     const group = opWaveGroupOf(spec, job);
-    const steps: Array<Record<string, unknown>> = [checkoutStep(true)];
+    // #4332: the job's cloud identities, traded before the checkout.
+    const cloud = group?.cloud ?? wave.cloud;
+    const steps: Array<Record<string, unknown>> = [...(cloud ? [tradeStep(cloud)] : []), checkoutStep(true)];
     if (job.kind === "share") {
       steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
-    steps.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
-    steps.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), run: job.command.join(" ") });
-    steps.push(...runSteps(options.extraScript ?? []));
+    const later: Array<Record<string, unknown>> = [];
+    later.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
+    later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), run: job.command.join(" ") });
+    later.push(...runSteps(options.extraScript ?? []));
+    steps.push(...(cloud ? later.map(withoutTokenRequest) : later));
     if (job.kind === "decide") {
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
     const environment = group?.environment ?? wave.environment;
     const idTokens = group?.idTokens ?? wave.idTokens;
+    const idToken = idTokens !== undefined || cloud !== undefined;
     jobsDoc[job.jobName] = {
       "runs-on": githubRunsOn(group?.runner ?? wave.runner ?? spec.runner),
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       container: image,
       ...(environment ? { environment: environmentDoc(environment) } : {}),
       // #3914: a job's own permissions replace the workflow's, so they repeat them.
-      ...(idTokens ? { permissions: { ...permissions, "id-token": "write" } } : {}),
+      ...(idToken ? { permissions: { ...permissions, "id-token": "write" } } : {}),
       ...nonEmpty("env", group || idTokens ? { ...wave.variables, ...group?.variables, ...idTokenAudienceEnv(idTokens) } : wave.variables),
       steps,
     };
@@ -159,6 +172,16 @@ function buildPlansDoc(spec: OpWavesSpec, options: OpWavesPipelineOptions): Gith
     permissions: { contents: "write" },
     jobsDoc: { "record-plans": { "runs-on": githubRunsOn(spec.runner), container: options.image ?? OP_WAVES_IMAGE, steps } },
   };
+}
+
+/** The step that trades the job's OIDC token for `cloud` (#4332), writing the credentials to GITHUB_ENV. */
+function tradeStep(cloud: CloudTradeSpec): Record<string, unknown> {
+  return { name: "Trade the job's OIDC token for its cloud identities", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") };
+}
+
+/** A run step after the trade (#4332), with the token request variables unset first. A `uses:` step is left as it is. */
+function withoutTokenRequest(step: Record<string, unknown>): Record<string, unknown> {
+  return typeof step.run === "string" ? { ...step, run: `unset ${OIDC_REQUEST_VARS.join(" ")}\n${step.run}` } : step;
 }
 
 function describeJob(kind: "wave" | "decide" | "share", wave: number, name: string, share?: number, group?: string): string {

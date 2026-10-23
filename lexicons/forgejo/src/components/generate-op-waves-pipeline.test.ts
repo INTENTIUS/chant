@@ -103,3 +103,20 @@ describe("a runner per wave and job groups per wave (#3914)", () => {
     expect(() => generateForgejoOpWavesPipeline({ ...grouped, waves: [{ ...grouped.waves[0]!, runner: { group: "x" } }] }, { specFile: "waves.json" })).toThrow(/wave "dev" runner is the runner group/);
   });
 });
+
+describe("an Op wave's jobs by cloud identity (#4332)", () => {
+  test("the dialect keeps id-token: write, and each job trades before its checkout", async () => {
+    const { parseYAML } = await import("@intentius/chant/yaml");
+    const { cloudIdentityWave, TRADE_SPEC_ENV } = await import("@intentius/chant/ci-identity");
+    const decl = { aws: { rules: [{ targets: ["a/**"], plan: "a-plan", apply: "a-apply" }, { plan: "own-plan", apply: "own-apply" }] } };
+    const roots = ["a/x", "b/y"];
+    const grouped: OpWavesSpec = { ...spec, waves: [{ name: "prod", runs: roots.map((target) => ({ target })), ...cloudIdentityWave(decl, "prod", undefined, roots) }] };
+    const { jobs } = parseYAML(generateForgejoOpWavesPipeline(grouped, { specFile: "waves.json" }).files[0]!.yaml) as { jobs: Record<string, { permissions?: Record<string, string>; steps: Array<{ uses?: string; env?: Record<string, string> }> }> };
+    expect(Object.keys(jobs)).toEqual(["wave-1-prod-decide", "wave-1-prod-a", "wave-1-prod-default"]);
+    for (const job of Object.values(jobs)) {
+      expect(job.permissions).toEqual({ "id-token": "write" });
+      expect(job.steps[0]!.env![TRADE_SPEC_ENV]).toBeDefined();
+      expect(job.steps[1]!.uses).toContain("checkout");
+    }
+  });
+});

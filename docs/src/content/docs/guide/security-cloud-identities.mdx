@@ -17,7 +17,7 @@ The three clouds AWS, GCP and Azure are covered on the three forges. It is off u
 
 ## Declare the identities
 
-Each cloud takes a list of rules. Each rule has `environments` and `members` globs and two identities, `plan` and `apply`. `chant build --pr-loop` takes the first rule that matches the pipeline's environment and member (`ruleFor` in `packages/core/src/ci-identity.ts:119`). Leave out `environments` to match every environment. Leave out `members` to match every member, and also a pipeline outside a member.
+Each cloud takes a list of rules. Each rule has `environments` and `members` globs and two identities, `plan` and `apply`. `chant build --pr-loop` takes the first rule that matches the pipeline's environment and member (`ruleFor` in `packages/core/src/ci-identity.ts:217`). Leave out `environments` to match every environment. Leave out `members` to match every member, and also a pipeline outside a member.
 
 ```json
 "ci": {
@@ -43,7 +43,7 @@ Each cloud takes a list of rules. Each rule has `environments` and `members` glo
 }
 ```
 
-A rule whose plan and apply are the same identity is refused with `declaration-invalid`. So is a rule that plans as an identity another rule applies as (`cloudIdentityProblems`, `ci-identity.ts:183`). Either would let the change's code act as an apply identity. chant 0.124.41 is the first reader, so set `minReader` to it.
+A rule whose plan and apply are the same identity is refused with `declaration-invalid`. So is a rule that plans as an identity another rule applies as (`cloudIdentityProblems`, `ci-identity.ts:416`). Either would let the change's code act as an apply identity. chant 0.124.41 is the first reader, so set `minReader` to it.
 
 Then regenerate each member's pipeline with the flags it was generated with:
 
@@ -52,6 +52,37 @@ chant build --components --generate github --pr-loop --env prod --output .github
 ```
 
 A workspace has one pull-request pipeline per member and environment. Each member's apply jobs hold that member's apply identity alone, so a rule per member keeps one member's apply from reaching another's state.
+
+## Give targets inside a member their own identities
+
+A member can hold several targets, such as Terraform roots or the runs of an Op wave. A rule with `targets` covers only the targets its globs match ([#4332](https://github.com/INTENTIUS/chant/issues/4332)). In a target glob `*` matches within one `/` segment, `**` across segments and `?` one character, as the terraform lexicon reads unit globs (`targetGlobMatch`, `ci-identity.ts:158`). A target takes the first rule that covers its environment, its member and the target (`ruleFor`, `ci-identity.ts:217`). Put the rules with `targets` before the member's own rule, since a rule with no `targets` covers every target.
+
+```json
+"aws": {
+  "rules": [
+    { "members": ["infra"], "targets": ["envs/prod/**"], "plan": "arn:aws:iam::111111111111:role/prod-plan", "apply": "arn:aws:iam::111111111111:role/prod-apply" },
+    { "members": ["infra"], "targets": ["envs/staging/**"], "name": "staging", "plan": "arn:aws:iam::222222222222:role/staging-plan", "apply": "arn:aws:iam::222222222222:role/staging-apply" },
+    { "plan": "arn:aws:iam::333333333333:role/plan", "apply": "arn:aws:iam::333333333333:role/apply" }
+  ]
+}
+```
+
+The plan job's trade then lists the member's own plan role and, before it, each rule's plan role with its globs (`resolveCloudIdentity`, `ci-identity.ts:268`). The trade asks for one OIDC token per cloud and trades it for each of them (`ci-identity.ts:509`). The job's own credentials go in the job's environment as before. Each role's credentials also go in a file of mode 0600 under `RUNNER_TEMP` or `TMPDIR`. The variable `CHANT_CLOUD_TARGETS` holds the file's path (`ci-identity.ts:534`). The file holds plan credentials only, since no rule may plan as what a rule applies as.
+
+A tool that runs one target calls `targetCloudEnv(process.env, target)` from `@intentius/chant/ci-identity` and runs with the environment it returns (`ci-identity.ts:583`). It swaps each cloud's variables for those the target's rule names. A target that no rule with `targets` covers keeps the job's own, and without the file the environment comes back unchanged. The module has no dependency and bundles to about 18 KB (`packages/core/src/ci-identity-targets.test.ts`).
+
+An apply runs in one job per apply role, so no job holds the apply tokens of two targets that apply as different roles. `cloudIdentityGroups(decl, env, member, targets)` groups the targets that take the same roles in every cloud (`ci-identity.ts:329`). A group takes its rule's `name`, or a name from its first glob (`envs/prod/**` gives `envs-prod`). The targets no such rule covers are the group `default`. `cloudIdentityWave` turns the groups into an Op wave's `cloud` and `jobs` (`ci-identity.ts:365`):
+
+```ts
+import { cloudIdentityWave } from "@intentius/chant/ci-identity";
+
+const roots = ["envs/prod/net", "envs/staging/net", "shared/dns"];
+const wave = { name: "wave-1", runs: roots.map((target) => ({ target })), ...cloudIdentityWave(decl, "prod", "infra", roots) };
+```
+
+The deciding job trades for every plan role of the wave's targets, and each group's job for its own apply roles. On GitHub and Forgejo each such job gets `id-token: write` and starts with the trade, ahead of its checkout (`lexicons/github/src/components/generate-op-waves-pipeline.ts:98`). Each later run step starts with an `unset` of the token request variables (`generate-op-waves-pipeline.ts:183`). On GitLab the job takes an `id_tokens:` entry per cloud and its script starts with the trade (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts:121`). With one group the wave keeps its one job, which trades for that group's apply roles.
+
+The pull-request pipeline applies a member in one job. With `--apply-on-merge` or `--apply-before-merge`, `chant build --pr-loop` refuses a member whose targets apply as more than one role in a cloud (`packages/core/src/cli/handlers/build.ts:156`). Apply such a member through Op waves; its plan and record jobs still trade for every plan role as above. A declaration whose rules set `targets` or `name` needs chant 0.124.45 or newer as its `minReader`.
 
 ## Which job takes which identity
 
@@ -62,25 +93,25 @@ A workspace has one pull-request pipeline per member and environment. Each membe
 | `record` | plan | the merged commit |
 | `apply`, `apply-wave-<k>` | apply | the newest green commit |
 
-On GitHub and Forgejo the plan, record and apply jobs get `id-token: write` (`withIdToken` in `lexicons/github/src/components/generate-pipeline.ts:276`). Forgejo's dialect keeps that one permission. Each job's first step is the trade, ahead of its checkout (`generate-pipeline.ts:279` and `:338`). On GitLab the same jobs take an `id_tokens:` entry per cloud, and the trade is the first line of the script (`lexicons/gitlab/src/components/generate-pipeline.ts:388`).
+On GitHub and Forgejo the plan, record and apply jobs get `id-token: write` (`withIdToken` in `lexicons/github/src/components/generate-pipeline.ts:290`). Forgejo's dialect keeps that one permission. Each job's first step is the trade, ahead of its checkout (`generate-pipeline.ts:293` and `:362`). On GitLab the same jobs take an `id_tokens:` entry per cloud, and the trade is the first line of the script (`lexicons/gitlab/src/components/generate-pipeline.ts:384`).
 
 ## What the trade does
 
-The trade is a script run with `node -e` from `/`, so it reads none of the checkout's files and needs nothing installed (`TRADE_JS`, `ci-identity.ts:237`). It gets one OIDC token per cloud with that cloud's audience. The token comes from the forge's request URL on GitHub and Forgejo, and from the `id_tokens` variable on GitLab (`ci-identity.ts:247`).
+The trade is a script run with `node -e` from `/`, so it reads none of the checkout's files and needs nothing installed (`TRADE_JS`, `ci-identity.ts:487`). It gets one OIDC token per cloud with that cloud's audience. The token comes from the forge's request URL on GitHub and Forgejo, and from the `id_tokens` variable on GitLab (`ci-identity.ts:498`).
 
 | Cloud | Trade | Variables it sets |
 |---|---|---|
-| AWS | STS `AssumeRoleWithWebIdentity` (`ci-identity.ts:256`) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` |
-| GCP | Google's STS token exchange, then IAM `generateAccessToken` for the service account (`ci-identity.ts:262`) | `GOOGLE_OAUTH_ACCESS_TOKEN`, `CLOUDSDK_AUTH_ACCESS_TOKEN` |
-| Azure | Entra's client credentials grant with the token as the client assertion (`ci-identity.ts:269`) | `AZURE_ACCESS_TOKEN`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the `ARM_` spellings |
+| AWS | STS `AssumeRoleWithWebIdentity` (`ci-identity.ts:509`) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION` |
+| GCP | Google's STS token exchange, then IAM `generateAccessToken` for the service account (`ci-identity.ts:517`) | `GOOGLE_OAUTH_ACCESS_TOKEN`, `CLOUDSDK_AUTH_ACCESS_TOKEN` |
+| Azure | Entra's client credentials grant with the token as the client assertion (`ci-identity.ts:526`) | `AZURE_ACCESS_TOKEN`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the `ARM_` spellings |
 
-On GitHub and Forgejo the trade appends the variables to `GITHUB_ENV` and masks each secret in the job's log (`ci-identity.ts:276`). GitLab's script sources a file of `export` lines and then deletes it. The file sits outside the project directory with mode 0600. A value with a space, a newline or anything outside printable ASCII is refused, so a reply cannot add a variable of its own (`ci-identity.ts:243`). The minted token is written nowhere.
+On GitHub and Forgejo the trade appends the variables to `GITHUB_ENV` and masks each secret in the job's log (`ci-identity.ts:539`). GitLab's script sources a file of `export` lines and then deletes it. The file sits outside the project directory with mode 0600. A value with a space, a newline or anything outside printable ASCII is refused, so a reply cannot add a variable of its own (`ci-identity.ts:493`). The minted token is written nowhere.
 
 terragucci leaves Azure untraded, since the azurerm provider takes only the OIDC token. chant trades it, so the plan job holds an ARM access token and no token another client could be traded for. A tool that needs the OIDC token itself cannot plan under this block.
 
 ## What the change's code can reach
 
-After the checkout, every step of the plan job starts again without the forge tokens and without the variables a token is requested with (`OIDC_REQUEST_VARS`, `ci-identity.ts:210`, dropped at `generate-pipeline.ts:334`). Those are `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_URL` and GitLab's `CHANT_ID_TOKEN_<CLOUD>`. The way the step starts again is the forge token handover's ([Keep the Forge Token From the Plan](/chant/guide/security-forge-token-handover/)). On GitLab the same `unset` line covers both (`gitlabTradeLines`, `ci-identity.ts:299`). The plan job's file names no apply identity.
+After the checkout, every step of the plan job starts again without the forge tokens and without the variables a token is requested with (`OIDC_REQUEST_VARS`, `ci-identity.ts:443`, dropped at `generate-pipeline.ts:358`). Those are `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_URL` and GitLab's `CHANT_ID_TOKEN_<CLOUD>`. The way the step starts again is the forge token handover's ([Keep the Forge Token From the Plan](/chant/guide/security-forge-token-handover/)). On GitLab the same `unset` line covers both (`gitlabTradeLines`, `ci-identity.ts:562`). The plan job's file names no apply identity.
 
 The tests run the generated jobs against a local emulator of the token URL and the three clouds (`packages/core/src/__fixtures__/oidc-emulator.ts`). `lexicons/github/src/components/generate-pr-pipeline.identity.test.ts` runs the GitHub plan job step by step. Each later step tries to request a token and prints what it sees. The plan credentials are there and the apply identity is not. No step holds a token or a request variable, and the emulator mints nothing after the trade. The GitLab test does the same with the plan script.
 

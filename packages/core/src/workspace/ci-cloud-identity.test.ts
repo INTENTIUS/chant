@@ -50,4 +50,24 @@ describe("declaredCloudIdentity (#4296)", () => {
     const root = workspace({ identity: { cloud: { aws: { rules: [{ plan: "r", apply: "r" }] } } } });
     await expect(declaredCloudIdentity(root, "production")).rejects.toThrow(/plans and applies as r.*\[declaration-invalid\]/);
   });
+
+  test("rules with targets and a name read from the declaration, and a target glob list may not be empty (#4332)", async () => {
+    const root = workspace({
+      identity: {
+        cloud: {
+          aws: {
+            rules: [
+              { members: ["net"], targets: ["envs/prod/**"], name: "prod", plan: "arn:aws:iam::1:role/prod-plan", apply: "arn:aws:iam::1:role/prod-apply" },
+              { plan: "arn:aws:iam::1:role/plan", apply: "arn:aws:iam::1:role/apply" },
+            ],
+          },
+        },
+      },
+    });
+    const net = (await declaredCloudIdentity(join(root, "net"), "production", "net"))!;
+    expect(net.plan.aws).toMatchObject({ role: "arn:aws:iam::1:role/plan", targets: [{ targets: ["envs/prod/**"], role: "arn:aws:iam::1:role/prod-plan" }] });
+    expect((await declaredCloudIdentity(join(root, "app"), "production", "app"))!.plan.aws!.targets).toBeUndefined();
+    const empty = workspace({ identity: { cloud: { aws: { rules: [{ targets: [], plan: "p", apply: "a" }] } } } });
+    await expect(declaredCloudIdentity(empty, "production")).rejects.toThrow(/\[declaration-invalid\]/);
+  });
 });
