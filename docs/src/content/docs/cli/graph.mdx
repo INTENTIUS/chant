@@ -146,6 +146,18 @@ The IR's first field is `version`, currently `1`. Every `--format ir` output car
 
 The format changes only additively. A release may add a field, an edge kind or a group, and none of those moves the number. A consumer must ignore any field and any edge `kind` it does not recognise, and keep reading the rest of the document. `version` moves only for a change a consumer could not safely ignore, such as a removed or renamed field or a changed meaning, and a consumer that sees a version it does not know should stop rather than guess.
 
+### Reference envelopes in `attrs`
+
+A node's `attrs` keep its declared configuration, with references replaced by small envelopes a reader can recognise:
+
+| Envelope | Stands for |
+|----------|------------|
+| `{ "$ref": "assets.Arn" }` | an attribute reference, `<producer>.<attribute>`; a `Ref` to a node is `{ "$ref": "<producer>" }` |
+| `{ "$sub": "${assets.Arn}/*" }` | a CloudFormation `Sub`, with its template as it serializes. The two-argument form adds `"$vars"`, its variable map, each value projected the same way |
+| `{ "$intrinsic": true }` | any other intrinsic, which the IR does not open (a `Join`, a `Ref` to a pseudo-parameter) |
+
+Each `${Name}` or `${Name.Attr}` in a `$sub` template that names a node is an edge from the holder, through the top-level attribute, like a `$ref`. So is each reference in `$vars`. CloudFormation's `${!Literal}` escape, pseudo-parameters such as `${AWS::Region}`, and names `$vars` binds are not. At `--detail 3` the edge's `toAttr` is the attribute the template names (`Arn` above). At `--detail 2` a top-level `$sub` stays in `attrs` with the other reference envelopes.
+
 ### Groups: the boxes a renderer draws
 
 `groups` carries the memberships a renderer turns into boundary boxes, keyed by group name to node ids.

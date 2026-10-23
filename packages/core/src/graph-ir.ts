@@ -5,8 +5,11 @@ import { type Declarable, isDeclarable } from "./declarable";
 import { isLexiconOutput, type LexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
+import { subTemplateRefs } from "./graph-sub-template";
 import type { ResourceMetadata } from "./lexicon";
 import type { UnobservedEntity } from "./observation";
+
+export { subTemplateRefs };
 
 /**
  * Graph IR — the engine-neutral, lint-gated representation of a project's
@@ -33,6 +36,21 @@ export interface SourceLoc {
 /** A reference in an attribute projection: `<producer>.<attribute>`. */
 export interface AttrRefEnvelope {
   $ref: string;
+}
+
+/**
+ * A CloudFormation `Fn::Sub` in an attribute projection (#4373), in place of
+ * `{ $intrinsic: true }`. `$sub` is the template exactly as it serializes, so
+ * `${assets.Arn}/*` names the producer and attribute a reader would otherwise
+ * have to guess. `$vars` is the two-argument form's variable map, each value
+ * projected like any other attr. Every `${Name}` or `${Name.Attr}` in the
+ * template that names a node, and every reference in `$vars`, is also an edge.
+ * `${!Literal}` (CloudFormation's escape), pseudo-parameters (`${AWS::Region}`)
+ * and names `$vars` binds are not.
+ */
+export interface SubEnvelope {
+  $sub: string;
+  $vars?: Record<string, unknown>;
 }
 
 /** One resource in the graph. */
@@ -499,6 +517,80 @@ function refIntrinsicTarget(value: unknown): string | undefined {
   return undefined;
 }
 
+/** A CloudFormation `Fn::Sub`: its template, and the variable map of the two-argument form. */
+interface SubForm {
+  template: string;
+  vars?: Record<string, unknown>;
+}
+
+/** Read `{ "Fn::Sub": "..." }` or `{ "Fn::Sub": ["...", { ... }] }`, or undefined. */
+function subForm(json: unknown): SubForm | undefined {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) return undefined;
+  const keys = Object.keys(json);
+  if (keys.length !== 1 || keys[0] !== "Fn::Sub") return undefined;
+  const arg = (json as Record<string, unknown>)["Fn::Sub"];
+  if (typeof arg === "string") return { template: arg };
+  if (Array.isArray(arg) && typeof arg[0] === "string") {
+    const vars = arg[1];
+    return vars !== null && typeof vars === "object" && !Array.isArray(vars)
+      ? { template: arg[0], vars: vars as Record<string, unknown> }
+      : { template: arg[0] };
+  }
+  return undefined;
+}
+
+/** The `Fn::Sub` an intrinsic serializes to (the aws `Sub` tag), or undefined. */
+function subIntrinsicForm(value: unknown): SubForm | undefined {
+  try {
+    return subForm((value as { toJSON?: () => unknown }).toJSON?.());
+  } catch {
+    // An AttrRef inside whose logical name is not set yet: no template to read.
+    return undefined;
+  }
+}
+
+/** False when an intrinsic's `toJSON()` throws (an AttrRef inside it has no logical name yet). */
+function serializes(value: unknown): boolean {
+  try {
+    (value as { toJSON?: () => unknown }).toJSON?.();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The logical names serialized CloudFormation JSON references: `{ Ref }`,
+ * `{ "Fn::GetAtt" }` in either encoding, and a nested `Fn::Sub`. Reads a
+ * two-argument `Sub`'s variable map after `toJSON()` has turned its live
+ * references into JSON.
+ */
+function cfnJsonRefNames(json: unknown, out: string[]): void {
+  if (json === null || typeof json !== "object") return;
+  if (Array.isArray(json)) {
+    for (const item of json) cfnJsonRefNames(item, out);
+    return;
+  }
+  const obj = json as Record<string, unknown>;
+  if (typeof obj.Ref === "string") {
+    out.push(obj.Ref);
+    return;
+  }
+  const getAtt = obj["Fn::GetAtt"];
+  if (getAtt !== undefined) {
+    const id = Array.isArray(getAtt) ? getAtt[0] : typeof getAtt === "string" ? getAtt.split(".")[0] : undefined;
+    if (typeof id === "string") out.push(id);
+    return;
+  }
+  const sub = subForm(obj);
+  if (sub) {
+    for (const r of subTemplateRefs(sub.template, new Set(Object.keys(sub.vars ?? {})))) out.push(r.name);
+    if (sub.vars) cfnJsonRefNames(Object.values(sub.vars), out);
+    return;
+  }
+  for (const v of Object.values(obj)) cfnJsonRefNames(v, out);
+}
+
 /** Resolve the producer (logical name) an AttrRef points at. */
 function refTarget(ref: AttrRef, reverse: Map<object, string>): string | undefined {
   // Nested refs (under `props`) aren't assigned a logical name by resolveAttrRefs,
@@ -545,6 +637,9 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
     // Ref to a non-node) stay opaque.
     const to = refIntrinsicTarget(value);
     if (to && nodeIds.has(to)) return { $ref: to } satisfies AttrRefEnvelope;
+    // A Sub keeps its template, so a reader sees which node and attribute it names (#4373).
+    const sub = subIntrinsicForm(value);
+    if (sub) return subEnvelope(sub, seen, reverse, nodeIds);
     return { $intrinsic: true };
   }
 
@@ -568,6 +663,14 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
     return out;
   }
 
+  // A Sub written as plain CloudFormation JSON reads the same as the `Sub` tag's.
+  const plainSub = subForm(value);
+  if (plainSub) {
+    const out = subEnvelope(plainSub, seen, reverse, nodeIds);
+    seen.delete(value);
+    return out;
+  }
+
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     const p = project(v, seen, reverse, nodeIds);
@@ -575,6 +678,17 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
   }
   seen.delete(value);
   return out;
+}
+
+/** Project a {@link SubForm} into its {@link SubEnvelope}. */
+function subEnvelope(sub: SubForm, seen: Set<unknown>, reverse: Map<object, string>, nodeIds: Set<string>): SubEnvelope {
+  if (!sub.vars) return { $sub: sub.template };
+  const vars: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(sub.vars)) {
+    const p = project(v, seen, reverse, nodeIds);
+    if (p !== undefined) vars[k] = p;
+  }
+  return { $sub: sub.template, $vars: vars };
 }
 
 // `references` and `stack` are the two duck-typed channels above
@@ -645,6 +759,9 @@ function collectEdges(
     });
   }
   const seen = new Set<unknown>();
+  const edgeTo = (to: string, viaAttr: string): void => {
+    if (to !== from && nodeIds.has(to)) edges.push({ from, to, kind: "ref", viaAttr });
+  };
   const visit = (value: unknown, viaAttr: string): void => {
     if (value === null || typeof value !== "object") return;
     if (isAttrRefLike(value)) {
@@ -659,7 +776,30 @@ function collectEdges(
       // — resolve it to an edge instead of dropping it as an opaque intrinsic (#513).
       const to = refIntrinsicTarget(value);
       if (to && to !== from && nodeIds.has(to)) edges.push({ from, to, kind: "ref", viaAttr });
+      // A Sub's interpolations are references too (#4373): each `${Name}` or
+      // `${Name.Attr}` naming a node, and each reference in a variable map.
+      const sub = subIntrinsicForm(value);
+      if (sub) {
+        const names = subTemplateRefs(sub.template, new Set(Object.keys(sub.vars ?? {}))).map((r) => r.name);
+        if (sub.vars) cfnJsonRefNames(Object.values(sub.vars), names);
+        for (const name of names) edgeTo(name, viaAttr);
+      }
+      // The live values the aws `Sub` tag interpolated. Covers an AttrRef whose
+      // logical name was not set, where `toJSON()` throws and leaves no
+      // template to read above. Any other intrinsic stays opaque.
+      const interpolated = (value as { values?: unknown }).values;
+      if (Array.isArray(interpolated) && (sub || !serializes(value))) {
+        for (const v of interpolated) visit(v, viaAttr);
+      }
       return;
+    }
+    // A Sub written as plain CloudFormation JSON in props: the template's names
+    // here, then the variable map's live values through the walk below.
+    const plainSub = subForm(value);
+    if (plainSub) {
+      for (const r of subTemplateRefs(plainSub.template, new Set(Object.keys(plainSub.vars ?? {})))) {
+        edgeTo(r.name, viaAttr);
+      }
     }
     // A whole node held in props or an enumerable field (the sql lexicon's
     // `dependsOn`) is a reference to it: draw the edge, and do not walk its

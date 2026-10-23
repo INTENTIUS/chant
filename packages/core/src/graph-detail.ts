@@ -1,4 +1,5 @@
 import type { GraphIR, IRNode, IREdge } from "./graph-ir";
+import { subTemplateRefs } from "./graph-sub-template";
 
 /**
  * Detail tiers — the diagram "detail dial". Each level is a pure IR → IR
@@ -60,13 +61,13 @@ function paintAttrs(attrs: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-/** A `{ $ref: "producer.attribute" }` envelope — a reference, not a property tree. */
+/** A `{ $ref: "producer.attribute" }` or `{ $sub: "..." }` (#4373) envelope — a reference, not a property tree. */
 function isRefEnvelope(v: unknown): boolean {
   return (
     typeof v === "object" &&
     v !== null &&
     !Array.isArray(v) &&
-    typeof (v as { $ref?: unknown }).$ref === "string"
+    (typeof (v as { $ref?: unknown }).$ref === "string" || typeof (v as { $sub?: unknown }).$sub === "string")
   );
 }
 
@@ -271,7 +272,8 @@ function toAttributes(ir: GraphIR): GraphIR {
   return { ...ir, edges };
 }
 
-/** Find the attribute in a `{ $ref: "producer.attribute" }` envelope under attrs. */
+/** Find the attribute in a `{ $ref: "producer.attribute" }` envelope under attrs,
+ * or in a `{ $sub }` envelope's `${producer.attribute}` (#4373). */
 function findRefAttr(attrs: Record<string, unknown>, producer: string): string | undefined {
   let found: string | undefined;
   const visit = (v: unknown): void => {
@@ -285,6 +287,16 @@ function findRefAttr(attrs: Record<string, unknown>, producer: string): string |
       const dot = ref.indexOf(".");
       if (dot > 0 && ref.slice(0, dot) === producer) {
         found = ref.slice(dot + 1);
+        return;
+      }
+    }
+    const sub = (v as { $sub?: unknown; $vars?: unknown }).$sub;
+    if (typeof sub === "string") {
+      const vars = (v as { $vars?: unknown }).$vars;
+      const bound = new Set(vars && typeof vars === "object" ? Object.keys(vars) : []);
+      const hit = subTemplateRefs(sub, bound).find((r) => r.name === producer && r.attr);
+      if (hit) {
+        found = hit.attr;
         return;
       }
     }

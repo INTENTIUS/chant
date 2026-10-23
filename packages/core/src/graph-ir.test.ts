@@ -6,6 +6,8 @@ import { LexiconOutput } from "./lexicon-output";
 import { resolveAttrRefs } from "./discovery/resolve";
 import { setProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
+import { applyDetail } from "./graph-detail";
+import { buildInterpolatedString, defaultInterpolationSerializer } from "./intrinsic-interpolation";
 
 function decl<T extends object>(base: T): Declarable & T {
   return { [DECLARABLE_MARKER]: true, ...base } as Declarable & T;
@@ -390,5 +392,166 @@ describe("applyLexiconOutputs (#3931)", () => {
       { name: "public.orders.buyer_id", node: "orders", previously: ["public.orders.customer_id"] },
     ]);
     expect(applyLexiconOutputs(ir, [{ outputs: [] }])).toBe(ir);
+  });
+});
+
+/**
+ * A `Sub`-tagged intrinsic shaped like the aws lexicon's `SubIntrinsic`: the
+ * template parts and live values it was written with, serialized the same way.
+ */
+function sub(parts: TemplateStringsArray, ...values: unknown[]): object {
+  const serialize = defaultInterpolationSerializer((name, attr) => `\${${name}.${attr}}`, (r) => `\${${r}}`);
+  return {
+    [INTRINSIC_MARKER]: true,
+    values,
+    toJSON: () => ({ "Fn::Sub": buildInterpolatedString([...parts], values, serialize) }),
+  };
+}
+
+/** An attribute AttrRef held on its producer, as a typed lexicon's resources hold theirs, so `resolveAttrRefs` names it. */
+function attr(entity: Declarable, name: string): AttrRef {
+  const r = new AttrRef(entity, name);
+  (entity as unknown as Record<string, unknown>)[name] = r;
+  return r;
+}
+
+/** A two-argument `Sub`, as an intrinsic serializes it. */
+function subWithVars(template: string, vars: Record<string, unknown>): object {
+  return { [INTRINSIC_MARKER]: true, toJSON: () => ({ "Fn::Sub": [template, vars] }) };
+}
+
+describe("a reference inside a CloudFormation Sub (#4373)", () => {
+  function estate(policyResource: unknown, extra: Array<[string, Declarable]> = []) {
+    const assets = decl({ lexicon: "aws", entityType: "AWS::S3::Bucket" });
+    const secret = decl({ lexicon: "aws", entityType: "AWS::SecretsManager::Secret" });
+    const policy = decl({
+      lexicon: "aws",
+      entityType: "AWS::IAM::Policy",
+      props: { PolicyName: "web", PolicyDocument: { Statement: [{ Effect: "Allow", Resource: policyResource }] } },
+    });
+    const entities = new Map<string, Declarable>([["assets", assets], ["secret", secret], ["policy", policy], ...extra]);
+    resolveAttrRefs(entities);
+    return { ir: buildGraphIr(entities), assets, secret };
+  }
+
+  test("${Res.Attr} is an edge through the top-level attribute, and attrs keep the template", () => {
+    const assets = decl({ lexicon: "aws", entityType: "AWS::S3::Bucket" });
+    const policy = decl({
+      lexicon: "aws",
+      entityType: "AWS::IAM::Policy",
+      props: { PolicyDocument: { Statement: [{ Resource: sub`${attr(assets, "Arn")}/*` }] } },
+    });
+    const entities = new Map<string, Declarable>([["assets", assets], ["policy", policy]]);
+    resolveAttrRefs(entities);
+    const ir = buildGraphIr(entities);
+
+    expect(ir.edges).toEqual([{ from: "policy", to: "assets", kind: "ref", viaAttr: "PolicyDocument" }]);
+    const attrs = ir.nodes.find((n) => n.id === "policy")!.attrs;
+    expect(attrs.PolicyDocument).toEqual({ Statement: [{ Resource: { $sub: "${assets.Arn}/*" } }] });
+  });
+
+  test("the edge is on every detail tier that carries edges; T3 names the producer attribute", () => {
+    const assets = decl({ lexicon: "aws", entityType: "AWS::S3::Bucket" });
+    const secret = decl({ lexicon: "aws", entityType: "AWS::SecretsManager::Secret" });
+    const db = decl({
+      lexicon: "aws",
+      entityType: "AWS::RDS::DBInstance",
+      props: {
+        MasterUserPassword: sub`{{resolve:secretsmanager:${ref("secret")}}}`,
+        Policy: { Resource: sub`${attr(assets, "Arn")}/*` },
+      },
+    });
+    const entities = new Map<string, Declarable>([["assets", assets], ["secret", secret], ["db", db]]);
+    resolveAttrRefs(entities);
+    const ir = buildGraphIr(entities);
+
+    const t2 = applyDetail(ir, 2);
+    expect(t2.edges).toEqual([
+      { from: "db", to: "assets", kind: "ref", viaAttr: "Policy" },
+      { from: "db", to: "secret", kind: "ref", viaAttr: "MasterUserPassword" },
+    ]);
+    // A top-level Sub is a reference envelope, kept at T2 like a $ref.
+    expect(t2.nodes.find((n) => n.id === "db")!.attrs.MasterUserPassword).toEqual({
+      $sub: "{{resolve:secretsmanager:${secret}}}",
+    });
+    // T3: the producer attribute when the template names one; none for a bare ${Name}.
+    expect(applyDetail(ir, 3).edges).toEqual([
+      { from: "db", to: "assets", kind: "ref", viaAttr: "Policy", toAttr: "Arn" },
+      { from: "db", to: "secret", kind: "ref", viaAttr: "MasterUserPassword" },
+    ]);
+    // T1 keeps a composite-free graph's edges.
+    expect(applyDetail(ir, 1).edges.map((e) => `${e.from}->${e.to}`).sort()).toEqual(["db->assets", "db->secret"]);
+  });
+
+  test("${Res} written by name in the template text is an edge too", () => {
+    const { ir } = estate(sub`arn:aws:s3:::\${assets}/*`);
+    expect(ir.edges).toEqual([{ from: "policy", to: "assets", kind: "ref", viaAttr: "PolicyDocument" }]);
+  });
+
+  test("a Sub with only pseudo-parameters adds no edge", () => {
+    const { ir } = estate(sub`arn:aws:s3:::logs-\${AWS::Region}-\${AWS::AccountId}/*`);
+    expect(ir.edges).toEqual([]);
+    const statement = (ir.nodes.find((n) => n.id === "policy")!.attrs.PolicyDocument as { Statement: unknown[] }).Statement[0];
+    expect(statement).toEqual({ Effect: "Allow", Resource: { $sub: "arn:aws:s3:::logs-${AWS::Region}-${AWS::AccountId}/*" } });
+  });
+
+  test("${!Escaped} is literal text, not a reference", () => {
+    const { ir } = estate(sub`\${!assets}/*`);
+    expect(ir.edges).toEqual([]);
+  });
+
+  test("two-argument form: the variable map's references are edges, the names it binds are not", () => {
+    const { ir } = estate(
+      subWithVars("${Bucket}/${assets}/${Region}", {
+        Bucket: { "Fn::GetAtt": ["secret", "Arn"] },
+        Region: { Ref: "AWS::Region" },
+      }),
+    );
+    // `${assets}` is unbound, so a resource name; `${Bucket}` is the map's own.
+    expect(ir.edges).toEqual([
+      { from: "policy", to: "assets", kind: "ref", viaAttr: "PolicyDocument" },
+      { from: "policy", to: "secret", kind: "ref", viaAttr: "PolicyDocument" },
+    ]);
+    const statement = (ir.nodes.find((n) => n.id === "policy")!.attrs.PolicyDocument as { Statement: unknown[] }).Statement[0];
+    expect(statement).toMatchObject({
+      Resource: { $sub: "${Bucket}/${assets}/${Region}", $vars: { Bucket: { "Fn::GetAtt": ["secret", "Arn"] } } },
+    });
+  });
+
+  test("a Sub written as plain CloudFormation JSON, with live values in its map", () => {
+    const assets = decl({ lexicon: "aws", entityType: "AWS::S3::Bucket" });
+    const secret = decl({ lexicon: "aws", entityType: "AWS::SecretsManager::Secret" });
+    const policy = decl({
+      lexicon: "aws",
+      entityType: "AWS::IAM::Policy",
+      props: { Resource: { "Fn::Sub": ["${assets.Arn}/${Key}", { Key: attr(secret, "Id") }] } },
+    });
+    const entities = new Map<string, Declarable>([["assets", assets], ["secret", secret], ["policy", policy]]);
+    resolveAttrRefs(entities);
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toEqual([
+      { from: "policy", to: "assets", kind: "ref", viaAttr: "Resource" },
+      { from: "policy", to: "secret", kind: "ref", viaAttr: "Resource" },
+    ]);
+    expect(ir.nodes.find((n) => n.id === "policy")!.attrs.Resource).toEqual({
+      $sub: "${assets.Arn}/${Key}",
+      $vars: { Key: { $ref: "secret.Id" } },
+    });
+    expect(applyDetail(ir, 3).edges.find((e) => e.to === "assets")!.toAttr).toBe("Arn");
+  });
+
+  test("a Sub whose AttrRef has no logical name still yields the edge from its live value", () => {
+    const assets = decl({ lexicon: "aws", entityType: "AWS::S3::Bucket" });
+    const unnamed = new AttrRef(assets, "Arn"); // never resolved: toJSON() throws
+    const policy = decl({ lexicon: "aws", entityType: "AWS::IAM::Policy", props: { Resource: sub`${unnamed}/*` } });
+    const ir = buildGraphIr(new Map<string, Declarable>([["assets", assets], ["policy", policy]]));
+    expect(ir.edges).toEqual([{ from: "policy", to: "assets", kind: "ref", viaAttr: "Resource" }]);
+    expect(ir.nodes.find((n) => n.id === "policy")!.attrs.Resource).toEqual({ $intrinsic: true });
+  });
+
+  test("an intrinsic that is not a Sub stays opaque", () => {
+    const joinLike = { [INTRINSIC_MARKER]: true, values: [ref("assets")], toJSON: () => ({ "Fn::Join": ["", []] }) };
+    const { ir } = estate(joinLike);
+    expect(ir.edges).toEqual([]);
   });
 });
