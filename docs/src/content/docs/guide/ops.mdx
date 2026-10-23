@@ -709,6 +709,25 @@ A destructive apply gets these:
 
 An ungated, additive apply needs none of this. See [Ops as teammates](/chant/concepts/durable-workflows/) for where each kind of durability an apply needs lives.
 
+### Checks before and after the apply
+
+`preflight` and `verify` take lists of steps and add them to the apply as their own phases ([#3370](https://github.com/INTENTIUS/chant/issues/3370)). A rollout that validates a config, applies it and then checks that it loaded is one `ApplyOp`, whatever the target:
+
+```typescript
+import { ApplyOp, activity, shell } from "@intentius/chant/op";
+
+const { op } = ApplyOp({
+  name: "collector-rollout",
+  env: "prod",
+  target: "kubectl",
+  delete: "gated",
+  preflight: [shell("otelcol-contrib validate --config dist/collector.yaml")],
+  verify: [activity("rulesLoadedObserve", { env: "prod" })],
+});
+```
+
+The phases run Build, Plan, Preflight, Approve, Apply, Verify. A failing preflight step ends the run before the gate, so nobody is asked to approve a change that failed its own checks and nothing is applied. A failing verify step fails the run after the apply, so the `onFailure` Rollback phase runs when the Op has one. Like a failure in Build or Plan, a preflight failure also runs `onFailure`. An `ApplyOp` with neither list, or with both empty, builds the same workflow it always did.
+
 ## Behaviour (a pull request's predicted delta)
 
 The `BehaviourOp` composite runs on a pull request and posts what the change does to the estate's predicted behaviour. It predicts the declared estate twice through the project's [`predictBehaviour()`](/chant/lexicon-authoring/observation-contract/#predictbehaviour) lexicon, once on the pull request's head and once on the base branch it targets, differences the two, and posts the finding as one sticky comment on the pull request (GitHub, Forgejo) or one note on the merge request (GitLab). The posting is `reconcilePr`'s `comment` mode, so it lands on the same three forges with the same marker recipe, and the marker names the Op as well as the env.
