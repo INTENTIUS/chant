@@ -400,6 +400,20 @@ If the plan read fails, `live-plan` alone answers and the note says why:
 
 The cost is two refreshes of the estate per read instead of one.
 
+The overlay keeps one verdict per block. A caller that paints from the
+`live-plan` rows themselves (each instance's omission reason and detail,
+`identity_values`, an adoptable row's fields) can ask for the document the read
+used instead of running its own `live-plan` beside it: set
+`CHANT_TERRAFORM_LIVE_PLAN_DIR` to an absolute directory and each live root's
+document is written there as `<root>.live-plan.json`, at either depth. A
+relative path is ignored, so nothing is written in the root. behold reads a
+choudoufu member this way (behold #924).
+
+```sh
+CHANT_TERRAFORM_OBSERVE=plan CHANT_TERRAFORM_LIVE_PLAN_DIR=$(mktemp -d) \
+  chant graph . --live --overlay --env prod --format ir --detail 3
+```
+
 ## What has no answer at all
 
 Only `resource` and `data` blocks have rows in state. A `terraform`,
