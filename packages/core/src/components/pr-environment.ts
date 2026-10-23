@@ -39,7 +39,8 @@
  * as a lexicon does.
  */
 
-import { environmentEndpoint, environmentName, isEnvironmentPattern, isOwnershipParamRef, matchesDeclaredEnvironment, resolveOwnershipStack, type ChantConfig, type EnvironmentDeclaration } from "../config";
+import type { ChantConfig } from "../config";
+import { environmentEndpoint, environmentName, isEnvironmentPattern, isOwnershipParamRef, matchesDeclaredEnvironment, resolveOwnershipStack, type EnvironmentDeclaration } from "../config-environments";
 import type { OwnershipMarker } from "../ownership";
 import { executeTeardown, planTeardown, type TeardownPlan, type TeardownPlanEntry, type TeardownReport } from "../lifecycle/teardown";
 import type { ObservationLexicon, TeardownCandidate, TeardownEnumeration, TeardownExecution } from "../lexicon";
