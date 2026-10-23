@@ -5,6 +5,7 @@
  * OTEL101-OTEL106, OTEL112-OTEL117 and OTEL119-OTEL127 read the emitted collector YAML, so they are
  * `yamlBased`. OTEL118 reads it too, but only in a build that stamps
  * telemetry attribution, so it is not.
+ * OTEL128 reads both: the emitted config and the declared `Distribution`.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
  * constructed with `yamlBased: false`. The two source-level lint rules are
@@ -232,5 +233,11 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "resourcedetection lists an unknown detector",
     "Name detectors as the processor registers them (elastic_beanstalk, not elasticbeanstalk), or remove the entry.",
     { category: "correctness" },
+  ),
+  OTEL128: entityRule(
+    "OTEL128",
+    "correctness",
+    "Collector config uses a component the declared Distribution does not build",
+    "Add the component to the Distribution's list for its kind, or remove it from the collector config.",
   ),
 };

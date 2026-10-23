@@ -59,8 +59,10 @@ on the same address (OTEL117), and a literal credential in source (OTEL002)
 or in the config (OTEL120). Others report deprecated fields (OTEL119),
 credentials sent in plaintext (OTEL121), zpages or pprof off loopback
 (OTEL122), detailed debug output beside a backend (OTEL123), delivery and
-batching settings (OTEL124, OTEL125), and k8sattributes fields or
-resourcedetection detectors the collector doesn't know (OTEL126, OTEL127). In
+batching settings (OTEL124, OTEL125), k8sattributes fields or
+resourcedetection detectors the collector doesn't know (OTEL126, OTEL127),
+and, when the project declares a \`Distribution\`, a component the config uses
+that the distribution doesn't build (OTEL128). In
 a build that stamps telemetry attribution, OTEL118 reports a processor that can
 drop or overwrite one of the attribution's resource attributes.
 `;

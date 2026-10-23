@@ -188,3 +188,28 @@ export {
 // `@intentius/chant-lexicon-otel/op/activities`.
 export { otelcolValidate, otelcolComponents, collectorHealthObserve, collectorAudit } from "./op/builders";
 export { CollectorAuditOp, type CollectorAuditOpConfig, type CollectorAuditOpResources } from "./op/audit-op";
+
+// A custom collector built with ocb (#3374): the builder manifest as an
+// entity, the `ocb-build` build verb, and the check that a config uses only
+// what the distribution builds (OTEL128).
+export {
+  Distribution,
+  DISTRIBUTION_TYPE,
+  DISTRIBUTION_MANIFEST_FILE,
+  BUILTIN_MODULES,
+  isDistributionEntity,
+  distributionManifest,
+  distributionYaml,
+  distributionComponents,
+  distributionIssues,
+  componentModule,
+  moduleComponentType,
+  type DistributionProps,
+  type DistributionDist,
+  type DistributionModule,
+  type DistributionComponent,
+  type DistributionEntity,
+  type DistributionComponents,
+} from "./distribution";
+export { otelCapabilityPlugin, OTEL_VERB_FAMILIES, ocbBuild } from "./build/capability-plugin";
+export { createOcbBuildCapability, ocbBuildCapability, ocbOutputPath, type OcbBuildInput, type OcbBuildOutput } from "./build/ocb-build";
