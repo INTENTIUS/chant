@@ -33,6 +33,14 @@
  * never a whole object, so no unwalked subtree can carry a secret past the
  * check.
  *
+ * A flag on either side redacts both sides of that path. On a stock root the
+ * two sides are flagged alike, because state records which paths were
+ * sensitive. On a choudoufu live root (#4371) they are not: prior state is
+ * rebuilt from the account on every run and carries no marks from the
+ * configuration, so an attribute made sensitive by a `sensitive` variable is
+ * flagged on `after` only, while `before` holds the live value, which is the
+ * previous secret. Recorded in `__fixtures__/live-plan-depth/`.
+ *
  * Flags alone are not enough, as a real plan shows: `terraform_data` copies
  * `input` to `output`, and the plan flags `input.token` sensitive while
  * leaving `output.token` unflagged with the same value in it. So every string
@@ -224,14 +232,15 @@ export function diffChange(
     // it is a container, so each leaf keeps its own sensitivity, and the
     // after side of every leaf is the phrase.
     if (au === true) {
-      if (bs !== true && isContainer(before) && Object.keys(before as object).length > 0) {
+      const flagged = bs === true || as === true;
+      if (!flagged && isContainer(before) && Object.keys(before as object).length > 0) {
         const keys = Array.isArray(before) ? before.map((_, i) => i) : Object.keys(before as Rec).sort();
         for (const key of keys) {
-          walk((before as Rec)[key as string], undefined, child(bs, key), undefined, true, [...at, key]);
+          walk((before as Rec)[key as string], undefined, child(bs, key), child(as, key), true, [...at, key]);
         }
         return;
       }
-      out.push({ path, before: isContainer(before) && bs !== true ? before : shown(before, bs === true, secrets), after: KNOWN_AFTER_APPLY });
+      out.push({ path, before: isContainer(before) && !flagged ? before : shown(before, flagged, secrets), after: KNOWN_AFTER_APPLY });
       return;
     }
 
@@ -240,10 +249,11 @@ export function diffChange(
     // A flagged node is emitted whole, as `(sensitive)`, and never walked:
     // there is nothing under it to show. A container beside a flag on the
     // other side is redacted too rather than walked without its flags.
+    // Both sides are redacted when either is flagged; see the module doc for
+    // the live root whose `before` is never flagged.
     if (bs === true || as === true) {
-      const side = (v: unknown, flagged: boolean): unknown =>
-        v === undefined || v === null ? null : flagged || isContainer(v) ? SENSITIVE_VALUE : shown(v, false, secrets);
-      out.push({ path, before: side(before, bs === true), after: side(after, as === true) });
+      const side = (v: unknown): unknown => (v === undefined || v === null ? null : SENSITIVE_VALUE);
+      out.push({ path, before: side(before), after: side(after) });
       return;
     }
 
@@ -285,11 +295,15 @@ export function indexPlan(document: unknown): PlanIndex {
   const rawDrift = Array.isArray(doc.resource_drift) ? doc.resource_drift.filter(isRecord) : [];
 
   // Pass one: every string under a sensitive flag, anywhere in the document.
+  // Each side is read under both sides' flags, so a live root's unflagged
+  // `before` value at a path `after` flags is a secret too (#4371).
   const secrets = new Set<string>();
   for (const entry of [...rawChanges, ...rawDrift]) {
     const change = isRecord(entry.change) ? entry.change : {};
-    collectSensitive(change.before, change.before_sensitive, secrets);
-    collectSensitive(change.after, change.after_sensitive, secrets);
+    for (const flags of [change.before_sensitive, change.after_sensitive]) {
+      collectSensitive(change.before, flags, secrets);
+      collectSensitive(change.after, flags, secrets);
+    }
   }
 
   const relevant = new Map<string, string[]>();
