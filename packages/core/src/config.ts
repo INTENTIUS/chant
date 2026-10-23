@@ -66,6 +66,10 @@ export const ChantConfigSchema = z.object({
   build: z.object({
     fold: z.boolean().optional(),
   }).optional(),
+  // Strict like `run`: a misspelt `lint` would leave the gate on with nothing said.
+  graph: z.object({
+    lint: z.enum(["gate", "report"]).optional(),
+  }).strict().optional(),
   buildParams: z.record(
     z.string(),
     z.object({
@@ -207,6 +211,23 @@ export interface ChantConfig {
 
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;
+
+  /**
+   * How `chant graph` treats lint errors (INTENTIUS/behold#919).
+   *
+   * `"gate"` (the default) refuses to emit the entity graph for source that
+   * fails `chant lint`: the graph stands for source chant will build.
+   * `"report"` emits it anyway and carries every lint finding on the IR's
+   * `meta.lint`, for a project that only reads source it did not author. The
+   * reader project `chant workspace graph` writes for a terraform or choudoufu
+   * member sets it, and so does behold's scratch project for a bare Terraform
+   * folder: an error-severity finding there describes the estate, and the
+   * person needs the picture to look at it. A chant older than the key
+   * ignores it and gates as before.
+   */
+  graph?: {
+    lint?: "gate" | "report";
+  };
 
   /**
    * Telemetry attribution (#2558, D22): lexicons that declare workloads stamp

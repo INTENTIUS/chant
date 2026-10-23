@@ -785,6 +785,7 @@ async function runLexiconPostSynthDiagnostics(
     ruleId: d.checkId,
     severity: d.severity,
     message: `${d.entity ? `[${d.entity}] ` : ""}${d.message}`,
+    ...(d.entity ? { entity: d.entity } : {}),
   });
 
   for (const { plugin, diagnostics: raw } of runLexiconPostSynthChecks(withChecks, result, env, { activityContracts, telemetry, projectDir: configDir, ...(loadedConfig ? { projectConfig: loadedConfig } : {}) })) {
