@@ -114,6 +114,20 @@ describe("--count-by on a Terraform project", () => {
     expect(g.reduce((s, [c]) => s + c, 0)).toBe(total(out));
   });
 
+  it("with --json, prints the groups and the total as one object", async () => {
+    const { code, out } = await search({ path: "kind:Terraform::Resource", countBy: "module", json: true });
+    expect(code).toBe(0);
+    expect(out).toHaveLength(1);
+    const body = JSON.parse(out[0]);
+    expect(body).toMatchObject({ countBy: "module", total: 4, source: { kind: "declared" } });
+    expect(body.groups).toEqual([
+      { group: "app/(root)", count: 2 },
+      { group: "app/module.cdn", count: 1 },
+      { group: "network/(root)", count: 1 },
+    ]);
+    expect(body.matches).toBeUndefined();
+  });
+
   it("refuses a grouping it cannot read", async () => {
     const { code } = await search({ countBy: "provider" });
     expect(code).toBe(1);

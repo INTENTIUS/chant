@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
-import { enrichEffectiveTopology } from "../../graph-effective";
+import { enrichEffectiveTopology, terraformResourceType } from "../../graph-effective";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -14,9 +14,9 @@ import type { ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
-import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
-import { isNoLexiconDetected } from "../../detectLexicon";
-import { parseCountBy, countGroups, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
+import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
+import type { Declarable } from "../../declarable";
+import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -33,6 +33,8 @@ import type { CommandContext } from "../registry";
  *   attr:<name>=<val>    attribute <name> equals/contains <val>
  *   ->kind:X / ->attr:.. this node has an edge TO a node matching the right side
  *   <-kind:X / <-attr:.. this node has an edge FROM a node matching the right side
+ *   ->*X, ->{n}X, ->{m,n}X  the far end is any depth / n / m..n hops away (#4359)
+ *   ->[via=a]X, ->[to=a]X   only edges through consumer attr a / reading producer attr a
  *
  * The edge operators are the point of "edge-aware" search (#1139): a small
  * model shouldn't hand-join instance→subnet→public across many results — one
@@ -87,6 +89,13 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     console.error(formatError({
       message: "chant search --check-snapshot needs --live",
       hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
+    }));
+    return 1;
+  }
+  if (args.json && (args.checkLive || args.checkSnapshot)) {
+    console.error(formatError({
+      message: "chant search --json does not carry the --check-live/--check-snapshot report",
+      hint: "run the drift check without --json; --json prints the matched rows and their paths",
     }));
     return 1;
   }
@@ -329,15 +338,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // overlay copies physical identity but not attrs, so merge them here.
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
   } else {
-    const srcDir = resolve(args.src ?? config.sourceDir ?? ".");
-    const discovered = await discover(srcDir);
-    // Entities a lexicon contributes from outside the TypeScript source (a
-    // Terraform root's blocks, rendered kustomize objects), joined the way
-    // `chant graph` and `build()` join them (#4360). Without this, search on a
-    // Terraform project matched nothing at all.
-    if (!(await mergeSearchBuildRoots(discovered.entities, ctx, projectPath, config as unknown as Record<string, unknown>, srcDir))) {
-      return 1;
-    }
+    const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+    await joinBuildRoots(discovered.entities, ctx, projectPath, config);
     ir = buildGraphIr(discovered.entities);
   }
 
@@ -349,6 +351,17 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   resolveKindTerms(terms, ir.nodes);
   const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
+  // Machine-readable rows and paths (#4359), for a caller that draws them.
+  if (args.json) {
+    // With --count-by (#4360) the object carries the groups and the total in
+    // place of the matches, the same answer the grouped lines give.
+    const payload = countBy
+      ? countsJson(query, source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures)
+      : searchJson(query, source, matches, terms, ir, nodeById, liveFailures);
+    console.log(JSON.stringify(payload));
+    for (const n of liveNotes) console.error(formatWarning({ message: n }));
+    return liveFailures.length > 0 ? 1 : 0;
+  }
   if (matches.length === 0) {
     console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
     availableAttrs(terms, ir);
@@ -370,7 +383,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
-  provenance(matches, source, recorded, liveFailures);
+  provenance(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir));
   // Qualifies the provenance line, so it sits with it: one line per distinct
   // note for the whole run, not one per stack, and after the rows (#1265).
   for (const n of liveNotes) console.error(formatWarning({ message: n }));
@@ -424,37 +437,34 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 
 
 /**
- * Join build-root contributions (a Terraform root's blocks, rendered kustomize
- * objects) to the discovered set, as `chant graph` does (#4360). A project
- * with no detectable lexicon has none to join. Returns false when a
- * contributor failed, so search does not answer from a partial estate.
+ * Join build-root entities (a terraform root's blocks, a rendered kustomize
+ * root) to the discovered set, the way `chant graph` and `build()` do (#4362).
+ * A terraform estate has no typed source at all, so without this a declared
+ * search over one had nothing to search. Best-effort: a project whose lexicons
+ * cannot be loaded is searched over its typed source alone, with a warning.
  */
-async function mergeSearchBuildRoots(
-  entities: Map<string, import("../../declarable").Declarable>,
+async function joinBuildRoots(
+  entities: Map<string, Declarable>,
   ctx: CommandContext,
   projectPath: string,
-  config: Record<string, unknown>,
-  srcDir: string,
-): Promise<boolean> {
+  config: object,
+): Promise<void> {
   let plugins = ctx.plugins;
   if (plugins.length === 0) {
     try {
       plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
-    } catch (err) {
-      if (isNoLexiconDetected(err)) return true;
-      throw err;
+    } catch {
+      return;
     }
   }
-  const contributors = collectBuildRootContributors(plugins, config, projectPath);
-  if (contributors.length === 0) return true;
-  const merged = await mergeBuildRootEntities(entities, contributors, srcDir);
-  for (const w of merged.warnings) console.error(formatWarning({ message: w }));
-  for (const message of merged.errors) console.error(formatError({ message }));
-  return merged.errors.length === 0;
+  const contributors = collectBuildRootContributors(plugins, config as Record<string, unknown>, projectPath);
+  if (contributors.length === 0) return;
+  const merged = await mergeBuildRootEntities(entities, contributors);
+  for (const message of [...merged.warnings, ...merged.errors]) console.error(formatWarning({ message }));
 }
 
 /** Where an answer's facts came from, for the provenance line (#1266). */
-type AnswerSource =
+export type AnswerSource =
   | { kind: "declared" }
   | { kind: "live" }
   | { kind: "snapshot"; commit: string; timestamp: string };
@@ -568,9 +578,18 @@ function ambientHint(
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, liveFailures: string[] = []): void {
+function provenance(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): void {
   if (source.kind === "declared") {
-    console.log("— declared only · no observation · physical ids unavailable");
+    // A derived fact the query relied on (#4362) was folded from declared
+    // references alone, so it describes the source, not the account.
+    const from = derived.length > 0 ? ` · ${derived.join(", ")} derived from declared references` : "";
+    console.log(`— declared only · no observation · physical ids unavailable${from}`);
     return;
   }
   const bound = matches.filter((n) => n.physicalId).length;
@@ -692,14 +711,25 @@ function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR, backed = 
   if (!derived || matches.length === 0 || !backed) return;
   const used = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
   const unused = new Set<string>();
-  for (const n of matches) {
-    for (const [kind, names] of Object.entries(derived)) {
-      if (!n.kind?.includes(kind)) continue;
-      for (const name of names) if (!used.has(name)) unused.add(name);
-    }
-  }
+  for (const n of matches) for (const name of derivedNames(n, ir)) if (!used.has(name)) unused.add(name);
   if (unused.size === 0) return;
   console.log(`— also derived for these resources: ${[...unused].sort().join(", ")}`);
+}
+
+/** The derived attributes recorded for a node's kind (or its terraform resource type, #4362). */
+function derivedNames(n: IRNode, ir: GraphIR): string[] {
+  const tfType = terraformResourceType(n);
+  return Object.entries(ir.derivedAttrs ?? {})
+    .filter(([kind]) => n.kind?.includes(kind) || kind === tfType)
+    .flatMap(([, names]) => names);
+}
+
+/** The derived attributes the query's `attr:` terms relied on, for the provenance line. */
+function derivedUsed(terms: Term[], matches: IRNode[], ir: GraphIR): string[] {
+  const queried = new Set(terms.filter((t) => t.kind === "attr" && !t.negated).map((t) => t.a));
+  const out = new Set<string>();
+  for (const n of matches) for (const name of derivedNames(n, ir)) if (queried.has(name)) out.add(name);
+  return [...out].sort();
 }
 
 /**
@@ -728,6 +758,11 @@ function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string
       const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
       if (typeof via === "string") console.log(`  ✓ ${id} ${t.a} via ${via}`);
     }
+  }
+  // The chain each match was reached by (#4359), so a caller can quote the
+  // path instead of re-deriving it with one search per hop.
+  for (const n of matches) {
+    for (const p of matchPaths(n, terms, ir, byId)) console.log(`  path ${formatPath(p.hops, p.term.dir!)}`);
   }
   const shown = excluded.slice(0, 8);
   for (const n of shown) {
@@ -785,11 +820,77 @@ function describeTerm(t: Term): string {
   // `--explain` has to say a negated term was negated, or an exclusion reads as
   // the opposite of what it is.
   if (t.negated) return `!${describeTerm({ ...t, negated: false })}`;
-  const leaf = (x: Term): string =>
-    x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
-      : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
-  if (t.kind === "edge" && t.sub) return `${t.dir === "out" ? "→" : "←"}${leaf(t.sub)} (no such edge)`;
-  return leaf(t);
+  if (t.kind === "edge") return `${edgeOperator(t, { out: "→", in: "←" })}${t.sub ? leafText(t.sub) : ""} (no such edge)`;
+  return leafText(t);
+}
+
+function leafText(x: Term): string {
+  return x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
+    : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
+}
+
+/**
+ * `chant search --json` (#4359): the matched rows and, per positive edge
+ * term, the path each match was reached by. Drawn by behold (behold#913).
+ *
+ *   {
+ *     "query": "kind:aws_instance ->*kind:aws_vpc",
+ *     "source": { "kind": "declared" | "live" | "snapshot", "commit"?, "timestamp"? },
+ *     "matches": [
+ *       { "id": "web", "kind": "aws_instance", "physicalId"?: "i-1", "unobserved"?: "read-failed",
+ *         "paths": [ { "term": "->*kind:aws_vpc", "dir": "out",
+ *                      "hops": [ { "from": "web", "fromAttr": "subnet_id", "to": "a", "toAttr": "id" },
+ *                                { "from": "a", "fromAttr": "vpc_id", "to": "main", "toAttr": "id" } ] } ] }
+ *     ],
+ *     "liveFailures"?: ["aws: ..."]
+ *   }
+ *
+ * `hops` is in walk order from the match; each hop keeps the edge's own
+ * direction (see {@link PathHop}). `paths` is empty when the query has no
+ * positive edge term. Ids are the graph's full ids.
+ */
+export interface SearchJson {
+  query: string;
+  source: AnswerSource;
+  matches: {
+    id: string;
+    kind?: string;
+    physicalId?: string;
+    unobserved?: string;
+    paths: { term: string; dir: "out" | "in"; hops: PathHop[] }[];
+  }[];
+  liveFailures?: string[];
+}
+
+function searchJson(
+  query: string,
+  source: AnswerSource,
+  matches: IRNode[],
+  terms: Term[],
+  ir: GraphIR,
+  byId: Map<string, IRNode>,
+  liveFailures: string[] = [],
+): SearchJson {
+  return {
+    query,
+    source,
+    matches: matches.map((n) => {
+      const attrs = (n.attrs ?? {}) as Record<string, unknown>;
+      const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
+      return {
+        id: n.id,
+        ...(n.kind ? { kind: n.kind } : {}),
+        ...(physical != null && typeof physical !== "object" ? { physicalId: String(physical) } : {}),
+        ...(typeof attrs["_unobserved"] === "string" ? { unobserved: attrs["_unobserved"] } : {}),
+        paths: matchPaths(n, terms, ir, byId).map((p) => ({
+          term: `${edgeOperator(p.term, { out: "->", in: "<-" })}${p.term.sub ? leafText(p.term.sub) : ""}`,
+          dir: p.term.dir!,
+          hops: p.hops,
+        })),
+      };
+    }),
+    ...(liveFailures.length > 0 ? { liveFailures } : {}),
+  };
 }
 
 export interface Term {
@@ -801,6 +902,15 @@ export interface Term {
   /** For edge terms: the direction and the sub-predicate matched at the far end. */
   dir?: "out" | "in";
   sub?: Term;
+  /**
+   * For edge terms (#4359): how many hops the far end may be away. Absent on a
+   * plain `->`/`<-`, which is exactly one hop. `max` is `Infinity` for `*`.
+   */
+  depth?: { min: number; max: number };
+  /** For edge terms (#4359): every edge on the path goes through this consumer attribute (`IREdge.viaAttr`). */
+  viaAttr?: string;
+  /** For edge terms (#4359): every edge on the path reads this producer attribute (`IREdge.toAttr`). */
+  toAttr?: string;
   /**
    * For kind terms: the kinds this term actually means, resolved against the
    * graph (see {@link resolveKindTerms}). Absent when nothing resolved it, in
@@ -891,6 +1001,70 @@ class QueryError extends Error {
   }
 }
 
+/**
+ * Parse an edge term (#4359): `->` or `<-`, then an optional depth, then an
+ * optional attribute qualifier, then the target leaf.
+ *
+ *   ->kind:X                one hop, as it always was
+ *   ->*kind:X               any number of hops, one or more
+ *   ->{3}kind:X             exactly three hops
+ *   ->{1,3}kind:X           one to three hops ({2,} is two or more)
+ *   <-[via=vpc_id]kind:X    only edges through the consumer attribute vpc_id
+ *   ->[to=id]kind:X         only edges that read the producer attribute id
+ *   <-*[via=subnet_id]      a qualifier may stand without a target: any node
+ *
+ * A qualifier constrains every edge on the path, not only the first one.
+ */
+function parseEdge(tok: string, negated: boolean): Term {
+  const dir = tok.startsWith("->") ? ("out" as const) : ("in" as const);
+  const arrow = tok.slice(0, 2);
+  let rest = tok.slice(2);
+  const term: Term = { kind: "edge", a: "", dir };
+  if (rest.startsWith("*")) {
+    term.depth = { min: 1, max: Infinity };
+    rest = rest.slice(1);
+  } else if (rest.startsWith("{")) {
+    const m = /^\{(\d+)(,(\d*))?\}/.exec(rest);
+    const min = m ? Number(m[1]) : NaN;
+    const max = !m ? NaN : m[2] === undefined ? min : m[3] === "" ? Infinity : Number(m[3]);
+    if (!m || min < 1 || max < min) {
+      throw new QueryError(
+        `"${tok}" has a depth this grammar cannot read`,
+        `a depth is {n}, {min,max} or {min,} with 1 <= min <= max, e.g. ${arrow}{1,3}kind:aws_vpc; ${arrow}* is any depth`,
+      );
+    }
+    term.depth = { min, max };
+    rest = rest.slice(m[0].length);
+  }
+  if (rest.startsWith("[")) {
+    const close = rest.indexOf("]");
+    const parts = close < 0 ? [""] : rest.slice(1, close).split(",").map((p) => p.trim());
+    for (const part of parts) {
+      const q = /^(via|to)=(.+)$/.exec(part);
+      if (!q) {
+        throw new QueryError(
+          `"${tok}" has an edge qualifier this grammar cannot read`,
+          `qualify an edge by attribute with [via=<consumer attr>] or [to=<producer attr>], e.g. <-[via=vpc_id]kind:aws_subnet or ->[via=subnet_id,to=id]`,
+        );
+      }
+      if (q[1] === "via") term.viaAttr = q[2];
+      else term.toAttr = q[2];
+    }
+    rest = rest.slice(close + 1);
+  }
+  if (rest.trim() === "") {
+    if (term.viaAttr === undefined && term.toAttr === undefined) {
+      const bang = negated ? "!" : "";
+      throw new QueryError(
+        `"${bang}${tok}" needs a target`,
+        `say what the edge reaches: ${bang}${tok}kind:EC2::Instance, or qualify it by attribute: ${bang}${tok}[via=vpc_id]`,
+      );
+    }
+    return term;
+  }
+  return { ...term, sub: parseLeaf(rest) };
+}
+
 function parseQuery(query: string): Term[] {
   // Split on whitespace but keep quoted phrases together.
   const tokens = query.match(/"[^"]*"|\S+/g) ?? [];
@@ -931,11 +1105,7 @@ function parseQuery(query: string): Term[] {
         `say what the edge reaches: ${negated ? "!" : ""}${tok}kind:EC2::Instance, or ${negated ? "!" : ""}${tok}attr:Name=web`,
       );
     }
-    const term = tok.startsWith("->")
-      ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
-      : tok.startsWith("<-")
-        ? { kind: "edge" as const, a: "", dir: "in" as const, sub: parseLeaf(tok.slice(2)) }
-        : parseLeaf(tok);
+    const term: Term = tok.startsWith("->") || tok.startsWith("<-") ? parseEdge(tok, negated) : parseLeaf(tok);
     return negated ? { ...term, negated: true } : term;
   });
 }
@@ -957,7 +1127,11 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
   if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
   if (t.kind === "edge") {
-    if (!ir || !byId || !t.sub) return false;
+    if (!ir || !byId) return false;
+    // Depth and attribute qualifiers (#4359) go through the path search. A
+    // plain one-hop term keeps the original code below, unchanged.
+    if (t.depth || t.viaAttr !== undefined || t.toAttr !== undefined) return findPath(n, t, ir, byId) !== null;
+    if (!t.sub) return false;
     // A node matches if it has an edge (out or in) to a node satisfying `sub`.
     const edges = ir.edges ?? [];
     const neighbors = edges
@@ -988,6 +1162,142 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
   // bare word: substring over id, kind, and all attr values
   const hay = [n.id, n.kind, ...Object.values(attrs).map(attrString)].join(" ").toLowerCase();
   return hay.includes(t.a.toLowerCase());
+}
+
+/**
+ * One edge on the path a match was reached by (#4359), in walk order from the
+ * match outward. `from` and `to` keep the edge's own direction (`from` holds
+ * the reference, `to` is what it names), whichever way the term walked, so a
+ * reader can find the edge in the graph by its endpoints. Node ids are the
+ * graph's full ids, stack qualification included.
+ */
+export interface PathHop {
+  from: string;
+  /** The consumer attribute the reference flows through (`IREdge.viaAttr`), when known. */
+  fromAttr?: string;
+  to: string;
+  /** The producer attribute read (`IREdge.toAttr`), when known. */
+  toAttr?: string;
+}
+
+const adjacency = new WeakMap<GraphIR, { out: Map<string, IREdge[]>; in: Map<string, IREdge[]> }>();
+
+function edgeIndex(ir: GraphIR): { out: Map<string, IREdge[]>; in: Map<string, IREdge[]> } {
+  let idx = adjacency.get(ir);
+  if (!idx) {
+    idx = { out: new Map(), in: new Map() };
+    for (const e of ir.edges ?? []) {
+      if (!idx.out.has(e.from)) idx.out.set(e.from, []);
+      idx.out.get(e.from)!.push(e);
+      if (!idx.in.has(e.to)) idx.in.set(e.to, []);
+      idx.in.get(e.to)!.push(e);
+    }
+    adjacency.set(ir, idx);
+  }
+  return idx;
+}
+
+function sameName(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * The shortest path by which an edge term reaches `n` (#4359), or null.
+ *
+ * Breadth-first over the edges in the term's direction, keeping only edges
+ * whose attributes satisfy its qualifier, and accepting a node that satisfies
+ * the target leaf (any node when the term has none) at a depth inside the
+ * term's range. A plain `->`/`<-` is the range 1..1.
+ *
+ * Termination on a cycle: a state is (node, depth capped at the range's
+ * minimum). Past the minimum, arriving at a node again by a longer walk can
+ * reach nothing the first arrival could not, so it is not queued twice. The
+ * state space is finite and the walk always ends.
+ */
+function findPath(n: IRNode, t: Term, ir: GraphIR, byId: Map<string, IRNode>): PathHop[] | null {
+  if (t.kind !== "edge") return null;
+  const { min, max } = t.depth ?? { min: 1, max: 1 };
+  const idx = edgeIndex(ir);
+  const out = t.dir === "out";
+  type State = { id: string; depth: number; hops: PathHop[] };
+  const seen = new Set<string>([`${n.id}|0`]);
+  let frontier: State[] = [{ id: n.id, depth: 0, hops: [] }];
+  while (frontier.length > 0) {
+    const next: State[] = [];
+    for (const s of frontier) {
+      if (s.depth >= max) continue;
+      for (const e of (out ? idx.out.get(s.id) : idx.in.get(s.id)) ?? []) {
+        if (t.viaAttr !== undefined && !sameName(e.viaAttr, t.viaAttr)) continue;
+        if (t.toAttr !== undefined && !sameName(e.toAttr, t.toAttr)) continue;
+        const farId = out ? e.to : e.from;
+        const far = byId.get(farId);
+        if (!far) continue;
+        const depth = s.depth + 1;
+        const hop: PathHop = {
+          from: e.from,
+          ...(e.viaAttr ? { fromAttr: e.viaAttr } : {}),
+          to: e.to,
+          ...(e.toAttr ? { toAttr: e.toAttr } : {}),
+        };
+        const hops = [...s.hops, hop];
+        if (depth >= min && (!t.sub || matchTerm(far, t.sub, ir, byId))) return hops;
+        const key = `${farId}|${Math.min(depth, min)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push({ id: farId, depth, hops });
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+function bareId(id: string): string {
+  return id.includes("::") ? id.slice(id.lastIndexOf("::") + 2) : id;
+}
+
+/**
+ * A path as one line of `id.attr` steps, read from the match outward (#4359).
+ * Walking `->`, each hop reads `consumer.via -> producer.attr`; walking `<-`,
+ * `producer.attr <- consumer.via`. Hops are joined with `; `.
+ */
+function formatPath(hops: PathHop[], dir: "out" | "in"): string {
+  const end = (id: string, attr?: string): string => (attr ? `${bareId(id)}.${attr}` : bareId(id));
+  return hops
+    .map((h) =>
+      dir === "out"
+        ? `${end(h.from, h.fromAttr)} -> ${end(h.to, h.toAttr)}`
+        : `${end(h.to, h.toAttr)} <- ${end(h.from, h.fromAttr)}`,
+    )
+    .join("; ");
+}
+
+/** The edge operator as written: arrow, depth and qualifier, no target. */
+function edgeOperator(t: Term, arrows: { out: string; in: string }): string {
+  const arrow = t.dir === "out" ? arrows.out : arrows.in;
+  const depth = !t.depth
+    ? ""
+    : t.depth.min === 1 && t.depth.max === Infinity
+      ? "*"
+      : t.depth.min === t.depth.max
+        ? `{${t.depth.min}}`
+        : `{${t.depth.min},${t.depth.max === Infinity ? "" : t.depth.max}}`;
+  const quals = [
+    ...(t.viaAttr !== undefined ? [`via=${t.viaAttr}`] : []),
+    ...(t.toAttr !== undefined ? [`to=${t.toAttr}`] : []),
+  ];
+  return `${arrow}${depth}${quals.length > 0 ? `[${quals.join(",")}]` : ""}`;
+}
+
+/** Each positive edge term's path to `n`, in query order (#4359). */
+function matchPaths(n: IRNode, terms: Term[], ir: GraphIR, byId: Map<string, IRNode>): { term: Term; hops: PathHop[] }[] {
+  const out: { term: Term; hops: PathHop[] }[] = [];
+  for (const t of terms) {
+    if (t.kind !== "edge" || t.negated) continue;
+    const hops = findPath(n, t, ir, byId);
+    if (hops) out.push({ term: t, hops });
+  }
+  return out;
 }
 
 function formatRow(n: IRNode, show: string[]): string {
@@ -1024,4 +1334,4 @@ function formatRow(n: IRNode, show: string[]): string {
 }
 
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, renderDrift, mergeResources, pickResources };
+export const __searchInternals = { parseQuery, matchTerm, findPath, formatPath, searchJson, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, renderDrift, mergeResources, pickResources };

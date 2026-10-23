@@ -129,6 +129,33 @@ export function countGroups(matches: IRNode[], countBy: CountBy, multiRoot = fal
     .sort((a, b) => b.count - a.count || (a.group < b.group ? -1 : a.group > b.group ? 1 : 0));
 }
 
+/** `--count-by` with `--json`: the groups, in printed order, and the total they add up to. */
+export interface CountsJson {
+  query: string;
+  source: unknown;
+  countBy: string;
+  groups: Array<{ group: string; count: number }>;
+  total: number;
+  liveFailures?: string[];
+}
+
+export function countsJson(
+  query: string,
+  source: unknown,
+  groups: Array<{ group: string; count: number }>,
+  countBy: CountBy,
+  liveFailures: string[] = [],
+): CountsJson {
+  return {
+    query,
+    source,
+    countBy: countByLabel(countBy),
+    groups,
+    total: groups.reduce((sum, g) => sum + g.count, 0),
+    ...(liveFailures.length > 0 ? { liveFailures } : {}),
+  };
+}
+
 /** The label a `--count-by` value is printed with on the total line. */
 function countByLabel(countBy: CountBy): string {
   return countBy.by === "attr" ? `attr:${countBy.name}` : countBy.by;

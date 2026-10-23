@@ -48,6 +48,13 @@ together.
 | `tag:<key>=<val>` | a `Tags` entry with `Key=<key>` and `Value` containing `<val>` |
 | `->kind:X`, `->attr:…`, `->tag:…` | node has an edge **to** a node matching the right side |
 | `<-kind:X`, `<-attr:…`, `<-tag:…` | node has an edge **from** a node matching the right side |
+| `->*X`, `<-*X` | the far end matching `X` is any number of hops away, one or more |
+| `->{n}X`, `<-{n}X` | exactly `n` hops away |
+| `->{m,n}X`, `<-{m,n}X` | between `m` and `n` hops away, inclusive (`{m,}` is `m` or more) |
+| `->[via=<attr>]X`, `<-[via=<attr>]X` | only edges whose consumer attribute (`viaAttr`) is `<attr>` |
+| `->[to=<attr>]X`, `<-[to=<attr>]X` | only edges that read the producer attribute (`toAttr`) `<attr>` |
+| `->[via=<attr>]`, `<-*[to=<attr>]` | a qualified edge may omit the target: any node at the far end |
+| `!<term>` | the node does **not** satisfy the term |
 
 The edge operators make the search **edge-aware**: a traversal becomes one
 term instead of a hand-join across results.
@@ -55,6 +62,28 @@ term instead of a hand-join across results.
 ```bash
 # instances that reference a public subnet
 chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true"
+```
+
+An edge points from the resource that holds a reference to the resource it
+names: `aws_subnet.a` with `vpc_id = aws_vpc.main.id` has an edge to
+`aws_vpc.main` through `vpc_id` (its `viaAttr`) reading `id` (its `toAttr`).
+So `->` walks toward what a resource reads, and `<-` walks toward what reads it.
+
+The parts of an edge term go in this order: arrow, depth, qualifier, target.
+A plain `->` or `<-` is one hop. A qualifier holds for every edge on the path,
+not only the first one, and names match ignoring case. An edge the lexicon
+recorded no attribute for never satisfies a qualifier. A cycle in the graph
+does not stop the walk from ending.
+
+```bash
+# everything that reads aws_vpc.main, directly or through other resources
+chant search "<-*aws_vpc.main" --explain
+
+# resources within two hops of an IAM role
+chant search "->{1,2}kind:aws_iam_role"
+
+# VPCs some resource reads through vpc_id
+chant search "kind:aws_vpc <-[via=vpc_id]"
 ```
 
 ## Derived attributes
@@ -73,6 +102,30 @@ chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
 chant search "kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0" --live --env dev --explain --show InstanceId
 ```
 
+The same two facts are folded onto a Terraform root's `aws_instance` blocks,
+read from `terraform.roots` in `chant.config.ts`:
+
+- `effectiveIngress` follows `vpc_security_group_ids`, `security_groups` and
+  `launch_template` (to the template's `vpc_security_group_ids`), and reads
+  inline `ingress` blocks, `aws_security_group_rule` resources with
+  `type = "ingress"` and `aws_vpc_security_group_ingress_rule` resources.
+- `internetFacing` follows `subnet_id` and `aws_route_table_association` to a
+  route table whose default route goes to an `aws_internet_gateway`, written
+  either as an inline `route` block or as an `aws_route` resource. A subnet on
+  the VPC's main route table (no association) is not followed.
+
+Without `--live` these come from declared references alone, and the
+provenance line says so:
+
+```text
+$ chant search "attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0" --explain
+net/aws_instance.web  Terraform::Resource
+— declared only · no observation · physical ids unavailable · effectiveIngress, internetFacing derived from declared references
+— 1 of 24 Terraform::Resource matched  (query: attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0)
+  ✓ net/aws_instance.web internetFacing via subnet route aws_subnet.public_a -> aws_route_table.public_inline -> aws_internet_gateway.main (inline route)
+  ✓ net/aws_instance.web effectiveIngress via security groups aws_launch_template.web -> aws_security_group.web
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -83,7 +136,8 @@ chant search "kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=
 | `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
 | `--count-by` | `string` | — | Print one count per group instead of one row per match: `kind`, `module` or `attr:<name>` (see [Grouped counts](#grouped-counts)) |
-| `--explain` | `boolean` | `false` | Print the match-universe footer and near-miss exclusions |
+| `--explain` | `boolean` | `false` | Print the match-universe footer, each match's path for edge terms, and near-miss exclusions |
+| `--json` | `boolean` | `false` | Print the matches and their paths as one JSON object instead of rows and footers (not with `--check-live`/`--check-snapshot`) |
 | `--ambient` | `boolean` | `false` | Also report resources of a managed kind that exist without being declared or referenced |
 | `--check-live` | `boolean` | `false` | With `--at`: additionally read the estate live and diff the matched rows against the snapshot the answer came from |
 | `--check-snapshot` | `boolean` | `false` | With `--live`: additionally diff the matched rows against the most recently recorded snapshot |
@@ -109,13 +163,30 @@ $ chant search "kind:Terraform::Resource" --count-by module
 | `--count-by module` | on a Terraform root, the module call chain from the entity's address (`module.cdn`, `module.cdn.module.bucket`), with a root-module block grouped as `(root)`. When the project has more than one root, the root name leads (`app/(root)`, `network/module.vpc`), because the same module name in two roots is two modules. Any other node groups by the composite that expanded it |
 | `--count-by attr:<name>` | the value of attribute `<name>`, matched case-insensitively as `--show` does |
 
-A node with no value for the grouped dimension is counted under `(none)`,
-never dropped, so the groups always add up to the total.
+A node with no value for the grouped dimension is counted under `(none)`, so
+the groups add up to the total.
 
 Combined with a query, only the matches are counted. With no query at all, the
 whole graph is: `chant search --count-by kind` lists every kind the estate
 holds. The provenance line still follows, so a grouped live answer says what
 backed it.
+
+With `--json`, the object carries the groups in the same order and the total
+in place of `matches`:
+
+```json
+{
+  "query": "kind:Terraform::Resource",
+  "source": { "kind": "declared" },
+  "countBy": "module",
+  "groups": [
+    { "group": "app/(root)", "count": 2 },
+    { "group": "app/module.cdn", "count": 1 },
+    { "group": "network/(root)", "count": 1 }
+  ],
+  "total": 4
+}
+```
 
 ## `--explain`
 
@@ -125,6 +196,9 @@ re-deriving it with a lossy CLI sweep:
 - the universe count — `4 of 6 EC2::Instance matched`, a denominator the typed
   graph knows and a live sweep does not
 - inclusion evidence for derived facts — e.g. `✓ web1 internet-facing via subnet route`
+- for each match and each edge term, the path it was reached by, as a chain of
+  `id.attr` steps read from the match outward (the shortest path when there
+  are several)
 - up to 8 near-misses with the query term each one fails
 
 ```
@@ -133,8 +207,60 @@ re-deriving it with a lossy CLI sweep:
   · excluded AppUsWest2 — fails attr:internetFacing=true
 ```
 
+```
+— 1 of 2 aws_instance matched  (query: kind:aws_instance ->*aws_vpc.main)
+  path aws_instance.web.subnet_id -> aws_subnet.a.id; aws_subnet.a.vpc_id -> aws_vpc.main.id
+  · excluded aws_instance.batch — fails →*"aws_vpc.main" (no such edge)
+```
+
+Walking `->`, each hop reads `consumer.viaAttr -> producer.toAttr`. Walking
+`<-`, it reads `producer.toAttr <- consumer.viaAttr`. A side the lexicon did not
+record is printed as the bare id.
+
 Everything in the footer is a property of the query over the graph, not of any
 expected answer.
+
+## `--json`
+
+`--json` prints one object. Each match carries, for every edge term in the
+query that is not negated, the path it was reached by as a list of hops in walk
+order from the match. A hop keeps the edge's own direction (`from` holds the
+reference, `to` is what it names) whichever way the term walked, so a reader
+finds the edge in the graph by its endpoints. Ids are the graph's full ids.
+Optional fields are left out when unknown.
+
+```json
+{
+  "query": "kind:aws_instance ->*aws_vpc.main",
+  "source": { "kind": "declared" },
+  "matches": [
+    {
+      "id": "aws_instance.web",
+      "kind": "aws_instance",
+      "paths": [
+        {
+          "term": "->*\"aws_vpc.main\"",
+          "dir": "out",
+          "hops": [
+            { "from": "aws_instance.web", "fromAttr": "subnet_id", "to": "aws_subnet.a", "toAttr": "id" },
+            { "from": "aws_subnet.a", "fromAttr": "vpc_id", "to": "aws_vpc.main", "toAttr": "id" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `source.kind` | `declared`, `live` or `snapshot`; a snapshot adds `commit` and `timestamp` |
+| `matches[].physicalId` | the physical id, when known |
+| `matches[].unobserved` | why a live read could not cover this row (e.g. `read-failed`) |
+| `matches[].paths[].term` | the edge term, as the query would spell it |
+| `matches[].paths[].dir` | `out` for `->`, `in` for `<-` |
+| `matches[].paths[].hops[]` | `from`, `fromAttr` (the edge's `viaAttr`), `to`, `toAttr` |
+| `liveFailures` | present when a live read failed; the command exits 1 as it does without `--json` |
 
 ## Live mode
 
