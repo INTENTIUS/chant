@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant search "<query>" [--live | --at <ref>] [--env <name>] [flags]
+chant search "<query>" [--live | --snapshot <ref>] [--env <name>] [flags]
 chant search ["<query>"] --count-by <kind | module | attr:<name>> [flags]
 ```
 
@@ -111,14 +111,14 @@ carries its two labels as `attrs.type` and `attrs.name`. `kind:` reads the
 type as well as the kind, with the same boundary rule `kind:EC2::VPC` follows
 on `::`, applied to `_`:
 
-- `kind:aws_instance` is that type exactly. `kind:aws_iam_role` is the roles
-  and never `aws_iam_role_policy` or `aws_iam_role_policy_attachment`, even on
-  a root that has no `aws_iam_role` at all.
-- A term ending in `_` is a prefix: `kind:aws_iam_` is every IAM type.
-  A bare provider name is the same prefix, so `kind:aws` is every `aws_` type.
-- `kind:Terraform::Resource` (or `kind:Resource`) is still every resource.
-- A `data` block's type keeps its prefix: `kind:data.aws_ami` is the AMI
-  lookups, and `kind:aws_ami` matches no data source.
+| Term | Matches |
+|------|---------|
+| `kind:aws_instance` | that type exactly |
+| `kind:aws_iam_role` | the roles, and never `aws_iam_role_policy` or `aws_iam_role_policy_attachment`, even on a root that has no `aws_iam_role` at all |
+| `kind:aws_iam_` | every IAM type: a term ending in `_` is a prefix |
+| `kind:aws` | every `aws_` type, since a bare provider name is the same prefix |
+| `kind:Terraform::Resource`, `kind:Resource` | every resource, as before |
+| `kind:data.aws_ami` | the AMI lookups: a `data` block's type keeps its prefix, and `kind:aws_ami` matches no data source |
 
 A result row shows the type where a CloudFormation row shows its kind, and
 `--explain` counts against it ("2 of 2 aws_instance matched"). These are the
@@ -234,15 +234,16 @@ with its own path:
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--live` | `boolean` | `false` | Query live state overlaid on the declared graph (requires `--env`) |
-| `--at` | `string` | — | Answer from a recorded snapshot instead of reading the estate now (`latest`; requires `--env`; mutually exclusive with `--live`) |
+| `--snapshot` | `string` | — | Answer from a recorded snapshot instead of reading the estate now (`latest`; requires `--env`; mutually exclusive with `--live`) |
+| `--at` | `string` | — | The same as `--snapshot`, kept for compatibility. Elsewhere in the [read contract](/chant/reference/workspace-read-contract/) `--at` is a git revision, so [`chant workspace search`](/chant/cli/workspace-search/) takes only `--snapshot` |
 | `--env` | `string` | — | Environment to observe (must be in `chant.config` `environments` when declared) |
 | `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
 | `--count-by` | `string` | — | Print one count per group instead of one row per match: `kind`, `module` or `attr:<name>` (see [Grouped counts](#grouped-counts)) |
 | `--explain` | `boolean` | `false` | Print the match-universe footer, each match's path for edge terms, and near-miss exclusions |
-| `--json` | `boolean` | `false` | Print the whole answer (rows, paths, provenance, `--explain`, drift, failures) as one JSON object instead of rows and footers |
+| `--json` | `boolean` | `false` | Print the whole answer (rows, paths, provenance, `--explain`, drift, failures) as the read contract's `search` document instead of rows and footers |
 | `--ambient` | `boolean` | `false` | Also report resources of a managed kind that exist without being declared or referenced |
-| `--check-live` | `boolean` | `false` | With `--at`: additionally read the estate live and diff the matched rows against the snapshot the answer came from |
+| `--check-live` | `boolean` | `false` | With `--snapshot` (or `--at`): additionally read the estate live and diff the matched rows against the snapshot the answer came from |
 | `--check-snapshot` | `boolean` | `false` | With `--live`: additionally diff the matched rows against the most recently recorded snapshot |
 | `--fail-on-drift` | `boolean` | `false` | With `--check-live`/`--check-snapshot`: exit non-zero when the scoped check finds drift |
 
@@ -280,6 +281,10 @@ in place of `matches`, plus `provenance`, `liveFailures` and `drift` as the
 
 ```json
 {
+  "$schema": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+  "contract": 1,
+  "chant": "0.124.46",
+  "at": null,
   "query": "kind:Terraform::Resource",
   "source": { "kind": "declared" },
   "countBy": "module",
@@ -329,10 +334,21 @@ expected answer.
 
 `--json` prints one JSON object on stdout and nothing else there. Warnings and
 errors still go to stderr, and the exit code is the one the text output would
-give. It carries what the rows and footers say in prose: the full node id of
-every match, the provenance line, the `--explain` facts, the drift check and
-any live read that failed. [behold](https://github.com/INTENTIUS/behold) reads
+give. Everything the rows and footers say in prose is a field here, from the
+full node id of every match to a live read that failed. [behold](https://github.com/INTENTIUS/behold) reads
 this document to draw the answer to a query.
+
+The object is the `search` document of the
+[workspace read contract](/chant/reference/workspace-read-contract/)
+([#4374](https://github.com/INTENTIUS/chant/issues/4374)), described by
+`search.schema.json` in `@intentius/chant`
+(`https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json`).
+It opens with `$schema`, `contract` and `chant`, then `workspace`
+(`{ name, root }`) when the project is a member of a declared workspace, and
+`at`, which is always `null` here because plain search reads the working tree.
+[`chant workspace search`](/chant/cli/workspace-search/) prints the same
+document for every member of a workspace at once. A chant from before the
+release after 0.124.45 prints the fields below without the head.
 
 Each match carries, for every edge term in the query that is not negated, the
 path it was reached by as a list of hops in walk order from the match. A hop
@@ -342,13 +358,17 @@ by its endpoints. Optional fields are left out when unknown.
 
 ```json
 {
+  "$schema": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+  "contract": 1,
+  "chant": "0.124.46",
+  "at": null,
   "query": "kind:aws_instance ->*aws_vpc.main",
-  "source": { "kind": "snapshot", "env": "prod", "commit": "a1b2c3d4e5f6", "timestamp": "2026-08-01T03:15:00.000Z" },
+  "source": { "kind": "snapshot", "env": "prod", "snapshot": "latest", "commit": "a1b2c3d4e5f6", "timestamp": "2026-08-01T03:15:00.000Z" },
   "matches": [
     {
       "id": "east::aws_instance.web",
       "displayId": "aws_instance.web",
-      "kind": "aws_instance",
+      "kind": "Terraform::Resource",
       "physicalId": "i-0abc",
       "show": { "instance_type": "t3.micro" },
       "paths": [
@@ -375,13 +395,17 @@ by its endpoints. Optional fields are left out when unknown.
 
 | Field | Meaning |
 |-------|---------|
+| `$schema`, `contract`, `chant` | the schema's `$id`, the contract version (1) and the chant that wrote the document |
+| `workspace` | `{ name, root }` of the declared workspace the project belongs to; absent outside one |
+| `at` | the git revision searched: always `null` for plain search, which reads the working tree |
 | `query` | the query as given |
 | `source.kind` | `declared`, `live` or `snapshot` |
 | `source.env` | the `--env` of a `live` or `snapshot` answer |
+| `source.snapshot` | the snapshot ref asked for with `--snapshot` or `--at`, such as `latest` |
 | `source.commit`, `source.timestamp` | a snapshot's commit and when it was taken |
 | `matches[].id` | the graph's full node id, stack-qualified (`<stack>::<name>`) when the project has side-by-side stacks and the answer is live or from a snapshot; two stacks' resources of the same name have two ids |
 | `matches[].displayId` | the bare name the text row prints |
-| `matches[].kind` | the node's kind |
+| `matches[].kind` | the node's IR kind; a Terraform block's is `Terraform::Resource`, and `kind:aws_instance` matches it by its resource type |
 | `matches[].physicalId` | the physical id, when known |
 | `matches[].unobserved` | why a live read could not cover this row (e.g. `read-failed`) |
 | `matches[].show` | with `--show`: each requested attribute the row carries, keyed by the name the graph spells it with; a name no row carries is left out |
@@ -398,7 +422,7 @@ by its endpoints. Optional fields are left out when unknown.
 | `explain.nearMisses[]` | `{ id, fails }`: up to 8 excluded nodes of the universe, and the first query term each one fails, spelled as the query would spell it |
 | `explain.moreExcluded` | how many more were excluded than `nearMisses` lists |
 | `drift` | with `--check-live` or `--check-snapshot`; see below |
-| `error` | `{ message, hint? }`, see below |
+| `error` | `{ code, message, hint? }`, see below |
 
 `drift` holds the query-scoped check. `against` is `live` or `snapshot`,
 `checked` is how many matched rows were checked, and `count` is how many
@@ -414,12 +438,25 @@ recorded deeper than the identity-level comparison made here. When
 
 A query the grammar refuses, a missing or unknown `--env`, or any other
 refused invocation prints a document with the error instead of matches, and
-exits 1:
+exits 1. The code is one of the read contract's
+[reason codes](/chant/reference/workspace-read-contract/#reason-codes):
+
+| Code | When |
+|------|------|
+| `query-invalid` | no query (without `--count-by`), a term the grammar refuses, or a `--count-by` that is not a grouping |
+| `usage-invalid` | a flag without the one it needs (`--check-live` without `--snapshot`, `--live` or `--snapshot` without `--env`), or two that exclude each other |
+| `environment-unknown` | `--env` names an environment the config does not declare |
+| `snapshot-unavailable` | no snapshot is recorded for the environment, or the ref is not one replay takes |
+| `build-failed` | the build of a `--live` read failed, or a build root failed to render |
 
 ```json
 {
+  "$schema": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+  "contract": 1,
+  "chant": "0.124.46",
   "query": "effectiveIngress:tcp:22",
   "error": {
+    "code": "query-invalid",
     "message": "\"effectiveIngress:tcp:22\" is not a term — there is no \"effectiveIngress:\" prefix",
     "hint": "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, and ->/<- for edges"
   }
@@ -465,7 +502,7 @@ what I was just told still true", about the resources in front of you, in the
 same command that produced them.
 
 ```
-$ chant search "kind:EC2::Instance" --env prod --at latest --check-live
+$ chant search "kind:EC2::Instance" --env prod --snapshot latest --check-live
 webServer             AWS::EC2::Instance  i-e392157f576caf855
 launchTemplateServer  AWS::EC2::Instance  i-ee2744528df10ea0d
 ⚠ webServer  attributes.SubnetId: subnet-2faec80b → subnet-9f01ab3c — drifted
@@ -486,7 +523,7 @@ are identical: `missing`/`orphan`/`disappeared`/`drifted` are drift,
 the query scoped out is a fourth case. It is never reported as missing or
 unobserved, because it was never asked about.
 
-`--check-live` requires `--at`; `--check-snapshot` requires `--live`. Each
+`--check-live` requires `--snapshot` (or `--at`); `--check-snapshot` requires `--live`. Each
 checks the answer against the source it did not already use. `--fail-on-drift`
 exits non-zero when the check finds drift, so it is usable as a CI gate; a
 missing snapshot for `--check-snapshot` is only a note on stderr, since
@@ -512,7 +549,7 @@ chant search "kind:Terraform::Resource" --count-by module
 chant search "kind:EC2::Instance" --count-by attr:region --live --env dev
 
 # query-scoped drift
-chant search "kind:EC2::Instance" --env prod --at latest --check-live
+chant search "kind:EC2::Instance" --env prod --snapshot latest --check-live
 chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-drift
 ```
 

@@ -16,12 +16,14 @@ import type { LiveObservation } from "../../graph-ir";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved } from "../../observation";
+import { readChantPackageVersion } from "../../package-version";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
 import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
+import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode, type SearchFailure, type SearchHead } from "../../workspace/search-contract";
 
 /**
  * `chant search <query> [--live --env <name>]` — answer an estate question with
@@ -54,55 +56,29 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   const query = (args.path ?? "").trim();
   // A refusal (#4367): the error on stderr as always, and under --json the
   // same message and hint as the one document on stdout, so a program reading
-  // stdout sees why there are no rows. Exit 1 either way.
-  const refuse = (error: { message: string; hint?: string }): number => {
+  // stdout sees why there are no rows. Exit 1 either way. The code is from the
+  // read contract's closed list (#4374).
+  const refuse = (error: { code: SearchErrorCode; message: string; hint?: string }): number => {
     console.error(formatError(error));
     if (args.json) console.log(JSON.stringify(searchErrorJson(query, error)));
     return 1;
   };
-  // `--count-by` groups the matched set (#4360). It takes any query, and no
-  // query at all counts the whole graph: "which kinds does this estate hold".
-  let countBy: CountBy | undefined;
-  if (args.countBy !== undefined) {
-    const parsed = parseCountBy(args.countBy);
-    if ("error" in parsed) return refuse({ message: parsed.error, hint: parsed.hint });
-    countBy = parsed;
+  // The snapshot to replay (#4374): `--snapshot <ref>`, or `--at <ref>`, which
+  // plain search keeps for compatibility. Everywhere else in the read contract
+  // `--at` is a git revision, so the workspace form takes only `--snapshot`.
+  if (args.snapshot !== undefined && args.at !== undefined && String(args.snapshot) !== String(args.at)) {
+    return refuse({
+      code: "usage-invalid",
+      message: `chant search was given --snapshot ${args.snapshot} and --at ${args.at}`,
+      hint: "they name the same thing, the recorded snapshot to answer from; give one",
+    });
   }
-  if (!query && !countBy) {
-    return refuse({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" });
-  }
-  let terms: Term[];
-  try {
-    terms = parseQuery(query);
-  } catch (err) {
-    if (err instanceof QueryError) {
-      return refuse({ message: err.message, hint: err.hint });
-    }
-    throw err;
-  }
+  const snapshotRef: string | undefined = args.snapshot ?? (args.at !== undefined ? String(args.at) : undefined);
+  const snapshotFlag = args.snapshot !== undefined ? "--snapshot" : "--at";
+  const checked = checkSearchArgs(args, query, { ref: snapshotRef, flag: snapshotFlag });
+  if ("error" in checked) return refuse(checked.error);
+  const { terms, countBy } = checked;
   const show = parseShow(args);
-
-  // Query-scoped drift (#1268): --check-live checks a snapshot answer against
-  // a live read, --check-snapshot checks a live answer against the recorded
-  // snapshot — the direction each needs is the source it does NOT already have.
-  if (args.checkLive && !args.at) {
-    return refuse({
-      message: "chant search --check-live needs --at <ref>",
-      hint: "answer from a snapshot and check the matched rows against a live read: --at latest --check-live --env <name>",
-    });
-  }
-  if (args.checkSnapshot && !args.live) {
-    return refuse({
-      message: "chant search --check-snapshot needs --live",
-      hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
-    });
-  }
-  if (args.failOnDrift && !args.checkLive && !args.checkSnapshot) {
-    return refuse({
-      message: "chant search --fail-on-drift needs --check-live or --check-snapshot",
-      hint: "it fails the check those flags run, so it is meaningless without one",
-    });
-  }
 
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
@@ -131,25 +107,14 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   let driftFailure = false;
   // Why --check-snapshot had nothing to check against, for --json (#4367).
   let driftUnavailable: string | undefined;
-  if (args.live || args.at) {
-    const environment = args.env;
-    if (!environment) {
-      const flag = args.at ? "--at" : "--live";
-      return refuse({ message: `chant search ${flag} needs an environment: ${flag} --env <name>` });
-    }
-    if (args.live && args.at) {
-      // Two different observations of the same estate, and no rule for which
-      // wins. Comparing them is a real question (#1268) but it is not this one.
-      return refuse({
-        message: "chant search takes --live or --at, not both",
-        hint: "--live reads the estate now; --at answers from a recorded snapshot",
-      });
-    }
+  if (args.live || snapshotRef) {
+    // checkSearchArgs refused a live or snapshot read without one.
+    const environment = String(args.env);
     // Membership via matchesDeclaredEnvironment (#1221): handles `{ name,
     // endpoint }` entries (#1166) — a plain `.includes` never matched those —
     // and glob-pattern entries like `"pr-*"`.
     if (config.environments && config.environments.length > 0 && !matchesDeclaredEnvironment(config.environments, environment)) {
-      return refuse({ message: `Unknown environment "${environment}"` });
+      return refuse({ code: "environment-unknown", message: `Unknown environment "${environment}"` });
     }
     const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
     // Build roots too (#4358), as `chant graph --live` does: a terraform
@@ -161,7 +126,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       config: config as unknown as Record<string, unknown>,
     });
     if (buildResult.errors.length > 0) {
-      return refuse({ message: "Build failed — fix errors before searching live state" });
+      return refuse({ code: "build-failed", message: "Build failed — fix errors before searching live state" });
     }
     const observing = plugins.filter((p) => p.describeResources);
     ambientKinds = observing.flatMap((p) => p.ambientKinds?.() ?? []);
@@ -169,15 +134,15 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 
     let observations: LiveObservation[];
     const liveAttrs: Record<string, Record<string, unknown>> = {};
-    if (args.at) {
+    if (snapshotRef) {
       // Answer from a recorded observation (#1266). Everything downstream is
       // the live path's — the point is that a snapshot replays into the same
       // shape a live read produces, so one pipeline serves both and a fold
       // improvement reaches an old snapshot for free.
       const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
-      const replay = await replaySnapshots(environment, String(args.at), scoped);
+      const replay = await replaySnapshots(environment, snapshotRef, scoped);
       if ("error" in replay) {
-        return refuse({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) });
+        return refuse({ code: "snapshot-unavailable", message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) });
       }
       observations = replay.observations;
       replayAmbient = {
@@ -185,7 +150,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           Object.values(o.resources).some((m) => m.ambient === true),
         ),
       };
-      source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
+      source = { kind: "snapshot", snapshot: snapshotRef, commit: replay.commit, timestamp: replay.timestamp };
       snapshotDepth = replay.depth;
       if (args.checkLive) {
         // A fresh live read, additional to the snapshot the answer itself came
@@ -239,7 +204,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     let containmentEdges: IREdge[] = [];
     // Live-only: enrichment is a provider call, so it has no place in a replay.
     // A recorded answer that quietly reached for the API would stop being one.
-    if (!args.at) {
+    if (!snapshotRef) {
       for (const p of observing) {
         if (!p.enrichLiveAttrs) continue;
         try {
@@ -302,7 +267,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       stacks.length > 0
         ? await buildDeclaredPerStack(stacks, projectPath, (g, entities) => withLexiconEdges(g, plugins, entities))
         : await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."), plugins);
-    if (!declared) return 1;
+    if (!declared) return refuse(BUILD_ROOT_FAILED);
     declaredForDrift = declared;
     // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
     // declared entity nobody could read is painted `_unobserved` and a row can
@@ -345,7 +310,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
   } else {
     const declared = await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."));
-    if (!declared) return 1;
+    if (!declared) return refuse(BUILD_ROOT_FAILED);
     ir = declared;
   }
 
@@ -400,20 +365,25 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // With --count-by (#4360) the object carries the groups and the total in
     // place of the matches, the same answer the grouped lines give, with the
     // provenance line beside it (#4367).
+    const head = { ...searchHead(), ...(await workspaceIdentity(projectPath)) };
     const payload = countBy
       ? {
+          ...head,
           ...countsJson(query, env ? { ...source, env } : source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
           provenance: provenanceText,
           ...(driftJson ? { drift: driftJson } : {}),
         }
-      : searchJson(query, source, matches, terms, ir, nodeById, liveFailures, {
+      : {
+          ...head,
+          ...searchJson(query, source, matches, terms, ir, nodeById, liveFailures, {
           ...(env ? { env } : {}),
           show,
           provenance: provenanceText,
           ...(capNotes.length > 0 ? { capabilities: capNotes } : {}),
           ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
-        });
+        }),
+        };
     console.log(JSON.stringify(payload));
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     if (liveFailures.length > 0) return 1;
@@ -477,6 +447,98 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 }
 
 
+/** A search's arguments refused before anything is read, or its parsed terms and grouping. */
+export type SearchArgsCheck =
+  | { error: { code: SearchErrorCode; message: string; hint?: string } }
+  | { terms: Term[]; countBy?: CountBy };
+
+/**
+ * Check a search's query and flags before anything is read (#4374): the
+ * grammar, `--count-by`, and the flags that need or exclude each other. The
+ * rules `chant search` and `chant workspace search` share, so the workspace
+ * form refuses once, with the same code and message, instead of once per
+ * member. `snapshot` is the snapshot asked for and the flag that asked:
+ * `--snapshot`, or plain search's `--at`.
+ */
+export function checkSearchArgs(
+  args: { countBy?: string; checkLive?: boolean; checkSnapshot?: boolean; failOnDrift?: boolean; live?: boolean; env?: string },
+  query: string,
+  snapshot: { ref?: string; flag: string },
+): SearchArgsCheck {
+  const flag = snapshot.flag;
+  // `--count-by` groups the matched set (#4360). It takes any query, and no
+  // query at all counts the whole graph: "which kinds does this estate hold".
+  let countBy: CountBy | undefined;
+  if (args.countBy !== undefined) {
+    const parsed = parseCountBy(args.countBy);
+    if ("error" in parsed) return { error: { code: "query-invalid", message: parsed.error, hint: parsed.hint } };
+    countBy = parsed;
+  }
+  if (!query && !countBy) {
+    return { error: { code: "query-invalid", message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" } };
+  }
+  let terms: Term[];
+  try {
+    terms = parseQuery(query);
+  } catch (err) {
+    if (err instanceof QueryError) return { error: { code: "query-invalid", message: err.message, hint: err.hint } };
+    throw err;
+  }
+  // Query-scoped drift (#1268): --check-live checks a snapshot answer against
+  // a live read, --check-snapshot checks a live answer against the recorded
+  // snapshot — the direction each needs is the source it does NOT already have.
+  if (args.checkLive && !snapshot.ref) {
+    return {
+      error: {
+        code: "usage-invalid",
+        message: `chant search --check-live needs ${flag} <ref>`,
+        hint: `answer from a snapshot and check the matched rows against a live read: ${flag} latest --check-live --env <name>`,
+      },
+    };
+  }
+  if (args.checkSnapshot && !args.live) {
+    return {
+      error: {
+        code: "usage-invalid",
+        message: "chant search --check-snapshot needs --live",
+        hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
+      },
+    };
+  }
+  if (args.failOnDrift && !args.checkLive && !args.checkSnapshot) {
+    return {
+      error: {
+        code: "usage-invalid",
+        message: "chant search --fail-on-drift needs --check-live or --check-snapshot",
+        hint: "it fails the check those flags run, so it is meaningless without one",
+      },
+    };
+  }
+  if ((args.live || snapshot.ref) && !args.env) {
+    const needs = snapshot.ref ? flag : "--live";
+    return { error: { code: "usage-invalid", message: `chant search ${needs} needs an environment: ${needs} --env <name>` } };
+  }
+  if (args.live && snapshot.ref) {
+    // Two different observations of the same estate, and no rule for which
+    // wins. Comparing them is a real question (#1268) but it is not this one.
+    return {
+      error: {
+        code: "usage-invalid",
+        message: `chant search takes --live or ${flag}, not both`,
+        hint: `--live reads the estate now; ${flag} answers from a recorded snapshot`,
+      },
+    };
+  }
+  return { terms, ...(countBy ? { countBy } : {}) };
+}
+
+/** Why a search over a project whose build root failed refuses (#4365), as the refusal prints it. */
+const BUILD_ROOT_FAILED = {
+  code: "build-failed",
+  message: "chant search: a build root failed to render, so the graph it would answer over is incomplete",
+  hint: "fix the error above; `chant graph . --format ir` reports the same one",
+} as const;
+
 /**
  * The declared graph a search answers over (#4362, #4365, #4368): discovery,
  * plus the build-root entities (a terraform root's blocks, a rendered
@@ -484,8 +546,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
  * same join and the same edges `chant graph --format ir` draws, through the
  * same helpers (`./declared-graph.ts`), so a node's id here is its id there.
  *
- * Returns undefined, having printed why, when a build root failed to render
- * or collided with a discovered name. A search over the rest would answer
+ * Returns undefined, having printed the build root's own errors, when a build
+ * root failed to render or collided with a discovered name; the caller refuses
+ * with {@link BUILD_ROOT_FAILED}. A search over the rest would answer
  * `(no matches)` for a root it never read, which is a wrong answer stated as
  * a fact.
  */
@@ -496,13 +559,7 @@ async function declaredGraph(
   loaded?: readonly LexiconPlugin[],
 ): Promise<GraphIR | undefined> {
   const discovered = await discover(srcDir);
-  if (!(await mergeDeclaredBuildRoots(discovered.entities, await declaredBuildRootContributors(ctx, projectPath)))) {
-    console.error(formatError({
-      message: "chant search: a build root failed to render, so the graph it would answer over is incomplete",
-      hint: "fix the error above; `chant graph . --format ir` reports the same one",
-    }));
-    return undefined;
-  }
+  if (!(await mergeDeclaredBuildRoots(discovered.entities, await declaredBuildRootContributors(ctx, projectPath)))) return undefined;
   let plugins = loaded ?? ctx.plugins;
   if (plugins.length === 0) {
     try {
@@ -615,7 +672,8 @@ async function bindCapabilities(
 export type AnswerSource =
   | { kind: "declared" }
   | { kind: "live" }
-  | { kind: "snapshot"; commit: string; timestamp: string };
+  /** `snapshot` is the ref asked for (`latest`), `commit` the snapshot commit it named (#4374). */
+  | { kind: "snapshot"; snapshot?: string; commit: string; timestamp: string };
 
 
 
@@ -1080,13 +1138,18 @@ function leafText(x: Term): string {
 /**
  * `chant search --json` (#4359, #4367): the whole answer as one document on
  * stdout, read by behold (behold#913). Warnings and errors still go to stderr;
- * the exit code is the text path's.
+ * the exit code is the text path's. It is the `search` document of the read
+ * contract (#4374, `workspace/search.schema.json`): every document opens with
+ * `$schema`, `contract` and `chant`, then `workspace` when the project belongs
+ * to one, and `at: null`, since plain search reads the working tree.
  *
  *   {
+ *     "$schema": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+ *     "contract": 1, "chant": "0.124.46", "workspace"?: { "name", "root" }, "at": null,
  *     "query": "kind:aws_instance ->*kind:aws_vpc",
- *     "source": { "kind": "declared" | "live" | "snapshot", "env"?, "commit"?, "timestamp"? },
+ *     "source": { "kind": "declared" | "live" | "snapshot", "env"?, "snapshot"?, "commit"?, "timestamp"? },
  *     "matches": [
- *       { "id": "east::web", "displayId": "web", "kind": "aws_instance", "physicalId"?: "i-1",
+ *       { "id": "east::web", "displayId": "web", "kind": "Terraform::Resource", "physicalId"?: "i-1",
  *         "unobserved"?: "read-failed", "show"?: { "InstanceType": "t3.micro" },
  *         "paths": [ { "term": "->*kind:aws_vpc", "dir": "out",
  *                      "hops": [ { "from": "web", "fromAttr": "subnet_id", "to": "a", "toAttr": "id" },
@@ -1101,8 +1164,12 @@ function leafText(x: Term): string {
  *     "drift"?: { "against": "live" | "snapshot", ... see SearchDriftJson }
  *   }
  *
- * A refused query or invocation prints `{ "query", "error": { "message", "hint"? } }`
- * instead, and exits 1.
+ * A refused query or invocation prints the head, `query` and
+ * `error: { code, message, hint? }` instead, and exits 1. The code is from the
+ * read contract's closed list (`SEARCH_ERROR_CODES`).
+ *
+ * `kind` is the IR kind, so a Terraform block's is `Terraform::Resource`;
+ * `kind:aws_instance` matches it by its resource type (#4366).
  *
  * `id` is the graph's full id, stack-qualified (`stack::name`) where the graph
  * qualifies it; `displayId` is the bare name the text row prints. `hops` is in
@@ -1141,14 +1208,35 @@ export interface SearchJson {
   capabilities?: { name: string; source: AnswerSource["kind"]; notEvaluated: string[] }[];
 }
 
-/** A refusal under `--json` (#4367): the same message and hint stderr carries. */
-export interface SearchErrorJson {
-  query: string;
-  error: { message: string; hint?: string };
+/**
+ * A refusal under `--json` (#4367): the same message and hint stderr carries,
+ * with its code from the read contract's closed list (#4374).
+ */
+export type SearchErrorJson = SearchFailure;
+
+function searchErrorJson(query: string, error: { code: SearchErrorCode; message: string; hint?: string }): SearchErrorJson {
+  return { ...searchHead(), query, error: { code: error.code, message: error.message, ...(error.hint ? { hint: error.hint } : {}) } };
 }
 
-function searchErrorJson(query: string, error: { message: string; hint?: string }): SearchErrorJson {
-  return { query, error: { message: error.message, ...(error.hint ? { hint: error.hint } : {}) } };
+/** The head of every `search` document (#4374): the contract, its schema, and the chant that wrote it. */
+function searchHead(): SearchHead {
+  return { $schema: SEARCH_OUTPUT_SCHEMA_ID, contract: SEARCH_CONTRACT_VERSION, chant: readChantPackageVersion() };
+}
+
+/**
+ * The workspace a project belongs to, when it belongs to one (#4374, ws-016):
+ * its declared name and its root relative to the git root, with `at: null`,
+ * since plain search reads the working tree. Outside a workspace, or when its
+ * declaration can't be read, only `at`.
+ */
+async function workspaceIdentity(cwd: string): Promise<{ workspace?: { name: string; root: string }; at: null }> {
+  try {
+    const [{ locateWorkspace }, { readDeclaration }] = await Promise.all([import("../../workspace/which-chant"), import("../../workspace/declaration")]);
+    const located = locateWorkspace(cwd);
+    return { workspace: { name: readDeclaration(located.tree, "").name, root: located.root }, at: null };
+  } catch {
+    return { at: null };
+  }
 }
 
 function searchJson(
