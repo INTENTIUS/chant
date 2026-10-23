@@ -222,6 +222,8 @@ import {
   type UnobservedReason,
 } from "@intentius/chant/observation";
 import type { OwnershipMarker } from "@intentius/chant/ownership";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   choudoufuLiveLs,
   choudoufuLivePlanDocument,
@@ -706,6 +708,42 @@ function readLiveResource(
 }
 
 /**
+ * The environment variable that asks for each live root's `live-plan -json`
+ * document as a file, in a directory the caller owns (behold#924).
+ *
+ * The overlay keeps chant's verdict per block and drops the rows behind it:
+ * each instance's omission reason and detail, `identity_values`, the adoptable
+ * row's own fields. A caller that paints ownership from those rows and wants
+ * the plan's attributes from the plan depth would otherwise run its own
+ * `live-plan` beside this one, two refreshes of the estate that can disagree
+ * (choudoufu #1014). With this set to an absolute directory, the document this
+ * read used is written there as `<root>.live-plan.json`, so the caller reads
+ * the same `live-plan` the verdicts came from.
+ *
+ * Opt-in, and never inside the root: a relative path is ignored, so nothing
+ * lands in the root by accident (#4379). A write that fails is ignored too;
+ * the read answers either way, and the caller sees no file.
+ */
+export const TERRAFORM_LIVE_PLAN_DIR_ENV = "CHANT_TERRAFORM_LIVE_PLAN_DIR";
+
+/** The file {@link TERRAFORM_LIVE_PLAN_DIR_ENV} names for a root: the root's name, made safe for a file name. */
+export function livePlanDocumentFile(root: string): string {
+  return `${root.replace(/[^A-Za-z0-9._-]/g, "_")}.live-plan.json`;
+}
+
+/** Write a live root's document where {@link TERRAFORM_LIVE_PLAN_DIR_ENV} asks, if it asks. */
+function handLivePlanDocument(root: string, json: unknown): void {
+  const out = process.env[TERRAFORM_LIVE_PLAN_DIR_ENV];
+  if (!out || !isAbsolute(out)) return;
+  try {
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, livePlanDocumentFile(root)), JSON.stringify(json));
+  } catch {
+    // Best effort: the read's answer does not depend on the copy.
+  }
+}
+
+/**
  * One live root's reader: `live-plan -json`, then address matching against
  * the document. `terraform show` is never run here, and there is no state
  * file to run it over.
@@ -718,6 +756,7 @@ function liveAdapter(root: string, cwd: string | undefined, deps: TerraformReadD
     async bind(): Promise<LivePlanIndex> {
       const planned = await deps.livePlan({ root, ...where });
       dir = planned.dir;
+      handLivePlanDocument(root, planned.json);
       return indexLivePlan(planned.json);
     },
 
