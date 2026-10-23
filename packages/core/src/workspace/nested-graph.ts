@@ -22,6 +22,7 @@
 
 import { spawn } from "node:child_process";
 import type { ParsedArgs } from "../cli/registry";
+import { isViewDocument, prefixView, VIEW_DOCUMENT_VERSION } from "../capabilities/view";
 import { danglingKey, SCOPED_GROUPS, type ComposedMember, type ComposedNode, type WorkspaceGraph } from "./compose-graph";
 
 export type { NestedWorkspace } from "./compose-graph";
@@ -45,6 +46,7 @@ export function nestedArgv(dir: string, args: Partial<ParsedArgs>, at: string | 
     ...(args.traffic !== undefined ? ["--traffic", String(args.traffic)] : []),
     ...(args.detail !== undefined ? ["--detail", String(args.detail)] : []),
     ...(args.noCache ? ["--no-cache"] : []),
+    ...(args.capabilityView ? ["--capability-view"] : []),
   ];
 }
 
@@ -97,8 +99,19 @@ export async function readNested(
   contract: number,
   toolchain: Toolchain | undefined = undefined,
 ): Promise<NestedRead & { stderr: string }> {
-  const r = await spawnRead((toolchain ?? readerToolchain()).command, nestedArgv(abs, args, at), abs);
+  const command = (toolchain ?? readerToolchain()).command;
+  let r = await spawnRead(command, nestedArgv(abs, args, at), abs);
+  // A nested chant from before #4378 has no --capability-view: read it
+  // without, and its members carry no view.
+  if (args.capabilityView && r.exitCode !== 0 && refusedCapabilityView(r.stderr)) {
+    r = await spawnRead(command, nestedArgv(abs, { ...args, capabilityView: false }, at), abs);
+  }
   return { ...readNestedDocument(r.stdout, r.exitCode, r.stderr, schemaId, contract), stderr: r.stderr };
+}
+
+/** Whether a chant refused `--capability-view` as a flag it doesn't know (#4378): one from before it. */
+export function refusedCapabilityView(stderr: string): boolean {
+  return /Unknown flag:?\s*--capability-view/i.test(stderr);
 }
 
 const prefixed = (outer: string, id: string): string => `${outer}/${id}`;
@@ -141,6 +154,24 @@ export function foldNested(graph: WorkspaceGraph, member: ComposedMember, inner:
   for (const e of inner.exports ?? []) graph.exports.push({ ...e, ...(e.node ? { node: prefixed(outer, e.node) } : {}), member: outer });
   for (const i of inner.imports ?? []) graph.imports.push({ ...i, node: prefixed(outer, i.node), member: outer });
   graph.groups.byMember[outer] = ids.sort();
+  // The capability view (#4378): each nested member's, under the outer id. A
+  // nested member that read without one leaves the outer member without one.
+  const composedInner = inner.members.filter((m) => m.status === "composed");
+  if (composedInner.some((m) => m.capabilityView !== undefined)) {
+    const views = composedInner.map((m) => m.capabilityView);
+    if (views.every(isViewDocument)) {
+      const ps = views.map((v) => prefixView(v, `${outer}/`));
+      member.capabilityView = {
+        version: VIEW_DOCUMENT_VERSION,
+        lexicons: [...new Set(ps.flatMap((v) => v.lexicons))].sort(),
+        nodes: ps.flatMap((v) => v.nodes),
+        edges: ps.flatMap((v) => v.edges),
+        unresolved: ps.flatMap((v) => v.unresolved),
+      };
+    } else {
+      member.capabilityView = null;
+    }
+  }
   const groups = graph.groups as unknown as Record<string, Record<string, string[]> | undefined>;
   const innerGroups = inner.groups as unknown as Record<string, Record<string, string[]> | undefined>;
   for (const key of ["byLexicon", "byComposite"] as const) {

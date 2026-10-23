@@ -41,6 +41,7 @@ import type { KindLinkRead } from "./kind-link-readers";
 import type { RecordLinkRow } from "./record-assets";
 import type { ReasonCode } from "./reason-codes";
 import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRDanglingRef, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
+import type { ViewDocument } from "../capabilities/view";
 
 /** The version of the composed document `chant workspace graph` writes. */
 export const WORKSPACE_GRAPH_VERSION = 1;
@@ -105,6 +106,12 @@ export interface ComposedMember {
    * `chant workspace graph` on every member; null when the box declares neither.
    */
   box?: { factory: FactoryView | null; listing: ListingView | null } | null;
+  /**
+   * With `--capability-view` (#4378): the lexicon-neutral view the member's
+   * own chant mapped through its own lexicons, with `<member>/<id>` ids. null
+   * when the member's chant predates the view and printed none.
+   */
+  capabilityView?: ViewDocument | null;
   /** Whole-read facts the member's IR carried (`meta`, `pipeline`), kept apart from the composed sections. */
   meta?: Record<string, unknown>;
   pipeline?: unknown;

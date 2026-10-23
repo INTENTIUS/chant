@@ -535,6 +535,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.deep = true;
     } else if (arg === "--at") {
       result.at = args[++i];
+    } else if (arg === "--capability-view") {
+      // `chant graph --format ir --capability-view` and `chant workspace graph --capability-view` (#4378)
+      result.capabilityView = true;
     } else if (arg === "--capabilities") {
       // `chant search --capabilities` and `chant workspace search --capabilities` (#4375)
       result.capabilities = true;

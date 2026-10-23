@@ -31,7 +31,9 @@ import { dirname, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
-import { composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { isViewDocument, prefixView } from "../capabilities/view";
+import { refusedCapabilityView } from "./nested-graph";
 import { openGraphCache, planStamps, splitCached, storeReads, withoutUnits } from "./graph-cache";
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberArgv, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
@@ -168,6 +170,7 @@ function compose(
   only: string[] | undefined,
   declarationMembers: { name: string; dir: string; kind: string }[],
   live = false,
+  capabilityView = false,
 ): { inputs: ComposeInput[]; failed: boolean } {
   // A member that ran was read live when --live was given, and says when (#2875).
   const read = (member: ComposedMember, r: UnitResult): ComposedMember => {
@@ -203,6 +206,12 @@ function compose(
     }
     const member = read(memberStatus(m.name, m.dir, m.kind, "composed", null, r.chant), r);
     member.irVersion = ir.irVersion;
+    // The member's own capability view (#4378), with composed ids; null when its chant printed none.
+    if (capabilityView) {
+      const view = (ir.ir as { capabilityView?: unknown }).capabilityView;
+      member.capabilityView = isViewDocument(view) ? prefixView(view, composedId(m.name, "")) : null;
+    }
+    delete (ir.ir as { capabilityView?: unknown }).capabilityView;
     inputs.push({ member, ir: ir.ir });
   }
   return { inputs, failed };
@@ -276,10 +285,11 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
     // Only the members that run get a reader project; a served member needs none.
     const toRun = withoutUnits(plan, served);
     readers = prepareKindReaders(toRun, exported ?? located.rootOnDisk);
-    const [ran, components] = await Promise.all([
+    const [first, components] = await Promise.all([
       executePlan(toRun, args, options.argvFor),
       query.components ? executePlan(plan, args, () => componentGraphArgv(args)) : Promise.resolve(undefined),
     ]);
+    const ran = args.capabilityView && !options.argvFor ? await withoutViewWhereRefused(toRun, args, first) : first;
     if (cache && split) storeReads(split, ran, cache);
     const results = [...(split?.hits ?? []), ...ran];
     if (query.inTree) await query.inTree(exported ?? located.rootOnDisk, declaration.members.filter((m) => !query.members?.length || query.members.includes(m.name)));
@@ -292,6 +302,21 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
   }
 }
 
+/**
+ * A member's chant from before #4378 refuses `--capability-view` as a flag
+ * it doesn't know. Read those members again without it, so the graph still
+ * composes them; they carry `capabilityView: null`, which a capability search
+ * reports as `member-chant-too-old`.
+ */
+async function withoutViewWhereRefused(plan: MemberPlan, args: ParsedArgs, results: UnitResult[]): Promise<UnitResult[]> {
+  const refused = new Set(results.filter((r) => r.exitCode !== 0 && refusedCapabilityView(r.stderr)).map((r) => r.id));
+  if (refused.size === 0) return results;
+  const others = new Set(results.filter((r) => !refused.has(r.id)).map((r) => r.id));
+  const again = await executePlan(withoutUnits(plan, others), { ...args, capabilityView: false });
+  const byId = new Map(again.map((r) => [r.id, r]));
+  return results.map((r) => byId.get(r.id) ?? r);
+}
+
 /** Read and compose the graph, and build the document. Never throws a {@link WorkspaceReadError}. */
 export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
   const head: Head = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: GRAPH_CONTRACT_VERSION, chant: readerVersion() };
@@ -301,7 +326,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
   try {
     const { located, declaration, kinds, plan, results, served, stamps, components } = await readMembers(query, { cache: true });
     const args = (query.args ?? {}) as ParsedArgs;
-    const { inputs, failed } = compose(plan, results, query.members, declaration.members, !!args.live);
+    const { inputs, failed } = compose(plan, results, query.members, declaration.members, !!args.live, !!args.capabilityView);
     for (const { member } of inputs) {
       if (member.status !== "composed") continue;
       member.cached = served.has(member.name);

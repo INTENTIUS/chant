@@ -3,9 +3,9 @@ import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
-import { attachCapabilities, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
+import { attachCapabilities, attachView, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
 import { CapabilityError, type CapabilityEngine, type Evidence } from "../../capabilities/matcher";
-import type { CapabilityPack } from "../../capabilities/view";
+import type { CapabilityPack, View } from "../../capabilities/view";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -659,8 +659,10 @@ function capabilityNotes(terms: Term[], ir: GraphIR, source: AnswerSource): { na
 
 /**
  * Answer capability terms over a graph that is not this project's own (#4375):
- * `chant workspace search` composes its members' graphs and asks here, so the
- * rules run once over the whole of it with the packs given. Returns the rows
+ * `chant workspace search` composes its members' graphs and views and asks
+ * here, so the rules run once over the whole of it. Given packs, the view is
+ * built here; given a view, it is the one the members' own chants mapped
+ * (#4378). Returns the rows
  * as `--json` carries them, or the refusal for a capability the query names
  * wrongly.
  */
@@ -668,9 +670,10 @@ export function answerOverGraph(
   ir: GraphIR,
   terms: Term[],
   query: string,
-  packs: CapabilityPack[],
+  packsOrView: CapabilityPack[] | View,
 ): { matches: SearchJson["matches"]; capabilities: NonNullable<SearchJson["capabilities"]> } | { error: { message: string; hint?: string } } {
-  const engine = attachCapabilities(ir, packs);
+  // A workspace hands over the view its members' chants mapped (#4378).
+  const engine = Array.isArray(packsOrView) ? attachCapabilities(ir, packsOrView) : attachView(ir, packsOrView);
   const refused = checkCapabilityTerms(engine, terms);
   if (refused) return { error: refused };
   resolveKindTerms(terms, ir.nodes);

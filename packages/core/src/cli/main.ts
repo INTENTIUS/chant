@@ -586,6 +586,9 @@ Ops:
                         --layout-engine graphviz to use dot instead;
                         --detail 0..3: stacks|composites|declarables|attributes;
                         --lens lexicon:<n>|stack:<n>|blast:<node> (--up/--down))
+                        --format ir --capability-view: add the lexicon-neutral
+                        view capability rules read, as this project's lexicons
+                        map it, to the IR as capabilityView (#4378)
                         --components --format ir --projection gitlab|github|forgejo:
                         add the CI/pipeline projection (stages/jobs/needs) to
                         the component-graph IR, from the same generator
@@ -940,6 +943,8 @@ Workspace (level 1, #2524):
                         source and toolchain are unchanged is served from
                         the cache in $CHANT_CACHE_DIR or ~/.cache/chant;
                         --no-cache reads every member
+                        --capability-view: each member's chant adds its
+                        capability view, mapped by its own lexicons
   workspace search "<query>" [--member <name>] [--env <name>] [--snapshot <ref> | --live] [--at <rev>] [--explain] [--count-by ...] [--json]
                         chant search in every chant member, each under its own
                         chant, as one read-contract document: ids are

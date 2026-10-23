@@ -146,6 +146,22 @@ export interface View {
   edges: ViewEdge[];
   /** Lexicons whose nodes the view read through a mapping. */
   lexicons: Set<string>;
+  /**
+   * ARN strings that name a role, bucket or table by name, where this view
+   * declares nothing of that name (#4378). A workspace resolves them over
+   * every member's view: the thing may be declared in another member.
+   */
+  unresolved?: UnresolvedArn[];
+}
+
+/** An ARN a view could not resolve, kept so a composed view can (#4378). */
+export interface UnresolvedArn {
+  /** The view node holding the reference: a statement or an inline block. */
+  from: string;
+  fromAttr: string;
+  /** The view edge it makes once resolved (`resource`, `principal`, or a block's ref edge). */
+  edge: string;
+  value: string;
 }
 
 /**
@@ -369,6 +385,12 @@ export function buildView(ir: GraphIR, packs: CapabilityPack[]): View {
     return undefined;
   };
 
+  const unresolved: UnresolvedArn[] = [];
+  // An ARN that names nothing declared here is kept for a workspace's composer (#4378).
+  const keepArn = (from: string, fromAttr: string, edge: string, value: unknown): void => {
+    if (typeof value === "string" && ARN_NAMES.some(({ re }) => re.test(value))) unresolved.push({ from, fromAttr, edge, value });
+  };
+
   const blockEdges: ViewEdge[] = [];
   // ---- inline blocks: ingress rules, inline routes
   for (const v of [...nodes.values()]) {
@@ -398,6 +420,7 @@ export function buildView(ir: GraphIR, packs: CapabilityPack[]): View {
           for (const [attr, edge] of Object.entries(spec.refs ?? {})) {
             for (const val of arr((raw as Record<string, unknown>)[attr])) {
               const t = refTarget(v.id, val);
+              if (!t) keepArn(id, attr, edge, val);
               if (t) blockEdges.push({ from: id, to: t.id, name: edge, hops: [{ from: id, fromAttr: attr, to: t.id, ...(t.attr ? { toAttr: t.attr } : {}), edge }] });
             }
           }
@@ -478,12 +501,14 @@ export function buildView(ir: GraphIR, packs: CapabilityPack[]): View {
             // counted, so an answer can say what it skipped. A `Sub` is read
             // through its `$sub` template (chant#4373).
             if (!t && ((r && typeof r === "object") || (typeof r === "string" && r.includes("${")))) unresolved++;
+            if (!t) keepArn(id, `Resource[${ri}]`, "resource", r);
             if (t) edges.push({ from: id, to: t.id, name: "resource", hops: [{ from: id, fromAttr: `Resource[${ri}]`, to: t.id, ...(t.attr ? { toAttr: t.attr } : {}), edge: "resource" }] });
           });
           if (unresolved > 0) attrs.unresolved = unresolved;
           if (principal && typeof principal === "object") {
             for (const p of arr((principal as Record<string, unknown>).AWS)) {
               const t = refTarget(holder.id, p);
+              if (!t) keepArn(id, "Principal.AWS", "principal", p);
               if (t) edges.push({ from: id, to: t.id, name: "principal", hops: [{ from: id, fromAttr: "Principal.AWS", to: t.id, ...(t.attr ? { toAttr: t.attr } : {}), edge: "principal" }] });
             }
           }
@@ -491,7 +516,92 @@ export function buildView(ir: GraphIR, packs: CapabilityPack[]): View {
       });
     }
   }
-  return { nodes, edges, lexicons };
+  return { nodes, edges, lexicons, unresolved };
+}
+
+/** The version of the serialized view a member's `chant graph --capability-view` prints (#4378). */
+export const VIEW_DOCUMENT_VERSION = 1;
+
+/**
+ * The view as a member's `chant graph --format ir --capability-view` prints
+ * it (#4378): built by the member's own chant, through the mappings and
+ * adapters of the lexicons that member loads, so a workspace's rules read
+ * every member as the member's own toolchain maps it. Node bodies are left
+ * out: rules read labels, attributes and edges only.
+ */
+export interface ViewDocument {
+  version: number;
+  lexicons: string[];
+  nodes: { id: string; label: string; irId: string; lexicon: string; attrs: Record<string, unknown> }[];
+  edges: ViewEdge[];
+  unresolved: UnresolvedArn[];
+}
+
+export function serializeView(view: View): ViewDocument {
+  return {
+    version: VIEW_DOCUMENT_VERSION,
+    lexicons: [...view.lexicons].sort(),
+    nodes: [...view.nodes.values()].map((n) => ({ id: n.id, label: n.label, irId: n.irId, lexicon: n.lexicon, attrs: n.attrs })),
+    edges: view.edges,
+    unresolved: view.unresolved ?? [],
+  };
+}
+
+/** Whether a member printed a view this chant reads; anything else is treated as no view. */
+export function isViewDocument(v: unknown): v is ViewDocument {
+  if (!v || typeof v !== "object") return false;
+  const d = v as Record<string, unknown>;
+  return d.version === VIEW_DOCUMENT_VERSION && Array.isArray(d.nodes) && Array.isArray(d.edges) && Array.isArray(d.lexicons);
+}
+
+/** A view document with every id it holds given `prefix` (`<member>/`), as `workspace graph` composes ids. */
+export function prefixView(doc: ViewDocument, prefix: string): ViewDocument {
+  const p = (id: string): string => `${prefix}${id}`;
+  const hop = (h: ViewHop): ViewHop => ({ ...h, from: p(h.from), to: p(h.to) });
+  return {
+    version: doc.version,
+    lexicons: doc.lexicons,
+    nodes: doc.nodes.map((n) => ({ ...n, id: p(n.id), irId: p(n.irId) })),
+    edges: doc.edges.map((e) => ({ ...e, from: p(e.from), to: p(e.to), hops: e.hops.map(hop) })),
+    unresolved: (doc.unresolved ?? []).map((u) => ({ ...u, from: p(u.from) })),
+  };
+}
+
+/**
+ * Compose member views into one (#4378), the matcher's input over a
+ * workspace. Each member's view was mapped by its own chant; the one thing
+ * left to do here is resolve the ARNs a member couldn't, by name over every
+ * member's nodes. Where several members declare the name, the last one in
+ * member order wins, as within one view.
+ */
+export function composeViews(docs: ViewDocument[]): View {
+  const nodes = new Map<string, ViewNode>();
+  const edges: ViewEdge[] = [];
+  const lexicons = new Set<string>();
+  for (const d of docs) {
+    for (const n of d.nodes) nodes.set(n.id, { ...n });
+    edges.push(...d.edges);
+    for (const l of d.lexicons) lexicons.add(l);
+  }
+  const byName = new Map<string, Map<string, string>>();
+  for (const v of nodes.values()) {
+    const name = v.attrs.name;
+    if (typeof name !== "string" || !name) continue;
+    if (!byName.has(v.label)) byName.set(v.label, new Map());
+    byName.get(v.label)!.set(name, v.id);
+  }
+  const unresolved: UnresolvedArn[] = [];
+  for (const u of docs.flatMap((d) => d.unresolved ?? [])) {
+    let to: string | undefined;
+    for (const { label, re } of ARN_NAMES) {
+      const m = re.exec(u.value);
+      to = m ? byName.get(label)?.get(m[1]) : undefined;
+      if (to) break;
+    }
+    if (to) edges.push({ from: u.from, to, name: u.edge, hops: [{ from: u.from, fromAttr: u.fromAttr, to, edge: u.edge }] });
+    else unresolved.push(u);
+  }
+  return { nodes, edges, lexicons, unresolved };
 }
 
 function irHop(e: IREdge, name: string): ViewHop {
