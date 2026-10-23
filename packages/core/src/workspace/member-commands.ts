@@ -12,7 +12,10 @@
  * - For `graph` only, members of a pinned package's kind whose kinds file
  *   says how to read them (#2874, a `graph` block): each runs `chant graph`
  *   in a reader project chant writes for it (`kind-readers.ts`). Other
- *   package kinds are `kind-not-run`, as before.
+ *   package kinds are `kind-not-run`, as before. A kind no built-in or
+ *   pinned package supplies, such as `terraform` when the pinned lexicon is
+ *   missing or at another version, is `unknown-kind` and fails the read,
+ *   with the pin's problem in the message (#4380).
  * - For `build` and `lint` only, every project an example group matches
  *   (ws-051): groups are built and linted, and have no ledger, audit or place
  *   in the graph. On a large repository this is most of the run, so
@@ -155,6 +158,12 @@ export interface PlanOptions {
   reader?: Toolchain;
   /** The files to plan from, such as a revision's (`--at`); the working tree under `root` by default. */
   tree?: WorkspaceTree;
+  /**
+   * Why a pinned package's kinds couldn't be loaded (`loadKindRegistry`'s
+   * problems), such as a pin at one version with another installed. A graph
+   * read names them on a member whose kind is unknown (#4380).
+   */
+  kindProblems?: readonly string[];
 }
 
 /** Work out which projects run and under which chant. Throws a {@link WorkspaceReadError} for an unreadable declaration or an unknown `--member` name. */
@@ -216,6 +225,16 @@ export function planMembers(verb: WorkspaceVerb, root: string, options: PlanOpti
         exclude: [],
         reader: { ...byKind.graph, packageDir: byKind.packageDir },
       });
+      continue;
+    }
+    // A kind no built-in or pinned package supplies is unknown, not a kind
+    // the read leaves out (#4380): a terraform member whose pinned lexicon is
+    // missing or at another version said kind-not-run before, as if the graph
+    // never read its kind. Say why, the pin's problem included.
+    if (verb === "graph" && !kinds.get(entry.kind)) {
+      const reason = memberReason(entry, tree, kinds) ?? { code: "unknown-kind", message: `no built-in kind or pinned package supplies kind ${entry.kind}` };
+      const problems = reason.code === "unknown-kind" ? (options.kindProblems ?? []) : [];
+      unreadable.push({ name: entry.name, dir: entry.dir, kind: entry.kind, reason: problems.length ? { ...reason, message: `${reason.message}; ${problems.join("; ")}` } : reason });
       continue;
     }
     if (entry.kind !== "chant") {

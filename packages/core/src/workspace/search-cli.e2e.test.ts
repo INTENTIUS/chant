@@ -9,7 +9,7 @@
  * codes for a chant too old to print the document and for a read that fails.
  */
 
-import { cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { realpathSync } from "node:fs";
@@ -186,5 +186,120 @@ describe("a member that can't be searched has a reason code, never zero matches"
     expect(r.members.find((m) => m.name === "west")).toMatchObject({ status: "failed", reason: { code: "command-failed" } });
     expect(r.members.find((m) => m.name === "gone")).toMatchObject({ status: "failed", reason: { code: "dir-missing" } });
     expect(r.matches.map((m) => m.id)).toEqual(["east/appService"]);
+  }, TIMEOUT);
+});
+
+// #4380: a member of kind terraform is searched through the reader project
+// `workspace graph` writes for it (#2874), so its rows carry the ids the graph
+// gives the same nodes: `<member>/<root>/<address>`, the root named for the member.
+describe("terraform members (#4380)", () => {
+  const LEXICON = "@intentius/chant-lexicon-terraform";
+  const VERSION = (JSON.parse(readFileSync(join(REPO, "lexicons", "terraform", "package.json"), "utf-8")) as { version: string }).version;
+  const NET_TF = 'resource "aws_vpc" "main" {\n  cidr_block = "10.0.0.0/16"\n}\n\nresource "aws_subnet" "b" {\n  vpc_id     = aws_vpc.main.id\n  cidr_block = "10.0.2.0/24"\n}\n\nresource "aws_s3_bucket" "logs" {\n  bucket = "logs"\n}\n\nmodule "subnets" {\n  source = "../modules/subnets"\n  vpc_id = aws_vpc.main.id\n}\n';
+  const SUBNETS_TF = 'variable "vpc_id" {}\n\nresource "aws_subnet" "a" {\n  vpc_id     = var.vpc_id\n  cidr_block = "10.0.1.0/24"\n}\n';
+
+  /** A committed workspace with chant member `east` and terraform member `net`, the lexicon pinned at `version`. */
+  function mixed(version = VERSION): string {
+    const root = scratchDir("chant-ws-search-tf-");
+    cpSync(join(CONFORMANCE_FIXTURE_DIR, "delivery"), join(root, "east"), { recursive: true });
+    mkdirSync(join(root, "estates", "net"), { recursive: true });
+    mkdirSync(join(root, "estates", "modules", "subnets"), { recursive: true });
+    writeFileSync(join(root, "estates", "net", "main.tf"), NET_TF);
+    writeFileSync(join(root, "estates", "modules", "subnets", "main.tf"), SUBNETS_TF);
+    // This checkout's node_modules: @intentius/chant for east, the lexicon for net's reader project.
+    symlinkSync(join(REPO, "node_modules"), join(root, "node_modules"), "dir");
+    writeFileSync(join(root, ".gitignore"), "node_modules\n");
+    writeFileSync(
+      join(root, "chant.workspace.json"),
+      JSON.stringify({ name: "mixed", schema: 1, pins: [{ package: LEXICON, version }], members: [{ name: "east", dir: "east", kind: "chant" }, { name: "net", dir: "estates/net", kind: "terraform" }] }, null, 2),
+    );
+    git(root, "init", "-q");
+    commitAll(root, "mixed");
+    return root;
+  }
+
+  test("a terraform and a chant member: rows, hops and capability matches carry workspace graph's ids", async () => {
+    const root = mixed();
+    const [found, graph] = await Promise.all([search(root, "kind:aws"), workspaceGraph({ cwd: root, reader })]);
+    const doc = result(found.doc);
+    expectValid(doc);
+    expect(found.failed).toBe(false);
+    if ("error" in graph.doc) throw new Error(graph.doc.error.message);
+    expect(doc.members.map((m) => [m.name, m.kind, m.status, m.reason])).toEqual([
+      ["east", "chant", "searched", null],
+      ["net", "terraform", "searched", null],
+    ]);
+    expect(doc.matches.map((m) => m.id)).toEqual(["net/net/aws_s3_bucket.logs", "net/net/aws_subnet.b", "net/net/aws_vpc.main", "net/net/module.subnets/aws_subnet.a"]);
+    expect(doc.members.find((m) => m.name === "east")!.matches).toEqual([]);
+    const graphIds = new Set(graph.doc.nodes.map((n) => n.id));
+    for (const m of doc.matches) expect(graphIds, m.id).toContain(m.id);
+    // The member's stamp is the one workspace graph gives it.
+    expect(doc.members.find((m) => m.name === "net")!.stamp).toBe(graph.doc.members.find((m) => m.name === "net")!.stamp);
+
+    // A path's hops are prefixed too, and each end is a node of the graph.
+    const walked = result((await search(root, "kind:aws_subnet ->kind:aws_vpc")).doc);
+    expectValid(walked);
+    expect(walked.matches.map((m) => m.id)).toEqual(["net/net/aws_subnet.b"]);
+    const hops = walked.matches[0].paths.flatMap((p) => p.hops);
+    expect(hops.length).toBeGreaterThan(0);
+    for (const h of hops) {
+      expect(graphIds, h.from).toContain(h.from);
+      expect(graphIds, h.to).toContain(h.to);
+    }
+    expect(hops.at(-1)!.to).toBe("net/net/aws_vpc.main");
+
+    // A capability term (#4375) maps the terraform member's nodes as well.
+    const caps = result((await search(root, "cap:stores-data")).doc);
+    expect(caps.matches.map((m) => m.id)).toEqual(["net/net/aws_s3_bucket.logs"]);
+    expect(caps.members.find((m) => m.name === "net")).toMatchObject({ status: "searched", matches: ["net/net/aws_s3_bucket.logs"] });
+  }, TIMEOUT);
+
+  test("a pin at another version than the installed lexicon: unknown-kind naming the pin, in search and graph, never kind-not-run", async () => {
+    const root = mixed("0.0.1");
+    const [found, graph] = await Promise.all([search(root, "kind:aws_vpc"), workspaceGraph({ cwd: root, reader })]);
+    const doc = result(found.doc);
+    expectValid(doc);
+    expect(found.failed).toBe(true);
+    const net = doc.members.find((m) => m.name === "net")!;
+    expect(net).toMatchObject({ status: "failed", reason: { code: "unknown-kind" } });
+    expect(net.reason!.message).toContain(`${LEXICON} is pinned at 0.0.1, and ${VERSION} is installed`);
+    expect(net).not.toHaveProperty("matches");
+    if ("error" in graph.doc) throw new Error(graph.doc.error.message);
+    expect(graph.doc.members.find((m) => m.name === "net")).toMatchObject({ status: "failed", reason: { code: "unknown-kind" } });
+    expect(graph.failed).toBe(true);
+  }, TIMEOUT);
+
+  // The shape behold's scratch project takes for a bare Terraform folder
+  // (behold#925): a directory outside the folder, not a git repository, with
+  // the declaration, a node_modules link, and a link to the folder as the one
+  // member's directory. Nothing is written in the folder.
+  test("a one-member workspace whose member is a bare Terraform folder, linked in: ids equal workspace graph's, the folder untouched", async () => {
+    const estate = scratchDir("chant-ws-search-bare-");
+    writeFileSync(join(estate, "main.tf"), 'resource "aws_vpc" "main" {\n  cidr_block = "10.0.0.0/16"\n}\n\nresource "aws_s3_bucket" "logs" {\n  bucket = "logs"\n}\n\nmodule "subnets" {\n  source = "./modules/subnets"\n  vpc_id = aws_vpc.main.id\n}\n');
+    mkdirSync(join(estate, "modules", "subnets"), { recursive: true });
+    writeFileSync(join(estate, "modules", "subnets", "main.tf"), SUBNETS_TF);
+    const before = readdirSync(estate, { recursive: true }).sort();
+
+    const project = scratchDir("chant-ws-search-scratch-");
+    symlinkSync(join(REPO, "node_modules"), join(project, "node_modules"), "dir");
+    symlinkSync(estate, join(project, "estate"), "dir");
+    writeFileSync(
+      join(project, "chant.workspace.json"),
+      JSON.stringify({ name: "estate", schema: 1, pins: [{ package: LEXICON, version: VERSION }], members: [{ name: "estate", dir: "estate", kind: "terraform" }] }, null, 2),
+    );
+
+    const [found, graph] = await Promise.all([search(project, "kind:aws"), workspaceGraph({ cwd: project, reader })]);
+    const doc = result(found.doc);
+    expectValid(doc);
+    expect(found.failed).toBe(false);
+    if ("error" in graph.doc) throw new Error(graph.doc.error.message);
+    expect(doc.at).toBeNull();
+    expect(doc.members.map((m) => [m.name, m.kind, m.status])).toEqual([["estate", "terraform", "searched"]]);
+    expect(doc.matches.map((m) => m.id)).toEqual(["estate/estate/aws_s3_bucket.logs", "estate/estate/aws_vpc.main", "estate/estate/module.subnets/aws_subnet.a"]);
+    const graphIds = new Set(graph.doc.nodes.map((n) => n.id));
+    for (const m of doc.matches) expect(graphIds, m.id).toContain(m.id);
+    const caps = result((await search(project, "cap:stores-data")).doc);
+    expect(caps.matches.map((m) => m.id)).toEqual(["estate/estate/aws_s3_bucket.logs"]);
+    expect(readdirSync(estate, { recursive: true }).sort()).toEqual(before);
   }, TIMEOUT);
 });

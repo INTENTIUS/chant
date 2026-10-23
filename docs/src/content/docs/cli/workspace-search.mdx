@@ -20,6 +20,25 @@ Members are read the way `chant workspace graph` reads them, through the same co
 
 Each member is searched alone. A path term such as `->*kind:aws_vpc` walks the member's own graph, and a path that would cross from one member into another through a [link](/chant/cli/workspace-graph/#links) is not walked. Every member that answered says so with `alone: true`.
 
+### Terraform members
+
+A member of kind `terraform` or `choudoufu` is searched in the reader project `workspace graph` writes for it, so its rows carry the ids `workspace graph` draws: `<member>/<root>/<address>`, where the reader project names the one root after the member, as in `prod/prod/aws_s3_bucket.artifacts` or `prod/prod/module.checkout/aws_sqs_queue.dead` ([#4380](https://github.com/INTENTIUS/chant/issues/4380)). Path terms walk the member's graph and capability terms map its nodes through the terraform lexicon, as for a chant member.
+
+The kind comes from the pinned `@intentius/chant-lexicon-terraform`, found in a `node_modules` at or above the workspace root at exactly the pinned version. When it isn't installed there, or another version is, the kind is unknown: each such member fails with `unknown-kind`, and the message names the pin's problem (`@intentius/chant-lexicon-terraform is pinned at 0.124.38, and 0.124.46 is installed`).
+
+A bare folder of `.tf` files can be searched without writing in it. Put the declaration in a directory of its own, with a `node_modules` link to an install that has the lexicon and a link to the folder, and declare the link as the one member:
+
+```json
+{
+  "name": "estate",
+  "schema": 1,
+  "pins": [{ "package": "@intentius/chant-lexicon-terraform", "version": "0.124.46" }],
+  "members": [{ "name": "estate", "dir": "estate", "kind": "terraform" }]
+}
+```
+
+The directory needs no git repository; `at` is then `null`, and `--at` is refused with `not-a-git-repository`.
+
 The query grammar, `--show`, `--explain` and `--count-by` are those of [`chant search`](/chant/cli/search/). A query or a combination of flags that `chant search` would refuse is refused once, before any member runs, with the same code.
 
 ## Flags
@@ -34,7 +53,7 @@ The query grammar, `--show`, `--explain` and `--count-by` are those of [`chant s
 | `--show` | `string` | none | Comma-separated attributes to carry on each row |
 | `--count-by` | `string` | none | Group the matches: `kind`, `module` or `attr:<name>` |
 | `--explain` | `boolean` | `false` | Each member's universe and near misses |
-| `--capabilities` | `boolean` | `false` | Print the [capability catalog](/chant/reference/capabilities/#the-capabilities-document) instead of answering a query: the `capabilities` document, from the workspace root's chant, for every lexicon a chant member loads |
+| `--capabilities` | `boolean` | `false` | Print the [capability catalog](/chant/reference/capabilities/#the-capabilities-document) instead of answering a query: the `capabilities` document, from the workspace root's chant, for every lexicon a member loads, a terraform member's lexicon included |
 | `--json` | `boolean` | `false` | Print the document. Without it, one row per match, `<member>/<name>  <kind>  <physical id>`, then a line per member that has no answer on stderr |
 
 `--ambient`, `--check-live`, `--check-snapshot` and `--fail-on-drift` are passed to each member as they are.

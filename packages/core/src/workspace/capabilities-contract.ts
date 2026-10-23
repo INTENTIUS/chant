@@ -6,7 +6,8 @@
  * `chant search --capabilities --json` prints it for one project, with a
  * support statement for each lexicon the project loads. `chant workspace
  * search --capabilities --json` prints it from the workspace root's chant,
- * for every lexicon a chant member loads: capability rules run once, under
+ * for every lexicon a member loads (a terraform member's reader lexicon
+ * included, #4380): capability rules run once, under
  * the workspace's chant, so the catalog is that chant's. chant's MCP
  * `capabilities` tool returns whichever of the two applies where the server
  * runs, unchanged.
@@ -86,17 +87,26 @@ export async function capabilitiesFailure(error: CapabilitiesFailure["error"]): 
   return { ...(await head()), error };
 }
 
-/** The lexicons the chant members of the workspace at `cwd` load, for its catalog. */
+/**
+ * The lexicons the members of the workspace at `cwd` load, for its catalog:
+ * each chant member's own, and for a member of a package's kind, such as
+ * `terraform`, the lexicon its reader project declares (#4380).
+ */
 export async function workspaceLexicons(cwd: string): Promise<string[]> {
   const { listWorkspace } = await import("./ls");
   const { findWorkspaceRoot } = await import("../project-root");
   const { resolveProjectLexicons } = await import("../cli/plugins");
+  const { loadKindRegistry } = await import("./kinds");
   const located = findWorkspaceRoot(cwd);
   const doc = listWorkspace({ cwd });
   if (!located || "error" in doc) return [];
   const out = new Set<string>();
+  const kinds = doc.members.some((m) => m.kind !== "chant" && m.readable) ? loadKindRegistry(doc.workspace.pins, located.dir).registry : undefined;
   for (const m of doc.members) {
-    if (m.kind !== "chant" || !m.readable) continue;
+    if (!m.readable) continue;
+    const reader = m.kind === "chant" ? undefined : kinds?.get(m.kind)?.graph?.lexicon;
+    if (reader) out.add(reader);
+    if (m.kind !== "chant") continue;
     try {
       for (const l of await resolveProjectLexicons(resolve(located.dir, m.dir))) out.add(l);
     } catch {
