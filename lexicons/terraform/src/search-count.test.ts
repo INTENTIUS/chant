@@ -121,9 +121,9 @@ describe("--count-by on a Terraform project", () => {
     const body = JSON.parse(out[0]);
     expect(body).toMatchObject({ countBy: "module", total: 4, source: { kind: "declared" } });
     expect(body.groups).toEqual([
-      { group: "app/(root)", count: 2 },
-      { group: "app/module.cdn", count: 1 },
-      { group: "network/(root)", count: 1 },
+      { group: "app/(root)", count: 2, ids: ["app/aws_instance.web", "app/aws_s3_bucket.assets"] },
+      { group: "app/module.cdn", count: 1, ids: ["app/module.cdn/aws_cloudfront_distribution.cdn"] },
+      { group: "network/(root)", count: 1, ids: ["network/aws_vpc.main"] },
     ]);
     expect(body.matches).toBeUndefined();
     // #4367: the provenance line rides beside the groups.
