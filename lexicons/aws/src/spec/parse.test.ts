@@ -4,6 +4,7 @@ import {
   cfnShortName,
   cfnServiceName,
   stripPointerPath,
+  tagPlacement,
 } from "./parse";
 import type { CFNSchema } from "./fetch";
 
@@ -494,5 +495,43 @@ describe("cfnServiceName", () => {
     expect(cfnServiceName("AWS::S3::Bucket")).toBe("S3");
     expect(cfnServiceName("AWS::Lambda::Function")).toBe("Lambda");
     expect(cfnServiceName("AWS::IAM::Role")).toBe("IAM");
+  });
+});
+
+describe("tagPlacement (#4350)", () => {
+  const base = { typeName: "AWS::Test::T", additionalProperties: false };
+  test("a Key/Value list in Tags", () => {
+    expect(tagPlacement({
+      ...base,
+      properties: { Tags: { type: "array", items: { $ref: "#/definitions/Tag" } } },
+      definitions: { Tag: { type: "object", properties: { Key: { type: "string" }, Value: { type: "string" } } } },
+      tagging: { taggable: true, tagProperty: "/properties/Tags" },
+    } as CFNSchema)).toEqual({ tagProperty: "Tags", tagShape: "list" });
+  });
+  test("a map under another property name", () => {
+    expect(tagPlacement({
+      ...base,
+      properties: { UserPoolTags: { type: "object", patternProperties: { ".*": { type: "string" } } } as never },
+      tagging: { taggable: true, tagProperty: "/properties/UserPoolTags" },
+    } as CFNSchema)).toEqual({ tagProperty: "UserPoolTags", tagShape: "map" });
+  });
+  test("Tags when tagProperty is absent", () => {
+    expect(tagPlacement({
+      ...base,
+      properties: { Tags: { type: "object" } },
+      tagging: { taggable: true },
+    } as CFNSchema)).toEqual({ tagProperty: "Tags", tagShape: "map" });
+  });
+  test("nothing for a path inside an array or a wrapper object", () => {
+    expect(tagPlacement({
+      ...base,
+      properties: { TagSpecifications: { type: "array" } },
+      tagging: { taggable: true, tagProperty: "/properties/TagSpecifications/*/Tags" },
+    } as CFNSchema)).toEqual({});
+    expect(tagPlacement({
+      ...base,
+      properties: { Tags: { type: "object", properties: { Items: { type: "array" } } } },
+      tagging: { taggable: true, tagProperty: "/properties/Tags" },
+    } as CFNSchema)).toEqual({});
   });
 });

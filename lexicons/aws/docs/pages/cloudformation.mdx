@@ -292,4 +292,6 @@ Use `defaultTags()` to declare project-wide tags. The serializer adds them to ev
 
 Resources with explicit `Tags` keep them (explicit key wins over default). Non-taggable resources like `AWS::Lambda::Permission` are never tagged.
 
+Each type is tagged through its own tag property and shape, read from the Registry schema's `tagging.tagProperty`. Most types get a `[{Key, Value}]` list in `Tags`. Map-tagged types such as `AWS::SSM::Parameter` get a map. `AWS::Cognito::UserPool` gets `UserPoolTags`, also a map. Explicit tags of either shape merge in. A type whose tags sit inside an array or a wrapper object, such as `AWS::EC2::CapacityReservation` (`TagSpecifications[].Tags`), gets no stamped tags. When the build stamps the ownership marker, that resource carries it in its own `Metadata["chant:ownership"]` instead. Post-synth check WAW071 flags tags in the wrong property or shape.
+
 Tag values support strings, `Parameter` references, and intrinsic functions (`Sub`, `Ref`, etc.).

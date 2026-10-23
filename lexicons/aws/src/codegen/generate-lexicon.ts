@@ -4,7 +4,7 @@
  * Output is a Record<string, LexiconEntry> keyed by generated class name.
  */
 
-import type { SchemaParseResult } from "../spec/parse";
+import type { ResourceTagging, SchemaParseResult } from "../spec/parse";
 import { cfnShortName } from "../spec/parse";
 import type { NamingStrategy } from "./naming";
 import type { ExtensionConstraint } from "./extensions";
@@ -33,7 +33,7 @@ export interface LexiconEntry {
   inferredDeprecations?: string[];
   conditionalCreateOnly?: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
-  tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
+  tagging?: ResourceTagging;
   runtimeDeprecations?: Record<string, string>;
 }
 

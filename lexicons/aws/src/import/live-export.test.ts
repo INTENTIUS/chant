@@ -66,6 +66,24 @@ describe("AWS exportResources mapping (#115)", () => {
     expect(ir.resources.map((r) => r.logicalId)).toEqual(["Mine"]);
   });
 
+  test("owned filter reads map tags, UserPoolTags and the Metadata marker (#4350)", () => {
+    const tpl = {
+      AWSTemplateFormatVersion: "2010-09-09",
+      Resources: {
+        Param: { Type: "AWS::SSM::Parameter", Properties: { Type: "String", Value: "v", Tags: { "chant:managed-by": "chant" } } },
+        Pool: { Type: "AWS::Cognito::UserPool", Properties: { UserPoolTags: { "chant:managed-by": "chant" } } },
+        Reservation: {
+          Type: "AWS::EC2::CapacityReservation",
+          Metadata: { "chant:ownership": { "chant:managed-by": "chant" } },
+          Properties: { InstanceType: "t3.micro" },
+        },
+        Theirs: { Type: "AWS::SSM::Parameter", Properties: { Type: "String", Value: "v", Tags: { team: "other" } } },
+      },
+    };
+    const ir = parseStackTemplate(tpl, undefined, true);
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["Param", "Pool", "Reservation"]);
+  });
+
   test("export IR feeds CFGenerator (templateGenerator) unchanged", () => {
     const ir = parseStackTemplate(liveTemplate);
     const files = new CFGenerator().generate(ir);

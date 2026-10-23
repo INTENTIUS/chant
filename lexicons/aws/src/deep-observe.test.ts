@@ -353,6 +353,25 @@ describe("hasOwnershipMarker", () => {
     expect(hasOwnershipMarker({ Tags: [{ Key: "env", Value: "prod" }] })).toBe(false);
     expect(hasOwnershipMarker({})).toBe(false);
   });
+
+  test("reads a map, and the type's own tag property (#4350)", () => {
+    expect(hasOwnershipMarker({ Tags: { "chant:managed-by": "chant" } }, "AWS::SSM::Parameter")).toBe(true);
+    expect(hasOwnershipMarker({ UserPoolTags: { "chant:managed-by": "chant" } }, "AWS::Cognito::UserPool")).toBe(true);
+    expect(hasOwnershipMarker({ Tags: { "chant:managed-by": "chant" } }, "AWS::Cognito::UserPool")).toBe(false);
+  });
+
+  test("prunes the live map entry of the marker on a map-tagged type (#4350)", () => {
+    const out = normalizeDeepProperties(
+      { UserPoolTags: { "chant:managed-by": "chant", team: "a" } },
+      {
+        entityType: "AWS::Cognito::UserPool",
+        side: "live",
+        hooks: awsDeepNormalizationHooks,
+        counterpartPaths: new Set<string>(),
+      },
+    );
+    expect(out).toEqual({ UserPoolTags: { team: "a" } });
+  });
 });
 
 describe("observeResourcesDeepAws", () => {

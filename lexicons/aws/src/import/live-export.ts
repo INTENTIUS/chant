@@ -1,6 +1,7 @@
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
-import { hasOwnershipMarker, tagArrayToMap } from "@intentius/chant/ownership";
-import { AWS_TAG_OWNERSHIP_KEYS } from "../ownership";
+import { hasOwnershipMarker } from "@intentius/chant/ownership";
+import { AWS_TAG_OWNERSHIP_KEYS, OWNERSHIP_METADATA_KEY } from "../ownership";
+import { readResourceTags, readTagValue } from "../taggable";
 import { CFParser } from "./parser";
 
 /**
@@ -30,8 +31,11 @@ export function parseStackTemplate(
       if (selector?.type !== undefined && r.type !== selector.type) return false;
       if (selector?.name !== undefined && r.logicalId !== selector.name) return false;
       if (owned) {
-        const tags = (r.properties as { Tags?: Array<{ Key?: string; Value?: unknown }> }).Tags;
-        if (!hasOwnershipMarker(tagArrayToMap(tags), AWS_TAG_OWNERSHIP_KEYS)) return false;
+        // The marker sits in the type's own tag property, in either shape, or
+        // in the resource's Metadata for a type whose tags can't be stamped (#4350).
+        const tags = readResourceTags(r.type, r.properties as Record<string, unknown>);
+        const marker = readTagValue(r.metadata?.[OWNERSHIP_METADATA_KEY]);
+        if (!hasOwnershipMarker(tags, AWS_TAG_OWNERSHIP_KEYS) && !hasOwnershipMarker(marker, AWS_TAG_OWNERSHIP_KEYS)) return false;
       }
       return true;
     }),

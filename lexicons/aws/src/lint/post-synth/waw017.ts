@@ -7,7 +7,7 @@
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parseCFTemplate } from "./cf-refs";
-import { loadTaggableResources } from "../../taggable";
+import { loadTaggableResources, tagPlacementFor } from "../../taggable";
 
 /**
  * Core detection logic — exported for direct testing with synthetic data.
@@ -28,7 +28,8 @@ export function checkMissingTags(
       if (!taggable.has(resource.Type)) continue;
 
       const props = resource.Properties ?? {};
-      if (!("Tags" in props)) {
+      const tagProperty = tagPlacementFor(resource.Type)?.property ?? "Tags";
+      if (!(tagProperty in props)) {
         diagnostics.push({
           checkId: "WAW017",
           severity: "warning",

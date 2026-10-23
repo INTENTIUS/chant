@@ -2069,6 +2069,16 @@ Reference a resource or parameter in this template. A value from another lexicon
 |---|---|
 | Prior art | [cfn-lint `E1012`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E1012) (equivalent) · [cfn-lint `E1010`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E1010) (overlaps) |
 
+### WAW071
+
+**Tags are in the wrong property or the wrong shape for the resource type** (merge-worthy · guidance)
+
+Write the tags in the property the type uses and in the shape it takes, which is a list of Key and Value pairs for most types and a map for some, such as UserPoolTags on AWS::Cognito::UserPool.
+
+| | |
+|---|---|
+| Prior art | [cfn-lint `E3002`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3002) (overlaps) · [cfn-lint `E3012`](https://github.com/aws-cloudformation/cfn-lint/blob/main/docs/rules.md#E3012) (overlaps) |
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).
@@ -3579,8 +3589,8 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [Fairwinds Polaris](https://polaris.docs.fairwinds.com/) | scanner | Apache-2.0 | 18 |
 | [KubeLinter](https://github.com/stackrox/kube-linter) | scanner | Apache-2.0 | 17 |
 | [kube-score](https://github.com/zegl/kube-score) | scanner | MIT | 15 |
+| [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) | scanner | MIT-0 | 14 |
 | [PSRule for Azure](https://azure.github.io/PSRule.Rules.Azure/) | scanner | MIT | 13 |
-| [cfn-lint](https://github.com/aws-cloudformation/cfn-lint) | scanner | MIT-0 | 12 |
 | [Google Cloud Policy Library](https://github.com/GoogleCloudPlatform/policy-library) | scanner | Apache-2.0 | 12 |
 | [poutine](https://boostsecurityio.github.io/poutine/) | scanner | Apache-2.0 | 11 |
 | [OpenSSF Scorecard](https://github.com/ossf/scorecard) | scanner | Apache-2.0 | 11 |
