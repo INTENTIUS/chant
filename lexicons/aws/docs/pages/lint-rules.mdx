@@ -128,6 +128,16 @@ Flags resources that support tagging but have no `Tags` property set. Tags are i
 WAW017: Resource "MyBucket" (AWS::S3::Bucket) supports tagging but has no Tags — consider adding tags for cost allocation and compliance
 ```
 
+### WAW071 — Tags in the Wrong Property or Shape
+
+**Severity:** error | **Category:** correctness
+
+Each taggable type names its tag property and shape in its Registry schema (`tagging.tagProperty`). Most take a `[{Key, Value}]` list in `Tags`. Some take a map, such as `AWS::SSM::Parameter`. Some use another property, such as `UserPoolTags` (a map) on `AWS::Cognito::UserPool`. The check flags a `Tags` property on a type whose tags live elsewhere, and a tag value whose shape doesn't match the type. CloudFormation rejects both.
+
+```
+WAW071: Resource "Pool" (AWS::Cognito::UserPool) has Tags, but the type takes its tags in UserPoolTags
+```
+
 ### WAW029 — Invalid DependsOn Target
 
 **Severity:** error | **Category:** correctness

@@ -63,6 +63,7 @@ import {
 } from "./api/read-client";
 import { declaredIdentifier } from "./identity-observe";
 import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
+import { readResourceTags, tagPlacementFor } from "./taggable";
 import {
   AWS_DEEP_BLIND_SPOTS,
   EC2_TOPOLOGY_GENERATED_NAMES,
@@ -409,6 +410,8 @@ export const awsDeepNormalizationHooks: DeepNormalizationHooks = {
     // drift. Counterpart-gated, so a template that declares the tag itself is
     // still compared against what is live.
     if (isOwnershipTag(node.value)) return true;
+    // The same marker as a map entry, on a map-tagged type (#4350).
+    if (OWNERSHIP_TAG_KEYS.has(node.key) && isMapTagEntry(node.entityType, node.pattern, node.key)) return true;
 
     // A name the service generated because source did not supply one.
     if (AWS_GENERATED_NAMES[node.entityType]?.has(node.pattern)) return true;
@@ -533,11 +536,19 @@ function isOwnershipTag(value: unknown): boolean {
   return isRecord(value) && typeof value.Key === "string" && OWNERSHIP_TAG_KEYS.has(value.Key);
 }
 
-/** True when the live property tree carries chant's ownership marker tag. */
-export function hasOwnershipMarker(properties: Record<string, unknown>): boolean {
-  const tags = properties.Tags;
-  if (!Array.isArray(tags)) return false;
-  return tags.some((t) => isRecord(t) && t.Key === AWS_TAG_OWNERSHIP_KEYS.managedBy);
+/** True when `pattern` is `<tagProperty>.<key>` on a type whose tags are a map. */
+function isMapTagEntry(type: string, pattern: string, key: string): boolean {
+  const placement = tagPlacementFor(type);
+  return placement?.shape === "map" && pattern === `${placement.property}.${key}`;
+}
+
+/**
+ * True when the live property tree carries chant's ownership marker tag. With
+ * a `type`, the tags are read from that type's own tag property
+ * (`UserPoolTags`); either way a list or a map reads (#4350).
+ */
+export function hasOwnershipMarker(properties: Record<string, unknown>, type?: string): boolean {
+  return readResourceTags(type, properties)[AWS_TAG_OWNERSHIP_KEYS.managedBy] !== undefined;
 }
 
 export interface AwsDeepObserveOptions {
@@ -680,7 +691,7 @@ export async function observeResourcesDeepAws(
     // thin path this one can answer the ownership question (#1015's open note).
     // A resource withheld by the filter is `filtered`, never absent: it exists,
     // it just isn't chant's.
-    const owned = hasOwnershipMarker(properties);
+    const owned = hasOwnershipMarker(properties, type);
     if (options.owned && !owned) {
       unobserved[entityName] = {
         type,

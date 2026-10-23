@@ -79,7 +79,24 @@ export interface ParsedResource {
   inferredDeprecations: string[];
   conditionalCreateOnly: string[];
   replacementStrategy?: "delete_then_create" | "create_then_delete";
-  tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
+  tagging?: ResourceTagging;
+}
+
+/** How a type's tags are written: a `[{Key, Value}]` list or a key-to-value map. */
+export type TagShape = "list" | "map";
+
+export interface ResourceTagging {
+  taggable: boolean;
+  tagOnCreate: boolean;
+  tagUpdatable: boolean;
+  /**
+   * The top-level property the type's tags live in (`Tags`, `UserPoolTags`, ...)
+   * and its shape, read from the schema's `tagging.tagProperty` (#4350). Both are
+   * absent when the tags sit somewhere the serializer can't stamp, such as
+   * a path inside an array (`TagSpecifications[].Tags`) or an `{Items: [...]}` wrapper.
+   */
+  tagProperty?: string;
+  tagShape?: TagShape;
 }
 
 export interface SchemaParseResult {
@@ -202,6 +219,7 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
       taggable: true,
       tagOnCreate: schema.tagging.tagOnCreate ?? false,
       tagUpdatable: schema.tagging.tagUpdatable ?? false,
+      ...tagPlacement(schema),
     };
   }
 
@@ -241,6 +259,70 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
 }
 
 // --- Type resolution (delegated to core) ---
+
+/**
+ * Where a taggable type's tags go and in which shape (#4350). The property is
+ * `tagging.tagProperty` when it names one top-level property, else `Tags` when
+ * the type has one. The shape is a list when the items carry `Key` and `Value`
+ * (directly or as one `oneOf` branch) and a map when the property is an object
+ * with no fixed properties. Anything else returns `{}`, so the type is skipped.
+ */
+export function tagPlacement(schema: CFNSchema): { tagProperty?: string; tagShape?: TagShape } {
+  const pointer = schema.tagging?.tagProperty;
+  let name: string | undefined;
+  if (pointer !== undefined) {
+    const m = /^\/properties\/([^/]+)$/.exec(pointer);
+    if (!m) return {};
+    name = m[1];
+  } else if (schema.properties?.Tags) {
+    name = "Tags";
+  }
+  if (name === undefined) return {};
+  const prop = resolveLocalRef(schema.properties?.[name], schema);
+  if (!prop) return {};
+  const shape = tagShapeOf(prop, schema);
+  return shape ? { tagProperty: name, tagShape: shape } : {};
+}
+
+type LooseSchema = Record<string, unknown> & {
+  $ref?: string;
+  type?: string | string[];
+  items?: unknown;
+  properties?: Record<string, unknown>;
+  oneOf?: unknown[];
+  anyOf?: unknown[];
+  patternProperties?: unknown;
+  additionalProperties?: unknown;
+};
+
+function resolveLocalRef(value: unknown, schema: CFNSchema): LooseSchema | undefined {
+  let node = value as LooseSchema | undefined;
+  for (let i = 0; i < 8 && node && typeof node.$ref === "string"; i++) {
+    const def = refDefinitionName(node.$ref);
+    node = def ? (schema.definitions?.[def] as LooseSchema | undefined) : undefined;
+  }
+  return node && typeof node === "object" ? node : undefined;
+}
+
+function hasType(node: LooseSchema, t: string): boolean {
+  return node.type === t || (Array.isArray(node.type) && node.type.includes(t));
+}
+
+function isKeyValueItem(node: LooseSchema | undefined, schema: CFNSchema): boolean {
+  if (!node) return false;
+  if (node.properties && "Key" in node.properties && "Value" in node.properties) return true;
+  const branches = [...(node.oneOf ?? []), ...(node.anyOf ?? [])];
+  return branches.some((b) => isKeyValueItem(resolveLocalRef(b, schema), schema));
+}
+
+function tagShapeOf(prop: LooseSchema, schema: CFNSchema): TagShape | undefined {
+  if (hasType(prop, "array")) {
+    return isKeyValueItem(resolveLocalRef(prop.items, schema), schema) ? "list" : undefined;
+  }
+  const objectish = hasType(prop, "object") || prop.patternProperties !== undefined || prop.additionalProperties !== undefined;
+  if (objectish && (!prop.properties || Object.keys(prop.properties).length === 0)) return "map";
+  return undefined;
+}
 
 function resolvePropertyType(prop: SchemaProperty | undefined, schema: CFNSchema): string {
   const shortName = cfnShortName(schema.typeName);

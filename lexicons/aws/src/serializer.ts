@@ -26,7 +26,7 @@ import { isMapping } from "./mapping";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { isTemplateTransform } from "./template-transform";
 import { isTemplateSection } from "./template-sections";
-import { loadTaggableResources } from "./taggable";
+import { isTagIntrinsic, loadTagPlacements, readTagValue, type TagPlacement } from "./taggable";
 
 /**
  * Check if a declarable is a CoreParameter
@@ -293,6 +293,33 @@ function renderReceiptRows(
 }
 
 /**
+ * Merge stamped default tags under a resource's explicit tags, in the type's
+ * tag shape (#4350). Explicit tags win on a key clash. Explicit tags of the
+ * other shape are converted, so a map written on a list type still merges.
+ * Returns undefined when the explicit value is an intrinsic, which can't be
+ * merged into.
+ */
+export function mergeTags(
+  explicit: unknown,
+  stamped: Array<{ Key: string; Value: unknown }>,
+  placement: TagPlacement,
+): unknown {
+  if (explicit !== undefined && (isTagIntrinsic(explicit) || (typeof explicit !== "object" || explicit === null))) {
+    return undefined;
+  }
+  if (placement.shape === "map") {
+    const merged: Record<string, unknown> = {};
+    for (const t of stamped) merged[t.Key] = t.Value;
+    return { ...merged, ...readTagValue(explicit) };
+  }
+  const explicitList = Array.isArray(explicit)
+    ? (explicit as Array<{ Key?: unknown }>)
+    : Object.entries(readTagValue(explicit)).map(([Key, Value]) => ({ Key, Value }));
+  const explicitKeys = new Set(explicitList.map(t => t?.Key));
+  return [...stamped.filter(t => !explicitKeys.has(t.Key)), ...explicitList];
+}
+
+/**
  * Serialize a set of entities into a CFTemplate object (without JSON.stringify).
  */
 function serializeToTemplate(
@@ -510,20 +537,30 @@ function serializeToTemplate(
     }
   }
 
-  // Inject default tags into taggable resources
+  // Inject default tags into taggable resources, each through its own tag
+  // property and shape (#4350): `UserPoolTags` on a Cognito user pool, a map on
+  // an SSM parameter, a `[{Key, Value}]` list elsewhere.
   if (defaultTagEntries.length > 0) {
-    const taggable = loadTaggableResources();
+    const placements = loadTagPlacements();
     for (const [, resource] of Object.entries(template.Resources)) {
-      if (!taggable.has(resource.Type)) continue;
+      const placement = placements.get(resource.Type);
+      if (placement === undefined) continue;
       const resolved = defaultTagEntries.map(t => ({
         Key: t.Key,
         Value: toCFValue(t.Value, entityNames),
       }));
-      const explicit = (resource.Properties?.Tags ?? []) as Array<{ Key: string }>;
-      const explicitKeys = new Set(explicit.map(t => t.Key));
-      const merged = [...resolved.filter(t => !explicitKeys.has(t.Key)), ...explicit];
-      if (!resource.Properties) resource.Properties = {};
-      resource.Properties.Tags = merged;
+      const stamped = placement ? mergeTags(resource.Properties?.[placement.property], resolved, placement) : undefined;
+      if (stamped !== undefined) {
+        if (!resource.Properties) resource.Properties = {};
+        resource.Properties[placement!.property] = stamped;
+      } else if (ownership) {
+        // Nowhere valid to write the tags, so the marker goes on the resource's
+        // own Metadata instead of an invalid property.
+        resource.Metadata = {
+          ...(resource.Metadata ?? {}),
+          [OWNERSHIP_METADATA_KEY]: ownershipEntries(AWS_TAG_OWNERSHIP_KEYS, ownership),
+        };
+      }
     }
   }
 
