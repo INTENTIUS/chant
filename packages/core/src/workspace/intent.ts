@@ -78,6 +78,7 @@ import { memberDirOnDisk, memberSymbolResolvers, type SymbolPluginLoader } from 
 import { resolveSymbol, symbolResolverFor, type SymbolResolver } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { buildTrace, type IntentTrace } from "./intent-trace";
+import { compareDecisionRank, type WhyRelevance } from "./decision-rank";
 import { joinPath, skippedDir, workingTree, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
@@ -524,8 +525,7 @@ export interface WhySpan {
   via?: string[];
 }
 
-/** Why a decision is in `why`, most relevant first (#3034). */
-export type WhyRelevance = "carried" | "path" | "contract" | "issue" | "member" | "related";
+export type { WhyRelevance };
 
 export interface WhyDecision {
   decision: string;
@@ -2080,7 +2080,6 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     // The decisions, most relevant first.
     const decisionNodes = [...nodes.values()].filter((n): n is DecisionNode => n.kind === "decision");
     const ownLines = (d: DecisionNode) => who.filter((w) => w.sha !== null && ownWork(joined.get(w.sha) ?? { contracts: [], authorship: [], decisions: [], carries: [] }, d)).length;
-    const ORDER: WhyRelevance[] = ["carried", "path", "contract", "issue", "member", "related"];
     const ranked = decisionNodes.map((d) => {
       const lines = ownLines(d);
       const carried = lines > 0 || (fileLines === null && touched.some((t) => ownWork(joined.get(t.sha) ?? { contracts: [], authorship: [], decisions: [], carries: [] }, d)));
@@ -2090,16 +2089,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       const specificity = Math.max(0, ...d.constrains.filter((c) => c.granularity === "path").map((c) => c.entry.length));
       return { d, entry: { decision: d.id, relevance, current: d.supersededBy === null, closed: d.closed, lines } satisfies WhyDecision, specificity };
     });
-    ranked.sort(
-      (a, b) =>
-        Number(b.entry.current) - Number(a.entry.current) ||
-        ORDER.indexOf(a.entry.relevance) - ORDER.indexOf(b.entry.relevance) ||
-        b.entry.lines - a.entry.lines ||
-        Number(b.entry.closed) - Number(a.entry.closed) ||
-        b.specificity - a.specificity ||
-        (b.d.decidedIn?.date ?? "").localeCompare(a.d.decidedIn?.date ?? "") ||
-        a.d.id.localeCompare(b.d.id),
-    );
+    const key = (r: (typeof ranked)[number]) => ({ ...r.entry, id: r.d.id, specificity: r.specificity, decidedOn: r.d.decidedIn?.date ?? null });
+    ranked.sort((a, b) => compareDecisionRank(key(a), key(b)));
     const decisions = ranked.map((r) => r.entry);
 
     // The runs that wrote the current lines, most lines first; for a directory, every run in the walk.

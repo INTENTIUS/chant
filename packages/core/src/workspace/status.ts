@@ -63,6 +63,7 @@ import { scopeSource } from "./write-scope";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
 import { trustQuorumJudge } from "../op/gate-quorum";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
+import { memberDecisionsReader, type DecisionKindReader } from "./status-decisions";
 import { gitTop, workingTree } from "./tree";
 import { handToRootChant } from "./which-chant";
 
@@ -433,6 +434,8 @@ export interface StatusQuery {
   readStewards?: typeof readMemberStewards;
   /** Reads one member's promotion order from its directory; its chant.config.ts unless a test swaps it. */
   readPromotionOrder?: (dir: string) => Promise<PromotionStep[] | null>;
+  /** Reads one record kind for the decisions covering each gate's member (#3616); the working tree unless a test swaps it. */
+  readDecisionKind?: DecisionKindReader;
 }
 
 /** A factory view with the declaration's x- keys on it and on its check, publish and tiers (#3595). */
@@ -727,6 +730,9 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const revoked = () => (revokedCommits ??= revokedCommitsAt(top, ruleSource.declaration?.ci?.green ?? null).catch(() => new Map()));
     // #4024: the flag records, read once for every member. Unreadable records list as null.
     const flags = await readStatusFlags(declaration, found.dir);
+    // #3616: the decisions covering each member, read from the records once and only when a gate is met.
+    let coveringReader: ReturnType<typeof memberDecisionsReader> | undefined;
+    const covering = () => (coveringReader ??= memberDecisionsReader(declaration, found.dir, rootDir, query.readDecisionKind));
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const revokedOf = revokedReleaseLookup(resolve(found.dir, m.dir), revoked);
@@ -748,7 +754,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         compare: query.compareTo === undefined ? null : compareEnvironments(environments[0], environments[environments.length - 1]),
         readable: environments.every((e) => e.reason === null),
         gateLedger: gates.ledger,
-        gates: await supersedeRevokedGates(gates.gates, revokedOf),
+        gates: await withDecisions(await supersedeRevokedGates(gates.gates, revokedOf), m, covering),
         box:
           m.box === null
             ? null
@@ -887,6 +893,13 @@ async function readStatusFlags(declaration: Declaration, root: string): Promise<
   } catch {
     return null;
   }
+}
+
+/** Each gate with the current decisions covering its member (#3616), when the member has gates. */
+async function withDecisions(gates: StatusGate[], m: { name: string; dir: string }, covering: () => ReturnType<typeof memberDecisionsReader>): Promise<StatusGate[]> {
+  if (gates.length === 0) return gates;
+  const decisions = (await covering())(m);
+  return gates.map((g) => ({ ...g, decisions: [...decisions] }));
 }
 
 /** The overlap report (#4025); null when no work kind is declared or it can't be read. */

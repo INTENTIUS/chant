@@ -895,6 +895,8 @@ A gate the declaration at base names in [`identity.gates`](/chant/reference/work
 
 A gate also has `gitSha` and `runId` ([#4020](https://github.com/INTENTIUS/chant/issues/4020)), read from its pending fact: the commit the run reached the gate at, and the run that reached it. A reader joins the gate to a release by `gitSha`, to a steward's `lastRun` by `runId`, and from a release back to the gate by its `admission`. See [Fields added within version 1](#fields-added-within-version-1).
 
+A gate also has `decisions`, the current decisions covering its member, as `<kind>/<id>` and most relevant first ([#3616](https://github.com/INTENTIUS/chant/issues/3616)). A reader names the decision a gate enforces from this list, without a `chant workspace graph --intent` walk, which reads the member's git history and can take minutes on a large repository. The list is read from the records alone. A decision covers the member through a `path:` constraint on the member's directory or a directory above it, through `member:<name>`, or through a `path:` inside the directory that the member holds. A superseded covering decision is replaced by the current decision at the end of its chain. The order is the one `why.decisions` uses in the intent graph, minus the relevances that need history (`carried`, `issue` and `contract`). Every gate of a member carries the same list, and it is `[]` when nothing covers the member.
+
 A gate whose `planDigest` names a stored change set also has `changeSet`, that digest ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). `chant change-set show <changeSet> --json` prints the document, so a reader shows what an approval would approve before anyone approves it, and what it approved after. See [Stored change sets](#stored-change-sets).
 
 `gateLedger` names the directory the gates were read from. Its `reason` holds a code from the closed list when there is no ledger branch, no gate ledger for the member, or a gate ledger that can't be read.
@@ -999,6 +1001,7 @@ These fields are optional in their documents. Each schema description names the 
 | `status` | `gates[].gitSha` | 0.124.28 | The commit the run reached the gate at |
 | `status` | `gates[].runId` | 0.124.28 | The run that reached the gate: an Op run id, or the CI run id for a component gate that ran in CI |
 | `status` | `gates[].changeSet` | 0.124.28 | The change set the gate binds, when one is stored under its `planDigest` ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). Absent otherwise |
+| `status` | `gates[].decisions` | 0.124.47 | The current decisions covering the gate's member, as `<kind>/<id>`, most relevant first, read from the records without history ([#3616](https://github.com/INTENTIUS/chant/issues/3616)) |
 | `change-set` | `entries[].node`, `graph` | 0.124.28 | On a stored change set: each entry's graph node, and the graph it came from ([#4022](https://github.com/INTENTIUS/chant/issues/4022)) |
 | `status` | `stewards[].ops[].lastRun.gitSha` | 0.124.28 | The commit the run built from |
 | `status` | `stewards[].ops[].lastRun.runOrigin` | 0.124.28 | The CI run the Op ran in, as a release's `runOrigin` names its run. Absent outside CI |
