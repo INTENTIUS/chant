@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { build, mergeBuildRootEntities } from "../../build";
+import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
@@ -10,12 +10,12 @@ import { observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { diffLive, type LiveDiffResult } from "../../lifecycle/live-diff";
 import type { LiveObservation } from "../../graph-ir";
-import type { ResourceMetadata } from "../../lexicon";
+import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
-import type { Declarable } from "../../declarable";
+import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
 import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
@@ -290,16 +290,16 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // `${stack}::${id}` — matching how observation qualifies. A flat whole-
     // project discovery would disambiguate colliding names by module path
     // (UsEast1Src…), which never matches the observed bare LogicalResourceIds.
+    //
+    // The flat canvas is the declared path's graph (#4365, #4358): discovery
+    // plus the build-root contributions (a terraform root's blocks, a rendered
+    // kustomize root) plus the lexicon edges, so a live answer over a Terraform
+    // root overlays onto a canvas that has the root's resources on it.
     const declared =
       stacks.length > 0
-        ? await buildDeclaredPerStack(stacks, projectPath)
-        : await (async () => {
-            const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
-            // The same join the declared-only path makes (#4362), so a live
-            // answer over a terraform root has its blocks on the canvas (#4358).
-            await joinBuildRoots(discovered.entities, ctx, projectPath, config);
-            return buildGraphIr(discovered.entities, projectPath);
-          })();
+        ? await buildDeclaredPerStack(stacks, projectPath, (g, entities) => withLexiconEdges(g, plugins, entities))
+        : await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."), plugins);
+    if (!declared) return 1;
     declaredForDrift = declared;
     // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
     // declared entity nobody could read is painted `_unobserved` and a row can
@@ -341,9 +341,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // overlay copies physical identity but not attrs, so merge them here.
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
   } else {
-    const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
-    await joinBuildRoots(discovered.entities, ctx, projectPath, config);
-    ir = buildGraphIr(discovered.entities);
+    const declared = await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."));
+    if (!declared) return 1;
+    ir = declared;
   }
 
   // Fold derived reachability facts (effectiveIngress, internetFacing) onto
@@ -465,30 +465,40 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 
 
 /**
- * Join build-root entities (a terraform root's blocks, a rendered kustomize
- * root) to the discovered set, the way `chant graph` and `build()` do (#4362).
- * A terraform estate has no typed source at all, so without this a declared
- * search over one had nothing to search. Best-effort: a project whose lexicons
- * cannot be loaded is searched over its typed source alone, with a warning.
+ * The declared graph a search answers over (#4362, #4365, #4368): discovery,
+ * plus the build-root entities (a terraform root's blocks, a rendered
+ * kustomize root), plus the edges the lexicons' `graphEdges` hooks add. The
+ * same join and the same edges `chant graph --format ir` draws, through the
+ * same helpers (`./declared-graph.ts`), so a node's id here is its id there.
+ *
+ * Returns undefined, having printed why, when a build root failed to render
+ * or collided with a discovered name. A search over the rest would answer
+ * `(no matches)` for a root it never read, which is a wrong answer stated as
+ * a fact.
  */
-async function joinBuildRoots(
-  entities: Map<string, Declarable>,
+async function declaredGraph(
   ctx: CommandContext,
   projectPath: string,
-  config: object,
-): Promise<void> {
-  let plugins = ctx.plugins;
+  srcDir: string,
+  loaded?: readonly LexiconPlugin[],
+): Promise<GraphIR | undefined> {
+  const discovered = await discover(srcDir);
+  if (!(await mergeDeclaredBuildRoots(discovered.entities, await declaredBuildRootContributors(ctx, projectPath)))) {
+    console.error(formatError({
+      message: "chant search: a build root failed to render, so the graph it would answer over is incomplete",
+      hint: "fix the error above; `chant graph . --format ir` reports the same one",
+    }));
+    return undefined;
+  }
+  let plugins = loaded ?? ctx.plugins;
   if (plugins.length === 0) {
     try {
       plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
     } catch {
-      return;
+      plugins = [];
     }
   }
-  const contributors = collectBuildRootContributors(plugins, config as Record<string, unknown>, projectPath);
-  if (contributors.length === 0) return;
-  const merged = await mergeBuildRootEntities(entities, contributors);
-  for (const message of [...merged.warnings, ...merged.errors]) console.error(formatWarning({ message }));
+  return withLexiconEdges(buildGraphIr(discovered.entities, projectPath), plugins, discovered.entities);
 }
 
 /** Where an answer's facts came from, for the provenance line (#1266). */
@@ -1339,6 +1349,19 @@ function attrString(v: unknown): string {
   return String(v);
 }
 
+/**
+ * Attributes a bare word does not search, by lexicon (#4368). A terraform
+ * node's `source` is the whole `.tf` file its block came from (the lint
+ * checks need the raw text), so a bare `aws_security_group` matched every
+ * node declared in a file that mentions one: 21 nodes on behold's example
+ * estate, where three are security groups. The block itself is still
+ * searched, through `address` and `body`, and `attr:source=<text>` still
+ * reads the file when that is what the caller means.
+ */
+const BARE_WORD_SKIPS: Record<string, ReadonlySet<string>> = {
+  terraform: new Set(["source"]),
+};
+
 function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>): boolean {
   if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
@@ -1378,8 +1401,13 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
       return key.toLowerCase() === t.a.toLowerCase() && (t.b === undefined || val.toLowerCase().includes(t.b.toLowerCase()));
     });
   }
-  // bare word: substring over id, kind, and all attr values
-  const hay = [n.id, n.kind, ...Object.values(attrs).map(attrString)].join(" ").toLowerCase();
+  // bare word: substring over id, kind, and all attr values, less the ones
+  // that hold text about other nodes (see BARE_WORD_SKIPS).
+  const skip = BARE_WORD_SKIPS[n.lexicon];
+  const values = Object.entries(attrs)
+    .filter(([k]) => !skip?.has(k))
+    .map(([, v]) => attrString(v));
+  const hay = [n.id, n.kind, ...values].join(" ").toLowerCase();
   return hay.includes(t.a.toLowerCase());
 }
 

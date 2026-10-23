@@ -34,6 +34,15 @@ With `--live --env <name>` chant observes the environment, overlays live
 identity and attributes onto the declared graph, and answers from that, on the same
 canvas as [`chant graph --overlay`](/chant/cli/graph/).
 
+The declared graph is the one [`chant graph --format ir`](/chant/cli/graph/)
+draws: the discovered source, plus what a lexicon renders from a build root
+(each `terraform.roots` root's blocks, each `k8s.kustomize.roots` root's
+objects), plus the edges a lexicon resolves itself. A node's id in a search
+row is its id in the graph IR, so `net/aws_security_group.web` names the same
+node in both. A build root that fails to render fails the search with that
+error and exit code 1, since an answer over the rest of the graph would say
+`(no matches)` about a root it never read.
+
 ## Query grammar
 
 Space-separated terms. All terms must match (AND). Quote phrases to keep them
@@ -56,32 +65,12 @@ together.
 | `->[via=<attr>]`, `<-*[to=<attr>]` | a qualified edge may omit the target: any node at the far end |
 | `!<term>` | the node does **not** satisfy the term |
 
-### `kind:` on a Terraform resource
-
-Every Terraform `resource` block is `Terraform::Resource` in the graph, and
-carries its two labels as `attrs.type` and `attrs.name`. `kind:` reads the
-type as well as the kind, with the same boundary rule `kind:EC2::VPC` follows
-on `::`, applied to `_`:
-
-- `kind:aws_instance` is that type exactly. `kind:aws_iam_role` is the roles
-  and never `aws_iam_role_policy` or `aws_iam_role_policy_attachment`, even on
-  a root that has no `aws_iam_role` at all.
-- A term ending in `_` is a prefix: `kind:aws_iam_` is every IAM type.
-  A bare provider name is the same prefix, so `kind:aws` is every `aws_` type.
-- `kind:Terraform::Resource` (or `kind:Resource`) is still every resource.
-- A `data` block's type keeps its prefix: `kind:data.aws_ami` is the AMI
-  lookups, and `kind:aws_ami` matches no data source.
-
-A result row shows the type where a CloudFormation row shows its kind, and
-`--explain` counts against it ("2 of 2 aws_instance matched"). These are the
-same types `--count-by kind` groups by, so `kind:<group>` returns exactly the
-rows counted in that group. `attr:type=`
-is a substring test like any other `attr:`, so prefer `kind:` for a type.
-
-```bash
-chant search "kind:aws_iam_role"
-chant search "kind:aws_iam_ !kind:aws_iam_role"   # IAM types other than roles
-```
+A bare word does not search a Terraform node's `source` attribute. That
+attribute holds the whole `.tf` file the block came from, so a bare
+`aws_security_group` would match every block in a file that mentions one. The
+block's `address` and `body` are still searched, so a block that references a
+group still matches. To search the file text, ask for it:
+`attr:source=aws_security_group`.
 
 The edge operators make the search **edge-aware**: a traversal becomes one
 term instead of a hand-join across results.
@@ -111,6 +100,33 @@ chant search "->{1,2}kind:aws_iam_role"
 
 # VPCs some resource reads through vpc_id
 chant search "kind:aws_vpc <-[via=vpc_id]"
+```
+
+## `kind:` on a Terraform resource
+
+Every Terraform `resource` block is `Terraform::Resource` in the graph, and
+carries its two labels as `attrs.type` and `attrs.name`. `kind:` reads the
+type as well as the kind, with the same boundary rule `kind:EC2::VPC` follows
+on `::`, applied to `_`:
+
+- `kind:aws_instance` is that type exactly. `kind:aws_iam_role` is the roles
+  and never `aws_iam_role_policy` or `aws_iam_role_policy_attachment`, even on
+  a root that has no `aws_iam_role` at all.
+- A term ending in `_` is a prefix: `kind:aws_iam_` is every IAM type.
+  A bare provider name is the same prefix, so `kind:aws` is every `aws_` type.
+- `kind:Terraform::Resource` (or `kind:Resource`) is still every resource.
+- A `data` block's type keeps its prefix: `kind:data.aws_ami` is the AMI
+  lookups, and `kind:aws_ami` matches no data source.
+
+A result row shows the type where a CloudFormation row shows its kind, and
+`--explain` counts against it ("2 of 2 aws_instance matched"). These are the
+same types `--count-by kind` groups by, so `kind:<group>` returns exactly the
+rows counted in that group. `attr:type=` is a substring test like any other
+`attr:`, so prefer `kind:` for a type.
+
+```bash
+chant search "kind:aws_iam_role"
+chant search "kind:aws_iam_ !kind:aws_iam_role"   # IAM types other than roles
 ```
 
 ## Derived attributes
@@ -445,4 +461,4 @@ chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-d
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
-| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
+| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a build root (`terraform.roots`, `k8s.kustomize.roots`) that failed to render, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
