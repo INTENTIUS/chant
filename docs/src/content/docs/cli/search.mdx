@@ -34,6 +34,15 @@ With `--live --env <name>` chant observes the environment, overlays live
 identity and attributes onto the declared graph, and answers from that, on the same
 canvas as [`chant graph --overlay`](/chant/cli/graph/).
 
+The declared graph is the one [`chant graph --format ir`](/chant/cli/graph/)
+draws: the discovered source, plus what a lexicon renders from a build root
+(each `terraform.roots` root's blocks, each `k8s.kustomize.roots` root's
+objects), plus the edges a lexicon resolves itself. A node's id in a search
+row is its id in the graph IR, so `net/aws_security_group.web` names the same
+node in both. A build root that fails to render fails the search with that
+error and exit code 1, since an answer over the rest of the graph would say
+`(no matches)` about a root it never read.
+
 ## Query grammar
 
 Space-separated terms. All terms must match (AND). Quote phrases to keep them
@@ -55,6 +64,13 @@ together.
 | `->[to=<attr>]X`, `<-[to=<attr>]X` | only edges that read the producer attribute (`toAttr`) `<attr>` |
 | `->[via=<attr>]`, `<-*[to=<attr>]` | a qualified edge may omit the target: any node at the far end |
 | `!<term>` | the node does **not** satisfy the term |
+
+A bare word does not search a Terraform node's `source` attribute. That
+attribute holds the whole `.tf` file the block came from, so a bare
+`aws_security_group` would match every block in a file that mentions one. The
+block's `address` and `body` are still searched, so a block that references a
+group still matches. To search the file text, ask for it:
+`attr:source=aws_security_group`.
 
 The edge operators make the search **edge-aware**: a traversal becomes one
 term instead of a hand-join across results.
@@ -416,4 +432,4 @@ chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-d
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
-| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
+| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a build root (`terraform.roots`, `k8s.kustomize.roots`) that failed to render, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
