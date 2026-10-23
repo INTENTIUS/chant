@@ -22,6 +22,7 @@ import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } fro
 import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
 import { parseCountBy, countGroups, countsJson, formatCounts, groupMembers, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
+import { adjacencyOf, walkBreadthFirst } from "../../graph-walk";
 import type { CommandContext } from "../registry";
 import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode, type SearchFailure, type SearchHead } from "../../workspace/search-contract";
 
@@ -1870,13 +1871,7 @@ const adjacency = new WeakMap<GraphIR, { out: Map<string, IREdge[]>; in: Map<str
 function edgeIndex(ir: GraphIR): { out: Map<string, IREdge[]>; in: Map<string, IREdge[]> } {
   let idx = adjacency.get(ir);
   if (!idx) {
-    idx = { out: new Map(), in: new Map() };
-    for (const e of ir.edges ?? []) {
-      if (!idx.out.has(e.from)) idx.out.set(e.from, []);
-      idx.out.get(e.from)!.push(e);
-      if (!idx.in.has(e.to)) idx.in.set(e.to, []);
-      idx.in.get(e.to)!.push(e);
-    }
+    idx = adjacencyOf(ir.edges ?? []);
     adjacency.set(ir, idx);
   }
   return idx;
@@ -1894,17 +1889,14 @@ function sameName(a: string | undefined, b: string): boolean {
  * the target leaf (any node when the term has none) at a depth inside the
  * term's range. A plain `->`/`<-` is the range 1..1.
  *
- * Termination on a cycle: a state is (node, depth capped at the range's
- * minimum). Past the minimum, arriving at a node again by a longer walk can
- * reach nothing the first arrival could not, so it is not queued twice. The
- * state space is finite and the walk always ends.
+ * The walk is `walkBreadthFirst` (graph-walk.ts), shared with carve's
+ * reachability (#2325); it is what terminates on a cycle.
  */
 function findPath(n: IRNode, t: Term, ir: GraphIR, byId: Map<string, IRNode>): PathHop[] | null {
   if (t.kind !== "edge") return null;
   const { min, max } = t.depth ?? { min: 1, max: 1 };
   const idx = edgeIndex(ir);
   const out = t.dir === "out";
-  type State = { id: string; depth: number; hops: PathHop[] };
   // A capability edge (#4375) stands for the hops that proved it.
   const steps = (id: string): { far: string; hops: PathHop[] }[] => {
     if (t.capability !== undefined) return capabilitySteps(id, t.capability, out, ir);
@@ -1915,28 +1907,15 @@ function findPath(n: IRNode, t: Term, ir: GraphIR, byId: Map<string, IRNode>): P
         hops: [{ from: e.from, ...(e.viaAttr ? { fromAttr: e.viaAttr } : {}), to: e.to, ...(e.toAttr ? { toAttr: e.toAttr } : {}) }],
       })));
   };
-  const seen = new Set<string>([`${n.id}|0`]);
-  let frontier: State[] = [{ id: n.id, depth: 0, hops: [] }];
-  while (frontier.length > 0) {
-    const next: State[] = [];
-    for (const s of frontier) {
-      if (s.depth >= max) continue;
-      for (const step of steps(s.id)) {
-        const farId = step.far;
-        const far = byId.get(farId);
-        if (!far) continue;
-        const depth = s.depth + 1;
-        const hops = [...s.hops, ...step.hops];
-        if (depth >= min && (!t.sub || matchTerm(far, t.sub, ir, byId))) return hops;
-        const key = `${farId}|${Math.min(depth, min)}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        next.push({ id: farId, depth, hops });
-      }
-    }
-    frontier = next;
-  }
-  return null;
+  // A node the graph does not hold is no step at all, and the match is the
+  // first arrival in range that satisfies the target leaf (#4359).
+  const found = walkBreadthFirst<PathHop>(n.id, {
+    min,
+    max,
+    steps: (id) => steps(id).filter((step) => byId.has(step.far)),
+    arrive: ({ id }) => !t.sub || matchTerm(byId.get(id)!, t.sub, ir, byId),
+  });
+  return found ? found.hops : null;
 }
 
 function bareId(id: string): string {

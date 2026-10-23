@@ -31,7 +31,8 @@
  */
 
 import { inboundEdges, outboundEdges } from "./graph";
-import { foldParentOf, resolveTier, type TierInfo } from "./tier-map";
+import { computeFolds } from "./folds";
+import { resolveTier, type TierInfo } from "./tier-map";
 import type { TfGraph, TfNode } from "./types";
 
 export type PeelabilityBand = "clean leaf" | "carvable w/ edits" | "leave in Terraform";
@@ -143,28 +144,6 @@ export function bandFor(score: number): PeelabilityBand {
 
 /** Module tier: a module maps to a chant composite — reshaping, so tier 2 by default. */
 const MODULE_TIER = 2 as const;
-
-/**
- * Build the set of addresses that fold into a parent present in the estate, plus
- * the reverse lookup (parent → its folded children), so a parent can discount
- * inbound edges coming from its own folded sub-resources.
- */
-function computeFolds(graph: TfGraph): { folded: Set<string>; childrenOf: Map<string, Set<string>> } {
-  const byAddress = new Map(graph.nodes.map((n) => [n.address, n]));
-  const folded = new Set<string>();
-  const childrenOf = new Map<string, Set<string>>();
-  for (const node of graph.nodes) {
-    if (node.kind !== "resource" || !node.type) continue;
-    const parentType = foldParentOf(node.type);
-    if (!parentType) continue;
-    const parentAddress = `${parentType}.${node.name}`;
-    if (!byAddress.has(parentAddress)) continue; // sub-resource without its parent → score it on its own
-    folded.add(node.address);
-    if (!childrenOf.has(parentAddress)) childrenOf.set(parentAddress, new Set());
-    childrenOf.get(parentAddress)!.add(node.address);
-  }
-  return { folded, childrenOf };
-}
 
 function scoreNode(
   node: TfNode,
