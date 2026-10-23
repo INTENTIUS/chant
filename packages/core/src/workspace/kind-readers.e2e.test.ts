@@ -65,4 +65,32 @@ describe("terraform and choudoufu members through the terraform lexicon (#2874)"
     },
     TIMEOUT,
   );
+
+  // behold#919: the reader project sets `graph.lint: "report"`, so a member
+  // whose HCL fails one of the lexicon's error rules is composed, with the
+  // finding on its meta.lint. Before, it failed with command-failed.
+  test(
+    "a member with a lint error is composed, the finding on its meta.lint",
+    async () => {
+      const root = repo({
+        "chant.workspace.json": declaration([{ name: "db", dir: "estates/db", kind: "terraform" }], { pins: [{ package: LEXICON, version: VERSION }] }),
+        "estates/db/main.tf":
+          'resource "aws_db_instance" "orders" {\n  identifier        = "orders"\n  engine            = "postgres"\n  instance_class    = "db.t3.micro"\n  allocated_storage = 20\n  storage_encrypted = false\n}\n',
+        ".gitignore": "node_modules\n",
+      });
+      symlinkSync(join(REPO, "node_modules"), join(root, "node_modules"), "dir");
+
+      const { doc, failed } = await workspaceGraph({ cwd: root });
+      const g = result(doc);
+      expectValid(g);
+      expect(g.members.map((m) => [m.name, m.status, m.reason?.code ?? null])).toEqual([["db", "composed", null]]);
+      expect(failed).toBe(false);
+      expect(g.nodes.map((n) => n.id)).toContain("db/db/aws_db_instance.orders");
+      const lint = (g.members[0] as { meta?: { lint?: { errors: number; findings: { ruleId: string; severity: string; entity?: string }[] } } }).meta?.lint;
+      expect(lint?.errors).toBeGreaterThanOrEqual(1);
+      // The finding names its entity, the id the member IR gives the node (before composition prefixes it).
+      expect(lint?.findings).toContainEqual(expect.objectContaining({ ruleId: "TF033", severity: "error", entity: "db/aws_db_instance.orders" }));
+    },
+    TIMEOUT,
+  );
 });

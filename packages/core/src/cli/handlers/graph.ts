@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
@@ -517,6 +517,82 @@ function refuseLintGate(lint: LintResult, projectPath: string): void {
   );
 }
 
+/** One lint finding as `meta.lint` carries it (INTENTIUS/behold#919). */
+export interface GraphLintFinding {
+  ruleId: string;
+  severity: string;
+  message: string;
+  /** Relative to the project when inside it, else as lint reported it. */
+  file: string;
+  line: number;
+  column: number;
+  /** The entity a post-synth check named, which is the graph node's id. Absent for a source-file rule. */
+  entity?: string;
+}
+
+/**
+ * What a `graph.lint: "report"` project's entity graph carries on `meta.lint`:
+ * the counts `chant lint` would print and every finding behind them, warnings
+ * included. Present on every graph such a project emits, findings or none, so
+ * a reader can tell "linted, clean" from "not looked" (no key).
+ */
+export interface GraphLintReport {
+  errors: number;
+  warnings: number;
+  findings: GraphLintFinding[];
+}
+
+/** The project's `graph.lint`: `"report"` only when it says so (#919). */
+async function graphLintMode(projectPath: string): Promise<"gate" | "report"> {
+  const { config } = await loadChantConfigUpward(projectPath).catch(() => ({ config: {} as ChantConfig }));
+  return config.graph?.lint === "report" ? "report" : "gate";
+}
+
+export function graphLintReport(lint: LintResult, projectPath: string): GraphLintReport {
+  const rel = (file: string) => {
+    if (!isAbsolute(file)) return file;
+    const r = relative(projectPath, file);
+    return r.startsWith("..") ? file : r;
+  };
+  const findings = (lint.diagnostics ?? []).map((d) => ({
+    ruleId: d.ruleId,
+    severity: d.severity,
+    message: d.message,
+    file: rel(d.file),
+    line: d.line,
+    column: d.column,
+    ...(d.entity ? { entity: d.entity } : {}),
+  }));
+  return {
+    errors: findings.filter((f) => f.severity === "error").length,
+    warnings: findings.filter((f) => f.severity === "warning").length,
+    findings,
+  };
+}
+
+/**
+ * The lint gate for the entity graph. Returns false when the graph must not be
+ * emitted, having printed why. A `graph.lint: "report"` project passes with
+ * lint errors and says so on stderr, unless an error is an uninstalled
+ * dependency: then there is no source to read, and it refuses as the gate does.
+ */
+function passLintGate(lint: LintResult, projectPath: string, mode: "gate" | "report"): boolean {
+  if (lint.success) return true;
+  if (mode === "gate") {
+    refuseLintGate(lint, projectPath);
+    return false;
+  }
+  const errors = (lint.diagnostics ?? []).filter((d) => d.severity === "error").map((d) => d.message);
+  if (reportUninstalledDependencies(errors, projectPath)) return false;
+  const n = errors.length;
+  console.error(
+    formatWarning({
+      message: `Emitting the graph with ${n} lint error${n === 1 ? "" : "s"}: graph.lint is "report", so every finding is on the IR's meta.lint. Run \`chant lint\` to see them.`,
+    }),
+  );
+  return true;
+}
+
 /**
  * `chant graph --components --format ir|mermaid|dot|layout` — the component DAG
  * projected into the renderable IR (nodes = components, `groups.byWave` = the
@@ -661,7 +737,9 @@ async function buildPipelineProjection(
  * `--node-sizes` so spacing fits real node footprints, and defaults to the dagre
  * engine (no native dependency); `--layout-engine graphviz` opts into `dot`.
  * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
- * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
+ * does not pass lint, unless the project's config sets `graph.lint: "report"`
+ * (#919): then the graph is emitted and the findings ride on `meta.lint`.
+ * Non-zero on discovery errors or a layout-engine failure.
  */
 /**
  * Add what the lexicons' `graphMeta` hooks report to `ir.meta` (#2559). A
@@ -799,17 +877,16 @@ async function runGraphView(
   const buildParams = await graphBuildParams(ctx, projectPath);
   if (!buildParams) return 1;
 
-  // Gate: only emit for lint-clean source.
+  // Gate: only emit for lint-clean source, unless the project reads source it
+  // did not author and asks for the findings instead (`graph.lint`, #919).
   const lint = await lintCommand({
     path: ctx.args.path,
     format: "stylish",
     sandbox: ctx.args.sandbox,
     buildParams,
   });
-  if (!lint.success) {
-    refuseLintGate(lint, projectPath);
-    return 1;
-  }
+  const lintMode = await graphLintMode(projectPath);
+  if (!passLintGate(lint, projectPath, lintMode)) return 1;
 
   const result = await discover(projectPath, { buildParams });
   if (result.errors.length > 0) {
@@ -874,6 +951,9 @@ async function runGraphView(
       if (notice) console.error(formatWarning({ message: notice }));
     }
   }
+  // Last, so no lens or detail pass can drop it: the findings are about the
+  // whole source read, not about the nodes this view kept.
+  if (lintMode === "report") ir = { ...ir, meta: { ...ir.meta, lint: graphLintReport(lint, projectPath) } };
   return emitIr(ir, ctx, format);
 }
 
