@@ -60,7 +60,7 @@ import { writeBlobToPath, readBlobFromPath, listFilesInDir } from "./git";
 import type { BuildArchiveManifest } from "../components/verbs/build-archive";
 
 /** Fixed top-level directory on the `chant/lifecycle` orphan branch that holds every persisted build manifest — a peer of the per-env directories, never nested inside one (see module doc for why). */
-export const BUILDS_DIR = "_builds";
+const BUILDS_DIR = "_builds";
 
 /** Turn a `sha256:...`-style digest into a filesystem/git-tree-safe filename stem (`:` is not usable in a git tree entry name the way this plumbing constructs it). */
 function digestToFilenameStem(digest: string): string {

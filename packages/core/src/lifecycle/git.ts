@@ -35,12 +35,6 @@ export interface LedgerLocation {
   member?: string | readonly string[];
   /** The prefix `resolveMemberLedger` returns: `""`, or `_members/<member>/` per level. */
   ledgerPrefix?: string;
-  /**
-   * A commit of the branch to read at, in place of its tip (#4329): what
-   * {@link resolveLedgerCommit} returns. Only {@link readBlobFromPath},
-   * {@link listFilesInDir} and {@link listLedgerTrees} take it; a write never does.
-   */
-  at?: string;
 }
 
 async function ledgerPrefixOf(opts?: LedgerLocation): Promise<string> {
@@ -436,7 +430,7 @@ export async function readBlobFromPath(
   const rt = getRuntime();
   const dir = await ledgerDir(environment, opts);
   const result = await rt.spawn(
-    ["git", "show", `${opts?.at ?? (await ledgerRevision(opts?.cwd))}:${dir}/${filename}`],
+    ["git", "show", `${await ledgerRevision(opts?.cwd)}:${dir}/${filename}`],
     { cwd: opts?.cwd },
   );
   if (result.exitCode !== 0) return null;
@@ -633,7 +627,7 @@ export async function listLedgerEnvironments(opts?: LedgerLocation): Promise<str
  * base, is absent.
  */
 export async function listLedgerTrees(opts?: LedgerLocation): Promise<string[]> {
-  const tip = opts?.at ?? (await getStateBranchTip(opts?.cwd));
+  const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
   // A member lists the directories under its own `_members/<member>/`; the
@@ -664,7 +658,7 @@ export async function listLedgerTrees(opts?: LedgerLocation): Promise<string[]> 
  * --name-only` call.
  */
 export async function listFilesInDir(dir: string, opts?: LedgerLocation): Promise<string[]> {
-  const tip = opts?.at ?? (await getStateBranchTip(opts?.cwd));
+  const tip = await getStateBranchTip(opts?.cwd);
   if (!tip) return [];
   const rt = getRuntime();
   const path = await ledgerDir(dir, opts);
@@ -1550,36 +1544,10 @@ function depth(dir: string): number {
 }
 
 /**
- * The commit of `chant/lifecycle` that `rev` names (#4329), for a read at an
- * earlier point of the ledger. `rev` is anything `git rev-parse` reads, such
- * as a sha or `chant/lifecycle~3`, or a date or time (`2026-10-01`,
- * `2026-10-01T12:00:00Z`) for the newest ledger commit at or before it. Null
- * when it names nothing, or a commit the branch does not hold.
- */
-export async function resolveLedgerCommit(rev: string, opts?: { cwd?: string }): Promise<string | null> {
-  const rt = getRuntime();
-  const branch = await ledgerRevision(opts?.cwd);
-  let sha: string | null = null;
-  if (/^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(rev)) {
-    // A bare date reads as the end of that day, so `--at 2026-10-01` holds what was recorded on the first.
-    const before = /^\d{4}-\d{2}-\d{2}$/.test(rev) ? `${rev}T23:59:59Z` : rev;
-    const listed = await rt.spawn(["git", "rev-list", "-1", `--before=${before}`, branch], { cwd: opts?.cwd, env: C_LOCALE_ENV });
-    sha = listed.exitCode === 0 ? listed.stdout.trim() || null : null;
-  } else {
-    const parsed = await rt.spawn(["git", "rev-parse", "--verify", "--quiet", `${rev}^{commit}`], { cwd: opts?.cwd, env: C_LOCALE_ENV });
-    sha = parsed.exitCode === 0 ? parsed.stdout.trim() || null : null;
-  }
-  if (sha === null) return null;
-  const onBranch = await rt.spawn(["git", "merge-base", "--is-ancestor", sha, branch], { cwd: opts?.cwd, env: C_LOCALE_ENV });
-  return onBranch.exitCode === 0 ? sha : null;
-}
-
-/**
  * The branch's read side as a {@link LedgerReadPort} for the member `opts`
  * names (#3865): what the bundle-safe readers (`./release-read.ts`,
  * `./wave-plans.ts`) are handed. A product with its own way to read the
  * branch passes its own port instead and never loads this module.
- * With `opts.at` it reads that commit instead of the tip (#4329).
  */
 export function gitLedgerReadPort(opts?: LedgerLocation): LedgerReadPort {
   return {

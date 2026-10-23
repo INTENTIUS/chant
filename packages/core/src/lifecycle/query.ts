@@ -11,18 +11,7 @@
  * - the gate ledgers, `_gates/<op>.jsonl` (`./gate-ledger.ts`);
  * - the deploy records, `<env>/releases.jsonl` (`./release-read.ts`);
  * - the releases and their cuts, `_releases/<digest>.json` and
- *   `_releases/cuts.jsonl` (`./release-store.ts`);
- * - the converge ticks, `<env>/converge.jsonl` (`./converge-ledger.ts`), and
- *   the deploy outcomes, `<env>/outcomes.jsonl` (`./deploy-outcome.ts`),
- *   added in #4329;
- * - the build manifests, `_builds/<digest>.json` (`./build-ledger-store.ts`),
- *   the stored change sets, `_change-sets/<digest>.json`
- *   (`./change-set-store.ts`), and the work lease histories,
- *   `_leases/<item>.jsonl` (`./work-lease.ts`), added in #4329.
- *
- * A product with records of its own, kept somewhere else, hands them in as a
- * {@link QuerySource} (#4329): its tables sit beside chant's in the same
- * database, so one statement joins them.
+ *   `_releases/cuts.jsonl` (`./release-store.ts`).
  *
  * The tables are a contract. {@link QUERY_SCHEMA_VERSION} names it, and the
  * `chant_schema` table lists every table and column with the version, so a
@@ -35,11 +24,9 @@
  *
  * The engine is `node:sqlite`, the SQLite built into Node.js 22.13 and later.
  * The database is in memory, takes `PRAGMA query_only`, and only a statement
- * that begins with SELECT, WITH or VALUES runs.
+ * that begins with SELECT, WITH or VALUES runs. This mirrors terragucci's
+ * `query.ts`, which reads report JSON from a bucket instead.
  */
-import { changeSetFile, parseStoredChangeSet, CHANGE_SETS_DIR } from "./change-set-store";
-import { CONVERGE_FILE, parseConvergeLedger } from "./converge-ledger";
-import { OUTCOMES_FILE, parseDeployOutcomes } from "./deploy-outcome";
 import type { GateOrigin } from "./gate-origin";
 import { parseGateLedger, GATES_DIR, type GateResolutionRecord, type PendingGateRecord } from "./gate-ledger";
 import type { LedgerReadPort } from "./ledger-port";
@@ -47,16 +34,11 @@ import { parseReleaseLedger, releaseLedgerLines } from "./release-read";
 import { CUTS_FILE, parseCuts, parseRelease, RELEASES_DIR, verifyReleaseDigest } from "./release-store";
 import { opOfRunLedgerFile, parseRunLedger } from "./run-ledger";
 import type { LifecycleSnapshot } from "./types";
-import { BUILDS_DIR } from "./build-ledger-store";
-import { hasLegacyContentDigest } from "./legacy-digest";
-import { LEASES_DIR, parseLeaseHistory } from "./work-lease";
-import type { BuildArchiveManifest } from "../components/verbs/build-archive";
 
 /** The version of the table schema below. */
 export const QUERY_SCHEMA_VERSION = 1;
 
-export type QueryColumnType = "TEXT" | "INTEGER" | "REAL";
-type ColumnType = QueryColumnType;
+type ColumnType = "TEXT" | "INTEGER";
 
 /**
  * Each table's columns, in order, with their SQLite type. A column named in
@@ -79,20 +61,6 @@ export const QUERY_TABLES = {
   releases: [["member", "TEXT"], ["release_digest", "TEXT"], ["release_member", "TEXT"], ["git_sha", "TEXT"], ["envs", "TEXT"], ["artifacts", "TEXT"]],
   /** One row per line of `_releases/cuts.jsonl`. `signed` is 1 for a signed cut. */
   cuts: [["member", "TEXT"], ["release_digest", "TEXT"], ["label", "TEXT"], ["actor", "TEXT"], ["timestamp", "TEXT"], ["run_id", "TEXT"], ["forge", "TEXT"], ["channel", "TEXT"], ["signed", "INTEGER"], ["composed_base", "TEXT"]],
-  /** One row per ConvergeOp tick in `<env>/converge.jsonl` (#4329). The counts are the tick's summary; `fired_rule_ids`, `outcomes`, `components` and `resources` are JSON. */
-  converge: [["member", "TEXT"], ["env", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["timestamp", "TEXT"], ["fired_rule_ids", "TEXT"], ["outcomes", "TEXT"], ["components", "TEXT"], ["resources", "TEXT"], ["drifted", "INTEGER"], ["remediated", "INTEGER"], ["reported", "INTEGER"], ["skipped_budget", "INTEGER"], ["skipped_flap", "INTEGER"], ["unobserved", "INTEGER"], ["adopted", "INTEGER"], ["gated", "INTEGER"], ["log", "TEXT"]],
-  /** One row per component of each deploy outcome in `<env>/outcomes.jsonl` (#4329): a promote, rollback or redeploy that failed or stopped at a gate. `status` is the run's, `outcome` the component's. */
-  deploy_outcomes: [["member", "TEXT"], ["env", "TEXT"], ["verb", "TEXT"], ["run_id", "TEXT"], ["timestamp", "TEXT"], ["actor", "TEXT"], ["release_digest", "TEXT"], ["status", "TEXT"], ["component", "TEXT"], ["outcome", "TEXT"], ["digest", "TEXT"], ["component_release_digest", "TEXT"]],
-  /** One row per build manifest in `_builds/` (#4329). `artifacts` counts its entries; `legacy_digest` is 1 when it holds digests from before real SHA-256. */
-  builds: [["member", "TEXT"], ["manifest_digest", "TEXT"], ["component", "TEXT"], ["created_at", "TEXT"], ["artifacts", "INTEGER"], ["legacy_digest", "INTEGER"]],
-  /** One row per entry of each build manifest (#4329): `kind` is image, template, asset or sbom. */
-  build_artifacts: [["member", "TEXT"], ["manifest_digest", "TEXT"], ["component", "TEXT"], ["kind", "TEXT"], ["path", "TEXT"], ["digest", "TEXT"], ["media_type", "TEXT"], ["subject_digest", "TEXT"], ["package_count", "INTEGER"], ["generator", "TEXT"]],
-  /** One row per stored change set in `_change-sets/` whose content hashes to its digest (#4329). `plans` is JSON, one object per member with its lexicon, planner, status and plan digest; `actions` is JSON, the count of each action; `failed` is JSON. */
-  change_sets: [["member", "TEXT"], ["digest", "TEXT"], ["release_digest", "TEXT"], ["environment", "TEXT"], ["chant", "TEXT"], ["plans", "TEXT"], ["entries", "INTEGER"], ["holes", "INTEGER"], ["actions", "TEXT"], ["failed", "TEXT"], ["graph_member", "TEXT"], ["graph_at", "TEXT"]],
-  /** One row per entry of each stored change set (#4329). `set_member` is the member the entry plans for, inside the document; `plan_digest` is that member's. `importing` is 1 for an entry that imports. `attributes` is JSON. */
-  change_set_entries: [["member", "TEXT"], ["digest", "TEXT"], ["set_member", "TEXT"], ["lexicon", "TEXT"], ["planner", "TEXT"], ["address", "TEXT"], ["type", "TEXT"], ["name", "TEXT"], ["module", "TEXT"], ["deposed", "TEXT"], ["physical_id", "TEXT"], ["action", "TEXT"], ["importing", "INTEGER"], ["disruption", "TEXT"], ["region", "TEXT"], ["scope", "TEXT"], ["node", "TEXT"], ["source", "TEXT"], ["plan_digest", "TEXT"], ["attributes", "TEXT"]],
-  /** One row per line of each work lease history, `_leases/<item>.jsonl` (#4329): `event` is claim, renew or release; `written_by` is who wrote the line. */
-  leases: [["member", "TEXT"], ["item", "TEXT"], ["event", "TEXT"], ["holder", "TEXT"], ["written_by", "TEXT"], ["token", "TEXT"], ["acquired_at", "TEXT"], ["expires_at", "TEXT"], ["timestamp", "TEXT"], ["outcome", "TEXT"], ["note", "TEXT"]],
 } as const satisfies Record<string, ReadonlyArray<readonly [string, ColumnType]>>;
 
 export type QueryTable = keyof typeof QUERY_TABLES;
@@ -118,33 +86,12 @@ export interface QueryLoad {
   malformed: Record<QueryTable, number>;
 }
 
-/**
- * A product's own records, as tables beside chant's (#4329). The product
- * reads them however it keeps them and hands in the rows; chant creates the
- * tables, lists them in `chant_schema` under the source's name and version,
- * and runs the statement over all of them. A table may not take the name of
- * a chant table or of `chant_schema`, and every name is lower-case letters,
- * digits and `_`.
- */
-export interface QuerySource {
-  /** The product, such as `terragucci`: `chant_schema.source` for its tables. */
-  name: string;
-  /** The product's own schema version for these tables: `chant_schema.version` on their rows. */
-  version: number;
-  tables: Record<string, { columns: ReadonlyArray<readonly [string, QueryColumnType]>; rows: readonly QueryRow[] }>;
-}
-
-export interface QueryOptions {
-  /** Products' tables to add beside chant's. */
-  sources?: readonly QuerySource[];
-}
-
 export interface QueryResult {
   schemaVersion: number;
   columns: string[];
   rows: QueryRow[];
-  /** How many rows each table held, a source's tables included. */
-  tables: Record<string, number>;
+  /** How many rows each table held. */
+  tables: Record<QueryTable, number>;
   malformed: Record<QueryTable, number>;
 }
 
@@ -156,8 +103,6 @@ const empty = <T>(v: () => T): Record<QueryTable, T> => Object.fromEntries(TABLE
 const json = (v: unknown): string | null => (v === undefined || v === null ? null : JSON.stringify(v));
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const bit = (v: boolean): number => (v ? 1 : 0);
-/** A summary count, 0 when an older record has none (`ConvergeTickRecord.summary.gated` came later). */
-const n = (v: unknown): number => (typeof v === "number" ? v : 0);
 
 /** Whether a parsed `.json` file under an environment is a snapshot (an observation baseline or another file is not). */
 function isSnapshot(v: unknown): v is LifecycleSnapshot {
@@ -238,24 +183,6 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
           }
           continue;
         }
-        if (file === CONVERGE_FILE) {
-          const { records, malformed: bad } = parseConvergeLedger(await port.read(env, file));
-          malformed.converge += bad;
-          for (const t of records) {
-            data.converge.push({ member, env: t.env, id: str(t.id), op: t.op, timestamp: t.timestamp, fired_rule_ids: json(t.firedRuleIds), outcomes: json(t.outcomes ?? []), components: json(t.components), resources: json(t.resources), drifted: n(t.summary?.drifted), remediated: n(t.summary?.remediated), reported: n(t.summary?.reported), skipped_budget: n(t.summary?.skippedBudget), skipped_flap: n(t.summary?.skippedFlap), unobserved: n(t.summary?.unobserved), adopted: n(t.summary?.adopted), gated: n(t.summary?.gated), log: str(t.log) });
-          }
-          continue;
-        }
-        if (file === OUTCOMES_FILE) {
-          const { outcomes, malformed: bad } = parseDeployOutcomes(await port.read(env, file));
-          malformed.deploy_outcomes += bad;
-          for (const o of outcomes) {
-            for (const c of o.components) {
-              data.deploy_outcomes.push({ member, env: o.env, verb: o.verb, run_id: o.runId, timestamp: o.timestamp, actor: o.actor, release_digest: str(o.releaseDigest), status: o.status, component: c.component, outcome: c.outcome, digest: c.digest, component_release_digest: str(c.releaseDigest) });
-            }
-          }
-          continue;
-        }
         if (opOfRunLedgerFile(file) !== null) {
           const text = await port.read(env, file);
           if (text === null) continue;
@@ -300,65 +227,8 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
         data.releases.push({ member, release_digest: release.releaseDigest, release_member: release.member, git_sha: release.commit, envs: release.targets.map((t) => t.env).join(","), artifacts: json(release.artifactDigests) });
       }
     }
-    if (trees.includes(BUILDS_DIR)) {
-      for (const file of (await port.list(BUILDS_DIR)).sort()) {
-        if (!file.endsWith(".json")) continue;
-        const m = parseJson(await port.read(BUILDS_DIR, file)) as Partial<BuildArchiveManifest> | null;
-        // `readBuildManifest` (build-ledger-store.ts) reads any JSON; a row needs the digest it is keyed by and its entries.
-        if (!m || typeof m.manifestDigest !== "string" || typeof m.component !== "string" || !Array.isArray(m.contents)) {
-          malformed.builds++;
-          continue;
-        }
-        const contents = m.contents.filter((e) => e && typeof e === "object");
-        const legacy = hasLegacyContentDigest([m.manifestDigest, ...contents.map((e) => e.digest)]);
-        data.builds.push({ member, manifest_digest: m.manifestDigest, component: m.component, created_at: str(m.createdAt), artifacts: contents.length, legacy_digest: bit(legacy) });
-        for (const e of contents) {
-          data.build_artifacts.push({ member, manifest_digest: m.manifestDigest, component: m.component, kind: str(e.kind), path: str(e.path), digest: str(e.digest), media_type: str(e.mediaType), subject_digest: str(e.subjectDigest), package_count: typeof e.packageCount === "number" ? e.packageCount : null, generator: str(e.generator) });
-        }
-      }
-    }
-    if (trees.includes(CHANGE_SETS_DIR)) {
-      for (const file of (await port.list(CHANGE_SETS_DIR)).sort()) {
-        if (!file.endsWith(".json")) continue;
-        const text = await port.read(CHANGE_SETS_DIR, file);
-        // The file is named for its digest (change-set-store.ts changeSetFile), and `parseStoredChangeSet` checks the content hashes to it.
-        const named = (parseJson(text) as { digest?: unknown } | null)?.digest;
-        const read = text === null || typeof named !== "string" || changeSetFile(named) !== file ? null : parseStoredChangeSet(text, named);
-        if (!read || read.status !== "found") {
-          malformed.change_sets++;
-          continue;
-        }
-        const doc = read.document;
-        const plans = new Map(doc.members.map((m) => [m.member, m.planDigest]));
-        data.change_sets.push({ member, digest: doc.digest, release_digest: str(doc.releaseDigest), environment: str(doc.environment), chant: str(doc.chant), plans: json(doc.members.map((m) => ({ member: m.member, lexicon: m.lexicon, planner: m.planner, status: m.status, planDigest: m.planDigest, ...(m.provisional ? { provisional: true } : {}), holes: m.holes.length }))), entries: doc.entries.length, holes: doc.members.reduce((sum, m) => sum + m.holes.length, 0), actions: json(doc.summary?.actions ?? {}), failed: json(doc.summary?.failed ?? []), graph_member: str(doc.graph?.member), graph_at: str(doc.graph?.at) });
-        for (const e of doc.entries) {
-          data.change_set_entries.push({ member, digest: doc.digest, set_member: e.member, lexicon: e.lexicon, planner: e.planner, address: e.address, type: e.type, name: str(e.name), module: str(e.module), deposed: str(e.deposed), physical_id: str(e.id), action: e.action, importing: bit(e.importing === true), disruption: str(e.disruption), region: str(e.region), scope: str(e.scope), node: str(e.node), source: str(e.source), plan_digest: plans.get(e.member) ?? null, attributes: json(e.attributes) });
-        }
-      }
-    }
-    if (trees.includes(LEASES_DIR)) {
-      for (const file of (await port.list(LEASES_DIR)).sort()) {
-        if (!file.endsWith(".jsonl")) continue;
-        const text = await port.read(LEASES_DIR, file);
-        if (text === null) continue;
-        const { records, malformed: bad } = parseLeaseHistory(text);
-        malformed.leases += bad;
-        for (const r of records) {
-          data.leases.push({ member, item: r.item, event: r.event, holder: r.holder, written_by: r.by, token: r.token, acquired_at: r.acquiredAt, expires_at: r.expiresAt, timestamp: r.timestamp, outcome: str(r.outcome), note: str(r.note) });
-        }
-      }
-    }
   }
   return { data, malformed };
-}
-
-function parseJson(text: string | null): unknown {
-  if (text === null) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 /** The part of `node:sqlite` this uses, typed here since the repo's @types/node predates the module. */
@@ -394,82 +264,39 @@ export function firstWord(sql: string): string {
   return (/^[A-Za-z]+/.exec(s)?.[0] ?? "").toLowerCase();
 }
 
-const NAME = /^[a-z_][a-z0-9_]*$/;
-const COLUMN_TYPES: readonly QueryColumnType[] = ["TEXT", "INTEGER", "REAL"];
-
-/** The source tables to create, checked: names that are safe to write unquoted and taken by no chant table or other source. */
-function sourceTables(sources: readonly QuerySource[]): Array<{ source: QuerySource; table: string; columns: ReadonlyArray<readonly [string, QueryColumnType]>; rows: readonly QueryRow[] }> {
-  const taken = new Set<string>([...TABLE_NAMES, SCHEMA_TABLE]);
-  const out: ReturnType<typeof sourceTables> = [];
-  for (const source of sources) {
-    for (const [table, { columns, rows }] of Object.entries(source.tables)) {
-      if (!NAME.test(table)) throw new QueryError(`${source.name}'s table ${JSON.stringify(table)} is not a name chant query takes: lower-case letters, digits and _`);
-      if (taken.has(table)) throw new QueryError(`${source.name}'s table ${table} takes the name of ${(TABLE_NAMES as string[]).includes(table) || table === SCHEMA_TABLE ? "a chant table" : "another source's table"}`);
-      const seen = new Set<string>();
-      for (const [c, t] of columns) {
-        if (!NAME.test(c) || seen.has(c)) throw new QueryError(`${source.name}'s table ${table} has a column ${JSON.stringify(c)} that is not a unique name of lower-case letters, digits and _`);
-        if (!COLUMN_TYPES.includes(t)) throw new QueryError(`${source.name}'s column ${table}.${c} has type ${String(t)}; a column is TEXT, INTEGER or REAL`);
-        seen.add(c);
-      }
-      if (columns.length === 0) throw new QueryError(`${source.name}'s table ${table} has no columns`);
-      taken.add(table);
-      out.push({ source, table, columns, rows });
-    }
-  }
-  return out;
-}
-
-/** A message for a statement SQLite refused, with a hint when a bare column name is an SQL keyword. */
-function refused(e: unknown, columns: ReadonlySet<string>): QueryError {
-  const m = (e as Error).message;
-  const near = /near "([A-Za-z_]+)": syntax error/.exec(m)?.[1];
-  return new QueryError(`the query does not run: ${m}${near && columns.has(near.toLowerCase()) ? `; ${near} is an SQL keyword, so quote the column: "${near.toLowerCase()}"` : ""}`);
-}
-
-/**
- * Run one read-only statement over the tables, and over the tables of each
- * source in `options.sources` (#4329).
- */
-export async function runQuery(sql: string, load: QueryLoad, options: QueryOptions = {}): Promise<QueryResult> {
+/** Run one read-only statement over the tables. */
+export async function runQuery(sql: string, load: QueryLoad): Promise<QueryResult> {
   if (sql.trim() === "") throw new QueryError('chant query needs a statement: chant query "SELECT * FROM resources"');
   if (!["select", "with", "values"].includes(firstWord(sql))) throw new QueryError("chant query runs one SELECT (or WITH, or VALUES) statement; it changes nothing");
-  const extra = sourceTables(options.sources ?? []);
   const { DatabaseSync } = await sqlite();
   const db = new DatabaseSync(":memory:");
-  const columnNames = new Set<string>();
   try {
-    // `source` came after `position` (#4329), so a column's place in chant_schema is what it was in #4297.
-    db.exec(`CREATE TABLE ${SCHEMA_TABLE} ("version" INTEGER, "table_name" TEXT, "column_name" TEXT, "type" TEXT, "position" INTEGER, "source" TEXT)`);
-    const describe = db.prepare(`INSERT INTO ${SCHEMA_TABLE} VALUES (?, ?, ?, ?, ?, ?)`);
-    const create = (table: string, cols: ReadonlyArray<readonly [string, ColumnType]>, rows: readonly QueryRow[], version: number, source: string): void => {
+    db.exec(`CREATE TABLE ${SCHEMA_TABLE} ("version" INTEGER, "table_name" TEXT, "column_name" TEXT, "type" TEXT, "position" INTEGER)`);
+    const describe = db.prepare(`INSERT INTO ${SCHEMA_TABLE} VALUES (?, ?, ?, ?, ?)`);
+    for (const table of TABLE_NAMES) {
+      const cols = QUERY_TABLES[table] as ReadonlyArray<readonly [string, ColumnType]>;
       db.exec(`CREATE TABLE ${table} (${cols.map(([c, t]) => `"${c}" ${t}`).join(", ")})`);
-      cols.forEach(([c, t], i) => {
-        describe.run(version, table, c, t, i + 1, source);
-        columnNames.add(c);
-      });
+      cols.forEach(([c, t], i) => describe.run(QUERY_SCHEMA_VERSION, table, c, t, i + 1));
       const insert = db.prepare(`INSERT INTO ${table} VALUES (${cols.map(() => "?").join(", ")})`);
       db.exec("BEGIN");
-      for (const row of rows) insert.run(...cols.map(([c]) => row[c] ?? null));
+      for (const row of load.data[table]) insert.run(...cols.map(([c]) => row[c] ?? null));
       db.exec("COMMIT");
-    };
-    for (const table of TABLE_NAMES) create(table, QUERY_TABLES[table] as ReadonlyArray<readonly [string, ColumnType]>, load.data[table], QUERY_SCHEMA_VERSION, "chant");
-    for (const t of extra) create(t.table, t.columns, t.rows, t.source.version, t.source.name);
+    }
     db.exec("PRAGMA query_only = ON");
     let stmt: SqliteStatement;
     try {
       stmt = db.prepare(sql);
     } catch (e) {
-      throw refused(e, columnNames);
+      throw new QueryError(`the query does not run: ${(e as Error).message}`);
     }
     let rows: QueryRow[];
     try {
       rows = stmt.all() as QueryRow[];
     } catch (e) {
-      throw refused(e, columnNames);
+      throw new QueryError(`the query does not run: ${(e as Error).message}`);
     }
     const columns = typeof stmt.columns === "function" ? stmt.columns().map((c) => c.name) : Object.keys(rows[0] ?? {});
-    const tables: Record<string, number> = Object.fromEntries(TABLE_NAMES.map((t) => [t, load.data[t].length]));
-    for (const t of extra) tables[t.table] = t.rows.length;
+    const tables = Object.fromEntries(TABLE_NAMES.map((t) => [t, load.data[t].length])) as Record<QueryTable, number>;
     return { schemaVersion: QUERY_SCHEMA_VERSION, columns, rows: rows.map((r) => ({ ...r })), tables, malformed: load.malformed };
   } finally {
     db.close();
