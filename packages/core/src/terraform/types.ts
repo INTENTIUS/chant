@@ -29,6 +29,14 @@ export interface TfNode {
   /** `count`, `for_each`, a `data` source, or an unresolved interpolation is present. */
   hasDynamic: boolean;
   /**
+   * The block's own expansion meta-argument, when it has one (#2325). Unlike
+   * `hasDynamic`, which a `data` read also sets, this says the node stands for
+   * an unknown number of instances until state resolves it.
+   */
+  expansion?: "count" | "for_each";
+  /** `"state"` once `applyStateCounts` read this node's instance count from a `.tfstate` (#2325). */
+  instancesFrom?: "state";
+  /**
    * The resource's physical name, when it is a plain literal in the HCL (e.g.
    * `bucket = "myapp-assets-prod"`). Used to build the live-import selector on
    * emit. Undefined when the identity attribute is absent or interpolated.

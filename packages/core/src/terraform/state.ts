@@ -81,7 +81,9 @@ export function readStateInstanceCounts(statePath: string): Map<string, number> 
 export function applyStateCounts(graph: TfGraph, counts: Map<string, number>): TfGraph {
   for (const node of graph.nodes) {
     const n = counts.get(node.address);
-    if (n !== undefined) node.instances = Math.max(1, n);
+    if (n === undefined) continue;
+    node.instances = Math.max(1, n);
+    node.instancesFrom = "state";
   }
   return graph;
 }

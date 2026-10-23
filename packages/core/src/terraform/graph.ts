@@ -270,6 +270,13 @@ function blockHasMeta(block: unknown, key: string): boolean {
   return !!block && typeof block === "object" && key in (block as Record<string, unknown>);
 }
 
+/** Which expansion meta-argument a block carries, as a spreadable `TfNode` field (#2325). */
+function expansionOf(block: unknown): { expansion?: "count" | "for_each" } {
+  if (blockHasMeta(block, "count")) return { expansion: "count" };
+  if (blockHasMeta(block, "for_each")) return { expansion: "for_each" };
+  return {};
+}
+
 /**
  * The literal string at a dotted path into a block, or undefined when the path
  * misses or lands on an interpolation. A dotted path walks nested blocks —
@@ -366,6 +373,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
         name,
         instances: 1,
         hasDynamic: dynamic || touchesData,
+        ...expansionOf(block),
         identity: literalIdentity(block, type),
         dataSourceValues: dataSourceValues(block, type),
       });
@@ -386,6 +394,7 @@ export function buildGraph(tree: Hcl2JsonTree, exprRefs: ExpressionRefs): TfGrap
       name,
       instances: 1,
       hasDynamic: dynamic || touchesData,
+      ...expansionOf(block),
     });
   }
 
