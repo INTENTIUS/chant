@@ -208,9 +208,33 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["build", "--unknown=value"])).toThrow(/Unknown flag: --unknown/);
   });
 
-  test("unknown short flags are still silently ignored (unchanged; out of #1127 scope)", () => {
-    const result = parseArgs(["build", "-x", "value"]);
-    expect(result.command).toBe("build");
+  test("an unknown short flag is refused like an unknown long one (#4369)", () => {
+    // Was "unknown short flags are still silently ignored": `-x` vanished and
+    // the next token became the path. #4369 refuses it with the #1127 message.
+    expect(() => parseArgs(["build", "-x", "value"])).toThrow(/Unknown flag: -x\nRun "chant --help"/);
+    expect(() => parseArgs(["search", "kind:X", "-q"])).toThrow(/Unknown flag: -q/);
+  });
+
+  test("a search query that opens with -> is the positional, not a dropped flag (#4369)", () => {
+    expect(parseArgs(["search", "->kind:Bucket"]).path).toBe("->kind:Bucket");
+    const explained = parseArgs(["search", "->kind:Bucket", "--explain"]);
+    expect(explained.path).toBe("->kind:Bucket");
+    expect(explained.explain).toBe(true);
+    expect(parseArgs(["search", "--explain", "->*[via=subnet_id]kind:aws_vpc"]).path).toBe("->*[via=subnet_id]kind:aws_vpc");
+    // Unchanged: the in-edge spelling and a leading space always worked.
+    expect(parseArgs(["search", "<-kind:Bucket"]).path).toBe("<-kind:Bucket");
+    expect(parseArgs(["search", " ->kind:Bucket"]).path).toBe(" ->kind:Bucket");
+    // A known short flag still parses as one.
+    expect(parseArgs(["search", "->kind:Bucket", "-v"]).verbose).toBe(true);
+  });
+
+  test("-- ends flag parsing: what follows is positional, unsplit (#4369)", () => {
+    const r = parseArgs(["search", "--json", "--", "-kind:X", "--explain"]);
+    expect(r.path).toBe("-kind:X");
+    expect(r.extraPositional).toBe("--explain");
+    expect(r.explain).toBeUndefined();
+    expect(r.json).toBe(true);
+    expect(parseArgs(["search", "--", "--x=y"]).path).toBe("--x=y");
   });
 
   test("parses --watch flag", () => {

@@ -217,6 +217,7 @@ describe("the path each match was reached by", () => {
       matches: [
         {
           id: "aws_vpc.main",
+          displayId: "aws_vpc.main",
           kind: "aws_vpc",
           paths: [
             {
