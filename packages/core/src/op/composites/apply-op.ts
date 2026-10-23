@@ -5,7 +5,11 @@
  * stays with the platform (the CloudFormation stack, the Kubernetes API
  * server, the ARM resource group) — chant never hosts a state file.
  *
- * Phases: build → plan → [approve] → apply. Deletes ride the native
+ * Phases: build → plan → [preflight] → [approve] → apply → [verify] (#3370).
+ * `preflight` steps run after the plan and before the approval, and a failing
+ * one stops the run before anything is approved or applied. `verify` steps
+ * run after the apply, and a failing one fails the run, which runs `onFailure`
+ * (the Rollback phase, when there is one). Deletes ride the native
  * prune path, whose bound is per target: the ownership marker on `kubectl`,
  * the ownership tag on `arm` (chant #1448 — previously `--mode Complete`, which
  * removed resources chant never applied), the ownership label on `gcp`
@@ -51,6 +55,15 @@
  *   target: "kubectl",
  *   gate: { gate: "approve-apply", point: "prod-apply" },
  * });
+ *
+ * // validate before, check after (#3370), for any target
+ * export const { op } = ApplyOp({
+ *   name: "collector-rollout",
+ *   env: "prod",
+ *   target: "kubectl",
+ *   preflight: [shell("otelcol-contrib validate --config dist/collector.yaml")],
+ *   verify: [activity("rulesLoadedObserve", { env: "prod" })],
+ * });
  * ```
  *
  * @see #112 — stateless-authoritative state model + live import
@@ -60,7 +73,7 @@ import { Op, phase, activity, gate } from "../builders";
 import { stepOutput } from "../step-output-ref";
 import { gateName } from "../gate-name";
 import type { OpResource } from "../resource";
-import type { GateStep } from "../types";
+import type { GateStep, StepDefinition } from "../types";
 import { defaultOutput, hasNativeRollback, type ApplyTarget, type DeleteMode } from "../activities/apply";
 
 export interface ApplyOpConfig {
@@ -143,6 +156,20 @@ export interface ApplyOpConfig {
    * created is the usual case).
    */
   forceConflicts?: boolean;
+  /**
+   * Steps run after the Plan phase and before the approval gate (#3370), as a
+   * `Preflight` phase: a config validation, a dry run, a policy check. A
+   * failing step stops the run there, so nothing is approved or applied.
+   * Omitted or empty, the Op has no Preflight phase.
+   */
+  preflight?: StepDefinition[];
+  /**
+   * Steps run after the apply (#3370), as a `Verify` phase: a readiness
+   * check, an observation that the new config loaded. A failing step fails
+   * the run, so `onFailure` runs (the Rollback phase, when the Op has one).
+   * Omitted or empty, the Op has no Verify phase.
+   */
+  verify?: StepDefinition[];
 }
 
 export interface ApplyOpResources {
@@ -171,6 +198,10 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
       },
     ]),
   ];
+
+  if (config.preflight !== undefined && config.preflight.length > 0) {
+    phases.push(phase("Preflight", config.preflight));
+  }
 
   if (gated) {
     phases.push(
@@ -209,6 +240,10 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
       ),
     ]),
   );
+
+  if (config.verify !== undefined && config.verify.length > 0) {
+    phases.push(phase("Verify", config.verify));
+  }
 
   // Compensation is total or refused (#1449). A rollback path is either the
   // target's mapped native rollback (cloudformation's rollbackStack) or an
