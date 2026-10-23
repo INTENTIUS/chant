@@ -125,7 +125,7 @@ matches" when all it supports is "the apply finished". A plan answers a third
 question: what the next apply would do.
 
 So the `ObservationResult` carries a `sources` map, keyed by chant entity name,
-with one of three values:
+with one of four values:
 
 ```json
 {
@@ -134,7 +134,8 @@ with one of three values:
   "sources": {
     "app/null_resource.first": "state",
     "estate/aws_eip.pool": "live",
-    "net/aws_vpc.main": "plan"
+    "net/aws_vpc.main": "plan",
+    "edge/aws_subnet.app": "live+plan"
   }
 }
 ```
@@ -144,6 +145,9 @@ with one of three values:
 `"plan"` means it was read from a saved plan at the plan depth, or that the
 plan depth was asked for and no read answered (the entity is then not-observed
 and its detail says so).
+`"live+plan"` means a live root was read at the plan depth and both reads
+answered: `live-plan -json` for presence and ownership, the saved plan for the
+attributes. See [A choudoufu root](#a-choudoufu-root).
 
 A consumer may rely on three things.
 
@@ -323,13 +327,61 @@ makes no claim there. If the plan fails, the read falls back as a plan failure.
 
 ### A choudoufu root
 
-A [live root](/chant/lexicons/terraform/ops/) keeps its `live-plan -json`
-read at any depth; asking it for the plan depth adds a note saying so. `choudoufu
-plan -out` writes a stock plan file (choudoufu #878), so the same read would
-work there, and it is where the attribute-level drift chant #2472 asks for
-lives: `live-plan -json` carries ownership sections and no attribute values
-(measured in behold #404). Merging the plan's attributes onto a live root's
-ownership verdicts is not built yet.
+A [live root](/chant/lexicons/terraform/ops/) at the plan depth runs both
+reads, one after the other:
+
+```sh
+choudoufu live-plan -detailed-exitcode -json
+choudoufu plan -input=false -lock=false [-var-file=...] -out=<tmp>/plan.tfplan
+choudoufu show -json <tmp>/plan.tfplan
+```
+
+`live-plan -json` answers presence and ownership exactly as it does at the
+default depth: the markers, the `bound`, `unowned`, `adoptable` and
+`omissions` sections, the same verdicts. It carries no attribute values
+(measured in behold #404), so the attributes come from the second read.
+`choudoufu plan -out` writes a stock plan file (choudoufu #878), and the plan
+depth reads it with the same rules as on a stock root: the same `-lock=false`
+(choudoufu accepts it), the same temp directory, nothing written in the root,
+the same attribute names and the same [sensitive rule](#sensitive-values).
+`sources` reads `"live+plan"`.
+
+The plan's attributes go on every block `live-plan` bound, and only there. A
+foreign or adoptable block gets none: choudoufu plans a `create` for an
+instance it does not own, which is its answer about ownership, not a fact
+about the live resource. A planned create reads absent, as on a stock root.
+
+Drift reads differently on a live root. choudoufu rebuilds prior state from
+the account on every run, so there is no recorded state for `resource_drift`
+to compare against, and `planDrift` stays empty. A change made outside
+choudoufu shows up as the planned change that would undo it: `planAction:
+"update"`, with the live value as `before` and the declared one as `after` in
+`planChanges`. A log group whose retention was changed by hand reads:
+
+```json
+{
+  "planAction": "update",
+  "planChanges": [{ "path": "retention_in_days", "before": 3, "after": 1 }]
+}
+```
+
+```sh
+CHANT_TERRAFORM_OBSERVE=plan chant search "attr:planAction=update" --live --env prod
+```
+
+choudoufu's plan marks a value from a `sensitive` variable on the `after` side
+only. The `before` side holds the live value, which is the previous secret,
+unmarked. So a path marked on either side is redacted on both, on every root.
+
+If the plan read fails, `live-plan` alone answers and the note says why:
+
+| what failed | what answers | note |
+| --- | --- | --- |
+| nothing | both | `` the plan read answered (...), beside `live-plan -json`, which answered presence and ownership `` |
+| the plan read, for any reason | `live-plan` alone; plan attributes are absent and `sources` reads `"live"` | `` the plan read failed (no provider credentials: ...), so `live-plan -json` alone answered `` |
+| `live-plan` | nothing: the root is not observed, as at the default depth, and the plan read is not tried | `` no read answered (`live-plan -json` failed, so the plan read was not tried) `` |
+
+The cost is two refreshes of the estate per read instead of one.
 
 ## What has no answer at all
 
