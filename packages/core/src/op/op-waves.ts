@@ -76,6 +76,7 @@
 
 import type { OpEnvironment, OpSetupStep } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
+import type { CloudTradeSpec } from "../ci-identity";
 import { gatePointProblems, type GatePoint } from "./gate-point";
 import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
@@ -261,6 +262,13 @@ export interface OpWaveJobGroup {
    * is requested.
    */
   idTokens?: Record<string, string>;
+  /**
+   * The cloud identities the group's jobs trade the job's OIDC token for
+   * (#4332), in place of the wave's: a {@link CloudTradeSpec}, as
+   * `cloudIdentityWave` in ../ci-identity.ts gives a group its apply
+   * identities. The trade runs before the checkout.
+   */
+  cloud?: CloudTradeSpec;
 }
 
 /** One wave: runs that apply together, behind one gate. */
@@ -321,6 +329,15 @@ export interface OpWave {
    * job's, and a group's own replace them.
    */
   idTokens?: Record<string, string>;
+  /**
+   * The cloud identities this wave's jobs trade the job's OIDC token for
+   * (#4332), before the checkout: a {@link CloudTradeSpec}. With `jobs`,
+   * the deciding job's, and a group's own `cloud` replaces it.
+   * `cloudIdentityWave` in ../ci-identity.ts gives the deciding job every
+   * plan identity of the wave's targets. Each later step of the job starts
+   * without the variables a token is requested with.
+   */
+  cloud?: CloudTradeSpec;
   /**
    * Split the wave's apply into job groups (#3914): a deciding job, which
    * runs with the wave's own settings, plans every run and decides the gate,
@@ -644,6 +661,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     }
     if (wave.runner !== undefined) assertOpWaveRunner(where, `wave "${wave.name}" runner`, wave.runner);
     if (wave.idTokens !== undefined) assertOpWaveIdTokens(where, `wave "${wave.name}" idTokens`, wave.idTokens);
+    if (wave.cloud !== undefined) assertOpWaveCloud(where, `wave "${wave.name}" cloud`, wave.cloud);
     if (wave.jobs !== undefined) assertOpWaveJobGroups(where, wave);
     if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
     if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
@@ -684,6 +702,24 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** The key each cloud of a `cloud` trade names its identity under (`IDENTITY_KEY` in ../ci-identity.ts, kept here so this module imports none of it). */
+const CLOUD_IDENTITY_KEY: Record<string, string> = { aws: "role", gcp: "serviceAccount", azure: "clientId" };
+
+/** Refuse a `cloud` (#4332) the trade could not run: an unknown cloud, one that names no identity, or no audience. */
+function assertOpWaveCloud(where: string, field: string, cloud: unknown): void {
+  if (cloud === null || typeof cloud !== "object" || Array.isArray(cloud) || Object.keys(cloud).length === 0) throw new Error(`${where}: ${field} must name one or more of aws, gcp and azure.`);
+  for (const [name, c] of Object.entries(cloud as Record<string, unknown>)) {
+    const key = CLOUD_IDENTITY_KEY[name];
+    if (!key) throw new Error(`${where}: ${field}.${name} is not a cloud; use aws, gcp or azure.`);
+    const t = c as Record<string, unknown> | null;
+    const targets = t?.targets;
+    const targetsOk = targets === undefined || (Array.isArray(targets) && targets.every((e) => e && Array.isArray((e as { targets?: unknown }).targets) && typeof (e as Record<string, unknown>)[key] === "string"));
+    if (!t || typeof t.audience !== "string" || !targetsOk || (typeof t[key] !== "string" && !(Array.isArray(targets) && targets.length > 0))) {
+      throw new Error(`${where}: ${field}.${name} must give an audience and a ${key}, or targets each with targets and a ${key}, as cloudIdentityWave gives them.`);
+    }
+  }
+}
+
 /** Refuse a `runner` no forge could read (#3914). */
 function assertOpWaveRunner(where: string, field: string, runner: unknown): void {
   const labels = (value: unknown): boolean => Array.isArray(value) && value.length > 0 && value.every((l) => typeof l === "string" && l.trim() !== "");
@@ -723,7 +759,7 @@ function assertOpWaveJobGroups(where: string, wave: OpWave): void {
     if (group.name === "decide" || /^share-\d+$/.test(group.name)) throw new Error(`${where}: ${field} is named like the wave's own jobs (decide, share-<i>); name it another way.`);
     if (names.has(group.name)) throw new Error(`${where}: ${at} names job group "${group.name}" twice.`);
     names.add(group.name);
-    const known = new Set(["name", "runs", "shares", "runner", "environment", "variables", "setup", "idTokens"]);
+    const known = new Set(["name", "runs", "shares", "runner", "environment", "variables", "setup", "idTokens", "cloud"]);
     const extra = Object.keys(group).find((key) => !known.has(key));
     if (extra !== undefined) throw new Error(`${where}: ${field}.${extra} is not a setting; a job group takes ${[...known].join(", ")}.`);
     if (!Array.isArray(group.runs) || group.runs.length === 0 || !group.runs.every((r) => typeof r === "string" && r.trim() !== "")) {
@@ -733,6 +769,7 @@ function assertOpWaveJobGroups(where: string, wave: OpWave): void {
     if (!Number.isInteger(shares) || shares < 1) throw new Error(`${where}: ${field} has shares ${group.shares}; use a whole number from 1.`);
     if (group.runner !== undefined) assertOpWaveRunner(where, `${field} runner`, group.runner);
     if (group.idTokens !== undefined) assertOpWaveIdTokens(where, `${field} idTokens`, group.idTokens);
+    if (group.cloud !== undefined) assertOpWaveCloud(where, `${field} cloud`, group.cloud);
     if (group.variables !== undefined && (group.variables === null || typeof group.variables !== "object" || Array.isArray(group.variables) || !Object.values(group.variables).every((v) => typeof v === "string"))) {
       throw new Error(`${where}: ${field} variables must be { "<name>": "<value>" }.`);
     }

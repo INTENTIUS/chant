@@ -24,6 +24,11 @@
  * deciding job with the wave's own settings and a job per group (per share of
  * a group) with the group's: its tags, environment, variables over the
  * wave's, setup after the wave's, and `id_tokens:` from its `idTokens`.
+ *
+ * A job whose wave or group gives `cloud` (#4332) takes an `id_tokens:`
+ * entry per cloud, and its script starts by trading them for those
+ * identities and unsetting the token variables, before any line of the
+ * checkout runs.
  */
 
 import {
@@ -44,6 +49,7 @@ import {
 } from "@intentius/chant/ci-jobs";
 import { opWaveGroupOf, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
+import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { emitGitlabFile } from "./ci-jobs";
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
@@ -96,7 +102,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
     const setup = [...setupOf[job.wave - 1]!, ...(group ? groupSetup.get(`${wave.name}/${group.name}`)! : [])];
     const tags = gitlabTags(group?.runner ?? wave.runner ?? spec.runner);
     const environment = group?.environment ?? wave.environment;
-    const idTokens = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
+    // #4332: the job's cloud identities, traded first.
+    const cloud = group?.cloud ?? wave.cloud;
+    const declared = gitlabIdTokensDoc(group?.idTokens ?? wave.idTokens);
+    const idTokens = cloud ? { ...declared, ...gitlabTradeIdTokens(cloud) } : declared;
     entries.push([
       job.jobName,
       {
@@ -106,10 +115,10 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         resource_group: `${spec.name}-${wave.name}`,
         ...(environment ? { environment: environmentDoc(environment) } : {}),
         ...(idTokens ? { id_tokens: idTokens } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}) },
+        variables: { ...GITLAB_FULL_HISTORY, ...(wave.variables ?? {}), ...(group?.variables ?? {}), ...(cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(cloud) } : {}) },
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-        script: [...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
+        script: [...(cloud ? gitlabTradeLines() : []), ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
         ...(job.kind === "decide" ? { artifacts: { when: "always", paths: [job.record!], expire_in: "30 days" } } : {}),
       },
     ]);
