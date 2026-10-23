@@ -366,6 +366,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
     const provenanceText = provenanceLine(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]).replace(/^— /, "");
     const capNotes = capabilityNotes(terms, ir, source);
+    const plannedCreates = source.kind !== "declared" && liveFailures.length === 0 ? plannedCreateCount(matches) : 0;
     const driftJson = drift
       ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
       : driftUnavailable !== undefined
@@ -380,6 +381,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           ...head,
           ...countsJson(query, env ? { ...source, env } : source, groupMembers(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
           provenance: provenanceText,
+          ...(plannedCreates > 0 ? { plannedCreates } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
         }
       : {
@@ -388,6 +390,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           ...(env ? { env } : {}),
           show,
           provenance: provenanceText,
+          ...(plannedCreates > 0 ? { plannedCreates } : {}),
           ...(capNotes.length > 0 ? { capabilities: capNotes } : {}),
           ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
@@ -883,6 +886,12 @@ function provenanceLine(
     return `— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`;
   }
   if (bound === 0) {
+    // Every match a planned create (#4372): absent on purpose, so "returned no
+    // bound resources" reads as a failed read when the read worked.
+    const planned = plannedCreateCount(matches);
+    if (planned > 0) {
+      return `— ${what}: ${planned} planned ${planned === 1 ? "create" : "creates"}, none bound yet · the plan has not been applied`;
+    }
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
     // A snapshot sitting unused is the actionable half of this. Denied network,
@@ -906,6 +915,19 @@ function provenanceLine(
   const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
   const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
   return `— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`;
+}
+
+/**
+ * How many matches there are when every one is a planned create (#4372): an
+ * absent entity (no physical id) carrying `planAction=create`. Zero for no
+ * matches or any other mix, so a real empty read keeps its wording.
+ */
+function plannedCreateCount(matches: IRNode[]): number {
+  if (matches.length === 0) return 0;
+  const all = matches.every(
+    (n) => !n.physicalId && (n.attrs as Record<string, unknown> | undefined)?.planAction === "create",
+  );
+  return all ? matches.length : 0;
 }
 
 /** Print {@link provenanceLine}: the text footer. */
@@ -1266,6 +1288,8 @@ export interface SearchJson {
     paths: { term: string; dir: "out" | "in"; hops: PathHop[]; because?: { capability: string; id: string; hops: PathHop[] }[] }[];
   }[];
   provenance?: string;
+  /** Present when every match is a planned create (#4372): how many. See the schema. */
+  plannedCreates?: number;
   liveFailures?: string[];
   explain?: {
     universe: { matched: number; of: number; kinds: string[] };
@@ -1324,6 +1348,7 @@ function searchJson(
     env?: string;
     show?: string[];
     provenance?: string;
+    plannedCreates?: number;
     capabilities?: SearchJson["capabilities"];
     explain?: ReturnType<typeof explainData>;
     drift?: SearchDriftJson;
@@ -1352,6 +1377,7 @@ function searchJson(
       };
     }),
     ...(extra.provenance !== undefined ? { provenance: extra.provenance } : {}),
+    ...(extra.plannedCreates ? { plannedCreates: extra.plannedCreates } : {}),
     ...(extra.capabilities ? { capabilities: extra.capabilities } : {}),
     ...(liveFailures.length > 0 ? { liveFailures } : {}),
     ...(extra.explain
