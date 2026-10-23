@@ -535,6 +535,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.deep = true;
     } else if (arg === "--at") {
       result.at = args[++i];
+    } else if (arg === "--snapshot") {
+      // `chant search` and `chant workspace search --snapshot <ref>` (#4374)
+      result.snapshot = args[++i];
+      if (!result.snapshot || result.snapshot.startsWith("-")) throw new Error("--snapshot needs a snapshot ref: --snapshot latest");
     } else if (arg === "--kind") {
       // `chant workspace records|graph|check --kind <kind file>` (#2546, #2549)
       result.kind = args[++i];
