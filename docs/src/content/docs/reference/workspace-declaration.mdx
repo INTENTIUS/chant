@@ -468,6 +468,7 @@ A rule that plans as an identity any rule applies as is refused with `declaratio
 |---|---|
 | `template` | The declared environment of the project that `pr-<n>` takes its endpoint from, unless a `pr-*` entry declares one. Required. |
 | `ttl` | How long the environment lives after its last apply, as `90m`, `72h` or `7d`, and 72h when absent. `chant components pr-env sweep` tears down one whose TTL passed. |
+| `teardown` | A command that tears down what no lexicon does, such as a Terraform root's copy ([#4330](https://github.com/INTENTIUS/chant/issues/4330)). `command` is its argv, with `{env}`, `{pr}` and `{stage}` filled in. `name` labels its outcomes, `teardown` when absent. `lexicons` names the lexicons it tears down in place of. `pr-env down` and `pr-env sweep` run it after the ownership check, without the forge token variables. See [tear down what no lexicon does](/chant/guide/pr-environments/#tear-down-what-no-lexicon-does). Needs `minReader` 0.124.45 or newer. |
 
 The jobs take the block from the declaration at the pull request's base, which keeps a change from naming its own template or TTL. Releases come from green commits, so a release never targets a pull request's environment. A declaration that uses the block needs `minReader` set to 0.124.42 or newer, the first chant that reads it.
 
