@@ -418,9 +418,10 @@ export interface PrForge {
    * someone other than the pull request's authors ({@link authors}) approved
    * `head`, and no standing review asks for changes. On GitLab an approval
    * counts when it came after the merge request's latest push, read from its
-   * system notes, and never from the token's own user.
+   * system notes, and never from the token's own user. `approvers` narrows
+   * who counts (#4337), and a refusal names each approver left out and why.
    */
-  prApproved?(pr: number, head: string): Promise<PrRequireResult>;
+  prApproved?(pr: number, head: string, approvers?: PrApproverFilter): Promise<PrRequireResult>;
   /**
    * The forge says `pr` merges as it stands: no conflicts, and on GitHub no
    * branch protection blocking it. Pending while the forge works it out. On
@@ -437,6 +438,68 @@ export interface PrForge {
    */
   prChecksPassed?(pr: number, head: string, ignore?: readonly string[]): Promise<PrRequireResult>;
 }
+
+/**
+ * Who counts as an approver for {@link PrForge.prApproved} (#4337). With
+ * none set, any reviewer other than the pull request's authors counts.
+ */
+export interface PrApproverFilter {
+  /**
+   * The forge's own rule for who may approve. GitHub: write access (admin,
+   * maintain or write), read per approver. Forgejo: the review is official,
+   * which Forgejo marks for someone with write access. GitLab: an access
+   * level of at least `minAccessLevel`, read per approver.
+   */
+  forgeRule?: boolean;
+  /** GitLab under `forgeRule`: the least access level that counts. Default 30, Developer. */
+  minAccessLevel?: number;
+  /** Logins whose approval never counts, compared case-insensitively, each with the reason a refusal gives if one is set. */
+  exclude?: readonly (string | PrExcludedApprover)[];
+}
+
+/** A login left out of the approvers, and the reason a refusal gives. */
+export interface PrExcludedApprover {
+  login: string;
+  reason: string;
+}
+
+/** Why `login`'s approval does not count under `filter`'s `exclude`, or undefined. */
+function excludedWhy(filter: PrApproverFilter | undefined, login: string): string | undefined {
+  for (const e of filter?.exclude ?? []) {
+    const who = typeof e === "string" ? e : e.login;
+    if (who.toLowerCase() === login.toLowerCase()) return typeof e === "string" ? `${login} is excluded` : e.reason;
+  }
+  return undefined;
+}
+
+/**
+ * The approvers who count, and why each other one did not: an author, then
+ * `exclude`, then the forge's rule (`rule` gives a reason or undefined).
+ */
+async function countApprovers(
+  approved: readonly string[],
+  authors: ReadonlySet<string>,
+  filter: PrApproverFilter | undefined,
+  rule: (login: string) => Promise<string | undefined>,
+): Promise<{ by: string[]; not: string[] }> {
+  const by: string[] = [];
+  const not: string[] = [];
+  for (const login of approved) {
+    const why = authors.has(login) ? `${login} is one of its authors` : (excludedWhy(filter, login) ?? (filter?.forgeRule ? await rule(login) : undefined));
+    if (why) not.push(why);
+    else by.push(login);
+  }
+  return { by, not };
+}
+
+/** A refusal for no approver counted, naming each one left out. */
+const noApprover = (line: string, not: readonly string[]): PrRequireResult => refuse(not.length > 0 ? `${line}: ${not.join("; ")}` : line);
+
+/** GitLab's access level for Developer, the least that may push. */
+const GITLAB_DEVELOPER = 30;
+
+/** GitHub's permissions that may approve under {@link PrApproverFilter.forgeRule}. */
+const GITHUB_WRITERS = new Set(["admin", "maintain", "write"]);
 
 /** What one of the requires checks (#4301) found. */
 export interface PrRequireResult {
@@ -801,25 +864,38 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       return [...standing].filter(([, state]) => state === "APPROVED").map(([login]) => login).sort();
     },
     authors: authorsOf,
-    async prApproved(pr, head) {
+    async prApproved(pr, head, approvers) {
       const got = await api.call("GET", `${repo}/pulls/${pr}`);
       const at = headOf(got);
       if (at !== head) return moved(`pull request ${pr}`, head, at);
       // A reviewer's newest deciding review stands, as in approvers; an approval counts only of this head.
-      const standing = new Map<string, { state: string; commit?: string }>();
+      const standing = new Map<string, { state: string; commit?: string; official?: boolean }>();
       for (const r of await api.list(`${repo}/pulls/${pr}/reviews`, pageParams, pageSize)) {
         const login = loginOf(r);
         if (!login || !isObject(r) || typeof r.state !== "string") continue;
         const state = r.dismissed === true ? "DISMISSED" : r.state.toUpperCase();
         if (state === "COMMENTED" || state === "COMMENT" || state === "PENDING") continue;
         const commit = str(r.commit_id);
-        standing.set(login, { state, ...(commit ? { commit } : {}) });
+        standing.set(login, { state, ...(commit ? { commit } : {}), ...(typeof r.official === "boolean" ? { official: r.official } : {}) });
       }
       const changes = [...standing].filter(([, r]) => r.state === "CHANGES_REQUESTED" || r.state === "REQUEST_CHANGES").map(([l]) => l).sort();
       if (changes.length > 0) return refuse(`${changes.join(", ")} asked for changes`);
       const authors = new Set(await authorsOf(pr));
-      const by = [...standing].filter(([l, r]) => r.state === "APPROVED" && r.commit === head && !authors.has(l)).map(([l]) => l).sort();
-      if (by.length === 0) return refuse(`no reviewer other than its authors approved its head ${short(head)}`);
+      const approved = [...standing].filter(([, r]) => r.state === "APPROVED" && r.commit === head).map(([l]) => l).sort();
+      const rule = async (login: string): Promise<string | undefined> => {
+        // Forgejo marks a review official when its author may write; terragucci read a missing flag as official too.
+        if (kind === "forgejo") return standing.get(login)?.official === false ? `${login}'s review is not official` : undefined;
+        let got: unknown;
+        try {
+          got = await api.call("GET", `${repo}/collaborators/${encodeURIComponent(login)}/permission`);
+        } catch (err) {
+          return `could not read ${login}'s access (${err instanceof Error ? err.message : String(err)})`;
+        }
+        const p = isObject(got) ? [str(got.permission), str(got.role_name)] : [];
+        return p.some((x) => x !== undefined && GITHUB_WRITERS.has(x)) ? undefined : `${login} has no write access`;
+      };
+      const { by, not } = await countApprovers(approved, authors, approvers, rule);
+      if (by.length === 0) return noApprover(`no reviewer other than its authors approved its head ${short(head)}`, not);
       return pass(`approved at ${short(head)} by ${by.join(", ")}`);
     },
     async prMergeable(pr, head) {
@@ -1183,7 +1259,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       return [...new Set(logins)].sort();
     },
     authors: authorsOf,
-    async prApproved(mr, head) {
+    async prApproved(mr, head, approvers) {
       const got = await api.call("GET", `${notes}/${mr}`);
       const at = isObject(got) ? str(got.sha) : undefined;
       if (at !== head) return moved(`merge request !${mr}`, head, at);
@@ -1194,7 +1270,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       // An approval counts once it came after the latest push: the newest version of the diff.
       const versions = await api.call("GET", `${notes}/${mr}/versions`);
       const since = Math.max(-Infinity, ...(Array.isArray(versions) ? versions : []).map((v) => Date.parse((isObject(v) ? str(v.created_at) : undefined) ?? "")).filter(Number.isFinite));
-      const said = new Map<string, { what: string; at: number }>();
+      const said = new Map<string, { what: string; at: number; id?: number }>();
       for (const n of await api.list(`${notes}/${mr}/notes?sort=asc&order_by=created_at`, pageParams, 100)) {
         if (!isObject(n) || n.system !== true) continue;
         const who = authorOf(n);
@@ -1203,13 +1279,29 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
         const when = Date.parse(str(n.created_at) ?? "");
         if (!who || who === self || !what || !Number.isFinite(when)) continue;
         const before = said.get(who);
-        if (!before || when >= before.at) said.set(who, { what, at: when });
+        const id = isObject(n.author) ? num(n.author.id) : undefined;
+        if (!before || when >= before.at) said.set(who, { what, at: when, ...(id !== undefined ? { id } : {}) });
       }
       const changes = [...said].filter(([, v]) => v.what === "changes").map(([w]) => w).sort();
       if (changes.length > 0) return refuse(`${changes.join(", ")} requested changes`);
       const authors = new Set(await authorsOf(mr));
-      const by = [...said].filter(([w, v]) => v.what === "approved" && v.at > since && !authors.has(w)).map(([w]) => w).sort();
-      if (by.length === 0) return refuse(`no member other than its authors approved it after its latest push, ${short(head)}`);
+      const approved = [...said].filter(([, v]) => v.what === "approved" && v.at > since).map(([w]) => w).sort();
+      const least = approvers?.minAccessLevel ?? GITLAB_DEVELOPER;
+      const rule = async (login: string): Promise<string | undefined> => {
+        const id = said.get(login)?.id;
+        if (id === undefined) return `GitLab did not say who ${login} is`;
+        let member: unknown;
+        try {
+          member = await api.call("GET", `${project}/members/all/${id}`);
+        } catch (err) {
+          if (err instanceof ForgeApiError && err.status === 404) return `${login} is not a member`;
+          return `could not read ${login}'s access (${err instanceof Error ? err.message : String(err)})`;
+        }
+        const level = isObject(member) ? (num(member.access_level) ?? 0) : 0;
+        return level >= least ? undefined : `${login} has access level ${level}, under ${least}`;
+      };
+      const { by, not } = await countApprovers(approved, authors, approvers, rule);
+      if (by.length === 0) return noApprover(`no member other than its authors approved it after its latest push, ${short(head)}`, not);
       return pass(`approved after ${short(head)} by ${by.join(", ")}`);
     },
     async prMergeable(mr, head) {

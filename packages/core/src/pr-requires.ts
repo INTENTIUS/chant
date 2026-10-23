@@ -13,7 +13,7 @@
  * Like ./pr-forge.ts this imports nothing beyond it, so a product bundles it
  * without the TypeScript toolchain.
  */
-import type { PrForge, PrRequireResult } from "./pr-forge";
+import type { PrApproverFilter, PrForge, PrRequireResult } from "./pr-forge";
 
 /** The four checks, in the order they run and the report lists them. */
 export const PR_APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] as const;
@@ -31,6 +31,8 @@ export interface PrRequiresOptions {
    * required" and makes no forge call. Default: all four.
    */
   only?: readonly PrApplyRequire[];
+  /** Who counts as an approver for `approved` (#4337). Default: anyone other than the authors. */
+  approvers?: PrApproverFilter;
   /** Status names the `checks` require leaves out: the apply's own. */
   ignore?: readonly string[];
   /** How many times a pending check is asked in all. Default 5. */
@@ -51,7 +53,7 @@ export async function checkPrRequires(forge: PrForge, pr: number, head: string, 
   const wait = opts.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const reads = Math.max(1, opts.reads ?? READS);
   const ask: Record<PrApplyRequire, (() => Promise<PrRequireResult>) | undefined> = {
-    approved: forge.prApproved ? () => forge.prApproved!(pr, head) : undefined,
+    approved: forge.prApproved ? () => forge.prApproved!(pr, head, opts.approvers) : undefined,
     mergeable: forge.prMergeable ? () => forge.prMergeable!(pr, head) : undefined,
     undiverged: forge.prUndiverged ? () => forge.prUndiverged!(pr, head) : undefined,
     checks: forge.prChecksPassed ? () => forge.prChecksPassed!(pr, head, opts.ignore ?? []) : undefined,
