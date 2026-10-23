@@ -242,14 +242,20 @@ describe("delivery member", () => {
   const delivery = join(fixture, "delivery");
 
   test("builds, and the Compose file builds the app from its Dockerfile", async () => {
-    const src = join(delivery, "src");
+    // On a copy: the build writes the factory Op's op.json under delivery/src/dist, and the reader conformance runs read the fixture as it is.
+    const out = mkdtempSync(join(tmpdir(), "chant-2543-delivery-"));
+    const root = join(out, "ws");
+    cpSync(fixture, root, { recursive: true, filter: (src) => !/[\\/](node_modules|dist)$/.test(src) });
+    mkdirSync(join(root, ".git"));
+    symlinkSync(join(repoRoot, "node_modules"), join(root, "node_modules"), "dir");
+    const copied = join(root, "delivery");
+    const src = join(copied, "src");
     const plugins = await loadPlugins(await resolveProjectLexicons(src));
     // The collector (#2559) is otel entities, so the build serializes both lexicons. `npm run build`
     // names `--lexicon docker`, and the compose file comes from that one.
     const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker" || s.name === "otel");
     expect(serializers.map((s) => s.name).sort()).toEqual(["docker", "otel"]);
 
-    const out = mkdtempSync(join(tmpdir(), "chant-2543-delivery-"));
     try {
       const output = join(out, "docker-compose.yml");
       const result = await buildCommand({ path: src, output, format: "yaml", serializers, plugins });
@@ -271,8 +277,8 @@ describe("delivery member", () => {
       expect(build).toBeDefined();
       // The package.json build script writes the file to delivery/dist/, and
       // Compose resolves the context from the file's own directory.
-      const context = resolve(delivery, "dist", build!.context);
-      expect(context).toBe(join(fixture, "app"));
+      const context = resolve(copied, "dist", build!.context);
+      expect(context).toBe(join(root, "app"));
       expect(existsSync(join(context, build!.dockerfile))).toBe(true);
     } finally {
       rmSync(out, { recursive: true, force: true });
@@ -760,7 +766,11 @@ describe("the collector on the fixture (#2559)", () => {
   test("the collector builds to YAML through the otel lexicon", () => {
     const out = mkdtempSync(join(tmpdir(), "chant-2559-collector-"));
     try {
-      const run = chant(join(fixture, "delivery"), "build", "src", "--lexicon", "otel", "-o", join(out, "collector.yaml"));
+      // On a copy: the build writes the factory Op's op.json under delivery/src/dist, and the reader conformance runs read the fixture as it is.
+      const root = join(out, "ws");
+      cpSync(fixture, root, { recursive: true, filter: (src) => !/[\\/](node_modules|dist)$/.test(src) });
+      symlinkSync(join(repoRoot, "node_modules"), join(root, "node_modules"), "dir");
+      const run = chant(join(root, "delivery"), "build", "src", "--lexicon", "otel", "-o", join(out, "collector.yaml"));
       expect(run.status, run.stderr).toBe(0);
       expect(readFileSync(join(out, "collector.yaml"), "utf-8")).toContain("otlphttp/backend:");
     } finally {
