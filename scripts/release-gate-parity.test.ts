@@ -11,7 +11,10 @@
  * other so the gap cannot reopen without a failing test.
  *
  * Since #2817 publish does not re-run the suite: its gate is that same green
- * `chant` run, checked through the API by scripts/publish-verify-ci.sh.
+ * `chant` run, checked through the API by scripts/publish-verify-ci.sh. Since
+ * CI went unit-only (2026-10-23) that run is core's typecheck and the unit
+ * tests, the gate runs on every tag push, and the validate job that arms the
+ * release gate runs only by hand.
  */
 
 import { spawnSync } from "node:child_process";
@@ -60,7 +63,10 @@ describe("release gate parity (#1481)", () => {
   it("publish.yml's test gate requires the released commit's chant run to have passed", () => {
     const steps = stepsRunning(publish.jobs.test, /scripts\/publish-verify-ci\.sh/);
     expect(steps).toHaveLength(1);
-    expect(publish.jobs.publish.needs).toEqual(expect.arrayContaining(["test"]));
+    expect(publish.jobs.publish.needs).toEqual(["test"]);
+    expect(publish.jobs.publish.if).toMatch(/needs\.test\.result == 'success'/);
+    expect((publish.jobs["release-publish"] as Job).needs).toEqual(["test"]);
+    expect((publish.jobs["release-publish"] as Job).if).toMatch(/needs\.test\.result == 'success'/);
   });
 
   // #3793: chant.yml no longer runs `npm run prepack` per lexicon. One job
@@ -91,23 +97,21 @@ describe("release gate parity (#1481)", () => {
   it("a failed tag release deletes its tag", () => {
     const untag = publish.jobs.untag;
     expect(untag).toBeDefined();
-    expect(untag.needs).toEqual(expect.arrayContaining(["test", "audit", "publish"]));
+    expect(untag.needs).toEqual(expect.arrayContaining(["test", "publish"]));
     expect(untag.if).toMatch(/always\(\)/);
     expect(untag.if).toMatch(/needs\.publish\.result/);
     expect(untag.if).toMatch(/needs\.test\.result/);
-    expect(untag.if).toMatch(/needs\.audit\.result/);
     // #3191: the deletion goes through release-untag.sh, which keeps the tag
     // once any package of the release is on npm.
     expect(stepsRunning(untag, /scripts\/release-untag\.sh/)).toHaveLength(1);
     expect(readFileSync(join(root, "scripts", "release-untag.sh"), "utf8")).toMatch(/git push origin ":refs\/tags\//);
   });
 
-  // #3191: a package with no trusted-publisher record stops the release
-  // before anything ships.
-  it("publish waits on the trusted-publisher audit", () => {
-    expect(stepsRunning(publish.jobs.audit, /scripts\/audit-trusted-publishers\.sh/)).toHaveLength(1);
-    expect(publish.jobs.publish.needs).toEqual(expect.arrayContaining(["test", "audit"]));
-    expect(publish.jobs.publish.if).toMatch(/needs\.audit\.result == 'success'/);
+  // 2026-10-23: the release gates on the unit tests and nothing else. The
+  // trusted-publisher audit (#3191) is gone from publish.yml.
+  it("publish gates on the unit tests only", () => {
+    expect(Object.keys(publish.jobs).sort()).toEqual(["publish", "release-publish", "test", "untag"]);
+    expect(publish.jobs.test.if).toBeUndefined();
   });
 
   // #3903: with CHANT_STAGED_PUBLISH=1 the publish step stages every
@@ -133,46 +137,43 @@ describe("release gate parity (#1481)", () => {
   });
 });
 
-// The fast checks run on every change. The e2e project runs on main in
-// release-suites.yml, whose `suites` check the release gates on (#3793). The
-// other large suites run only when a person starts them. On GitHub that is a
+// Unit tests only on every change (2026-10-23). A pull request and a push to
+// main run the lexicon artifacts, core's typecheck and the unit tests. Every
+// other job and suite runs only when a person starts it. On GitHub that is a
 // workflow_dispatch, locally a person typing `run` at scripts/human-gate.sh.
-describe("large suites stay out of pull request CI", () => {
-  it("chant.yml runs no end-to-end, binary or Docker suite", () => {
+describe("pull request and push CI run the unit tests only", () => {
+  it("chant.yml runs typecheck and unit tests on a push or pull request, everything else by hand", () => {
     const chant = workflow("chant.yml");
-    for (const name of Object.keys(chant.jobs)) {
+    expect(Object.keys(chant.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
+    const always = ["check", "lexicon-artifacts", "test", "test-shard"];
+    for (const [name, job] of Object.entries(chant.jobs)) {
+      if (always.includes(name)) expect(job.if ?? "").not.toMatch(/workflow_dispatch/);
+      else expect(job.if).toBe("github.event_name == 'workflow_dispatch'");
+    }
+    expect(stepsRunning(chant.jobs["test-shard"], /npx vitest run --project unit --shard=/)).toHaveLength(1);
+    expect(stepsRunning(chant.jobs.check, /./).map((s) => s.run).filter((r) => /tsc7\.sh/.test(r!))).toEqual([
+      "scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json",
+    ]);
+    for (const name of always) {
       expect(stepsRunning(chant.jobs[name], /--project e2e|ci-observability-binaries\.sh test|smoke\.sh|docker build/)).toEqual([]);
     }
     expect(chant.jobs.test.needs).toEqual(["test-shard"]);
   });
 
-  it("release-suites runs the e2e project on main's newest commit and by hand, never on a pull request, and the release requires its suites check", () => {
-    const suites = workflow("release-suites.yml");
-    // #4169: suites builds the newest commit, so a push to main queues one run and GitHub keeps only the newest waiting.
-    expect(Object.keys(suites.on).sort()).toEqual(["push", "workflow_dispatch"]);
-    expect(suites.on.push).toEqual({ branches: ["main"] });
-    expect(suites.concurrency).toEqual({ group: "chant-build-suites-${{ github.ref }}", "cancel-in-progress": false });
-    expect(stepsRunning(suites.jobs.e2e, /npx vitest run --project e2e/)).toHaveLength(1);
-    expect(suites.jobs.suites.needs).toEqual(["e2e"]);
-    expect(suites.jobs.suites.if).toMatch(/always\(\)/);
+  it("ci.green requires check and test and nothing else", () => {
     const declaration = JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf8")) as {
       ci: { green: { branch: string; phases: Record<string, { runs: string[]; build?: string }>; require: string[] } };
     };
     expect(declaration.ci.green.branch).toBe("main");
-    expect(declaration.ci.green.phases.suites).toEqual({ runs: ["suites"], build: "newest" });
-    expect(declaration.ci.green.require).toEqual(expect.arrayContaining(["check", "test", "validate", "suites"]));
-    // The tick runs when release-suites completes, not only on its 15-minute schedule.
-    const tick = workflow("chant-ci-green.yml").on.workflow_run as { workflows: string[] };
-    expect(tick.workflows).toContain("release-suites");
+    expect(declaration.ci.green.require).toEqual(["check", "test"]);
+    expect(Object.keys(declaration.ci.green.phases).sort()).toEqual(["check", "test"]);
   });
 
-  it("the large-suite workflows and the release gate start only from a dispatch", () => {
-    for (const file of ["large-suites.yml", "helm-survey.yml"]) {
+  it("the suites, docs checks and large-suite workflows start only from a dispatch", () => {
+    for (const file of ["release-suites.yml", "docs-check.yml", "large-suites.yml", "helm-survey.yml"]) {
       expect(Object.keys(workflow(file).on)).toEqual(["workflow_dispatch"]);
     }
-    const gate = workflow("publish.yml").jobs.test.if ?? "";
-    expect(gate).toMatch(/github\.event_name == 'workflow_dispatch' && inputs\.verify_ci/);
-    expect(gate).not.toMatch(/refs\/tags/);
+    expect(stepsRunning(workflow("release-suites.yml").jobs.e2e, /npx vitest run --project e2e/)).toHaveLength(1);
   });
 
   const gateScript = join(root, "scripts", "human-gate.sh");

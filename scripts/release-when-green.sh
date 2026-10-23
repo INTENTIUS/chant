@@ -5,7 +5,7 @@
 # `just release`, then waits on the publish run and prints npm's `latest`:
 #
 #   1. starts each required ci.green phase that has no check run on the
-#      commit: release-suites.yml (suites), chant.yml (check, test, validate)
+#      commit: chant.yml (check, test; ci.green's require on main)
 #      when it takes a dispatch; a commit behind main's head goes through
 #      `chant ci run --at <sha>` instead, since a dispatch on main builds the
 #      head;

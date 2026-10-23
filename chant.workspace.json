@@ -43,25 +43,11 @@
             "test"
           ],
           "build": "every"
-        },
-        "validate": {
-          "runs": [
-            "validate"
-          ],
-          "build": "every"
-        },
-        "suites": {
-          "runs": [
-            "suites"
-          ],
-          "build": "newest"
         }
       },
       "require": [
         "check",
-        "test",
-        "validate",
-        "suites"
+        "test"
       ]
     }
   },

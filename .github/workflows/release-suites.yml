@@ -1,36 +1,17 @@
 name: release-suites
 
-# The long suites a release gates on (#3793). Pull request CI (chant.yml) runs
-# only fast checks; everything that spawns the CLI, runs tsc over fixtures,
-# builds the example corpus or boots a container is the vitest e2e project
-# (*.e2e.test.ts), and it runs here, on main, never on a pull request.
-#
-# The aggregate job is named `suites`, and chant.workspace.json's ci.green
-# requires a `suites` phase beside check, test and validate. `chant ci tick`
-# (chant-ci-green.yml) tags a main commit ci/green/<sha> only when all four
-# passed on it, and `just release` (scripts/release-preflight.sh) tags the
-# newest commit with a ci/green tag. So a release only ships a commit these
-# suites passed.
-#
-# ci.green declares suites `build: "newest"` (#4169), and `chant ci workflow`
-# writes the triggers and concurrency below from it. Each push to main queues
-# a run; one runs at a time, and GitHub keeps only the newest waiting, so the
-# commits between are never built. The tick records those as unbuilt, covered
-# by the newer commit. When a run goes red the tick bisects: it pushes a
-# ci/build/<sha> tag on an unbuilt commit and starts this workflow there by
-# hand (workflow_dispatch), each tag in a concurrency group of its own. `chant
-# ci run --at <sha>` asks for the same to make a chosen commit releasable.
-# Locally the same suite is `just test-e2e`.
+# The long suites (#3793): everything that spawns the CLI, runs tsc over
+# fixtures, builds the example corpus or boots a container is the vitest e2e
+# project (*.e2e.test.ts), and it runs here. By hand only (workflow_dispatch)
+# since CI went unit-only on 2026-10-23: no push or pull request starts it,
+# and no release waits on it. chant.workspace.json's ci.green no longer
+# requires a `suites` phase. Locally the same suite is `just test-e2e`.
 run-name: release-suites — ${{ github.ref_name }}
 
-# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch: {}
 
-# Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
+# One run at a time per ref; a run in progress is never cancelled.
 concurrency:
   group: chant-build-suites-${{ github.ref }}
   cancel-in-progress: false

@@ -3,19 +3,18 @@ name: chant
 # Distinct title so it isn't confused with other workflows on the same commit.
 run-name: chant — ${{ github.head_ref || github.ref_name }}
 
-# The fast checks, on every change, and nothing long (#3793): the lexicon
-# artifacts built once (lexicon-artifacts), typechecks, lint and small guards
-# (check), the unit tests (test-shard, aggregated as test), the trust policy
-# (trust) and the rest of every lexicon's prepack under the release gate plus
-# the completeness contract (validate).
+# Unit tests only, on every change (the maintainer's call, 2026-10-23: the
+# pipelines took too long). A pull request and a push to main run the lexicon
+# artifacts the unit tests read (lexicon-artifacts), core's typecheck (check)
+# and the unit tests (test-shard, aggregated as test). Nothing else.
 #
-# The long suites are not here. The e2e project (the CLI goldens, the corpus
-# differentials, the reference workspace, every *.e2e.test.ts) runs in
-# release-suites.yml on main, on a schedule or a dispatch; its `suites` check
-# is a required ci.green phase, so `just release` never tags a commit they
-# have not passed. The tests against real observability binaries and the
-# Docker npm smoke are in large-suites.yml, and the helm survey in
-# helm-survey.yml, both dispatch only.
+# By hand only, from a workflow_dispatch of this workflow: the repo-wide
+# typechecks, lints, example runs and time budgets that used to be in check
+# (guards), and every lexicon's validate and build under the release gate
+# plus the completeness contract (validate). The e2e project is in
+# release-suites.yml, the observability binaries and the Docker npm smoke in
+# large-suites.yml, the helm survey in helm-survey.yml and the docs link
+# check in docs-check.yml, all dispatch only.
 #
 # Run once per commit: on PRs (pull_request) and on pushes to main
 # (post-merge validation). Without scoping `push` to main, a commit on a
@@ -35,12 +34,11 @@ on:
 # a later push neither cancels a run in progress nor replaces a queued one.
 # Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 concurrency:
-  group: chant-build-check-test-validate-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: chant-build-check-test-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   # The lexicon artifacts the other jobs read, built once per run (#3793).
@@ -124,7 +122,7 @@ jobs:
   check:
     needs: [lexicon-artifacts]
     runs-on: ubuntu-latest
-    # Typechecks and guards on restored artifacts, about 2 minutes.
+    # Core's typecheck on restored artifacts.
     timeout-minutes: 10
     steps:
       # Recorded first so the timeout-report step below (#2076) can compute
@@ -133,6 +131,71 @@ jobs:
         id: start-time
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Restore the lexicon artifacts
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ needs.lexicon-artifacts.outputs.key }}
+          fail-on-cache-miss: true
+
+      # #3088: typechecks run on TypeScript 7 through scripts/tsc7.sh.
+      - name: Typecheck
+        run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json
+
+      # #2817: each run's length in its summary, so drift shows before it
+      # becomes a timeout.
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "check ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # #2076, a job-level timeout-minutes cancels the job rather than
+      # failing it (GitHub Actions docs, "expressions": cancelled() is true
+      # once the job is cancelled, and a step guarded by cancelled() still
+      # runs even though the rest of the job was skipped). Without this the
+      # job still ends red, and a reviewer cannot tell a timeout from a real
+      # failure without opening the run.
+      - name: Report a timeout, distinct from a failure
+        if: cancelled()
+        run: |
+          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
+          message="check job timed out after ~${elapsed}m against its 10 minute ceiling. This is a CI timeout, not a check failure."
+          echo "::error::${message}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # The steps check ran before unit-only CI, by hand only. Dispatch this
+  # workflow to run them.
+  guards:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [lexicon-artifacts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
       - uses: actions/checkout@v6
         with:
           # Whole history, for the trace budget step (#4032): a trace reads a region's commits and blame.
@@ -171,9 +234,6 @@ jobs:
           echo "node_modules/.bin/tsc: $(npx tsc -v)"
           echo "scripts/tsc7.sh: $(scripts/tsc7.sh -v)"
           node -e 'console.log("import(\"typescript\"): " + require("typescript").version)'
-
-      - name: Typecheck
-        run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json
 
       # The whole repo, not just core (#1366). The root tsconfig includes
       # `lexicons/**/*` — every lexicon, example and helper script — so all of
@@ -263,35 +323,11 @@ jobs:
           set -o pipefail
           npx tsx scripts/bench-overlap.ts | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # #2817: each run's length in its summary, so drift shows before it
-      # becomes a timeout.
-      - name: Record the job's duration
-        if: always()
-        run: |
-          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
-          echo "check ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Upload SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
-
-      # #2076, a job-level timeout-minutes cancels the job rather than
-      # failing it (GitHub Actions docs, "expressions": cancelled() is true
-      # once the job is cancelled, and a step guarded by cancelled() still
-      # runs even though the rest of the job was skipped). Without this the
-      # job still ends red, and a reviewer cannot tell a timeout from a real
-      # failure without opening the run.
-      - name: Report a timeout, distinct from a failure
-        if: cancelled()
-        run: |
-          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
-          message="check job timed out after ~${elapsed}m against its 10 minute ceiling. This is a CI timeout, not a check failure."
-          echo "::error::${message}"
-          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
-          fi
 
   # The unit tests run as four vitest shards in parallel. vitest assigns each
   # test file to exactly one shard (sorted by a hash of its path), so the
@@ -415,66 +451,6 @@ jobs:
           fi
           [ "${SHARDS}" = "success" ]
 
-  # chant#2547 — the trust policy is read from the base branch, so this job
-  # judges a pull request by the signers main already has. A commit that
-  # changes .chant/allowed_signers or .chant/trust.json must be signed by a
-  # key listed there. Every other commit needs no signature. Pull requests
-  # only: a push to main has no base to read a policy from.
-  trust:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          # Whole history, so origin/<base> and the commits between it and the head are there.
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-      - name: Verify the change against the policy at base
-        # --head is the pull request's own tip, not the merge commit GitHub makes for the run.
-        run: npx tsx packages/core/src/cli/main.ts workspace verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
-
-  # #2814: the surface snapshot of each lexicon a pull request changes, for
-  # the lexicons validate does not already gate (those that set
-  # checkSurfaceSnapshot: aws, azure, k8s, sql). Before, docker, fly, fountain,
-  # gcp, github and gitlab were compared only by the weekly lexicon-upgrade
-  # run. The script generates the changed lexicons at the head and, when the
-  # head drifts, at the merge base from the same fetched spec, and fails only
-  # on drift the base does not have, so upstream moving under fly or github
-  # does not fail an unrelated change. A PR that changes no such lexicon stops
-  # after the checkout.
-  surfaces:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          # Whole history, so origin/<base> and the merge base are there.
-          fetch-depth: 0
-      - name: Find changed lexicon sources
-        id: changed
-        run: |
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq '^lexicons/[^/]+/(src/|surface\.snapshot\.json$)'; then
-            echo "any=true" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/setup-node@v6
-        if: steps.changed.outputs.any == 'true'
-        with:
-          node-version: '24'
-          cache: 'npm'
-      - name: Install dependencies
-        if: steps.changed.outputs.any == 'true'
-        run: npm install --ignore-scripts
-      - name: Compare each changed lexicon's surface with its snapshot
-        if: steps.changed.outputs.any == 'true'
-        run: npx tsx scripts/check-changed-surfaces.ts --base "origin/${{ github.base_ref }}"
-
   # The rest of every lexicon's prepack (validate, build) on the artifacts
   # lexicon-artifacts built, then the completeness contract (#1067), which
   # reads the builds. One job, beside the shards (#3793); before, this job ran
@@ -487,7 +463,10 @@ jobs:
   # releases in a row died on a check CI was structurally unable to see.
   # Every input the gate depends on is pinned (the aws spec by content,
   # #1511; k8s by version tag), so arming it on PRs is deterministic.
+  #
+  # By hand only since unit-only CI: dispatch this workflow to run it.
   validate:
+    if: github.event_name == 'workflow_dispatch'
     needs: [lexicon-artifacts]
     runs-on: ubuntu-latest
     timeout-minutes: 10

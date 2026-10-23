@@ -20,50 +20,24 @@ on:
     # reuses publish.yml (already the npm trusted-publisher), so NO npm/OIDC
     # change is needed. Un-gate by uncommenting the line below.
     # branches: [main]
-  workflow_dispatch:
-    inputs:
-      verify_ci:
-        description: Run the release-gate job, which waits for a green chant run on the commit (up to 45 minutes)
-        type: boolean
-        default: false
+  workflow_dispatch: {}
 
 jobs:
-  # Which packages can actually publish over OIDC, answered in seconds. No
-  # `needs:`, so it runs beside the test gate — dispatch this workflow and
-  # the coverage table is in the run summary before the gate finishes.
+  # The release's only gate besides the build and the publish themselves:
+  # the unit tests. Since CI went unit-only (2026-10-23) the `chant` workflow
+  # runs core's typecheck and the unit tests and nothing else, so this job
+  # requires a green `chant` run on the commit being released instead of
+  # running the unit tests a second time. For a bump commit, which only moves
+  # version fields, the run checked is its parent's
+  # (scripts/publish-verify-ci.sh). It runs on every tag push and every
+  # dispatch. The trusted-publisher audit that also gated the release (#3191)
+  # and the e2e suites (release-suites.yml) no longer do.
   #
-  # It lives here rather than in its own workflow because npm matches a
-  # trusted-publisher record against the workflow FILENAME: probing from
-  # anywhere else reports every package as missing and proves nothing.
-  #
-  # #3191: a gate. `publish` needs it, so a package with no working record
-  # stops the release before anything ships. chant-v0.81.0 (#2646) published
-  # 19 packages before the two with no record failed. When GitHub issues no
-  # id-token (a fork, a job without the permission) the script can check
-  # nothing; it warns and passes.
-  audit:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v6
-      - run: bash scripts/audit-trusted-publishers.sh
-
-  # The CI gate (#2817). This job ran the whole suite again, about 15
-  # minutes, on a commit whose `chant` run had already passed: `just release`
-  # only tags a bump commit on top of a green commit (#2816). It now checks
-  # that run through the API instead. For a bump commit, which only moves
-  # version fields and has no run of its own, the run checked is its parent's
-  # (scripts/publish-verify-ci.sh). The publish step below still runs each
-  # package's prepack under CHANT_RELEASE_GATE, so the build and the release
-  # gate run on what ships. The job keeps the id `test` so `publish` and
-  # `untag` read its result as before.
-  #
-  # #3573: its check run is named release-gate. The tag sits on a bump commit
-  # on main, where chant.yml's required `test` also runs, and ci.green judges
-  # a phase by check-run name, keeping the newest run of each name. Two runs
-  # named `test` would let this gate's verdict stand in for the suite's.
+  # #3573: its check run is named release-gate. The tag sits on a commit on
+  # main, where chant.yml's required `test` also runs, and ci.green judges a
+  # phase by check-run name, keeping the newest run of each name. Two runs
+  # named `test` would let this gate's verdict stand in for the suite's. The
+  # job keeps the id `test` so `publish` and `untag` read its result.
   #
   # #3027: the run it checks may still be queued or running when the tag
   # lands, so the script waits for it (up to 45 minutes, or 5 for a run to
@@ -71,17 +45,8 @@ jobs:
   # `gate` output; on `timeout` the tag is kept (see `untag`). The job timeout
   # sits above the script's own so a slow CI ends as `timeout`, not as a
   # cancelled job.
-  #
-  # Manual only. A tag push never runs this job: the release waits on no
-  # suite. `just release` already refuses a commit without a green `chant`
-  # run (scripts/release-preflight.sh), and that run is the fast checks. A
-  # person who wants the extra check dispatches this workflow with verify_ci
-  # set. Skipped, `publish` goes ahead and `untag` ignores it. The repository
-  # variable CHANT_RELEASE_SKIP_CI_GATE, which used to switch this job off on
-  # tags, is no longer read.
   test:
     name: release-gate
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_ci }}
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
@@ -94,18 +59,16 @@ jobs:
         with:
           # The bump commit and its parent, the commit `chant` ran on.
           fetch-depth: 2
-      - name: Require a green chant run on the released commit
+      - name: Require a green chant run (typecheck and unit tests) on the released commit
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/publish-verify-ci.sh
 
   publish:
-    needs: [test, audit]
-    # Run when the CI gate passed (a dispatch with verify_ci) or was skipped
-    # (every tag push, and a dispatch without it), and every package has a
-    # trusted-publisher record (#3191). Never runs if either actually failed.
-    if: ${{ always() && !startsWith(github.ref, 'refs/tags/release/') && needs.audit.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    needs: [test]
+    # Runs only when the unit-test gate passed.
+    if: ${{ !startsWith(github.ref, 'refs/tags/release/') && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       # What this run put on npm, name@version, space-separated. `untag`
@@ -155,9 +118,8 @@ jobs:
         id: publish
         env:
           # Fallback only. Packages with an npm trusted-publisher record
-          # publish over OIDC and never touch this. Since #3191 `audit` stops
-          # the release when a package has no record, so this is used only
-          # when the exchange worked there and then failed here. See
+          # publish over OIDC and never touch this; a package without one, or
+          # whose exchange fails, publishes with it. See
           # scripts/publish-packages.sh.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           # chant #1473 — arm the release-time surface gate. `prepack`
@@ -185,8 +147,8 @@ jobs:
   # pushes its record to chant/lifecycle, hence contents: write, and a run
   # again after a failure resumes from that record. The tag is never deleted.
   release-publish:
-    needs: [audit]
-    if: ${{ startsWith(github.ref, 'refs/tags/release/npm/') && needs.audit.result == 'success' }}
+    needs: [test]
+    if: ${{ startsWith(github.ref, 'refs/tags/release/npm/') && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -217,7 +179,7 @@ jobs:
 
   # #1481 — a failed release must not leave its tag behind. `just release`
   # pushes the bump commit and the tag before this workflow runs, so when the
-  # gate, the audit or the publish fails, main is left claiming a version the
+  # gate or the publish fails, main is left claiming a version the
   # registry never got (chant-v0.40.1 was exactly that: tagged, bumped,
   # nothing on npm). Deleting the tag makes the tag list the truth again.
   #
@@ -231,18 +193,17 @@ jobs:
   # list), keeps the tag and fails with the list of what did and did not
   # publish, or deletes the tag when nothing did. Recover a partial release
   # by fixing the cause and `gh run rerun <id> --failed`: the publish skips
-  # what is already on npm. An audit failure publishes nothing, so its tag
-  # goes; add the record and push the tag again at the same commit.
+  # what is already on npm. A gate failure publishes nothing, so its tag
+  # goes; fix the unit tests and push the tag again at a green commit.
   #
-  # One exception (#3027), possible only when a person dispatches this
-  # workflow on a tag with verify_ci (a tag push skips the gate): when the
-  # gate failed only because the `chant` run was still going after 45 minutes (needs.test.outputs.gate == 'timeout'),
+  # One exception (#3027): when the gate failed only because the `chant` run
+  # was still going after 45 minutes (needs.test.outputs.gate == 'timeout'),
   # the release is not known to be bad, so the tag stays and nothing was
   # published. Once that run is green, `gh run rerun <id> --failed` re-runs
   # the gate and publishes. A cancelled gate (no output) still untags.
   untag:
-    needs: [test, audit, publish]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/release/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.audit.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
+    needs: [test, publish]
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/release/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -256,5 +217,5 @@ jobs:
         env:
           PUBLISHED_IN_RUN: ${{ needs.publish.outputs.published }}
         run: |
-          echo "::error::release ${GITHUB_REF_NAME} failed (test: ${{ needs.test.result }}, audit: ${{ needs.audit.result }}, publish: ${{ needs.publish.result }})"
+          echo "::error::release ${GITHUB_REF_NAME} failed (test: ${{ needs.test.result }}, publish: ${{ needs.publish.result }})"
           bash scripts/release-untag.sh

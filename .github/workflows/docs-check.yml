@@ -1,11 +1,9 @@
 name: docs-check
 
-# No workflow-level `paths` filter: a filtered-out workflow never reports a
-# check at all. The job always runs and its first step decides whether this
-# PR touches anything the docs build or link check reads. When it does not,
-# the heavy steps are skipped and the job succeeds in seconds.
+# By hand only (workflow_dispatch) since CI went unit-only on 2026-10-23.
+# A dispatch is not a pull request, so the first step runs the full check.
 on:
-  pull_request:
+  workflow_dispatch: {}
 
 permissions:
   contents: read

@@ -85,8 +85,8 @@ test: _ensure-gen
 
 # The end-to-end tests, the vitest `e2e` project (*.e2e.test.ts). A large
 # suite: it asks a person to type `run` (scripts/human-gate.sh). On GitHub
-# release-suites.yml runs it on main, on a schedule or a dispatch, and a
-# release only tags a commit it passed (#3793).
+# release-suites.yml runs it when a person dispatches it. No release waits
+# on it since CI went unit-only (2026-10-23).
 test-e2e:
     @scripts/human-gate.sh test-e2e
     @just _ensure-gen
@@ -103,7 +103,7 @@ test-e2e-affected base="origin/main" *args: _ensure-gen
 
 # chant #1025 — the fold-vs-run differential corpus, standalone with its
 # per-source report (fold / run-fallback / drift). Part of the e2e project
-# (`just test-e2e`, and release-suites.yml before a release) since #3793; this
+# (`just test-e2e`, and release-suites.yml by hand) since #3793; this
 # target runs just the differential on demand and shows its report without
 # the rest of the suite's noise.
 fold-differential: _ensure-gen
