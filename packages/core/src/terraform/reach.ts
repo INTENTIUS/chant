@@ -106,8 +106,12 @@ export function hidesContents(node: TfNode): boolean {
   return node.expansion !== undefined && node.instancesFrom !== "state";
 }
 
-/** Which way a walk steps: `in` follows who reads a node (its dependents), `out` what it reads. */
-export type WalkDirection = "in" | "out";
+/**
+ * Which way a walk steps: `in` follows who reads a node (its dependents), `out`
+ * what it reads, `both` either (weak connectivity, #3909). An output is
+ * terminal every way: it is reached, never stepped from.
+ */
+export type WalkDirection = "in" | "out" | "both";
 
 /**
  * Walk from `seeds` (already contracted) and return every node reached with its
@@ -121,11 +125,16 @@ export function walkFrom(
 ): Map<string, number> {
   const start = new Set(seeds);
   const reached = new Map<string, number>();
+  const stepsAlong = (edges: ContractedEdge[] | undefined, far: "from" | "to"): { far: string; hops: never[] }[] =>
+    (edges ?? []).filter((e) => !(opts.sameStack && e.crossStack)).map((e) => ({ far: e[far], hops: [] }));
   walkBreadthFirst<never>(start, {
-    steps: (id) =>
-      ((direction === "in" ? index.adj.in.get(id) : index.adj.out.get(id)) ?? [])
-        .filter((e) => !(opts.sameStack && e.crossStack))
-        .map((e) => ({ far: direction === "in" ? e.from : e.to, hops: [] })),
+    steps: (id) => {
+      if (isOutputAddress(id) && !start.has(id)) return [];
+      const steps: { far: string; hops: never[] }[] = [];
+      if (direction !== "out") steps.push(...stepsAlong(index.adj.in.get(id), "from"));
+      if (direction !== "in") steps.push(...stepsAlong(index.adj.out.get(id), "to"));
+      return steps;
+    },
     arrive: ({ id, depth }) => {
       if (!start.has(id) && !reached.has(id)) reached.set(id, depth);
       return false;
