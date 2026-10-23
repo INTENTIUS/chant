@@ -100,8 +100,10 @@ export const terraformRootSchema = z.strictObject({
    * `show -json`: what the next apply would do, with replace reasons,
    * values unknown until apply and drift. It needs provider credentials and
    * an initialised root, and falls back to the state read, then to declared
-   * only, saying which read answered. A live choudoufu root is read with
-   * `live-plan -json` whatever this says.
+   * only, saying which read answered. A live choudoufu root keeps its
+   * `live-plan -json` read for ownership at either depth; at `"plan"` the
+   * plan read runs beside it and its attributes go on the blocks `live-plan`
+   * bound (#4371).
    *
    * The `CHANT_TERRAFORM_OBSERVE` environment variable overrides it for
    * every root, for one run.

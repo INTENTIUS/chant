@@ -24,13 +24,16 @@
  * is a different one.
  *
  * So the returned `ObservationResult` carries `sources`, keyed by chant entity
- * name, with one of exactly three values:
+ * name, with one of exactly four values:
  *
  * - `"state"`: this entity's root was read with `terraform show -json`.
  * - `"live"`: this entity's root was read with `choudoufu live-plan -json`.
  * - `"plan"`: this entity's root was read at the plan depth (#4358), a saved
  *   plan's `show -json`, which says what the next apply would do. See the
  *   plan depth section below.
+ * - `"live+plan"`: a live root at the plan depth (#4371), where both reads
+ *   answered: `live-plan -json` for presence and ownership, the plan read for
+ *   the attributes. A live root whose plan read failed says `"live"`.
  *
  * Three guarantees a consumer may rely on. Every entity `describeResources`
  * was asked about that belongs to a root has an entry, whatever verdict it
@@ -166,6 +169,31 @@
  * root gets a note saying which read answered. A planned create has no row in
  * `prior_state` and reads absent, as on the state read, so its plan
  * attributes have nowhere to ride.
+ *
+ * ### On a live root (#4371)
+ *
+ * `live-plan -json` carries ownership and no attribute values (behold#404),
+ * and `choudoufu plan -out` writes a stock plan file (choudoufu #878). So a
+ * live root at the plan depth runs both (`livePlanDepthAdapter`):
+ * `live-plan -json` first, unchanged, for presence and ownership, then the
+ * same `terraformPlanRead` a stock root gets, whose attributes are added to
+ * each block `live-plan` bound. A foreign or adoptable block gets none: the
+ * plan proposes a create there, which is choudoufu's answer for an instance
+ * it does not own, not a fact about the live resource. `sources` reads
+ * `"live+plan"`.
+ *
+ * choudoufu rebuilds prior state from the account on every run, so on a live
+ * root out-of-band drift is not in `resource_drift`. It is the planned
+ * `update` itself: `planChanges` has the live value as `before` and the
+ * declared one as `after`, and `planDrift` stays empty. That is where #2472's
+ * property-level drift for a live root comes from.
+ *
+ * Falling back is one step: if the plan read fails, `live-plan` alone
+ * answered, the note says why, and `sources` reads `"live"`. If `live-plan`
+ * fails the root is not observed, as at the default depth, and the plan read
+ * is not tried, since its attributes would have no present block to ride.
+ * The cost is two refreshes of the estate per read, run one after the other
+ * so they never share the root's cache file.
  *
  * ## Nothing from `values` is surfaced
  *
@@ -1326,6 +1354,76 @@ function planAdapter(
   };
 }
 
+/** What a live root's plan-depth bind produced: `live-plan`'s index, and the plan when it answered. */
+type LivePlanDepthIndex = { live: LivePlanIndex; plan?: PlanIndex };
+
+/** Which reads answered a live root at the plan depth (#4371). */
+export type LivePlanDepthAnswer = "live+plan" | "live";
+
+/**
+ * One live root's reader at the plan depth (#4371): {@link liveAdapter}'s
+ * read, unchanged, with the plan's attributes added to every block it bound.
+ * See "On a live root" in the module doc.
+ */
+function livePlanDepthAdapter(
+  root: string,
+  cwd: string | undefined,
+  deps: TerraformReadDeps,
+  outcome: { answered: LivePlanDepthAnswer; note: string },
+): ObserverAdapter<LivePlanDepthIndex> {
+  const where = cwd ? { cwd } : {};
+  const live = liveAdapter(root, cwd, deps);
+  const planRead = deps.planRead ?? terraformPlanRead;
+  const firstLine = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
+  let command = "";
+
+  return {
+    async bind(): Promise<LivePlanDepthIndex> {
+      outcome.answered = "live";
+      outcome.note = `terraform.roots.${root}: no read answered (\`live-plan -json\` failed, so the plan read was not tried)`;
+      const index = await live.bind();
+      try {
+        const read = await planRead({ root, ...where });
+        command = read.command.replace(read.planDir, "<tmp>");
+        outcome.answered = "live+plan";
+        outcome.note = `terraform.roots.${root}: the plan read answered (\`${command}\`), beside \`live-plan -json\`, which answered presence and ownership`;
+        return { live: index, plan: indexPlan(read.json) };
+      } catch (err) {
+        const kind = err instanceof TerraformPlanReadError ? err.kind : "plan";
+        const why =
+          kind === "not-initialised"
+            ? "the root needs init, which chant never runs"
+            : planFailureIsCredentials(String(err instanceof Error ? err.message : err))
+              ? "no provider credentials"
+              : kind === "backend"
+                ? "the plan read could not reach the backend"
+                : "the plan failed";
+        outcome.note = `terraform.roots.${root}: the plan read failed (${why}: ${firstLine(err)}), so \`live-plan -json\` alone answered; plan attributes are absent`;
+        return { live: index };
+      }
+    },
+
+    classifyBindFailure(err) {
+      return live.classifyBindFailure!(err);
+    },
+
+    async read(index, entity): Promise<EntityObservation> {
+      const observed = await live.read(index.live, entity);
+      const { plan } = index;
+      if (!plan) return observed;
+      const queried = `${observed.queried}; ${command} + show -json <planfile>`;
+      const present = "present" in observed ? observed.present : undefined;
+      if (!present || entity.type !== RESOURCE_TYPE || present.ownership !== "owned") return { ...observed, queried };
+      const { address } = entity as TerraformDeclared;
+      return {
+        ...observed,
+        present: { ...present, attributes: { ...present.attributes, ...planAttributesFor(address, plan) } },
+        queried,
+      };
+    },
+  };
+}
+
 /** The environment variable that overrides every root's observation depth for one run (#4358). */
 export const TERRAFORM_OBSERVE_ENV = "CHANT_TERRAFORM_OBSERVE";
 
@@ -1422,15 +1520,20 @@ export async function describeResources(
     const live = declared.some((entity) => entity.mode === "live");
     const depth = depthOf(root);
     if (live) {
-      for (const entity of declared) sources[entity.name] = "live";
       notes.push(
         `terraform.roots.${root} is a live root: ownership came from choudoufu's tofu-estate/tofu-address markers via \`live-plan -json\`, not from a state file`,
       );
       if (depth === "plan") {
-        notes.push(
-          `terraform.roots.${root}: the plan depth reads stock roots only; this live root was read with \`live-plan -json\` (see the observation page, "A choudoufu root")`,
-        );
+        // Both reads (#4371): `live-plan` for ownership, the plan for the
+        // attributes on what it bound. `sources` is known only after the read.
+        const outcome: { answered: LivePlanDepthAnswer; note: string } = { answered: "live", note: "" };
+        const read = await observeEntities(declared, livePlanDepthAdapter(root, options.cwd, deps, outcome));
+        for (const entity of declared) sources[entity.name] = outcome.answered;
+        if (outcome.note) notes.push(outcome.note);
+        parts.push(normalizeObservation(read));
+        continue;
       }
+      for (const entity of declared) sources[entity.name] = "live";
       parts.push(normalizeObservation(await observeEntities(declared, liveAdapter(root, options.cwd, deps))));
       continue;
     }
