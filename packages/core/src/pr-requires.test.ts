@@ -184,6 +184,18 @@ describe("checkPrRequires", () => {
     expect(unmetRequires(out)).toBeNull();
   });
 
+  test("only: a check left out passes as not required and asks the forge nothing (#4336)", async () => {
+    const calls: string[] = [];
+    const ask = (name: string) => async () => (calls.push(name), { passed: false, reason: `${name} unmet` });
+    const forge = { kind: "github", prApproved: ask("approved"), prMergeable: ask("mergeable"), prUndiverged: ask("undiverged"), prChecksPassed: ask("checks") } as unknown as PrForge;
+    const out = await checkPrRequires(forge, 7, HEAD, { only: ["approved", "checks"], reads: 1 });
+    expect(calls).toEqual(["approved", "checks"]);
+    expect(out.map((o) => o.name)).toEqual([...PR_APPLY_REQUIRES]);
+    expect(out[1]).toEqual({ name: "mergeable", passed: true, reason: "not required" });
+    expect(unmetRequires(out)).toBe("approved: approved unmet; checks: checks unmet");
+    expect(unmetRequires(await checkPrRequires(forge, 7, HEAD, { only: [] }))).toBeNull();
+  });
+
   test("a client without a method, or a call that throws, is unmet", async () => {
     const forge = { kind: "gitlab", prApproved: async () => { throw new Error("401"); } } as unknown as PrForge;
     const out = await checkPrRequires(forge, 3, HEAD, { reads: 1 });

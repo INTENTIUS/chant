@@ -1076,6 +1076,7 @@ async function beforeMergeChecks(ctx: CommandContext): Promise<PrBeforeMerge | n
   }
   // The apply's own statuses never hold it back: chant ci run's, and the report's.
   const ignore = [`chant/${gate}`, `chant/${PR_APPLY_GATE}`, prStatusContext("apply", member)];
+  // No `only`: ws-106 gives the declaration no way to leave a check out, so all four are asked (#4336).
   const requires = await checkPrRequires(forge, args.pr, head, { ignore });
   for (const r of requires) console.error(formatInfo(`${r.name}: ${r.passed ? "passed" : r.pending ? "pending" : "unmet"}, ${r.reason}`));
   const unmet = unmetRequires(requires);
