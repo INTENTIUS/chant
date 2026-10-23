@@ -47,6 +47,12 @@ export interface ObserveResult {
    * {@link carryAnnotations} puts it on the declared nodes of an overlay.
    */
   annotations?: Record<string, Record<string, unknown>>;
+  /**
+   * Which read answered each declared entity (#2267), keyed like the
+   * observations' resources: `"state"`, `"live"`, `"plan"` or `"live+plan"`
+   * from the terraform lexicon. Present only for lexicons that report it.
+   */
+  sources?: Record<string, string>;
 }
 
 /**
@@ -159,6 +165,7 @@ export async function observeResources(
   const errors: string[] = [];
   const notes: string[] = [];
   const annotations: Record<string, Record<string, unknown>> = {};
+  const sources: Record<string, string> = {};
 
   for (const plugin of plugins) {
     if (!plugin.describeResources) continue;
@@ -259,6 +266,7 @@ export async function observeResources(
         if (!notes.includes(line)) notes.push(line);
       }
       Object.assign(annotations, observed.annotations ?? {});
+      Object.assign(sources, observed.sources);
       // What the estate depends on but does not declare (#1273). Read after the
       // managed resources, because the declared observation is the closure's
       // roots — there is nothing to reference out from until it exists.
@@ -328,7 +336,7 @@ export async function observeResources(
     }
   }
 
-  return { observations, warnings, errors, notes, annotations };
+  return { observations, warnings, errors, notes, annotations, ...(Object.keys(sources).length > 0 ? { sources } : {}) };
 }
 
 /**
