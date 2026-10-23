@@ -16,6 +16,14 @@
 
 import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
 import type { TemplateIR } from "@intentius/chant/import/parser";
+import { EmbeddedImportScope, isEmbeddedReference, renderEmbeddedReference } from "@intentius/chant/import/embedded";
+import { isEmbeddedRawValue } from "./embedded";
+
+/** What one module's rendering collects: the fly classes it uses, and the imports embedded references need. */
+interface Ctx {
+  imports: Set<string>;
+  scope: EmbeddedImportScope;
+}
 
 /**
  * How a nested field is wrapped: `single` → `new Cls({...})`, `array` → each
@@ -106,13 +114,25 @@ export class FlyGenerator implements TypeScriptGenerator {
   generate(ir: TemplateIR): GeneratedFile[] {
     const imports = new Set<string>();
     const bodyLines: string[] = [];
+    // Names an embedded reference's imports must not take: the module's own
+    // declarations and every fly class it could import.
+    const classNames = new Set(["App", "Machine", ...Object.keys(NESTED_DECLARABLES)]);
+    for (const fields of Object.values(NESTED_DECLARABLES)) for (const n of Object.values(fields)) classNames.add(n.cls);
+    for (const r of ir.resources) {
+      const parts = r.type.split("::");
+      classNames.add(parts.length >= 3 ? parts[2] : r.type);
+    }
+    const ctx: Ctx = {
+      imports,
+      scope: new EmbeddedImportScope("", [...classNames, "Buffer", ...ir.resources.map((r) => camelCase(r.logicalId))]),
+    };
 
     for (const resource of ir.resources) {
       const parts = resource.type.split("::");
       const className = parts.length >= 3 ? parts[2] : resource.type;
       imports.add(className);
       const varName = camelCase(resource.logicalId);
-      const props = formatProps(resource.properties, 0, className, imports);
+      const props = formatProps(resource.properties, 0, className, ctx);
       bodyLines.push(`export const ${varName} = new ${className}(${props});`);
       bodyLines.push("");
     }
@@ -122,8 +142,9 @@ export class FlyGenerator implements TypeScriptGenerator {
       lines.push(
         `import { ${[...imports].sort().join(", ")} } from "@intentius/chant-lexicon-fly";`,
       );
-      lines.push("");
     }
+    lines.push(...ctx.scope.lines());
+    if (lines.length > 0) lines.push("");
     lines.push(...bodyLines);
 
     return [{ path: "main.ts", content: lines.join("\n") + "\n" }];
@@ -145,7 +166,7 @@ function formatProps(
   props: Record<string, unknown>,
   indent: number,
   ownerClass: string,
-  imports: Set<string>,
+  ctx: Ctx,
 ): string {
   const entries = Object.entries(props);
   if (entries.length === 0) return "{}";
@@ -158,8 +179,8 @@ function formatProps(
     const spec = nested?.[key];
     const rendered =
       spec !== undefined
-        ? formatNested(value, indent + 1, spec, imports)
-        : formatValue(value, indent + 1);
+        ? formatNested(value, indent + 1, spec, ctx)
+        : formatValue(value, indent + 1, ctx);
     return `${pad}${key}: ${rendered},`;
   });
 
@@ -171,14 +192,14 @@ function formatNested(
   value: unknown,
   indent: number,
   spec: Nested,
-  imports: Set<string>,
+  ctx: Ctx,
 ): string {
   const construct = (obj: unknown, at: number): string => {
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-      return formatValue(obj, at);
+      return formatValue(obj, at, ctx);
     }
-    imports.add(spec.cls);
-    return `new ${spec.cls}(${formatProps(obj as Record<string, unknown>, at, spec.cls, imports)})`;
+    ctx.imports.add(spec.cls);
+    return `new ${spec.cls}(${formatProps(obj as Record<string, unknown>, at, spec.cls, ctx)})`;
   };
 
   if (spec.kind === "single") {
@@ -195,7 +216,7 @@ function formatNested(
 
   // record: a plain object whose values are wrapped in the constructor.
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return formatValue(value, indent);
+    return formatValue(value, indent, ctx);
   }
   const record = value as Record<string, unknown>;
   const recKeys = Object.entries(record);
@@ -206,8 +227,14 @@ function formatNested(
   return `{\n${items.join("\n")}\n${closePad}}`;
 }
 
-function formatValue(value: unknown, indent: number): string {
+function formatValue(value: unknown, indent: number, ctx: Ctx): string {
   if (value === null || value === undefined) return "undefined";
+  // A machine file another lexicon imported (#3373): flaps wants the file's
+  // text base64-encoded, so the reference's text is encoded at build time.
+  if (isEmbeddedRawValue(value)) {
+    return `Buffer.from(${renderEmbeddedReference(value.$base64, ctx.scope, indent * 2)}, "utf8").toString("base64")`;
+  }
+  if (isEmbeddedReference(value)) return renderEmbeddedReference(value, ctx.scope, indent * 2);
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || typeof value === "boolean") return String(value);
 
@@ -215,24 +242,24 @@ function formatValue(value: unknown, indent: number): string {
     if (value.length === 0) return "[]";
     const pad = "  ".repeat(indent + 1);
     const closePad = "  ".repeat(indent);
-    const items = value.map((v) => `${pad}${formatValue(v, indent + 1)},`);
+    const items = value.map((v) => `${pad}${formatValue(v, indent + 1, ctx)},`);
     return `[\n${items.join("\n")}\n${closePad}]`;
   }
 
   if (typeof value === "object") {
-    return formatPlainObject(value as Record<string, unknown>, indent);
+    return formatPlainObject(value as Record<string, unknown>, indent, ctx);
   }
 
   return String(value);
 }
 
 /** A plain object literal (no constructor wrapping) — for scalar-valued maps like env/metadata. */
-function formatPlainObject(obj: Record<string, unknown>, indent: number): string {
+function formatPlainObject(obj: Record<string, unknown>, indent: number, ctx: Ctx): string {
   const entries = Object.entries(obj);
   if (entries.length === 0) return "{}";
   const pad = "  ".repeat(indent + 1);
   const closePad = "  ".repeat(indent);
-  const lines = entries.map(([key, value]) => `${pad}${objectKey(key)}: ${formatValue(value, indent + 1)},`);
+  const lines = entries.map(([key, value]) => `${pad}${objectKey(key)}: ${formatValue(value, indent + 1, ctx)},`);
   return `{\n${lines.join("\n")}\n${closePad}}`;
 }
 

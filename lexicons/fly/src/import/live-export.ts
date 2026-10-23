@@ -19,6 +19,7 @@
  */
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
+import type { ParseContext, TemplateIR } from "@intentius/chant/import/parser";
 import { isChantOwned, type FlapsMachine } from "../op/activities/fly-apply";
 import {
   FlyParser,
@@ -90,9 +91,15 @@ export function buildExportFromApp(
   const cleanApp = keptApp ? stripAppServerFields(keptApp) : keptApp;
 
   const bundle: Record<string, unknown> = { ...(cleanApp ?? {}), machines: cleanMachines };
-  const ir = new FlyParser().parse(JSON.stringify(bundle));
+  const content = JSON.stringify(bundle);
+  // `reparse(context)` parses the same bundle again with a `ParseContext`, so
+  // `chant import --from` hands a collector config in a machine file to the
+  // otel importer, as file import does (#3373).
+  const parse = (context?: ParseContext): TemplateIR => select(new FlyParser().parse(content, context), opts.selector);
+  return { ...parse(), reparse: (context) => parse(context) };
+}
 
-  const selector = opts.selector;
+function select(ir: TemplateIR, selector: ResourceSelector | undefined): TemplateIR {
   if (!selector || (selector.type === undefined && selector.name === undefined)) {
     return ir;
   }

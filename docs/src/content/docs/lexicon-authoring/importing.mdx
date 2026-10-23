@@ -107,7 +107,7 @@ Neither side depends on the other. The contract is in `packages/core/src/import/
 
 `chant import --from <env>` delegates the same way ([#2995](https://github.com/INTENTIUS/chant/issues/2995)). An export has no parser call of its own, so an exporter that maps through its import parser returns `reparse(context)` on its `ExportedTemplate`: the same objects parsed again with a `ParseContext`, with no second read of the live target. Core probes and resolves through it exactly as above, and writes the owners' modules beside the generated files. An export without `reparse` keeps embedded content as read. See [Implementing Live Export](/chant/lexicon-authoring/live-export/#embedded-content).
 
-k8s is the only host so far (`lexicons/k8s/src/import/embedded.ts`). otel, prometheus and grafana are the owners, each in its `src/import/embedded.ts`. The round trip over real manifests is `lexicons/k8s/src/import/embedded-roundtrip.test.ts`, and the same through live import against a fake cluster is `embedded-live.test.ts` beside it.
+k8s (`lexicons/k8s/src/import/embedded.ts`) and fly (`lexicons/fly/src/import/embedded.ts`, a machine's `config.files[].raw_value`, #3373) are the hosts. otel, prometheus and grafana are the owners, each in its `src/import/embedded.ts`. The round trip over real manifests is `lexicons/k8s/src/import/embedded-roundtrip.test.ts`, and the same through live import against a fake cluster is `embedded-live.test.ts` beside it. fly's is `lexicons/fly/src/import/embedded-live.test.ts`, against a fake flaps API.
 
 ## The three files
 

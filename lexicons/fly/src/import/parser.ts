@@ -23,9 +23,12 @@ import type {
   TemplateParser,
   TemplateIR,
   ResourceIR,
+  ParseContext,
 } from "@intentius/chant/import/parser";
+import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
 import { BaseValueParser } from "@intentius/chant/import/base-parser";
 import { isSerializerPlan } from "../detect";
+import { delegateEmbedded } from "./embedded";
 
 export const APP_TYPE = "Fly::Machines::App";
 export const MACHINE_TYPE = "Fly::Machines::Machine";
@@ -70,7 +73,24 @@ export class FlyParser extends BaseValueParser implements TemplateParser {
     return null;
   }
 
-  parse(input: string): TemplateIR {
+  /** Set for the length of one `parse` with a context (`chant import`). */
+  private embedded?: EmbeddedContentResolver;
+
+  /**
+   * With `context.embedded` (`chant import`), a machine file another lexicon
+   * owns (a collector config) is handed to it (see ./embedded.ts). Without
+   * it, every file is kept as written.
+   */
+  parse(input: string, context?: ParseContext): TemplateIR {
+    this.embedded = context?.embedded;
+    try {
+      return this.parseInput(input);
+    } finally {
+      this.embedded = undefined;
+    }
+  }
+
+  private parseInput(input: string): TemplateIR {
     const trimmed = input.trim();
     if (!trimmed) return { resources: [], parameters: [] };
 
@@ -179,6 +199,7 @@ export class FlyParser extends BaseValueParser implements TemplateParser {
     }
     // Always carry a name so the round-trip keeps the machine's identity.
     properties.name = name;
+    if (this.embedded) delegateEmbedded(name, properties, this.embedded);
 
     return { logicalId: name, type: MACHINE_TYPE, properties };
   }

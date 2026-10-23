@@ -47,4 +47,8 @@ Without `config`, the composite uses `otlpCollector()` from the otel lexicon. It
 
 When the config enables a `health_check` extension that listens on an address other than localhost, the machine gets an HTTP check named `health` on that port and path, every 15 seconds with a 10 second grace period. A config without one gets no check. The machine restarts with policy `always`.
 
+## Importing a collector machine
+
+`chant import fly.json` and `chant import --from <env>` both decode each machine file's `raw_value` and hand a collector config to the otel lexicon ([#3373](https://github.com/INTENTIUS/chant/issues/3373)). The config is imported as `chant import config.yaml` would import it, into a directory named after the machine, and the file's `raw_value` becomes `Buffer.from(collectorYaml([...]), "utf8").toString("base64")` over the imported declarations. A file that is not a YAML or JSON document is kept as written.
+
 The example project is `lexicons/fly/examples/otel-collector`.

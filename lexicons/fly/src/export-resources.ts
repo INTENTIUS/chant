@@ -93,7 +93,7 @@ export async function exportResources(
     );
   };
 
-  const resources: ExportedTemplate["resources"] = [];
+  const parts: ExportedTemplate[] = [];
   for (const app of apps) {
     const appRes = await http(
       "GET",
@@ -116,8 +116,17 @@ export async function exportResources(
       owned: options.owned,
       onBoundaryInference,
     });
-    resources.push(...ir.resources);
+    parts.push(ir);
   }
 
-  return { resources, parameters: [] };
+  // Each app's export re-parses its own bundle; together they re-parse the
+  // whole export, so embedded collector configs reach the otel importer (#3373).
+  return {
+    resources: parts.flatMap((p) => p.resources),
+    parameters: [],
+    reparse: (context) => ({
+      resources: parts.flatMap((p) => (p.reparse ? p.reparse(context) : p).resources),
+      parameters: [],
+    }),
+  };
 }
