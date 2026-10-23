@@ -69,7 +69,7 @@ describe("the secrets file (#4096)", () => {
     expect(ciSecretsFor(undefined, "plan")).toEqual({});
     expect(ciSecretsFor({ ...s, jobs: { plan: [] } }, "plan")).toEqual({});
     expect(() => parseCiSecrets(JSON.stringify({ secrets: { A: "aaaa" }, jobs: { plan: ["C"] } }), "s.json")).toThrow(/jobs\.plan names C, which the file does not set/);
-    expect(() => parseCiSecrets(JSON.stringify({ secrets: { A: "aaaa" }, jobs: { deploy: [] } }), "s.json")).toThrow(/the jobs are plan and apply/);
+    expect(() => parseCiSecrets(JSON.stringify({ secrets: { A: "aaaa" }, jobs: { deploy: [] } }), "s.json")).toThrow(/the jobs are plan, apply, env-up/);
     expect(() => parseCiSecrets('{ "A": 1 }', "s.json")).toThrow(/must be a string/);
     // A parse error does not quote the text, which may hold a secret.
     expect(() => parseCiSecrets('{ "A": "hunter2', "s.json")).toThrow(/^s\.json starts with \{, and is not valid JSON$/);

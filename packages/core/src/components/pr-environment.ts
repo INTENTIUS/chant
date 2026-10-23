@@ -32,14 +32,19 @@
  *
  * terragucci's `ephemeral.ts` gives each copy a suffixed Terraform state key.
  * That part is Terraform's own and stays there; chant keys ownership on the
- * marker its lexicons stamp and read back (`../lifecycle/teardown.ts`).
+ * marker its lexicons stamp and read back (`../lifecycle/teardown.ts`). A
+ * product supplies the rest as adapters (#4330): its plan and apply
+ * (`./pr-env-run.ts`), and a teardown for what no lexicon tears down
+ * ({@link PrEnvTeardownAdapter}), which reads the marker back from the copy
+ * as a lexicon does.
  */
 
 import { environmentEndpoint, environmentName, isEnvironmentPattern, isOwnershipParamRef, matchesDeclaredEnvironment, resolveOwnershipStack, type ChantConfig, type EnvironmentDeclaration } from "../config";
 import type { OwnershipMarker } from "../ownership";
 import { executeTeardown, planTeardown, type TeardownPlan, type TeardownPlanEntry, type TeardownReport } from "../lifecycle/teardown";
-import type { ObservationLexicon } from "../lexicon";
+import type { ObservationLexicon, TeardownCandidate, TeardownEnumeration, TeardownExecution } from "../lexicon";
 import { applyLiveEndpoint } from "../live-endpoint";
+import type { ComponentEnvironmentDeclaration } from "./component";
 
 /** The gate a pull request's environment waits on, under the pull request's op `pr-<n>`. */
 export const PR_ENV_GATE = "pr-env";
@@ -167,6 +172,35 @@ export function derivePrEnvironment(config: ChantConfig, template: string, pr: n
   return { env, template, stack, param: own.param, environments, ...(endpoint ? { endpoint } : {}) };
 }
 
+/** The placeholder a template's site URL or domain names the environment with (#4330). */
+export const PR_ENV_SITE_PLACEHOLDER = "{env}";
+
+/**
+ * A component's site in `env`, a pull request's environment, carried over
+ * from its site in `template` (#4330). An entry the component declares for
+ * `env` itself wins. Otherwise the template's runtime and lifecycle remote
+ * carry over as they are. Its URL and domain carry over only when they name
+ * the environment with `{env}`, which becomes `pr-<n>`: a literal URL or
+ * domain is the template's own release, so it is left out rather than
+ * pointing pr-<n> at it. Undefined when neither is declared.
+ */
+export function prEnvironmentSite(declared: readonly ComponentEnvironmentDeclaration[] | undefined, template: string, env: string): ComponentEnvironmentDeclaration | undefined {
+  const own = declared?.find((d) => d.name === env);
+  if (own) return { ...own };
+  const from = declared?.find((d) => d.name === template);
+  if (!from) return undefined;
+  const named = (v: string | undefined): string | undefined => (v && v.includes(PR_ENV_SITE_PLACEHOLDER) ? v.split(PR_ENV_SITE_PLACEHOLDER).join(env) : undefined);
+  const url = named(from.url);
+  const domain = named(from.domain);
+  return {
+    name: env,
+    ...(from.runtime ? { runtime: from.runtime } : {}),
+    ...(url ? { url } : {}),
+    ...(domain ? { domain } : {}),
+    ...(from.lifecycle ? { lifecycle: from.lifecycle } : {}),
+  };
+}
+
 // ── records ────────────────────────────────────────────────────────────────
 
 /** One line of `_pr-envs/records.jsonl`: an apply, or a teardown. */
@@ -186,6 +220,12 @@ export interface PrEnvRecord {
   commit: string;
   /** The components applied (up) or the lexicons torn down (down). */
   components: string[];
+  /**
+   * Up (#4330): where each component's copy lives, by component, as the
+   * adapter that applied it says (a Terraform root's suffixed state key).
+   * A teardown adapter reads it back from the live environment.
+   */
+  locations?: Record<string, string>;
   /** The change-set digest applied; empty for a teardown. */
   planDigest: string;
   /** `incomplete`: a teardown that left something, so the environment stays live and the sweep tries again. */
@@ -229,6 +269,8 @@ export interface LivePrEnvironment {
   commit: string;
   /** Every component an apply of it ever touched. */
   components: string[];
+  /** Where each component's copy lives, merged over every up (#4330). */
+  locations?: Record<string, string>;
   applied: string;
   expiresAt: string;
   /** Its last teardown left something, so the sweep tries again. */
@@ -245,6 +287,7 @@ export function livePrEnvironments(records: readonly PrEnvRecord[]): Map<string,
   for (const r of records) {
     if (r.kind === "up") {
       const was = live.get(r.env);
+      const locations = { ...(was?.locations ?? {}), ...(r.locations ?? {}) };
       live.set(r.env, {
         pr: r.pr,
         env: r.env,
@@ -253,6 +296,7 @@ export function livePrEnvironments(records: readonly PrEnvRecord[]): Map<string,
         marker: { ...r.marker },
         commit: r.commit,
         components: [...new Set([...(was?.components ?? []), ...r.components])],
+        ...(Object.keys(locations).length > 0 ? { locations } : {}),
         applied: r.timestamp,
         expiresAt: r.expiresAt ?? r.timestamp,
       });
@@ -302,12 +346,61 @@ export function ownedEntries(plan: TeardownPlan, marker: OwnershipMarker): { pla
   return { plan: { ...plan, entries: plan.entries.filter(owns) }, dropped: plan.entries.filter((e) => !owns(e)) };
 }
 
+/**
+ * A teardown a product supplies for what no lexicon tears down (#4330), such
+ * as a Terraform root's copy under a suffixed state key: chant has no
+ * Terraform runner, so terragucci supplies this. It takes part in the same
+ * two halves a lexicon's teardown does (`../lifecycle/teardown.ts`): `owned`
+ * names what the environment owns, each with the marker read back from it,
+ * and `teardown` deletes the candidates chant hands back. Every candidate
+ * whose marker is not exactly `{ stack, env: "pr-<n>" }` is dropped before
+ * `teardown` sees it, and a candidate it says nothing about counts as failed.
+ */
+export interface PrEnvTeardownAdapter {
+  /** The name outcomes are attributed to, as a lexicon's are. */
+  name: string;
+  /**
+   * The lexicons this adapter tears down in place of (`terraform`). Their own
+   * teardown is left out, so a lexicon with no teardown execution does not
+   * leave the environment incomplete when the adapter covers it.
+   */
+  lexicons?: string[];
+  /** What the environment owns: candidates with their read-back markers, and what could not be read. */
+  owned(input: PrEnvTeardownAdapterInput): Promise<TeardownEnumeration>;
+  /** Delete the candidates: one outcome per candidate, keyed by name. */
+  teardown(input: PrEnvTeardownAdapterInput & { candidates: TeardownCandidate[] }): Promise<TeardownExecution>;
+}
+
+/** What a {@link PrEnvTeardownAdapter} is told about the environment. */
+export interface PrEnvTeardownAdapterInput {
+  /** `pr-<n>`. */
+  environment: string;
+  /** The marker everything is selected on. */
+  marker: OwnershipMarker;
+  /** The environment as its records say it stands: the commit last applied, its components and their locations. */
+  live: LivePrEnvironment;
+}
+
+/** An adapter in the shape `planTeardown` and `executeTeardown` call: a lexicon with only its two teardown halves. */
+function adapterLexicon(adapter: PrEnvTeardownAdapter, live: LivePrEnvironment): ObservationLexicon {
+  const shaped: Pick<ObservationLexicon, "name" | "teardownOwned" | "executeTeardown"> = {
+    name: adapter.name,
+    teardownOwned: (o) => adapter.owned({ environment: o.environment, marker: o.marker, live }),
+    executeTeardown: (o) => adapter.teardown({ environment: o.environment, marker: o.marker, live, candidates: o.candidates }),
+  };
+  return shaped as ObservationLexicon;
+}
+
 /** What {@link tearDownPrEnvironment} needs. */
 export interface PrEnvTeardownInput {
   pr: number;
   live: LivePrEnvironment;
-  config: ChantConfig;
-  plugins: ObservationLexicon[];
+  /** The project's config, for its environments and stacks. Absent: a product with no chant.config.ts, whose adapters do the teardown. */
+  config?: ChantConfig;
+  /** The lexicons whose teardown runs. Default none. */
+  plugins?: ObservationLexicon[];
+  /** Teardowns a product supplies (#4330), run after the lexicons'. */
+  adapters?: PrEnvTeardownAdapter[];
   warn?: (message: string) => void;
 }
 
@@ -316,18 +409,30 @@ export interface PrEnvTeardownInput {
  * before any read when {@link teardownRefusal} says so; otherwise the live
  * resources under the record's marker are planned, every entry whose marker
  * is not exactly `{ stack, env: "pr-<n>" }` is dropped ({@link ownedEntries}),
- * and only the rest go to each lexicon's teardown. The endpoint is the one
- * the environment was applied at: its own `pr-*` entry's, else the template's.
+ * and only the rest go to each lexicon's or adapter's teardown. The endpoint
+ * is the one the environment was applied at: its own `pr-*` entry's, else the
+ * template's. A lexicon an adapter covers (`lexicons`) is left out.
  */
 export async function tearDownPrEnvironment(input: PrEnvTeardownInput): Promise<{ refusal: string } | { report: TeardownReport; dropped: number; marker: { stack: string; env: string } }> {
-  const { pr, live, config, plugins } = input;
+  const { pr, live } = input;
+  const config = input.config ?? {};
   const refusal = teardownRefusal(pr, live, config.environments);
   if (refusal) return { refusal };
+  const adapters = input.adapters ?? [];
+  const covered = new Set(adapters.flatMap((a) => a.lexicons ?? []));
+  const names = new Set<string>();
+  for (const a of adapters) {
+    if (names.has(a.name)) return { refusal: `two teardown adapters are named ${a.name}, so their outcomes could not be told apart; nothing was torn down` };
+    names.add(a.name);
+  }
+  const lexicons = (input.plugins ?? []).filter((x) => !covered.has(x.name));
+  if (lexicons.some((x) => names.has(x.name))) return { refusal: `a teardown adapter shares its name with a lexicon (${[...names].filter((n) => lexicons.some((x) => x.name === n)).join(", ")}), so their outcomes could not be told apart; nothing was torn down` };
   const env = prEnvironmentName(pr);
   const marker = { stack: live.marker.stack, env };
   const endpoint = environmentEndpoint(config.environments, env) ?? environmentEndpoint(config.environments, live.template);
-  const applied = applyLiveEndpoint(endpoint ? [{ name: env, endpoint }] : [], env, plugins.filter((x) => x.teardownOwned || x.describeResources || x.executeTeardown));
+  const applied = applyLiveEndpoint(endpoint ? [{ name: env, endpoint }] : [], env, lexicons.filter((x) => x.teardownOwned || x.describeResources || x.executeTeardown));
   if (applied.notice) input.warn?.(applied.notice);
+  const plugins = [...lexicons, ...adapters.map((a) => adapterLexicon(a, live))];
   const deployedStacks = (config.stacks ?? []).map((s) => ({ name: s.name, ...(s.region ? { region: s.region } : {}) }));
   try {
     const planned = await planTeardown({ environment: env, stack: marker.stack, plugins, ...(deployedStacks.length > 0 ? { deployedStacks } : {}) });
@@ -405,6 +510,7 @@ export function acceptHandedRecord(raw: unknown, check: HandedRecordCheck): { re
       marker: { stack: r.marker.stack, env },
       commit: check.head,
       components: [...r.components],
+      ...(handedLocations(r.locations) ? { locations: handedLocations(r.locations)! } : {}),
       planDigest: typeof r.planDigest === "string" ? r.planDigest : "",
       result: r.result,
       by: check.by,
@@ -415,6 +521,21 @@ export function acceptHandedRecord(raw: unknown, check: HandedRecordCheck): { re
       ...(check.runUrl ? { runUrl: check.runUrl } : {}),
     },
   };
+}
+
+/** A handed-on report row's site, kept only as its three strings. */
+function handedSite(raw: unknown): PrEnvReportRow["site"] | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  const site = Object.fromEntries((["runtime", "url", "domain"] as const).filter((k) => typeof r[k] === "string").map((k) => [k, r[k] as string]));
+  return Object.keys(site).length > 0 ? site : undefined;
+}
+
+/** A handed-on record's locations, kept only as a map of strings to strings. */
+function handedLocations(raw: unknown): Record<string, string> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const out = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -445,13 +566,36 @@ export function handedPrEnvReport(raw: unknown, check: { pr: number; head: strin
       status: r.status,
       ...(typeof r.message === "string" ? { message: r.message } : {}),
       ...(typeof r.endpoint === "string" ? { endpoint: r.endpoint } : {}),
-      components: (Array.isArray(r.components) ? r.components : []).map((c) => ({ component: str(c?.component), status: str(c?.status), create: num(c?.create), update: num(c?.update), replace: num(c?.replace), delete: num(c?.delete) })),
+      components: (Array.isArray(r.components) ? r.components : []).map((c) => ({
+        component: str(c?.component),
+        status: str(c?.status),
+        create: num(c?.create),
+        update: num(c?.update),
+        replace: num(c?.replace),
+        delete: num(c?.delete),
+        ...(typeof c?.location === "string" ? { location: c.location } : {}),
+        ...(handedSite(c?.site) ? { site: handedSite(c?.site)! } : {}),
+      })),
       ...(Array.isArray(r.approvedBy) ? { approvedBy: r.approvedBy.filter((a): a is string => typeof a === "string") } : {}),
     },
   };
 }
 
 // ── the note ───────────────────────────────────────────────────────────────
+
+/** One component's row in the report and the note. */
+export interface PrEnvReportRow {
+  component: string;
+  status: string;
+  create: number;
+  update: number;
+  replace: number;
+  delete: number;
+  /** Where its copy lives, as the adapter says (#4330). */
+  location?: string;
+  /** Its site in pr-<n>: the runtime, URL and domain carried over from the template's (#4330, {@link prEnvironmentSite}). */
+  site?: { runtime?: string; url?: string; domain?: string };
+}
 
 /** What one `pr-env up` or `down` run came to, as `pr-env.json` holds it. */
 export interface PrEnvReport {
@@ -467,7 +611,7 @@ export interface PrEnvReport {
   status: "applied" | "nothing" | "waiting" | "changed" | "plan-failed" | "failed" | "refused" | "destroyed" | "incomplete" | "absent";
   message?: string;
   endpoint?: string;
-  components: Array<{ component: string; status: string; create: number; update: number; replace: number; delete: number }>;
+  components: PrEnvReportRow[];
   approvedBy?: string[];
   expiresAt?: string;
   outcomes?: PrEnvRecord["outcomes"];
@@ -505,8 +649,11 @@ export function renderPrEnvNote(r: PrEnvReport, approver = "<you>"): string {
   }
   if (r.message) out.push("", `> ${r.message.split("\n").join("\n> ")}`);
   if (r.components.length > 0) {
-    out.push("", "| Component | Status | Create | Update | Replace | Delete |", "|---|---|---:|---:|---:|---:|");
-    for (const c of r.components) out.push(`| ${code(c.component)} | ${c.status} | ${c.create} | ${c.update} | ${c.replace} | ${c.delete} |`);
+    // #4330: a Where column when a row has a URL or a location, as code: env-up ran the change's code, so the post job does not link it.
+    const at = (c: PrEnvReportRow): string | undefined => c.site?.url ?? c.site?.domain ?? c.location;
+    const where = r.components.some((c) => at(c));
+    out.push("", `| Component | Status | Create | Update | Replace | Delete |${where ? " Where |" : ""}`, `|---|---|---:|---:|---:|---:|${where ? "---|" : ""}`);
+    for (const c of r.components) out.push(`| ${code(c.component)} | ${c.status} | ${c.create} | ${c.update} | ${c.replace} | ${c.delete} |${where ? ` ${at(c) ? code(at(c)!) : ""} |` : ""}`);
   }
   if (r.digest) out.push("", `Plan digest: ${code(r.digest)}${r.approvedBy?.length ? `, approved by ${r.approvedBy.map(code).join(", ")}` : ""}`);
   out.push("", `${code(r.env)} is not a release target: releases come from green commits.`);

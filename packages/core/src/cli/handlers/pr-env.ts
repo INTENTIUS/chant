@@ -25,8 +25,14 @@
  * `down` reads the environment's record on chant/lifecycle, checks it names
  * this pull request's environment, and tears down what `planTeardown` finds
  * under the record's marker, after dropping any entry whose marker is not
- * exactly that one. No gate holds it: closing the pull request is the
- * decision, as is the TTL the base set for `sweep`.
+ * exactly that one. The lexicons tear down what they own, and the command
+ * `ci.prEnvironment.teardown` names tears down the rest (#4330). No gate
+ * holds it: closing the pull request is the decision, as is the TTL the base
+ * set for `sweep`.
+ *
+ * The runs themselves are ../../components/pr-env-run.ts, which a product
+ * calls with an adapter of its own (#4330). This file supplies the
+ * components adapter and the CLI's ports.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -37,39 +43,41 @@ import { isEmptyChangeSet } from "../../change-set";
 import {
   PR_ENV_EXIT,
   PR_ENV_GATE,
-  PR_ENV_LEDGER_DIR,
-  PR_ENV_LEDGER_FILE,
   PR_ENV_RECORD_FILE,
   PR_ENV_REPORT_DIR,
   acceptHandedRecord,
   handedPrEnvReport,
   PR_ENV_TEMPLATE_VAR,
   derivePrEnvironment,
-  expired,
-  livePrEnvironments,
-  parsePrEnvRecords,
   prEnvApproveCommand,
-  prEnvNoteMarker,
-  prEnvStatusContext,
-  prEnvStatusDescription,
   prEnvStatusState,
   prEnvironmentName,
+  prEnvironmentSite,
   renderPrEnvNote,
-  teardownComplete,
-  teardownCounts,
-  tearDownPrEnvironment,
   ttlMs,
-  type LivePrEnvironment,
-  type PrEnvRecord,
   type PrEnvReport,
+  type PrEnvReportRow,
+  type PrEnvTeardownAdapter,
 } from "../../components/pr-environment";
-import { applyPrSet, approvalOf, decidePrGate, readOnlyLedger } from "../../components/pr-run";
-import { gitGateLedgerPort } from "../../op/gate";
+import {
+  commandTeardownAdapter,
+  forgePrEnvPublisher,
+  lifecyclePrEnvPorts,
+  prEnvDown as prEnvDownRun,
+  prEnvOp,
+  prEnvSweep as prEnvSweepRun,
+  prEnvUp as prEnvUpRun,
+  type PrEnvAdapter,
+  type PrEnvPorts,
+  type PrEnvTarget,
+} from "../../components/pr-env-run";
+import { applyPrSet, type PrPlanSet } from "../../components/pr-run";
 import { prOp } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";
 import { formatError, formatInfo, formatWarning } from "../format";
 import { withComponentEndpoint } from "../component-endpoint";
 import type { CommandContext } from "../registry";
+import type { Prepared } from "./pr";
 
 const USAGE = "chant components pr-env up --base <ref> --pr <n> [--no-push] | post --pr <n> --head <sha> | down --pr <n> [--reason closed|expired] | sweep";
 
@@ -107,36 +115,30 @@ function memberOf(ctx: CommandContext): string | undefined {
   return ctx.args.members?.length === 1 ? ctx.args.members[0] : undefined;
 }
 
-// ── the ledger ─────────────────────────────────────────────────────────────
+// ── the ports ──────────────────────────────────────────────────────────────
 
-async function readRecords(): Promise<PrEnvRecord[]> {
-  const { fetchLifecycle, readBlobFromPath } = await import("../../lifecycle/git");
-  await fetchLifecycle().catch(() => false);
-  return parsePrEnvRecords(await readBlobFromPath(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE));
-}
+const log = (line: string): void => console.error(formatInfo(line));
+const warn = (message: string): void => console.error(formatWarning({ message }));
 
 /**
- * Append `record` to chant/lifecycle and push it. With `--no-push` (#4295)
- * the record is written to `pr-env-record.json` under `--output` instead,
- * for `pr-env post` to append from a job that runs none of the change's
- * code. A failure warns: what was applied or torn down stands.
+ * The ports `pr-env` runs with (../../components/pr-env-run.ts): the records
+ * and the gate ledger on chant/lifecycle here, and the report written under
+ * `--output` and posted through `forge`. With `--no-push` (#4295) the record
+ * is written to `pr-env-record.json` under `--output` instead, for `pr-env
+ * post` to append from a job that runs none of the change's code.
  */
-async function appendRecord(ctx: CommandContext, record: PrEnvRecord): Promise<void> {
-  if (ctx.args.noPush) {
-    const dir = resolve(ctx.args.output ?? PR_ENV_REPORT_DIR);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, PR_ENV_RECORD_FILE), JSON.stringify(record, null, 2) + "\n");
-    return;
-  }
-  const { appendLedgerLine, fetchLifecycle, pushLifecycleReport } = await import("../../lifecycle/git");
-  try {
-    await fetchLifecycle().catch(() => false);
-    await appendLedgerLine(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, JSON.stringify(record), `Pull request environment ${record.env} ${record.kind} (${record.result})`);
-    const pushed = await pushLifecycleReport();
-    if (pushed.pushWarning) console.error(formatWarning({ message: pushed.pushWarning }));
-  } catch (err) {
-    console.error(formatWarning({ message: `could not record ${record.env}'s ${record.kind} on chant/lifecycle: ${err instanceof Error ? err.message : String(err)}` }));
-  }
+function cliPorts(ctx: CommandContext, forge: PrForge | undefined): PrEnvPorts {
+  const lifecycle = lifecyclePrEnvPorts({ ...(forge ? { forge } : {}), log, warn });
+  return {
+    ...lifecycle,
+    async appendRecord(record) {
+      if (!ctx.args.noPush) return lifecycle.appendRecord(record);
+      const dir = resolve(ctx.args.output ?? PR_ENV_REPORT_DIR);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, PR_ENV_RECORD_FILE), JSON.stringify(record, null, 2) + "\n");
+    },
+    publish: (report) => finish(ctx, forge, report),
+  };
 }
 
 // ── the report and the note ────────────────────────────────────────────────
@@ -148,24 +150,7 @@ async function finish(ctx: CommandContext, forge: PrForge | undefined, report: P
   writeFileSync(join(dir, `pr-env-${report.stage}.json`), JSON.stringify(report, null, 2) + "\n");
   writeFileSync(join(dir, "pr-env-note.md"), note);
   if (ctx.args.json) console.log(JSON.stringify(report, null, 2));
-  if (!forge) return;
-  if (report.head) {
-    try {
-      await forge.setStatus(report.head, {
-        context: prEnvStatusContext(report.member),
-        state: prEnvStatusState(report),
-        description: prEnvStatusDescription(report),
-        ...(forge.runUrl ? { url: forge.runUrl } : {}),
-      });
-    } catch (err) {
-      console.error(formatWarning({ message: `could not set the ${prEnvStatusContext(report.member)} status: ${err instanceof Error ? err.message : String(err)}` }));
-    }
-  }
-  try {
-    await forge.upsertNote(report.pr, prEnvNoteMarker(report.env, report.member), note);
-  } catch (err) {
-    console.error(formatWarning({ message: `could not post the note on #${report.pr}: ${err instanceof Error ? err.message : String(err)}` }));
-  }
+  if (forge) await forgePrEnvPublisher(forge, warn)(report);
 }
 
 // ── up ─────────────────────────────────────────────────────────────────────
@@ -190,7 +175,6 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
   const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
   const derived = derivePrEnvironment(config, setting.template, pr);
   if ("refusal" in derived) return fail(derived.refusal);
-  const ttl = ttlMs(setting.ttl) ?? ttlMs("72h")!;
 
   // The build sees pr-<n> as its environment and the template's name beside it.
   process.env[ENV_VAR] = derived.env;
@@ -200,111 +184,76 @@ async function prEnvUp(ctx: CommandContext): Promise<number> {
     args: { ...args, env: derived.env, param: [...(args.param ?? []).filter((p) => !p.startsWith(`${derived.param}=`)), `${derived.param}=${derived.env}`] },
   };
   console.error(formatInfo(`pr-env up: ${derived.env}, derived from ${derived.template}${derived.endpoint ? ` at ${derived.endpoint}` : ""}, marker ${derived.stack}/${derived.env}`));
-  return withComponentEndpoint(envCtx, () => up(envCtx, pr, derived, ttl), { config: { ...config, environments: derived.environments }, environment: derived.env });
+  return withComponentEndpoint(envCtx, () => up(envCtx, pr, derived, setting.ttl), { config: { ...config, environments: derived.environments }, environment: derived.env });
 }
 
-async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<typeof derivePrEnvironment>, { refusal: string }>, ttl: number): Promise<number> {
+async function up(ctx: CommandContext, pr: number, derived: Exclude<ReturnType<typeof derivePrEnvironment>, { refusal: string }>, ttl: string): Promise<number> {
   const { prepare, planAll, placeHooks, runStageHook } = await import("./pr");
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
-  const forge = p.forge;
-  const op = prOp(pr, p.member);
   // ci.hooks (#4288), read at base as the other pull-request jobs read them, around the plan and the apply.
-  placeHooks(ctx, p, "apply", op);
-  const base: PrEnvReport = {
-    stage: "up",
+  placeHooks(ctx, p, "apply", prEnvOp(pr, p.member));
+  const result = await prEnvUpRun({
     pr,
-    env: derived.env,
-    ...(p.member ? { member: p.member } : {}),
-    template: derived.template,
     head: p.head,
-    op,
-    gate: PR_ENV_GATE,
-    digest: "",
-    status: "nothing",
-    ...(derived.endpoint ? { endpoint: derived.endpoint } : {}),
-    components: [],
-  };
-  if (p.plan.order.length === 0) {
-    await finish(ctx, forge, { ...base, ...(p.routedAway ? { message: p.routedAway } : {}) });
-    console.error(formatInfo(`pr-env up: nothing this change touches is deployed by a component, so ${derived.env} gets nothing`));
-    return PR_ENV_EXIT.done;
-  }
-
-  const set = await planAll(p);
-  const rows = (status: (component: string) => string) =>
-    p.plan.order.map((component) => {
-      const ms = set.members.filter((m) => m.component === component);
-      const sum = (k: "create" | "update" | "replace" | "delete") => ms.reduce((n, m) => n + m.counts[k], 0);
-      return { component, status: status(component), create: sum("create"), update: sum("update"), replace: sum("replace"), delete: sum("delete") };
-    });
-  const digest = set.doc.digest;
-  if (set.failed) {
-    await finish(ctx, forge, { ...base, digest, status: "plan-failed", ...(p.hookFailed ? { message: p.hookFailed } : {}), components: rows((c) => (set.members.some((m) => m.component === c && m.status === "plan-failed") ? "plan failed" : "planned")) });
-    return PR_ENV_EXIT.failed;
-  }
-
-  // ws-080, ws-104: a non-empty plan applies only under a person's approval of its digest. An empty one passes.
-  let approvedBy: string[] | undefined;
-  if (!isEmptyChangeSet(set.doc)) {
-    let approval;
-    try {
-      approval = approvalOf(await decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: PR_ENV_GATE, digest, description: `${derived.env}: ${p.plan.order.join(", ")}` }));
-    } catch (err) {
-      return fail(`could not read the gate ledger, so ${derived.env} does not apply: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    if (approval.status !== "approved") {
-      const status = approval.status === "changed" ? "changed" : "waiting";
-      await finish(ctx, forge, { ...base, digest, status, components: rows(() => "planned") });
-      console.error(formatInfo(`pr-env up: ${derived.env} waits for an approval of ${digest}`));
-      console.error(formatInfo(`approve : ${prEnvApproveCommand(op, digest)}`));
-      return PR_ENV_EXIT.waiting;
-    }
-    approvedBy = approval.approvedBy ?? [];
-  }
-
-  const hookStop = runStageHook(p, "before-apply", p.plan.order, set);
-  if (hookStop) {
-    await finish(ctx, forge, { ...base, digest, status: "failed", message: hookStop, components: rows(() => "planned"), ...(approvedBy ? { approvedBy } : {}) });
-    return PR_ENV_EXIT.failed;
-  }
-  const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: derived.env, set, gate: PR_ENV_GATE });
-  const afterHook = runStageHook(p, "after-apply", p.plan.order, set, "the environment stands as applied");
-  const status = (component: string) => applied.members.find((m) => m.component === component)?.status ?? "planned";
-  const ok = applied.status === "applied";
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + ttl).toISOString();
-  // A copy that failed part way is live too: what applied is torn down on close or at expiry like the rest.
-  await appendRecord(ctx, {
-    version: 1,
-    kind: "up",
-    pr,
-    env: derived.env,
-    ...(p.member ? { member: p.member } : {}),
     template: derived.template,
-    marker: { stack: derived.stack, env: derived.env },
-    commit: p.head,
-    components: p.plan.order,
-    planDigest: digest,
-    result: ok ? "applied" : "failed",
-    by: actor(),
-    timestamp: now.toISOString(),
-    expiresAt,
-    ...(approvedBy ? { approvedBy } : {}),
-    releaseTarget: false,
-    ...(forge?.runUrl ? { runUrl: forge.runUrl } : {}),
+    ttl,
+    stack: derived.stack,
+    ...(p.member ? { member: p.member } : {}),
+    ...(derived.endpoint ? { endpoint: derived.endpoint } : {}),
+    adapter: componentsPrEnvAdapter(p, { planAll, runStageHook }),
+    ports: cliPorts(ctx, p.forge),
+    actor: actor(),
+    ...(p.forge?.runUrl ? { runUrl: p.forge.runUrl } : {}),
   });
-  await finish(ctx, forge, {
-    ...base,
-    digest,
-    status: ok ? "applied" : "failed",
-    components: rows(status),
-    ...(approvedBy ? { approvedBy } : {}),
-    expiresAt,
-    ...(ok ? (afterHook ? { message: afterHook } : {}) : { message: applied.status === "waiting" ? "A component read an upstream output that moved when it applied; run the job again to plan it against the new value." : "A component failed to apply; what applied stays in the environment and is torn down with it." }),
-  });
-  console.error((ok ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-env up: ${derived.env} ${ok ? "applied" : applied.status}; it expires ${expiresAt}`));
-  return ok && !afterHook ? PR_ENV_EXIT.done : PR_ENV_EXIT.failed;
+  if (result.report.status === "waiting" || result.report.status === "changed") console.error(formatInfo(`approve : ${prEnvApproveCommand(result.report.op, result.report.digest)}`));
+  return result.exit;
+}
+
+/**
+ * The components as a pull request environment's adapter: the plan is
+ * `pr-plan`'s, with the plan-side hooks around it, and the apply is the
+ * fan-out's, with the apply-side hooks around it. Each row carries the
+ * component's site in `pr-<n>`, carried over from the template's (#4330,
+ * `prEnvironmentSite`).
+ */
+function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr").planAll; runStageHook: typeof import("./pr").runStageHook }): PrEnvAdapter {
+  let set: PrPlanSet | undefined;
+  const rows = (target: PrEnvTarget, status: (component: string) => string): PrEnvReportRow[] =>
+    p.plan.order.map((component) => {
+      const ms = (set?.members ?? []).filter((m) => m.component === component);
+      const sum = (k: "create" | "update" | "replace" | "delete") => ms.reduce((n, m) => n + m.counts[k], 0);
+      const found = prEnvironmentSite(p.sites?.[component], target.template, target.env);
+      const site = found ? { ...(found.runtime ? { runtime: found.runtime } : {}), ...(found.url ? { url: found.url } : {}), ...(found.domain ? { domain: found.domain } : {}) } : undefined;
+      return { component, status: status(component), create: sum("create"), update: sum("update"), replace: sum("replace"), delete: sum("delete"), ...(site && Object.keys(site).length > 0 ? { site } : {}) };
+    });
+  return {
+    async plan(target) {
+      if (p.plan.order.length === 0) return { digest: "", empty: true, rows: [], ...(p.routedAway ? { message: p.routedAway } : {}) };
+      set = await run.planAll(p);
+      const planned = set;
+      return {
+        digest: planned.doc.digest,
+        empty: isEmptyChangeSet(planned.doc),
+        ...(planned.failed ? { failed: true } : {}),
+        rows: rows(target, (c) => (planned.failed && planned.members.some((m) => m.component === c && m.status === "plan-failed") ? "plan failed" : "planned")),
+        ...(p.hookFailed ? { message: p.hookFailed } : {}),
+      };
+    },
+    async apply(target) {
+      const planned = set!;
+      const hookStop = run.runStageHook(p, "before-apply", p.plan.order, planned);
+      if (hookStop) return { status: "stopped", rows: rows(target, () => "planned"), message: hookStop };
+      const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: target.env, set: planned, gate: PR_ENV_GATE });
+      const afterHook = run.runStageHook(p, "after-apply", p.plan.order, planned, "the environment stands as applied");
+      const status = (component: string) => applied.members.find((m) => m.component === component)?.status ?? "planned";
+      return {
+        status: applied.status === "applied" ? "applied" : applied.status === "waiting" ? "waiting" : "failed",
+        rows: rows(target, status),
+        ...(afterHook ? { afterFailure: afterHook } : {}),
+      };
+    },
+  };
 }
 
 // ── post ───────────────────────────────────────────────────────────────────
@@ -352,7 +301,7 @@ async function prEnvPost(ctx: CommandContext): Promise<number> {
         report.message = `${report.message ? `${report.message} ` : ""}${accepted.refusal}`;
         code = PR_ENV_EXIT.failed;
       } else {
-        await appendRecord({ ...ctx, args: { ...args, noPush: false } }, accepted.record);
+        await lifecyclePrEnvPorts({ warn }).appendRecord(accepted.record);
         if (accepted.record.expiresAt) report.expiresAt = accepted.record.expiresAt;
       }
     }
@@ -363,6 +312,19 @@ async function prEnvPost(ctx: CommandContext): Promise<number> {
 
 // ── down ───────────────────────────────────────────────────────────────────
 
+/**
+ * What tears the environment down: the lexicons, and the command
+ * `ci.prEnvironment.teardown` names in the declaration at this commit
+ * (#4330), which the down and sweep jobs check out from the base branch.
+ */
+async function teardownSources(): Promise<{ config: ChantConfig; adapters: PrEnvTeardownAdapter[] }> {
+  const projectPath = resolve(".");
+  const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} as ChantConfig }));
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const hook = scopeSource(projectPath, "HEAD").declaration?.ci?.prEnvironment?.teardown;
+  return { config, adapters: hook ? [commandTeardownAdapter(hook, { cwd: projectPath })] : [] };
+}
+
 async function prEnvDown(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   if (args.pr === undefined) return fail("pr-env down needs the pull or merge request: --pr <n>");
@@ -370,57 +332,20 @@ async function prEnvDown(ctx: CommandContext): Promise<number> {
   if (reason !== "closed" && reason !== "expired") return fail(`--reason ${reason} is not closed or expired`);
   const forge = forgeOf(ctx);
   if (typeof forge === "number") return forge;
-  const live = livePrEnvironments(await readRecords()).get(prEnvironmentName(args.pr));
-  return teardown(ctx, forge, args.pr, live, reason);
-}
-
-async function teardown(ctx: CommandContext, forge: PrForge | undefined, pr: number, live: LivePrEnvironment | undefined, reason: "closed" | "expired"): Promise<number> {
-  const env = prEnvironmentName(pr);
   const member = memberOf(ctx);
-  const report: PrEnvReport = { stage: "down", pr, env, ...(member ? { member } : {}), template: live?.template ?? "", head: "", op: prOp(pr, member), gate: PR_ENV_GATE, digest: "", status: "absent", components: [] };
-  if (!live) {
-    console.error(formatInfo(`pr-env down: ${env} has no live record, so there is nothing to tear down`));
-    if (forge) await finish(ctx, forge, report);
-    return PR_ENV_EXIT.done;
-  }
-  const { config } = await loadChantConfig(resolve(".")).catch(() => ({ config: {} as ChantConfig }));
-  const torn = await tearDownPrEnvironment({ pr, live, config, plugins: ctx.plugins, warn: (message) => console.error(formatWarning({ message })) });
-  if ("refusal" in torn) {
-    await finish(ctx, forge, { ...report, template: live.template, status: "refused", message: torn.refusal });
-    return fail(torn.refusal);
-  }
-  const { report: result, dropped, marker } = torn;
-  const counts = teardownCounts(result);
-  const complete = teardownComplete(result);
-  const lexicons = [...new Set(result.outcomes.map((o) => o.lexicon))].sort();
-  const head = await headCommit();
-  await appendRecord(ctx, {
-    version: 1,
-    kind: "down",
-    pr,
-    env,
-    ...(live.member ? { member: live.member } : {}),
-    template: live.template,
-    marker,
-    commit: head,
-    components: lexicons,
-    planDigest: "",
-    result: complete ? "destroyed" : "incomplete",
-    by: actor(),
-    timestamp: new Date().toISOString(),
+  const result = await prEnvDownRun({
+    pr: args.pr,
     reason,
-    outcomes: counts,
-    releaseTarget: false,
+    ...(member ? { member } : {}),
+    ports: cliPorts(ctx, forge),
+    ...(await teardownSources()),
+    plugins: ctx.plugins,
+    commit: await headCommit(),
+    actor: actor(),
     ...(forge?.runUrl ? { runUrl: forge.runUrl } : {}),
   });
-  const why: string[] = [];
-  if (dropped > 0) why.push(`${dropped} candidate${dropped === 1 ? "" : "s"} whose marker was not ${marker.stack}/${env} left alone`);
-  if (result.unimplemented.length > 0) why.push(`no teardown execution in ${result.unimplemented.join(", ")}`);
-  if (result.plan.holes.length > 0) why.push(`${result.plan.holes.length} part${result.plan.holes.length === 1 ? "" : "s"} could not be read`);
-  for (const o of result.outcomes.filter((x) => x.outcome === "failed")) why.push(`${o.lexicon} ${o.name}: ${o.detail ?? "failed"}`);
-  await finish(ctx, forge, { ...report, template: live.template, status: complete ? "destroyed" : "incomplete", outcomes: counts, ...(why.length > 0 ? { message: why.join("; ") } : {}) });
-  console.error((complete ? formatInfo : (m: string) => formatWarning({ message: m }))(`pr-env down: ${env} ${complete ? "torn down" : "not wholly torn down; it stays live and the sweep tries again"} (${counts.deleted} deleted, ${counts.failed} failed, ${counts.skipped} skipped)`));
-  return complete ? PR_ENV_EXIT.done : PR_ENV_EXIT.failed;
+  if (result.report.status === "refused") return fail(result.report.message ?? "refused");
+  return result.exit;
 }
 
 async function headCommit(): Promise<string> {
@@ -434,29 +359,13 @@ async function headCommit(): Promise<string> {
 async function prEnvSweep(ctx: CommandContext): Promise<number> {
   const forge = forgeOf(ctx);
   if (typeof forge === "number") return forge;
-  const live = [...livePrEnvironments(await readRecords()).values()];
-  if (live.length === 0) {
-    console.error(formatInfo("pr-env sweep: no pull request environment is live"));
-    return PR_ENV_EXIT.done;
-  }
-  const now = new Date();
-  let code: number = PR_ENV_EXIT.done;
-  for (const e of live) {
-    let reason: "closed" | "expired" | undefined = expired(e, now) ? "expired" : undefined;
-    if (!reason && forge?.pullRequestState) {
-      try {
-        const state = await forge.pullRequestState(e.pr);
-        if (state !== "open") reason = "closed";
-      } catch (err) {
-        console.error(formatWarning({ message: `could not read whether #${e.pr} is open (${err instanceof Error ? err.message : String(err)}); its TTL still holds` }));
-      }
-    }
-    if (!reason) {
-      console.error(formatInfo(`pr-env sweep: ${e.env} stays; it expires ${e.expiresAt}`));
-      continue;
-    }
-    const c = await teardown(ctx, forge, e.pr, e, reason);
-    if (c !== PR_ENV_EXIT.done) code = PR_ENV_EXIT.failed;
-  }
-  return code;
+  const result = await prEnvSweepRun({
+    ports: cliPorts(ctx, forge),
+    ...(await teardownSources()),
+    plugins: ctx.plugins,
+    commit: await headCommit(),
+    actor: actor(),
+    ...(forge?.runUrl ? { runUrl: forge.runUrl } : {}),
+  });
+  return result.exit;
 }

@@ -20,6 +20,7 @@ import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import { componentsForUnits, planFanOut, type ChangedUnits, type ComponentChangeSignal, type FanOutPlan } from "./fan-out";
 import type { CapabilityRegistry } from "./capability";
 import type { DriverComponent } from "./driver";
+import type { ComponentEnvironmentDeclaration } from "./component";
 import type { BuildParamProvenance } from "../provenance";
 import { loadChantConfig, type ChantConfig } from "../config";
 
@@ -49,6 +50,8 @@ export interface DerivedFanOut {
   /** What the stack-level signal meant in component terms, `unclaimed` included. */
   signal: ComponentChangeSignal;
   plan: FanOutPlan;
+  /** Component name to the environments it declares, for the components that declare any (#4330). */
+  sites?: Record<string, ComponentEnvironmentDeclaration[]>;
   error?: string;
 }
 
@@ -85,7 +88,7 @@ export async function deriveFanOut(options: DeriveFanOutOptions): Promise<Derive
     ...(options.canary?.length ? { canary: options.canary } : {}),
   });
 
-  return { success: true, components, signal, plan };
+  return { success: true, components, signal, plan, ...(resolved.sites ? { sites: resolved.sites } : {}) };
 }
 
 /**

@@ -289,6 +289,33 @@
               "type": "string",
               "pattern": "^[1-9][0-9]*(m|h|d)$",
               "description": "How long a pull request's environment lives after its last apply, such as 72h, 90m or 7d. chant components pr-env sweep tears down one whose TTL passed. 72h when absent."
+            },
+            "teardown": {
+              "type": "object",
+              "description": "A command that tears down what no lexicon does, such as a Terraform root's copy of the environment (#4330). pr-env down and pr-env sweep run it after the ownership check, twice: CHANT_PR_ENV_STAGE=owned writes the candidates with their read-back markers to CHANT_PR_ENV_RESULT, and CHANT_PR_ENV_STAGE=teardown deletes the candidates in CHANT_PR_ENV_CANDIDATES and writes their outcomes. It runs without the forge token variables. Added in schema 1 by chant 0.124.45, so a declaration that uses it sets minReader to 0.124.45 or newer.",
+              "required": ["command"],
+              "additionalProperties": false,
+              "patternProperties": {
+                "^x-": true
+              },
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]*$",
+                  "description": "The name the teardown's outcomes are attributed to, as a lexicon's are. teardown when absent."
+                },
+                "command": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string", "minLength": 1 },
+                  "description": "Argv, run in the member's directory at the commit the job runs at. {env}, {pr} and {stage} are filled in."
+                },
+                "lexicons": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "description": "The lexicons the command tears down in place of, such as terraform. Their own teardown is left out, so one with no teardown execution does not leave the environment incomplete."
+                }
+              }
             }
           }
         }

@@ -545,6 +545,8 @@ export interface ResolvedComponentTargets {
   targets: DriverComponent[];
   /** For a list selector (#3950): the dependencies the closure added that the list did not name, in discovery order. */
   added?: string[];
+  /** Component name to the environments it declares (#3153), for the components that declare any (#4330). */
+  sites?: Record<string, ComponentEnvironmentDeclaration[]>;
   error?: string;
 }
 
@@ -577,7 +579,10 @@ export async function resolveComponentTargets(
 
   if (isComponentList(selector)) return resolveComponentList(selector, discovered, all);
 
-  if (selector === "all") return { success: true, targets: withoutDisabled(discovered, all) };
+  if (selector === "all") {
+    const sites = Object.fromEntries(discovered.filter((c) => c.environments && c.environments.length > 0).map((c) => [c.name, c.environments!.map((e) => ({ ...e }))]));
+    return { success: true, targets: withoutDisabled(discovered, all), ...(Object.keys(sites).length > 0 ? { sites } : {}) };
+  }
 
   const found = all.find((c) => c.name === selector);
   const disabledByName = discovered.find((c) => c.name === selector && c.enabled === false);
