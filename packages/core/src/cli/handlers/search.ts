@@ -16,6 +16,7 @@ import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import type { Declarable } from "../../declarable";
+import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -48,7 +49,18 @@ import type { CommandContext } from "../registry";
 export async function runSearch(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const query = (args.path ?? "").trim();
-  if (!query) {
+  // `--count-by` groups the matched set (#4360). It takes any query, and no
+  // query at all counts the whole graph: "which kinds does this estate hold".
+  let countBy: CountBy | undefined;
+  if (args.countBy !== undefined) {
+    const parsed = parseCountBy(args.countBy);
+    if ("error" in parsed) {
+      console.error(formatError({ message: parsed.error, hint: parsed.hint }));
+      return 1;
+    }
+    countBy = parsed;
+  }
+  if (!query && !countBy) {
     console.error(formatError({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" }));
     return 1;
   }
@@ -342,19 +354,28 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   // Machine-readable rows and paths (#4359), for a caller that draws them.
   if (args.json) {
-    console.log(JSON.stringify(searchJson(query, source, matches, terms, ir, nodeById, liveFailures)));
+    // With --count-by (#4360) the object carries the groups and the total in
+    // place of the matches, the same answer the grouped lines give.
+    const payload = countBy
+      ? countsJson(query, source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures)
+      : searchJson(query, source, matches, terms, ir, nodeById, liveFailures);
+    console.log(JSON.stringify(payload));
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     return liveFailures.length > 0 ? 1 : 0;
   }
   if (matches.length === 0) {
-    console.log("(no matches)");
+    console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
     availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     return 0;
   }
-  for (const n of matches) {
-    console.log(formatRow(n, show));
+  if (countBy) {
+    for (const line of formatCounts(countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy)) console.log(line);
+  } else {
+    for (const n of matches) {
+      console.log(formatRow(n, show));
+    }
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
   // Only worth asking when the live read came back empty — that is the one case
@@ -391,8 +412,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     if (args.failOnDrift && driftCount > 0) driftFailure = true;
   }
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
-  showMiss(matches, show);
-  regionSpread(terms, matches, show);
+  // Both point at `--show`, which a grouped count does not print (#4360).
+  if (!countBy) {
+    showMiss(matches, show);
+    regionSpread(terms, matches, show);
+  }
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   // The caller asked for a live answer and at least one lexicon could not be

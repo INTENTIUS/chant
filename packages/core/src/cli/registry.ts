@@ -246,6 +246,8 @@ export interface ParsedArgs {
   show?: string;
   /** `chant search --explain` — append a footer: universe count + why non-matches were excluded (#1139). */
   explain?: boolean;
+  /** `chant search --count-by kind|module|attr:<name>`: print one count per group instead of one row per match (#4360). */
+  countBy?: string;
   /** `chant graph --lens blast:<node> --up` — include upstream producers */
   up?: boolean;
   /** `chant graph --lens blast:<node> --down` — include downstream dependents */

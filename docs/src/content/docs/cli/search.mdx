@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant search "<query>" [--live | --at <ref>] [--env <name>] [flags]
+chant search ["<query>"] --count-by <kind | module | attr:<name>> [flags]
 ```
 
 ## Description
@@ -25,7 +26,10 @@ kept chant's token footprint the lowest of any tooling configuration on
 [aws-bench](https://github.com/aws-bench/aws-bench), an infrastructure-agent
 benchmark.
 
-By default the query runs over the **declared** graph (source only, offline).
+By default the query runs over the **declared** graph (source only, offline). That
+graph holds what a lexicon reads from outside the TypeScript source too, the
+same set [`chant graph`](/chant/cli/graph/) draws: on a Terraform project,
+every block of every configured root.
 With `--live --env <name>` chant observes the environment, overlays live
 identity and attributes onto the declared graph, and answers from that, on the same
 canvas as [`chant graph --overlay`](/chant/cli/graph/).
@@ -156,12 +160,58 @@ net/aws_instance.web  aws_instance
 | `--env` | `string` | — | Environment to observe (must be in `chant.config` `environments` when declared) |
 | `--src` | `string` | config `sourceDir` or `.` | Source directory to discover/build |
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
+| `--count-by` | `string` | — | Print one count per group instead of one row per match: `kind`, `module` or `attr:<name>` (see [Grouped counts](#grouped-counts)) |
 | `--explain` | `boolean` | `false` | Print the match-universe footer, each match's path for edge terms, and near-miss exclusions |
 | `--json` | `boolean` | `false` | Print the matches and their paths as one JSON object instead of rows and footers (not with `--check-live`/`--check-snapshot`) |
 | `--ambient` | `boolean` | `false` | Also report resources of a managed kind that exist without being declared or referenced |
 | `--check-live` | `boolean` | `false` | With `--at`: additionally read the estate live and diff the matched rows against the snapshot the answer came from |
 | `--check-snapshot` | `boolean` | `false` | With `--live`: additionally diff the matched rows against the most recently recorded snapshot |
 | `--fail-on-drift` | `boolean` | `false` | With `--check-live`/`--check-snapshot`: exit non-zero when the scoped check finds drift |
+
+## Grouped counts
+
+`--count-by` answers "how many of each" in one call. Instead of a row per
+match it prints one line per group with its count, sorted by count (highest
+first) and then by name, and a total line:
+
+```
+$ chant search "kind:Terraform::Resource" --count-by module
+2  app/(root)
+1  app/module.cdn
+1  network/(root)
+— 4 total · 3 groups by module
+```
+
+| Grouping | Groups by |
+|----------|-----------|
+| `--count-by kind` | the node's kind. A Terraform resource groups by its resource type (`aws_instance`) and a data source by `data.<type>` (`data.aws_ami`), since every Terraform resource is `Terraform::Resource` in chant's graph |
+| `--count-by module` | on a Terraform root, the module call chain from the entity's address (`module.cdn`, `module.cdn.module.bucket`), with a root-module block grouped as `(root)`. When the project has more than one root, the root name leads (`app/(root)`, `network/module.vpc`), because the same module name in two roots is two modules. Any other node groups by the composite that expanded it |
+| `--count-by attr:<name>` | the value of attribute `<name>`, matched case-insensitively as `--show` does |
+
+A node with no value for the grouped dimension is counted under `(none)`, so
+the groups add up to the total.
+
+Combined with a query, only the matches are counted. With no query at all, the
+whole graph is: `chant search --count-by kind` lists every kind the estate
+holds. The provenance line still follows, so a grouped live answer says what
+backed it.
+
+With `--json`, the object carries the groups in the same order and the total
+in place of `matches`:
+
+```json
+{
+  "query": "kind:Terraform::Resource",
+  "source": { "kind": "declared" },
+  "countBy": "module",
+  "groups": [
+    { "group": "app/(root)", "count": 2 },
+    { "group": "app/module.cdn", "count": 1 },
+    { "group": "network/(root)", "count": 1 }
+  ],
+  "total": 4
+}
+```
 
 ## `--explain`
 
@@ -309,6 +359,11 @@ chant search "tag:Environment=prod"
 chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
 chant search "kind:Instance ->attr:MapPublicIpOnLaunch=true" --live --env dev --explain
 
+# how many of each
+chant search --count-by kind
+chant search "kind:Terraform::Resource" --count-by module
+chant search "kind:EC2::Instance" --count-by attr:region --live --env dev
+
 # query-scoped drift
 chant search "kind:EC2::Instance" --env prod --at latest --check-live
 chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-drift
@@ -319,4 +374,4 @@ chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-d
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
-| 1 | Missing query, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
+| 1 | Missing query (without `--count-by`), a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |

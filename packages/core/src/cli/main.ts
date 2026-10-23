@@ -173,7 +173,8 @@ Commands:
                         terms, ->* / ->{1,3} for depth, ->[via=attr] / [to=attr]
                         by attribute; --live or --at <ref> with --env <name>
                         reads the estate or a recorded snapshot; --show <attr>,
-                        --explain prints paths, --json, --check-live,
+                        --count-by kind|module|attr:<name>, --explain prints
+                        paths, --json, --check-live,
                         --check-snapshot, --fail-on-drift)
   query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
                         the resources and snapshots each lexicon observed, Op
