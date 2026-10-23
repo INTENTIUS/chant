@@ -146,6 +146,8 @@ The root's chant reads the declaration ([ws-021](https://github.com/INTENTIUS/ch
 
 The pin is checked before `minReader` and before the schema, since the pinned chant may know fields this one doesn't. The pin is read from the tree being read, so `--at` follows the pin at the revision. Members are never read by the root's chant. Each runs under its own toolchain, as [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member) describes.
 
+Capability search keeps the same split ([#4378](https://github.com/INTENTIUS/chant/issues/4378)). Each member's lexicon mapping and adapter run under that member's toolchain, and its view travels on its `graph` entry as `capabilityView`, a contract 1 addition present only with `chant workspace graph --capability-view`. The root's chant runs only the rules, once, over the composed views. A member whose chant prints no view has `capabilityView: null` in `graph` and `member-chant-too-old` in `search`.
+
 A reader without chant may parse the declaration itself against its [schema](/chant/reference/workspace-declaration/), which is how a Terraform-only estate stays viewable. It should apply the same two rules: defer to the pinned chant, and refuse a `minReader` newer than the format it knows.
 
 ## Reason codes
@@ -173,7 +175,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lexicon-has-no-mapping` | lexicon, `capabilities` | The lexicon ships no capability mapping, so no capability rule can read its resources ([#4375](https://github.com/INTENTIUS/chant/issues/4375)). |
 | `capability-not-derivable` | lexicon, `capabilities` | The lexicon's capability mapping labels none of the kinds the capability's rule needs. The message names them. |
 | `lexicon-not-loaded` | lexicon, `capabilities` | The lexicon isn't installed where the chant that wrote the catalog runs, so its mapping wasn't read. |
-| `member-chant-too-old` | member, `search` | The member's chant prints no search document of the read contract: it predates `workspace member-run`, has no such command or flag, or prints `search --json` from before the contract. |
+| `member-chant-too-old` | member, `search` | The member's chant prints no search document of the read contract: it predates `workspace member-run`, has no such command or flag, or prints `search --json` from before the contract. For a query with a capability term, the member's chant printed no [capability view](/chant/cli/workspace-graph/#the-capability-view) ([#4378](https://github.com/INTENTIUS/chant/issues/4378)), so nothing mapped its nodes. |
 | `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
 | `dir-missing` | member, `ls` and `graph` | The member's directory does not exist. |
 | `unknown-kind` | member, `ls` and `graph` | No built-in kind or pinned package supplies the member's kind. |

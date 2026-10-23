@@ -97,7 +97,11 @@ describe("chant workspace search on two members", () => {
     expectValid(doc);
     expect(doc).toMatchObject({ countBy: "kind", total: 2 });
     if (!("groups" in doc)) throw new Error("no groups");
-    expect(doc.groups).toContainEqual({ group: "Fixture::Service", count: 2 });
+    const service = doc.groups.find((g) => g.group === "Fixture::Service");
+    expect(service).toMatchObject({ count: 2 });
+    // #4382: each group's ids, as `<member>/<id>`, one per member here.
+    expect(service?.ids).toHaveLength(2);
+    expect(service?.ids?.map((id) => id.split("/")[0]).sort()).toEqual(doc.members.map((m) => m.name).sort());
     expect(doc.members.map((m) => m.total)).toEqual([1, 1]);
   }, TIMEOUT);
 

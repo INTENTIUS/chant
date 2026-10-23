@@ -217,6 +217,11 @@ In a declared workspace, `chant workspace search --capabilities --json`
 prints the same document from the workspace root's chant, for every lexicon
 a chant member loads, since that chant runs the rules over the composed graph
 (see [workspace search](/chant/cli/workspace-search/#capabilities)). The
+rules are the root chant's; each member's mapping and adapter run under the
+member's own chant, which prints its part of the view
+([#4378](https://github.com/INTENTIUS/chant/issues/4378)), so the `lexicons`
+support this document states is the root's installed lexicons, and a member
+pinned to another lexicon version answers by that version's mapping. The
 reader conformance suite covers it as `search --capabilities`. chant's MCP
 `capabilities` tool returns whichever of the two applies where the server
 runs, unchanged. An agent reads it once per session.

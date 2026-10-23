@@ -73,7 +73,7 @@ export const DEFAULT_PLAN_FILE = "chant.tfplan";
 /** Binary used when the `terraform` namespace records no preference. */
 export const DEFAULT_TERRAFORM_BINARY = "terraform";
 
-/** Where {@link choudoufuLivePlan} writes GitHub issue #788's JSON document, relative to the root directory. */
+/** Where the {@link choudoufuLivePlan} Op activity writes GitHub issue #788's JSON document, relative to the root directory. */
 export const DEFAULT_LIVE_PLAN_DOCUMENT_FILE = "chant.live-plan.json";
 
 /**
@@ -1745,8 +1745,12 @@ export interface ChoudoufuLivePlanDocumentResult extends LivePlanUnownedCounts {
   json: unknown;
   /** Absolute path of the root module directory. */
   dir: string;
-  /** Where the JSON document was written, relative to `dir`. */
-  documentPath: string;
+  /**
+   * Where the JSON document was written, relative to `dir`. Present only when
+   * the caller asked for a file with `documentPath`; a read writes nothing
+   * into the root (#4379).
+   */
+  documentPath?: string;
   /** The estate this plan ran against. */
   estate: string;
 }
@@ -1767,7 +1771,9 @@ export interface ChoudoufuLivePlanDocumentResult extends LivePlanUnownedCounts {
  * the root's environment. The graph command runs in such a scope, so its
  * observation and its prediction see one `live-plan` between them, and the
  * graph's statuses and the prediction's figures are statements about the
- * same read. The document file is still written on every call.
+ * same read. The document is returned, not written: the root is left
+ * byte-for-byte as it was (#4379). A caller that wants the file passes
+ * `documentPath` (relative to the root) and it is written there on request.
  */
 export async function choudoufuLivePlanDocument(
   args: ChoudoufuLivePlanArgs & { documentPath?: string },
@@ -1777,7 +1783,7 @@ export async function choudoufuLivePlanDocument(
   const { binary, dir } = resolved;
   const estate = resolveEstate(args, resolved, "choudoufuLivePlan");
   const env = terraformEnvironment(resolved.root);
-  const documentPath = args.documentPath ?? DEFAULT_LIVE_PLAN_DOCUMENT_FILE;
+  const documentPath = args.documentPath;
   // A root that declares its own estate is run without `-estate`: choudoufu
   // refuses the flag beside a declaration and, since v0.14.0, settles the name
   // from the declaration itself. See {@link choudoufuLivePlanCommand}.
@@ -1819,15 +1825,28 @@ export async function choudoufuLivePlanDocument(
   // the identity on a supported binary. See {@link liveDocumentFrom}.
   const document = liveDocumentFrom(jsonStdout);
   const json: unknown = JSON.parse(document);
-  writeFileSync(join(dir, documentPath), document);
-  return { drift, json, dir, documentPath, estate, ...countLivePlanUnowned(json) };
+  if (documentPath !== undefined) writeFileSync(join(dir, documentPath), document);
+  return {
+    drift,
+    json,
+    dir,
+    ...(documentPath === undefined ? {} : { documentPath }),
+    estate,
+    ...countLivePlanUnowned(json),
+  };
 }
 
 export async function choudoufuLivePlan(
   args: ChoudoufuLivePlanArgs & { documentPath?: string },
   signal?: AbortSignal,
 ): Promise<ChoudoufuLivePlanResult> {
-  const { drift, json, dir, documentPath, estate, ...unowned } = await choudoufuLivePlanDocument(args, signal);
+  // The Op activity is the one caller that wants the file: `documentPath` is a
+  // declared `.out` ref a later step or reviewer opens (#2103), so it asks.
+  const documentPath = args.documentPath ?? DEFAULT_LIVE_PLAN_DOCUMENT_FILE;
+  const { drift, json, dir, estate, ...unowned } = await choudoufuLivePlanDocument(
+    { ...args, documentPath },
+    signal,
+  );
   const resolved = await resolveRoot(args, signal);
   const { binary } = resolved;
   const env = terraformEnvironment(resolved.root);

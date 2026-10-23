@@ -130,6 +130,15 @@ async function runGraphCommand(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
+  // The capability view (#4378) is built from the declared entity graph's IR,
+  // the read `chant workspace graph --capability-view` asks each member for.
+  if (ctx.args.capabilityView && (ctx.args.format !== "ir" || ctx.args.components || ctx.args.live || ctx.args.at)) {
+    console.error(formatError({
+      message: "--capability-view adds the capability view to the declared graph's IR, so it needs --format ir and takes no --components, --live or --at",
+      hint: "chant graph --format ir --detail 3 --capability-view",
+    }));
+    return 1;
+  }
   // `--at` graphs a recorded observation instead of reading the estate (#1279).
   // Two different observations with no rule for which wins, so not both.
   if (ctx.args.at && ctx.args.live) {
@@ -920,10 +929,10 @@ async function runGraphView(
   // The declared half of the epic's delta (#2355): this path predicts the
   // file, the live path predicts the account. Same helper, so the two shapes
   // reach the engine by one route and stay comparable.
+  const plugins = ctx.plugins.length > 0
+    ? ctx.plugins
+    : await loadPlugins(await projectLexiconsOrNone(projectPath));
   {
-    const plugins = ctx.plugins.length > 0
-      ? ctx.plugins
-      : await loadPlugins(await projectLexiconsOrNone(projectPath));
     ir = withLexiconEdges(ir, plugins as LexiconPlugin[], result.entities);
     ir = withLexiconOutputs(ir, plugins as LexiconPlugin[], result.entities);
     const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
@@ -961,6 +970,14 @@ async function runGraphView(
   // Last, so no lens or detail pass can drop it: the findings are about the
   // whole source read, not about the nodes this view kept.
   if (lintMode === "report") ir = { ...ir, meta: { ...ir.meta, lint: graphLintReport(lint, projectPath) } };
+  // The view capability rules read (#4378), mapped by this project's own
+  // lexicons, so a workspace's rules read each member as its chant maps it.
+  if (ctx.args.capabilityView) {
+    const { buildView, serializeView } = await import("../../capabilities/view");
+    const { resolvePacks } = await import("../../capabilities/catalog");
+    const packs = (plugins as LexiconPlugin[]).map((p) => p.capabilityPack).filter((p): p is NonNullable<typeof p> => !!p);
+    ir = { ...ir, capabilityView: serializeView(buildView(ir, resolvePacks(packs))) };
+  }
   return emitIr(ir, ctx, format);
 }
 

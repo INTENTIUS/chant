@@ -3,9 +3,9 @@ import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
-import { attachCapabilities, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
+import { attachCapabilities, attachView, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
 import { CapabilityError, type CapabilityEngine, type Evidence } from "../../capabilities/matcher";
-import type { CapabilityPack } from "../../capabilities/view";
+import type { CapabilityPack, View } from "../../capabilities/view";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -20,7 +20,7 @@ import { readChantPackageVersion } from "../../package-version";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
-import { parseCountBy, countGroups, countsJson, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
+import { parseCountBy, countGroups, countsJson, formatCounts, groupMembers, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode, type SearchFailure, type SearchHead } from "../../workspace/search-contract";
@@ -366,6 +366,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
     const provenanceText = provenanceLine(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]).replace(/^— /, "");
     const capNotes = capabilityNotes(terms, ir, source);
+    const plannedCreates = source.kind !== "declared" && liveFailures.length === 0 ? plannedCreateCount(matches) : 0;
     const driftJson = drift
       ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
       : driftUnavailable !== undefined
@@ -378,8 +379,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const payload = countBy
       ? {
           ...head,
-          ...countsJson(query, env ? { ...source, env } : source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
+          ...countsJson(query, env ? { ...source, env } : source, groupMembers(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
           provenance: provenanceText,
+          ...(plannedCreates > 0 ? { plannedCreates } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
         }
       : {
@@ -388,6 +390,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           ...(env ? { env } : {}),
           show,
           provenance: provenanceText,
+          ...(plannedCreates > 0 ? { plannedCreates } : {}),
           ...(capNotes.length > 0 ? { capabilities: capNotes } : {}),
           ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
@@ -659,8 +662,10 @@ function capabilityNotes(terms: Term[], ir: GraphIR, source: AnswerSource): { na
 
 /**
  * Answer capability terms over a graph that is not this project's own (#4375):
- * `chant workspace search` composes its members' graphs and asks here, so the
- * rules run once over the whole of it with the packs given. Returns the rows
+ * `chant workspace search` composes its members' graphs and views and asks
+ * here, so the rules run once over the whole of it. Given packs, the view is
+ * built here; given a view, it is the one the members' own chants mapped
+ * (#4378). Returns the rows
  * as `--json` carries them, or the refusal for a capability the query names
  * wrongly.
  */
@@ -668,9 +673,10 @@ export function answerOverGraph(
   ir: GraphIR,
   terms: Term[],
   query: string,
-  packs: CapabilityPack[],
+  packsOrView: CapabilityPack[] | View,
 ): { matches: SearchJson["matches"]; capabilities: NonNullable<SearchJson["capabilities"]> } | { error: { message: string; hint?: string } } {
-  const engine = attachCapabilities(ir, packs);
+  // A workspace hands over the view its members' chants mapped (#4378).
+  const engine = Array.isArray(packsOrView) ? attachCapabilities(ir, packsOrView) : attachView(ir, packsOrView);
   const refused = checkCapabilityTerms(engine, terms);
   if (refused) return { error: refused };
   resolveKindTerms(terms, ir.nodes);
@@ -883,6 +889,12 @@ function provenanceLine(
     return `— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`;
   }
   if (bound === 0) {
+    // Every match a planned create (#4372): absent on purpose, so "returned no
+    // bound resources" reads as a failed read when the read worked.
+    const planned = plannedCreateCount(matches);
+    if (planned > 0) {
+      return `— ${what}: ${planned} planned ${planned === 1 ? "create" : "creates"}, none bound yet · the plan has not been applied`;
+    }
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
     // A snapshot sitting unused is the actionable half of this. Denied network,
@@ -906,6 +918,19 @@ function provenanceLine(
   const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
   const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
   return `— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`;
+}
+
+/**
+ * How many matches there are when every one is a planned create (#4372): an
+ * absent entity (no physical id) carrying `planAction=create`. Zero for no
+ * matches or any other mix, so a real empty read keeps its wording.
+ */
+function plannedCreateCount(matches: IRNode[]): number {
+  if (matches.length === 0) return 0;
+  const all = matches.every(
+    (n) => !n.physicalId && (n.attrs as Record<string, unknown> | undefined)?.planAction === "create",
+  );
+  return all ? matches.length : 0;
 }
 
 /** Print {@link provenanceLine}: the text footer. */
@@ -1266,6 +1291,8 @@ export interface SearchJson {
     paths: { term: string; dir: "out" | "in"; hops: PathHop[]; because?: { capability: string; id: string; hops: PathHop[] }[] }[];
   }[];
   provenance?: string;
+  /** Present when every match is a planned create (#4372): how many. See the schema. */
+  plannedCreates?: number;
   liveFailures?: string[];
   explain?: {
     universe: { matched: number; of: number; kinds: string[] };
@@ -1324,6 +1351,7 @@ function searchJson(
     env?: string;
     show?: string[];
     provenance?: string;
+    plannedCreates?: number;
     capabilities?: SearchJson["capabilities"];
     explain?: ReturnType<typeof explainData>;
     drift?: SearchDriftJson;
@@ -1352,6 +1380,7 @@ function searchJson(
       };
     }),
     ...(extra.provenance !== undefined ? { provenance: extra.provenance } : {}),
+    ...(extra.plannedCreates ? { plannedCreates: extra.plannedCreates } : {}),
     ...(extra.capabilities ? { capabilities: extra.capabilities } : {}),
     ...(liveFailures.length > 0 ? { liveFailures } : {}),
     ...(extra.explain

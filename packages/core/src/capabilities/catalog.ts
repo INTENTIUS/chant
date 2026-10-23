@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import type { GraphIR } from "../graph-ir";
 import { parseRules, ruleDependencies, type Literal, type Rule } from "./language";
 import { CapabilityEngine } from "./matcher";
-import { buildView, mergeMappings, type CapabilityMapping, type CapabilityPack } from "./view";
+import { buildView, mergeMappings, type CapabilityMapping, type CapabilityPack, type View } from "./view";
 import base from "./base-mappings.json" with { type: "json" };
 
 /** The rule files core ships, by name. */
@@ -76,6 +76,16 @@ export function capabilityEngine(ir: GraphIR, packs: CapabilityPack[] = []): Cap
 export function attachCapabilities(ir: GraphIR, packs: CapabilityPack[]): CapabilityEngine {
   engines.delete(ir);
   return capabilityEngine(ir, packs);
+}
+
+/**
+ * Bind a graph to a view built elsewhere (#4378): a workspace's composed
+ * view, which each member's own chant mapped. The rules are this chant's.
+ */
+export function attachView(ir: GraphIR, view: View): CapabilityEngine {
+  const e = new CapabilityEngine(view, shippedRules().rules);
+  engines.set(ir, e);
+  return e;
 }
 
 /**

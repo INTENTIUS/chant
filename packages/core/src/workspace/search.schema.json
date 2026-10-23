@@ -66,6 +66,11 @@
           "type": "string",
           "description": "Plain `chant search`: the provenance line the text prints after the rows, without its leading dash. In the workspace form each member carries its own."
         },
+        "plannedCreates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Plain `chant search`, `--live` or `--snapshot` only: present when every match is a planned create (an absent entity carrying plan attributes, #4372), with how many. The provenance line says \"N planned creates, none bound yet\" instead of \"returned no bound resources\". Absent for a real empty read, a failed read, or any answer with a match that is not a planned create."
+        },
         "liveFailures": {
           "type": "array",
           "items": {
@@ -651,6 +656,13 @@
           "count": {
             "type": "integer",
             "minimum": 0
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ids of the matches in the group, in match order (#4382); `count` is its length. In the workspace form they are `<member>/<id>`, and a merged group lists them only when every member that counted into it listed its own (an older member chant lists none). Written by chant 0.124.46 and newer."
           }
         }
       }
@@ -712,7 +724,7 @@
                     "snapshot-unavailable",
                     "build-failed"
                   ],
-                  "description": "A member that ran and refused carries its own search refusal code. `member-chant-too-old` is a member whose chant prints no search document of the contract."
+                  "description": "A member that ran and refused carries its own search refusal code. `member-chant-too-old` is a member whose chant prints no search document of the contract, or, for a query with a capability term, no capability view (#4378)."
                 },
                 "message": {
                   "type": "string"
@@ -758,6 +770,11 @@
         },
         "provenance": {
           "type": "string"
+        },
+        "plannedCreates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "As in the result document: present when every counted match is a planned create."
         },
         "liveFailures": {
           "type": "array",

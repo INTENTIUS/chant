@@ -19,6 +19,10 @@
  * A member that could not be searched is listed with a reason code and no
  * answer, never as zero matches. Members are stamped by the rule of ws-059.
  *
+ * A query with a capability term is the exception: its rules run once over
+ * the composed graph, each member mapped by its own chant (#4375, #4378;
+ * `composedCapabilitySearch` below).
+ *
  * Two times stay apart. `--at <rev>` is the git revision, as for every
  * contract read, and the document's `at` is that commit. `--snapshot <ref>`
  * replays a recorded lifecycle snapshot, and `source.snapshot` names it. The
@@ -30,7 +34,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
-import { composedId } from "./compose-graph";
+import { composedId, type ComposedMember } from "./compose-graph";
 import { readerVersion, WorkspaceReadError } from "./declaration";
 import { readMembers } from "./graph-cli";
 import type { GraphIR } from "../graph-ir";
@@ -94,7 +98,7 @@ interface MemberAnswer {
   source: Record<string, unknown>;
   matches?: MemberMatch[];
   countBy?: string;
-  groups?: { group: string; count: number }[];
+  groups?: { group: string; count: number; ids?: string[] }[];
   total?: number;
   provenance?: string;
   liveFailures?: string[];
@@ -123,7 +127,7 @@ export interface SearchMember {
   source?: Record<string, unknown>;
   /** The member's matched ids, `<member>/<id>`. */
   matches?: string[];
-  groups?: { group: string; count: number }[];
+  groups?: { group: string; count: number; ids?: string[] }[];
   total?: number;
   provenance?: string;
   liveFailures?: string[];
@@ -143,7 +147,7 @@ interface WorkspaceHead extends SearchHead {
 
 export type WorkspaceSearchDocument =
   | (WorkspaceHead & { matches: (MemberMatch & { member: string })[] })
-  | (WorkspaceHead & { countBy: string; groups: { group: string; count: number }[]; total: number })
+  | (WorkspaceHead & { countBy: string; groups: { group: string; count: number; ids?: string[] }[]; total: number })
   | (SearchHead & { query: string; error: { code: WorkspaceSearchErrorCode | SearchErrorCode; message: string; hint?: string } });
 
 export interface WorkspaceSearchResult {
@@ -264,10 +268,15 @@ function prefixMatch(member: string, m: MemberMatch): MemberMatch & { member: st
   };
 }
 
-/** Sort groups by count, highest first, then by name: the order `--count-by` prints. */
-function sortGroups(groups: Map<string, number>): { group: string; count: number }[] {
+/**
+ * Sort groups by count, highest first, then by name: the order `--count-by`
+ * prints. A group carries `ids` (#4382) when every member that counted into it
+ * listed its own; a member on an older chant lists none, and then the merged
+ * group has a count and no ids, rather than ids that fall short of it.
+ */
+function sortGroups(groups: Map<string, { count: number; ids: string[] | null }>): { group: string; count: number; ids?: string[] }[] {
   return [...groups]
-    .map(([group, count]) => ({ group, count }))
+    .map(([group, g]) => ({ group, count: g.count, ...(g.ids ? { ids: g.ids } : {}) }))
     .sort((a, b) => b.count - a.count || (a.group < b.group ? -1 : a.group > b.group ? 1 : 0));
 }
 
@@ -325,7 +334,7 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
     const byId = new Map(results.map((r) => [r.id, r]));
     const members: SearchMember[] = [];
     const matches: (MemberMatch & { member: string })[] = [];
-    const groups = new Map<string, number>();
+    const groups = new Map<string, { count: number; ids: string[] | null }>();
     let failed = plan.unreadable.length > 0;
     for (const m of declaration.members) {
       if (q.members?.length && !q.members.includes(m.name)) continue;
@@ -361,12 +370,15 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
         entry.matches = rows.map((x) => x.id);
       }
       if (Array.isArray(a.groups)) {
-        entry.groups = a.groups;
+        // Each group's ids (#4382) as `workspace graph` gives the same nodes: `<member>/<id>`.
+        entry.groups = a.groups.map((g) => (Array.isArray(g.ids) ? { ...g, ids: g.ids.map((id) => composedId(m.name, id)) } : g));
         entry.total = a.total ?? a.groups.reduce((n, g) => n + g.count, 0);
         // A module is a member's own: `module.vpc` in two members is two modules.
-        for (const g of a.groups) {
+        for (const g of entry.groups) {
           const name = checked.countBy?.by === "module" ? composedId(m.name, g.group) : g.group;
-          groups.set(name, (groups.get(name) ?? 0) + g.count);
+          const was = groups.get(name);
+          const ids = Array.isArray(g.ids) && (!was || was.ids) ? [...(was?.ids ?? []), ...g.ids] : null;
+          groups.set(name, { count: (was?.count ?? 0) + g.count, ids });
         }
       }
       if (a.provenance !== undefined) entry.provenance = a.provenance;
@@ -409,10 +421,16 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
 /**
  * A query with capability terms (#4375): the rules run once, under this
  * chant, over the graph `chant workspace graph` composes, so a path may cross
- * from one member into another wherever the composed graph has an edge. Each
- * member's graph is read under its own chant, as `workspace graph` reads it
- * (`readMembers`); the lexicon mappings are this chant's, loaded for every
- * lexicon a chant member uses. A member is `searched` without `alone`.
+ * from one member into another wherever the composed graph has an edge.
+ *
+ * The lexicon-neutral view the rules read is not built here (#4378). Each
+ * member's own chant builds its part, through the mappings and adapters of
+ * the lexicons that member loads, and prints it with
+ * `chant graph --capability-view`; `workspace graph --capability-view`
+ * carries it on the member. This chant composes the parts, resolves ARNs one
+ * member names in another, and evaluates. A member whose chant printed no
+ * view is `member-chant-too-old`, never an empty answer. A member is
+ * `searched` without `alone`.
  */
 async function composedCapabilitySearch(
   q: WorkspaceSearchQuery,
@@ -422,55 +440,66 @@ async function composedCapabilitySearch(
 ): Promise<WorkspaceSearchResult> {
   const { answerOverGraph } = await import("../cli/handlers/search");
   const { workspaceGraph } = await import("./graph-cli");
-  const { workspaceLexicons } = await import("./capabilities-contract");
-  const { loadPlugin } = await import("../cli/plugins");
-  // Detail 3: each member's full property trees, which the rules read
-  // (a policy document, an inline ingress block).
-  const { doc: graph, failed: graphFailed } = await workspaceGraph({ cwd: q.cwd, at: q.at, members: q.members, reader: q.reader, onStderr: q.onStderr, args: { detail: 3 } });
+  const { composeViews, isViewDocument } = await import("../capabilities/view");
+  // Detail 3, each member's full property trees, and each member's capability
+  // view (#4378): its chant maps its own nodes through its own lexicons, as
+  // its own `chant search` would. Only the rules run here, once.
+  const { doc: graph, failed: graphFailed } = await workspaceGraph({
+    cwd: q.cwd,
+    at: q.at,
+    members: q.members,
+    reader: q.reader,
+    onStderr: q.onStderr,
+    args: { detail: 3, capabilityView: true },
+  });
   if ("error" in graph) {
     const e = graph.error as { code: string; message: string };
     return { doc: { ...head, query, error: { code: e.code as WorkspaceSearchErrorCode, message: e.message } }, failed: true };
-  }
-  const packs = [];
-  for (const name of await workspaceLexicons(q.cwd)) {
-    try {
-      const pack = (await loadPlugin(name)).capabilityPack;
-      if (pack) packs.push(pack);
-    } catch {
-      // Not installed here: the catalog's lexicons say so (lexicon-not-loaded).
-    }
   }
   const g = graph as unknown as {
     workspace: { name: string; root: string };
     at: string | null;
     nodes: GraphIR["nodes"];
     edges: GraphIR["edges"];
-    members: { name: string; dir: string; kind: string; status: string; reason: { code: string; message: string } | null; chant?: string | null; stamp?: string | null }[];
+    members: (ComposedMember & { chant?: string | null; stamp?: string | null })[];
   };
+  const viewed = g.members.filter((m) => m.status === "composed" && isViewDocument(m.capabilityView));
   const ir: GraphIR = { nodes: g.nodes, edges: g.edges, groups: {} } as GraphIR;
-  const answer = answerOverGraph(ir, terms, query, packs);
+  const answer = answerOverGraph(ir, terms, query, composeViews(viewed.map((m) => m.capabilityView!)));
   if ("error" in answer) {
     return { doc: { ...head, query, error: { code: "query-invalid", message: answer.error.message, ...(answer.error.hint ? { hint: answer.error.hint } : {}) } }, failed: true };
   }
   const known = new Set<string>(SEARCH_MEMBER_REASON_CODES);
-  const members: SearchMember[] = g.members.map((m) => ({
-    name: m.name,
-    dir: m.dir,
-    kind: m.kind,
-    status: m.status === "composed" ? "searched" : m.reason ? "failed" : "skipped",
-    reason: m.reason
+  // A member whose chant printed no view was read, but nothing mapped its
+  // nodes, so it has no answer rather than an empty one.
+  const tooOld = (m: (typeof g.members)[number]): { code: SearchMemberReasonCode; message: string } => ({
+    code: "member-chant-too-old",
+    message: `the member runs ${m.chant ? `chant ${m.chant}` : "a chant older than workspace member-run"}, which prints no capability view (#4378), so its nodes are not evaluated: a member's lexicon mappings run under its own chant; install a newer @intentius/chant for this member`,
+  });
+  const members: SearchMember[] = g.members.map((m) => {
+    const searched = m.status === "composed" && viewed.includes(m);
+    const reason = m.reason
       ? { code: (known.has(m.reason.code) ? m.reason.code : "output-unreadable") as SearchMemberReasonCode, message: m.reason.message }
-      : null,
-    chant: m.chant ?? null,
-    stamp: m.stamp ?? null,
-    ...(m.status === "composed"
-      ? {
-          source: { kind: "declared" },
-          matches: answer.matches.filter((x) => x.id.startsWith(`${m.name}/`)).map((x) => x.id),
-          provenance: "declared only · capabilities evaluated once over the composed workspace graph",
-        }
-      : {}),
-  }));
+      : m.status === "composed" && !searched
+        ? tooOld(m)
+        : null;
+    return {
+      name: m.name,
+      dir: m.dir,
+      kind: m.kind,
+      status: searched ? "searched" : reason && m.status !== "skipped" ? "failed" : "skipped",
+      reason,
+      chant: m.chant ?? null,
+      stamp: m.stamp ?? null,
+      ...(searched
+        ? {
+            source: { kind: "declared" },
+            matches: answer.matches.filter((x) => x.id.startsWith(`${m.name}/`)).map((x) => x.id),
+            provenance: "declared only · each member mapped by its own chant, capabilities evaluated once over the composed workspace graph",
+          }
+        : {}),
+    } as SearchMember;
+  });
   const matches = answer.matches
     .map((x) => {
       const member = x.id.slice(0, x.id.indexOf("/"));
@@ -487,7 +516,7 @@ async function composedCapabilitySearch(
     matches,
     capabilities: answer.capabilities,
   } as unknown as WorkspaceSearchDocument;
-  return { doc, failed: graphFailed };
+  return { doc, failed: graphFailed || viewed.length < g.members.filter((m) => m.status === "composed").length };
 }
 
 /** The text form: one row per match, or the merged groups, then each member that has no answer. */

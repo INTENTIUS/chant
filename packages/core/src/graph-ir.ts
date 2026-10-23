@@ -483,6 +483,13 @@ export interface GraphIR {
    * the passes produced, not a list maintained by hand.
    */
   derivedAttrs?: Record<string, string[]>;
+  /**
+   * With `chant graph --format ir --capability-view` (#4378): the
+   * lexicon-neutral view capability rules read, built by this chant through
+   * the project's own lexicon mappings and adapters. A `ViewDocument`
+   * (`capabilities/view.ts`). Absent unless asked for.
+   */
+  capabilityView?: unknown;
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */

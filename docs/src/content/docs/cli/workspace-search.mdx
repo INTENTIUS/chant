@@ -63,19 +63,27 @@ The query grammar, `--show`, `--explain` and `--count-by` are those of [`chant s
 A query that names a [capability](/chant/reference/capabilities/) (`cap:<name>`
 or `->[cap=<name>]`) is not run member by member. Its rules run once, under
 the workspace's chant, over the graph [`chant workspace
-graph`](/chant/cli/workspace-graph/) composes at detail 3, with each member's
-graph read under the member's own chant as that command reads it
-([#4375](https://github.com/INTENTIUS/chant/issues/4375)). The lexicon
-mappings are the workspace chant's. So a path may cross from one member into
-another: a role in `platform` whose policy names a bucket in `data` by ARN
-`reaches` that bucket, which no member's own search could see.
+graph`](/chant/cli/workspace-graph/) composes at detail 3
+([#4375](https://github.com/INTENTIUS/chant/issues/4375)). The view the rules
+read is split the way ws-021 splits every member read
+([#4378](https://github.com/INTENTIUS/chant/issues/4378)): each member's own
+chant maps its nodes through the lexicons that member loads, at the versions
+it pins, and prints the result as its [capability
+view](/chant/cli/workspace-graph/#the-capability-view). The workspace's chant
+composes the views, resolves an ARN that one member names and another
+declares, and evaluates. So a path may cross from one member into another: a
+role in `platform` whose policy names a bucket in `data` by ARN `reaches` that
+bucket, which no member's own search could see.
 
 ```bash
 chant workspace search "cap:holds-secret <-[cap=reaches]kind:aws_iam_role" --json
 ```
 
 Every member then reads `searched` without `alone`, and the document carries
-`capabilities`, what each capability named does not evaluate. Such a query
+`capabilities`, what each capability named does not evaluate. A member whose
+chant predates the capability view is `failed` with `member-chant-too-old`
+and no `matches`, never an empty answer: nothing mapped its nodes. Install a
+newer `@intentius/chant` for it. Such a query
 answers from the declared graph, so it refuses `--live`, `--snapshot`,
 `--check-live`, `--check-snapshot` and `--count-by` with `usage-invalid`.
 
@@ -140,7 +148,7 @@ Plain [`chant search --at <ref>`](/chant/cli/search/) still means a snapshot, fo
 | `members[].source`, `provenance`, `liveFailures`, `explain`, `drift` | the member's own answer, as [`chant search --json`](/chant/cli/search/#--json) carries them, with every node id `<member>/<id>` |
 | `matches[]` | every member's rows, sorted by id, each as `chant search --json` prints it with `id` and the ends of every hop `<member>/<id>`, and `member` added |
 
-With `--count-by`, `countBy`, `groups` and `total` take the place of `matches`. `groups` adds the members' groups up by name, except that a `module` group is prefixed with its member (`east/module.vpc`), since a module of the same name in two members is two modules. Each member entry carries its own `groups` and `total`.
+With `--count-by`, `countBy`, `groups` and `total` take the place of `matches`. `groups` adds the members' groups up by name, except that a `module` group is prefixed with its member (`east/module.vpc`), since a module of the same name in two members is two modules. A group's `ids` are `<member>/<id>`, the ids `chant workspace graph` gives the same nodes; a merged group lists them only when every member that counted into it listed its own. Each member entry carries its own `groups` and `total`.
 
 A member that can't be searched is listed with a reason code and never as zero matches:
 
