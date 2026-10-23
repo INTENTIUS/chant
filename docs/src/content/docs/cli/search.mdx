@@ -98,6 +98,30 @@ chant search "kind:EC2::Instance attr:internetFacing=true" --live --env dev
 chant search "kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0" --live --env dev --explain --show InstanceId
 ```
 
+The same two facts are folded onto a Terraform root's `aws_instance` blocks,
+read from `terraform.roots` in `chant.config.ts`:
+
+- `effectiveIngress` follows `vpc_security_group_ids`, `security_groups` and
+  `launch_template` (to the template's `vpc_security_group_ids`), and reads
+  inline `ingress` blocks, `aws_security_group_rule` resources with
+  `type = "ingress"` and `aws_vpc_security_group_ingress_rule` resources.
+- `internetFacing` follows `subnet_id` and `aws_route_table_association` to a
+  route table whose default route goes to an `aws_internet_gateway`, written
+  either as an inline `route` block or as an `aws_route` resource. A subnet on
+  the VPC's main route table (no association) is not followed.
+
+Without `--live` these come from declared references alone, and the
+provenance line says so:
+
+```text
+$ chant search "attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0" --explain
+net/aws_instance.web  Terraform::Resource
+— declared only · no observation · physical ids unavailable · effectiveIngress, internetFacing derived from declared references
+— 1 of 24 Terraform::Resource matched  (query: attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0)
+  ✓ net/aws_instance.web internetFacing via subnet route aws_subnet.public_a -> aws_route_table.public_inline -> aws_internet_gateway.main (inline route)
+  ✓ net/aws_instance.web effectiveIngress via security groups aws_launch_template.web -> aws_security_group.web
+```
+
 ## Flags
 
 | Flag | Type | Default | Description |
