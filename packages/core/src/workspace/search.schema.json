@@ -66,6 +66,11 @@
           "type": "string",
           "description": "Plain `chant search`: the provenance line the text prints after the rows, without its leading dash. In the workspace form each member carries its own."
         },
+        "plannedCreates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Plain `chant search`, `--live` or `--snapshot` only: present when every match is a planned create (an absent entity carrying plan attributes, #4372), with how many. The provenance line says \"N planned creates, none bound yet\" instead of \"returned no bound resources\". Absent for a real empty read, a failed read, or any answer with a match that is not a planned create."
+        },
         "liveFailures": {
           "type": "array",
           "items": {
@@ -758,6 +763,11 @@
         },
         "provenance": {
           "type": "string"
+        },
+        "plannedCreates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "As in the result document: present when every counted match is a planned create."
         },
         "liveFailures": {
           "type": "array",

@@ -44,6 +44,9 @@ vi.mock("../../build", async () => {
   };
 });
 
+import searchSchema from "../../workspace/search.schema.json";
+import { contract } from "../../workspace/__fixtures__/contract-repo";
+const { expectValid } = contract(searchSchema);
 const { runSearch } = await import("./search");
 
 function decl<T extends object>(base: T): Declarable & T {
@@ -326,5 +329,78 @@ describe("search --live over a planned create (#4372)", () => {
     const text = out.join("\n");
     expect(text).toContain("app/terraform_data.created");
     expect(text).not.toContain("app/terraform_data.replaced");
+  });
+});
+
+// #4381 — when every match is a planned create, the live read worked and found
+// nothing bound yet. "returned no bound resources" read like a failed read.
+describe("search --live provenance when every match is a planned create (#4381)", () => {
+  let out: string[];
+
+  function setup(annotations: Record<string, Record<string, unknown>> | undefined, names: string[]) {
+    const rooted = new Map<string, Declarable>(
+      names.map((n) => [n, decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })]),
+    );
+    buildResultMock.mockReset();
+    buildResultMock.mockImplementation((_src: unknown, _s: unknown, _x: unknown, opts?: { buildRoots?: unknown[] }) => ({
+      errors: [],
+      entities: (opts?.buildRoots?.length ?? 0) > 0 ? rooted : new Map(),
+      outputs: new Map([["terraform", ""]]),
+      warnings: [],
+    }));
+    loadPluginsMock.mockResolvedValue([
+      {
+        ...createMockPlugin({
+          name: "terraform",
+          describeResources: async () => ({ observation: "v1", resources: {}, ...(annotations ? { annotations } : {}) }),
+        }),
+        buildRoots: async () => ({ entities: rooted, warnings: [] }),
+      },
+    ]);
+  }
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockImplementation(async () => ({ entities: new Map(), errors: [], sourceFiles: [] }));
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  const planned = { "app/a": { planAction: "create" }, "app/b": { planAction: "create" } };
+
+  test("text footer and --json provenance say planned creates, and plannedCreates carries the count", async () => {
+    setup(planned, ["app/a", "app/b"]);
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAction=create" }), plugins: [], serializers: [] })).toBe(0);
+    const text = out.join("\n");
+    expect(text).toContain("2 planned creates, none bound yet");
+    expect(text).not.toContain("returned no bound resources");
+
+    out = [];
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAction=create", json: true }), plugins: [], serializers: [] })).toBe(0);
+    const doc = JSON.parse(out.filter((l) => !l.startsWith("ERR ")).join("\n")) as { provenance: string; plannedCreates?: number };
+    expectValid(doc);
+    expect(doc.provenance).toContain("2 planned creates, none bound yet");
+    expect(doc.plannedCreates).toBe(2);
+  });
+
+  test("a real empty live read keeps its wording and carries no plannedCreates", async () => {
+    setup(undefined, ["app/a", "app/b"]);
+    expect(await runSearch({ args: makeArgs({ path: "kind:Terraform::Resource" }), plugins: [], serializers: [] })).toBe(0);
+    expect(out.join("\n")).toContain("live read returned no bound resources");
+    expect(out.join("\n")).not.toContain("planned create");
+
+    out = [];
+    expect(await runSearch({ args: makeArgs({ path: "kind:Terraform::Resource", json: true }), plugins: [], serializers: [] })).toBe(0);
+    const doc = JSON.parse(out.filter((l) => !l.startsWith("ERR ")).join("\n")) as { provenance: string; plannedCreates?: number };
+    expectValid(doc);
+    expect(doc.provenance).toContain("live read returned no bound resources");
+    expect(doc.plannedCreates).toBeUndefined();
   });
 });
