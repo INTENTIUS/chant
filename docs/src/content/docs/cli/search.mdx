@@ -213,7 +213,7 @@ own, with a count where the graph holds that thing:
 $ chant search "cap:stores-data <-[cap=reaches]aws_iam_role.app_data"
 findings/aws_dynamodb_table.sessions  aws_dynamodb_table
 — declared only · no observation · physical ids unavailable · stores-data, reaches derived from declared references
-— reaches does not evaluate: IAM Condition keys; Resource "*" (2 statements here); NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+— reaches does not evaluate: IAM Condition keys; Resource "*" (2 statements here); NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as an expression naming nothing declared
 ```
 
 With `--explain`, each match prints the path that proved it, one hop per

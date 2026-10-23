@@ -6,12 +6,9 @@
  * are identity reach 13, exfiltration 3 and blast radius 15, the same as the
  * Terraform form's (lexicons/terraform/src/capabilities.test.ts).
  *
- * The graph chant builds today can't reach all of them: a reference inside
- * a `Sub` (``Sub`${assets.Arn}/*` ``) becomes an opaque intrinsic with no
- * edge, so three statements name no resource. chant#4373 is the feature that
- * resolves them. The first block pins today's answers and names each pair
- * that waits on it; the second asserts the full answers and runs once the
- * graph carries those references.
+ * Three of those pairs are proved only by a reference inside a `Sub`
+ * (``Sub`${assets.Arn}/*` ``), which the graph carries as `{ $sub }` since
+ * chant#4373.
  */
 
 import { join } from "node:path";
@@ -28,8 +25,6 @@ const LEDGER = join(import.meta.dirname, "testdata", "capabilities-ledger");
 
 const engineFor = (g: GraphIR) => new CapabilityEngine(buildView(g, resolvePacks([awsCapabilityPack])), shippedRules().rules);
 
-// Built at collection, not in a hook: whether the graph carries Sub
-// references decides which block below runs.
 const ir: GraphIR = buildGraphIr((await discover(LEDGER)).entities, LEDGER);
 const engine = engineFor(ir);
 
@@ -70,31 +65,23 @@ const NEEDS_SUB = {
   blast: ["reporter customerData", "webServer assets"],
 };
 const blastOf = (e: CapabilityEngine) => pairs(e, "blast").filter((p) => BLAST_STARTS.includes(p.split(" ")[0]));
-const subEdges = () => (ir.edges ?? []).some((e) => e.from === "webPolicy" && e.to === "assets");
 
-describe("the ledger's hand-checked answers on today's CloudFormation graph", () => {
-  it.skipIf(subEdges())("finds every pair except those only a Sub reference proves (chant#4373)", () => {
-    expect(pairs(engine, "reaches")).toEqual(REACH.filter((p) => !NEEDS_SUB.reach.includes(p)));
-    expect(pairs(engine, "exfiltrates")).toEqual(EXFIL.filter((p) => !NEEDS_SUB.exfil.includes(p)));
-    expect(blastOf(engine)).toEqual(BLAST.filter((p) => !NEEDS_SUB.blast.includes(p)));
-  });
-
-  it.skipIf(subEdges())("counts the statements whose resource is an opaque Sub, so an answer can say so", () => {
-    const unresolved = [...engine.view.nodes.values()].filter((n) => n.label === "Statement" && n.attrs.unresolved).map((n) => displayName(n.id));
-    expect(unresolved.sort()).toEqual([
-      "assetsPolicy#PolicyDocument[0].Statement[0]",
-      "deployPolicy#PolicyDocument[0].Statement[0]",
-      "reportRead#PolicyDocument[0].Statement[0]",
-      "webPolicy#PolicyDocument[0].Statement[0]",
-    ]);
-  });
-});
-
-describe("the ledger's hand-checked answers once Sub references are edges (gated on chant#4373)", () => {
-  it.runIf(subEdges())("identity reach 13, exfiltration 3, blast radius 15", () => {
+describe("the ledger's hand-checked answers on the CloudFormation form", () => {
+  it("identity reach 13, exfiltration 3, blast radius 15, three of them proved only by a Sub reference (chant#4373)", () => {
     expect(pairs(engine, "reaches")).toEqual(REACH);
     expect(pairs(engine, "exfiltrates")).toEqual(EXFIL);
     expect(blastOf(engine)).toEqual(BLAST);
+  });
+
+  it("leaves no statement's resource unresolved", () => {
+    const unresolved = [...engine.view.nodes.values()].filter((n) => n.label === "Statement" && n.attrs.unresolved);
+    expect(unresolved.map((n) => n.id)).toEqual([]);
+  });
+
+  it("finds the Sub-only pairs through the Sub's own reference", () => {
+    for (const p of NEEDS_SUB.reach) expect(pairs(engine, "reaches")).toContain(p);
+    const ev = engine.relation("reaches").out.get("reporterRole")!.get("customerData")!;
+    expect(ev.hops.at(-1)).toMatchObject({ to: "customerData", toAttr: "Arn", edge: "resource" });
   });
 });
 

@@ -473,9 +473,10 @@ export function buildView(ir: GraphIR, packs: CapabilityPack[]): View {
           let unresolved = 0;
           resources.forEach((r, ri) => {
             const t = refTarget(holder.id, r);
-            // A reference the graph holds but can't name (a CloudFormation
-            // `Sub`, chant#4373; a Terraform expression to an undeclared
-            // resource) is counted, so an answer can say what it skipped.
+            // A reference the graph holds but can't name (an intrinsic with
+            // no target, a Terraform expression to an undeclared resource) is
+            // counted, so an answer can say what it skipped. A `Sub` is read
+            // through its `$sub` template (chant#4373).
             if (!t && ((r && typeof r === "object") || (typeof r === "string" && r.includes("${")))) unresolved++;
             if (t) edges.push({ from: id, to: t.id, name: "resource", hops: [{ from: id, fromAttr: `Resource[${ri}]`, to: t.id, ...(t.attr ? { toAttr: t.attr } : {}), edge: "resource" }] });
           });

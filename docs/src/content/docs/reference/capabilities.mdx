@@ -69,10 +69,10 @@ count where the graph holds the thing left out:
   it. On behold#912's terralith, eight team roles allow DynamoDB actions on
   `*`; `reaches` doesn't find them, and the not-evaluated line counts them.
 - AWS-managed policies, which a configuration names by ARN only.
-- A reference the graph holds but can't resolve. On a CloudFormation project
-  that is a reference inside a `Sub` (``Sub`${bucket.Arn}/*` ``), which the
-  graph keeps as an opaque intrinsic until
-  [#4373](https://github.com/INTENTIUS/chant/issues/4373).
+- A reference the graph holds but can't resolve, such as an expression that
+  names nothing declared. A reference inside a CloudFormation `Sub`
+  (``Sub`${bucket.Arn}/*` ``) is read through the `$sub` template the graph
+  keeps since [#4373](https://github.com/INTENTIUS/chant/issues/4373).
 - A subnet on its VPC's main route table, network ACLs, prefix lists, load
   balancers and API gateways.
 

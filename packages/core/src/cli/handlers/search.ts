@@ -637,7 +637,7 @@ function capabilityNotes(terms: Term[], ir: GraphIR, source: AnswerSource): { na
   const counts: Record<string, number> = {
     'Resource "*"': statements.filter((n) => n.attrs.anyResource).length,
     "IAM Condition keys": statements.filter((n) => n.attrs.condition).length,
-    "resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)": statements.filter((n) => n.attrs.unresolved).length,
+    "resources the graph holds but can't resolve, such as an expression naming nothing declared": statements.filter((n) => n.attrs.unresolved).length,
   };
   return names.map((name) => ({
     name,

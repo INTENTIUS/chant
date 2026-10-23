@@ -121,7 +121,7 @@ can-assume(a, b)     := a:Role <-{0,1}attachedTo ->statement :Statement[doc = "p
 ## answers: what can this role touch
 ## answers: what can reach the customer database (read it in reverse: <-[cap=grants])
 ## depth: declared
-## not-evaluated: IAM Condition keys; Resource "*"; NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+## not-evaluated: IAM Condition keys; Resource "*"; NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as an expression naming nothing declared
 grants(r, x; action?) := r:Role ->allows($action) x !<-denies($action) r
 
 ## meaning: can-assume any number of times, then grants
@@ -129,7 +129,7 @@ grants(r, x; action?) := r:Role ->allows($action) x !<-denies($action) r
 ## answers: if this role is compromised, what data can it reach
 ## answers: what can reach the customer database (read it in reverse: <-[cap=reaches])
 ## depth: declared
-## not-evaluated: IAM Condition keys; Resource "*"; NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+## not-evaluated: IAM Condition keys; Resource "*"; NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as an expression naming nothing declared
 reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x
 
 # ------------------------------------------------------------------ paths
@@ -138,11 +138,11 @@ reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x
 ## answers: is there an exfiltration path from the internet to our data
 ## answers: which internet-facing hosts can read restricted data
 ## depth: declared
-## not-evaluated: IAM Condition keys; Resource "*"; load balancers and API gateways; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+## not-evaluated: IAM Condition keys; Resource "*"; load balancers and API gateways; resources the graph holds but can't resolve, such as an expression naming nothing declared
 exfiltrates(c, x)    := c[@internet-reachable] ->runs-as ->reaches x[@holds-secret]
 
 ## meaning: what a compromise of it reaches: runs-as, can-assume and network any number of times, then what each identity is granted
 ## answers: what is the blast radius if this host is compromised
 ## depth: declared
-## not-evaluated: IAM Condition keys; Resource "*"; CIDR-to-CIDR reachability; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+## not-evaluated: IAM Condition keys; Resource "*"; CIDR-to-CIDR reachability; resources the graph holds but can't resolve, such as an expression naming nothing declared
 blast(s, x)          := s ->{0,}pivot ->{0,1}grants x
