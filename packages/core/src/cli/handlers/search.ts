@@ -2,21 +2,28 @@ import { resolve } from "node:path";
 import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
-import { enrichEffectiveTopology } from "../../graph-effective";
+import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
+import { attachCapabilities, attachView, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
+import { CapabilityError, type CapabilityEngine, type Evidence } from "../../capabilities/matcher";
+import type { CapabilityPack, View } from "../../capabilities/view";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
-import { observeResources } from "../../lifecycle/observe";
+import { carryAnnotations, observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { diffLive, type LiveDiffResult } from "../../lifecycle/live-diff";
 import type { LiveObservation } from "../../graph-ir";
-import type { ResourceMetadata } from "../../lexicon";
+import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
-import { formatUnobserved } from "../../observation";
+import { formatUnobserved, type RootRead } from "../../observation";
+import { readChantPackageVersion } from "../../package-version";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
+import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
+import { parseCountBy, countGroups, countsJson, formatCounts, groupMembers, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
+import { SEARCH_CONTRACT_VERSION, SEARCH_OUTPUT_SCHEMA_ID, type SearchErrorCode, type SearchFailure, type SearchHead } from "../../workspace/search-contract";
 
 /**
  * `chant search <query> [--live --env <name>]` — answer an estate question with
@@ -26,11 +33,14 @@ import type { CommandContext } from "../registry";
  *
  * Query grammar (space-separated terms, all must match — AND):
  *   bare word            case-insensitive substring over id, kind, and attrs
- *   kind:<substr>        node kind contains <substr> (e.g. kind:EC2::Instance)
+ *   kind:<substr>        node kind contains <substr> (e.g. kind:EC2::Instance);
+ *                        on a terraform resource, its type (kind:aws_instance, kind:aws_iam_)
  *   tag:<key>=<val>      a Tags entry with Key=key and Value containing val
  *   attr:<name>=<val>    attribute <name> equals/contains <val>
  *   ->kind:X / ->attr:.. this node has an edge TO a node matching the right side
  *   <-kind:X / <-attr:.. this node has an edge FROM a node matching the right side
+ *   ->*X, ->{n}X, ->{m,n}X  the far end is any depth / n / m..n hops away (#4359)
+ *   ->[via=a]X, ->[to=a]X   only edges through consumer attr a / reading producer attr a
  *
  * The edge operators are the point of "edge-aware" search (#1139): a small
  * model shouldn't hand-join instance→subnet→public across many results — one
@@ -44,46 +54,33 @@ import type { CommandContext } from "../registry";
 export async function runSearch(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const query = (args.path ?? "").trim();
-  if (!query) {
-    console.error(formatError({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" }));
+  // A refusal (#4367): the error on stderr as always, and under --json the
+  // same message and hint as the one document on stdout, so a program reading
+  // stdout sees why there are no rows. Exit 1 either way. The code is from the
+  // read contract's closed list (#4374).
+  const refuse = (error: { code: SearchErrorCode; message: string; hint?: string }): number => {
+    console.error(formatError(error));
+    if (args.json) console.log(JSON.stringify(searchErrorJson(query, error)));
     return 1;
+  };
+  // The capability catalog (#4375): the `capabilities` document, not an answer.
+  if (args.capabilities) return printCapabilities(args, query, await resolveProjectLexicons(resolve(".")).catch(() => []));
+  // The snapshot to replay (#4374): `--snapshot <ref>`, or `--at <ref>`, which
+  // plain search keeps for compatibility. Everywhere else in the read contract
+  // `--at` is a git revision, so the workspace form takes only `--snapshot`.
+  if (args.snapshot !== undefined && args.at !== undefined && String(args.snapshot) !== String(args.at)) {
+    return refuse({
+      code: "usage-invalid",
+      message: `chant search was given --snapshot ${args.snapshot} and --at ${args.at}`,
+      hint: "they name the same thing, the recorded snapshot to answer from; give one",
+    });
   }
-  let terms: Term[];
-  try {
-    terms = parseQuery(query);
-  } catch (err) {
-    if (err instanceof QueryError) {
-      console.error(formatError({ message: err.message, hint: err.hint }));
-      return 1;
-    }
-    throw err;
-  }
+  const snapshotRef: string | undefined = args.snapshot ?? (args.at !== undefined ? String(args.at) : undefined);
+  const snapshotFlag = args.snapshot !== undefined ? "--snapshot" : "--at";
+  const checked = checkSearchArgs(args, query, { ref: snapshotRef, flag: snapshotFlag });
+  if ("error" in checked) return refuse(checked.error);
+  const { terms, countBy } = checked;
   const show = parseShow(args);
-
-  // Query-scoped drift (#1268): --check-live checks a snapshot answer against
-  // a live read, --check-snapshot checks a live answer against the recorded
-  // snapshot — the direction each needs is the source it does NOT already have.
-  if (args.checkLive && !args.at) {
-    console.error(formatError({
-      message: "chant search --check-live needs --at <ref>",
-      hint: "answer from a snapshot and check the matched rows against a live read: --at latest --check-live --env <name>",
-    }));
-    return 1;
-  }
-  if (args.checkSnapshot && !args.live) {
-    console.error(formatError({
-      message: "chant search --check-snapshot needs --live",
-      hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
-    }));
-    return 1;
-  }
-  if (args.failOnDrift && !args.checkLive && !args.checkSnapshot) {
-    console.error(formatError({
-      message: "chant search --fail-on-drift needs --check-live or --check-snapshot",
-      hint: "it fails the check those flags run, so it is meaningless without one",
-    }));
-    return 1;
-  }
 
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
@@ -97,6 +94,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // on this path" — printed with the provenance footer, after the rows, so the
   // answer is not preceded by what qualifies it.
   let liveNotes: string[] = [];
+  // Which read answered each entity (#2267), from a live read.
+  let readSources: Record<string, string> = {};
+  let rootReads: Record<string, RootRead> = {};
   // Kinds that can exist in the account without being declared (#1278). Known
   // without a scan, so it costs nothing to mention.
   let ambientKinds: string[] = [];
@@ -110,53 +110,46 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   let declaredForDrift: GraphIR | undefined;
   let snapshotDepth: ObservationDepth | undefined;
   let driftFailure = false;
-  if (args.live || args.at) {
-    const environment = args.env;
-    if (!environment) {
-      const flag = args.at ? "--at" : "--live";
-      console.error(formatError({ message: `chant search ${flag} needs an environment: ${flag} --env <name>` }));
-      return 1;
-    }
-    if (args.live && args.at) {
-      // Two different observations of the same estate, and no rule for which
-      // wins. Comparing them is a real question (#1268) but it is not this one.
-      console.error(formatError({
-        message: "chant search takes --live or --at, not both",
-        hint: "--live reads the estate now; --at answers from a recorded snapshot",
-      }));
-      return 1;
-    }
+  // Why --check-snapshot had nothing to check against, for --json (#4367).
+  let driftUnavailable: string | undefined;
+  if (args.live || snapshotRef) {
+    // checkSearchArgs refused a live or snapshot read without one.
+    const environment = String(args.env);
     // Membership via matchesDeclaredEnvironment (#1221): handles `{ name,
     // endpoint }` entries (#1166) — a plain `.includes` never matched those —
     // and glob-pattern entries like `"pr-*"`.
     if (config.environments && config.environments.length > 0 && !matchesDeclaredEnvironment(config.environments, environment)) {
-      console.error(formatError({ message: `Unknown environment "${environment}"` }));
-      return 1;
+      return refuse({ code: "environment-unknown", message: `Unknown environment "${environment}"` });
     }
     const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
+    // Build roots too (#4358), as `chant graph --live` does: a terraform
+    // root's blocks are entities only once its root is rendered, and an
+    // entity the build never produced is never observed.
+    const buildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, projectPath);
     const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer), undefined, {
+      buildRoots,
       config: config as unknown as Record<string, unknown>,
     });
     if (buildResult.errors.length > 0) {
-      console.error(formatError({ message: "Build failed — fix errors before searching live state" }));
-      return 1;
+      return refuse({ code: "build-failed", message: "Build failed — fix errors before searching live state" });
     }
     const observing = plugins.filter((p) => p.describeResources);
     ambientKinds = observing.flatMap((p) => p.ambientKinds?.() ?? []);
     const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
 
     let observations: LiveObservation[];
+    // Facts about absent entities (#4372): a planned create's plan attributes.
+    let annotations: Record<string, Record<string, unknown>> | undefined;
     const liveAttrs: Record<string, Record<string, unknown>> = {};
-    if (args.at) {
+    if (snapshotRef) {
       // Answer from a recorded observation (#1266). Everything downstream is
       // the live path's — the point is that a snapshot replays into the same
       // shape a live read produces, so one pipeline serves both and a fold
       // improvement reaches an old snapshot for free.
       const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
-      const replay = await replaySnapshots(environment, String(args.at), scoped);
+      const replay = await replaySnapshots(environment, snapshotRef, scoped);
       if ("error" in replay) {
-        console.error(formatError({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) }));
-        return 1;
+        return refuse({ code: "snapshot-unavailable", message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) });
       }
       observations = replay.observations;
       replayAmbient = {
@@ -164,7 +157,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           Object.values(o.resources).some((m) => m.ambient === true),
         ),
       };
-      source = { kind: "snapshot", commit: replay.commit, timestamp: replay.timestamp };
+      source = { kind: "snapshot", snapshot: snapshotRef, commit: replay.commit, timestamp: replay.timestamp };
       snapshotDepth = replay.depth;
       if (args.checkLive) {
         // A fresh live read, additional to the snapshot the answer itself came
@@ -194,6 +187,9 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         console.error(formatError({ message: `live read failed — ${e}` }));
       }
       observations = observed.observations;
+      annotations = observed.annotations;
+      readSources = observed.sources ?? {};
+      rootReads = observed.rootReads ?? {};
       liveNotes = observed.notes ?? [];
       source = { kind: "live" };
       if (args.checkSnapshot) {
@@ -205,6 +201,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         const checkReplay = await replaySnapshots(environment, "latest", scoped);
         if ("error" in checkReplay) {
           console.error(formatWarning({ message: `--check-snapshot: ${checkReplay.error}` }));
+          driftUnavailable = checkReplay.error;
         } else {
           checkObservations = checkReplay.observations;
           snapshotDepth = checkReplay.depth;
@@ -217,7 +214,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     let containmentEdges: IREdge[] = [];
     // Live-only: enrichment is a provider call, so it has no place in a replay.
     // A recorded answer that quietly reached for the API would stop being one.
-    if (!args.at) {
+    if (!snapshotRef) {
       for (const p of observing) {
         if (!p.enrichLiveAttrs) continue;
         try {
@@ -271,10 +268,16 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // `${stack}::${id}` — matching how observation qualifies. A flat whole-
     // project discovery would disambiguate colliding names by module path
     // (UsEast1Src…), which never matches the observed bare LogicalResourceIds.
+    //
+    // The flat canvas is the declared path's graph (#4365, #4358): discovery
+    // plus the build-root contributions (a terraform root's blocks, a rendered
+    // kustomize root) plus the lexicon edges, so a live answer over a Terraform
+    // root overlays onto a canvas that has the root's resources on it.
     const declared =
       stacks.length > 0
-        ? await buildDeclaredPerStack(stacks, projectPath)
-        : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
+        ? await buildDeclaredPerStack(stacks, projectPath, (g, entities) => withLexiconEdges(g, plugins, entities))
+        : await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."), plugins);
+    if (!declared) return refuse(BUILD_ROOT_FAILED);
     declaredForDrift = declared;
     // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
     // declared entity nobody could read is painted `_unobserved` and a row can
@@ -315,28 +318,109 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // account's default VPC, whose route table chant does not model). The
     // overlay copies physical identity but not attrs, so merge them here.
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
+    // And what the read learned about an entity it found absent (#4372), so
+    // `attr:planAction=create` matches a block the plan will create. The node
+    // stays pending: only its attributes change.
+    ir = { ...ir, nodes: carryAnnotations(ir.nodes, annotations) };
   } else {
-    const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
-    ir = buildGraphIr(discovered.entities);
+    const declared = await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."));
+    if (!declared) return refuse(BUILD_ROOT_FAILED);
+    ir = declared;
   }
 
   // Fold derived reachability facts (effectiveIngress, internetFacing) onto
   // instance nodes so multi-hop/launch-template joins are one node predicate (#1139).
   ir = enrichEffectiveTopology(ir);
+  // Capability terms (#4375) read the graph through the lexicons' mappings.
+  if (terms.some(usesCapability)) {
+    const refused = await bindCapabilities(ctx, projectPath, ir, terms);
+    if (refused) return refuse({ code: "query-invalid", ...refused });
+  }
   // Resolve `kind:` terms against what is actually in this graph, before any
   // node is tested against them.
   resolveKindTerms(terms, ir.nodes);
   const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
+  // Query-scoped drift (#1268): the matched rows, and only the matched rows,
+  // checked against the observation the primary answer did NOT use. Scoping
+  // both sides of diffLive() to the matched ids is what keeps a query-scoped-
+  // out resource from reading as `missing` or `unobserved` — it was never
+  // asked about, which is a third thing from both.
+  let drift: LiveDiffResult | undefined;
+  if (checkObservations && declaredForDrift && primaryObservations) {
+    const declaredIds = new Set(declaredForDrift.nodes.map((n) => n.id));
+    const matchedIds = new Set(matches.map((n) => n.id));
+    const nowObservations = args.checkLive ? checkObservations : primaryObservations;
+    const thenObservations = args.checkLive ? primaryObservations : checkObservations;
+    drift = diffLive({
+      declared: new Set([...matchedIds].filter((id) => declaredIds.has(id))),
+      observedNow: pickResources(mergeResources(nowObservations), matchedIds),
+      observedThen: pickResources(mergeResources(thenObservations), matchedIds),
+      unobserved: pickResources(collectUnobserved(nowObservations), matchedIds),
+    });
+  }
+  // Name the plan read when it answered (#4384).
+  if (source.kind === "live") source = withReadDepth(source, matches, readSources, rootReads);
+  const driftAgainst: "live" | "snapshot" = args.checkLive ? "live" : "snapshot";
+  // Machine-readable answer (#4359, #4367): the rows, their paths, and every
+  // footer the text prints as prose, as one document for a caller that draws
+  // it (behold#913). Same exit codes as the text path.
+  if (args.json) {
+    const recorded =
+      source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
+        ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
+        : undefined;
+    const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
+    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]).replace(/^— /, "");
+    const capNotes = capabilityNotes(terms, ir, source);
+    const plannedCreates = source.kind !== "declared" && liveFailures.length === 0 ? plannedCreateCount(matches) : 0;
+    const driftJson = drift
+      ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
+      : driftUnavailable !== undefined
+        ? { against: driftAgainst, unavailable: driftUnavailable }
+        : undefined;
+    // With --count-by (#4360) the object carries the groups and the total in
+    // place of the matches, the same answer the grouped lines give, with the
+    // provenance line beside it (#4367).
+    const head = { ...searchHead(), ...(await workspaceIdentity(projectPath)) };
+    const payload = countBy
+      ? {
+          ...head,
+          ...countsJson(query, env ? { ...source, env } : source, groupMembers(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
+          provenance: provenanceText,
+          ...(plannedCreates > 0 ? { plannedCreates } : {}),
+          ...(driftJson ? { drift: driftJson } : {}),
+        }
+      : {
+          ...head,
+          ...searchJson(query, source, matches, terms, ir, nodeById, liveFailures, {
+          ...(env ? { env } : {}),
+          show,
+          provenance: provenanceText,
+          ...(plannedCreates > 0 ? { plannedCreates } : {}),
+          ...(capNotes.length > 0 ? { capabilities: capNotes } : {}),
+          ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
+          ...(driftJson ? { drift: driftJson } : {}),
+        }),
+        };
+    console.log(JSON.stringify(payload));
+    for (const n of liveNotes) console.error(formatWarning({ message: n }));
+    if (liveFailures.length > 0) return 1;
+    return args.failOnDrift && drift && driftCountOf(drift) > 0 ? 1 : 0;
+  }
   if (matches.length === 0) {
-    console.log("(no matches)");
+    console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
     availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     return 0;
   }
-  for (const n of matches) {
-    console.log(formatRow(n, show));
+  if (countBy) {
+    for (const line of formatCounts(countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy)) console.log(line);
+  } else {
+    for (const n of matches) {
+      console.log(formatRow(n, show));
+    }
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
   // Only worth asking when the live read came back empty — that is the one case
@@ -345,36 +429,23 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
-  provenance(matches, source, recorded, liveFailures);
+  provenance(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]);
+  for (const c of capabilityNotes(terms, ir, source)) {
+    if (c.notEvaluated.length > 0) console.log(`— ${c.name} does not evaluate: ${c.notEvaluated.join("; ")}`);
+  }
   // Qualifies the provenance line, so it sits with it: one line per distinct
   // note for the whole run, not one per stack, and after the rows (#1265).
   for (const n of liveNotes) console.error(formatWarning({ message: n }));
-  // Query-scoped drift (#1268): the matched rows, and only the matched rows,
-  // checked against the observation the primary answer did NOT use. Scoping
-  // both sides of diffLive() to the matched ids is what keeps a query-scoped-
-  // out resource from reading as `missing` or `unobserved` — it was never
-  // asked about, which is a third thing from both.
-  if (checkObservations && declaredForDrift && primaryObservations) {
-    const declaredIds = new Set(declaredForDrift.nodes.map((n) => n.id));
-    const matchedIds = new Set(matches.map((n) => n.id));
-    const nowObservations = args.checkLive ? checkObservations : primaryObservations;
-    const thenObservations = args.checkLive ? primaryObservations : checkObservations;
-    const driftCount = renderDrift(
-      diffLive({
-        declared: new Set([...matchedIds].filter((id) => declaredIds.has(id))),
-        observedNow: pickResources(mergeResources(nowObservations), matchedIds),
-        observedThen: pickResources(mergeResources(thenObservations), matchedIds),
-        unobserved: pickResources(collectUnobserved(nowObservations), matchedIds),
-      }),
-      matches.length,
-      args.checkLive ? "live" : "snapshot",
-      snapshotDepth,
-    );
+  if (drift) {
+    const driftCount = renderDrift(drift, matches.length, driftAgainst, snapshotDepth);
     if (args.failOnDrift && driftCount > 0) driftFailure = true;
   }
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
-  showMiss(matches, show);
-  regionSpread(terms, matches, show);
+  // Both point at `--show`, which a grouped count does not print (#4360).
+  if (!countBy) {
+    showMiss(matches, show);
+    regionSpread(terms, matches, show);
+  }
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   // The caller asked for a live answer and at least one lexicon could not be
@@ -395,11 +466,359 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
 }
 
 
+/** A search's arguments refused before anything is read, or its parsed terms and grouping. */
+export type SearchArgsCheck =
+  | { error: { code: SearchErrorCode; message: string; hint?: string } }
+  | { terms: Term[]; countBy?: CountBy };
+
+/**
+ * Check a search's query and flags before anything is read (#4374): the
+ * grammar, `--count-by`, and the flags that need or exclude each other. The
+ * rules `chant search` and `chant workspace search` share, so the workspace
+ * form refuses once, with the same code and message, instead of once per
+ * member. `snapshot` is the snapshot asked for and the flag that asked:
+ * `--snapshot`, or plain search's `--at`.
+ */
+export function checkSearchArgs(
+  args: { countBy?: string; checkLive?: boolean; checkSnapshot?: boolean; failOnDrift?: boolean; live?: boolean; env?: string },
+  query: string,
+  snapshot: { ref?: string; flag: string },
+): SearchArgsCheck {
+  const flag = snapshot.flag;
+  // `--count-by` groups the matched set (#4360). It takes any query, and no
+  // query at all counts the whole graph: "which kinds does this estate hold".
+  let countBy: CountBy | undefined;
+  if (args.countBy !== undefined) {
+    const parsed = parseCountBy(args.countBy);
+    if ("error" in parsed) return { error: { code: "query-invalid", message: parsed.error, hint: parsed.hint } };
+    countBy = parsed;
+  }
+  if (!query && !countBy) {
+    return { error: { code: "query-invalid", message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" } };
+  }
+  let terms: Term[];
+  try {
+    terms = parseQuery(query);
+  } catch (err) {
+    if (err instanceof QueryError) return { error: { code: "query-invalid", message: err.message, hint: err.hint } };
+    throw err;
+  }
+  // Query-scoped drift (#1268): --check-live checks a snapshot answer against
+  // a live read, --check-snapshot checks a live answer against the recorded
+  // snapshot — the direction each needs is the source it does NOT already have.
+  if (args.checkLive && !snapshot.ref) {
+    return {
+      error: {
+        code: "usage-invalid",
+        message: `chant search --check-live needs ${flag} <ref>`,
+        hint: `answer from a snapshot and check the matched rows against a live read: ${flag} latest --check-live --env <name>`,
+      },
+    };
+  }
+  if (args.checkSnapshot && !args.live) {
+    return {
+      error: {
+        code: "usage-invalid",
+        message: "chant search --check-snapshot needs --live",
+        hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
+      },
+    };
+  }
+  if (args.failOnDrift && !args.checkLive && !args.checkSnapshot) {
+    return {
+      error: {
+        code: "usage-invalid",
+        message: "chant search --fail-on-drift needs --check-live or --check-snapshot",
+        hint: "it fails the check those flags run, so it is meaningless without one",
+      },
+    };
+  }
+  if ((args.live || snapshot.ref) && !args.env) {
+    const needs = snapshot.ref ? flag : "--live";
+    return { error: { code: "usage-invalid", message: `chant search ${needs} needs an environment: ${needs} --env <name>` } };
+  }
+  if (args.live && snapshot.ref) {
+    // Two different observations of the same estate, and no rule for which
+    // wins. Comparing them is a real question (#1268) but it is not this one.
+    return {
+      error: {
+        code: "usage-invalid",
+        message: `chant search takes --live or ${flag}, not both`,
+        hint: `--live reads the estate now; ${flag} answers from a recorded snapshot`,
+      },
+    };
+  }
+  return { terms, ...(countBy ? { countBy } : {}) };
+}
+
+/** Why a search over a project whose build root failed refuses (#4365), as the refusal prints it. */
+const BUILD_ROOT_FAILED = {
+  code: "build-failed",
+  message: "chant search: a build root failed to render, so the graph it would answer over is incomplete",
+  hint: "fix the error above; `chant graph . --format ir` reports the same one",
+} as const;
+
+/**
+ * The declared graph a search answers over (#4362, #4365, #4368): discovery,
+ * plus the build-root entities (a terraform root's blocks, a rendered
+ * kustomize root), plus the edges the lexicons' `graphEdges` hooks add. The
+ * same join and the same edges `chant graph --format ir` draws, through the
+ * same helpers (`./declared-graph.ts`), so a node's id here is its id there.
+ *
+ * Returns undefined, having printed the build root's own errors, when a build
+ * root failed to render or collided with a discovered name; the caller refuses
+ * with {@link BUILD_ROOT_FAILED}. A search over the rest would answer
+ * `(no matches)` for a root it never read, which is a wrong answer stated as
+ * a fact.
+ */
+async function declaredGraph(
+  ctx: CommandContext,
+  projectPath: string,
+  srcDir: string,
+  loaded?: readonly LexiconPlugin[],
+): Promise<GraphIR | undefined> {
+  const discovered = await discover(srcDir);
+  if (!(await mergeDeclaredBuildRoots(discovered.entities, await declaredBuildRootContributors(ctx, projectPath)))) return undefined;
+  let plugins = loaded ?? ctx.plugins;
+  if (plugins.length === 0) {
+    try {
+      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
+    } catch {
+      plugins = [];
+    }
+  }
+  return withLexiconEdges(buildGraphIr(discovered.entities, projectPath), plugins, discovered.entities);
+}
+
+/**
+ * Print the capability catalog (#4375): the `capabilities` document under
+ * `--json`, a line per capability otherwise. It takes no query and no other
+ * search flag, since it answers nothing about the estate. Shared by `chant
+ * search` and `chant workspace search`, which differ only in the lexicons
+ * they report on.
+ */
+export async function printCapabilities(
+  args: { json?: boolean; live?: boolean; env?: string; snapshot?: string; at?: string; countBy?: string; explain?: boolean; show?: string },
+  query: string,
+  lexicons: string[],
+): Promise<number> {
+  const { capabilitiesDocument, capabilitiesFailure, formatCapabilities } = await import("../../workspace/capabilities-contract");
+  const extra = [
+    // `args.path` is "." when no query was given.
+    ...(query && query !== "." ? [`the query "${query}"`] : []),
+    ...(["live", "env", "snapshot", "at", "countBy", "explain", "show"] as const)
+      .filter((k) => args[k] !== undefined && args[k] !== false)
+      .map((k) => `--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`),
+  ];
+  if (extra.length > 0) {
+    const error = {
+      code: "usage-invalid" as const,
+      message: `--capabilities prints the catalog, so it takes no query and no other search flag; it was given ${extra.join(", ")}`,
+      hint: "ask with a capability instead: chant search \"cap:internet-reachable(22)\"",
+    };
+    console.error(formatError(error));
+    if (args.json) console.log(JSON.stringify(await capabilitiesFailure(error)));
+    return 1;
+  }
+  const doc = await capabilitiesDocument(lexicons);
+  if (args.json) console.log(JSON.stringify(doc));
+  else for (const line of formatCapabilities(doc)) console.log(line);
+  return 0;
+}
+
+/** The capabilities a query names, in query order, for the provenance line (#4375). */
+function capabilitiesUsed(terms: Term[]): string[] {
+  const out: string[] = [];
+  const walk = (t: Term): void => {
+    if (t.negated) return;
+    const call = t.kind === "cap" ? t.a : t.capability;
+    const name = call !== undefined ? parseCapabilityCall(call)?.name : undefined;
+    if (name && !out.includes(name)) out.push(name);
+    if (t.sub) walk(t.sub);
+  };
+  terms.forEach(walk);
+  return out;
+}
+
+/**
+ * What each capability the query used could not evaluate (#4375), with a
+ * count where this graph holds the thing left out: an answer computed from
+ * declared references says what it skipped, so a caller knows the rows are a
+ * floor, not the whole of it.
+ */
+function capabilityNotes(terms: Term[], ir: GraphIR, source: AnswerSource): { name: string; source: AnswerSource["kind"]; notEvaluated: string[] }[] {
+  const names = capabilitiesUsed(terms);
+  if (names.length === 0) return [];
+  const engine = capabilityEngine(ir);
+  const statements = [...engine.view.nodes.values()].filter((n) => n.label === "Statement" && n.attrs.effect === "Allow");
+  const counts: Record<string, number> = {
+    'Resource "*"': statements.filter((n) => n.attrs.anyResource).length,
+    "IAM Condition keys": statements.filter((n) => n.attrs.condition).length,
+    "resources the graph holds but can't resolve, such as an expression naming nothing declared": statements.filter((n) => n.attrs.unresolved).length,
+  };
+  return names.map((name) => ({
+    name,
+    source: source.kind,
+    notEvaluated: (engine.rule(name)?.meta["not-evaluated"] ?? "")
+      .split(/;|\n/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => (counts[x] ? `${x} (${counts[x]} statement${counts[x] === 1 ? "" : "s"} here)` : x)),
+  }));
+}
+
+/**
+ * Answer capability terms over a graph that is not this project's own (#4375):
+ * `chant workspace search` composes its members' graphs and views and asks
+ * here, so the rules run once over the whole of it. Given packs, the view is
+ * built here; given a view, it is the one the members' own chants mapped
+ * (#4378). Returns the rows
+ * as `--json` carries them, or the refusal for a capability the query names
+ * wrongly.
+ */
+export function answerOverGraph(
+  ir: GraphIR,
+  terms: Term[],
+  query: string,
+  packsOrView: CapabilityPack[] | View,
+): { matches: SearchJson["matches"]; capabilities: NonNullable<SearchJson["capabilities"]> } | { error: { message: string; hint?: string } } {
+  // A workspace hands over the view its members' chants mapped (#4378).
+  const engine = Array.isArray(packsOrView) ? attachCapabilities(ir, packsOrView) : attachView(ir, packsOrView);
+  const refused = checkCapabilityTerms(engine, terms);
+  if (refused) return { error: refused };
+  resolveKindTerms(terms, ir.nodes);
+  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
+  const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, byId)));
+  const doc = searchJson(query, { kind: "declared" }, matches, terms, ir, byId);
+  return { matches: doc.matches, capabilities: capabilityNotes(terms, ir, { kind: "declared" }) };
+}
+
+/** Whether a term, or the leaf under it, names a capability (#4375). */
+export function usesCapability(t: Term): boolean {
+  return t.kind === "cap" || t.capability !== undefined || (t.sub !== undefined && usesCapability(t.sub));
+}
+
+/**
+ * Bind the graph to its lexicons' capability packs and check every capability
+ * the query names (#4375): an unknown name, a set used as an edge or the
+ * wrong arguments is a refusal, never an empty answer.
+ */
+async function bindCapabilities(
+  ctx: CommandContext,
+  projectPath: string,
+  ir: GraphIR,
+  terms: Term[],
+): Promise<{ message: string; hint?: string } | undefined> {
+  let plugins: readonly LexiconPlugin[] = ctx.plugins;
+  if (plugins.length === 0) {
+    try {
+      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
+    } catch {
+      plugins = [];
+    }
+  }
+  const engine = attachCapabilities(ir, plugins.map((p) => p.capabilityPack).filter((p): p is CapabilityPack => !!p));
+  return checkCapabilityTerms(engine, terms);
+}
+
+/** Refuse a capability the query names that doesn't exist, a set used as an edge, or the wrong arguments. */
+function checkCapabilityTerms(engine: CapabilityEngine, terms: Term[]): { message: string; hint?: string } | undefined {
+  const known = [...new Set(engine.publicNames())].join(", ");
+  const check = (t: Term): { message: string; hint?: string } | undefined => {
+    if (t.sub) {
+      const inner = check(t.sub);
+      if (inner) return inner;
+    }
+    const call = t.kind === "cap" ? t.a : t.capability;
+    if (call === undefined) return undefined;
+    const parsed = parseCapabilityCall(call)!;
+    if (!engine.has(parsed.name)) {
+      return { message: `no capability "${parsed.name}"`, hint: `the capabilities are ${known}; chant search --capabilities describes each` };
+    }
+    const shape = engine.rule(parsed.name)!.vars.length === 1 ? "set" : "edge";
+    if (t.capability !== undefined && shape === "set") {
+      return { message: `"${parsed.name}" is a set, not an edge`, hint: `test it as a term: cap:${call}` };
+    }
+    try {
+      engine.bind(parsed.name, parsed.args);
+    } catch (err) {
+      if (err instanceof CapabilityError) return { message: `cap:${call}: ${err.message}`, hint: "chant search --capabilities lists each capability's parameters" };
+      throw err;
+    }
+    return undefined;
+  };
+  for (const t of terms) {
+    const r = check(t);
+    if (r) return r;
+  }
+  return undefined;
+}
+
+/**
+ * Which read answered a live search's matches, when the lexicon reports it
+ * (#2267) and at least one answer came from the plan (#4384). Absent for a
+ * plain live or state answer, so those documents are unchanged.
+ */
+export interface ReadDepth {
+  /** `plan` or `live+plan` when every read match came that way, else `mixed`. */
+  depth?: "plan" | "live+plan" | "mixed";
+  /** The distinct reads that answered the matches, sorted. */
+  reads?: string[];
+  /** The plan read was asked for and failed: the read that answered instead. */
+  planFellBackTo?: "state" | "live" | "declared";
+}
+
+/**
+ * The read a plan-depth root fell back to, from the lexicon's structured
+ * per-root report. Never from note text. "state" wins over "declared" when
+ * roots disagree, because some read still answered.
+ */
+function planFallback(rootReads: Record<string, RootRead>): "state" | "live" | "declared" | undefined {
+  const falls = Object.values(rootReads)
+    .filter((r) => (r.depth === "plan" || r.depth === "live+plan") && r.fellBackTo)
+    .map((r) => r.fellBackTo);
+  if (falls.includes("state")) return "state";
+  if (falls.includes("live")) return "live";
+  if (falls.includes("declared")) return "declared";
+  return undefined;
+}
+
+/**
+ * Add the read depth to a live source (#4384). Only bound matches count: a
+ * row nobody read has no read to name. Nothing is added when no match was
+ * answered by the plan and the plan did not fall back.
+ */
+function withReadDepth(
+  source: AnswerSource & { kind: "live" },
+  matches: IRNode[],
+  sources: Record<string, string>,
+  rootReads: Record<string, RootRead>,
+): AnswerSource {
+  const reads = [...new Set(matches.filter((n) => n.physicalId).map((n) => sources[n.id]).filter((r): r is string => !!r))].sort();
+  const fellBack = planFallback(rootReads);
+  const planned = reads.filter((r) => r === "plan" || r === "live+plan");
+  if (planned.length === 0 && !fellBack) return source;
+  return {
+    ...source,
+    ...(planned.length > 0 ? { depth: reads.length === 1 ? (reads[0] as "plan" | "live+plan") : ("mixed" as const) } : {}),
+    ...(reads.length > 0 ? { reads } : {}),
+    ...(fellBack ? { planFellBackTo: fellBack } : {}),
+  };
+}
+
+const READ_PHRASE: Record<string, string> = {
+  plan: "at the plan depth (terraform plan -lock=false)",
+  "live+plan": "live and at the plan depth (live-plan -json, terraform plan -lock=false)",
+  state: "from state",
+  live: "live",
+};
+
 /** Where an answer's facts came from, for the provenance line (#1266). */
-type AnswerSource =
+export type AnswerSource =
   | { kind: "declared" }
-  | { kind: "live" }
-  | { kind: "snapshot"; commit: string; timestamp: string };
+  | ({ kind: "live" } & ReadDepth)
+  /** `snapshot` is the ref asked for (`latest`), `commit` the snapshot commit it named (#4374). */
+  | { kind: "snapshot"; snapshot?: string; commit: string; timestamp: string };
 
 
 
@@ -510,10 +929,38 @@ function ambientHint(
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, liveFailures: string[] = []): void {
+function provenanceLine(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): string {
+  const line = provenanceBase(matches, source, recorded, liveFailures, derived);
+  // The plan read fell back (#4384): say to what, on whichever line this is.
+  return source.kind === "live" ? line + fellBackText(source) : line;
+}
+
+/** ` · the plan read fell back to state`, or nothing. */
+function fellBackText(source: ReadDepth): string {
+  if (!source.planFellBackTo) return "";
+  // A live root has no state read to fall to: live-plan answered alone.
+  const to = source.planFellBackTo === "live" ? "live-plan alone" : source.planFellBackTo;
+  return ` · the plan read fell back to ${to}`;
+}
+
+function provenanceBase(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): string {
   if (source.kind === "declared") {
-    console.log("— declared only · no observation · physical ids unavailable");
-    return;
+    // A derived fact the query relied on (#4362) was folded from declared
+    // references alone, so it describes the source, not the account.
+    const from = derived.length > 0 ? ` · ${derived.join(", ")} derived from declared references` : "";
+    return `— declared only · no observation · physical ids unavailable${from}`;
   }
   const bound = matches.filter((n) => n.physicalId).length;
   const what = source.kind === "live" ? "live read" : "snapshot";
@@ -525,10 +972,15 @@ function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, 
     const rest = recorded
       ? "a snapshot of this environment is recorded — answer from it with --at latest"
       : "answered from the declared graph · physical ids unavailable";
-    console.log(`— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`);
-    return;
+    return `— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`;
   }
   if (bound === 0) {
+    // Every match a planned create (#4372): absent on purpose, so "returned no
+    // bound resources" reads as a failed read when the read worked.
+    const planned = plannedCreateCount(matches);
+    if (planned > 0) {
+      return `— ${what}: ${planned} planned ${planned === 1 ? "create" : "creates"}, none bound yet · the plan has not been applied`;
+    }
     // The estate was asked for and nothing came back bound. Naming it is the
     // difference between "these do not exist" and "nobody could see them".
     // A snapshot sitting unused is the actionable half of this. Denied network,
@@ -536,25 +988,50 @@ function provenance(matches: IRNode[], source: AnswerSource, recorded?: string, 
     // retrying `--live` — the tool knew the estate was unreachable AND that a
     // recording of it was on disk, and said only the first half.
     if (recorded) {
-      console.log(
-        `— ${what} returned no bound resources · a snapshot of this environment is recorded — answer from it with --at latest`,
-      );
-      return;
-    }
-    console.log(
-      `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`,
+      return (
+        `— ${what} returned no bound resources · a snapshot of this environment is recorded — answer from it with --at latest`
     );
-    return;
+    }
+    return (
+      `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`
+    );
   }
   if (source.kind === "live") {
-    console.log(`— observed live · bound ${bound}/${matches.length}`);
-    return;
+    // The plan answered some or all of it (#4384): say so, and name each read.
+    if (source.depth && source.reads) {
+      return `— observed ${source.reads.map((r) => READ_PHRASE[r] ?? r).join(" and ")} · bound ${bound}/${matches.length}`;
+    }
+    return `— observed live · bound ${bound}/${matches.length}`;
   }
   // Time is the whole risk of a recorded answer, so it leads. A caller can see
   // how old this is and decide, rather than discovering staleness later.
   const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
   const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
-  console.log(`— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`);
+  return `— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`;
+}
+
+/**
+ * How many matches there are when every one is a planned create (#4372): an
+ * absent entity (no physical id) carrying `planAction=create`. Zero for no
+ * matches or any other mix, so a real empty read keeps its wording.
+ */
+function plannedCreateCount(matches: IRNode[]): number {
+  if (matches.length === 0) return 0;
+  const all = matches.every(
+    (n) => !n.physicalId && (n.attrs as Record<string, unknown> | undefined)?.planAction === "create",
+  );
+  return all ? matches.length : 0;
+}
+
+/** Print {@link provenanceLine}: the text footer. */
+function provenance(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): void {
+  console.log(provenanceLine(matches, source, recorded, liveFailures, derived));
 }
 
 /** Union `LiveObservation.resources` across lexicons into one name-keyed map. */
@@ -598,13 +1075,66 @@ function renderDrift(
   for (const name of diff.newlyObserved) console.log(`  · ${name} — newly observed since the recorded snapshot`);
   for (const r of diff.runtimeChildren) console.log(`  · ${r.name} (${r.type}) — runtime, owned by ${r.owner}`);
   for (const u of diff.unobserved) console.log(`  ? ${formatUnobserved(u.name, u)}`);
-  const driftCount = diff.missing.length + diff.orphan.length + diff.disappeared.length + diff.driftedSinceSnapshot.length;
+  const driftCount = driftCountOf(diff);
   const label = direction === "live" ? "a live read" : "the recorded snapshot";
   const depthNote = depth === "deep" ? " · snapshot recorded at deep depth, compared here at identity" : "";
   console.log(
     `— checked against ${label} · ${driftCount > 0 ? `${driftCount} of ${checked} matched drifted` : `no drift across ${checked} matched`}${depthNote}`,
   );
   return driftCount;
+}
+
+/** What counts as drift: the set `lifecycle diff` totals (#1268). */
+function driftCountOf(diff: LiveDiffResult): number {
+  return diff.missing.length + diff.orphan.length + diff.disappeared.length + diff.driftedSinceSnapshot.length;
+}
+
+/** The query-scoped drift check as `--json` carries it (#4367). See {@link SearchJson}. */
+export interface SearchDriftJson {
+  against: "live" | "snapshot";
+  /** Matched rows checked. */
+  checked?: number;
+  /** Rows that drifted: missing + orphan + disappeared + drifted, as the text summary counts. */
+  count?: number;
+  missing?: string[];
+  orphan?: string[];
+  disappeared?: string[];
+  drifted?: { id: string; path: string; old?: unknown; new?: unknown }[];
+  newlyObserved?: string[];
+  runtimeChildren?: { id: string; type: string; owner: string }[];
+  unobserved?: { id: string; type?: string; reason: string; detail?: string }[];
+  /** The snapshot was recorded deeper than the identity-level comparison made here. */
+  depth?: ObservationDepth;
+  /** --check-snapshot found no snapshot to check against: the reason, and no other field. */
+  unavailable?: string;
+}
+
+function searchDriftJson(
+  diff: LiveDiffResult,
+  checked: number,
+  against: "live" | "snapshot",
+  depth?: ObservationDepth,
+): SearchDriftJson {
+  return {
+    against,
+    checked,
+    count: driftCountOf(diff),
+    missing: diff.missing,
+    orphan: diff.orphan,
+    disappeared: diff.disappeared,
+    drifted: diff.driftedSinceSnapshot.flatMap((d) =>
+      d.changes.map((c) => ({ id: d.name, path: c.path, old: c.oldValue, new: c.newValue })),
+    ),
+    newlyObserved: diff.newlyObserved,
+    runtimeChildren: diff.runtimeChildren.map((r) => ({ id: r.name, type: r.type, owner: r.owner })),
+    unobserved: diff.unobserved.map((u) => ({
+      id: u.name,
+      ...(u.type ? { type: u.type } : {}),
+      reason: u.reason,
+      ...(u.detail ? { detail: u.detail } : {}),
+    })),
+    ...(depth ? { depth } : {}),
+  };
 }
 
 function formatValue(v: unknown): string {
@@ -634,14 +1164,25 @@ function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR, backed = 
   if (!derived || matches.length === 0 || !backed) return;
   const used = new Set(terms.filter((t) => t.kind === "attr").map((t) => t.a));
   const unused = new Set<string>();
-  for (const n of matches) {
-    for (const [kind, names] of Object.entries(derived)) {
-      if (!n.kind?.includes(kind)) continue;
-      for (const name of names) if (!used.has(name)) unused.add(name);
-    }
-  }
+  for (const n of matches) for (const name of derivedNames(n, ir)) if (!used.has(name)) unused.add(name);
   if (unused.size === 0) return;
   console.log(`— also derived for these resources: ${[...unused].sort().join(", ")}`);
+}
+
+/** The derived attributes recorded for a node's kind (or its terraform resource type, #4362). */
+function derivedNames(n: IRNode, ir: GraphIR): string[] {
+  const tfType = terraformResourceType(n);
+  return Object.entries(ir.derivedAttrs ?? {})
+    .filter(([kind]) => n.kind?.includes(kind) || kind === tfType)
+    .flatMap(([, names]) => names);
+}
+
+/** The derived attributes the query's `attr:` terms relied on, for the provenance line. */
+function derivedUsed(terms: Term[], matches: IRNode[], ir: GraphIR): string[] {
+  const queried = new Set(terms.filter((t) => t.kind === "attr" && !t.negated).map((t) => t.a));
+  const out = new Set<string>();
+  for (const n of matches) for (const name of derivedNames(n, ir)) if (queried.has(name)) out.add(name);
+  return [...out].sort();
 }
 
 /**
@@ -654,30 +1195,75 @@ function derivedSurface(terms: Term[], matches: IRNode[], ir: GraphIR, backed = 
  * any expected answer, so it stays a fair, question-agnostic capability.
  */
 function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string, IRNode>, query: string): void {
-  const kinds = new Set(matches.map((n) => n.kind).filter((k): k is string => !!k));
-  const universe = kinds.size > 0 ? ir.nodes.filter((n) => n.kind && kinds.has(n.kind)) : ir.nodes;
-  const matched = new Set(matches.map((n) => n.id));
-  const excluded = universe.filter((n) => !matched.has(n.id));
-  const kindLabel = kinds.size > 0 ? [...kinds].join("/") : "nodes";
-  console.log(`— ${matches.length} of ${universe.length} ${kindLabel} matched  (query: ${query})`);
+  const data = explainData(terms, matches, ir, byId);
+  const kindLabel = data.universe.kinds.length > 0 ? data.universe.kinds.join("/") : "nodes";
+  console.log(`— ${data.universe.matched} of ${data.universe.of} ${kindLabel} matched  (query: ${query})`);
   // Inclusion evidence: for a derived fact a CLI can't easily re-verify
   // (internetFacing, resolved across the default VPC's routing), name WHY each
   // match qualifies, so the agent trusts the result instead of dropping it.
+  for (const e of data.evidence) console.log(`  ✓ ${bareId(e.id)} ${e.attr} via ${e.via}`);
+  // The chain each match was reached by (#4359), so a caller can quote the
+  // path instead of re-deriving it with one search per hop.
+  for (const n of matches) {
+    for (const p of matchPaths(n, terms, ir, byId)) {
+      // A capability's path (#4375) turns as the rule does, so each hop says which way it went.
+      if (p.term.kind === "cap" || p.term.capability !== undefined) {
+        // A set a node is in by its own attributes (stores-data) has no path to print.
+        if (p.hops.length === 0 && !p.because) continue;
+        console.log(`  path ${bareId(n.id)} ${termText({ ...p.term, negated: false })}: ${formatHops(p.hops, n.id) || "(the node itself)"}`);
+        for (const b of p.because ?? []) {
+          console.log(`    ${b.capability} ${bareId(b.id)}: ${formatHops(b.hops, b.id) || "(an attribute of the node)"}`);
+        }
+      } else console.log(`  path ${formatPath(p.hops, p.term.dir!)}`);
+    }
+  }
+  for (const m of data.nearMisses) {
+    console.log(`  · excluded ${bareId(m.id)} — fails ${m.term ? describeTerm(m.term) : "(query)"}`);
+  }
+  if (data.moreExcluded > 0) console.log(`  · …and ${data.moreExcluded} more excluded`);
+}
+
+/** How many near-misses `--explain` names before summarising the rest. */
+const NEAR_MISS_LIMIT = 8;
+
+/**
+ * The facts behind the `--explain` footer, shared by the text and `--json`
+ * (#4367). The universe is every node of the matched kinds (every node when
+ * nothing matched); a near-miss is a node of that universe the query
+ * excluded, with the first term it fails.
+ */
+function explainData(
+  terms: Term[],
+  matches: IRNode[],
+  ir: GraphIR,
+  byId: Map<string, IRNode>,
+): {
+  universe: { matched: number; of: number; kinds: string[] };
+  evidence: { id: string; attr: string; via: string }[];
+  nearMisses: { id: string; term?: Term }[];
+  moreExcluded: number;
+} {
+  // Counted against a terraform block's type, not `Terraform::Resource` (#4366):
+  // "2 of 2 aws_instance", not "2 of 185 Terraform::Resource".
+  const kinds = new Set(matches.map(displayKind).filter((k): k is string => !!k));
+  const universe = kinds.size > 0 ? ir.nodes.filter((n) => kinds.has(displayKind(n) ?? "")) : ir.nodes;
+  const matched = new Set(matches.map((n) => n.id));
+  const excluded = universe.filter((n) => !matched.has(n.id));
+  const evidence: { id: string; attr: string; via: string }[] = [];
   for (const t of terms) {
     if (t.kind !== "attr") continue;
     for (const n of matches) {
       const via = (n.attrs as Record<string, unknown> | undefined)?.[`${t.a}Via`];
-      const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-      if (typeof via === "string") console.log(`  ✓ ${id} ${t.a} via ${via}`);
+      if (typeof via === "string") evidence.push({ id: n.id, attr: t.a, via });
     }
   }
-  const shown = excluded.slice(0, 8);
-  for (const n of shown) {
-    const failing = terms.find((t) => !matchTerm(n, t, ir, byId));
-    const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-    console.log(`  · excluded ${id} — fails ${failing ? describeTerm(failing) : "(query)"}`);
-  }
-  if (excluded.length > shown.length) console.log(`  · …and ${excluded.length - shown.length} more excluded`);
+  const shown = excluded.slice(0, NEAR_MISS_LIMIT);
+  return {
+    universe: { matched: matches.length, of: universe.length, kinds: [...kinds] },
+    evidence,
+    nearMisses: shown.map((n) => ({ id: n.id, term: terms.find((t) => !matchTerm(n, t, ir, byId)) })),
+    moreExcluded: excluded.length - shown.length,
+  };
 }
 
 /**
@@ -691,7 +1277,7 @@ function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string
 function availableAttrs(terms: Term[], ir: GraphIR): void {
   const kindTerm = terms.find((t) => t.kind === "kind");
   if (!kindTerm) return;
-  const of = ir.nodes.filter((n) => n.kind?.includes(kindTerm.a));
+  const of = ir.nodes.filter((n) => matchTerm(n, { ...kindTerm, negated: false }));
   if (of.length === 0) return;
   const names = new Set<string>();
   for (const n of of) for (const k of Object.keys((n.attrs as Record<string, unknown>) ?? {})) names.add(k);
@@ -727,15 +1313,189 @@ function describeTerm(t: Term): string {
   // `--explain` has to say a negated term was negated, or an exclusion reads as
   // the opposite of what it is.
   if (t.negated) return `!${describeTerm({ ...t, negated: false })}`;
-  const leaf = (x: Term): string =>
-    x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
-      : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
-  if (t.kind === "edge" && t.sub) return `${t.dir === "out" ? "→" : "←"}${leaf(t.sub)} (no such edge)`;
-  return leaf(t);
+  if (t.kind === "edge") return `${edgeOperator(t, { out: "→", in: "←" })}${t.sub ? leafText(t.sub) : ""} (no such edge)`;
+  return leafText(t);
+}
+
+function leafText(x: Term): string {
+  if (x.kind === "cap") return `cap:${x.a}`;
+  return x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
+    : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
+}
+
+/**
+ * `chant search --json` (#4359, #4367): the whole answer as one document on
+ * stdout, read by behold (behold#913). Warnings and errors still go to stderr;
+ * the exit code is the text path's. It is the `search` document of the read
+ * contract (#4374, `workspace/search.schema.json`): every document opens with
+ * `$schema`, `contract` and `chant`, then `workspace` when the project belongs
+ * to one, and `at: null`, since plain search reads the working tree.
+ *
+ *   {
+ *     "$schema": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+ *     "contract": 1, "chant": "0.124.46", "workspace"?: { "name", "root" }, "at": null,
+ *     "query": "kind:aws_instance ->*kind:aws_vpc",
+ *     "source": { "kind": "declared" | "live" | "snapshot", "env"?, "snapshot"?, "commit"?, "timestamp"? },
+ *     "matches": [
+ *       { "id": "east::web", "displayId": "web", "kind": "Terraform::Resource", "physicalId"?: "i-1",
+ *         "unobserved"?: "read-failed", "show"?: { "InstanceType": "t3.micro" },
+ *         "paths": [ { "term": "->*kind:aws_vpc", "dir": "out",
+ *                      "hops": [ { "from": "web", "fromAttr": "subnet_id", "to": "a", "toAttr": "id" },
+ *                                { "from": "a", "fromAttr": "vpc_id", "to": "main", "toAttr": "id" } ] } ] }
+ *     ],
+ *     "provenance": "observed live · bound 2/2",
+ *     "liveFailures"?: ["aws: ..."],
+ *     "explain"?: { "universe": { "matched": 2, "of": 6, "kinds": ["aws_instance"] },
+ *                   "evidence": [ { "id": "web", "attr": "internetFacing", "via": "..." } ],
+ *                   "nearMisses": [ { "id": "db", "fails": "attr:internetFacing=true" } ],
+ *                   "moreExcluded": 0 },
+ *     "drift"?: { "against": "live" | "snapshot", ... see SearchDriftJson }
+ *   }
+ *
+ * A refused query or invocation prints the head, `query` and
+ * `error: { code, message, hint? }` instead, and exits 1. The code is from the
+ * read contract's closed list (`SEARCH_ERROR_CODES`).
+ *
+ * `kind` is the IR kind, so a Terraform block's is `Terraform::Resource`;
+ * `kind:aws_instance` matches it by its resource type (#4366).
+ *
+ * `id` is the graph's full id, stack-qualified (`stack::name`) where the graph
+ * qualifies it; `displayId` is the bare name the text row prints. `hops` is in
+ * walk order from the match; each hop keeps the edge's own direction (see
+ * {@link PathHop}). `paths` is empty when the query has no positive edge
+ * term. `show` is present when `--show` was given, holding the requested
+ * attributes a row carries, under the name the graph spells them with.
+ * `explain` is present with `--explain`; `drift` with `--check-live` or
+ * `--check-snapshot`.
+ */
+export interface SearchJson {
+  query: string;
+  source: AnswerSource & { env?: string };
+  matches: {
+    id: string;
+    displayId: string;
+    kind?: string;
+    physicalId?: string;
+    unobserved?: string;
+    show?: Record<string, unknown>;
+    paths: { term: string; dir: "out" | "in"; hops: PathHop[]; because?: { capability: string; id: string; hops: PathHop[] }[] }[];
+  }[];
+  provenance?: string;
+  /** Present when every match is a planned create (#4372): how many. See the schema. */
+  plannedCreates?: number;
+  liveFailures?: string[];
+  explain?: {
+    universe: { matched: number; of: number; kinds: string[] };
+    evidence: { id: string; attr: string; via: string }[];
+    nearMisses: { id: string; fails?: string }[];
+    moreExcluded: number;
+  };
+  drift?: SearchDriftJson;
+  /**
+   * Present when the query names a capability (#4375): each one, the
+   * observation its facts were derived from, and what it does not evaluate.
+   */
+  capabilities?: { name: string; source: AnswerSource["kind"]; notEvaluated: string[] }[];
+}
+
+/**
+ * A refusal under `--json` (#4367): the same message and hint stderr carries,
+ * with its code from the read contract's closed list (#4374).
+ */
+export type SearchErrorJson = SearchFailure;
+
+function searchErrorJson(query: string, error: { code: SearchErrorCode; message: string; hint?: string }): SearchErrorJson {
+  return { ...searchHead(), query, error: { code: error.code, message: error.message, ...(error.hint ? { hint: error.hint } : {}) } };
+}
+
+/** The head of every `search` document (#4374): the contract, its schema, and the chant that wrote it. */
+function searchHead(): SearchHead {
+  return { $schema: SEARCH_OUTPUT_SCHEMA_ID, contract: SEARCH_CONTRACT_VERSION, chant: readChantPackageVersion() };
+}
+
+/**
+ * The workspace a project belongs to, when it belongs to one (#4374, ws-016):
+ * its declared name and its root relative to the git root, with `at: null`,
+ * since plain search reads the working tree. Outside a workspace, or when its
+ * declaration can't be read, only `at`.
+ */
+async function workspaceIdentity(cwd: string): Promise<{ workspace?: { name: string; root: string }; at: null }> {
+  try {
+    const [{ locateWorkspace }, { readDeclaration }] = await Promise.all([import("../../workspace/which-chant"), import("../../workspace/declaration")]);
+    const located = locateWorkspace(cwd);
+    return { workspace: { name: readDeclaration(located.tree, "").name, root: located.root }, at: null };
+  } catch {
+    return { at: null };
+  }
+}
+
+function searchJson(
+  query: string,
+  source: AnswerSource,
+  matches: IRNode[],
+  terms: Term[],
+  ir: GraphIR,
+  byId: Map<string, IRNode>,
+  liveFailures: string[] = [],
+  extra: {
+    env?: string;
+    show?: string[];
+    provenance?: string;
+    plannedCreates?: number;
+    capabilities?: SearchJson["capabilities"];
+    explain?: ReturnType<typeof explainData>;
+    drift?: SearchDriftJson;
+  } = {},
+): SearchJson {
+  const show = extra.show ?? [];
+  return {
+    query,
+    source: extra.env ? { ...source, env: extra.env } : source,
+    matches: matches.map((n) => {
+      const attrs = (n.attrs ?? {}) as Record<string, unknown>;
+      const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
+      return {
+        id: n.id,
+        displayId: bareId(n.id),
+        ...(n.kind ? { kind: n.kind } : {}),
+        ...(physical != null && typeof physical !== "object" ? { physicalId: String(physical) } : {}),
+        ...(typeof attrs["_unobserved"] === "string" ? { unobserved: attrs["_unobserved"] } : {}),
+        ...(show.length > 0 ? { show: Object.fromEntries(showValues(attrs, show)) } : {}),
+        paths: matchPaths(n, terms, ir, byId).map((p) => ({
+          term: termText({ ...p.term, negated: false }),
+          dir: p.term.dir ?? ("out" as const),
+          hops: p.hops,
+          ...(p.because ? { because: p.because } : {}),
+        })),
+      };
+    }),
+    ...(extra.provenance !== undefined ? { provenance: extra.provenance } : {}),
+    ...(extra.plannedCreates ? { plannedCreates: extra.plannedCreates } : {}),
+    ...(extra.capabilities ? { capabilities: extra.capabilities } : {}),
+    ...(liveFailures.length > 0 ? { liveFailures } : {}),
+    ...(extra.explain
+      ? {
+          explain: {
+            universe: extra.explain.universe,
+            evidence: extra.explain.evidence,
+            nearMisses: extra.explain.nearMisses.map((m) => ({ id: m.id, ...(m.term ? { fails: termText(m.term) } : {}) })),
+            moreExcluded: extra.explain.moreExcluded,
+          },
+        }
+      : {}),
+    ...(extra.drift ? { drift: extra.drift } : {}),
+  };
+}
+
+/** A term as the query grammar spells it, `!` and ASCII arrows included (#4367). */
+function termText(t: Term): string {
+  if (t.negated) return `!${termText({ ...t, negated: false })}`;
+  if (t.kind === "edge") return `${edgeOperator(t, { out: "->", in: "<-" })}${t.sub ? leafText(t.sub) : ""}`;
+  return leafText(t);
 }
 
 export interface Term {
-  kind: "word" | "kind" | "tag" | "attr" | "edge";
+  kind: "word" | "kind" | "tag" | "attr" | "edge" | "cap";
   /** `!term` — the node must NOT satisfy this (#1280). */
   negated?: boolean;
   a: string;
@@ -744,11 +1504,32 @@ export interface Term {
   dir?: "out" | "in";
   sub?: Term;
   /**
+   * For edge terms (#4359): how many hops the far end may be away. Absent on a
+   * plain `->`/`<-`, which is exactly one hop. `max` is `Infinity` for `*`.
+   */
+  depth?: { min: number; max: number };
+  /** For edge terms (#4359): every edge on the path goes through this consumer attribute (`IREdge.viaAttr`). */
+  viaAttr?: string;
+  /** For edge terms (#4359): every edge on the path reads this producer attribute (`IREdge.toAttr`). */
+  toAttr?: string;
+  /**
+   * For edge terms (#4375): walk this edge capability (`reaches`,
+   * `grants(s3:GetObject)`) instead of the graph's own edges. A `cap:` leaf
+   * keeps its call in `a`.
+   */
+  capability?: string;
+  /**
    * For kind terms: the kinds this term actually means, resolved against the
    * graph (see {@link resolveKindTerms}). Absent when nothing resolved it, in
    * which case the substring rule applies unchanged.
    */
   kinds?: Set<string>;
+  /**
+   * For kind terms (#4366): the terraform resource types this term means,
+   * resolved against the graph. A terraform resource matches the term when its
+   * type is in here, whatever `kinds` says.
+   */
+  tfTypes?: Set<string>;
 }
 
 /**
@@ -772,12 +1553,25 @@ export interface Term {
  * Substring is kept as the fallback, so `kind:Gateway` still finds both
  * `InternetGateway` and `VPCGatewayAttachment` — a genuine substring search
  * that no segment rule would serve. Most specific wins; nothing else changes.
+ *
+ * A terraform resource is `Terraform::Resource` whatever it is, so the term is
+ * also read against each resource's type (#4366), with the same boundary rule
+ * on `_`: `kind:aws_iam_role` means that type exactly and never
+ * `aws_iam_role_policy`, and a term ending in `_` (`kind:aws_iam_`) or a bare
+ * provider name (`kind:aws`) means every type it begins. A data source's type
+ * keeps its `data.` prefix (`kind:data.aws_ami`), the same type `--count-by kind`
+ * groups it under, so `kind:aws_ami` is not a data source. A term that names a
+ * type turns off the substring fallback for the IR kind, so `kind:aws_instance`
+ * is the instances and nothing found by accident.
  */
 export function resolveKindTerms(terms: Term[], nodes: IRNode[]): void {
   const present = [...new Set(nodes.map((n) => n.kind).filter((k): k is string => !!k))];
+  const tfPresent = [...new Set(nodes.map(terraformType).filter((k): k is string => !!k))];
   const walk = (t: Term): void => {
     if (t.sub) walk(t.sub);
     if (t.kind !== "kind") return;
+    const types = resolveTerraformTypes(t.a, tfPresent);
+    if (types.length > 0) t.tfTypes = new Set(types);
     const want = t.a.toLowerCase().split("::").filter(Boolean);
     if (want.length === 0) return;
     const onBoundary = present.filter((k) => {
@@ -792,7 +1586,32 @@ export function resolveKindTerms(terms: Term[], nodes: IRNode[]): void {
   terms.forEach(walk);
 }
 
+/** The terraform resource types a `kind:` term names, by the rule in {@link resolveKindTerms}. */
+function resolveTerraformTypes(term: string, present: string[]): string[] {
+  const want = term.toLowerCase();
+  if (want.length === 0 || want.includes("::")) return [];
+  const exact = present.filter((p) => p === want);
+  if (exact.length > 0) return exact;
+  const prefix = want.endsWith("_") || want.endsWith(".") ? want : /[_.]/.test(want) ? undefined : `${want}_`;
+  return prefix ? present.filter((p) => p.startsWith(prefix)) : [];
+}
+
+/** What a row and `--explain` call a node's kind: a terraform block's type (#4366), else its IR kind. Same as `--count-by kind`. */
+function displayKind(n: IRNode): string | undefined {
+  return terraformType(n) ?? n.kind;
+}
+
 function parseLeaf(tok: string): Term {
+  const cap = /^cap:(.*)$/i.exec(tok);
+  if (cap) {
+    if (!parseCapabilityCall(cap[1])) {
+      throw new QueryError(
+        `"${tok}" is not a capability term`,
+        "name a capability, with arguments in parentheses when it takes any: cap:internet-reachable, cap:open-ingress(22); chant search --capabilities lists them",
+      );
+    }
+    return { kind: "cap", a: cap[1] };
+  }
   const m = /^(kind|tag|attr):(.*)$/i.exec(tok);
   if (m) {
     const key = m[1].toLowerCase() as Term["kind"];
@@ -831,6 +1650,76 @@ class QueryError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * Parse an edge term (#4359): `->` or `<-`, then an optional depth, then an
+ * optional attribute qualifier, then the target leaf.
+ *
+ *   ->kind:X                one hop, as it always was
+ *   ->*kind:X               any number of hops, one or more
+ *   ->{3}kind:X             exactly three hops
+ *   ->{1,3}kind:X           one to three hops ({2,} is two or more)
+ *   <-[via=vpc_id]kind:X    only edges through the consumer attribute vpc_id
+ *   ->[to=id]kind:X         only edges that read the producer attribute id
+ *   <-*[via=subnet_id]      a qualifier may stand without a target: any node
+ *
+ * A qualifier constrains every edge on the path, not only the first one.
+ */
+function parseEdge(tok: string, negated: boolean): Term {
+  const dir = tok.startsWith("->") ? ("out" as const) : ("in" as const);
+  const arrow = tok.slice(0, 2);
+  let rest = tok.slice(2);
+  const term: Term = { kind: "edge", a: "", dir };
+  if (rest.startsWith("*")) {
+    term.depth = { min: 1, max: Infinity };
+    rest = rest.slice(1);
+  } else if (rest.startsWith("{")) {
+    const m = /^\{(\d+)(,(\d*))?\}/.exec(rest);
+    const min = m ? Number(m[1]) : NaN;
+    const max = !m ? NaN : m[2] === undefined ? min : m[3] === "" ? Infinity : Number(m[3]);
+    if (!m || min < 1 || max < min) {
+      throw new QueryError(
+        `"${tok}" has a depth this grammar cannot read`,
+        `a depth is {n}, {min,max} or {min,} with 1 <= min <= max, e.g. ${arrow}{1,3}kind:aws_vpc; ${arrow}* is any depth`,
+      );
+    }
+    term.depth = { min, max };
+    rest = rest.slice(m[0].length);
+  }
+  if (rest.startsWith("[")) {
+    const close = rest.indexOf("]");
+    // Split on commas outside parentheses, so `[cap=open-ingress(22,tcp)]` is one part.
+    const parts = close < 0 ? [""] : (rest.slice(1, close).match(/(?:[^,(]|\([^)]*\))+/g) ?? [""]).map((p) => p.trim());
+    for (const part of parts) {
+      const c = /^cap=(.+)$/.exec(part);
+      if (c && parseCapabilityCall(c[1])) {
+        term.capability = c[1];
+        continue;
+      }
+      const q = /^(via|to)=(.+)$/.exec(part);
+      if (!q) {
+        throw new QueryError(
+          `"${tok}" has an edge qualifier this grammar cannot read`,
+          `qualify an edge by attribute with [via=<consumer attr>] or [to=<producer attr>], e.g. <-[via=vpc_id]kind:aws_subnet or ->[via=subnet_id,to=id], or walk a capability with [cap=<name>], e.g. ->[cap=reaches]cap:stores-data`,
+        );
+      }
+      if (q[1] === "via") term.viaAttr = q[2];
+      else term.toAttr = q[2];
+    }
+    rest = rest.slice(close + 1);
+  }
+  if (rest.trim() === "") {
+    if (term.viaAttr === undefined && term.toAttr === undefined && term.capability === undefined) {
+      const bang = negated ? "!" : "";
+      throw new QueryError(
+        `"${bang}${tok}" needs a target`,
+        `say what the edge reaches: ${bang}${tok}kind:EC2::Instance, or qualify it by attribute: ${bang}${tok}[via=vpc_id]`,
+      );
+    }
+    return term;
+  }
+  return { ...term, sub: parseLeaf(rest) };
 }
 
 function parseQuery(query: string): Term[] {
@@ -873,11 +1762,7 @@ function parseQuery(query: string): Term[] {
         `say what the edge reaches: ${negated ? "!" : ""}${tok}kind:EC2::Instance, or ${negated ? "!" : ""}${tok}attr:Name=web`,
       );
     }
-    const term = tok.startsWith("->")
-      ? { kind: "edge" as const, a: "", dir: "out" as const, sub: parseLeaf(tok.slice(2)) }
-      : tok.startsWith("<-")
-        ? { kind: "edge" as const, a: "", dir: "in" as const, sub: parseLeaf(tok.slice(2)) }
-        : parseLeaf(tok);
+    const term: Term = tok.startsWith("->") || tok.startsWith("<-") ? parseEdge(tok, negated) : parseLeaf(tok);
     return negated ? { ...term, negated: true } : term;
   });
 }
@@ -895,11 +1780,28 @@ function attrString(v: unknown): string {
   return String(v);
 }
 
+/**
+ * Attributes a bare word does not search, by lexicon (#4368). A terraform
+ * node's `source` is the whole `.tf` file its block came from (the lint
+ * checks need the raw text), so a bare `aws_security_group` matched every
+ * node declared in a file that mentions one: 21 nodes on behold's example
+ * estate, where three are security groups. The block itself is still
+ * searched, through `address` and `body`, and `attr:source=<text>` still
+ * reads the file when that is what the caller means.
+ */
+const BARE_WORD_SKIPS: Record<string, ReadonlySet<string>> = {
+  terraform: new Set(["source"]),
+};
+
 function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>): boolean {
   if (t.negated) return !matchTerm(n, { ...t, negated: false }, ir, byId);
   const attrs = n.attrs ?? {};
   if (t.kind === "edge") {
-    if (!ir || !byId || !t.sub) return false;
+    if (!ir || !byId) return false;
+    // Depth and attribute qualifiers (#4359) go through the path search. A
+    // plain one-hop term keeps the original code below, unchanged.
+    if (t.depth || t.viaAttr !== undefined || t.toAttr !== undefined || t.capability !== undefined) return findPath(n, t, ir, byId) !== null;
+    if (!t.sub) return false;
     // A node matches if it has an edge (out or in) to a node satisfying `sub`.
     const edges = ir.edges ?? [];
     const neighbors = edges
@@ -908,10 +1810,14 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
       .filter((x): x is IRNode => !!x);
     return neighbors.some((m) => matchTerm(m, t.sub!, ir, byId));
   }
+  if (t.kind === "cap") return !!ir && capabilityEvidence(n, t, ir) !== undefined;
   if (t.kind === "kind") {
     // Resolved kinds when the term lined up with `::` boundaries; the
-    // documented substring otherwise.
+    // documented substring otherwise. A term that named a terraform type
+    // (#4366) matches resources of that type as well, and drops the substring.
+    if (t.tfTypes?.has(terraformType(n) ?? "")) return true;
     if (t.kinds) return t.kinds.has(n.kind ?? "");
+    if (t.tfTypes) return false;
     return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
   }
   if (t.kind === "attr") {
@@ -927,16 +1833,244 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
       return key.toLowerCase() === t.a.toLowerCase() && (t.b === undefined || val.toLowerCase().includes(t.b.toLowerCase()));
     });
   }
-  // bare word: substring over id, kind, and all attr values
-  const hay = [n.id, n.kind, ...Object.values(attrs).map(attrString)].join(" ").toLowerCase();
+  // bare word: substring over id, kind, and all attr values, less the ones
+  // that hold text about other nodes (see BARE_WORD_SKIPS).
+  const skip = BARE_WORD_SKIPS[n.lexicon];
+  const values = Object.entries(attrs)
+    .filter(([k]) => !skip?.has(k))
+    .map(([, v]) => attrString(v));
+  const hay = [n.id, n.kind, ...values].join(" ").toLowerCase();
   return hay.includes(t.a.toLowerCase());
+}
+
+/**
+ * One edge on the path a match was reached by (#4359), in walk order from the
+ * match outward. `from` and `to` keep the edge's own direction (`from` holds
+ * the reference, `to` is what it names), whichever way the term walked, so a
+ * reader can find the edge in the graph by its endpoints. Node ids are the
+ * graph's full ids, stack qualification included.
+ */
+export interface PathHop {
+  from: string;
+  /** The consumer attribute the reference flows through (`IREdge.viaAttr`), when known. */
+  fromAttr?: string;
+  to: string;
+  /** The producer attribute read (`IREdge.toAttr`), when known. */
+  toAttr?: string;
+  /**
+   * On a capability's path (#4375): the name the capability rules give this
+   * edge (`subnet`, `statement`, `resource`). Its `from` may be a node inside
+   * another (a policy statement, `<holder>#policy[0].Statement[1]`).
+   */
+  edge?: string;
+}
+
+const adjacency = new WeakMap<GraphIR, { out: Map<string, IREdge[]>; in: Map<string, IREdge[]> }>();
+
+function edgeIndex(ir: GraphIR): { out: Map<string, IREdge[]>; in: Map<string, IREdge[]> } {
+  let idx = adjacency.get(ir);
+  if (!idx) {
+    idx = { out: new Map(), in: new Map() };
+    for (const e of ir.edges ?? []) {
+      if (!idx.out.has(e.from)) idx.out.set(e.from, []);
+      idx.out.get(e.from)!.push(e);
+      if (!idx.in.has(e.to)) idx.in.set(e.to, []);
+      idx.in.get(e.to)!.push(e);
+    }
+    adjacency.set(ir, idx);
+  }
+  return idx;
+}
+
+function sameName(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * The shortest path by which an edge term reaches `n` (#4359), or null.
+ *
+ * Breadth-first over the edges in the term's direction, keeping only edges
+ * whose attributes satisfy its qualifier, and accepting a node that satisfies
+ * the target leaf (any node when the term has none) at a depth inside the
+ * term's range. A plain `->`/`<-` is the range 1..1.
+ *
+ * Termination on a cycle: a state is (node, depth capped at the range's
+ * minimum). Past the minimum, arriving at a node again by a longer walk can
+ * reach nothing the first arrival could not, so it is not queued twice. The
+ * state space is finite and the walk always ends.
+ */
+function findPath(n: IRNode, t: Term, ir: GraphIR, byId: Map<string, IRNode>): PathHop[] | null {
+  if (t.kind !== "edge") return null;
+  const { min, max } = t.depth ?? { min: 1, max: 1 };
+  const idx = edgeIndex(ir);
+  const out = t.dir === "out";
+  type State = { id: string; depth: number; hops: PathHop[] };
+  // A capability edge (#4375) stands for the hops that proved it.
+  const steps = (id: string): { far: string; hops: PathHop[] }[] => {
+    if (t.capability !== undefined) return capabilitySteps(id, t.capability, out, ir);
+    return (((out ? idx.out.get(id) : idx.in.get(id)) ?? [])
+      .filter((e) => (t.viaAttr === undefined || sameName(e.viaAttr, t.viaAttr)) && (t.toAttr === undefined || sameName(e.toAttr, t.toAttr)))
+      .map((e) => ({
+        far: out ? e.to : e.from,
+        hops: [{ from: e.from, ...(e.viaAttr ? { fromAttr: e.viaAttr } : {}), to: e.to, ...(e.toAttr ? { toAttr: e.toAttr } : {}) }],
+      })));
+  };
+  const seen = new Set<string>([`${n.id}|0`]);
+  let frontier: State[] = [{ id: n.id, depth: 0, hops: [] }];
+  while (frontier.length > 0) {
+    const next: State[] = [];
+    for (const s of frontier) {
+      if (s.depth >= max) continue;
+      for (const step of steps(s.id)) {
+        const farId = step.far;
+        const far = byId.get(farId);
+        if (!far) continue;
+        const depth = s.depth + 1;
+        const hops = [...s.hops, ...step.hops];
+        if (depth >= min && (!t.sub || matchTerm(far, t.sub, ir, byId))) return hops;
+        const key = `${farId}|${Math.min(depth, min)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push({ id: farId, depth, hops });
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
+
+function bareId(id: string): string {
+  return id.includes("::") ? id.slice(id.lastIndexOf("::") + 2) : id;
+}
+
+/**
+ * A path as one line of `id.attr` steps, read from the match outward (#4359).
+ * Walking `->`, each hop reads `consumer.via -> producer.attr`; walking `<-`,
+ * `producer.attr <- consumer.via`. Hops are joined with `; `.
+ */
+function formatPath(hops: PathHop[], dir: "out" | "in"): string {
+  const end = (id: string, attr?: string): string => (attr ? `${bareId(id)}.${attr}` : bareId(id));
+  return hops
+    .map((h) =>
+      dir === "out"
+        ? `${end(h.from, h.fromAttr)} -> ${end(h.to, h.toAttr)}`
+        : `${end(h.to, h.toAttr)} <- ${end(h.from, h.fromAttr)}`,
+    )
+    .join("; ");
+}
+
+/** The edge operator as written: arrow, depth and qualifier, no target. */
+function edgeOperator(t: Term, arrows: { out: string; in: string }): string {
+  const arrow = t.dir === "out" ? arrows.out : arrows.in;
+  const depth = !t.depth
+    ? ""
+    : t.depth.min === 1 && t.depth.max === Infinity
+      ? "*"
+      : t.depth.min === t.depth.max
+        ? `{${t.depth.min}}`
+        : `{${t.depth.min},${t.depth.max === Infinity ? "" : t.depth.max}}`;
+  const quals = [
+    ...(t.viaAttr !== undefined ? [`via=${t.viaAttr}`] : []),
+    ...(t.toAttr !== undefined ? [`to=${t.toAttr}`] : []),
+    ...(t.capability !== undefined ? [`cap=${t.capability}`] : []),
+  ];
+  return `${arrow}${depth}${quals.length > 0 ? `[${quals.join(",")}]` : ""}`;
+}
+
+/** Each positive edge term's path to `n`, in query order (#4359). */
+function matchPaths(n: IRNode, terms: Term[], ir: GraphIR, byId: Map<string, IRNode>): MatchPath[] {
+  const out: MatchPath[] = [];
+  for (const t of terms) {
+    if (t.negated) continue;
+    if (t.kind === "cap") {
+      const ev = capabilityEvidence(n, t, ir);
+      if (ev) out.push({ term: t, hops: ev.hops.map(pathHop), because: becauseOf(ev) });
+      continue;
+    }
+    if (t.kind !== "edge") continue;
+    const hops = findPath(n, t, ir, byId);
+    if (hops) out.push({ term: t, hops });
+  }
+  return out;
+}
+
+/** A term's path to a match: one per positive edge or `cap:` term. */
+interface MatchPath {
+  term: Term;
+  hops: PathHop[];
+  /** For a `cap:` term (#4375): the node sets the match relied on, each with its own path. */
+  because?: { capability: string; id: string; hops: PathHop[] }[];
+}
+
+/**
+ * The evidence for a `cap:` term on a node (#4375): its path when the node
+ * is in the set, or the source of an edge capability, else undefined. A
+ * capability or argument the catalog can't take throws a CapabilityError,
+ * which `runSearch` turns into a refusal before any node is tested.
+ */
+function capabilityEvidence(n: IRNode, t: Term, ir: GraphIR): Evidence | undefined {
+  const call = parseCapabilityCall(t.a);
+  if (!call) return undefined;
+  const engine = capabilityEngine(ir);
+  const args = engine.bind(call.name, call.args);
+  if (engine.rule(call.name)!.vars.length === 1) return engine.set(call.name, args).get(n.id);
+  const targets = engine.relation(call.name, args).out.get(n.id);
+  return targets ? targets.values().next().value : undefined;
+}
+
+/** One step along an edge capability from `id` (#4375), each with the hops that proved it, in walk order. */
+function capabilitySteps(id: string, call: string, out: boolean, ir: GraphIR): { far: string; hops: PathHop[] }[] {
+  const parsed = parseCapabilityCall(call);
+  if (!parsed) return [];
+  const engine = capabilityEngine(ir);
+  const rel = engine.relation(parsed.name, engine.bind(parsed.name, parsed.args));
+  const m = (out ? rel.out : rel.in).get(id);
+  if (!m) return [];
+  return [...m].map(([far, ev]) => ({ far, hops: (out ? ev.hops : [...ev.hops].reverse()).map(pathHop) }));
+}
+
+function pathHop(h: { from: string; fromAttr?: string; to: string; toAttr?: string; edge: string }): PathHop {
+  return { from: h.from, ...(h.fromAttr ? { fromAttr: h.fromAttr } : {}), to: h.to, ...(h.toAttr ? { toAttr: h.toAttr } : {}), edge: h.edge };
+}
+
+function becauseOf(ev: Evidence): MatchPath["because"] {
+  const out: NonNullable<MatchPath["because"]> = [];
+  const walk = (e: Evidence): void => {
+    for (const b of e.because) {
+      out.push({ capability: b.capability, id: b.id, hops: b.evidence.hops.map(pathHop) });
+      walk(b.evidence);
+    }
+  };
+  walk(ev);
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * A capability's path as one line (#4375), in #4359's hop format, read from
+ * `start`: each hop is `consumer.via -> producer.attr` when the walk follows
+ * the reference, `producer.attr <- consumer.via` when it goes against it. A
+ * hop with no IR attribute names the capability edge instead (`-statement->`).
+ */
+function formatHops(hops: PathHop[], start: string): string {
+  const end = (id: string, attr?: string): string => (attr ? `${bareId(id)}.${attr}` : bareId(id));
+  let at = start;
+  return hops
+    .map((h) => {
+      const forward = h.from === at || h.to !== at;
+      at = forward ? h.to : h.from;
+      return forward
+        ? `${end(h.from, h.fromAttr)} -> ${end(h.to, h.toAttr)}`
+        : `${end(h.to, h.toAttr)} <- ${end(h.from, h.fromAttr)}`;
+    })
+    .join("; ");
 }
 
 function formatRow(n: IRNode, show: string[]): string {
   const attrs = (n.attrs ?? {}) as Record<string, unknown>;
   // Display the bare logical id, not the `${stack}::` qualification (#1162).
   const displayId = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-  const parts: string[] = [displayId, n.kind ?? ""];
+  // A terraform resource shows its type (#4366); its IR kind is `Terraform::Resource` for all of them.
+  const parts: string[] = [displayId, displayKind(n) ?? ""];
   // Prefer the node-level live physicalId (set by the overlay), then attrs;
   // skip source-mode AttrRef placeholders (objects).
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
@@ -945,15 +2079,7 @@ function formatRow(n: IRNode, show: string[]): string {
   // blank there reads as "declared, not provisioned", which the read never
   // established; the reason is the tri-state's (#1089).
   else if (typeof attrs["_unobserved"] === "string") parts.push(`(unobserved: ${attrs["_unobserved"]})`);
-  for (const key of show) {
-    // Match the name case-insensitively, and report what was actually found.
-    // AWS attribute names are PascalCase and chant's derived ones are not, so a
-    // caller mixing them is normal: `--show region` and `--show Region` are the
-    // same request, and one of them silently printed nothing. Seven of the
-    // `--show` names in one benchmark run missed on case alone.
-    const actual = key in attrs ? key : Object.keys(attrs).find((k) => k.toLowerCase() === key.toLowerCase());
-    const v = actual == null ? undefined : attrs[actual];
-    if (v == null) continue;
+  for (const [actual, v] of showValues(attrs, show)) {
     // A column the caller explicitly asked for is shown whatever shape it is.
     // Skipping non-scalars silently meant `--show effectiveIngress` — the
     // derived reachability fact, and the reason to reach for chant at all —
@@ -965,5 +2091,25 @@ function formatRow(n: IRNode, show: string[]): string {
   return parts.filter(Boolean).join("  ");
 }
 
+/**
+ * The `--show` columns a row carries, as `[name as the graph spells it, value]`,
+ * in the order asked. Shared by the text row and `--json` (#4367).
+ */
+function showValues(attrs: Record<string, unknown>, show: string[]): [string, unknown][] {
+  const out: [string, unknown][] = [];
+  for (const key of show) {
+    // Match the name case-insensitively, and report what was actually found.
+    // AWS attribute names are PascalCase and chant's derived ones are not, so a
+    // caller mixing them is normal: `--show region` and `--show Region` are the
+    // same request, and one of them silently printed nothing. Seven of the
+    // `--show` names in one benchmark run missed on case alone.
+    const actual = key in attrs ? key : Object.keys(attrs).find((k) => k.toLowerCase() === key.toLowerCase());
+    const v = actual == null ? undefined : attrs[actual];
+    if (v == null) continue;
+    out.push([actual!, v]);
+  }
+  return out;
+}
+
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, renderDrift, mergeResources, pickResources };
+export const __searchInternals = { parseQuery, matchTerm, findPath, formatPath, searchJson, searchErrorJson, explainData, termText, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, provenanceLine, renderDrift, searchDriftJson, mergeResources, pickResources };

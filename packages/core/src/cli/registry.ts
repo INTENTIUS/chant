@@ -246,6 +246,8 @@ export interface ParsedArgs {
   show?: string;
   /** `chant search --explain` — append a footer: universe count + why non-matches were excluded (#1139). */
   explain?: boolean;
+  /** `chant search --count-by kind|module|attr:<name>`: print one count per group instead of one row per match (#4360). */
+  countBy?: string;
   /** `chant graph --lens blast:<node> --up` — include upstream producers */
   up?: boolean;
   /** `chant graph --lens blast:<node> --down` — include downstream dependents */
@@ -446,6 +448,26 @@ export interface ParsedArgs {
    * should win.
    */
   at?: string;
+  /**
+   * `chant search "<q>" --snapshot <ref> --env <name>` and `chant workspace
+   * search "<q>" --snapshot <ref>` (#4374): the recorded snapshot to answer
+   * from. Plain search also takes it as `--at <ref>`, for compatibility;
+   * everywhere else in the read contract `--at` is a git revision.
+   */
+  snapshot?: string;
+  /**
+   * `chant search --capabilities` and `chant workspace search --capabilities`
+   * (#4375): print the capability catalog, the `capabilities` document of the
+   * read contract, instead of answering a query.
+   */
+  capabilities?: boolean;
+  /**
+   * `chant graph --format ir --capability-view` (#4378): add the lexicon-neutral
+   * view capability rules read, mapped by this chant's lexicons, to the IR as
+   * `capabilityView`. `chant workspace graph --capability-view` asks each
+   * member's chant for it and carries it on the member.
+   */
+  capabilityView?: boolean;
   /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
   kind?: string;
   /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */

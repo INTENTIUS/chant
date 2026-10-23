@@ -29,6 +29,8 @@ chant graph [path] [--env <name>] [--param name=value] [--params-file <path>] [-
 
 The infra-graph formats are computed from lint-clean source alone. Every node traces to a source file, and every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
 
+A project that only reads source it did not write can ask for the findings instead of the refusal, with `graph: { lint: "report" }` in its `chant.config` ([behold#919](https://github.com/INTENTIUS/behold/issues/919)). The graph is then emitted even when lint finds errors, a warning on stderr says how many, and the IR's `meta.lint` carries `errors`, `warnings` and every finding as `{ ruleId, severity, message, file, line, column }`, plus `entity` when a lexicon check named one, which is the id of that entity's node. `meta.lint` is there on every graph such a project emits, with no findings when lint is clean, so a reader can tell a clean read from one that did not look. A lint error that is an uninstalled dependency still refuses, since there is no source to read. The reader projects [`chant workspace graph`](/chant/cli/workspace-graph/) writes for terraform and choudoufu members set it, and so does behold's scratch project for a bare Terraform folder: a Terraform estate that opens SSH to the world is the estate someone needs the picture of. `"gate"` is the default, and a chant older than 0.124.46 ignores the key.
+
 Declared Ops are part of the infra graph. `*.op.ts` files are collected the way `chant graph` (the Op view) and `chant run` find them, from the git root, so an op kept outside `sourceDir` (`ops/`, or the project root beside `sourceDir: "src"`) still appears as a `Chant::Op` node. Its `attrs` carry the full `OpConfig` (`phases`, `steps`, `gates`, `depends`) at `--detail 3`; lower tiers keep only the scalar fields.
 
 ### `--live` — the provisioned graph
@@ -143,6 +145,22 @@ chant graph ./infra --format layout    # node positions (dagre by default — no
 The IR's first field is `version`, currently `1`. Every `--format ir` output carries it, including `--live`, `--overlay` and `--components`. Output from a chant older than the field has no `version` and reads as version 1.
 
 The format changes only additively. A release may add a field, an edge kind or a group, and none of those moves the number. A consumer must ignore any field and any edge `kind` it does not recognise, and keep reading the rest of the document. `version` moves only for a change a consumer could not safely ignore, such as a removed or renamed field or a changed meaning, and a consumer that sees a version it does not know should stop rather than guess.
+
+### The capability view: `--capability-view`
+
+`chant graph --format ir --capability-view` adds `capabilityView` to the IR ([#4378](https://github.com/INTENTIUS/chant/issues/4378)): the lexicon-neutral view the [capability rules](/chant/reference/capabilities/) read, built by this chant through the mappings and adapters of the lexicons this project loads. It is what [`chant workspace graph --capability-view`](/chant/cli/workspace-graph/#the-capability-view) asks each member for, so a workspace's rules read every member as that member's own toolchain maps it. Its shape is the `capabilityView` definition in `graph.schema.json`: `version` (1), `lexicons`, `nodes` (`id`, `label`, `irId`, `lexicon`, `attrs`), `edges` (`from`, `to`, `name`, `hops`) and `unresolved`, the ARNs that name a role, bucket or table the project declares nothing of. The flag needs `--format ir` on the declared graph, and is refused with `--components`, `--live` or `--at`.
+
+### Reference envelopes in `attrs`
+
+A node's `attrs` keep its declared configuration, with references replaced by small envelopes a reader can recognise:
+
+| Envelope | Stands for |
+|----------|------------|
+| `{ "$ref": "assets.Arn" }` | an attribute reference, `<producer>.<attribute>`; a `Ref` to a node is `{ "$ref": "<producer>" }` |
+| `{ "$sub": "${assets.Arn}/*" }` | a CloudFormation `Sub`, with its template as it serializes. The two-argument form adds `"$vars"`, its variable map, each value projected the same way |
+| `{ "$intrinsic": true }` | any other intrinsic, which the IR does not open (a `Join`, a `Ref` to a pseudo-parameter) |
+
+Each `${Name}` or `${Name.Attr}` in a `$sub` template that names a node is an edge from the holder, through the top-level attribute, like a `$ref`. So is each reference in `$vars`. CloudFormation's `${!Literal}` escape, pseudo-parameters such as `${AWS::Region}`, and names `$vars` binds are not. At `--detail 3` the edge's `toAttr` is the attribute the template names (`Arn` above). At `--detail 2` a top-level `$sub` stays in `attrs` with the other reference envelopes.
 
 ### Groups: the boxes a renderer draws
 

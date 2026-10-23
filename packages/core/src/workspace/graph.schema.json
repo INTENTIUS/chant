@@ -437,6 +437,17 @@
               }
             }
           ]
+        },
+        "capabilityView": {
+          "description": "Added in contract 1 by #4378. Only with `--capability-view`, which `chant workspace search` asks for when a query has a capability term. The lexicon-neutral view capability rules read, built by the member's own chant through the mappings and adapters of the lexicons the member loads (its `chant graph --format ir --capability-view`), with `<member>/<id>` ids. null on a composed member whose chant printed no view (one from before #4378); a capability search reports that member as `member-chant-too-old`. Absent without the flag, and on a member that was not composed.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/capabilityView"
+            }
+          ]
         }
       },
       "if": {
@@ -1436,6 +1447,143 @@
               }
             }
           ]
+        }
+      }
+    },
+    "capabilityView": {
+      "type": "object",
+      "description": "One member's capability view (#4378), as `capabilities/view.ts` serializes it. Rules read labels, attributes and edges; a node's attributes are the neutral ones its lexicon's mapping names.",
+      "required": [
+        "version",
+        "lexicons",
+        "nodes",
+        "edges",
+        "unresolved"
+      ],
+      "properties": {
+        "version": {
+          "const": 1,
+          "description": "The view's own format version. A reader treats a view of a version it doesn't know as no view."
+        },
+        "lexicons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The lexicons whose nodes a mapping labelled."
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "irId",
+              "lexicon",
+              "attrs"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "A node id of the composed graph, or, for a policy statement or an inline block, that id with `#<attribute path>`."
+              },
+              "label": {
+                "type": "string",
+                "description": "The neutral label (`Role`, `Bucket`, `Statement`, `IngressRule`)."
+              },
+              "irId": {
+                "type": "string",
+                "description": "The composed graph node this view node is, or sits inside."
+              },
+              "lexicon": {
+                "type": "string"
+              },
+              "attrs": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "name",
+              "hops"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string",
+                "description": "The view edge's name (`subnet`, `statement`, `resource`, `attachedTo`)."
+              },
+              "hops": {
+                "type": "array",
+                "description": "The graph references the edge stands for, in walk order from `from`, each in the reference's own direction.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "from",
+                    "to",
+                    "edge"
+                  ],
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "fromAttr": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "toAttr": {
+                      "type": "string"
+                    },
+                    "edge": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "unresolved": {
+          "type": "array",
+          "description": "ARN strings naming a role, bucket or table that the member declares nothing of. `chant workspace search` resolves them by name over every member's view, so a policy in one member reaches a bucket in another.",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "fromAttr",
+              "edge",
+              "value"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "fromAttr": {
+                "type": "string"
+              },
+              "edge": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }

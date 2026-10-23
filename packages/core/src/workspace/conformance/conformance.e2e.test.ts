@@ -39,6 +39,8 @@ const JSON_FLAG: Record<ReadContractCommand, string[]> = {
   "graph --composites": ["--json"],
   runs: ["--json"],
   wip: ["--json"],
+  search: ["--json"],
+  "search --capabilities": ["--json"],
 };
 
 /** The smallest reader that conforms, with a hook to misbehave. */
@@ -63,6 +65,17 @@ describe("the generated conformance workspace (#2679)", () => {
     expect(report.problems).toEqual([]);
     expect(report.checked).toEqual([...READ_CONTRACT_COMMANDS]);
     expect(report.skipped).toEqual([]);
+  }, 300_000);
+
+  test("search answers over the chant member with workspace graph's ids, and lists the others (#4374)", async () => {
+    const docs: Record<string, unknown>[] = [];
+    const report = await runWorkspaceReaderConformance(reader((doc) => (docs.push(doc), doc)), { workspaceDir: ws.dir, commands: ["search"] });
+    expect(report.problems).toEqual([]);
+    const doc = docs[0] as { at: null; matches: { id: string; member: string }[]; members: { name: string; status: string; alone?: boolean }[] };
+    expect(doc.at).toBeNull();
+    expect(doc.matches.length).toBeGreaterThan(0);
+    for (const m of doc.matches) expect(m.id.startsWith(`${m.member}/`), m.id).toBe(true);
+    expect(doc.members.find((m) => m.name === "delivery")).toMatchObject({ status: "searched", alone: true });
   }, 300_000);
 
   test("graph --composites joins the fixture's composite to its component", async () => {
@@ -120,7 +133,7 @@ describe("commands (#2679)", () => {
     expect(report.problems).toEqual([]);
     expect(read).toEqual(["ls", "status", "graph --composites"]);
     expect(report.checked).toEqual(["ls", "status", "graph --composites"]);
-    expect(report.skipped).toEqual(["graph", "check", "records", "records --uncommitted", "graph --intent", "runs", "wip"]);
+    expect(report.skipped).toEqual(["graph", "check", "records", "records --uncommitted", "graph --intent", "runs", "wip", "search", "search --capabilities"]);
   }, 300_000);
 
   test("a name that is not a contract command, or an empty list, is refused", () => {

@@ -31,11 +31,13 @@ import { dirname, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
-import { composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
-import { openGraphCache, splitCached, storeReads, withoutUnits } from "./graph-cache";
-import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation } from "./declaration";
-import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
-import { loadKindRegistry } from "./kinds";
+import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { isViewDocument, prefixView } from "../capabilities/view";
+import { refusedCapabilityView } from "./nested-graph";
+import { openGraphCache, planStamps, splitCached, storeReads, withoutUnits } from "./graph-cache";
+import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation } from "./declaration";
+import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberArgv, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
+import { loadKindRegistry, type KindRegistry } from "./kinds";
 import { readKindLinks } from "./kind-link-readers";
 import { prepareKindReaders, type PreparedReaders } from "./kind-readers";
 import { recordLinkRows } from "./record-assets";
@@ -168,6 +170,7 @@ function compose(
   only: string[] | undefined,
   declarationMembers: { name: string; dir: string; kind: string }[],
   live = false,
+  capabilityView = false,
 ): { inputs: ComposeInput[]; failed: boolean } {
   // A member that ran was read live when --live was given, and says when (#2875).
   const read = (member: ComposedMember, r: UnitResult): ComposedMember => {
@@ -203,6 +206,12 @@ function compose(
     }
     const member = read(memberStatus(m.name, m.dir, m.kind, "composed", null, r.chant), r);
     member.irVersion = ir.irVersion;
+    // The member's own capability view (#4378), with composed ids; null when its chant printed none.
+    if (capabilityView) {
+      const view = (ir.ir as { capabilityView?: unknown }).capabilityView;
+      member.capabilityView = isViewDocument(view) ? prefixView(view, composedId(m.name, "")) : null;
+    }
+    delete (ir.ir as { capabilityView?: unknown }).capabilityView;
     inputs.push({ member, ir: ir.ir });
   }
   return { inputs, failed };
@@ -212,51 +221,117 @@ function compose(
 export function planGraph(query: GraphQuery): MemberPlan {
   const located = locateWorkspace(query.cwd, query.at);
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
-  const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
-  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
+  const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
+  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems: problems.map((p) => p.message) });
 }
 
-/** Read and compose the graph, and build the document. Never throws a {@link WorkspaceReadError}. */
-export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
-  const head: Head = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: GRAPH_CONTRACT_VERSION, chant: readerVersion() };
+/** The members of a workspace read, each read under its own toolchain: what graph and search compose (#4374). */
+export interface MemberReads {
+  located: LocatedWorkspace;
+  declaration: Declaration;
+  kinds: KindRegistry;
+  /** The plan the members ran from. */
+  plan: MemberPlan;
+  /** Each member's answer, the cache's included, in no particular order. */
+  results: UnitResult[];
+  /** The members the cache answered. */
+  served: ReadonlySet<string>;
+  /** Each member's stamp, by unit id (ws-059). */
+  stamps: ReadonlyMap<string, string>;
+  /** With {@link GraphQuery.components}: each member's component graph run. */
+  components?: UnitResult[];
+}
+
+export interface MemberReadOptions {
+  /** The command line each member runs; `chant graph --format ir` and the verb's flags by default. */
+  argvFor?: MemberArgv;
+  /**
+   * Answer members from the per-member cache and store what they print
+   * (ws-059). Only a read whose output is a graph IR may be cached. When
+   * off, every member is still stamped by the same rule.
+   */
+  cache: boolean;
+}
+
+/**
+ * Plan the members a workspace read covers, run each under its own toolchain
+ * (ws-021) at the revision asked for, and return what they printed. One
+ * fan-out, shared by `chant workspace graph` and `chant workspace search`
+ * (#4374): `--at` exports the tree once, a member of a package's kind runs in
+ * its reader project, and every member is stamped by the rule of ws-059. The
+ * exported tree and the reader projects are removed before this returns.
+ * Throws a {@link WorkspaceReadError} when the declaration can't be read.
+ */
+export async function readMembers(query: GraphQuery, options: MemberReadOptions): Promise<MemberReads> {
   let exported: string | undefined;
   let readers: PreparedReaders | undefined;
-  if (query.args?.live && query.at !== undefined) {
-    return { doc: { ...head, error: { code: "live-at-revision", message: LIVE_AT_REVISION, location: null } }, failed: true };
-  }
   try {
     const located = locateWorkspace(query.cwd, query.at);
     const declaration = readDeclaration(located.tree, "", { rootChant: true });
     // Kinds are read before planning: a package kind with a graph block runs (#2874).
-    const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
-    let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
+    const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
+    const kindProblems = problems.map((p) => p.message);
+    let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems });
     const args = (query.args ?? {}) as ParsedArgs;
     // Members whose last source read still stands are answered from the cache (#2876).
     // A composites read runs every member's component graph as well, so it reads everything.
-    const cache = query.noCache || query.components ? undefined : openGraphCache(located.rootOnDisk);
+    const cache = !options.cache || query.noCache || query.components ? undefined : openGraphCache(located.rootOnDisk);
     const split = cache ? splitCached(plan, args, cache, located.at) : undefined;
+    const stamps = split?.stamps ?? (options.cache ? new Map<string, string>() : planStamps(plan, located.at));
     const served = new Set(split?.hits.map((h) => h.id));
     if (located.at !== null && withoutUnits(plan, served).groups.length > 0) {
       exported = exportRevision(located, withoutUnits(plan, served).groups.flatMap((g) => g.units.map((u) => u.dir)));
-      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds });
+      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds, kindProblems });
     }
     // Only the members that run get a reader project; a served member needs none.
     const toRun = withoutUnits(plan, served);
     readers = prepareKindReaders(toRun, exported ?? located.rootOnDisk);
-    const [ran, components] = await Promise.all([
-      executePlan(toRun, args),
+    const [first, components] = await Promise.all([
+      executePlan(toRun, args, options.argvFor),
       query.components ? executePlan(plan, args, () => componentGraphArgv(args)) : Promise.resolve(undefined),
     ]);
+    const ran = args.capabilityView && !options.argvFor ? await withoutViewWhereRefused(toRun, args, first) : first;
     if (cache && split) storeReads(split, ran, cache);
     const results = [...(split?.hits ?? []), ...ran];
     if (query.inTree) await query.inTree(exported ?? located.rootOnDisk, declaration.members.filter((m) => !query.members?.length || query.members.includes(m.name)));
     for (const r of components ?? []) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
-    const { inputs, failed } = compose(plan, results, query.members, declaration.members, !!args.live);
+    return { located, declaration, kinds, plan, results, served, stamps, ...(components ? { components } : {}) };
+  } finally {
+    readers?.cleanup();
+    if (exported) rmSync(dirname(exported), { recursive: true, force: true });
+  }
+}
+
+/**
+ * A member's chant from before #4378 refuses `--capability-view` as a flag
+ * it doesn't know. Read those members again without it, so the graph still
+ * composes them; they carry `capabilityView: null`, which a capability search
+ * reports as `member-chant-too-old`.
+ */
+async function withoutViewWhereRefused(plan: MemberPlan, args: ParsedArgs, results: UnitResult[]): Promise<UnitResult[]> {
+  const refused = new Set(results.filter((r) => r.exitCode !== 0 && refusedCapabilityView(r.stderr)).map((r) => r.id));
+  if (refused.size === 0) return results;
+  const others = new Set(results.filter((r) => !refused.has(r.id)).map((r) => r.id));
+  const again = await executePlan(withoutUnits(plan, others), { ...args, capabilityView: false });
+  const byId = new Map(again.map((r) => [r.id, r]));
+  return results.map((r) => byId.get(r.id) ?? r);
+}
+
+/** Read and compose the graph, and build the document. Never throws a {@link WorkspaceReadError}. */
+export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
+  const head: Head = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: GRAPH_CONTRACT_VERSION, chant: readerVersion() };
+  if (query.args?.live && query.at !== undefined) {
+    return { doc: { ...head, error: { code: "live-at-revision", message: LIVE_AT_REVISION, location: null } }, failed: true };
+  }
+  try {
+    const { located, declaration, kinds, plan, results, served, stamps, components } = await readMembers(query, { cache: true });
+    const args = (query.args ?? {}) as ParsedArgs;
+    const { inputs, failed } = compose(plan, results, query.members, declaration.members, !!args.live, !!args.capabilityView);
     for (const { member } of inputs) {
       if (member.status !== "composed") continue;
       member.cached = served.has(member.name);
-      member.stamp = split?.stamps.get(member.name) ?? null;
+      member.stamp = stamps.get(member.name) ?? null;
     }
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     // A kind's link reader (#3932) reads the member's files in the tree read, as check does.
@@ -285,9 +360,6 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
-  } finally {
-    readers?.cleanup();
-    if (exported) rmSync(dirname(exported), { recursive: true, force: true });
   }
 }
 

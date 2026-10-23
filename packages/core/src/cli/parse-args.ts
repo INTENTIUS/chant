@@ -153,13 +153,36 @@ export function parseArgs(args: string[]): ParsedArgs {
   // whose own value legitimately contains `=` (`--param=tier=production`
   // splits to flag `--param`, value `tier=production`, not further split on
   // the second `=`).
-  args = splitJoinedFlags(args, BOOLEAN_FLAGS);
+  //
+  // Tokens after a bare `--` are positionals (#4369), so they are not split.
+  const end = args.indexOf("--");
+  args = end < 0 ? splitJoinedFlags(args, BOOLEAN_FLAGS) : [...splitJoinedFlags(args.slice(0, end), BOOLEAN_FLAGS), ...args.slice(end)];
+
+  // chant #4369 — every token after a bare `--` is a positional, whatever it
+  // starts with: `chant search -- "-kind:X"` is the spelling that always works.
+  let onlyPositionals = false;
+  const positional = (arg: string): void => {
+    if (result.command) (result.positionals ??= []).push(arg);
+    if (!result.command) {
+      result.command = arg;
+    } else if (result.path === ".") {
+      result.path = arg;
+    } else if (!result.extraPositional) {
+      result.extraPositional = arg;
+    } else {
+      result.extraPositional2 = arg;
+    }
+  };
 
   let i = 0;
   while (i < args.length) {
     const arg = args[i];
 
-    if (arg === "--help" || arg === "-h") {
+    if (onlyPositionals) {
+      positional(arg);
+    } else if (arg === "--") {
+      onlyPositionals = true;
+    } else if (arg === "--help" || arg === "-h") {
       result.help = true;
     } else if (arg === "--version" || arg === "-V") {
       result.version = true;
@@ -339,6 +362,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.explain = true;
     } else if (arg === "--show") {
       result.show = args[++i];
+    } else if (arg === "--count-by") {
+      // `chant search --count-by kind|module|attr:<name>` (#4360)
+      result.countBy = args[++i];
+      if (!result.countBy || result.countBy.startsWith("-")) throw new Error("--count-by needs a grouping: --count-by kind, --count-by module or --count-by attr:<name>");
     } else if (arg === "--up") {
       result.up = true;
     } else if (arg === "--down") {
@@ -508,6 +535,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.deep = true;
     } else if (arg === "--at") {
       result.at = args[++i];
+    } else if (arg === "--capability-view") {
+      // `chant graph --format ir --capability-view` and `chant workspace graph --capability-view` (#4378)
+      result.capabilityView = true;
+    } else if (arg === "--capabilities") {
+      // `chant search --capabilities` and `chant workspace search --capabilities` (#4375)
+      result.capabilities = true;
+    } else if (arg === "--snapshot") {
+      // `chant search` and `chant workspace search --snapshot <ref>` (#4374)
+      result.snapshot = args[++i];
+      if (!result.snapshot || result.snapshot.startsWith("-")) throw new Error("--snapshot needs a snapshot ref: --snapshot latest");
     } else if (arg === "--kind") {
       // `chant workspace records|graph|check --kind <kind file>` (#2546, #2549)
       result.kind = args[++i];
@@ -972,17 +1009,19 @@ export function parseArgs(args: string[]): ParsedArgs {
       // every command, not scoped per-command, so "the command's known
       // flags" isn't something this loop can name in isolation.
       throw new Error(`Unknown flag: ${arg}\nRun "chant --help" to see supported flags.`);
-    } else if (!arg.startsWith("-")) {
-      if (result.command) (result.positionals ??= []).push(arg);
-      if (!result.command) {
-        result.command = arg;
-      } else if (result.path === ".") {
-        result.path = arg;
-      } else if (!result.extraPositional) {
-        result.extraPositional = arg;
-      } else {
-        result.extraPositional2 = arg;
-      }
+    } else if (/^-[A-Za-z]/.test(arg)) {
+      // chant #4369 — an unrecognised short flag (`-x`) is refused like an
+      // unrecognised `--flag` (#1127). It used to be dropped without a word,
+      // the same silent misparse #1127 closed for long flags. A lexicon's own
+      // mounted command still gets its short flags: `main` tries the plugin
+      // commands before rethrowing a parse error.
+      throw new Error(`Unknown flag: ${arg}\nRun "chant --help" to see supported flags.`);
+    } else {
+      // Anything else is a positional, including a token that starts with `-`
+      // but is not flag-shaped (#4369): `->kind:Bucket` is a search query that
+      // opens with an outgoing edge term, and dropping it made `chant search`
+      // answer for "." instead. A bare `-` is a positional too.
+      positional(arg);
     }
 
     i++;

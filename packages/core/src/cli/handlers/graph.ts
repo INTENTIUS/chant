@@ -1,15 +1,15 @@
-import { dirname, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
-import { partitionByLexicon, computeStackGraph, build, mergeBuildRootEntities } from "../../build";
-import { applyLexiconGraphEdges, applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconGraphEdges, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
+import { partitionByLexicon, computeStackGraph, build } from "../../build";
+import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
-import { observeResources } from "../../lifecycle/observe";
+import { carryAnnotations, observeResources } from "../../lifecycle/observe";
 import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
@@ -22,6 +22,12 @@ import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layou
 import { lintCommand, type LintResult } from "../commands/lint";
 import { reportUninstalledDependencies } from "../dependencies";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
+// One copy for graph and search (#4365): the build-root join and the lexicon edges.
+import {
+  declaredBuildRootContributors as graphBuildRootContributors,
+  mergeDeclaredBuildRoots as mergeGraphBuildRoots,
+  withLexiconEdges,
+} from "./declared-graph";
 import { isNoLexiconDetected } from "../../detectLexicon";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
@@ -78,69 +84,6 @@ async function graphBuildParams(
   return resolution.provenance;
 }
 
-/**
- * The build-root contributors this invocation's project configures (#1626) —
- * the same closures `chant build` and the lifecycle handlers hand to
- * `BuildOptions.buildRoots`, bound here for the graph command's
- * discover-based paths, which never run `build()` and so never ran the hook:
- * a `k8s.kustomize.roots` estate graphed only its typed source while its
- * built (and deployed) output carried the rendered manifests too.
- *
- * `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
- * lexicon), so plugins are loaded here when `ctx.plugins` is empty, mirroring
- * `runGraphLive`. Rooted at the config's own directory, like
- * `cli/commands/build.ts` — a relative kustomize root resolves against where
- * it was declared, not against a sourceDir-scoped graph path. A project that
- * fails to load plugins degrades to no contributors with a warning rather
- * than failing modes that never needed plugins at all.
- */
-async function graphBuildRootContributors(
-  ctx: CommandContext,
-  projectPath: string,
-): Promise<Array<import("../../lexicon").BuildRootContributor>> {
-  const { config, configPath } = await loadChantConfigUpward(projectPath).catch(
-    () => ({ config: {} as ChantConfig, configPath: undefined }),
-  );
-  let plugins = ctx.plugins;
-  if (plugins.length === 0) {
-    try {
-      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
-    } catch (err) {
-      console.error(formatWarning({
-        message: `could not load the project's lexicons — build-root entities (kustomize roots) will be missing from the graph (${err instanceof Error ? err.message : String(err)})`,
-      }));
-      return [];
-    }
-  }
-  return collectBuildRootContributors(
-    plugins,
-    config as unknown as Record<string, unknown>,
-    configPath ? dirname(configPath) : projectPath,
-  );
-}
-
-/**
- * Merge build-root contributions into a discovered entity set — the exact
- * merge `build()` performs (one implementation: `mergeBuildRootEntities`,
- * ../../build.ts), surfaced in the graph command's error style. Returns false
- * when a contributor failed or a name collided; the caller stops, matching
- * how the discover-based paths treat discovery errors — a graph missing the
- * entities the build would refuse over must not be emitted as if complete.
- */
-async function mergeGraphBuildRoots(
-  entities: Map<string, import("../../declarable").Declarable>,
-  contributors: Array<import("../../lexicon").BuildRootContributor>,
-): Promise<boolean> {
-  if (contributors.length === 0) return true;
-  const merged = await mergeBuildRootEntities(entities, contributors);
-  for (const w of merged.warnings) console.error(formatWarning({ message: w }));
-  if (merged.errors.length > 0) {
-    for (const message of merged.errors) console.error(formatError({ message }));
-    return false;
-  }
-  return true;
-}
-
 /** #1675 — join git-root ops into a discovered entity map; op-discovery
  * errors are warnings here (the lint gate never saw those files). */
 async function mergeGraphOps(
@@ -184,6 +127,15 @@ async function runGraphCommand(ctx: CommandContext): Promise<number> {
   if (ctx.args.projection && !(ctx.args.components && ctx.args.format === "ir")) {
     console.error(formatError({
       message: "--projection needs --components --format ir — the CI/pipeline projection extends the component-graph IR, the only mode that carries it.",
+    }));
+    return 1;
+  }
+  // The capability view (#4378) is built from the declared entity graph's IR,
+  // the read `chant workspace graph --capability-view` asks each member for.
+  if (ctx.args.capabilityView && (ctx.args.format !== "ir" || ctx.args.components || ctx.args.live || ctx.args.at)) {
+    console.error(formatError({
+      message: "--capability-view adds the capability view to the declared graph's IR, so it needs --format ir and takes no --components, --live or --at",
+      hint: "chant graph --format ir --detail 3 --capability-view",
     }));
     return 1;
   }
@@ -325,6 +277,8 @@ async function runGraphLive(
 
     let ir: GraphIR;
     let observations: LiveObservation[];
+    // Facts about absent entities (#4372), carried onto the overlay's nodes.
+    let annotations: Record<string, Record<string, unknown>> | undefined;
     // A replay is a graph of what was recorded, so it must not reach the provider
     // at all — not for observation and not for enrichment. Anything that quietly
     // called out would make `--at` a live read with an older label on it.
@@ -353,6 +307,7 @@ async function runGraphLive(
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       observations = observeResult.observations;
+      annotations = observeResult.annotations;
       const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
       // Unobserved entities (#1089) arrive as warnings — a node missing from the
@@ -465,6 +420,10 @@ async function runGraphLive(
             : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
       }
     }
+    // What a read learned about an entity it found absent (#4372), on the
+    // declared node beside the overlay's `_status`. A planned create keeps its
+    // pending paint and carries the plan's attributes.
+    ir = { ...ir, nodes: carryAnnotations(ir.nodes, annotations) };
   }
 
   // Behaviour overlay (#2377, epic #2355): carry a prediction on the graph.
@@ -572,6 +531,82 @@ function refuseLintGate(lint: LintResult, projectPath: string): void {
       message: "Refusing to emit graph: source has lint errors. Run `chant lint` and fix them first.",
     }),
   );
+}
+
+/** One lint finding as `meta.lint` carries it (INTENTIUS/behold#919). */
+export interface GraphLintFinding {
+  ruleId: string;
+  severity: string;
+  message: string;
+  /** Relative to the project when inside it, else as lint reported it. */
+  file: string;
+  line: number;
+  column: number;
+  /** The entity a post-synth check named, which is the graph node's id. Absent for a source-file rule. */
+  entity?: string;
+}
+
+/**
+ * What a `graph.lint: "report"` project's entity graph carries on `meta.lint`:
+ * the counts `chant lint` would print and every finding behind them, warnings
+ * included. Present on every graph such a project emits, findings or none, so
+ * a reader can tell "linted, clean" from "not looked" (no key).
+ */
+export interface GraphLintReport {
+  errors: number;
+  warnings: number;
+  findings: GraphLintFinding[];
+}
+
+/** The project's `graph.lint`: `"report"` only when it says so (#919). */
+async function graphLintMode(projectPath: string): Promise<"gate" | "report"> {
+  const { config } = await loadChantConfigUpward(projectPath).catch(() => ({ config: {} as ChantConfig }));
+  return config.graph?.lint === "report" ? "report" : "gate";
+}
+
+export function graphLintReport(lint: LintResult, projectPath: string): GraphLintReport {
+  const rel = (file: string) => {
+    if (!isAbsolute(file)) return file;
+    const r = relative(projectPath, file);
+    return r.startsWith("..") ? file : r;
+  };
+  const findings = (lint.diagnostics ?? []).map((d) => ({
+    ruleId: d.ruleId,
+    severity: d.severity,
+    message: d.message,
+    file: rel(d.file),
+    line: d.line,
+    column: d.column,
+    ...(d.entity ? { entity: d.entity } : {}),
+  }));
+  return {
+    errors: findings.filter((f) => f.severity === "error").length,
+    warnings: findings.filter((f) => f.severity === "warning").length,
+    findings,
+  };
+}
+
+/**
+ * The lint gate for the entity graph. Returns false when the graph must not be
+ * emitted, having printed why. A `graph.lint: "report"` project passes with
+ * lint errors and says so on stderr, unless an error is an uninstalled
+ * dependency: then there is no source to read, and it refuses as the gate does.
+ */
+function passLintGate(lint: LintResult, projectPath: string, mode: "gate" | "report"): boolean {
+  if (lint.success) return true;
+  if (mode === "gate") {
+    refuseLintGate(lint, projectPath);
+    return false;
+  }
+  const errors = (lint.diagnostics ?? []).filter((d) => d.severity === "error").map((d) => d.message);
+  if (reportUninstalledDependencies(errors, projectPath)) return false;
+  const n = errors.length;
+  console.error(
+    formatWarning({
+      message: `Emitting the graph with ${n} lint error${n === 1 ? "" : "s"}: graph.lint is "report", so every finding is on the IR's meta.lint. Run \`chant lint\` to see them.`,
+    }),
+  );
+  return true;
 }
 
 /**
@@ -718,7 +753,9 @@ async function buildPipelineProjection(
  * `--node-sizes` so spacing fits real node footprints, and defaults to the dagre
  * engine (no native dependency); `--layout-engine graphviz` opts into `dot`.
  * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
- * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
+ * does not pass lint, unless the project's config sets `graph.lint: "report"`
+ * (#919): then the graph is emitted and the findings ride on `meta.lint`.
+ * Non-zero on discovery errors or a layout-engine failure.
  */
 /**
  * Add what the lexicons' `graphMeta` hooks report to `ir.meta` (#2559). A
@@ -739,26 +776,6 @@ function withGraphMeta(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<stri
     }
   }
   return Object.keys(added).length === 0 ? ir : { ...ir, meta: { ...(ir.meta ?? {}), ...added } };
-}
-
-/**
- * Add the edges the lexicons' `graphEdges` hooks resolve (#3910): CI
- * dependencies written as strings (`needs`, `uses:`, `trigger:`, `include:`,
- * `extends`), which the AttrRef walk in `buildGraphIr` cannot see. A hook that
- * throws costs its own edges and a warning, not the graph.
- */
-function withLexiconEdges(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
-  const reports: LexiconGraphEdges[] = [];
-  for (const p of plugins) {
-    if (!p.graphEdges) continue;
-    try {
-      const report = p.graphEdges(entities);
-      if (report) reports.push(report);
-    } catch (err) {
-      console.error(formatWarning({ message: `the ${p.name} lexicon's graphEdges failed (${err instanceof Error ? err.message : String(err)}); its edges are left out` }));
-    }
-  }
-  return reports.length === 0 ? ir : applyLexiconGraphEdges(ir, reports);
 }
 
 /**
@@ -876,17 +893,16 @@ async function runGraphView(
   const buildParams = await graphBuildParams(ctx, projectPath);
   if (!buildParams) return 1;
 
-  // Gate: only emit for lint-clean source.
+  // Gate: only emit for lint-clean source, unless the project reads source it
+  // did not author and asks for the findings instead (`graph.lint`, #919).
   const lint = await lintCommand({
     path: ctx.args.path,
     format: "stylish",
     sandbox: ctx.args.sandbox,
     buildParams,
   });
-  if (!lint.success) {
-    refuseLintGate(lint, projectPath);
-    return 1;
-  }
+  const lintMode = await graphLintMode(projectPath);
+  if (!passLintGate(lint, projectPath, lintMode)) return 1;
 
   const result = await discover(projectPath, { buildParams });
   if (result.errors.length > 0) {
@@ -913,10 +929,10 @@ async function runGraphView(
   // The declared half of the epic's delta (#2355): this path predicts the
   // file, the live path predicts the account. Same helper, so the two shapes
   // reach the engine by one route and stay comparable.
+  const plugins = ctx.plugins.length > 0
+    ? ctx.plugins
+    : await loadPlugins(await projectLexiconsOrNone(projectPath));
   {
-    const plugins = ctx.plugins.length > 0
-      ? ctx.plugins
-      : await loadPlugins(await projectLexiconsOrNone(projectPath));
     ir = withLexiconEdges(ir, plugins as LexiconPlugin[], result.entities);
     ir = withLexiconOutputs(ir, plugins as LexiconPlugin[], result.entities);
     const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
@@ -950,6 +966,17 @@ async function runGraphView(
       const notice = detailInertNotice(base, ir);
       if (notice) console.error(formatWarning({ message: notice }));
     }
+  }
+  // Last, so no lens or detail pass can drop it: the findings are about the
+  // whole source read, not about the nodes this view kept.
+  if (lintMode === "report") ir = { ...ir, meta: { ...ir.meta, lint: graphLintReport(lint, projectPath) } };
+  // The view capability rules read (#4378), mapped by this project's own
+  // lexicons, so a workspace's rules read each member as its chant maps it.
+  if (ctx.args.capabilityView) {
+    const { buildView, serializeView } = await import("../../capabilities/view");
+    const { resolvePacks } = await import("../../capabilities/catalog");
+    const packs = (plugins as LexiconPlugin[]).map((p) => p.capabilityPack).filter((p): p is NonNullable<typeof p> => !!p);
+    ir = { ...ir, capabilityView: serializeView(buildView(ir, resolvePacks(packs))) };
   }
   return emitIr(ir, ctx, format);
 }

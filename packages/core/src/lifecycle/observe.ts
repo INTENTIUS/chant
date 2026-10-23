@@ -22,6 +22,7 @@ import {
   unobservedAll,
   formatUnobserved,
   type NormalizedObservation,
+  type RootRead,
 } from "../observation";
 import { zeroResourcesWarning } from "../live-endpoint";
 import { unqualifiedKey } from "./identity";
@@ -39,6 +40,40 @@ export interface ObserveResult {
    * answer, not ahead of it.
    */
   notes: string[];
+  /**
+   * Facts about declared entities beside their verdict (#4372), keyed like
+   * the observations' resources (stack-qualified where those are). A planned
+   * create is the case: absent, with the plan's attributes. Never part of
+   * `observations`, so nothing that classifies or paints presence sees it;
+   * {@link carryAnnotations} puts it on the declared nodes of an overlay.
+   */
+  annotations?: Record<string, Record<string, unknown>>;
+  /**
+   * Which read answered each declared entity (#2267), keyed like the
+   * observations' resources: `"state"`, `"live"`, `"plan"` or `"live+plan"`
+   * from the terraform lexicon. Present only for lexicons that report it.
+   */
+  sources?: Record<string, string>;
+  /** Which read answered each root, and why it fell back (structured, from the lexicon). */
+  rootReads?: Record<string, RootRead>;
+}
+
+/**
+ * Put each entity's annotations (#4372) on its node, by id. Only attributes
+ * are touched: `_status`, `physicalId` and `ownership` stay what the overlay
+ * decided, so a planned create is still painted pending and still absent to
+ * every consumer that asks. An annotation wins a collision with a declared
+ * attribute, the same precedence an observed attribute has in the overlay.
+ */
+export function carryAnnotations<N extends { id: string; attrs: Record<string, unknown> }>(
+  nodes: N[],
+  annotations: Record<string, Record<string, unknown>> | undefined,
+): N[] {
+  if (!annotations || Object.keys(annotations).length === 0) return nodes;
+  return nodes.map((n) => {
+    const a = annotations[n.id];
+    return a && Object.keys(a).length > 0 ? { ...n, attrs: { ...n.attrs, ...a } } : n;
+  });
 }
 
 /**
@@ -57,6 +92,7 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     queried: q(obs.queried),
     // Which read answered (#2267) is per entity, so it re-keys with them.
     sources: q(obs.sources),
+    ...(obs.annotations ? { annotations: q(obs.annotations) } : {}),
     notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
@@ -131,6 +167,9 @@ export async function observeResources(
   const warnings: string[] = [];
   const errors: string[] = [];
   const notes: string[] = [];
+  const annotations: Record<string, Record<string, unknown>> = {};
+  const sources: Record<string, string> = {};
+  const rootReads: Record<string, RootRead> = {};
 
   for (const plugin of plugins) {
     if (!plugin.describeResources) continue;
@@ -230,6 +269,9 @@ export async function observeResources(
         const line = `[${plugin.name}] ${note}`;
         if (!notes.includes(line)) notes.push(line);
       }
+      Object.assign(annotations, observed.annotations ?? {});
+      Object.assign(sources, observed.sources);
+      Object.assign(rootReads, observed.rootReads ?? {});
       // What the estate depends on but does not declare (#1273). Read after the
       // managed resources, because the declared observation is the closure's
       // roots — there is nothing to reference out from until it exists.
@@ -299,7 +341,7 @@ export async function observeResources(
     }
   }
 
-  return { observations, warnings, errors, notes };
+  return { observations, warnings, errors, notes, annotations, ...(Object.keys(sources).length > 0 ? { sources } : {}), ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}) };
 }
 
 /**

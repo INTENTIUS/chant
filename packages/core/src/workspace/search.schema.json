@@ -1,0 +1,822 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+  "title": "chant search output",
+  "description": "What `chant search --json` and `chant workspace search --json` print, version 1 of the read contract (#4374, ws-017). Plain `chant search` answers over one project. `chant workspace search` runs that same search in every chant member, under the member's own chant (ws-021), and composes the answers with the `<member>/<id>` ids `chant workspace graph` gives the same nodes; each member is searched alone, so no path crosses from one member into another, except for a query that names a capability (`cap:`, `->[cap=...]`, #4375): its rules run once, under the workspace's chant, over the graph `chant workspace graph` composes, and a path may cross wherever that graph has an edge. A result lists `matches`; with `--count-by` it lists `groups` and `total` instead; a refusal lists `error` and exits 1. Readers ignore fields they do not know; a field is only ever added within a version. The error and reason codes are closed lists from the one list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer; this document is written by chant 0.124.46 and newer, and an older `search --json` has no `contract` field.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/counts"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The rows that matched. Exit 0, or 1 when a live read failed, `--fail-on-drift` found drift, or in the workspace form a member failed.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "query",
+        "source",
+        "at",
+        "matches"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The version of the chant that wrote the document."
+        },
+        "query": {
+          "type": "string",
+          "description": "The query as given, trimmed."
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The full commit id of the source searched (`workspace search --at <rev>`), or null for the working tree. Plain `chant search` reads the working tree, so it is always null there. This is the git-revision axis; the snapshot axis is `source.snapshot`."
+        },
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/member"
+          },
+          "description": "`chant workspace search` only: every member the search covers, in declaration order, with its own answer or the reason it has none."
+        },
+        "provenance": {
+          "type": "string",
+          "description": "Plain `chant search`: the provenance line the text prints after the rows, without its leading dash. In the workspace form each member carries its own."
+        },
+        "plannedCreates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Plain `chant search`, `--live` or `--snapshot` only: present when every match is a planned create (an absent entity carrying plan attributes, #4372), with how many. The provenance line says \"N planned creates, none bound yet\" instead of \"returned no bound resources\". Absent for a real empty read, a failed read, or any answer with a match that is not a planned create."
+        },
+        "liveFailures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Plain `chant search`: the lexicons whose live read failed, with why. Exit 1. In the workspace form each member carries its own."
+        },
+        "drift": {
+          "$ref": "#/$defs/drift"
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/match"
+          },
+          "description": "The matched nodes. In the workspace form, sorted by id."
+        },
+        "explain": {
+          "$ref": "#/$defs/explain"
+        },
+        "countBy": false,
+        "groups": false,
+        "error": false,
+        "capabilities": {
+          "type": "array",
+          "description": "Present when the query names a capability (#4375): each one, the observation its facts were derived from, and what it does not evaluate.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "source",
+              "notEvaluated"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "declared",
+                  "live",
+                  "snapshot"
+                ]
+              },
+              "notEvaluated": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "counts": {
+      "description": "`--count-by` (#4360): the matched set grouped, in place of the rows. In the workspace form, `groups` adds the members' groups up by name, except that a `module` group is prefixed with its member (`<member>/<module>`), since a module in two members is two modules.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "query",
+        "source",
+        "at",
+        "countBy",
+        "groups",
+        "total"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The version of the chant that wrote the document."
+        },
+        "query": {
+          "type": "string",
+          "description": "The query as given, trimmed."
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The full commit id of the source searched (`workspace search --at <rev>`), or null for the working tree. Plain `chant search` reads the working tree, so it is always null there. This is the git-revision axis; the snapshot axis is `source.snapshot`."
+        },
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/member"
+          },
+          "description": "`chant workspace search` only: every member the search covers, in declaration order, with its own answer or the reason it has none."
+        },
+        "provenance": {
+          "type": "string",
+          "description": "Plain `chant search`: the provenance line the text prints after the rows, without its leading dash. In the workspace form each member carries its own."
+        },
+        "liveFailures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Plain `chant search`: the lexicons whose live read failed, with why. Exit 1. In the workspace form each member carries its own."
+        },
+        "drift": {
+          "$ref": "#/$defs/drift"
+        },
+        "countBy": {
+          "type": "string",
+          "description": "`kind`, `module` or `attr:<name>`."
+        },
+        "groups": {
+          "$ref": "#/$defs/groups"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number of matches, the sum of the groups' counts."
+        },
+        "matches": false,
+        "error": false
+      }
+    },
+    "failure": {
+      "description": "The search was refused before any answer: the query or flags, the project's environment, snapshot or build, or in the workspace form the declaration or `--at`. Exit 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "query",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The version of the chant that wrote the document."
+        },
+        "query": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "live-at-revision",
+                "snapshot-at-revision",
+                "query-invalid",
+                "usage-invalid",
+                "environment-unknown",
+                "snapshot-unavailable",
+                "build-failed"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "hint": {
+              "type": "string",
+              "description": "What to do instead, as stderr prints it after the error. `revision-unknown` from `workspace search --at` names `--snapshot` here."
+            }
+          }
+        },
+        "matches": false,
+        "groups": false,
+        "members": false
+      }
+    },
+    "workspace": {
+      "description": "The workspace searched, or for plain `chant search` the one the project belongs to, when it belongs to one (ws-016).",
+      "type": "object",
+      "required": [
+        "name",
+        "root"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The declaration's name."
+        },
+        "root": {
+          "type": "string",
+          "description": "The workspace root relative to the git root, \".\" for the git root itself."
+        }
+      }
+    },
+    "source": {
+      "description": "Which observation answered. `declared` is the source graph; `live` reads the account now; `snapshot` replays a recorded lifecycle snapshot. In the workspace form the top-level source names the axis asked for, and each member's source names the snapshot commit it replayed.",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "declared",
+            "live",
+            "snapshot"
+          ]
+        },
+        "env": {
+          "type": "string",
+          "description": "The environment, for `live` and `snapshot`."
+        },
+        "snapshot": {
+          "type": "string",
+          "description": "The snapshot ref asked for with `--snapshot` (or plain search's `--at`), such as `latest`."
+        },
+        "commit": {
+          "type": "string",
+          "description": "The snapshot commit replayed."
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "When that snapshot was taken."
+        },
+        "depth": {
+          "enum": [
+            "plan",
+            "live+plan",
+            "mixed"
+          ],
+          "description": "`live` only, present when the plan read (CHANT_TERRAFORM_OBSERVE=plan) answered at least one bound match (#4384): `plan` or `live+plan` when every read match came that way, `mixed` when the matches were read at different depths (see `reads`). Absent for a plain live or state answer."
+        },
+        "reads": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "live",
+              "state",
+              "plan",
+              "live+plan"
+            ]
+          },
+          "description": "`live` only, with `depth` or `planFellBackTo`: the distinct reads that answered the bound matches, sorted. These are the lexicon's per-entity `sources` values (#2267)."
+        },
+        "planFellBackTo": {
+          "enum": [
+            "state",
+            "live",
+            "declared"
+          ],
+          "description": "`live` only: the plan read was asked for and failed, and this read answered instead. `declared` means no read answered and the rows are unobserved."
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "required": [
+        "id",
+        "displayId",
+        "paths"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The graph's full id: stack-qualified (`stack::name`) where the graph qualifies it, and in the workspace form `<member>/<id>`, as `chant workspace graph` prints the same node."
+        },
+        "member": {
+          "type": "string",
+          "description": "Workspace form: the member the row came from."
+        },
+        "displayId": {
+          "type": "string",
+          "description": "The bare name the text row prints."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The node's IR kind."
+        },
+        "physicalId": {
+          "type": "string"
+        },
+        "unobserved": {
+          "type": "string",
+          "description": "Why a live or replayed read has no observation of the node, such as `read-failed`."
+        },
+        "show": {
+          "type": "object",
+          "description": "The `--show` attributes the node carries, under the names the graph spells them with."
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          },
+          "description": "One per positive edge term and cap: term the node matched through. Empty when the query has none."
+        }
+      }
+    },
+    "path": {
+      "type": "object",
+      "required": [
+        "term",
+        "dir",
+        "hops"
+      ],
+      "properties": {
+        "term": {
+          "type": "string",
+          "description": "The edge term, or the cap: term, as the grammar spells it."
+        },
+        "dir": {
+          "enum": [
+            "out",
+            "in"
+          ]
+        },
+        "hops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "The edge's consumer end, a full id (`<member>/<id>` in the workspace form)."
+              },
+              "fromAttr": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string",
+                "description": "The edge's producer end."
+              },
+              "toAttr": {
+                "type": "string"
+              },
+              "edge": {
+                "type": "string",
+                "description": "On a capability's path (#4375): the name the capability rules give the edge, such as statement or resource. Its from or to may be a node inside a resource, `<id>#<attr>[n]...`."
+              }
+            }
+          },
+          "description": "In walk order from the match. Each hop keeps the edge's own direction."
+        },
+        "because": {
+          "type": "array",
+          "description": "On a cap: term (#4375): each set the match relied on, with the path that proved it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "capability",
+              "id",
+              "hops"
+            ],
+            "properties": {
+              "capability": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "hops": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "explain": {
+      "description": "`--explain`: the universe the query ran over and why near misses were left out.",
+      "type": "object",
+      "required": [
+        "universe",
+        "evidence",
+        "nearMisses",
+        "moreExcluded"
+      ],
+      "properties": {
+        "universe": {
+          "type": "object",
+          "required": [
+            "matched",
+            "of",
+            "kinds"
+          ],
+          "properties": {
+            "matched": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "of": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "attr",
+              "via"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "attr": {
+                "type": "string"
+              },
+              "via": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "nearMisses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "fails": {
+                "type": "string",
+                "description": "The first term the node fails."
+              }
+            }
+          }
+        },
+        "moreExcluded": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "drift": {
+      "description": "`--check-live` or `--check-snapshot`: the matched rows checked against the observation the answer did not use. `unavailable` alone when there was nothing to check against.",
+      "type": "object",
+      "required": [
+        "against"
+      ],
+      "properties": {
+        "against": {
+          "enum": [
+            "live",
+            "snapshot"
+          ]
+        },
+        "checked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "orphan": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "disappeared": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "drifted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "path"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "old": {},
+              "new": {}
+            }
+          }
+        },
+        "newlyObserved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runtimeChildren": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "owner"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "unobserved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "depth": {
+          "type": "string"
+        },
+        "unavailable": {
+          "type": "string"
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "description": "Each group and its count, highest count first, then by name. A node with no value for the grouped dimension counts under `(none)`.",
+      "items": {
+        "type": "object",
+        "required": [
+          "group",
+          "count"
+        ],
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ids of the matches in the group, in match order (#4382); `count` is its length. In the workspace form they are `<member>/<id>`, and a merged group lists them only when every member that counted into it listed its own (an older member chant lists none). Written by chant 0.124.46 and newer."
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "name",
+        "dir",
+        "kind",
+        "status",
+        "reason",
+        "chant",
+        "stamp"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Relative to the workspace root, with / separators; \".\" is the root member."
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "searched",
+            "skipped",
+            "failed"
+          ],
+          "description": "`searched` when the member answered; `skipped` when the workspace commands don't run its kind; `failed` when it has no answer. A failed member is never reported as zero matches."
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "kind-not-run",
+                    "dir-missing",
+                    "unknown-kind",
+                    "kind-probe-failed",
+                    "command-failed",
+                    "output-unreadable",
+                    "member-chant-too-old",
+                    "query-invalid",
+                    "usage-invalid",
+                    "environment-unknown",
+                    "snapshot-unavailable",
+                    "build-failed"
+                  ],
+                  "description": "A member that ran and refused carries its own search refusal code. `member-chant-too-old` is a member whose chant prints no search document of the contract, or, for a query with a capability term, no capability view (#4378)."
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "chant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The chant version the member's toolchain reported, or null when a chant older than member-run read it, or the member did not run."
+        },
+        "stamp": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member's stamp by the rule of ws-059 (the reference's Member stamps): sha256 over its files and install state, or over the commit id with --at. null when none could be taken. Search is never served from the graph cache."
+        },
+        "alone": {
+          "const": true,
+          "description": "On a searched member: its terms and paths saw only its own graph. Paths that cross members are not walked."
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The member's matched ids, `<member>/<id>`, each a row of the top-level `matches`."
+        },
+        "groups": {
+          "$ref": "#/$defs/groups"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provenance": {
+          "type": "string"
+        },
+        "plannedCreates": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "As in the result document: present when every counted match is a planned create."
+        },
+        "liveFailures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "explain": {
+          "$ref": "#/$defs/explain"
+        },
+        "drift": {
+          "$ref": "#/$defs/drift"
+        }
+      }
+    }
+  }
+}

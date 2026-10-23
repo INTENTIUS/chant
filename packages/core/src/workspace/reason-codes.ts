@@ -51,6 +51,18 @@ export const REASONS = {
   "command-failed": "The member's own command exited with a failure, or the lexicon that reads the member through its kind's graph block isn't installed where the workspace resolves its pin.",
   "output-unreadable": "The member's command printed something that isn't the document asked for.",
   "ir-version-unsupported": "The member's IR has a version this chant can't read.",
+  // search and workspace search (#4374): why no answer was printed, and why a member has none.
+  "query-invalid": "search was given no query, a term its grammar can't parse, or a --count-by that is not a grouping.",
+  "usage-invalid": "search was given a flag that needs another one it lacks, or two that don't go together, such as --check-live without --snapshot.",
+  "environment-unknown": "--env names an environment the project's chant config does not declare.",
+  "snapshot-unavailable": "--snapshot names a snapshot chant can't replay: none is recorded for the environment, or the ref is one replay does not take.",
+  "build-failed": "The project's build, or one of its build roots, failed, so the graph search would answer over is incomplete.",
+  "snapshot-at-revision": "workspace search was given --snapshot and --at: a snapshot replays the estate as recorded over the source in the working tree, not at a revision.",
+  "member-chant-too-old": "The member's chant predates the document asked for: it has no such command, or prints it without the read contract.",
+  // the capabilities catalog (#4375): why a lexicon can't supply a capability.
+  "lexicon-has-no-mapping": "The lexicon ships no capability mapping, so no capability rule can read its resources.",
+  "capability-not-derivable": "The lexicon's capability mapping labels none of the kinds the capability's rule needs.",
+  "lexicon-not-loaded": "The lexicon isn't installed where the chant that wrote the catalog runs, so its mapping wasn't read.",
   // A ledger status can't fully read.
   "ledger-unreadable": "Reading the ledger failed, so nothing from it is listed.",
   "ledger-malformed": "Some lines of the ledger aren't release records; the rest are listed.",

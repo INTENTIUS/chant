@@ -2,6 +2,7 @@ import { compositeCatalog } from "./composites/catalog";
 import { createRequire } from "module";
 import { awsBehaviourKinds } from "./behaviour-kinds";
 import { detectTemplate } from "./detect";
+import { awsCapabilityPack } from "./capabilities/pack";
 import type { LexiconPlugin, IntrinsicDef, ObservationResult, DeepObservationResult, DependencyObservation, DescribeIdentityOptions, DescribeIdentityResult, DisruptionQuery, DisruptionVerdict, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(moduleSourceUrl(import.meta.url));
 import type { LintRule } from "@intentius/chant/lint/rule";
@@ -79,6 +80,7 @@ export const awsPlugin: LexiconPlugin = {
   auditCatalog: () => awsAuditCatalog,
   // Live edge reconstruction for `chant graph --live` (#778).
   referenceCatalog: awsReferenceCatalog,
+  capabilityPack: awsCapabilityPack,
 
   lintRules(): LintRule[] {
     const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");

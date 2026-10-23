@@ -40,7 +40,8 @@
  */
 
 import { exec } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { resolve, dirname, join, relative, sep } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
@@ -72,7 +73,7 @@ export const DEFAULT_PLAN_FILE = "chant.tfplan";
 /** Binary used when the `terraform` namespace records no preference. */
 export const DEFAULT_TERRAFORM_BINARY = "terraform";
 
-/** Where {@link choudoufuLivePlan} writes GitHub issue #788's JSON document, relative to the root directory. */
+/** Where the {@link choudoufuLivePlan} Op activity writes GitHub issue #788's JSON document, relative to the root directory. */
 export const DEFAULT_LIVE_PLAN_DOCUMENT_FILE = "chant.live-plan.json";
 
 /**
@@ -1484,6 +1485,190 @@ export async function terraformShow(
   };
 }
 
+// ── The plan read (#4358) ───────────────────────────────────────────────────
+
+/** Prefix of the scratch directory a plan read writes its plan file into, under the OS temp directory. */
+export const PLAN_READ_DIR_PREFIX = "chant-terraform-plan-";
+
+/** The plan file's name inside that scratch directory. */
+export const PLAN_READ_FILE = "plan.tfplan";
+
+/**
+ * `terraform plan` for an observation read (#4358): `-input=false -lock=false
+ * -out=<file>`, plus the root's own `-var-file`s.
+ *
+ * `-lock=false` is the point. A read must never take the backend's state lock,
+ * or a teammate's apply that starts while chant is reading would fail on
+ * "Error acquiring the state lock". `-detailed-exitcode` is not passed: the
+ * read wants the document, not the boolean, so exit 0 is the only success.
+ * The `-out` path is always outside the root (see {@link terraformPlanRead}).
+ */
+export function terraformPlanReadCommand(opts: { binary: string; planFile: string; varFiles?: string[] }): string {
+  const parts = [opts.binary, "plan", "-input=false", "-lock=false"];
+  for (const varFile of opts.varFiles ?? []) parts.push(`-var-file=${quoteArg(varFile)}`);
+  parts.push(`-out=${quoteArg(opts.planFile)}`);
+  return parts.join(" ");
+}
+
+/**
+ * The one line a person runs to initialise a root chant refuses to plan,
+ * with the root's `backendConfig` carried, so it can be pasted as printed.
+ */
+export function terraformInitLine(opts: { binary: string; dir: string; backendConfig?: Record<string, string> }): string {
+  const init = terraformInitCommand({
+    binary: opts.binary,
+    ...(opts.backendConfig ? { backendConfig: opts.backendConfig } : {}),
+  });
+  return init.replace(`${opts.binary} init`, `${opts.binary} -chdir=${quoteArg(opts.dir)} init`);
+}
+
+/**
+ * Why a plan read refused or failed, in the three classes the plan depth
+ * falls back by (#4358):
+ *
+ *   - `"not-initialised"`: the root was never initialised, or its providers,
+ *     modules or backend changed since. chant never runs `init` on a read,
+ *     because `init` writes into the root, so this is refused with the line
+ *     to run.
+ *   - `"backend"`: the state could not be read at all. A state read needs the
+ *     same backend, so there is nothing to fall back to but declared only.
+ *   - `"plan"`: anything else, missing provider credentials first among them.
+ *     The backend answered, so the state read can still answer.
+ */
+export type TerraformPlanReadFailureKind = "not-initialised" | "backend" | "plan";
+
+/** A plan read that did not produce a document. `kind` decides the fallback. */
+export class TerraformPlanReadError extends Error {
+  readonly kind: TerraformPlanReadFailureKind;
+  readonly dir: string;
+  /** Present on `"not-initialised"`: the line to run. */
+  readonly initLine?: string;
+
+  constructor(kind: TerraformPlanReadFailureKind, message: string, dir: string, initLine?: string) {
+    super(message);
+    this.name = "TerraformPlanReadError";
+    this.kind = kind;
+    this.dir = dir;
+    if (initLine !== undefined) this.initLine = initLine;
+  }
+}
+
+/**
+ * Sort a failed plan's own output into a {@link TerraformPlanReadFailureKind}.
+ * Matched on terraform's and OpenTofu's own error summaries. Order matters:
+ * an S3 backend without credentials says both "backend" and "credentials",
+ * and it is the backend that failed, so the backend patterns are read first.
+ */
+export function classifyPlanReadFailure(output: string): TerraformPlanReadFailureKind {
+  if (
+    /Backend initialization required|Inconsistent dependency lock file|Required plugins are not installed|Module not installed|Missing required provider|please run "(terraform|tofu|choudoufu) init"|Run "(terraform|tofu|choudoufu) init"|Backend configuration changed/i.test(
+      output,
+    )
+  ) {
+    return "not-initialised";
+  }
+  if (
+    /error loading state|Failed to load state|Error refreshing state|Failed to get existing workspaces|error configuring (the )?\S+ backend|Error: Failed to (read|retrieve) state|Error retrieving state|Error acquiring the state lock|state data in S3|NoSuchBucket|failed to (get|read) (remote )?state|Unable to access object|\bbackend\b.*(credential|denied|unauthori[sz]ed|forbidden)/i.test(
+      output,
+    )
+  ) {
+    return "backend";
+  }
+  return "plan";
+}
+
+/** What {@link terraformPlanRead} resolved. */
+export interface TerraformPlanReadResult {
+  /** `terraform show -json <planfile>`, parsed. */
+  json: unknown;
+  /** Absolute path of the root module directory the plan ran in. */
+  dir: string;
+  /**
+   * The scratch directory the plan file was written to, under the OS temp
+   * directory. Already removed when this result is returned; named so a test
+   * can prove both halves of that.
+   */
+  planDir: string;
+  /** The plan command exactly as run, for a test or a note to quote. */
+  command: string;
+}
+
+/**
+ * Whether a root has been initialised: `.terraform` (or `TF_DATA_DIR`, when
+ * the environment points elsewhere) exists. A root whose providers or modules
+ * have since changed passes this check and is caught by
+ * {@link classifyPlanReadFailure} on the plan's own error instead.
+ */
+export function rootIsInitialised(dir: string, env: Record<string, string | undefined> = process.env): boolean {
+  const dataDir = env.TF_DATA_DIR ? resolve(dir, env.TF_DATA_DIR) : join(dir, ".terraform");
+  return existsSync(dataDir);
+}
+
+/**
+ * Read a saved plan for one root without writing anything in it (#4358):
+ * `plan -input=false -lock=false -out=<tmp>/plan.tfplan` in the root, then
+ * `show -json <tmp>/plan.tfplan`, then remove `<tmp>`.
+ *
+ * Three rules, each a lesson behold already learned reading choudoufu
+ * members (behold `src/choudoufu-plan.ts`):
+ *
+ *   - No lock. `-lock=false` on the plan, always ({@link terraformPlanReadCommand}).
+ *   - Nothing in the root. `<tmp>` is a fresh `mkdtemp` under the OS temp
+ *     directory and is removed in a `finally`, failure or not. `init` is never
+ *     run: an uninitialised root throws a {@link TerraformPlanReadError} of
+ *     kind `"not-initialised"` carrying the line to run.
+ *   - A failure says which kind it is, so the observation can fall back by
+ *     depth ({@link classifyPlanReadFailure}).
+ *
+ * Uses the longInfra profile, like {@link terraformPlan}: a plan refreshes
+ * every resource against its provider.
+ */
+export async function terraformPlanRead(
+  args: TerraformRootArgs,
+  signal?: AbortSignal,
+): Promise<TerraformPlanReadResult> {
+  const { binary, root, dir } = await resolveRoot(args, signal);
+  const env = terraformEnvironment(root);
+  const initLine = terraformInitLine({ binary, dir, ...(root.backendConfig ? { backendConfig: root.backendConfig } : {}) });
+  const notInitialised = (detail: string): TerraformPlanReadError =>
+    new TerraformPlanReadError(
+      "not-initialised",
+      `terraform.roots.${args.root} (${dir}) ${detail}: run \`${initLine}\` first. chant never runs init on a read, since init writes into the root.`,
+      dir,
+      initLine,
+    );
+
+  if (!rootIsInitialised(dir, { ...process.env, ...env })) throw notInitialised("has never been initialised");
+
+  const planDir = mkdtempSync(join(tmpdir(), PLAN_READ_DIR_PREFIX));
+  const planFile = join(planDir, PLAN_READ_FILE);
+  const command = terraformPlanReadCommand({ binary, planFile, ...(root.varFiles ? { varFiles: root.varFiles } : {}) });
+  try {
+    try {
+      const { stderr } = await run(command, dir, env, signal);
+      // The plan's own stdout is the human render, which this read never
+      // uses; stderr carries warnings worth a human's eye.
+      if (stderr) console.error(stderr);
+    } catch (err) {
+      const failure = err as ExecFailure;
+      if (typeof failure.code !== "number") throw err;
+      const output = `${failure.stderr ?? ""}\n${failure.stdout ?? ""}`.replace(/\x1b\[[0-9;]*m/g, "");
+      const kind = classifyPlanReadFailure(output);
+      const line =
+        output
+          .split("\n")
+          .map((l) => l.replace(/^[\s│╷╵]+/, "").trim())
+          .find((l) => /^Error:/.test(l)) ?? `exit ${failure.code}`;
+      if (kind === "not-initialised") throw notInitialised(`needs init (${line})`);
+      throw new TerraformPlanReadError(kind, `${binary} plan failed in ${dir}: ${line}`, dir);
+    }
+    const shown = await run(terraformShowCommand({ binary, json: true, planFile }), dir, env, signal);
+    return { json: JSON.parse(shown.stdout) as unknown, dir, planDir, command };
+  } finally {
+    rmSync(planDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * The estate a choudoufu-only activity runs against, in precedence order:
  * `args.estate` when the step names one, then the root's own `estate`
@@ -1560,8 +1745,12 @@ export interface ChoudoufuLivePlanDocumentResult extends LivePlanUnownedCounts {
   json: unknown;
   /** Absolute path of the root module directory. */
   dir: string;
-  /** Where the JSON document was written, relative to `dir`. */
-  documentPath: string;
+  /**
+   * Where the JSON document was written, relative to `dir`. Present only when
+   * the caller asked for a file with `documentPath`; a read writes nothing
+   * into the root (#4379).
+   */
+  documentPath?: string;
   /** The estate this plan ran against. */
   estate: string;
 }
@@ -1582,7 +1771,9 @@ export interface ChoudoufuLivePlanDocumentResult extends LivePlanUnownedCounts {
  * the root's environment. The graph command runs in such a scope, so its
  * observation and its prediction see one `live-plan` between them, and the
  * graph's statuses and the prediction's figures are statements about the
- * same read. The document file is still written on every call.
+ * same read. The document is returned, not written: the root is left
+ * byte-for-byte as it was (#4379). A caller that wants the file passes
+ * `documentPath` (relative to the root) and it is written there on request.
  */
 export async function choudoufuLivePlanDocument(
   args: ChoudoufuLivePlanArgs & { documentPath?: string },
@@ -1592,7 +1783,7 @@ export async function choudoufuLivePlanDocument(
   const { binary, dir } = resolved;
   const estate = resolveEstate(args, resolved, "choudoufuLivePlan");
   const env = terraformEnvironment(resolved.root);
-  const documentPath = args.documentPath ?? DEFAULT_LIVE_PLAN_DOCUMENT_FILE;
+  const documentPath = args.documentPath;
   // A root that declares its own estate is run without `-estate`: choudoufu
   // refuses the flag beside a declaration and, since v0.14.0, settles the name
   // from the declaration itself. See {@link choudoufuLivePlanCommand}.
@@ -1634,15 +1825,28 @@ export async function choudoufuLivePlanDocument(
   // the identity on a supported binary. See {@link liveDocumentFrom}.
   const document = liveDocumentFrom(jsonStdout);
   const json: unknown = JSON.parse(document);
-  writeFileSync(join(dir, documentPath), document);
-  return { drift, json, dir, documentPath, estate, ...countLivePlanUnowned(json) };
+  if (documentPath !== undefined) writeFileSync(join(dir, documentPath), document);
+  return {
+    drift,
+    json,
+    dir,
+    ...(documentPath === undefined ? {} : { documentPath }),
+    estate,
+    ...countLivePlanUnowned(json),
+  };
 }
 
 export async function choudoufuLivePlan(
   args: ChoudoufuLivePlanArgs & { documentPath?: string },
   signal?: AbortSignal,
 ): Promise<ChoudoufuLivePlanResult> {
-  const { drift, json, dir, documentPath, estate, ...unowned } = await choudoufuLivePlanDocument(args, signal);
+  // The Op activity is the one caller that wants the file: `documentPath` is a
+  // declared `.out` ref a later step or reviewer opens (#2103), so it asks.
+  const documentPath = args.documentPath ?? DEFAULT_LIVE_PLAN_DOCUMENT_FILE;
+  const { drift, json, dir, estate, ...unowned } = await choudoufuLivePlanDocument(
+    { ...args, documentPath },
+    signal,
+  );
   const resolved = await resolveRoot(args, signal);
   const { binary } = resolved;
   const env = terraformEnvironment(resolved.root);

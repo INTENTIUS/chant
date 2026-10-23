@@ -1,0 +1,202 @@
+---
+diataxis: reference
+description: Run chant search in every member of a declared workspace and get one read-contract document, with the ids workspace graph gives the same nodes
+title: "chant workspace search"
+---
+
+## Synopsis
+
+```
+chant workspace search "<query>" [--member <name>] [--at <rev>] [--explain] [--show a,b] [--json]
+chant workspace search "<query>" --snapshot <ref> --env <name> [--member <name>] [--json]
+chant workspace search ["<query>"] --count-by <kind | module | attr:<name>> [--member <name>] [--json]
+```
+
+## Description
+
+`chant workspace search` answers an estate question over a whole declared workspace ([#4374](https://github.com/INTENTIUS/chant/issues/4374)). It runs [`chant search`](/chant/cli/search/) in every member of kind `chant`, and in every member of a package kind that [`chant workspace graph`](/chant/cli/workspace-graph/) reads through a reader project, and prints the answers as one `search` document of the [read contract](/chant/reference/workspace-read-contract/).
+
+Members are read the way `chant workspace graph` reads them, through the same code. Each member runs under its own chant ([ws-021](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-021-which-chant.md)), one process per toolchain, so the query's terms are evaluated in the member, by the member's chant, over the graph that member's `chant graph` draws. Each row's id is then `<member>/<id>`, the id `chant workspace graph` gives the same node, and each row names its `member`. A reader joins a search row to a graph node by id and needs no prefixing of its own.
+
+Each member is searched alone. A path term such as `->*kind:aws_vpc` walks the member's own graph, and a path that would cross from one member into another through a [link](/chant/cli/workspace-graph/#links) is not walked. Every member that answered says so with `alone: true`.
+
+### Terraform members
+
+A member of kind `terraform` or `choudoufu` is searched in the reader project `workspace graph` writes for it, so its rows carry the ids `workspace graph` draws: `<member>/<root>/<address>`, where the reader project names the one root after the member, as in `prod/prod/aws_s3_bucket.artifacts` or `prod/prod/module.checkout/aws_sqs_queue.dead` ([#4380](https://github.com/INTENTIUS/chant/issues/4380)). Path terms walk the member's graph and capability terms map its nodes through the terraform lexicon, as for a chant member.
+
+The kind comes from the pinned `@intentius/chant-lexicon-terraform`, found in a `node_modules` at or above the workspace root at exactly the pinned version. When it isn't installed there, or another version is, the kind is unknown: each such member fails with `unknown-kind`, and the message names the pin's problem (`@intentius/chant-lexicon-terraform is pinned at 0.124.38, and 0.124.46 is installed`).
+
+A bare folder of `.tf` files can be searched without writing in it. Put the declaration in a directory of its own, with a `node_modules` link to an install that has the lexicon and a link to the folder, and declare the link as the one member:
+
+```json
+{
+  "name": "estate",
+  "schema": 1,
+  "pins": [{ "package": "@intentius/chant-lexicon-terraform", "version": "0.124.46" }],
+  "members": [{ "name": "estate", "dir": "estate", "kind": "terraform" }]
+}
+```
+
+The directory needs no git repository; `at` is then `null`, and `--at` is refused with `not-a-git-repository`.
+
+The query grammar, `--show`, `--explain` and `--count-by` are those of [`chant search`](/chant/cli/search/). A query or a combination of flags that `chant search` would refuse is refused once, before any member runs, with the same code.
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--member` | `string` | every member | Search only this member. Repeatable, and a comma list works too |
+| `--at` | `string` | working tree | The git revision to search the source at. Each member runs from an export of the tree at that commit, as `workspace graph --at` does |
+| `--snapshot` | `string` | none | Answer from a recorded lifecycle snapshot instead of the source alone (`latest`; needs `--env`) |
+| `--env` | `string` | none | The environment the snapshot was recorded for, passed to each member |
+| `--live` | `boolean` | `false` | Each member reads the estate now, as `chant search --live` does (needs `--env`) |
+| `--show` | `string` | none | Comma-separated attributes to carry on each row |
+| `--count-by` | `string` | none | Group the matches: `kind`, `module` or `attr:<name>` |
+| `--explain` | `boolean` | `false` | Each member's universe and near misses |
+| `--capabilities` | `boolean` | `false` | Print the [capability catalog](/chant/reference/capabilities/#the-capabilities-document) instead of answering a query: the `capabilities` document, from the workspace root's chant, for every lexicon a member loads, a terraform member's lexicon included |
+| `--json` | `boolean` | `false` | Print the document. Without it, one row per match, `<member>/<name>  <kind>  <physical id>`, then a line per member that has no answer on stderr |
+
+`--ambient`, `--check-live`, `--check-snapshot` and `--fail-on-drift` are passed to each member as they are.
+
+## Capabilities
+
+A query that names a [capability](/chant/reference/capabilities/) (`cap:<name>`
+or `->[cap=<name>]`) is not run member by member. Its rules run once, under
+the workspace's chant, over the graph [`chant workspace
+graph`](/chant/cli/workspace-graph/) composes at detail 3
+([#4375](https://github.com/INTENTIUS/chant/issues/4375)). The view the rules
+read is split the way ws-021 splits every member read
+([#4378](https://github.com/INTENTIUS/chant/issues/4378)): each member's own
+chant maps its nodes through the lexicons that member loads, at the versions
+it pins, and prints the result as its [capability
+view](/chant/cli/workspace-graph/#the-capability-view). The workspace's chant
+composes the views, resolves an ARN that one member names and another
+declares, and evaluates. So a path may cross from one member into another: a
+role in `platform` whose policy names a bucket in `data` by ARN `reaches` that
+bucket, which no member's own search could see.
+
+```bash
+chant workspace search "cap:holds-secret <-[cap=reaches]kind:aws_iam_role" --json
+```
+
+Every member then reads `searched` without `alone`, and the document carries
+`capabilities`, what each capability named does not evaluate. A member whose
+chant predates the capability view is `failed` with `member-chant-too-old`
+and no `matches`, never an empty answer: nothing mapped its nodes. Install a
+newer `@intentius/chant` for it. Such a query
+answers from the declared graph, so it refuses `--live`, `--snapshot`,
+`--check-live`, `--check-snapshot` and `--count-by` with `usage-invalid`.
+
+## Two times
+
+A workspace is identified by its name and a git revision ([ws-016](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-016-identity.md)), and in every read of the contract `--at <rev>` is that revision. A lifecycle snapshot is another kind of time: what the estate looked like when the snapshot was recorded. This command keeps the two apart.
+
+| Asked with | Answers from | The document says |
+|---|---|---|
+| `--at <rev>` | the source at that commit | `at` is the full commit id |
+| `--snapshot <ref> --env <name>` | the recorded snapshot, over the source in the working tree | `source.snapshot` is the ref, and each member's `source.commit` the snapshot commit it replayed |
+
+`--at` given a snapshot ref such as `latest` names no commit, so it fails with `revision-unknown`, and the hint names `--snapshot`. `--snapshot` with `--at` fails with `snapshot-at-revision`, since a snapshot replays over the working tree. `--live` with `--at` fails with `live-at-revision`, as for `workspace graph`.
+
+Plain [`chant search --at <ref>`](/chant/cli/search/) still means a snapshot, for compatibility, and takes `--snapshot` as the same flag.
+
+## Output
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
+  "contract": 1,
+  "chant": "0.124.46",
+  "workspace": { "name": "two", "root": "." },
+  "at": null,
+  "query": "app",
+  "source": { "kind": "declared" },
+  "members": [
+    {
+      "name": "east", "dir": "east", "kind": "chant",
+      "status": "searched", "reason": null, "chant": "0.124.46",
+      "stamp": "sha256:1b4a19e7...",
+      "alone": true,
+      "source": { "kind": "declared" },
+      "matches": ["east/appService"],
+      "provenance": "declared only · no observation · physical ids unavailable"
+    },
+    {
+      "name": "west", "dir": "west", "kind": "chant",
+      "status": "failed",
+      "reason": { "code": "member-chant-too-old", "message": "the member runs a chant older than workspace member-run, which prints no search document of the read contract (#4374); install a newer @intentius/chant for this member" },
+      "chant": null, "stamp": "sha256:d8933087..."
+    }
+  ],
+  "matches": [
+    { "id": "east/appService", "member": "east", "displayId": "appService", "kind": "Fixture::Service", "paths": [] }
+  ]
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `workspace`, `at` | the workspace's name and root, and the commit searched or `null` for the working tree |
+| `source` | the axis asked for: `kind` (`declared`, `live` or `snapshot`), `env`, and `snapshot`, the ref given |
+| `members[]` | every member the search covers, in declaration order |
+| `members[].status` | `searched`, `skipped` (a kind the workspace commands don't run, such as `other`, with `kind-not-run`) or `failed` |
+| `members[].reason` | why a member has no answer, as `{ code, message }`, or `null` |
+| `members[].chant` | the chant version the member's toolchain reported, or `null` |
+| `members[].stamp` | the member's stamp, by the [rule the graph cache keys on](/chant/reference/workspace-read-contract/#member-stamps). Equal stamps read the same source. A search is never served from the cache |
+| `members[].alone` | `true` on a searched member: its terms and paths saw only its own graph |
+| `members[].matches` | the member's matched ids |
+| `members[].source`, `provenance`, `liveFailures`, `explain`, `drift` | the member's own answer, as [`chant search --json`](/chant/cli/search/#--json) carries them, with every node id `<member>/<id>` |
+| `matches[]` | every member's rows, sorted by id, each as `chant search --json` prints it with `id` and the ends of every hop `<member>/<id>`, and `member` added |
+
+With `--count-by`, `countBy`, `groups` and `total` take the place of `matches`. `groups` adds the members' groups up by name, except that a `module` group is prefixed with its member (`east/module.vpc`), since a module of the same name in two members is two modules. A group's `ids` are `<member>/<id>`, the ids `chant workspace graph` gives the same nodes; a merged group lists them only when every member that counted into it listed its own. Each member entry carries its own `groups` and `total`.
+
+A member that can't be searched is listed with a reason code and never as zero matches:
+
+| Code | Meaning |
+|------|---------|
+| `member-chant-too-old` | the member's chant prints no search document of the read contract: it predates `workspace member-run`, has no `search` command or flag the read needs, or prints `search --json` from before the contract |
+| `command-failed` | the member's `chant search` exited with a failure and printed no document |
+| `output-unreadable` | it printed something that isn't a search document |
+| `query-invalid`, `usage-invalid`, `environment-unknown`, `snapshot-unavailable`, `build-failed` | the member's own search refused, with this code: for example `snapshot-unavailable` for a member with no snapshot recorded for the environment |
+| `dir-missing`, `unknown-kind`, `kind-probe-failed`, `kind-not-run` | as for [`workspace graph`](/chant/cli/workspace-graph/) |
+
+A refusal of the whole search is a document with `error: { code, message, hint? }` and no `members`. Its code is one of the declaration's codes, `revision-unknown`, `not-a-git-repository`, `live-at-revision`, `snapshot-at-revision`, `query-invalid` or `usage-invalid`. The [read contract](/chant/reference/workspace-read-contract/#reason-codes) lists them all.
+
+The document follows `search.schema.json`, which `@intentius/chant` exports as `@intentius/chant/workspace/search.schema.json`. chant's MCP server returns the same document from its `workspace-search` tool ([MCP](/chant/cli/mcp/)).
+
+## Which chant runs a member
+
+A member's search runs under the chant its directory resolves, found as [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member) finds it: the first `node_modules/.bin/chant` from the member's directory up to the workspace root, else the root's, else the chant running this command. Members that resolve the same chant share one process. The member's `chant search` is handed its flags first and the query last, after `--`, so a query that opens with `->` reaches it as a query.
+
+A member pinned to a chant from before this command's release has no `search` document to give. Its entry says `member-chant-too-old` and names the chant it found, and the other members still answer. Upgrading that member's `@intentius/chant` is the fix, and nothing about the workspace declaration needs to change.
+
+The member's directory, the files it reads and the workspace are never written. With `--at`, the members run from a temporary export of the tree at that commit, which is removed when the read ends, as for `workspace graph --at`.
+
+## Reading it from a tool
+
+A tool that shows a workspace, such as behold or hud, reads this document instead of running `chant search` in each member itself. The document already holds the fan-out, the member prefixing and the per-member failures, so the tool computes no join of its own, as the [read contract](/chant/reference/workspace-read-contract/) asks. The reader conformance suite in `@intentius/chant/workspace/conformance` lists the command as `search`. It holds a reader to one call of this command, with the document handed back as chant printed it and no file written.
+
+For a project that is not part of a declared workspace, plain `chant search --json` prints the same document without `members`.
+
+## Usage
+
+```bash
+# every chant member, offline, over the declared graphs
+chant workspace search "kind:aws_instance ->*kind:aws_vpc" --json
+
+# one member, at the commit a pull request was based on
+chant workspace search "kind:aws_s3_bucket" --member storage --at origin/main --json
+
+# from the latest recorded snapshot of dev
+chant workspace search "kind:aws_instance" --snapshot latest --env dev --json
+
+# how many of each kind across the workspace
+chant workspace search --count-by kind
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Every member covered answered, or was skipped |
+| 1 | The search was refused, a member failed, a member's live read failed, or a member's scoped drift check failed with `--fail-on-drift` |

@@ -170,9 +170,15 @@ Commands:
                         bundle tree, otherwise JSON path→content on stdout)
   search "<query>"      Answer an estate question with a few matching rows
                         instead of a graph dump (kind:, tag:, attr:, ->/<- edge
-                        terms; --live or --at <ref> with --env <name> reads the
-                        estate or a recorded snapshot; --show <attr>,
-                        --check-live, --check-snapshot, --fail-on-drift)
+                        terms, ->* / ->{1,3} for depth, ->[via=attr] / [to=attr]
+                        by attribute; --live or --snapshot <ref> (also --at
+                        <ref>) with --env <name> reads the estate or a
+                        recorded snapshot; --show <attr>,
+                        --count-by kind|module|attr:<name>, --explain prints
+                        paths, --json, --check-live,
+                        --check-snapshot, --fail-on-drift; cap:<name> and
+                        ->[cap=<name>] ask with a capability, and
+                        --capabilities prints the catalog)
   query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
                         the resources and snapshots each lexicon observed, Op
                         runs, gates, deploys, releases and cuts, loaded into
@@ -580,6 +586,9 @@ Ops:
                         --layout-engine graphviz to use dot instead;
                         --detail 0..3: stacks|composites|declarables|attributes;
                         --lens lexicon:<n>|stack:<n>|blast:<node> (--up/--down))
+                        --format ir --capability-view: add the lexicon-neutral
+                        view capability rules read, as this project's lexicons
+                        map it, to the IR as capabilityView (#4378)
                         --components --format ir --projection gitlab|github|forgejo:
                         add the CI/pipeline projection (stages/jobs/needs) to
                         the component-graph IR, from the same generator
@@ -934,6 +943,15 @@ Workspace (level 1, #2524):
                         source and toolchain are unchanged is served from
                         the cache in $CHANT_CACHE_DIR or ~/.cache/chant;
                         --no-cache reads every member
+                        --capability-view: each member's chant adds its
+                        capability view, mapped by its own lexicons
+  workspace search "<query>" [--member <name>] [--env <name>] [--snapshot <ref> | --live] [--at <rev>] [--explain] [--count-by ...] [--json]
+                        chant search in every chant member, each under its own
+                        chant, as one read-contract document: ids are
+                        <member>/<id> as workspace graph prints them, each
+                        member is searched alone, and a member that can't be
+                        searched has a reason code. --at <rev> is the git
+                        revision; --snapshot <ref> replays a recorded snapshot
   workspace graph --composites [--at <rev>] [--member <name>] [-o <file>]
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
@@ -1610,6 +1628,8 @@ export const commandRegistry: CommandDef[] = [
   // chant#2618 — audit runs no project code, at the workspace level too.
   { name: "workspace audit", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
+  // #4374 — chant search in every member, under its own chant, composed with workspace graph's ids: the search document.
+  { name: "workspace search", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/search-cli")).runWorkspaceSearch(ctx) },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
   // #3308 — a box's listing, written through chant so a tool never edits the declaration itself (ws-074).

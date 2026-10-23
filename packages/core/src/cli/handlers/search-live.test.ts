@@ -44,6 +44,11 @@ vi.mock("../../build", async () => {
   };
 });
 
+import type { ResourceMetadata } from "../../lexicon";
+import type { RootRead } from "../../observation";
+import searchSchema from "../../workspace/search.schema.json";
+import { contract } from "../../workspace/__fixtures__/contract-repo";
+const { expectValid } = contract(searchSchema);
 const { runSearch } = await import("./search");
 
 function decl<T extends object>(base: T): Declarable & T {
@@ -213,5 +218,387 @@ describe("search --live run-level notes (#1265)", () => {
     const notes = all.filter((line) => line.includes("ownership filter unavailable"));
     expect(notes).toHaveLength(1);
     expect(all.indexOf("(no matches)")).toBeLessThan(all.findIndex((l) => l.includes("ownership filter unavailable")));
+  });
+});
+
+// #4358 — a terraform root's blocks exist only once `buildRoots()` renders the
+// root, and `--live` built without it, so no terraform root was ever observed
+// and a plan attribute could never be matched. The live path now builds roots
+// and joins them to the declared canvas, as `chant graph --live` does.
+describe("search --live over build-root entities (#4358)", () => {
+  let out: string[];
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockImplementation(async () => ({ entities: new Map(), errors: [], sourceFiles: [] }));
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  test("builds roots, observes their blocks and matches the attributes the read put on them", async () => {
+    const rooted = new Map<string, Declarable>([
+      ["app/terraform_data.replaced", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+    ]);
+    buildResultMock.mockReset();
+    buildResultMock.mockImplementation((_src: unknown, _s: unknown, _x: unknown, opts?: { buildRoots?: unknown[] }) => ({
+      errors: [],
+      entities: (opts?.buildRoots?.length ?? 0) > 0 ? rooted : new Map(),
+      outputs: new Map([["terraform", ""]]),
+      warnings: [],
+    }));
+    loadPluginsMock.mockResolvedValue([
+      {
+        // createMockPlugin has no `buildRoots` option; the hook is spread on.
+        ...createMockPlugin({
+          name: "terraform",
+          describeResources: async ({ entityNames }: { entityNames: string[] }) =>
+            Object.fromEntries(
+            entityNames.map((n) => [n, { type: "Terraform::Resource", physicalId: "id-1", status: "managed", ownership: "owned", owned: true, attributes: { planAction: "replace" } }]),
+            ),
+        }),
+        buildRoots: async () => ({ entities: rooted, warnings: [] }),
+      },
+    ]);
+    const exit = await runSearch({ args: makeArgs({ path: "attr:planAction=replace" }), plugins: [], serializers: [] });
+    expect(out.join("\n")).toContain("app/terraform_data.replaced  terraform_data  id-1");
+    expect(exit).toBe(0);
+  });
+});
+
+// #4372 — a planned create is absent, and the plan's attributes ride beside
+// the verdict as annotations. The handler puts them on the declared row, so
+// `attr:planAction=create` matches a block that does not exist yet, and the
+// row still has no physical id.
+describe("search --live over a planned create (#4372)", () => {
+  let out: string[];
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockImplementation(async () => ({ entities: new Map(), errors: [], sourceFiles: [] }));
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  test("attr:planAction=create and attr:planAfterUnknown=id match it, and it stays without a physical id", async () => {
+    const rooted = new Map<string, Declarable>([
+      ["app/terraform_data.replaced", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+      ["app/terraform_data.created", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+    ]);
+    buildResultMock.mockReset();
+    buildResultMock.mockImplementation((_src: unknown, _s: unknown, _x: unknown, opts?: { buildRoots?: unknown[] }) => ({
+      errors: [],
+      entities: (opts?.buildRoots?.length ?? 0) > 0 ? rooted : new Map(),
+      outputs: new Map([["terraform", ""]]),
+      warnings: [],
+    }));
+    loadPluginsMock.mockResolvedValue([
+      {
+        ...createMockPlugin({
+          name: "terraform",
+          describeResources: async () => ({
+            observation: "v1",
+            resources: {
+              "app/terraform_data.replaced": { type: "Terraform::Resource", physicalId: "id-1", status: "managed", ownership: "owned", attributes: { planAction: "replace" } },
+            },
+            annotations: { "app/terraform_data.created": { planAction: "create", planAfterUnknown: ["id", "input"] } },
+          }),
+        }),
+        buildRoots: async () => ({ entities: rooted, warnings: [] }),
+      },
+    ]);
+
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAction=create", json: true }), plugins: [], serializers: [] })).toBe(0);
+    const json = JSON.parse(out.filter((l) => !l.startsWith("ERR ")).join("\n")) as { matches: Array<{ id: string; physicalId?: string | null }> };
+    expect(json.matches.map((m) => m.id)).toEqual(["app/terraform_data.created"]);
+    expect(json.matches[0]!.physicalId ?? null).toBeNull();
+
+    out = [];
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAfterUnknown=id" }), plugins: [], serializers: [] })).toBe(0);
+    const text = out.join("\n");
+    expect(text).toContain("app/terraform_data.created");
+    expect(text).not.toContain("app/terraform_data.replaced");
+  });
+});
+
+// #4381 — when every match is a planned create, the live read worked and found
+// nothing bound yet. "returned no bound resources" read like a failed read.
+describe("search --live provenance when every match is a planned create (#4381)", () => {
+  let out: string[];
+
+  function setup(annotations: Record<string, Record<string, unknown>> | undefined, names: string[]) {
+    const rooted = new Map<string, Declarable>(
+      names.map((n) => [n, decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })]),
+    );
+    buildResultMock.mockReset();
+    buildResultMock.mockImplementation((_src: unknown, _s: unknown, _x: unknown, opts?: { buildRoots?: unknown[] }) => ({
+      errors: [],
+      entities: (opts?.buildRoots?.length ?? 0) > 0 ? rooted : new Map(),
+      outputs: new Map([["terraform", ""]]),
+      warnings: [],
+    }));
+    loadPluginsMock.mockResolvedValue([
+      {
+        ...createMockPlugin({
+          name: "terraform",
+          describeResources: async () => ({ observation: "v1", resources: {}, ...(annotations ? { annotations } : {}) }),
+        }),
+        buildRoots: async () => ({ entities: rooted, warnings: [] }),
+      },
+    ]);
+  }
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockImplementation(async () => ({ entities: new Map(), errors: [], sourceFiles: [] }));
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  const planned = { "app/a": { planAction: "create" }, "app/b": { planAction: "create" } };
+
+  test("text footer and --json provenance say planned creates, and plannedCreates carries the count", async () => {
+    setup(planned, ["app/a", "app/b"]);
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAction=create" }), plugins: [], serializers: [] })).toBe(0);
+    const text = out.join("\n");
+    expect(text).toContain("2 planned creates, none bound yet");
+    expect(text).not.toContain("returned no bound resources");
+
+    out = [];
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAction=create", json: true }), plugins: [], serializers: [] })).toBe(0);
+    const doc = JSON.parse(out.filter((l) => !l.startsWith("ERR ")).join("\n")) as { provenance: string; plannedCreates?: number };
+    expectValid(doc);
+    expect(doc.provenance).toContain("2 planned creates, none bound yet");
+    expect(doc.plannedCreates).toBe(2);
+  });
+
+  test("a real empty live read keeps its wording and carries no plannedCreates", async () => {
+    setup(undefined, ["app/a", "app/b"]);
+    expect(await runSearch({ args: makeArgs({ path: "kind:Terraform::Resource" }), plugins: [], serializers: [] })).toBe(0);
+    expect(out.join("\n")).toContain("live read returned no bound resources");
+    expect(out.join("\n")).not.toContain("planned create");
+
+    out = [];
+    expect(await runSearch({ args: makeArgs({ path: "kind:Terraform::Resource", json: true }), plugins: [], serializers: [] })).toBe(0);
+    const doc = JSON.parse(out.filter((l) => !l.startsWith("ERR ")).join("\n")) as { provenance: string; plannedCreates?: number };
+    expectValid(doc);
+    expect(doc.provenance).toContain("live read returned no bound resources");
+    expect(doc.plannedCreates).toBeUndefined();
+  });
+});
+
+// #4384 - a plan-depth answer said "observed live". Each row carries the read
+// that answered it (`sources`, #2267), and the line and --json name it.
+describe("search --live names the plan read (#4384)", () => {
+  let out: string[];
+  const entities = new Map<string, Declarable>([
+    ["orders", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+  ]);
+  const PLAN_NOTE = "terraform.roots.app: the plan read answered (`terraform plan -input=false -lock=false -out=<tmp>/plan.tfplan`)";
+  const STATE_NOTE = "terraform.roots.app: the plan read failed (no provider credentials: x), so the state read answered; plan attributes are absent";
+  const DECLARED_NOTE = "terraform.roots.app: no read answered, declared only (the plan read could not reach the backend)";
+
+  const FELL_TO_STATE: Record<string, RootRead> = { "terraform.roots.app": { depth: "plan", fellBackTo: "state", reason: "no-credentials" } };
+  const FELL_TO_DECLARED: Record<string, RootRead> = { "terraform.roots.app": { depth: "plan", fellBackTo: "declared", reason: "backend-unreachable" } };
+
+  function setup(
+    sources: Record<string, string>,
+    notes: string[],
+    resources: Record<string, ResourceMetadata> | null = null,
+    rootReads?: Record<string, RootRead>,
+  ) {
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "terraform",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: resources ?? { orders: { type: "Terraform::Resource", physicalId: "db-1", status: "OK", ownership: "owned" as const } },
+          sources,
+          notes,
+          ...(rootReads ? { rootReads } : {}),
+        }),
+      }),
+    ]);
+  }
+
+  async function run(json = false) {
+    out = [];
+    const exit = await runSearch({ args: makeArgs({ path: "kind:Terraform::Resource", json }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    return out.filter((l) => !l.startsWith("ERR ")).join("\n");
+  }
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockResolvedValue({ entities, errors: [], sourceFiles: [] });
+    buildResultMock.mockReset();
+    buildResultMock.mockReturnValue({ errors: [], entities, outputs: new Map([["terraform", ""]]), warnings: [] });
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  test("a plan answer names the plan depth in the line and in --json", async () => {
+    setup({ orders: "plan" }, [PLAN_NOTE]);
+    expect(await run()).toContain("observed at the plan depth (terraform plan -lock=false) · bound 1/1");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source).toMatchObject({ kind: "live", depth: "plan", reads: ["plan"] });
+    expect(doc.provenance).toBe("observed at the plan depth (terraform plan -lock=false) · bound 1/1");
+  });
+
+  test("a live+plan answer names both reads", async () => {
+    setup({ orders: "live+plan" }, [PLAN_NOTE]);
+    const text = await run();
+    expect(text).toContain("observed live and at the plan depth (live-plan -json, terraform plan -lock=false) · bound 1/1");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.depth).toBe("live+plan");
+  });
+
+  test("matches read at different depths name both", async () => {
+    setup(
+      { a: "plan", b: "state" },
+      [PLAN_NOTE],
+      {
+        a: { type: "Terraform::Resource", physicalId: "x", status: "OK", ownership: "owned" as const },
+        b: { type: "Terraform::Resource", physicalId: "y", status: "OK", ownership: "owned" as const },
+      },
+    );
+    entities.set("a", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} }));
+    entities.set("b", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} }));
+    try {
+      const doc = JSON.parse(await run(true));
+      expectValid(doc);
+      expect(doc.source).toMatchObject({ depth: "mixed", reads: ["plan", "state"] });
+      expect(doc.provenance).toContain("at the plan depth (terraform plan -lock=false) and from state");
+    } finally {
+      entities.delete("a");
+      entities.delete("b");
+    }
+  });
+
+  test("a plan read that fell back to state says so", async () => {
+    setup({ orders: "state" }, [STATE_NOTE], null, FELL_TO_STATE);
+    const text = await run();
+    expect(text).toContain("observed live · bound 1/1 · the plan read fell back to state");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("state");
+    expect(doc.source.depth).toBeUndefined();
+  });
+
+  test("a live root's plan read that failed says live-plan answered alone", async () => {
+    const LIVE_NOTE = "terraform.roots.app: the plan read failed (the plan failed: x), so `live-plan -json` alone answered; plan attributes are absent";
+    setup({ orders: "live" }, [LIVE_NOTE], null, { "terraform.roots.app": { depth: "live+plan", fellBackTo: "live", reason: "plan-failed" } });
+    expect(await run()).toContain("observed live · bound 1/1 · the plan read fell back to live-plan alone");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("live");
+    expect(doc.source.depth).toBeUndefined();
+  });
+
+  test("a live root whose plan read answered names both reads and no fallback", async () => {
+    setup({ orders: "live+plan" }, [PLAN_NOTE], null, { "terraform.roots.app": { depth: "live+plan" } });
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBeUndefined();
+    expect(doc.provenance).toBe("observed live and at the plan depth (live-plan -json, terraform plan -lock=false) · bound 1/1");
+  });
+
+  test("a live root whose live-plan failed reports no plan fallback", async () => {
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "terraform",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: {},
+          unobserved: { orders: { reason: "read-failed" as const, type: "Terraform::Resource" } },
+          sources: { orders: "live" },
+          notes: ["terraform.roots.app: no read answered (`live-plan -json` failed, so the plan read was not tried)"],
+        }),
+      }),
+    ]);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBeUndefined();
+    expect(doc.provenance).not.toContain("fell back");
+  });
+
+  test("a plan read that fell back to declared says so", async () => {
+    setup(
+      { orders: "plan" },
+      [DECLARED_NOTE],
+      null,
+    );
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "terraform",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: {},
+          unobserved: { orders: { reason: "no-binding" as const, type: "Terraform::Resource" } },
+          sources: { orders: "plan" },
+          notes: [DECLARED_NOTE],
+          rootReads: FELL_TO_DECLARED,
+        }),
+      }),
+    ]);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("declared");
+    expect(doc.source.depth).toBeUndefined();
+    expect(doc.provenance).toContain("the plan read fell back to declared");
+  });
+
+  test("rewording the notes changes nothing: the fallback is read from the structured field", async () => {
+    setup({ orders: "state" }, ["the app root: plan unavailable, state used instead"], null, FELL_TO_STATE);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("state");
+    expect(doc.provenance).toBe("observed live · bound 1/1 · the plan read fell back to state");
+  });
+
+  test("a note that reads like a fallback does not make one", async () => {
+    setup({ orders: "state" }, [STATE_NOTE, DECLARED_NOTE]);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBeUndefined();
+    expect(doc.provenance).toBe("observed live · bound 1/1");
+  });
+
+  test("a plain live or state answer is unchanged", async () => {
+    setup({ orders: "state" }, []);
+    expect(await run()).toContain("observed live · bound 1/1");
+    expect(await run()).not.toContain("plan");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source).toEqual({ kind: "live", env: "dev" });
   });
 });

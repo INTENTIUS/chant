@@ -1,6 +1,6 @@
 ---
 title: Observation
-description: How chant reads a terraform root, and what answers "is this mine?" in each of its two modes
+description: How chant reads a terraform root at each of its three depths (state, live, plan), and what answers "is this mine?" in each
 diataxis: explanation
 ---
 
@@ -21,6 +21,9 @@ it runs `terraform show -json` over the root's current state and matches
 On a [live root](/chant/lexicons/terraform/ops/) it runs
 `choudoufu live-plan -json` instead and matches that document's sections, for
 the reason the next two sections give: a live root has no state file to show.
+
+A stock root can also be read one depth further, from a saved plan, which says
+what the next apply would do. That is the [plan depth](#the-plan-depth) below.
 
 ## The state file is the ownership answer, on a stock root
 
@@ -112,16 +115,17 @@ as a teardown hole rather than leaving it out. A resource type with no `tags`
 argument never carried a marker, so its absence from a tag listing says
 nothing about whether it is there.
 
-## Which of the two reads answered is on the wire
+## Which read answered is on the wire
 
 `terraform show -json` and `choudoufu live-plan -json` do not answer the same
 question. The first says what the last apply recorded. The second says what
 the account holds now. A tool that renders an observation as drift and cannot
 tell them apart will paint a state read green, which reads as "the account
-matches" when all it supports is "the apply finished".
+matches" when all it supports is "the apply finished". A plan answers a third
+question: what the next apply would do.
 
 So the `ObservationResult` carries a `sources` map, keyed by chant entity name,
-with one of two values:
+with one of four values:
 
 ```json
 {
@@ -129,13 +133,21 @@ with one of two values:
   "resources": { "app/null_resource.first": { "...": "..." } },
   "sources": {
     "app/null_resource.first": "state",
-    "estate/aws_eip.pool": "live"
+    "estate/aws_eip.pool": "live",
+    "net/aws_vpc.main": "plan",
+    "edge/aws_subnet.app": "live+plan"
   }
 }
 ```
 
 `"state"` means that entity's root was read with `terraform show -json`.
 `"live"` means it was read with `choudoufu live-plan -json`.
+`"plan"` means it was read from a saved plan at the plan depth, or that the
+plan depth was asked for and no read answered (the entity is then not-observed
+and its detail says so).
+`"live+plan"` means a live root was read at the plan depth and both reads
+answered: `live-plan -json` for presence and ownership, the saved plan for the
+attributes. See [A choudoufu root](#a-choudoufu-root).
 
 A consumer may rely on three things.
 
@@ -144,13 +156,263 @@ present, absent and not-observed alike. Which read was attempted is a fact
 independent of what it found, and an absent entity has no other row to carry
 it. An entity with no root gets no entry, for the same reason it gets no read.
 
-The value equals the declared entity's own `props.mode`. One fact decides both
-(`terraform.binary` is `"choudoufu"` and the root declares an estate), so a
-consumer holding the declared graph and no observation at all can label from
-`mode` and get the same answer.
+At the default depth the value equals the declared entity's own `props.mode`.
+One fact decides both (`terraform.binary` is `"choudoufu"` and the root
+declares an estate), so a consumer holding the declared graph and no
+observation at all can label from `mode` and get the same answer. The plan
+depth is chosen when the read runs, so only `sources` says it was used.
 
 A project with both kinds of root gets both values in one document, which is
 why this is a map rather than one field on the result.
+
+## The plan depth
+
+State says what the last apply recorded. Four things an agent or a renderer
+needs exist only in a saved plan: what the next apply will do to each
+instance, why an instance is replaced and which attribute forces it, which
+values stay unknown until apply, and what changed outside Terraform. The plan
+depth reads them.
+
+### Choosing it
+
+The default depth is `"state"`. Ask for the plan depth for every root, for one
+root, or for one run:
+
+```json
+{
+  "terraform": {
+    "observe": "plan",
+    "roots": {
+      "net": { "dir": "./net", "varFiles": ["prod.tfvars"] },
+      "app": { "dir": "./app", "observe": "state" }
+    }
+  }
+}
+```
+
+```sh
+CHANT_TERRAFORM_OBSERVE=plan chant search "attr:planAction=replace" --live --env prod
+```
+
+The variable wins over the config for that run. A caller holding the lexicon
+directly passes `depth: "plan"` to `describeResources`. `chant search --live`,
+`chant graph --live` and anything else that observes through
+`describeResources` pick it up from either.
+
+### What it runs
+
+```sh
+terraform plan -input=false -lock=false [-var-file=...] -out=<tmp>/plan.tfplan
+terraform show -json <tmp>/plan.tfplan
+```
+
+Both run in the root directory, with `TF_IN_AUTOMATION=1` and the root's
+`TF_WORKSPACE`. `<tmp>` is a fresh directory under the OS temp directory,
+named `chant-terraform-plan-*`, and it is removed when the read ends, whether
+the read worked or not. The plan file is never written in the root.
+
+`-lock=false` is on every plan read, so a read never takes the backend's state
+lock and never blocks, or is blocked by, a teammate's apply.
+
+chant never runs `init` on a plan read, because `init` writes into the root. A
+root with no `.terraform` directory (or no `TF_DATA_DIR`, when that is set) is
+refused before anything runs, and so is a root whose plan says it needs `init`
+again. The refusal carries the line to run:
+
+```
+terraform.roots.net (/repo/net) has never been initialised: run `terraform -chdir=/repo/net init -input=false` first.
+```
+
+### What lands on the IR
+
+Presence and ownership come from the plan's `prior_state`, by the state read's
+rule: a block with a row there is present and `owned`. A block with `count` or
+`for_each` is found by its instances. Each present `resource` or `data` block
+then carries these attributes beside `address`, `root`, `resourceType`,
+`mode` and `provider`:
+
+| attribute | from the plan | shape |
+| --- | --- | --- |
+| `planAction` | `resource_changes[].change.actions` | one word per block: `create`, `update`, `replace`, `delete`, `read`, `no-op`; distinct words comma-joined when instances differ |
+| `planActions` | `resource_changes[].change.actions` | the raw action list per instance address |
+| `planActionReason` | `resource_changes[].action_reason` | e.g. `replace_because_cannot_update` |
+| `planReplacePaths` | `resource_changes[].change.replace_paths` | attribute paths that force the replace |
+| `planAfterUnknown` | `resource_changes[].change.after_unknown` | attribute paths unknown until apply |
+| `planChanges` | `before` and `after` of an update or replace | `{ path, before, after }` per changed leaf |
+| `planDriftAction` | `resource_drift[].change.actions` | what changed outside Terraform: `update` or `delete` |
+| `planDrift` | `resource_drift[]` `before` and `after` | `{ path, before, after, relevant? }` per drifted leaf |
+| `planRelevantAttributes` | `relevant_attributes[]` | attribute paths of this resource the plan reads |
+
+A drift entry carries `relevant: true` when the plan reads that attribute, so
+"what changed outside Terraform that this plan acts on" is one filter. A path
+is one string, keys joined with `.` and indexes in brackets:
+`lifecycle_commands[0].read`, `tags["kubernetes.io/role"]`. On a block with
+more than one instance each change also names its `instance`.
+
+Every name is a search term:
+
+```sh
+chant search "attr:planAction=replace" --live --env prod --show planReplacePaths,planActionReason
+chant search "attr:planAfterUnknown=vpc_id" --live --env prod
+chant search "attr:planDrift" --live --env prod
+```
+
+A planned create reads absent, exactly as it does on the state read: there is
+no row in `prior_state` for it, and absent plus declared is what makes a
+`create`. Its plan attributes go on the observation's `annotations` map
+instead of a `resources` row: `planAction: "create"`, `planActions`, and
+`planAfterUnknown`, which on a new resource names its `id` and anything else
+it only learns at apply. `planChanges` is empty on a create, as it is on any
+create: there is no before side to compare. Annotations are facts beside the
+verdict, never part of it, so the block stays absent and `lifecycle plan`
+still proposes the create. `chant graph --live --overlay` and
+`chant search --live` put them on the declared node, which keeps its pending
+status and has no physical id:
+
+```sh
+chant search "attr:planAction=create" --live --env prod --show planAfterUnknown
+chant search "attr:planAfterUnknown=id" --live --env prod
+```
+
+A data block the plan reads during apply is annotated the same way, with
+`planAction: "read"`. Annotations come from a fresh read only: a recorded
+snapshot does not keep them.
+
+### Sensitive values
+
+`before_sensitive` and `after_sensitive` mark values in parallel trees. A value
+under a marked node is replaced with `(sensitive)` before it reaches an
+attribute, at any depth, so a secret nested in a map (`tags.password`, an
+`environment` entry) is caught the same way as a sensitive top-level
+attribute. Only leaf values are ever put on the IR; a marked map is one
+`(sensitive)` entry and is never walked.
+
+Marks are not always carried along. A real plan marks `terraform_data`'s
+`input.token` sensitive and leaves the same value unmarked in `output.token`.
+So every string found under a mark anywhere in the plan is collected first,
+and any value equal to one of them is redacted too. That catches a copy. It
+does not catch a secret a provider transformed, hashed or embedded in a longer
+string, so treat `planChanges` and `planDrift` as attribute values a reader of
+the plan could already see, with the marked ones removed.
+
+Nothing from `prior_state` is surfaced except each row's `id`, as on the state
+read.
+
+### Falling back by depth
+
+A plan needs more than a state read does: provider credentials, and every data
+source and provider reachable. When it cannot run, the read falls back and a
+note on the result says which read answered:
+
+| what failed | what answers | note |
+| --- | --- | --- |
+| nothing | the plan | `the plan read answered` |
+| the plan, for missing provider credentials or any other provider or configuration error | the state read, `terraform show -json` with no `init`; plan attributes are absent and `sources` reads `"state"` | `the plan read failed (no provider credentials: ...), so the state read answered` |
+| the backend (state could not be loaded, workspaces could not be listed, the backend refused its credentials) | nothing: declared only. The state read needs the same backend, so it is not tried | `no read answered, declared only (the plan read could not reach the backend)` |
+| the root needs `init` | nothing: declared only, with the init line | `no read answered, declared only (the root needs init, which chant never runs)` |
+| the plan, then the state read after it | nothing: declared only | `no read answered, declared only (...)` |
+
+Declared only means every block of that root comes back not-observed, never
+absent, with the failure in its detail. A failed read is never a list of
+creates.
+
+### What `-lock=false` covers, by backend
+
+Checked against Terraform's source at `hashicorp/terraform@55988303` and
+OpenTofu's at `opentofu/opentofu@8830c516`. Every backend here runs plans
+through the local operations backend, which takes the state lock in exactly
+one place, `op.StateLocker.Lock` in `internal/backend/local/backend_local.go`.
+`-lock=false` replaces that locker with a no-op (`clistate.NewNoopLocker` in
+`internal/command/meta_backend.go`), so the backend's own lock is never
+called: no `.tflock` object on S3 with `use_lockfile` or on GCS, no DynamoDB
+item, no azurerm blob lease, no pg advisory lock, no local lock file. The
+acceptance suite proves it for `local` with both binaries: a plan read
+succeeds while another apply holds the lock, and the same plan without the
+flag fails on `Error acquiring the state lock`.
+
+One case takes a lock anyway. When the selected workspace has no state object
+yet, the backend's `StateMgr` creates an empty one, under a lock, before the
+plan runs. That is any workspace on `gcs` and `azurerm`, and any workspace but
+`default` on `s3` and `pg`. A root that has been applied in its workspace has
+state, so this is only a never-applied workspace, and the write is the empty
+state the first apply would have made anyway.
+
+Terraform Cloud and HCP Terraform remote execution are out of scope. Under
+remote execution the plan runs in HCP Terraform, its locking is HCP's, and
+whether `plan -out` is accepted depends on the Terraform version, so chant
+makes no claim there. If the plan fails, the read falls back as a plan failure.
+
+### A choudoufu root
+
+A [live root](/chant/lexicons/terraform/ops/) at the plan depth runs both
+reads, one after the other:
+
+```sh
+choudoufu live-plan -detailed-exitcode -json
+choudoufu plan -input=false -lock=false [-var-file=...] -out=<tmp>/plan.tfplan
+choudoufu show -json <tmp>/plan.tfplan
+```
+
+`live-plan -json` answers presence and ownership exactly as it does at the
+default depth: the markers, the `bound`, `unowned`, `adoptable` and
+`omissions` sections, the same verdicts. It carries no attribute values
+(measured in behold #404), so the attributes come from the second read.
+`choudoufu plan -out` writes a stock plan file (choudoufu #878), and the plan
+depth reads it with the same rules as on a stock root: the same `-lock=false`
+(choudoufu accepts it), the same temp directory, nothing written in the root,
+the same attribute names and the same [sensitive rule](#sensitive-values).
+`sources` reads `"live+plan"`.
+
+The plan's attributes go on every block `live-plan` bound, and only there. A
+foreign or adoptable block gets none: choudoufu plans a `create` for an
+instance it does not own, which is its answer about ownership, not a fact
+about the live resource. A planned create reads absent, as on a stock root.
+
+Drift reads differently on a live root. choudoufu rebuilds prior state from
+the account on every run, so there is no recorded state for `resource_drift`
+to compare against, and `planDrift` stays empty. A change made outside
+choudoufu shows up as the planned change that would undo it: `planAction:
+"update"`, with the live value as `before` and the declared one as `after` in
+`planChanges`. A log group whose retention was changed by hand reads:
+
+```json
+{
+  "planAction": "update",
+  "planChanges": [{ "path": "retention_in_days", "before": 3, "after": 1 }]
+}
+```
+
+```sh
+CHANT_TERRAFORM_OBSERVE=plan chant search "attr:planAction=update" --live --env prod
+```
+
+choudoufu's plan marks a value from a `sensitive` variable on the `after` side
+only. The `before` side holds the live value, which is the previous secret,
+unmarked. So a path marked on either side is redacted on both, on every root.
+
+If the plan read fails, `live-plan` alone answers and the note says why:
+
+| what failed | what answers | note |
+| --- | --- | --- |
+| nothing | both | `` the plan read answered (...), beside `live-plan -json`, which answered presence and ownership `` |
+| the plan read, for any reason | `live-plan` alone; plan attributes are absent and `sources` reads `"live"` | `` the plan read failed (no provider credentials: ...), so `live-plan -json` alone answered `` |
+| `live-plan` | nothing: the root is not observed, as at the default depth, and the plan read is not tried | `` no read answered (`live-plan -json` failed, so the plan read was not tried) `` |
+
+The cost is two refreshes of the estate per read instead of one.
+
+The overlay keeps one verdict per block. A caller that paints from the
+`live-plan` rows themselves (each instance's omission reason and detail,
+`identity_values`, an adoptable row's fields) can ask for the document the read
+used instead of running its own `live-plan` beside it: set
+`CHANT_TERRAFORM_LIVE_PLAN_DIR` to an absolute directory and each live root's
+document is written there as `<root>.live-plan.json`, at either depth. A
+relative path is ignored, so nothing is written in the root. behold reads a
+choudoufu member this way (behold #924).
+
+```sh
+CHANT_TERRAFORM_OBSERVE=plan CHANT_TERRAFORM_LIVE_PLAN_DIR=$(mktemp -d) \
+  chant graph . --live --overlay --env prod --format ir --detail 3
+```
 
 ## What has no answer at all
 
@@ -192,4 +454,7 @@ pull request.
 
 The same care applies to observation: an observed resource reports its
 address, type, mode, provider and root, plus the `id` as its physical id.
-Nothing else out of the state row's `values` is surfaced.
+Nothing else out of the state row's `values` is surfaced. The plan depth adds
+the attribute values that change, and only those, with the
+[sensitive rule](#sensitive-values) applied; the plan document itself never
+leaves the process and its file is removed when the read ends.

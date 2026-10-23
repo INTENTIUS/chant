@@ -25,6 +25,7 @@ import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable"
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
 import type { TerraformDeleteMode } from "../config";
+import { redactSensitiveBody, redactSensitiveSource } from "./redact";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
 /** A parsed HCL block body, as `@cdktn/hcl2json` encodes it. */
@@ -52,6 +53,16 @@ export interface TerraformEntity extends Declarable {
   readonly props: {
     /** Terraform address, e.g. `aws_s3_bucket.assets`, `var.region`, `module.cdn`. */
     readonly address: string;
+    /**
+     * A `resource` or `data` block's type and name, its two labels
+     * (`aws_instance` and `web` for `aws_instance.web`, `aws_ami` and `ubuntu`
+     * for `data.aws_ami.ubuntu`). Absent on every other block. Every resource
+     * is `Terraform::Resource` to chant, so this is what core's
+     * `terraformType()` reads for `chant search "kind:aws_instance"`,
+     * `--count-by kind` and the effective-topology folds (chant #4366).
+     */
+    readonly type?: string;
+    readonly name?: string;
     /** The block body, verbatim from hcl2json (interpolations survive as `"${...}"`). */
     readonly body: BlockBody;
     /** File the block came from, as named by the parse input. */
@@ -223,6 +234,9 @@ export function terraformEntity(
   suppressions?: readonly SuppressionDirective[],
 ): TerraformEntity {
   const expansion = expansionOf(body);
+  const labels = entityType === RESOURCE_TYPE ? blockLabels(address)
+    : entityType === DATA_TYPE && address.startsWith("data.") ? blockLabels(address.slice("data.".length))
+    : undefined;
   return {
     [DECLARABLE_MARKER]: true,
     lexicon: "terraform",
@@ -231,6 +245,7 @@ export function terraformEntity(
     stack: root,
     props: {
       address,
+      ...(labels ?? {}),
       body,
       file,
       root,
@@ -246,6 +261,13 @@ export function terraformEntity(
     },
     suppressions,
   };
+}
+
+/** The type and name labels of a resource address (`aws_instance.web`), or undefined when it is not two labels. */
+function blockLabels(address: string): { type: string; name: string } | undefined {
+  const dot = address.indexOf(".");
+  if (dot <= 0 || dot === address.length - 1 || address.indexOf(".", dot + 1) !== -1) return undefined;
+  return { type: address.slice(0, dot), name: address.slice(dot + 1) };
 }
 
 /** One `.tf` file's name and source. */
@@ -388,6 +410,9 @@ export async function blocksToEntities(
   const entities = new Map<string, Declarable>();
   const prefix = callers.length > 0 ? `${root}/${callers.join("/")}` : root;
 
+  /** Each file's text is carried by every entity of the file: redact it once. */
+  const redacted = new Map<string, string>();
+
   const add = (
     entityType: string,
     address: string,
@@ -397,10 +422,13 @@ export async function blocksToEntities(
     scanAddress: string = address,
   ): void => {
     const { line, suppressions } = directivesFor(scan, scanAddress);
+    let source = redacted.get(file.source);
+    if (source === undefined) redacted.set(file.source, (source = redactSensitiveSource(file.source)));
+    const plain = (typeof body === "object" && body !== null ? body : {}) as BlockBody;
     const entity = terraformEntity(
       entityType,
       address,
-      (typeof body === "object" && body !== null ? body : {}) as BlockBody,
+      entityType === VARIABLE_TYPE ? redactSensitiveBody(plain) : plain,
       file.name,
       root,
       {
@@ -409,7 +437,7 @@ export async function blocksToEntities(
         ...(modeOptions?.configEstate !== undefined ? { configEstate: modeOptions.configEstate } : {}),
         ...(callers.length > 0 ? { callers } : {}),
       },
-      file.source,
+      source,
       line,
       suppressions,
     );

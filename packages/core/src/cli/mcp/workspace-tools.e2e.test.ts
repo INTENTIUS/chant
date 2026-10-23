@@ -85,7 +85,7 @@ describe("which servers have the workspace tools", () => {
       const { tools } = (await rpc(server(cwd), "tools/list")) as { tools: { name: string }[] };
       expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(names));
     }
-    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-changes", "workspace-records", "workspace-points", "workspace-agent", "workspace-work-history", "workspace-runs", "records-new", "records-amend", "records-review", "records-close", "points-answer", "points-retract", "points-withdraw"]);
+    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-search", "workspace-changes", "workspace-records", "workspace-points", "workspace-agent", "workspace-work-history", "workspace-runs", "records-new", "records-amend", "records-review", "records-close", "points-answer", "points-retract", "points-withdraw"]);
   });
 
   test("a server outside any workspace, or given none, does not", async () => {
@@ -159,7 +159,27 @@ describe("reads", () => {
     expect(flag.content[0].text).toMatch(/at may not start with -/);
   }, 120_000);
 
+  test("workspace-search returns exactly the document chant workspace search --json prints (#4374)", async () => {
+    const s = server();
+    const res = await call(s, "workspace-search", { query: "app" });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent).toEqual(cli(["workspace", "search", "app", "--json"]));
+    expect(res.structuredContent).toMatchObject({ contract: 1, query: "app", at: null, source: { kind: "declared" } });
+    // A query that opens with an edge term is passed after --, and a refusal is a document.
+    const edge = await call(s, "workspace-search", { query: "->kind:Nothing", countBy: "kind" });
+    expect(edge.structuredContent).toEqual(cli(["workspace", "search", "--count-by", "kind", "--json", "--", "->kind:Nothing"]));
+    const refused = await call(s, "workspace-search", { query: "app", at: "latest" });
+    expect(refused.structuredContent).toMatchObject({ error: { code: "revision-unknown", hint: expect.stringContaining("--snapshot latest") } });
+  }, 240_000);
+
   test("the conformance suite's argv maps to the tool that answers it", () => {
+    expect(mcpToolCall(["workspace", "search", "app", "--member", "delivery", "--snapshot", "latest", "--env", "dev", "--json"])).toEqual({
+      name: "workspace-search",
+      arguments: { query: "app", member: ["delivery"], snapshot: "latest", env: "dev" },
+    });
+    expect(readArgv("workspace-search", { query: "->kind:X", member: ["delivery"], snapshot: "latest", env: "dev" })).toEqual([
+      "workspace", "search", "--member", "delivery", "--env", "dev", "--snapshot", "latest", "--json", "--", "->kind:X",
+    ]);
     expect(mcpToolCall(["workspace", "records", "--kind", KIND, "--json"])).toEqual({ name: "workspace-records", arguments: { kind: KIND } });
     expect(mcpToolCall(["workspace", "records", "--uncommitted", "--kind", KIND, "--json"])).toEqual({ name: "workspace-records", arguments: { uncommitted: true, kind: KIND } });
     expect(readArgv("workspace-records", { kind: KIND, uncommitted: true })).toEqual(["workspace", "records", "--kind", KIND, "--uncommitted", "--json"]);

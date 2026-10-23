@@ -1,6 +1,6 @@
 # What the gated acceptance suites have actually run against
 
-Five `describe` blocks across three files run this lexicon against a real
+Eight `describe` blocks across five files run this lexicon against a real
 binary rather than a fixture, and every one of them skips rather than fails
 when its dependency is absent. A skip is silent by design, so without this
 file nothing in the tree says which of them has ever passed, against what, or
@@ -210,6 +210,58 @@ With the Init phase back, the same run reaches its gate:
    Init downloads the provider the Ledger step needs, and the run reaches
    its gate
 ```
+
+### 6. `the plan depth against a real terraform` / `tofu`
+
+`../plan-read.acceptance.test.ts`, one block per binary, three tests each, over
+the `plan-read/` fixture (built-in `terraform_data`, `local` backend, so no
+registry, no network and no credentials). The first reads the plan depth
+through `describeResources` and checks the IR attributes, `sources` reading
+`"plan"`, no secret in the result, nothing new or changed in the root, and no
+`chant-terraform-plan-*` directory left in the temp dir. The second holds the
+state lock with an `apply` waiting at its prompt, shows a plan without
+`-lock=false` failing on `Error acquiring the state lock`, and reads through
+it. The third refuses a never-initialised root with the init line and writes
+nothing in it.
+
+Gated on `terraform` / `tofu` on PATH, each block on its own binary.
+
+```
+npx vitest run lexicons/terraform/src/plan-read.acceptance.test.ts
+```
+
+Last passed: 2026-10-23, `Terraform v1.15.8` and `OpenTofu v1.12.5` on
+`darwin_arm64`, 6 passed, by chant #4358. Proved red the same day: with
+`-lock=false` taken out of `terraformPlanReadCommand`, both lock tests failed
+on `Error acquiring the state lock`.
+
+### 7. `the plan depth on a live root against a real choudoufu`
+
+`../live-plan-depth.acceptance.e2e.test.ts` (#4371), one test, in the e2e
+project because it takes about a minute. It copies `live-estate/` under a
+fresh estate name, applies it with three files held back, creates the two
+unowned log groups, drifts a log group's retention and a VPC tag out of band,
+and changes the value of a `sensitive` variable the VPC carries as a tag. Then
+one `describeResources` at the plan depth with the real activities: bound
+blocks carry the plan's attributes (the drift as a planned `update`),
+ownership and the marker still come from `live-plan`, the foreign and
+adoptable blocks carry none, `sources` reads `live+plan`, neither secret
+appears anywhere in the result, and the read adds nothing to the root (the
+plan file and the `live-plan` document included, #4379) or the temp directory.
+
+Gated on a `choudoufu` and an `aws` CLI on PATH and on
+`CHOUDOUFU_EMULATOR_ENDPOINT`.
+
+```
+npx vitest run --project e2e lexicons/terraform/src/live-plan-depth.acceptance.e2e.test.ts
+```
+
+Last passed: 2026-10-23, choudoufu v0.30.0 (release binary, verified against
+`SHA256SUMS`) with floci
+`ghcr.io/lex00/floci@sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec`,
+by chant #4371. Proved red the same day: with `plan-observation.ts`'s
+redaction put back to flagging each side by its own marks, the old secret
+came through as `tags.token`'s `before`.
 
 ## Running everything that can run on a machine with no choudoufu
 

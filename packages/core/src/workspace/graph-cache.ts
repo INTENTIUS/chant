@@ -368,9 +368,7 @@ export function splitCached(plan: MemberPlan, args: ParsedArgs, cache: GraphCach
       // A member read through a generated reader project (#2874) is also keyed on
       // the kind's graph block and the version of the package that reads it.
       const reader = unit.reader ? readerStamp(unit.reader) : "";
-      const abs = unit.dir === "." ? plan.workspace.root : join(plan.workspace.root, ...unit.dir.split("/"));
-      const revision = at ? { commit: at, dir: unit.dir } : undefined;
-      const stamp = memberStamp(abs, unit.exclude, revision);
+      const { abs, revision, stamp } = unitStamp(plan, unit, at);
       if (!stamp) continue;
       stamps.set(unit.id, stamp.value);
       const key = cacheKey({ member: unit.member, dir: unit.dir, stamp: stamp.value, toolchain: `${tool}\0${reader}`, argv, env });
@@ -383,6 +381,32 @@ export function splitCached(plan: MemberPlan, args: ParsedArgs, cache: GraphCach
     }
   }
   return { hits, stamps, pending, started };
+}
+
+/** One unit's stamp, and what it was taken over: the member's directory on disk, and the commit for `--at`. */
+function unitStamp(plan: MemberPlan, unit: RunUnit, at: string | null): { abs: string; revision?: { commit: string; dir: string }; stamp: Stamp | undefined } {
+  const abs = unit.dir === "." ? plan.workspace.root : join(plan.workspace.root, ...unit.dir.split("/"));
+  const revision = at ? { commit: at, dir: unit.dir } : undefined;
+  return { abs, ...(revision ? { revision } : {}), stamp: memberStamp(abs, unit.exclude, revision) };
+}
+
+/**
+ * Every member unit's stamp, by unit id, by the rule {@link splitCached} keys
+ * the cache on (ws-059), with no cache read. A read that is never cached, such
+ * as `chant workspace search` (#4374), still stamps its members this way, so a
+ * reader compares stamps across documents with one meaning. A unit whose stamp
+ * can't be taken is left out.
+ */
+export function planStamps(plan: MemberPlan, at: string | null): Map<string, string> {
+  const stamps = new Map<string, string>();
+  for (const group of plan.groups) {
+    for (const unit of group.units) {
+      if (unit.group) continue;
+      const { stamp } = unitStamp(plan, unit, at);
+      if (stamp) stamps.set(unit.id, stamp.value);
+    }
+  }
+  return stamps;
 }
 
 /** The plan without the units in `ids`; a toolchain left with no units is dropped. */

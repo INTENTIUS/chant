@@ -13,6 +13,9 @@
  *   (`substituteGraphConfig`). The terraform lexicon's config names one root
  *   after the member, at the member's directory, with `moduleRoot` at the
  *   workspace root, so a member that calls `../modules/x` keeps its modules.
+ * - It also sets `graph.lint: "report"` (behold#919), so a member whose
+ *   source fails the lexicon's lint is still composed, with the findings on
+ *   its `meta.lint`, instead of failing with `command-failed`.
  * - `node_modules` links to the `node_modules` directory holding the lexicon
  *   package, found from the workspace root as the kind's pin was. The lexicon
  *   chant loads is then the one the declaration pins.
@@ -95,7 +98,10 @@ export function prepareKindReaders(plan: MemberPlan, root: string): PreparedRead
         const project = join(scratch, unit.id);
         mkdirSync(project, { recursive: true });
         const config = substituteGraphConfig(unit.reader.config, { member: unit.member, dir: unit.abs, workspace: root });
-        writeFileSync(join(project, "chant.config.json"), `${JSON.stringify({ lexicons: [unit.reader.lexicon], [unit.reader.lexicon]: config }, null, 2)}\n`);
+        // `graph.lint: "report"` (behold#919): chant did not author a reader
+        // member's source, so a lint error there is a finding about it, carried
+        // on the member's `meta.lint`, not a reason to leave it out of the graph.
+        writeFileSync(join(project, "chant.config.json"), `${JSON.stringify({ lexicons: [unit.reader.lexicon], [unit.reader.lexicon]: config, graph: { lint: "report" } }, null, 2)}\n`);
         symlinkSync(found.modules, join(project, "node_modules"), "dir");
         unit.abs = project;
         return true;

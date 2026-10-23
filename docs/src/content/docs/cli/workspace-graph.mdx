@@ -7,7 +7,7 @@ title: "chant workspace graph"
 ## Synopsis
 
 ```
-chant workspace graph [dir] [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--no-cache] [--dry-run]
+chant workspace graph [dir] [--at <rev>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--capability-view] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [--detail 0..3] [-o <file>] [--member <name>] [--kind <kind file>]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
 chant workspace graph [dir] --intent <path[:start-end]|path#symbol|member/node|sha> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
@@ -18,7 +18,7 @@ chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind fi
 
 `chant workspace graph` reads every member of kind `chant` through that member's own `chant graph --format ir` and composes the results into one document ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-009](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-009-ir-versions.md), [ws-018](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-018-composer.md), [ws-022](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-022-ids.md)). The toolchain each member gets works as described for [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member). Example groups have no place in the graph.
 
-A member of a kind from a pinned package is read too when the package's kinds file says how, in the kind's [`graph` block](/chant/reference/workspace-kinds/#reading-a-member-in-the-graph) ([#2874](https://github.com/INTENTIUS/chant/issues/2874)). The `terraform` and `choudoufu` kinds of the terraform lexicon have one. chant writes a reader project for each such member in a temporary directory outside the workspace, with a `chant.config.json` that declares the lexicon, and runs the member's `chant graph` there under the member's toolchain. `--env` isn't passed to it, since the reader project declares no environments. The project is removed when the read ends. A member of a package kind without a `graph` block is listed with `kind-not-run`, and `build`, `lint` and `audit` skip every package kind.
+A member of a kind from a pinned package is read too when the package's kinds file says how, in the kind's [`graph` block](/chant/reference/workspace-kinds/#reading-a-member-in-the-graph) ([#2874](https://github.com/INTENTIUS/chant/issues/2874)). The `terraform` and `choudoufu` kinds of the terraform lexicon have one. chant writes a reader project for each such member in a temporary directory outside the workspace, with a `chant.config.json` that declares the lexicon, and runs the member's `chant graph` there under the member's toolchain. The reader project sets [`graph.lint: "report"`](/chant/cli/graph/), so a member whose HCL fails one of the lexicon's error rules (a database with `storage_encrypted = false`, say) is still composed, and the findings are on the member's `meta.lint` ([behold#919](https://github.com/INTENTIUS/behold/issues/919)). Under a member toolchain older than 0.124.46 the key is ignored and such a member fails with `command-failed`, as before. `--env` isn't passed to it, since the reader project declares no environments. The project is removed when the read ends. A member of a package kind without a `graph` block is listed with `kind-not-run`, and `build`, `lint` and `audit` skip every package kind. A kind that neither a built-in nor a loaded pin supplies fails the member with `unknown-kind`. That happens to `terraform` when the pinned lexicon isn't installed, or another version is. The message names the pin's problem ([#4380](https://github.com/INTENTIUS/chant/issues/4380)). Before, such a member was listed with `kind-not-run`.
 
 Each member reads its graph at the `--detail` tier given, `2` when none is ([#4228](https://github.com/INTENTIUS/chant/issues/4228)). At `--detail 1` a member's composites arrive collapsed, as [`chant graph`](/chant/cli/graph/) collapses them, and a member's cached read at one tier is never served for another, since the tier is part of the member's command line.
 
@@ -117,6 +117,12 @@ The document follows the schema `https://intentius.io/chant/schemas/workspace/gr
 `contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. The `meta` and `pipeline` of a member's IR, when it has them, stay on the member's entry, except for the collector topology, which has its own [section](#collectors). A composed member also carries `cached`, which says whether the [member cache](#the-member-cache) answered it. Its `stamp` is the member's [stamp](/chant/reference/workspace-read-contract/#member-stamps), or `null` when none could be taken.
 
 When the declaration can't be read, the command prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with one of the [declaration's error codes](/chant/reference/workspace-declaration/#errors) or an `--at` code, `not-a-git-repository` or `revision-unknown`. `--live` with `--at` fails with `live-at-revision`.
+
+## The capability view
+
+With `--capability-view`, each member runs `chant graph --format ir --capability-view`, and its composed entry carries `capabilityView`: the lexicon-neutral view the [capability rules](/chant/reference/capabilities/) read, built by the member's own chant through the mappings and adapters of the lexicons that member loads, with `<member>/<id>` ids ([#4378](https://github.com/INTENTIUS/chant/issues/4378)). Two members that pin different lexicon versions are each mapped by their own. [`chant workspace search`](/chant/cli/workspace-search/#capabilities) asks for it when a query names a capability. It composes the members' views and resolves the ARNs one member names in another, then runs the rules once.
+
+A member's chant from before the view refuses the flag as one it doesn't know. That member is read again without it, so the graph still composes it, and its `capabilityView` is `null`. A nested workspace member carries the views of its own members together, or `null` when any of them has none. The member cache keys the read on its command line, so a read with the view and one without are cached apart.
 
 ## Links
 
@@ -503,6 +509,7 @@ A trace over one region may take at most twice as long as [`chant workspace stat
 | `--follow-squash` | With `--intent`, [follow each squash merge](#following-a-squash-merge) to its pull request's original commits, fetching a pull request ref the clone lacks from `origin`. |
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |
 | `--env <name>` | Passed to each member's `chant graph`. |
+| `--capability-view` | Ask each member's chant for its [capability view](#the-capability-view) and carry it on the member. |
 | `--no-cache` | Read every member, leaving the [member cache](#the-member-cache) unread and unwritten. |
 | `--live` | Read each member's graph from the account with `chant graph --live`. Needs `--env`, and can't be used with `--at`. See [the live read](#the-live-read). |
 | `--overlay` | With `--live`, passed to each member: its graph carries the drift overlay against its source. |
