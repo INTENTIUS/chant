@@ -69,9 +69,13 @@ on `::`, applied to `_`:
 - A term ending in `_` is a prefix: `kind:aws_iam_` is every IAM type.
   A bare provider name is the same prefix, so `kind:aws` is every `aws_` type.
 - `kind:Terraform::Resource` (or `kind:Resource`) is still every resource.
+- A `data` block's type keeps its prefix: `kind:data.aws_ami` is the AMI
+  lookups, and `kind:aws_ami` matches no data source.
 
 A result row shows the type where a CloudFormation row shows its kind, and
-`--explain` counts against it ("2 of 2 aws_instance matched"). `attr:type=`
+`--explain` counts against it ("2 of 2 aws_instance matched"). These are the
+same types `--count-by kind` groups by, so `kind:<group>` returns exactly the
+rows counted in that group. `attr:type=`
 is a substring test like any other `attr:`, so prefer `kind:` for a type.
 
 ```bash

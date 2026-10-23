@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
-import { enrichEffectiveTopology, terraformResourceType } from "../../graph-effective";
+import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -954,13 +954,15 @@ export interface Term {
  * also read against each resource's type (#4366), with the same boundary rule
  * on `_`: `kind:aws_iam_role` means that type exactly and never
  * `aws_iam_role_policy`, and a term ending in `_` (`kind:aws_iam_`) or a bare
- * provider name (`kind:aws`) means every type it begins. A term that names a
+ * provider name (`kind:aws`) means every type it begins. A data source's type
+ * keeps its `data.` prefix (`kind:data.aws_ami`), the same type `--count-by kind`
+ * groups it under, so `kind:aws_ami` is not a data source. A term that names a
  * type turns off the substring fallback for the IR kind, so `kind:aws_instance`
  * is the instances and nothing found by accident.
  */
 export function resolveKindTerms(terms: Term[], nodes: IRNode[]): void {
   const present = [...new Set(nodes.map((n) => n.kind).filter((k): k is string => !!k))];
-  const tfPresent = [...new Set(nodes.map(terraformResourceType).filter((k): k is string => !!k))];
+  const tfPresent = [...new Set(nodes.map(terraformType).filter((k): k is string => !!k))];
   const walk = (t: Term): void => {
     if (t.sub) walk(t.sub);
     if (t.kind !== "kind") return;
@@ -986,13 +988,13 @@ function resolveTerraformTypes(term: string, present: string[]): string[] {
   if (want.length === 0 || want.includes("::")) return [];
   const exact = present.filter((p) => p === want);
   if (exact.length > 0) return exact;
-  const prefix = want.endsWith("_") ? want : want.includes("_") ? undefined : `${want}_`;
+  const prefix = want.endsWith("_") || want.endsWith(".") ? want : /[_.]/.test(want) ? undefined : `${want}_`;
   return prefix ? present.filter((p) => p.startsWith(prefix)) : [];
 }
 
-/** What a row and `--explain` call a node's kind: a terraform resource's type (#4366), else its IR kind. */
+/** What a row and `--explain` call a node's kind: a terraform block's type (#4366), else its IR kind. Same as `--count-by kind`. */
 function displayKind(n: IRNode): string | undefined {
-  return terraformResourceType(n) ?? n.kind;
+  return terraformType(n) ?? n.kind;
 }
 
 function parseLeaf(tok: string): Term {
@@ -1179,7 +1181,7 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
     // Resolved kinds when the term lined up with `::` boundaries; the
     // documented substring otherwise. A term that named a terraform type
     // (#4366) matches resources of that type as well, and drops the substring.
-    if (t.tfTypes?.has(terraformResourceType(n) ?? "")) return true;
+    if (t.tfTypes?.has(terraformType(n) ?? "")) return true;
     if (t.kinds) return t.kinds.has(n.kind ?? "");
     if (t.tfTypes) return false;
     return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());

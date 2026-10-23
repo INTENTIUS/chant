@@ -122,33 +122,52 @@ export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
   return { ...ir, nodes, ...(derivedAttrs ? { derivedAttrs } : {}) };
 }
 
-/** The chant entity type every terraform `resource` block carries. */
+/** The chant entity types every terraform `resource` and `data` block carries. */
 const TERRAFORM_RESOURCE = "Terraform::Resource";
+const TERRAFORM_DATA = "Terraform::Data";
+
+/**
+ * The Terraform type of a `resource` or `data` node: `aws_instance` for
+ * `aws_instance.web`, `data.aws_ami` for `data.aws_ami.ubuntu`. Undefined for
+ * any other node.
+ *
+ * This is the one reading of a terraform node's type. `chant search`'s `kind:`
+ * (#4366), its rows and `--explain` count, `--count-by kind` (#4360) and the
+ * effective-topology folds (#4362) all call it, so they cannot disagree.
+ *
+ * The terraform lexicon puts every resource on the IR as `Terraform::Resource`
+ * (and every data source as `Terraform::Data`) and carries the block's type
+ * label as `attrs.type` (#4366), which is read first. A node without one (an
+ * older producer, or a `chant graph --live` node built from state) falls back
+ * to the block's address (`aws_instance.web`, or `module.app.aws_instance.web`)
+ * in `attrs.address`, whose second-to-last segment is the type, and failing
+ * that to its id, whose last path segment is the address too. A data source
+ * keeps its `data.` prefix: `data.aws_ami` reads an AMI, it does not manage one.
+ */
+export function terraformType(n: IRNode | undefined): string | undefined {
+  if (!n || (n.kind !== TERRAFORM_RESOURCE && n.kind !== TERRAFORM_DATA)) return undefined;
+  const label = (n.attrs as Record<string, unknown> | undefined)?.["type"];
+  let type = typeof label === "string" && label.length > 0 ? label : undefined;
+  if (type === undefined) {
+    const parts = terraformAddress(n).split(".");
+    type = parts.length >= 2 ? parts[parts.length - 2] : undefined;
+  }
+  if (type === undefined) return undefined;
+  return n.kind === TERRAFORM_DATA ? `data.${type}` : type;
+}
 
 /**
  * The provider resource type of a terraform `resource` node (`aws_instance`),
- * or undefined for any other node.
- *
- * The terraform lexicon puts every resource on the IR as `Terraform::Resource`
- * and carries the block's type label as `attrs.type` (chant #4366), which is
- * read first. A node without one (an older producer, or a `chant graph --live`
- * node built from state) falls back to the block's address (`aws_instance.web`,
- * or `module.app.aws_instance.web`) in `attrs.address`, whose second-to-last
- * segment is the type, and failing that to its id, whose last path segment is
- * the address too.
+ * or undefined for any other node, data sources included. See {@link terraformType}.
  */
 export function terraformResourceType(n: IRNode | undefined): string | undefined {
-  if (!n || n.kind !== TERRAFORM_RESOURCE) return undefined;
-  const type = (n.attrs as Record<string, unknown> | undefined)?.["type"];
-  if (typeof type === "string" && type.length > 0) return type;
-  const parts = terraformAddress(n).split(".");
-  return parts.length >= 2 ? parts[parts.length - 2] : undefined;
+  return n?.kind === TERRAFORM_RESOURCE ? terraformType(n) : undefined;
 }
 
 function terraformAddress(n: IRNode): string {
   const address = (n.attrs as Record<string, unknown> | undefined)?.["address"];
   if (typeof address === "string" && address.length > 0) return address;
-  return n.id.slice(n.id.lastIndexOf("/") + 1);
+  return n.id.slice(n.id.lastIndexOf("/") + 1).replace(/~\d+$/, "");
 }
 
 type Body = Record<string, unknown>;

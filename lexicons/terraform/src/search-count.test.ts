@@ -71,8 +71,8 @@ describe("chant search on a Terraform project", () => {
   it("sees the roots' blocks at all", async () => {
     const { code, out } = await search({ path: "kind:Terraform::Resource" });
     expect(code).toBe(0);
-    expect(out).toContain("app/aws_instance.web  Terraform::Resource");
-    expect(out).toContain("network/aws_vpc.main  Terraform::Resource");
+    expect(out).toContain("app/aws_instance.web  aws_instance");
+    expect(out).toContain("network/aws_vpc.main  aws_vpc");
   });
 });
 

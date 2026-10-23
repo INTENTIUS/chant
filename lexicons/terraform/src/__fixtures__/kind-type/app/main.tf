@@ -22,3 +22,14 @@ resource "aws_instance" "worker" {
   ami           = "ami-12345678"
   instance_type = "t3.micro"
 }
+
+# A data source reads an AMI, it does not manage one: its type is
+# `data.aws_ami`, never `aws_ami`.
+data "aws_ami" "base" {
+  most_recent = true
+  owners      = ["amazon"]
+}
+
+variable "region" {
+  default = "us-east-1"
+}

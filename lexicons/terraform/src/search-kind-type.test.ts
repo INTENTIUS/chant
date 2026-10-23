@@ -6,7 +6,9 @@
  * type and name as `attrs.type` and `attrs.name`, and `kind:` reads the type
  * with the `::`-boundary rule moved onto `_`. The fixture
  * (`src/__fixtures__/kind-type/`) holds two `aws_instance`, an `aws_iam_role`
- * and an `aws_iam_role_policy`, whose type begins with the role's.
+ * and an `aws_iam_role_policy`, whose type begins with the role's, and one
+ * `data "aws_ami"`. `--count-by kind` (#4360) groups by the same type, through
+ * the same function, which the last test holds it to.
  */
 
 import { dirname, join } from "node:path";
@@ -15,6 +17,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildGraphIr, type GraphIR, type IRNode } from "@intentius/chant/graph-ir";
 import { enrichEffectiveTopology } from "@intentius/chant/graph-effective";
 import { __searchInternals, resolveKindTerms, runSearch } from "@intentius/chant/cli/handlers/search";
+import { countGroups } from "@intentius/chant/cli/handlers/search-count";
 import { renderTerraformRoots } from "./hcl/roots";
 import { terraformPlugin } from "./plugin";
 
@@ -44,9 +47,16 @@ describe("the lexicon's resource labels", () => {
     expect(web.attrs.name).toBe("web");
   });
 
-  it("carries neither on a block that is not a resource", () => {
-    const tf = ir.nodes.filter((n) => n.kind !== "Terraform::Resource");
-    for (const n of tf) expect(n.attrs.type).toBeUndefined();
+  it("carries them on a data source, without the data. prefix", () => {
+    const ami = ir.nodes.find((n) => n.id === "app/data.aws_ami.base")!;
+    expect(ami.attrs.type).toBe("aws_ami");
+    expect(ami.attrs.name).toBe("base");
+  });
+
+  it("carries neither on any other block", () => {
+    const other = ir.nodes.filter((n) => n.kind !== "Terraform::Resource" && n.kind !== "Terraform::Data");
+    expect(other.length).toBeGreaterThan(0);
+    for (const n of other) expect(n.attrs.type).toBeUndefined();
   });
 });
 
@@ -71,6 +81,18 @@ describe('search "kind:<terraform type>"', () => {
     expect(search("kind:aws")).toHaveLength(4);
   });
 
+  it("a data source is data.<type>, and kind:<type> alone is only resources", () => {
+    expect(search("kind:data.aws_ami")).toEqual(["app/data.aws_ami.base"]);
+    expect(search("kind:aws_ami")).toEqual([]);
+    expect(search("kind:Terraform::Data")).toEqual(["app/data.aws_ami.base"]);
+  });
+
+  it("kind:<group> returns exactly what --count-by kind counts in that group (#4360)", () => {
+    const groups = countGroups(ir.nodes, { by: "kind" });
+    expect(groups.map((g) => g.group)).toEqual(expect.arrayContaining(["aws_instance", "aws_iam_role", "aws_iam_role_policy", "data.aws_ami"]));
+    for (const { group, count } of groups) expect(search(`kind:${group}`), group).toHaveLength(count);
+  });
+
   it("kind:Terraform::Resource still returns every resource", () => {
     expect(search("kind:Terraform::Resource")).toHaveLength(4);
     expect(search("kind:Resource")).toHaveLength(4);
@@ -82,7 +104,7 @@ describe('search "kind:<terraform type>"', () => {
   });
 
   it("reads a node with no attrs.type from its address, as a live or older node", () => {
-    const bare: IRNode = { id: "app/aws_instance.legacy", kind: "Terraform::Resource", attrs: { address: "aws_instance.legacy" } };
+    const bare: IRNode = { id: "app/aws_instance.legacy", kind: "Terraform::Resource", lexicon: "terraform", attrs: { address: "aws_instance.legacy" } };
     expect(search("kind:aws_instance", { ...ir, nodes: [...ir.nodes, bare] })).toContain("app/aws_instance.legacy");
   });
 
