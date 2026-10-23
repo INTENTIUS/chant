@@ -38,18 +38,18 @@ export default {
 };
 ```
 
-`pr-env up` refuses to run when the marker could not tell the environment's resources apart from any other (`packages/core/src/components/pr-environment.ts:143`):
+`pr-env up` refuses to run when the marker could not tell the environment's resources apart from any other (`packages/core/src/components/pr-environment.ts:144`):
 
 - `ownership.stack` is unset, so nothing carries a marker.
-- `ownership.env` is a literal. Every resource would carry that literal, so the build parameter form is required (`packages/core/src/components/pr-environment.ts:147`).
-- The config declares environments and does not declare the template, or does not cover `pr-<n>`, which `"pr-*"` does (`packages/core/src/components/pr-environment.ts:159`).
-- The config declares `pr-<n>` outright. That environment is the project's, not a pull request's (`packages/core/src/components/pr-environment.ts:166`).
+- `ownership.env` is a literal. Every resource would carry that literal, so the build parameter form is required (`packages/core/src/components/pr-environment.ts:148`).
+- The config declares environments and does not declare the template, or does not cover `pr-<n>`, which `"pr-*"` does (`packages/core/src/components/pr-environment.ts:160`).
+- The config declares `pr-<n>` outright. That environment is the project's, not a pull request's (`packages/core/src/components/pr-environment.ts:167`).
 
 The job sets the build parameter that `ownership.env` reads to `pr-<n>` (`packages/core/src/cli/handlers/pr-env.ts:184`). It also sets `CHANT_ENV` to `pr-<n>` and `CHANT_ENV_TEMPLATE` to the template's name, so a component that sizes itself by environment can read the template (`packages/core/src/cli/handlers/pr-env.ts:181`).
 
-The environment takes the template's declared endpoint, unless a `pr-*` entry declares one of its own (`packages/core/src/components/pr-environment.ts:170`). Point the template at an emulator and every pull request's environment goes there too.
+The environment takes the template's declared endpoint, unless a `pr-*` entry declares one of its own (`packages/core/src/components/pr-environment.ts:171`). Point the template at an emulator and every pull request's environment goes there too.
 
-A component's site carries over as well ([#4330](https://github.com/INTENTIUS/chant/issues/4330)). `pr-<n>` takes the runtime and lifecycle remote of a component's site in the template, as its `environments` declare it. A URL or domain carries over only when it names the environment with `{env}`, which becomes `pr-<n>`. A literal URL or domain is the template's own release, so it is left out (`packages/core/src/components/pr-environment.ts:187`). An entry the component declares for `pr-<n>` itself wins. The note shows each component's URL or domain in a Where column.
+A component's site carries over as well ([#4330](https://github.com/INTENTIUS/chant/issues/4330)). `pr-<n>` takes the runtime and lifecycle remote of a component's site in the template, as its `environments` declare it. A URL or domain carries over only when it names the environment with `{env}`, which becomes `pr-<n>`. A literal URL or domain is the template's own release, so it is left out (`packages/core/src/components/pr-environment.ts:188`). An entry the component declares for `pr-<n>` itself wins. The note shows each component's URL or domain in a Where column.
 
 ```ts
 environments: [{ name: "staging", runtime: "fly", url: "https://shop-{env}.example.test" }],
@@ -95,21 +95,21 @@ There is one note per environment on the pull request. Each job keeps its report
 
 ## Approve the environment's plan
 
-`env-up` plans the components the change reaches into `pr-<n>`. A plan with changes applies only once an approval of its digest stands under gate `pr-env`, on the pull request's op (`packages/core/src/components/pr-env-run.ts:240`). Until then the job exits 3, and the note names the command:
+`env-up` plans the components the change reaches into `pr-<n>`. A plan with changes applies only once an approval of its digest stands under gate `pr-env`, on the pull request's op (`packages/core/src/components/pr-env-run.ts:234`). Until then the job exits 3, and the note names the command:
 
 ```sh
 chant approve pr-42 pr-env --plan <digest> --approver github:<you> --sign
 ```
 
-The `ci.hooks` the other pull-request jobs run go around the plan and the apply here too, read at base (`packages/core/src/cli/handlers/pr-env.ts:195`). A failed `before-apply` hook stops the apply, and no record is kept (`packages/core/src/components/pr-env-run.ts:260`).
+The `ci.hooks` the other pull-request jobs run go around the plan and the apply here too, read at base (`packages/core/src/cli/handlers/pr-env.ts:195`). A failed `before-apply` hook stops the apply, and no record is kept (`packages/core/src/components/pr-env-run.ts:254`).
 
-Run the job again, or push, once it is approved. A push that moves the plan needs a new approval. An empty plan applies with no approval, by the rule ws-104 gives an empty change set (`packages/core/src/components/pr-env-run.ts:240`).
+Run the job again, or push, once it is approved. A push that moves the plan needs a new approval. An empty plan applies with no approval, by the rule ws-104 gives an empty change set (`packages/core/src/components/pr-env-run.ts:234`).
 
 <Aside type="caution">
 `env-up` runs the pull request's code with the credentials the job gives it. Give the job credentials that reach only what a pull request's environment may touch, such as an emulator or an account set aside for previews. With `ci.identity.cloud`, that is the identity of the `pr-*` rule. On GitHub a forked pull request's job gets no secrets, so it has nothing to apply with.
 </Aside>
 
-`env-up` writes the apply's record to `pr-env-record.json` under `--no-push` (`packages/core/src/cli/handlers/pr-env.ts:134`). `env-post` checks it as data before it appends the line to `_pr-envs/records.jsonl` on `chant/lifecycle` (`packages/core/src/cli/handlers/pr-env.ts:299`). The record must name this pull request's `pr-<n>`, that marker env and the template the base declares. The commit, the actor and the expiry are the post job's own, so a change cannot keep its environment past the base's TTL (`packages/core/src/components/pr-environment.ts:488`). The line names the marker the teardown will select on. An apply that failed part way is recorded too, so what did apply is torn down with the rest.
+`env-up` writes the apply's record to `pr-env-record.json` under `--no-push` (`packages/core/src/cli/handlers/pr-env.ts:134`). `env-post` checks it as data before it appends the line to `_pr-envs/records.jsonl` on `chant/lifecycle` (`packages/core/src/cli/handlers/pr-env.ts:299`). The record must name this pull request's `pr-<n>`, that marker env and the template the base declares. The commit, the actor and the expiry are the post job's own, so a change cannot keep its environment past the base's TTL (`packages/core/src/components/pr-environment.ts:489`). The line names the marker the teardown will select on. An apply that failed part way is recorded too, so what did apply is torn down with the rest.
 
 ## Run it by hand
 
@@ -135,15 +135,15 @@ chant ci run env-down --pr 42 --forge github
 
 ## What the teardown removes
 
-`pr-env down` reads the environment's record and runs the ownership check before it reads anything live (`packages/core/src/components/pr-environment.ts:327`). It refuses when:
+`pr-env down` reads the environment's record and runs the ownership check before it reads anything live (`packages/core/src/components/pr-environment.ts:328`). It refuses when:
 
 - the record names another pull request,
 - the record's marker names an environment other than `pr-<n>`,
 - the config declares `pr-<n>` outright.
 
-Then it plans the teardown under the record's marker, `{ stack, env: "pr-<n>" }`, through each lexicon's teardown capability. `planTeardown` drops a candidate whose marker differs (`packages/core/src/lifecycle/teardown.ts:126`), and `pr-env down` drops it again before anything is deleted (`packages/core/src/components/pr-environment.ts:344`). The template's resources carry `env: "staging"`, so they are never in the set.
+Then it plans the teardown under the record's marker, `{ stack, env: "pr-<n>" }`, through each lexicon's teardown capability. `planTeardown` drops a candidate whose marker differs (`packages/core/src/lifecycle/teardown.ts:126`), and `pr-env down` drops it again before anything is deleted (`packages/core/src/components/pr-environment.ts:345`). The template's resources carry `env: "staging"`, so they are never in the set.
 
-A teardown that left something stays live: a failure, a lexicon with no teardown execution, or a part the plan could not read (`packages/core/src/components/pr-environment.ts:459`). The record says `incomplete`, and the next sweep tries again. The aws, k8s and fly lexicons execute teardowns today. For other lexicons the candidates are reported as skipped, as `chant lifecycle teardown` reports them.
+A teardown that left something stays live: a failure, a lexicon with no teardown execution, or a part the plan could not read (`packages/core/src/components/pr-environment.ts:460`). The record says `incomplete`, and the next sweep tries again. The aws, k8s and fly lexicons execute teardowns today. For other lexicons the candidates are reported as skipped, as `chant lifecycle teardown` reports them.
 
 ## Tear down what no lexicon does
 
@@ -156,7 +156,7 @@ chant runs no Terraform, so the terraform lexicon has no teardown execution. Nam
 }
 ```
 
-The jobs read it from the declaration at the commit they check out, the base branch's (`packages/core/src/cli/handlers/pr-env.ts:324`). Set `minReader` to 0.124.45 or newer with it. chant runs the command twice, each time without the forge token variables (`packages/core/src/components/pr-env-run.ts:601`):
+The jobs read it from the declaration at the commit they check out, the base branch's (`packages/core/src/cli/handlers/pr-env.ts:324`). Set `minReader` to 0.124.45 or newer with it. chant runs the command twice, each time without the forge token variables (`packages/core/src/components/pr-env-run.ts:530`):
 
 | Stage | `CHANT_PR_ENV_STAGE` | What the command does |
 |---|---|---|
@@ -173,7 +173,7 @@ The command also gets the variables in the table below.
 | `CHANT_PR_ENV_TEMPLATE` | the template |
 | `CHANT_PR_ENV_COMMIT` | the commit last applied |
 | `CHANT_PR_ENV_LIVE` | a JSON file with the components and their locations from the records |
- A candidate whose marker is not exactly `{ stack, env: "pr-<n>" }` is dropped before the teardown stage sees it, as a lexicon's is. A failed owned stage is a hole, and a candidate the teardown stage leaves out counts as failed, so the environment stays live. `lexicons` names the lexicons the command covers. Their own candidates are left out, so the terraform lexicon's skip does not leave the environment incomplete (`packages/core/src/components/pr-environment.ts:422`).
+ A candidate whose marker is not exactly `{ stack, env: "pr-<n>" }` is dropped before the teardown stage sees it, as a lexicon's is. A failed owned stage is a hole, and a candidate the teardown stage leaves out counts as failed, so the environment stays live. `lexicons` names the lexicons the command covers. Their own candidates are left out, so the terraform lexicon's skip does not leave the environment incomplete (`packages/core/src/components/pr-environment.ts:423`).
 
 The command runs in the down job, which holds the forge token for the note. Keep it to the base branch's code.
 
@@ -183,10 +183,11 @@ A product that plans and applies with a tool chant does not run can take the gat
 
 | Function | What it does |
 |---|---|
-| `prEnvUp({ pr, head, template, ttl, stack, adapter, ports })` | Plans through `adapter.plan`, decides gate `pr-env` through `ports.decideGate`, applies through `adapter.apply` and keeps the record (`packages/core/src/components/pr-env-run.ts:191`). |
-| `prEnvDown({ pr, reason, adapters, ports, commit })` | The ownership check, then the lexicons' and adapters' teardown (`packages/core/src/components/pr-env-run.ts:330`). |
-| `prEnvSweep({ adapters, ports, commit })` | Runs `prEnvDown` for each environment whose TTL passed or whose pull request closed (`packages/core/src/components/pr-env-run.ts:398`). |
-| `lifecyclePrEnvPorts({ forge })` | The ports over `chant/lifecycle` and the gate ledger here, with the forge's note, status and pull request state (`packages/core/src/components/pr-env-run.ts:459`). |
+| `prEnvUp({ pr, head, template, ttl, stack, adapter, ports })` | Plans through `adapter.plan`, decides gate `pr-env` through `ports.decideGate`, applies through `adapter.apply` and keeps the record (`packages/core/src/components/pr-env-run.ts:185`). |
+| `prEnvDown({ pr, reason, adapters, ports, commit })` | The ownership check, then the lexicons' and adapters' teardown (`packages/core/src/components/pr-env-run.ts:324`). |
+| `prEnvSweep({ adapters, ports, commit })` | Runs `prEnvDown` for each environment whose TTL passed or whose pull request closed (`packages/core/src/components/pr-env-run.ts:392`). |
+
+The ports chant itself uses are in `@intentius/chant/components/pr-env-ports`. `lifecyclePrEnvPorts({ forge })` reads and appends the records on `chant/lifecycle`, decides the gate from the ledger there, and posts the forge's note and status (`packages/core/src/components/pr-env-ports.ts:53`). They load the gate, Ajv and js-yaml, so they sit apart. A product that passes its own ports bundles `pr-env-run` without them, about 32 KB (`packages/core/src/components/pr-env-run-bundle.test.ts`).
 
 The adapter's `apply` returns `locations`, where each component's copy lives, and the record keeps them. A teardown adapter, `PrEnvTeardownAdapter`, reads them back from `live.locations` in its `owned` half and answers each candidate with the marker its copy carries.
 
@@ -194,7 +195,7 @@ No gate holds a teardown. Closing the pull request is the decision, and so is th
 
 ## The sweep
 
-`pr-env sweep` tears down each live environment whose TTL passed (`packages/core/src/components/pr-env-run.ts:409`). With `--forge` it also asks whether each pull request is still open, and tears down the environment of one that closed or merged (`packages/core/src/components/pr-env-run.ts:412`). A forge that cannot answer leaves the TTL in charge.
+`pr-env sweep` tears down each live environment whose TTL passed (`packages/core/src/components/pr-env-run.ts:403`). With `--forge` it also asks whether each pull request is still open, and tears down the environment of one that closed or merged (`packages/core/src/components/pr-env-run.ts:406`). A forge that cannot answer leaves the TTL in charge.
 
 ## Related
 

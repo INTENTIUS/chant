@@ -61,8 +61,6 @@ import {
 } from "../../components/pr-environment";
 import {
   commandTeardownAdapter,
-  forgePrEnvPublisher,
-  lifecyclePrEnvPorts,
   prEnvDown as prEnvDownRun,
   prEnvOp,
   prEnvSweep as prEnvSweepRun,
@@ -71,6 +69,7 @@ import {
   type PrEnvPorts,
   type PrEnvTarget,
 } from "../../components/pr-env-run";
+import { forgePrEnvPublisher, lifecyclePrEnvPorts } from "../../components/pr-env-ports";
 import { applyPrSet, type PrPlanSet } from "../../components/pr-run";
 import { prOp } from "../../pr-loop";
 import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrForge } from "../../pr-forge";

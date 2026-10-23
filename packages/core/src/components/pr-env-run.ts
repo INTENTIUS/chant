@@ -16,9 +16,11 @@
  * - the report and the note ({@link renderPrEnvNote}).
  *
  * `chant components pr-env` (../cli/handlers/pr-env.ts) runs these with the
- * components adapter and the lexicons' teardown. The ports default to
- * chant/lifecycle in the working directory and the gate ledger there
- * ({@link lifecyclePrEnvPorts}).
+ * components adapter and the lexicons' teardown, and the ports over
+ * chant/lifecycle and the gate ledger in ./pr-env-ports.ts
+ * (`lifecyclePrEnvPorts`). Those ports load the gate and its schema checks,
+ * so they live apart: a product that brings its own ports bundles this
+ * module without them (pr-env-run-bundle.test.ts).
  */
 
 import { spawnSync } from "node:child_process";
@@ -29,19 +31,11 @@ import { withoutForgeTokens } from "../ci-handover";
 import type { ChantConfig } from "../config";
 import type { TeardownCandidate, TeardownHole, TeardownOutcome } from "../lexicon";
 import type { ObservationLexicon } from "../lexicon";
-import type { PrForge } from "../pr-forge";
 import {
   PR_ENV_EXIT,
   PR_ENV_GATE,
-  PR_ENV_LEDGER_DIR,
-  PR_ENV_LEDGER_FILE,
   expired,
   livePrEnvironments,
-  parsePrEnvRecords,
-  prEnvNoteMarker,
-  prEnvStatusContext,
-  prEnvStatusDescription,
-  prEnvStatusState,
   prEnvironmentName,
   renderPrEnvNote,
   teardownComplete,
@@ -423,71 +417,6 @@ export async function prEnvSweep(input: PrEnvSweepInput): Promise<{ exit: number
     if (r.exit !== PR_ENV_EXIT.done) exit = PR_ENV_EXIT.failed;
   }
   return { exit, results };
-}
-
-// ── the ports chant itself uses ────────────────────────────────────────────
-
-/**
- * The note and the `chant/pr-env` status on the forge. A refusal from the
- * forge warns and never fails the run.
- */
-export function forgePrEnvPublisher(forge: PrForge, warn: (message: string) => void = () => {}): (report: PrEnvReport) => Promise<void> {
-  return async (report) => {
-    const { forgePrincipalOf } = await import("../pr-forge");
-    const note = renderPrEnvNote(report, forgePrincipalOf(forge.kind, forge.host, "<your-login>"));
-    if (report.head) {
-      try {
-        await forge.setStatus(report.head, { context: prEnvStatusContext(report.member), state: prEnvStatusState(report), description: prEnvStatusDescription(report), ...(forge.runUrl ? { url: forge.runUrl } : {}) });
-      } catch (err) {
-        warn(`could not set the ${prEnvStatusContext(report.member)} status: ${messageOf(err)}`);
-      }
-    }
-    try {
-      await forge.upsertNote(report.pr, prEnvNoteMarker(report.env, report.member), note);
-    } catch (err) {
-      warn(`could not post the note on #${report.pr}: ${messageOf(err)}`);
-    }
-  };
-}
-
-/**
- * The ports over chant/lifecycle in `cwd` (default the working directory):
- * the records at `_pr-envs/records.jsonl`, appended and pushed, and the gate
- * ledger read without writing a pending fact. With `forge`, the note and
- * status are posted and the sweep asks it whether a pull request is open.
- */
-export function lifecyclePrEnvPorts(opts: { cwd?: string; forge?: PrForge; log?: (line: string) => void; warn?: (message: string) => void } = {}): PrEnvPorts {
-  const at = opts.cwd ? { cwd: opts.cwd } : undefined;
-  const warn = opts.warn ?? (() => {});
-  const forge = opts.forge;
-  return {
-    async readRecords() {
-      const { fetchLifecycle, readBlobFromPath } = await import("../lifecycle/git");
-      await fetchLifecycle(at).catch(() => false);
-      return parsePrEnvRecords(await readBlobFromPath(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, at));
-    },
-    async appendRecord(record) {
-      const { appendLedgerLine, fetchLifecycle, pushLifecycleReport } = await import("../lifecycle/git");
-      try {
-        await fetchLifecycle(at).catch(() => false);
-        await appendLedgerLine(PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, JSON.stringify(record), `Pull request environment ${record.env} ${record.kind} (${record.result})`, at);
-        const pushed = await pushLifecycleReport(at);
-        if (pushed.pushWarning) warn(pushed.pushWarning);
-      } catch (err) {
-        warn(`could not record ${record.env}'s ${record.kind} on chant/lifecycle: ${messageOf(err)}`);
-      }
-    },
-    async decideGate(input) {
-      const { approvalOf, decidePrGate, readOnlyLedger } = await import("./pr-run");
-      const { gitGateLedgerPort } = await import("../op/gate");
-      const approval = approvalOf(await decidePrGate(readOnlyLedger(gitGateLedgerPort(at)), input));
-      return { status: approval.status, ...(approval.approvedBy ? { approvedBy: approval.approvedBy } : {}) };
-    },
-    ...(forge ? { publish: forgePrEnvPublisher(forge, warn) } : {}),
-    ...(forge?.pullRequestState ? { pullRequestState: (pr: number) => forge.pullRequestState!(pr) } : {}),
-    ...(opts.log ? { log: opts.log } : {}),
-    warn,
-  };
 }
 
 // ── a teardown command ─────────────────────────────────────────────────────

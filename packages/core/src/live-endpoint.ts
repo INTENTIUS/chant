@@ -35,7 +35,7 @@
  * `--live --env floci` read against azure silently went to real Azure.
  */
 
-import { environmentEndpoint, type EnvironmentDeclaration } from "./config";
+import { environmentEndpoint, type EnvironmentDeclaration } from "./config-environments";
 import { emulatorsOf, endpointEnvVars, type EmulatorDeclaration } from "./op/emulator-lifecycle";
 
 /**
