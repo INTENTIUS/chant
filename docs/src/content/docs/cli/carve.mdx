@@ -97,26 +97,28 @@ CDK cloud-assembly carve-out advisory for ./cdk.out
   6 construct(s) scored. Advises only — nothing is emitted or changed.
 
 CLEAN LEAF — carve now  (3)
-   88  DataStack/Assets -> AWS::S3::Bucket
-       1 inbound (a reimport each)
-       2 CloudFormation resources fold into this construct.
+   88  1+0 d1 x1  DataStack/Assets -> AWS::S3::Bucket
+                  1 inbound (a reimport each)
+                  2 CloudFormation resources fold into this construct.
 
 CARVABLE — has boundary work  (2)
-   69  AppStack/Api
-       1 inbound (a reimport each), 1 stack output(s) reading it (one-line rewrite each), tier 2 map
-       L3 construct subtree — a Composite candidate (#1000). Its leaves rank here as one unit rather than separately.
-       3 CloudFormation resources fold into this construct.
-   67  AppStack/Handler -> AWS::Lambda::Function
-       2 outbound (deferred input each), tier 2 map, asset-backed
-       Asset-backed (Code) — carving it moves the CDK bundling too, not just the resource.
-       3 CloudFormation resources fold into this construct.
+   69  1+1 d1     AppStack/Api
+                  1 inbound (a reimport each), 1 stack output(s) reading it (one-line rewrite each), tier 2 map
+                  L3 construct subtree — a Composite candidate (#1000). Its leaves rank here as one unit rather than separately.
+                  3 CloudFormation resources fold into this construct.
+   67  -          AppStack/Handler -> AWS::Lambda::Function
+                  2 outbound (deferred input each), tier 2 map, asset-backed
+                  Asset-backed (Code) — carving it moves the CDK bundling too, not just the resource.
+                  3 CloudFormation resources fold into this construct.
 
 LEAVE IN CDK  (1)
-    0  AppStack/Reports.NestedStack
-       not carvable as it stands
-       Nested stack — its resources live in a template this advisor does not descend into, so
-       carving it means carving that whole template. Advise the nested assembly on its own.
+    0  -          AppStack/Reports.NestedStack
+                  not carvable as it stands
+                  Nested stack — its resources live in a template this advisor does not descend into, so
+                  carving it means carving that whole template. Advise the nested assembly on its own.
 ```
+
+On an assembly of several stacks the radius column adds `xN`: how many of the dependents sit across a stack boundary, reached through an `Fn::ImportValue`. `DataStack/Assets` has one dependent, and it is in another stack.
 
 ## Example
 
@@ -129,27 +131,30 @@ Terraform carve-out advisory for .../sample-estate
   8 resource(s)/module(s) scored. Advises only — nothing is emitted or changed.
 
 CLEAN LEAF — carve now  (6)
-  100  aws_cloudwatch_log_group.api -> AWS::Logs::LogGroup
-       clean 1:1 native map, no boundary edges
-   96  aws_subnet.a -> AWS::EC2::Subnet
-       1 outbound (deferred input each)
-   88  aws_s3_bucket.assets -> AWS::S3::Bucket
-       1 inbound (data-source patch each)
-   81  aws_lambda_function.api -> AWS::Lambda::Function
-       1 outbound (deferred input each), tier 2 map
+  100  -       aws_cloudwatch_log_group.api -> AWS::Logs::LogGroup
+               clean 1:1 native map, no boundary edges
+   96  -       aws_subnet.a -> AWS::EC2::Subnet
+               1 outbound (deferred input each)
+   88  1+0 d1  aws_s3_bucket.assets -> AWS::S3::Bucket
+               1 inbound (data-source patch each)
+   81  -       aws_lambda_function.api -> AWS::Lambda::Function
+               1 outbound (deferred input each), tier 2 map
 
 CARVABLE — has boundary work  (1)
-   64  aws_vpc.main -> AWS::EC2::VPC
-       3 inbound (data-source patch each)
+   64  3+0 d1  aws_vpc.main -> AWS::EC2::VPC
+               3 inbound (data-source patch each)
 
 LEAVE IN TERRAFORM  (1)
-    0  random_pet.suffix
-       no known native mapping (unsupported provider/type)
+    0  -       random_pet.suffix
+               no known native mapping (unsupported provider/type)
 
 Bands: 80-100 carve now | 50-79 carve with boundary edits | 0-49 leave in Terraform
+Radius: resources+outputs that depend on it at any depth, dN the farthest hop; - none; ? a module or unresolved count/for_each hides how many.
 ```
 
 Read it top to bottom: the log group has no dependents and a clean native map, so it carves for free. The bucket is a clean leaf too, held back one notch by the one Lambda that reads it. The VPC is carvable but three subnets hang off it, so carving it means three data-source patches. `random_pet` has no native mapping at all, so it stays.
+
+The second column is the [radius](#radius). Here every radius equals the direct count, because nothing is more than one hop deep. A deeper estate differs. `aws_db_subnet_group.main` in the `depth-estate` test fixture scores 80 with one inbound edge, and its radius is `3+1 d2`, the Aurora cluster, its instance and a Lambda behind that one edge, plus an output.
 
 ## The JSON report
 
@@ -179,6 +184,7 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
         "instances": 1,
         "penalties": { "inbound": -36, "outbound": 0, "outputs": 0, "tier": 0, "dynamic": 0, "instances": 0 }
       },
+      "radius": { "resources": 3, "outputs": 0, "depth": 1 },
       "boundary": {
         "inbound": [
           {
@@ -209,6 +215,16 @@ Read it top to bottom: the log group has no dependents and a clean native map, s
 - The lists are the carve *set's* boundary, so a folded sub-resource is never an endpoint: it carves with its parent, and edges internal to the set are not boundary work.
 - `boundary` present with two empty lists means no boundary work. `boundary` absent means the report was produced by a chant that predates the field. "None" and "not reported" are different claims.
 
+### Radius
+
+`radius` is how far a change to the resource reaches: everything that depends on it, directly or through other dependents. It is reported beside the score and never feeds it. Every score term is a unit of work (an inbound edge is one data-source patch); a transitive dependent is not work, nobody patches it, and the count can run far past what a 0-100 score holds. So `100 + sum(breakdown.penalties)` still reproduces the score.
+
+- `resources` counts the resources and modules that depend on it. With `--state` each counts its instances. It is `"unknown"` when one of them is a `module` (one node, whatever it holds) or a `count`/`for_each` block no state resolved, and `hiddenBy` names those dependents.
+- `outputs` counts the `output` blocks that read it or one of its dependents. They end the walk: nothing reads an output.
+- `depth` is the number of hops to the farthest dependent, outputs included. `0` means nothing depends on it.
+- On a CDK assembly of several stacks, `crossStack` counts the dependents reachable only through an `Fn::ImportValue`.
+- A folded sub-resource is its parent here too: a bucket's versioning block is never in the bucket's radius, and whatever reads the versioning block is.
+
 ### What a CDK report adds
 
 The shape is the same. `source` says `"cdk"`, and:
@@ -229,6 +245,8 @@ The shape is the same. `source` says `"cdk"`, and:
 - **Additive within a version.** New top-level fields, new per-resource fields, new kinds of entry in existing lists, and new values in an open-ended enum (a `bridge` kind, say) may appear in any release. Read leniently: ignore keys and values you do not know.
 - **Removing or renaming a field, or changing what one means, bumps the version.** So does narrowing a type. (An optional field becoming always-present is additive; the reverse is not.)
 - A reader handed a version it does not know should refuse the report and say so, rather than half-reading it.
+
+`radius` is additive under the same promise: a new per-resource field that a reader who does not know it can ignore, and that changes no existing field's value or meaning.
 
 The CDK source stays inside that promise and does not bump the version. Every field an existing reader validates keeps its type and meaning; everything new is additive and ignorable. A reader that reproduces a score as `100 + sum(breakdown.penalties)` still gets the right number, because the CDK asset term is one more entry in that same map.
 

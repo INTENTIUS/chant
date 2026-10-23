@@ -184,3 +184,55 @@ export function reach(graph: TfGraph, address: string, opts: { direction?: WalkD
 export function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
+
+/**
+ * How far a change to one node reaches, as `carve advise` reports it (#2326):
+ * its own axis beside the peelability score, never a penalty term. Every score
+ * term is a unit of work (an inbound edge is one data-source patch); a
+ * transitive dependent is not work, nobody patches it, and its count can run
+ * far past what a 0-100 score carries.
+ */
+export interface BlastRadius {
+  /**
+   * Resources and modules that depend on the node, directly or not, weighted by
+   * instance count when `--state` resolved it. `"unknown"` when one of them is
+   * a module or a `count`/`for_each` no state resolved: see `hiddenBy`.
+   */
+  resources: number | "unknown";
+  /** `output` blocks that read the node or one of its dependents. */
+  outputs: number;
+  /** Hops to the farthest dependent, outputs included; 0 when nothing depends on it. */
+  depth: number;
+  /**
+   * Of `resources`, those reachable only through a `crossStack` edge (a CDK
+   * `Fn::ImportValue`), weighted the same way. Present only when the graph has
+   * such an edge.
+   */
+  crossStack?: number | "unknown";
+  /** The dependents that make a count `"unknown"`. Present only when one does. */
+  hiddenBy?: string[];
+}
+
+/** The instances `addresses` stand for, or `"unknown"` when one of them hides its contents. */
+export function weigh(index: CarveIndex, addresses: readonly string[]): number | "unknown" {
+  let total = 0;
+  for (const address of addresses) {
+    const node = index.nodes.get(address)!;
+    if (hidesContents(node)) return "unknown";
+    total += node.instances;
+  }
+  return total;
+}
+
+/** The {@link BlastRadius} of `address`: its {@link reach} through dependents, counted. */
+export function blastRadius(graph: TfGraph, address: string): BlastRadius {
+  const index = carveIndex(graph);
+  const r = reach(graph, address);
+  return {
+    resources: weigh(index, r.resources),
+    outputs: r.outputs.length,
+    depth: r.depth,
+    ...(index.crossStack ? { crossStack: weigh(index, r.crossStack) } : {}),
+    ...(r.hidden.length ? { hiddenBy: r.hidden } : {}),
+  };
+}

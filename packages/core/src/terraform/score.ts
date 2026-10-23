@@ -32,6 +32,7 @@
 
 import { inboundEdges, outboundEdges } from "./graph";
 import { computeFolds } from "./folds";
+import { blastRadius, type BlastRadius } from "./reach";
 import { resolveTier, type TierInfo } from "./tier-map";
 import type { TfGraph, TfNode } from "./types";
 
@@ -97,6 +98,12 @@ export interface Peelability {
   notes?: string[];
   /** The source units folded into this node (#1056). */
   members?: CarveUnitMember[];
+  /**
+   * How far a change to this node reaches through its dependents (#2326). Its
+   * own axis: it never feeds `score`, so `100 + sum(breakdown.penalties)`
+   * still reproduces the score.
+   */
+  radius?: BlastRadius;
 }
 
 /**
@@ -226,11 +233,12 @@ function scoreNode(
 /**
  * Score every carvable node in the estate, ranked most-peelable first. Folded
  * sub-resources are omitted (they carve with their parent, not on their own).
+ * Each carries its blast radius (#2326) beside the score, not in it.
  */
 export function scoreEstate(graph: TfGraph, opts: ScoreOptions = {}): Peelability[] {
   const { folded, childrenOf } = computeFolds(graph);
   return graph.nodes
     .filter((n) => !folded.has(n.address))
-    .map((n) => scoreNode(n, graph, childrenOf.get(n.address) ?? new Set(), opts))
+    .map((n) => ({ ...scoreNode(n, graph, childrenOf.get(n.address) ?? new Set(), opts), radius: blastRadius(graph, n.address) }))
     .sort((a, b) => b.score - a.score || (a.address < b.address ? -1 : a.address > b.address ? 1 : 0));
 }

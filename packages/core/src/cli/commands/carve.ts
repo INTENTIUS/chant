@@ -141,6 +141,9 @@ async function adviseTerraform(opts: CarveAdviseOptions): Promise<CarveAdviseRes
  * additive and ignorable: the top-level `source` discriminator, per-resource
  * `notes` and `members`, and two more `bridge` values in a list that was
  * already declared open-ended.
+ *
+ * Per-resource `radius` (#2326) is additive the same way: a new field beside
+ * `score`, not a term inside it, so the score and its penalties are unchanged.
  */
 export const CARVE_REPORT_VERSION = 1;
 
@@ -246,6 +249,8 @@ export function formatCarveReport(result: CarveAdviseResult): string {
   );
   for (const note of result.diagnostics ?? []) lines.push(`  ! ${note}`);
   lines.push("");
+  const cells = new Map(results.map((r) => [r.address, radiusCell(r)]));
+  const cellWidth = Math.max(...[...cells.values()].map((c) => c.length));
 
   for (const band of BAND_ORDER) {
     const inBand = results.filter((r) => r.band === band);
@@ -253,9 +258,11 @@ export function formatCarveReport(result: CarveAdviseResult): string {
     lines.push(`${bandLabel(band, cdk)}  (${inBand.length})`);
     for (const r of inBand) {
       const target = r.mapsTo ? ` -> ${r.mapsTo}` : "";
-      lines.push(`  ${String(r.score).padStart(3)}  ${r.address}${target}`);
-      lines.push(`       ${reasons(r, cdk)}`);
-      for (const note of r.notes ?? []) lines.push(`       ${note}`);
+      const cell = cellWidth > 0 ? `${cells.get(r.address)!.padEnd(cellWidth)}  ` : "";
+      const indent = " ".repeat(7 + (cellWidth > 0 ? cellWidth + 2 : 0));
+      lines.push(`  ${String(r.score).padStart(3)}  ${cell}${r.address}${target}`);
+      lines.push(`${indent}${reasons(r, cdk)}`);
+      for (const note of r.notes ?? []) lines.push(`${indent}${note}`);
     }
     lines.push("");
   }
@@ -263,7 +270,28 @@ export function formatCarveReport(result: CarveAdviseResult): string {
   lines.push(
     `Bands: 80-100 carve now | 50-79 carve with boundary edits | 0-49 leave in ${cdk ? "CDK" : "Terraform"}`,
   );
+  if (cellWidth > 0) {
+    lines.push(
+      "Radius: resources+outputs that depend on it at any depth, dN the farthest hop; - none; " +
+        (cdk ? "xN across a stack boundary." : "? a module or unresolved count/for_each hides how many."),
+    );
+  }
   return lines.join("\n").trimEnd();
+}
+
+/**
+ * The radius column (#2326): `3+1 d2` is three resources and one output that
+ * depend on the node, the farthest two hops away; `-` is nothing; `?` stands in
+ * for a count a module or unresolved `count` hides; ` x2` is how many sit
+ * across a stack boundary. Empty when the result carries no radius.
+ */
+function radiusCell(r: Peelability): string {
+  const radius = r.radius;
+  if (!radius) return "";
+  if (radius.depth === 0) return "-";
+  const n = (v: number | "unknown"): string => (v === "unknown" ? "?" : String(v));
+  const cross = radius.crossStack !== undefined && radius.crossStack !== 0 ? ` x${n(radius.crossStack)}` : "";
+  return `${n(radius.resources)}+${radius.outputs} d${radius.depth}${cross}`;
 }
 
 function bandLabel(band: PeelabilityBand, cdk: boolean): string {
