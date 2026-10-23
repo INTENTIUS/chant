@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { build } from "../../build";
+import { build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology } from "../../graph-effective";
@@ -14,7 +14,9 @@ import type { ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved } from "../../observation";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
+import { isNoLexiconDetected } from "../../detectLexicon";
+import { parseCountBy, countGroups, formatCounts, hasManyTerraformRoots, type CountBy } from "./search-count";
 import { formatError, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -44,7 +46,18 @@ import type { CommandContext } from "../registry";
 export async function runSearch(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const query = (args.path ?? "").trim();
-  if (!query) {
+  // `--count-by` groups the matched set (#4360). It takes any query, and no
+  // query at all counts the whole graph: "which kinds does this estate hold".
+  let countBy: CountBy | undefined;
+  if (args.countBy !== undefined) {
+    const parsed = parseCountBy(args.countBy);
+    if ("error" in parsed) {
+      console.error(formatError({ message: parsed.error, hint: parsed.hint }));
+      return 1;
+    }
+    countBy = parsed;
+  }
+  if (!query && !countBy) {
     console.error(formatError({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" }));
     return 1;
   }
@@ -316,7 +329,15 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // overlay copies physical identity but not attrs, so merge them here.
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
   } else {
-    const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+    const srcDir = resolve(args.src ?? config.sourceDir ?? ".");
+    const discovered = await discover(srcDir);
+    // Entities a lexicon contributes from outside the TypeScript source (a
+    // Terraform root's blocks, rendered kustomize objects), joined the way
+    // `chant graph` and `build()` join them (#4360). Without this, search on a
+    // Terraform project matched nothing at all.
+    if (!(await mergeSearchBuildRoots(discovered.entities, ctx, projectPath, config as unknown as Record<string, unknown>, srcDir))) {
+      return 1;
+    }
     ir = buildGraphIr(discovered.entities);
   }
 
@@ -329,14 +350,18 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
   if (matches.length === 0) {
-    console.log("(no matches)");
+    console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
     availableAttrs(terms, ir);
     if (args.explain) explain(terms, matches, ir, nodeById, query);
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
     return 0;
   }
-  for (const n of matches) {
-    console.log(formatRow(n, show));
+  if (countBy) {
+    for (const line of formatCounts(countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy)) console.log(line);
+  } else {
+    for (const n of matches) {
+      console.log(formatRow(n, show));
+    }
   }
   const backed = source.kind === "declared" || matches.some((n) => n.physicalId);
   // Only worth asking when the live read came back empty — that is the one case
@@ -373,8 +398,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     if (args.failOnDrift && driftCount > 0) driftFailure = true;
   }
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
-  showMiss(matches, show);
-  regionSpread(terms, matches, show);
+  // Both point at `--show`, which a grouped count does not print (#4360).
+  if (!countBy) {
+    showMiss(matches, show);
+    regionSpread(terms, matches, show);
+  }
   derivedSurface(terms, matches, ir, backed);
   if (args.explain) explain(terms, matches, ir, nodeById, query);
   // The caller asked for a live answer and at least one lexicon could not be
@@ -394,6 +422,36 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
+
+/**
+ * Join build-root contributions (a Terraform root's blocks, rendered kustomize
+ * objects) to the discovered set, as `chant graph` does (#4360). A project
+ * with no detectable lexicon has none to join. Returns false when a
+ * contributor failed, so search does not answer from a partial estate.
+ */
+async function mergeSearchBuildRoots(
+  entities: Map<string, import("../../declarable").Declarable>,
+  ctx: CommandContext,
+  projectPath: string,
+  config: Record<string, unknown>,
+  srcDir: string,
+): Promise<boolean> {
+  let plugins = ctx.plugins;
+  if (plugins.length === 0) {
+    try {
+      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
+    } catch (err) {
+      if (isNoLexiconDetected(err)) return true;
+      throw err;
+    }
+  }
+  const contributors = collectBuildRootContributors(plugins, config, projectPath);
+  if (contributors.length === 0) return true;
+  const merged = await mergeBuildRootEntities(entities, contributors, srcDir);
+  for (const w of merged.warnings) console.error(formatWarning({ message: w }));
+  for (const message of merged.errors) console.error(formatError({ message }));
+  return merged.errors.length === 0;
+}
 
 /** Where an answer's facts came from, for the provenance line (#1266). */
 type AnswerSource =

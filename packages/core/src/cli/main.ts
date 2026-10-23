@@ -172,7 +172,8 @@ Commands:
                         instead of a graph dump (kind:, tag:, attr:, ->/<- edge
                         terms; --live or --at <ref> with --env <name> reads the
                         estate or a recorded snapshot; --show <attr>,
-                        --check-live, --check-snapshot, --fail-on-drift)
+                        --count-by kind|module|attr:<name>, --check-live,
+                        --check-snapshot, --fail-on-drift)
   query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
                         the resources and snapshots each lexicon observed, Op
                         runs, gates, deploys, releases and cuts, loaded into
