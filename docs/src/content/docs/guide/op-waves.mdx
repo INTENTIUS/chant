@@ -369,9 +369,9 @@ The pull request job that records plans for `pr-review` (`--record-plans`) runs 
 
 ### Hooks around a product's own stages
 
-A product that runs its own stages, outside a wave job, runs one moment's hooks with `runStageHooks` from `@intentius/chant/op/stage-hooks` ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). That module bundles without the wave loop, the gate or the ledger. It fills the argv, honours `targets`, `perRun` and `onFailure`, and counts a hold on another gate as a plain hold (`packages/core/src/op/stage-hooks.ts:332`). Settling that gate is the product's job.
+A product that runs its own stages, outside a wave job, runs one moment's hooks with `runStageHooks` from `@intentius/chant/op/stage-hooks` ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). That module bundles without the wave loop or the gate. It reads each hook's fields as a wave job does. A hold on another gate counts as a plain hold (`packages/core/src/op/stage-hooks.ts:332`). Settling that gate is the product's job.
 
-`runStageHooks` waits for each hook with `spawnSync`, which blocks the event loop. A product that plans several targets side by side calls `runStageHooksAsync` instead ([#4334](https://github.com/INTENTIUS/chant/issues/4334)). It takes the same options, and its `exec` returns a promise. The default exec, `spawnExecAsync`, runs the hook with `spawn` (`packages/core/src/op/stage-hooks.ts:76`). Both forms share one hook loop, so they give the same outcomes, holds and failure for the same exit codes (`packages/core/src/op/stage-hooks.ts:161`).
+`runStageHooks` waits for each hook with `spawnSync`, which blocks the event loop. A product that plans several targets side by side calls `runStageHooksAsync` instead ([#4334](https://github.com/INTENTIUS/chant/issues/4334)). It takes the same options, and its `exec` returns a promise. The default exec, `spawnExecAsync`, runs the hook with `spawn` (`packages/core/src/op/stage-hooks.ts:76`). Both forms share one hook loop, so the same exit codes give the same result in each (`packages/core/src/op/stage-hooks.ts:161`).
 
 ```ts
 import { runStageHooksAsync } from "@intentius/chant/op/stage-hooks";
