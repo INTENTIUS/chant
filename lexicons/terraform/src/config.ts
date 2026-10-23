@@ -48,6 +48,14 @@ export type TerraformDeleteMode = z.infer<typeof terraformDeleteModeSchema>;
  * strict, and a root entry is exactly where a typo (`varfiles`) would
  * otherwise land silently.
  */
+/**
+ * How deep a root is observed (#4358): `"state"` reads state, `"plan"`
+ * reads a saved plan. See {@link TerraformRootConfig.observe}.
+ */
+export const terraformObserveDepthSchema = z.enum(["state", "plan"]);
+
+export type TerraformObserveDepth = z.infer<typeof terraformObserveDepthSchema>;
+
 export const terraformRootSchema = z.strictObject({
   /** Root module directory, relative to the project root (where `chant.config.*` lives). */
   dir: z.string(),
@@ -85,6 +93,20 @@ export const terraformRootSchema = z.strictObject({
   estate: z.string().optional(),
   /** This root's declared delete mode. See {@link terraformDeleteModeSchema}. */
   delete: terraformDeleteModeSchema.optional(),
+  /**
+   * How deep `describeResources` reads this root (#4358). `"state"`, the
+   * default, is `terraform show -json` over state: what the last apply
+   * recorded. `"plan"` is a saved plan, `plan -lock=false -out=<tmp>` then
+   * `show -json`: what the next apply would do, with replace reasons,
+   * values unknown until apply and drift. It needs provider credentials and
+   * an initialised root, and falls back to the state read, then to declared
+   * only, saying which read answered. A live choudoufu root is read with
+   * `live-plan -json` whatever this says.
+   *
+   * The `CHANT_TERRAFORM_OBSERVE` environment variable overrides it for
+   * every root, for one run.
+   */
+  observe: terraformObserveDepthSchema.optional(),
 });
 
 export const terraformConfigSchema = z.strictObject({
@@ -119,6 +141,8 @@ export const terraformConfigSchema = z.strictObject({
    * project does not own.
    */
   moduleRoot: z.string().optional(),
+  /** The default {@link TerraformRootConfig.observe} for every root that sets none (#4358). */
+  observe: terraformObserveDepthSchema.optional(),
   /** Named root modules. The name is the entity-key prefix, so keep it stable. */
   roots: z.record(z.string(), terraformRootSchema),
 });

@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterAll, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -22,6 +22,13 @@ import {
   terraformPlan,
   terraformApply,
   terraformShow,
+  terraformPlanRead,
+  terraformPlanReadCommand,
+  terraformInitLine,
+  classifyPlanReadFailure,
+  rootIsInitialised,
+  TerraformPlanReadError,
+  PLAN_READ_DIR_PREFIX,
   choudoufuLivePlan,
   choudoufuLivePlanDocument,
   choudoufuLiveLs,
@@ -503,6 +510,116 @@ describe("terraformApply — saved plans only (#2086)", () => {
       /planFile is required/,
     );
     expect(execCalls).toHaveLength(0);
+  });
+});
+
+// ── terraformPlanRead (#4358) ───────────────────────────────────────────────
+
+/** Every entry under `dir`, recursively, as relative paths. */
+function tree(dir: string): string[] {
+  return readdirSync(dir, { recursive: true }).map(String).sort();
+}
+
+describe("terraformPlanReadCommand (#4358)", () => {
+  test("always carries -lock=false, with -input=false and the plan file outside the root", () => {
+    const cmd = terraformPlanReadCommand({ binary: "terraform", planFile: "/tmp/chant-terraform-plan-x/plan.tfplan" });
+    expect(cmd.split(" ")).toContain("-lock=false");
+    expect(cmd).toBe("terraform plan -input=false -lock=false -out=/tmp/chant-terraform-plan-x/plan.tfplan");
+  });
+
+  test("carries the root's var files, in order, before -out", () => {
+    expect(terraformPlanReadCommand({ binary: "tofu", planFile: "/t/p", varFiles: ["a.tfvars", "b.tfvars"] })).toBe(
+      "tofu plan -input=false -lock=false -var-file=a.tfvars -var-file=b.tfvars -out=/t/p",
+    );
+  });
+});
+
+describe("terraformInitLine (#4358)", () => {
+  test("names the root by -chdir and carries its backend config, so it pastes as printed", () => {
+    expect(terraformInitLine({ binary: "terraform", dir: "/p/infra", backendConfig: { bucket: "b" } })).toBe(
+      "terraform -chdir=/p/infra init -input=false -backend-config=bucket=b",
+    );
+  });
+});
+
+describe("classifyPlanReadFailure (#4358)", () => {
+  test.each([
+    ["Error: Backend initialization required, please run \"terraform init\"", "not-initialised"],
+    ["Error: Inconsistent dependency lock file", "not-initialised"],
+    ["Error: Required plugins are not installed", "not-initialised"],
+    ["Error: Failed to get existing workspaces: AccessDenied", "backend"],
+    ["Error: error configuring S3 Backend: no valid credential sources for S3 Backend found.", "backend"],
+    ["Error: error loading state: storage: bucket doesn't exist", "backend"],
+    ["Error: No valid credential sources found", "plan"],
+    ["Error: Invalid provider configuration", "plan"],
+  ])("%s -> %s", (output, kind) => {
+    expect(classifyPlanReadFailure(output)).toBe(kind);
+  });
+});
+
+describe("terraformPlanRead (#4358)", () => {
+  function initialisedProject(): string {
+    const dir = project({ roots: { app: { dir: "./infra", varFiles: ["next.tfvars"] } } });
+    mkdirSync(join(dir, "infra", ".terraform"));
+    return dir;
+  }
+
+  test("plans with -lock=false into a temp dir, shows it, and removes the temp dir", async () => {
+    const dir = initialisedProject();
+    const before = tree(join(dir, "infra"));
+    replies.push({ match: "show -json", reply: { stdout: '{"format_version":"1.2"}', stderr: "" } });
+    const result = await terraformPlanRead({ root: "app", cwd: dir });
+
+    const [plan, show] = execCalls.map((c) => c.cmd);
+    expect(plan).toContain(" -lock=false ");
+    expect(plan).toBe(`terraform plan -input=false -lock=false -var-file=next.tfvars -out=${join(result.planDir, "plan.tfplan")}`);
+    expect(show).toBe(`terraform show -json ${join(result.planDir, "plan.tfplan")}`);
+    expect(execCalls[0].opts.cwd).toBe(resolve(dir, "infra"));
+    expect(execCalls[0].opts.env?.TF_IN_AUTOMATION).toBe("1");
+
+    expect(result.planDir.startsWith(join(tmpdir(), PLAN_READ_DIR_PREFIX))).toBe(true);
+    expect(existsSync(result.planDir)).toBe(false);
+    expect(tree(join(dir, "infra"))).toEqual(before);
+    expect(result.json).toEqual({ format_version: "1.2" });
+  });
+
+  test("removes the temp dir when the plan fails, too", async () => {
+    const dir = initialisedProject();
+    replies.push({ match: "plan -input=false", reply: execError(1, "Error: No valid credential sources found") });
+    const err = await terraformPlanRead({ root: "app", cwd: dir }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TerraformPlanReadError);
+    expect((err as TerraformPlanReadError).kind).toBe("plan");
+    expect((err as TerraformPlanReadError).message).toContain("Error: No valid credential sources found");
+    const planFile = execCalls[0].cmd.split("-out=")[1]!;
+    expect(existsSync(planFile)).toBe(false);
+    expect(existsSync(join(planFile, ".."))).toBe(false);
+  });
+
+  test("refuses an uninitialised root with the init line, and runs nothing", async () => {
+    const dir = project({ roots: { app: { dir: "./infra", backendConfig: { key: "app.tfstate" } } } });
+    const err = (await terraformPlanRead({ root: "app", cwd: dir }).catch((e: unknown) => e)) as TerraformPlanReadError;
+    expect(err).toBeInstanceOf(TerraformPlanReadError);
+    expect(err.kind).toBe("not-initialised");
+    expect(err.initLine).toBe(`terraform -chdir=${resolve(dir, "infra")} init -input=false -backend-config=key=app.tfstate`);
+    expect(err.message).toContain(`run \`${err.initLine}\` first`);
+    expect(execCalls).toHaveLength(0);
+    expect(tree(join(dir, "infra"))).toEqual([]);
+  });
+
+  test("a plan that says the root needs init again is refused the same way", async () => {
+    const dir = initialisedProject();
+    replies.push({ match: "plan -input=false", reply: execError(1, "Error: Inconsistent dependency lock file") });
+    const err = (await terraformPlanRead({ root: "app", cwd: dir }).catch((e: unknown) => e)) as TerraformPlanReadError;
+    expect(err.kind).toBe("not-initialised");
+    expect(err.message).toContain("init -input=false");
+  });
+
+  test("rootIsInitialised honours TF_DATA_DIR", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-tf-init-"));
+    workspaces.push(dir);
+    expect(rootIsInitialised(dir, {})).toBe(false);
+    mkdirSync(join(dir, "data"));
+    expect(rootIsInitialised(dir, { TF_DATA_DIR: "data" })).toBe(true);
   });
 });
 

@@ -215,3 +215,54 @@ describe("search --live run-level notes (#1265)", () => {
     expect(all.indexOf("(no matches)")).toBeLessThan(all.findIndex((l) => l.includes("ownership filter unavailable")));
   });
 });
+
+// #4358 — a terraform root's blocks exist only once `buildRoots()` renders the
+// root, and `--live` built without it, so no terraform root was ever observed
+// and a plan attribute could never be matched. The live path now builds roots
+// and joins them to the declared canvas, as `chant graph --live` does.
+describe("search --live over build-root entities (#4358)", () => {
+  let out: string[];
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockImplementation(async () => ({ entities: new Map(), errors: [], sourceFiles: [] }));
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  test("builds roots, observes their blocks and matches the attributes the read put on them", async () => {
+    const rooted = new Map<string, Declarable>([
+      ["app/terraform_data.replaced", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+    ]);
+    buildResultMock.mockReset();
+    buildResultMock.mockImplementation((_src: unknown, _s: unknown, _x: unknown, opts?: { buildRoots?: unknown[] }) => ({
+      errors: [],
+      entities: (opts?.buildRoots?.length ?? 0) > 0 ? rooted : new Map(),
+      outputs: new Map([["terraform", ""]]),
+      warnings: [],
+    }));
+    loadPluginsMock.mockResolvedValue([
+      {
+        // createMockPlugin has no `buildRoots` option; the hook is spread on.
+        ...createMockPlugin({
+          name: "terraform",
+          describeResources: async ({ entityNames }: { entityNames: string[] }) =>
+            Object.fromEntries(
+            entityNames.map((n) => [n, { type: "Terraform::Resource", physicalId: "id-1", status: "managed", ownership: "owned", owned: true, attributes: { planAction: "replace" } }]),
+            ),
+        }),
+        buildRoots: async () => ({ entities: rooted, warnings: [] }),
+      },
+    ]);
+    const exit = await runSearch({ args: makeArgs({ path: "attr:planAction=replace" }), plugins: [], serializers: [] });
+    expect(out.join("\n")).toContain("app/terraform_data.replaced  Terraform::Resource  id-1");
+    expect(exit).toBe(0);
+  });
+});

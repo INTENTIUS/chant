@@ -1,0 +1,663 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.15.8",
+  "variables": {
+    "generation": {
+      "value": "2"
+    },
+    "token": {
+      "value": "hunter2"
+    }
+  },
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "shell_script.conf",
+          "mode": "managed",
+          "type": "shell_script",
+          "name": "conf",
+          "provider_name": "registry.terraform.io/scottwinkler/shell",
+          "schema_version": 0,
+          "values": {
+            "dirty": false,
+            "environment": null,
+            "interpreter": null,
+            "lifecycle_commands": [
+              {
+                "create": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json",
+                "delete": "rm -f conf.json",
+                "read": "cat conf.json",
+                "update": null
+              }
+            ],
+            "read_error": null,
+            "sensitive_environment": null,
+            "triggers": null,
+            "working_directory": "."
+          },
+          "sensitive_values": {
+            "lifecycle_commands": [
+              {}
+            ],
+            "output": {}
+          }
+        },
+        {
+          "address": "terraform_data.downstream",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "downstream",
+          "provider_name": "terraform.io/builtin/terraform",
+          "schema_version": 0,
+          "values": {
+            "id": "cdc15f05-7729-5b45-9939-ac130870af9b",
+            "triggers_replace": null
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "terraform_data.reader",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "reader",
+          "provider_name": "terraform.io/builtin/terraform",
+          "schema_version": 0,
+          "values": {
+            "id": "ddeb5161-f76f-084c-c29d-ad91f80f695d",
+            "triggers_replace": null
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "terraform_data.replaced",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "replaced",
+          "provider_name": "terraform.io/builtin/terraform",
+          "schema_version": 0,
+          "values": {
+            "input": "stable",
+            "triggers_replace": "2"
+          },
+          "sensitive_values": {}
+        },
+        {
+          "address": "terraform_data.updated",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "updated",
+          "provider_name": "terraform.io/builtin/terraform",
+          "schema_version": 0,
+          "values": {
+            "id": "102d392e-20a6-62b3-8e85-c4ddb3e78790",
+            "input": {
+              "name": "app-2",
+              "token": "hunter2"
+            },
+            "triggers_replace": null
+          },
+          "sensitive_values": {
+            "input": {
+              "token": true
+            },
+            "output": {}
+          }
+        }
+      ]
+    }
+  },
+  "resource_drift": [
+    {
+      "address": "shell_script.conf",
+      "mode": "managed",
+      "type": "shell_script",
+      "name": "conf",
+      "provider_name": "registry.terraform.io/scottwinkler/shell",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "dirty": false,
+          "environment": null,
+          "id": "dbdq11g85ml2evuh7160",
+          "interpreter": null,
+          "lifecycle_commands": [
+            {
+              "create": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json",
+              "delete": "rm -f conf.json",
+              "read": "cat conf.json",
+              "update": ""
+            }
+          ],
+          "output": {
+            "port": "8080"
+          },
+          "read_error": null,
+          "sensitive_environment": null,
+          "triggers": null,
+          "working_directory": "."
+        },
+        "after": {
+          "dirty": true,
+          "environment": null,
+          "id": "dbdq11g85ml2evuh7160",
+          "interpreter": null,
+          "lifecycle_commands": [
+            {
+              "create": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json",
+              "delete": "rm -f conf.json",
+              "read": "cat conf.json",
+              "update": ""
+            }
+          ],
+          "output": {
+            "port": "8080"
+          },
+          "read_error": "",
+          "sensitive_environment": null,
+          "triggers": null,
+          "working_directory": "."
+        },
+        "after_unknown": {},
+        "before_sensitive": {
+          "lifecycle_commands": [
+            {}
+          ],
+          "output": {},
+          "sensitive_environment": true
+        },
+        "after_sensitive": {
+          "lifecycle_commands": [
+            {}
+          ],
+          "output": {},
+          "sensitive_environment": true
+        }
+      }
+    }
+  ],
+  "resource_changes": [
+    {
+      "address": "shell_script.conf",
+      "mode": "managed",
+      "type": "shell_script",
+      "name": "conf",
+      "provider_name": "registry.terraform.io/scottwinkler/shell",
+      "change": {
+        "actions": [
+          "delete",
+          "create"
+        ],
+        "before": {
+          "dirty": true,
+          "environment": null,
+          "id": "dbdq11g85ml2evuh7160",
+          "interpreter": null,
+          "lifecycle_commands": [
+            {
+              "create": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json",
+              "delete": "rm -f conf.json",
+              "read": "cat conf.json",
+              "update": ""
+            }
+          ],
+          "output": {
+            "port": "8080"
+          },
+          "read_error": "",
+          "sensitive_environment": null,
+          "triggers": null,
+          "working_directory": "."
+        },
+        "after": {
+          "dirty": false,
+          "environment": null,
+          "interpreter": null,
+          "lifecycle_commands": [
+            {
+              "create": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json",
+              "delete": "rm -f conf.json",
+              "read": "cat conf.json",
+              "update": null
+            }
+          ],
+          "read_error": null,
+          "sensitive_environment": null,
+          "triggers": null,
+          "working_directory": "."
+        },
+        "after_unknown": {
+          "id": true,
+          "lifecycle_commands": [
+            {}
+          ],
+          "output": true
+        },
+        "before_sensitive": {
+          "lifecycle_commands": [
+            {}
+          ],
+          "output": {},
+          "sensitive_environment": true
+        },
+        "after_sensitive": {
+          "lifecycle_commands": [
+            {}
+          ],
+          "output": {},
+          "sensitive_environment": true
+        },
+        "replace_paths": [
+          [
+            "dirty"
+          ]
+        ]
+      },
+      "action_reason": "replace_because_cannot_update"
+    },
+    {
+      "address": "terraform_data.downstream",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "downstream",
+      "provider_name": "terraform.io/builtin/terraform",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "cdc15f05-7729-5b45-9939-ac130870af9b",
+          "input": "dd1202fc-a741-3635-905a-9e9633162183",
+          "output": "dd1202fc-a741-3635-905a-9e9633162183",
+          "triggers_replace": null
+        },
+        "after": {
+          "id": "cdc15f05-7729-5b45-9939-ac130870af9b",
+          "triggers_replace": null
+        },
+        "after_unknown": {
+          "input": true,
+          "output": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "terraform_data.reader",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "reader",
+      "provider_name": "terraform.io/builtin/terraform",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "ddeb5161-f76f-084c-c29d-ad91f80f695d",
+          "input": "8080",
+          "output": "8080",
+          "triggers_replace": null
+        },
+        "after": {
+          "id": "ddeb5161-f76f-084c-c29d-ad91f80f695d",
+          "triggers_replace": null
+        },
+        "after_unknown": {
+          "input": true,
+          "output": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "terraform_data.replaced",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "replaced",
+      "provider_name": "terraform.io/builtin/terraform",
+      "change": {
+        "actions": [
+          "delete",
+          "create"
+        ],
+        "before": {
+          "id": "dd1202fc-a741-3635-905a-9e9633162183",
+          "input": "stable",
+          "output": "stable",
+          "triggers_replace": "1"
+        },
+        "after": {
+          "input": "stable",
+          "triggers_replace": "2"
+        },
+        "after_unknown": {
+          "id": true,
+          "output": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "replace_paths": [
+          [
+            "triggers_replace"
+          ]
+        ]
+      },
+      "action_reason": "replace_because_cannot_update"
+    },
+    {
+      "address": "terraform_data.updated",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "updated",
+      "provider_name": "terraform.io/builtin/terraform",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "102d392e-20a6-62b3-8e85-c4ddb3e78790",
+          "input": {
+            "name": "app-1",
+            "token": "hunter2"
+          },
+          "output": {
+            "name": "app-1",
+            "token": "hunter2"
+          },
+          "triggers_replace": null
+        },
+        "after": {
+          "id": "102d392e-20a6-62b3-8e85-c4ddb3e78790",
+          "input": {
+            "name": "app-2",
+            "token": "hunter2"
+          },
+          "triggers_replace": null
+        },
+        "after_unknown": {
+          "input": {},
+          "output": true
+        },
+        "before_sensitive": {
+          "input": {
+            "token": true
+          },
+          "output": {}
+        },
+        "after_sensitive": {
+          "input": {
+            "token": true
+          },
+          "output": {}
+        }
+      }
+    }
+  ],
+  "prior_state": {
+    "format_version": "1.0",
+    "terraform_version": "1.15.8",
+    "values": {
+      "root_module": {
+        "resources": [
+          {
+            "address": "shell_script.conf",
+            "mode": "managed",
+            "type": "shell_script",
+            "name": "conf",
+            "provider_name": "registry.terraform.io/scottwinkler/shell",
+            "schema_version": 0,
+            "values": {
+              "dirty": true,
+              "environment": null,
+              "id": "dbdq11g85ml2evuh7160",
+              "interpreter": null,
+              "lifecycle_commands": [
+                {
+                  "create": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json",
+                  "delete": "rm -f conf.json",
+                  "read": "cat conf.json",
+                  "update": ""
+                }
+              ],
+              "output": {
+                "port": "8080"
+              },
+              "read_error": "",
+              "sensitive_environment": null,
+              "triggers": null,
+              "working_directory": "."
+            },
+            "sensitive_values": {
+              "lifecycle_commands": [
+                {}
+              ],
+              "output": {},
+              "sensitive_environment": true
+            }
+          },
+          {
+            "address": "terraform_data.downstream",
+            "mode": "managed",
+            "type": "terraform_data",
+            "name": "downstream",
+            "provider_name": "terraform.io/builtin/terraform",
+            "schema_version": 0,
+            "values": {
+              "id": "cdc15f05-7729-5b45-9939-ac130870af9b",
+              "input": "dd1202fc-a741-3635-905a-9e9633162183",
+              "output": "dd1202fc-a741-3635-905a-9e9633162183",
+              "triggers_replace": null
+            },
+            "sensitive_values": {},
+            "depends_on": [
+              "terraform_data.replaced"
+            ]
+          },
+          {
+            "address": "terraform_data.reader",
+            "mode": "managed",
+            "type": "terraform_data",
+            "name": "reader",
+            "provider_name": "terraform.io/builtin/terraform",
+            "schema_version": 0,
+            "values": {
+              "id": "ddeb5161-f76f-084c-c29d-ad91f80f695d",
+              "input": "8080",
+              "output": "8080",
+              "triggers_replace": null
+            },
+            "sensitive_values": {},
+            "depends_on": [
+              "shell_script.conf"
+            ]
+          },
+          {
+            "address": "terraform_data.replaced",
+            "mode": "managed",
+            "type": "terraform_data",
+            "name": "replaced",
+            "provider_name": "terraform.io/builtin/terraform",
+            "schema_version": 0,
+            "values": {
+              "id": "dd1202fc-a741-3635-905a-9e9633162183",
+              "input": "stable",
+              "output": "stable",
+              "triggers_replace": "1"
+            },
+            "sensitive_values": {}
+          },
+          {
+            "address": "terraform_data.updated",
+            "mode": "managed",
+            "type": "terraform_data",
+            "name": "updated",
+            "provider_name": "terraform.io/builtin/terraform",
+            "schema_version": 0,
+            "values": {
+              "id": "102d392e-20a6-62b3-8e85-c4ddb3e78790",
+              "input": {
+                "name": "app-1",
+                "token": "hunter2"
+              },
+              "output": {
+                "name": "app-1",
+                "token": "hunter2"
+              },
+              "triggers_replace": null
+            },
+            "sensitive_values": {
+              "input": {
+                "token": true
+              },
+              "output": {}
+            }
+          }
+        ]
+      }
+    }
+  },
+  "configuration": {
+    "provider_config": {
+      "shell": {
+        "name": "shell",
+        "full_name": "registry.terraform.io/scottwinkler/shell",
+        "version_constraint": "~> 1.7"
+      },
+      "terraform": {
+        "name": "terraform",
+        "full_name": "terraform.io/builtin/terraform"
+      }
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "shell_script.conf",
+          "mode": "managed",
+          "type": "shell_script",
+          "name": "conf",
+          "provider_config_key": "shell",
+          "expressions": {
+            "lifecycle_commands": [
+              {
+                "create": {
+                  "constant_value": "printf '{\"port\":\"8080\"}' > conf.json; cat conf.json"
+                },
+                "delete": {
+                  "constant_value": "rm -f conf.json"
+                },
+                "read": {
+                  "constant_value": "cat conf.json"
+                }
+              }
+            ],
+            "working_directory": {
+              "references": [
+                "path.module"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "terraform_data.downstream",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "downstream",
+          "provider_config_key": "terraform",
+          "expressions": {
+            "input": {
+              "references": [
+                "terraform_data.replaced.id",
+                "terraform_data.replaced"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "terraform_data.reader",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "reader",
+          "provider_config_key": "terraform",
+          "expressions": {
+            "input": {
+              "references": [
+                "shell_script.conf.output[\"port\"]",
+                "shell_script.conf.output",
+                "shell_script.conf"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "terraform_data.replaced",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "replaced",
+          "provider_config_key": "terraform",
+          "expressions": {
+            "input": {
+              "constant_value": "stable"
+            },
+            "triggers_replace": {
+              "references": [
+                "var.generation"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "terraform_data.updated",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "updated",
+          "provider_config_key": "terraform",
+          "expressions": {
+            "input": {
+              "references": [
+                "var.generation",
+                "var.token"
+              ]
+            }
+          },
+          "schema_version": 0
+        }
+      ],
+      "variables": {
+        "generation": {
+          "default": "1"
+        },
+        "token": {
+          "default": "hunter2",
+          "sensitive": true
+        }
+      }
+    }
+  },
+  "relevant_attributes": [
+    {
+      "resource": "shell_script.conf",
+      "attribute": [
+        "output",
+        "port"
+      ]
+    },
+    {
+      "resource": "terraform_data.replaced",
+      "attribute": [
+        "id"
+      ]
+    }
+  ],
+  "timestamp": "2026-10-23T17:59:34Z",
+  "applyable": true,
+  "complete": true,
+  "errored": false
+}

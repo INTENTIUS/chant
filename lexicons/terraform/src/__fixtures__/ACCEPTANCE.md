@@ -211,6 +211,30 @@ With the Init phase back, the same run reaches its gate:
    its gate
 ```
 
+### 6. `the plan depth against a real terraform` / `tofu`
+
+`../plan-read.acceptance.test.ts`, one block per binary, three tests each, over
+the `plan-read/` fixture (built-in `terraform_data`, `local` backend, so no
+registry, no network and no credentials). The first reads the plan depth
+through `describeResources` and checks the IR attributes, `sources` reading
+`"plan"`, no secret in the result, nothing new or changed in the root, and no
+`chant-terraform-plan-*` directory left in the temp dir. The second holds the
+state lock with an `apply` waiting at its prompt, shows a plan without
+`-lock=false` failing on `Error acquiring the state lock`, and reads through
+it. The third refuses a never-initialised root with the init line and writes
+nothing in it.
+
+Gated on `terraform` / `tofu` on PATH, each block on its own binary.
+
+```
+npx vitest run lexicons/terraform/src/plan-read.acceptance.test.ts
+```
+
+Last passed: 2026-10-23, `Terraform v1.15.8` and `OpenTofu v1.12.5` on
+`darwin_arm64`, 6 passed, by chant #4358. Proved red the same day: with
+`-lock=false` taken out of `terraformPlanReadCommand`, both lock tests failed
+on `Error acquiring the state lock`.
+
 ## Running everything that can run on a machine with no choudoufu
 
 ```
