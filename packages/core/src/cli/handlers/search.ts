@@ -15,7 +15,7 @@ import { diffLive, type LiveDiffResult } from "../../lifecycle/live-diff";
 import type { LiveObservation } from "../../graph-ir";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
-import { formatUnobserved } from "../../observation";
+import { formatUnobserved, type RootRead } from "../../observation";
 import { readChantPackageVersion } from "../../package-version";
 import { loadChantConfig, matchesDeclaredEnvironment } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
@@ -96,6 +96,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   let liveNotes: string[] = [];
   // Which read answered each entity (#2267), from a live read.
   let readSources: Record<string, string> = {};
+  let rootReads: Record<string, RootRead> = {};
   // Kinds that can exist in the account without being declared (#1278). Known
   // without a scan, so it costs nothing to mention.
   let ambientKinds: string[] = [];
@@ -188,6 +189,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       observations = observed.observations;
       annotations = observed.annotations;
       readSources = observed.sources ?? {};
+      rootReads = observed.rootReads ?? {};
       liveNotes = observed.notes ?? [];
       source = { kind: "live" };
       if (args.checkSnapshot) {
@@ -358,7 +360,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     });
   }
   // Name the plan read when it answered (#4384).
-  if (source.kind === "live") source = withReadDepth(source, matches, readSources, liveNotes);
+  if (source.kind === "live") source = withReadDepth(source, matches, readSources, rootReads);
   const driftAgainst: "live" | "snapshot" = args.checkLive ? "live" : "snapshot";
   // Machine-readable answer (#4359, #4367): the rows, their paths, and every
   // footer the text prints as prose, as one document for a caller that draws
@@ -766,10 +768,15 @@ export interface ReadDepth {
   planFellBackTo?: "state" | "declared";
 }
 
-/** The terraform lexicon's plan-fallback notes (describe-resources.ts, `planAdapter`). */
-function planFallback(notes: string[]): "state" | "declared" | undefined {
-  if (notes.some((n) => /the plan read failed .*so the state read answered/.test(n))) return "state";
-  if (notes.some((n) => /no read answered, declared only \(the plan read/.test(n))) return "declared";
+/**
+ * The read a plan-depth root fell back to, from the lexicon's structured
+ * per-root report. Never from note text. "state" wins over "declared" when
+ * roots disagree, because some read still answered.
+ */
+function planFallback(rootReads: Record<string, RootRead>): "state" | "declared" | undefined {
+  const falls = Object.values(rootReads).filter((r) => r.depth === "plan" && r.fellBackTo).map((r) => r.fellBackTo);
+  if (falls.includes("state")) return "state";
+  if (falls.includes("declared")) return "declared";
   return undefined;
 }
 
@@ -782,10 +789,10 @@ function withReadDepth(
   source: AnswerSource & { kind: "live" },
   matches: IRNode[],
   sources: Record<string, string>,
-  notes: string[],
+  rootReads: Record<string, RootRead>,
 ): AnswerSource {
   const reads = [...new Set(matches.filter((n) => n.physicalId).map((n) => sources[n.id]).filter((r): r is string => !!r))].sort();
-  const fellBack = planFallback(notes);
+  const fellBack = planFallback(rootReads);
   const planned = reads.filter((r) => r === "plan" || r === "live+plan");
   if (planned.length === 0 && !fellBack) return source;
   return {
