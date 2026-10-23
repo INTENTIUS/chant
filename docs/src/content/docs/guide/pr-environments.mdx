@@ -72,11 +72,24 @@ On GitHub and Forgejo the workflow's `pull_request` trigger then fires on close 
 | `env-down` | a closed pull request, from the base branch's checkout | `chant components pr-env down --pr "$PR_NUMBER" --reason closed --forge <forge>` |
 | `env-sweep` | the schedule, hourly at minute 17 | `chant components pr-env sweep --forge <forge>` |
 
-`env-up` runs the pull request's code, so it holds no forge token while it does, as the plan job holds none ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). Its permissions are `contents: read` (`lexicons/github/src/components/generate-pipeline.ts:464`). A checkout script alone sees the job's token, every later step starts without the token variables, and the `pr-env up` step runs last and hands its report and record on as the job's outputs (`lexicons/github/src/components/generate-pipeline.ts:480`). On GitLab the job's script drops the tokens on its first line (`lexicons/gitlab/src/components/generate-pipeline.ts:495`). `env-post` runs none of the change's code. It takes the report and record back, keeps the record on `chant/lifecycle`, and posts the note and the `chant/pr-env` status with the token.
+`env-up` runs the pull request's code, so it holds no forge token while it does, as the plan job holds none ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). Its permissions are `contents: read` (`lexicons/github/src/components/generate-pipeline.ts:492`). A checkout script alone sees the job's token, every later step starts without the token variables, and the `pr-env up` step runs last and hands its report and record on as the job's outputs (`lexicons/github/src/components/generate-pipeline.ts:485`). On GitLab the job's script drops the tokens on its first line (`lexicons/gitlab/src/components/generate-pipeline.ts:515`). `env-post` runs none of the change's code. It takes the report and record back, keeps the record on `chant/lifecycle`, and posts the note and the `chant/pr-env` status with the token.
 
-`env-up` and `env-down` share a concurrency group per pull request, so a close waits for an apply still running. `env-down` checks out the base branch, since a closed pull request's merge ref can be gone (`lexicons/github/src/components/generate-pipeline.ts:519`).
+`env-up` and `env-down` share a concurrency group per pull request, so a close waits for an apply still running. `env-down` checks out the base branch, since a closed pull request's merge ref can be gone (`lexicons/github/src/components/generate-pipeline.ts:549`).
 
-On GitLab, `env-up` starts a GitLab environment `pr-<iid>` whose stop job is `env-down`, so the environment's Stop button tears it down (`lexicons/gitlab/src/components/generate-pipeline.ts:492`). GitLab starts no pipeline when a merge request closes. Create a pipeline schedule for the project, and `env-sweep` then tears down a closed merge request's environment (`lexicons/gitlab/src/components/generate-pipeline.ts:521`).
+On GitLab, `env-up` starts a GitLab environment `pr-<iid>` whose stop job is `env-down`, so the environment's Stop button tears it down (`lexicons/gitlab/src/components/generate-pipeline.ts:510`). GitLab starts no pipeline when a merge request closes. Create a pipeline schedule for the project, and `env-sweep` then tears down a closed merge request's environment (`lexicons/gitlab/src/components/generate-pipeline.ts:542`).
+
+### The environment's cloud identity
+
+With `ci.identity.cloud` declared, the environment's jobs take a cloud identity through the OIDC trade the plan job uses ([#4296](https://github.com/INTENTIUS/chant/issues/4296), [#4330](https://github.com/INTENTIUS/chant/issues/4330)). `env-up` applies, and it runs the pull request's code, so it gets the apply identity of a rule that names the pull request environments. A rule with no `environments` covers every environment, and it is never the one `env-up` gets (`packages/core/src/ci-identity.ts:323`). Give the pull request environments a rule of their own:
+
+```json
+"identity": { "cloud": { "aws": { "rules": [
+  { "environments": ["pr-*"], "plan": "arn:aws:iam::000000000000:role/pr-plan", "apply": "arn:aws:iam::000000000000:role/pr-env" },
+  { "environments": ["prod"], "plan": "arn:aws:iam::000000000000:role/prod-plan", "apply": "arn:aws:iam::000000000000:role/prod-apply" }
+] } } }
+```
+
+`chant build --pr-env` resolves it for the member, matching each rule's globs against `pr-1` (`packages/core/src/cli/handlers/build.ts:167`). On GitHub and Forgejo, `env-up` then has `id-token: write`, and its first step trades the token before the change is checked out (`lexicons/github/src/components/generate-pipeline.ts:495`). Every later step starts without the forge token and the token request variables, so the change's code can request no other token (`lexicons/github/src/components/generate-pipeline.ts:485`). On GitLab the trade is the job's first line, and the same unset drops the forge tokens (`lexicons/gitlab/src/components/generate-pipeline.ts:515`). `env-down` and `env-sweep` trade for the same identity, since a teardown deletes what `env-up` created (`lexicons/github/src/components/generate-pipeline.ts:536`). `env-post` holds no cloud identity. With no rule that names the pull request environments, the jobs request no OIDC token.
 
 There is one note per environment on the pull request. Each job keeps its report under `.chant/pr-env` as an artifact.
 
@@ -93,7 +106,7 @@ The `ci.hooks` the other pull-request jobs run go around the plan and the apply 
 Run the job again, or push, once it is approved. A push that moves the plan needs a new approval. An empty plan applies with no approval, by the rule ws-104 gives an empty change set (`packages/core/src/components/pr-env-run.ts:240`).
 
 <Aside type="caution">
-`env-up` runs the pull request's code with the credentials the job gives it. Give the job credentials that reach only what a pull request's environment may touch, such as an emulator or an account set aside for previews. On GitHub a forked pull request's job gets no secrets, so it has nothing to apply with.
+`env-up` runs the pull request's code with the credentials the job gives it. Give the job credentials that reach only what a pull request's environment may touch, such as an emulator or an account set aside for previews. With `ci.identity.cloud`, that is the identity of the `pr-*` rule. On GitHub a forked pull request's job gets no secrets, so it has nothing to apply with.
 </Aside>
 
 `env-up` writes the apply's record to `pr-env-record.json` under `--no-push` (`packages/core/src/cli/handlers/pr-env.ts:134`). `env-post` checks it as data before it appends the line to `_pr-envs/records.jsonl` on `chant/lifecycle` (`packages/core/src/cli/handlers/pr-env.ts:299`). The record must name this pull request's `pr-<n>`, that marker env and the template the base declares. The commit, the actor and the expiry are the post job's own, so a change cannot keep its environment past the base's TTL (`packages/core/src/components/pr-environment.ts:488`). The line names the marker the teardown will select on. An apply that failed part way is recorded too, so what did apply is torn down with the rest.

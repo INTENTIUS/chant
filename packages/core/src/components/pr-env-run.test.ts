@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import type { ObservationLexicon, TeardownCandidate } from "../lexicon";
+import { resolvePrEnvCloudIdentity } from "../ci-identity";
 import {
   PR_ENV_TEARDOWN_ENV,
   commandTeardownAdapter,
@@ -274,3 +275,16 @@ describe("a component's site in pr-<n>", () => {
 function livePrRecord(live: ReturnType<typeof livePrEnvironments> extends Map<string, infer L> ? L : never): PrEnvRecord {
   return { version: 1, kind: "up", pr: live.pr, env: live.env, template: live.template, marker: live.marker, commit: live.commit, components: live.components, ...(live.locations ? { locations: live.locations } : {}), planDigest: "sha256:set", result: "applied", by: "octo", timestamp: live.applied, expiresAt: live.expiresAt, releaseTarget: false };
 }
+
+describe("the cloud identity of the environment's jobs (#4330)", () => {
+  const aws = (rules: Array<{ environments?: string[]; plan: string; apply: string }>) => ({ aws: { endpoint: "http://localhost:4566", rules } });
+
+  test("is the apply identity of the first rule that names the pull request environments", () => {
+    const spec = resolvePrEnvCloudIdentity(aws([{ environments: ["prod"], plan: "prod-plan", apply: "prod-apply" }, { environments: ["pr-*"], plan: "pr-plan", apply: "pr-apply" }]));
+    expect(spec?.aws).toMatchObject({ role: "pr-apply" });
+  });
+
+  test("a rule with no environments, which covers every one, is never handed to the change's code", () => {
+    expect(resolvePrEnvCloudIdentity(aws([{ plan: "any-plan", apply: "any-apply" }]))).toBeUndefined();
+  });
+});

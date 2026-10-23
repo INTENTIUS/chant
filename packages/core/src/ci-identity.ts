@@ -302,6 +302,29 @@ export function resolveTargetCloudIdentity(decl: CloudIdentityDeclaration | unde
   return Object.keys(plan).length > 0 ? { plan: plan as CloudTradeSpec, apply: apply as CloudTradeSpec } : undefined;
 }
 
+/** The name a pull request environment's rule is matched against (#4330): any pull request's, as `pr-*` covers it. */
+export const PR_ENV_IDENTITY_PROBE = "pr-1";
+
+/**
+ * The trade a pull request environment's jobs take (#4330): per cloud, the
+ * apply identity of the rules {@link resolveCloudIdentity} gives `pr-1` and
+ * `member`, from the rules that name `environments` only. env-up runs the
+ * change's code with that identity, so a rule with no `environments`, which
+ * covers every environment, is never one it gets: give pull request
+ * environments a rule of their own, such as `environments: ["pr-*"]`, whose
+ * identity reaches only what they may touch. Undefined when no such rule
+ * covers them.
+ */
+export function resolvePrEnvCloudIdentity(decl: CloudIdentityDeclaration | undefined, member?: string): CloudTradeSpec | undefined {
+  if (!decl) return undefined;
+  const named: CloudIdentityDeclaration = {};
+  for (const cloud of CLOUDS) {
+    const c = decl[cloud];
+    if (c) (named as Record<string, unknown>)[cloud] = { ...c, rules: c.rules.filter((r) => r.environments !== undefined) };
+  }
+  return resolveCloudIdentity(named, PR_ENV_IDENTITY_PROBE, member)?.apply;
+}
+
 /** One apply job's targets (#4332): those that take the same identities, per cloud. */
 export interface CloudIdentityGroup {
   /** A job-name-safe name: the first rule with `targets` they took (its `name`, or one from its first glob), else `default`. */

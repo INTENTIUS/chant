@@ -496,6 +496,10 @@ function prEnvGitlabJobs(
   const group = `chant-pr-env-${member ? `${member.name}-` : ""}$CI_MERGE_REQUEST_IID`;
   const script = (j: typeof up): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(j.build ?? []), j.command, ...extraScript];
   const artifacts = { when: "always", paths: [reportPath] };
+  // #4330: env-up, env-down and env-sweep trade the job's OIDC token for the pull request environments' identity first.
+  const identity = loop.prEnvIdentity;
+  const trading = identity ? { id_tokens: gitlabTradeIdTokens(identity) } : {};
+  const tradeVars: Record<string, string> = identity ? { [TRADE_SPEC_ENV]: JSON.stringify(identity) } : {};
   return {
     jobs: {
       [named("env-up")]: {
@@ -504,9 +508,11 @@ function prEnvGitlabJobs(
         rules: [{ if: onMergeRequest }],
         resource_group: group,
         environment: { name: environment, on_stop: named("env-down") },
-        variables: up.env,
+        ...trading,
+        variables: { ...up.env, ...tradeVars },
         // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
-        script: [GITLAB_DROP_FORGE_TOKENS, ...script(up)],
+        // #4330: with an identity, the trade runs before that, and the same unset drops the token variables too.
+        script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...script(up)],
         artifacts,
       },
       [named(PR_ENV_POST_JOB)]: {
@@ -525,8 +531,9 @@ function prEnvGitlabJobs(
         allow_failure: true,
         resource_group: group,
         environment: { name: environment, action: "stop" },
-        variables: down.env,
-        script: script(down),
+        ...trading,
+        variables: { ...down.env, ...tradeVars },
+        script: [...(identity ? gitlabTradeLines() : []), ...script(down)],
         artifacts,
       },
       [named("env-sweep")]: {
@@ -534,8 +541,9 @@ function prEnvGitlabJobs(
         image,
         rules: [{ if: GITLAB_SCHEDULE_RULE }],
         resource_group: `chant-pr-env-sweep${member ? `-${member.name}` : ""}`,
-        variables: sweep.env,
-        script: script(sweep),
+        ...trading,
+        variables: { ...sweep.env, ...tradeVars },
+        script: [...(identity ? gitlabTradeLines() : []), ...script(sweep)],
         artifacts,
       },
     },

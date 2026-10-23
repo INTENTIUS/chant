@@ -89,7 +89,7 @@ import { EMPTY_TREE_SHA } from "./changed-files";
 import { layerWaves } from "../gated-waves";
 import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
-import type { PipelineCloudIdentity } from "../ci-identity";
+import type { CloudTradeSpec, PipelineCloudIdentity } from "../ci-identity";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -211,6 +211,15 @@ export interface PrLoopPipelineOptions {
    * ({@link prEnvJobs}). Set from `--pr-env` beside `--pr-loop`. Default false.
    */
   prEnvironment?: boolean;
+  /**
+   * The cloud identity a pull request environment's jobs take (#4330), from
+   * `ci.identity.cloud` (`resolvePrEnvCloudIdentity` in ../ci-identity.ts):
+   * the apply identity of a rule that names the pull request environments.
+   * env-up, env-down and env-sweep trade their OIDC token for it before the
+   * checkout, and env-up's later steps start without the token variables.
+   * Absent: they request no OIDC token.
+   */
+  prEnvIdentity?: CloudTradeSpec;
 }
 
 /** One job's command and the forge values it reads, as environment variables for its step. */

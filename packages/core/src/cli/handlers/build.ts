@@ -160,6 +160,16 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  // #4330: the identity a pull request environment's jobs trade for, from a rule that names those environments.
+  let prEnvIdentity: import("../../ci-identity").CloudTradeSpec | undefined;
+  if (found && args.prLoop && args.prEnv) {
+    try {
+      prEnvIdentity = await (await import("../../workspace/ci-cloud-identity")).declaredPrEnvCloudIdentity(resolve(args.path), plan?.member.name);
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
 
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
@@ -182,7 +192,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
       // #4292: on the branch ci.branches routes the member to, when it routes it.
-      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}) } } : {}),
+      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}) } } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
