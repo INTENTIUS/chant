@@ -421,7 +421,12 @@ export interface PrForge {
    * system notes, and never from the token's own user.
    */
   prApproved?(pr: number, head: string): Promise<PrRequireResult>;
-  /** The forge says `pr` merges as it stands: no conflicts, and on GitHub no branch protection blocking it. Pending while the forge works it out. */
+  /**
+   * The forge says `pr` merges as it stands: no conflicts, and on GitHub no
+   * branch protection blocking it. Pending while the forge works it out. On
+   * Forgejo, which answers `mergeable: false` while it still checks, a false
+   * is pending too, so it counts as conflicts only once the reads run out.
+   */
   prMergeable?(pr: number, head: string): Promise<PrRequireResult>;
   /** `head` contains the tip of the branch `pr` merges into. */
   prUndiverged?(pr: number, head: string): Promise<PrRequireResult>;
@@ -823,6 +828,9 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       if (at !== head) return moved(`pull request ${pr}`, head, at);
       const m = isObject(got) ? got : {};
       const into = isObject(m.base) ? str(m.base.ref) : undefined;
+      // Forgejo answers mergeable false while it still checks for conflicts, and names no state that tells the two apart, so its false is asked again.
+      if (kind === "forgejo" && m.draft === true) return refuse("it is a draft");
+      if (kind === "forgejo" && m.mergeable === false) return refuse(`Forgejo reports conflicts with ${into ?? "its base"}, or is still checking for them`, true);
       if (m.mergeable === false || m.mergeable_state === "dirty") return refuse(`the forge reports conflicts with ${into ?? "its base"}`);
       if (m.mergeable !== true) return refuse("the forge has not worked out yet whether it can merge", true);
       if (kind === "github" && m.mergeable_state === "blocked") return refuse(`branch protection on ${into ?? "its base"} blocks its merge`);

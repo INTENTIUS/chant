@@ -94,6 +94,15 @@ describe("forgejo", () => {
     expect((await forge({ [`GET ${repo}/pulls/4`]: pull({ merge_base: OTHER }) }).prUndiverged!(4, HEAD)).reason).toBe("aaaaaaaa does not contain main at bbbbbbbb");
   });
 
+  test("mergeable: a false while Forgejo still checks is pending, and passes once it settles (#4335)", async () => {
+    expect(await forge({ [`GET ${repo}/pulls/4`]: pull({ mergeable: false }) }).prMergeable!(4, HEAD)).toMatchObject({ passed: false, pending: true });
+    expect(await forge({ [`GET ${repo}/pulls/4`]: pull({ mergeable: false, draft: true }) }).prMergeable!(4, HEAD)).toEqual({ passed: false, reason: "it is a draft" });
+    let reads = 0;
+    const flips = forge({ [`GET ${repo}/pulls/4`]: () => pull({ mergeable: ++reads > 2 }), [`GET ${repo}/pulls/4/reviews`]: [], [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [{ context: "ci/test", status: "success" }] } });
+    const out = await checkPrRequires(flips, 4, HEAD, { wait: async () => {} });
+    expect(out.find((o) => o.name === "mergeable")).toEqual({ name: "mergeable", passed: true, reason: "it merges into main as it stands" });
+  });
+
   test("mergeable: no branch protection reading, and checks from the combined status alone", async () => {
     expect((await forge({ [`GET ${repo}/pulls/4`]: pull({ mergeable_state: "blocked" }) }).prMergeable!(4, HEAD)).passed).toBe(true);
     const f = forge({ [`GET ${repo}/commits/${HEAD}/status`]: { statuses: [{ context: "ci/test", status: "success" }] } });
