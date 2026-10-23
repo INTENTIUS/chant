@@ -61,6 +61,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `flux-reconcile` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `kubectl-apply` | k8s | yes | yes | a server-side dry run (`dryRun=All`) of the manifest, compared with each live object | a create, update, no-op or delete per object, and each changed field path with its value before and after. See [kubectl-apply](#kubectl-apply) |
 | `kustomize-apply` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `ocb-build` | otel | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `terraform-apply` | terraform | yes | yes | `terraform plan` (or tofu or choudoufu) in the root, against its state | every resource change with its action, and each changed top-level attribute with its value before and after. See [terraform-apply](#terraform-apply) |
 
 {/* END GENERATED plan-previews */}
