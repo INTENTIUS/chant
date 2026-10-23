@@ -367,6 +367,27 @@ That file has all four moments' hooks, and nothing is approved, so a held hook s
 
 The pull request job that records plans for `pr-review` (`--record-plans`) runs no hooks.
 
+### Hooks around a product's own stages
+
+A product that runs its own stages, outside a wave job, runs one moment's hooks with `runStageHooks` from `@intentius/chant/op/stage-hooks` ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). That module bundles without the wave loop or the gate. It reads each hook's fields as a wave job does. A hold on another gate counts as a plain hold (`packages/core/src/op/stage-hooks.ts:332`). Settling that gate is the product's job.
+
+`runStageHooks` waits for each hook with `spawnSync`, which blocks the event loop. A product that plans several targets side by side calls `runStageHooksAsync` instead ([#4334](https://github.com/INTENTIUS/chant/issues/4334)). It takes the same options, and its `exec` returns a promise. The default exec, `spawnExecAsync`, runs the hook with `spawn` (`packages/core/src/op/stage-hooks.ts:76`). Both forms share one hook loop, so the same exit codes give the same result in each (`packages/core/src/op/stage-hooks.ts:161`).
+
+```ts
+import { runStageHooksAsync } from "@intentius/chant/op/stage-hooks";
+
+const results = await Promise.all(roots.map((root) =>
+  runStageHooksAsync("before-plan", hooks, {
+    name: "plan", op: "plan", wave: "plan",
+    runs: [{ target: root, op: "plan" }],
+    runsFile: `.out/${root}/runs.json`,
+    holdFile: `.out/${root}/hold.json`,
+  }),
+));
+```
+
+The hooks of one call still run one after another. Calls run side by side. Give each call its own `holdFile`, since the runner clears that file before each hook (`packages/core/src/op/stage-hooks.ts:192`).
+
 ## Resume the waiting job
 
 A push to `chant/lifecycle` starts no pipeline, so an approval alone leaves the job stopped. When the wave job runs in CI, its pending fact records where it runs: the forge, the run, and on GitLab the job. `--resume` uses that to start the job again after recording the approval:

@@ -6,7 +6,7 @@
  * the same hooks inside a wave job.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { opWaveHookRuns, type OpWaveHook, type OpWaveHookMoment } from "./op-waves";
@@ -68,6 +68,17 @@ export const spawnExec: OpWaveExec = (argv, cwd, env) => {
   if (result.error) throw result.error;
   return result.status ?? 1;
 };
+
+/** {@link OpWaveExec} for {@link runStageHooksAsync} (#4334): the exit code comes back as a promise, so the event loop runs while a hook does. */
+export type OpWaveAsyncExec = (argv: string[], cwd: string, env?: Record<string, string>) => Promise<number>;
+
+/** {@link spawnExec} on `spawn`: it rejects when the command cannot start. */
+export const spawnExecAsync: OpWaveAsyncExec = (argv, cwd, env) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(argv[0]!, argv.slice(1), { cwd, stdio: "inherit", ...(env ? { env: { ...process.env, ...env } } : {}) });
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code ?? 1));
+  });
 
 /** Fill one argv template. A placeholder whose value is not given is left as it is. */
 export function opWaveArgv(
@@ -134,22 +145,30 @@ export interface HookPlace {
   holdPath?: string;
 }
 
+/** One hook call {@link hookListSteps} asks its driver to run. The driver sends back the exit code. */
+interface HookCall {
+  label: string;
+  argv: string[];
+  cwd: string;
+  env: Record<string, string>;
+}
+
 /**
- * Run one moment's hooks, in order: each once for the wave, or once per run
- * for a `perRun` hook. A hook that fails stops the rest, unless its
- * `onFailure` is `approve`: then it holds the wave and the hooks after it run.
+ * The hook list as steps (#4334): it yields each call and takes its exit
+ * code back, so the sync and async runners share the targets, hold, outcome
+ * and other-gate handling and differ only in how they wait for a call.
  */
-export function runHookList(
-  at: HookPlace,
+function* hookListSteps(
+  at: Omit<HookPlace, "exec">,
   moment: OpWaveHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
-  extraEnv: Record<string, string> = {},
-): HookListOutcome {
+  extraEnv: Record<string, string>,
+): Generator<HookCall, HookListOutcome, number> {
   const out: HookListOutcome = { holds: [], outcomes: [], otherGates: [] };
   if (!hooks || hooks.length === 0) return out;
-  const { name: specName, op, waveName, k, cwd, exec, log } = at;
+  const { name: specName, op, waveName, k, cwd, log } = at;
   // #3821: a hook that holds the wave on another gate names it in this file.
   const holdPath = at.holdPath ?? `.chant/op-waves/${specName}/wave-${k}/hold.json`;
   const env = { CHANT_OP_WAVES: specName, CHANT_WAVE: waveName, CHANT_WAVE_NUMBER: String(k), CHANT_HOOK: moment, CHANT_RUNS: runsPath, CHANT_HOLD: holdPath, ...extraEnv };
@@ -170,14 +189,8 @@ export function runHookList(
       : [{ target: undefined, argv: opWaveArgv(hook.command, { op, wave: waveName, runs: runsPath }), env: env as Record<string, string> }];
     for (const call of calls) {
       const label = `${moment} hook ${name}${call.target ? ` (${call.target})` : ""}`;
-      let code: number;
       rmSync(join(cwd, holdPath), { force: true });
-      try {
-        code = exec(call.argv, cwd, call.env);
-      } catch (err) {
-        log(`${label} did not run: ${err instanceof Error ? err.message : String(err)}`);
-        code = 127;
-      }
+      const code = yield { label, argv: call.argv, cwd, env: call.env };
       const base = { moment, name, ...(call.target ? { target: call.target } : {}), exit: code };
       if (code === 0) {
         out.outcomes.push({ ...base, outcome: "passed" });
@@ -202,6 +215,64 @@ export function runHookList(
     }
   }
   return out;
+}
+
+/** The exit code a call that did not start counts as, after its error is logged. */
+function didNotRun(call: HookCall, err: unknown, log: (line: string) => void): number {
+  log(`${call.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
+  return 127;
+}
+
+/**
+ * Run one moment's hooks, in order: each once for the wave, or once per run
+ * for a `perRun` hook. A hook that fails stops the rest, unless its
+ * `onFailure` is `approve`: then it holds the wave and the hooks after it run.
+ */
+export function runHookList(
+  at: HookPlace,
+  moment: OpWaveHookMoment,
+  hooks: readonly OpWaveHook[] | undefined,
+  runs: readonly OpWaveHookRun[],
+  runsPath: string,
+  extraEnv: Record<string, string> = {},
+): HookListOutcome {
+  const steps = hookListSteps(at, moment, hooks, runs, runsPath, extraEnv);
+  let step = steps.next();
+  while (!step.done) {
+    const call = step.value;
+    let code: number;
+    try {
+      code = at.exec(call.argv, call.cwd, call.env);
+    } catch (err) {
+      code = didNotRun(call, err, at.log);
+    }
+    step = steps.next(code);
+  }
+  return step.value;
+}
+
+/** {@link runHookList} with an exec that returns a promise (#4334). */
+export async function runHookListAsync(
+  at: Omit<HookPlace, "exec"> & { exec: OpWaveAsyncExec },
+  moment: OpWaveHookMoment,
+  hooks: readonly OpWaveHook[] | undefined,
+  runs: readonly OpWaveHookRun[],
+  runsPath: string,
+  extraEnv: Record<string, string> = {},
+): Promise<HookListOutcome> {
+  const steps = hookListSteps(at, moment, hooks, runs, runsPath, extraEnv);
+  let step = steps.next();
+  while (!step.done) {
+    const call = step.value;
+    let code: number;
+    try {
+      code = await at.exec(call.argv, call.cwd, call.env);
+    } catch (err) {
+      code = didNotRun(call, err, at.log);
+    }
+    step = steps.next(code);
+  }
+  return step.value;
 }
 
 /** The options of {@link runStageHooks} (#4288). */
@@ -235,6 +306,22 @@ export interface StageHooksRun {
   holds: string[];
 }
 
+/** {@link RunStageHooksOptions} for {@link runStageHooksAsync} (#4334). */
+export interface RunStageHooksAsyncOptions extends Omit<RunStageHooksOptions, "exec"> {
+  /** Default: {@link spawnExecAsync}. */
+  exec?: OpWaveAsyncExec;
+}
+
+/** Where a stage runner's hooks run, without the exec. */
+function stagePlace(options: Omit<RunStageHooksOptions, "exec">): Omit<HookPlace, "exec"> {
+  return { name: options.name, op: options.op, waveName: options.wave, k: options.k ?? 0, cwd: options.cwd ?? process.cwd(), log: options.log ?? ((line: string) => console.error(line)), holdPath: options.holdFile };
+}
+
+/** A stage run's result: a hold on another gate counts as a plain hold. */
+function stageRun(out: HookListOutcome, name: string): StageHooksRun {
+  return { outcomes: out.outcomes, ...(out.failed ? { failed: out.failed } : {}), holds: [...out.holds, ...out.otherGates.map((g) => `${g.label} (on ${g.request.op ?? name} / ${g.request.gate})`)] };
+}
+
 /**
  * Run one moment's hooks outside an Op waves job (#4288): the pull-request
  * jobs, or a product's own stage, with the same `targets`, `perRun`,
@@ -243,9 +330,17 @@ export interface StageHooksRun {
  * caller's.
  */
 export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
-  const cwd = options.cwd ?? process.cwd();
-  const log = options.log ?? ((line: string) => console.error(line));
-  const place: HookPlace = { name: options.name, op: options.op, waveName: options.wave, k: options.k ?? 0, cwd, exec: options.exec ?? spawnExec, log, holdPath: options.holdFile };
-  const out = runHookList(place, moment, hooks, options.runs, options.runsFile, options.env);
-  return { outcomes: out.outcomes, ...(out.failed ? { failed: out.failed } : {}), holds: [...out.holds, ...out.otherGates.map((g) => `${g.label} (on ${g.request.op ?? options.name} / ${g.request.gate})`)] };
+  const place = { ...stagePlace(options), exec: options.exec ?? spawnExec };
+  return stageRun(runHookList(place, moment, hooks, options.runs, options.runsFile, options.env), options.name);
+}
+
+/**
+ * {@link runStageHooks} with an exec that returns a promise (#4334), so a
+ * product can run several stages' hooks side by side. The hooks of one call
+ * still run one after another. Give each concurrent call its own `holdFile`
+ * and `runsFile`.
+ */
+export async function runStageHooksAsync(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksAsyncOptions): Promise<StageHooksRun> {
+  const place = { ...stagePlace(options), exec: options.exec ?? spawnExecAsync };
+  return stageRun(await runHookListAsync(place, moment, hooks, options.runs, options.runsFile, options.env), options.name);
 }

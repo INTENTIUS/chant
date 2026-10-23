@@ -112,19 +112,23 @@ import {
   readHoldRequest,
   runHookList,
   runStageHooks,
+  runStageHooksAsync,
   spawnExec,
+  spawnExecAsync,
   type HookPlace,
+  type OpWaveAsyncExec,
   type OpWaveExec,
   type OpWaveHoldRequest,
   type OpWaveHookOutcome,
   type OpWaveHookRun,
   type OtherGateHold,
+  type RunStageHooksAsyncOptions,
   type RunStageHooksOptions,
   type StageHooksRun,
 } from "./stage-hooks";
 
-export { OP_WAVE_PENDING_RESERVED, opWaveArgv, runStageHooks };
-export type { OpWaveExec, OpWaveHoldRequest, OpWaveHookOutcome, OpWaveHookRun, RunStageHooksOptions, StageHooksRun };
+export { OP_WAVE_PENDING_RESERVED, opWaveArgv, runStageHooks, runStageHooksAsync, spawnExecAsync };
+export type { OpWaveAsyncExec, OpWaveExec, OpWaveHoldRequest, OpWaveHookOutcome, OpWaveHookRun, RunStageHooksAsyncOptions, RunStageHooksOptions, StageHooksRun };
 
 /** What a run's plan command writes to `{plan}`. */
 export interface OpWavePlanFile {
