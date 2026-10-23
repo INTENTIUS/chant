@@ -4,7 +4,9 @@
  * asked of the forge through its {@link PrForge} method. All four must pass.
  *
  * The checks are terragucci's `apply.requires` (comment-apply.ts:781-860 at
- * INTENTIUS/terragucci e6cb431), with no setting to drop one. A check the
+ * INTENTIUS/terragucci e6cb431). A product may leave one out with `only`
+ * (#4336); chant's own `pr-apply --before-merge` passes no `only`, so it asks
+ * all four, as ws-106 requires. A check the
  * forge has not settled, such as GitHub working out whether a pull request
  * can merge, is asked again a few times before it counts as unmet.
  *
@@ -24,6 +26,11 @@ export interface PrRequireOutcome extends PrRequireResult {
 }
 
 export interface PrRequiresOptions {
+  /**
+   * The checks to ask (#4336). One left out passes with the reason "not
+   * required" and makes no forge call. Default: all four.
+   */
+  only?: readonly PrApplyRequire[];
   /** Status names the `checks` require leaves out: the apply's own. */
   ignore?: readonly string[];
   /** How many times a pending check is asked in all. Default 5. */
@@ -50,7 +57,12 @@ export async function checkPrRequires(forge: PrForge, pr: number, head: string, 
     checks: forge.prChecksPassed ? () => forge.prChecksPassed!(pr, head, opts.ignore ?? []) : undefined,
   };
   const out: PrRequireOutcome[] = [];
+  const asked = new Set<PrApplyRequire>(opts.only ?? PR_APPLY_REQUIRES);
   for (const name of PR_APPLY_REQUIRES) {
+    if (!asked.has(name)) {
+      out.push({ name, passed: true, reason: "not required" });
+      continue;
+    }
     const call = ask[name];
     if (!call) {
       out.push({ name, passed: false, reason: `this ${forge.kind} client cannot say` });
