@@ -170,9 +170,11 @@ Commands:
                         bundle tree, otherwise JSON path→content on stdout)
   search "<query>"      Answer an estate question with a few matching rows
                         instead of a graph dump (kind:, tag:, attr:, ->/<- edge
-                        terms; --live or --at <ref> with --env <name> reads the
-                        estate or a recorded snapshot; --show <attr>,
-                        --check-live, --check-snapshot, --fail-on-drift)
+                        terms, ->* / ->{1,3} for depth, ->[via=attr] / [to=attr]
+                        by attribute; --live or --at <ref> with --env <name>
+                        reads the estate or a recorded snapshot; --show <attr>,
+                        --explain prints paths, --json, --check-live,
+                        --check-snapshot, --fail-on-drift)
   query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
                         the resources and snapshots each lexicon observed, Op
                         runs, gates, deploys, releases and cuts, loaded into
