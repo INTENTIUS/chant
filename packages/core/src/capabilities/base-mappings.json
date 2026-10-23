@@ -1,0 +1,122 @@
+{
+  "$comment": "The kinds core's effective-topology folds read (#1139, #4362), as data. These were constants in graph-effective.ts; they stay in core so the folds work on a graph read without its lexicon's plugin. Each lexicon's own mapping (src/capabilities/mapping.json) extends its entry here.",
+  "mappings": [
+    {
+      "lexicon": "aws",
+      "types": "kind",
+      "refs": "cloudformation",
+      "labels": {
+        "AWS::EC2::Instance": "Instance",
+        "AWS::EC2::LaunchTemplate": "LaunchTemplate",
+        "AWS::EC2::SecurityGroup": "SecurityGroup",
+        "AWS::EC2::SecurityGroupIngress": { "label": "IngressRule", "style": "cfn" },
+        "AWS::EC2::Subnet": "Subnet",
+        "AWS::EC2::SubnetRouteTableAssociation": "RouteTableAssociation",
+        "AWS::EC2::RouteTable": "RouteTable",
+        "AWS::EC2::Route": "Route",
+        "AWS::EC2::InternetGateway": "InternetGateway"
+      },
+      "edges": {
+        "Instance": {
+          "SecurityGroupIds": "sg",
+          "SecurityGroupId": "sg",
+          "LaunchTemplate": "template",
+          "LaunchTemplateId": "template",
+          "SubnetId": "subnet"
+        },
+        "LaunchTemplate": {
+          "LaunchTemplateData": { "SecurityGroup": "sg" },
+          "SecurityGroupIds": "sg",
+          "SecurityGroupId": "sg"
+        },
+        "IngressRule": { "GroupId": "-ingress", "SourceSecurityGroupId": "source" },
+        "RouteTableAssociation": { "SubnetId": "subnet", "RouteTableId": "table" },
+        "Route": { "RouteTableId": "table", "GatewayId": "gateway" }
+      },
+      "attrs": {
+        "Route": { "dest": "DestinationCidrBlock" },
+        "IngressRule": { "proto": "IpProtocol", "from": "FromPort", "to": "ToPort", "cidrs": { "all": ["CidrIp", "CidrIpv6"] } }
+      },
+      "blocks": {
+        "SecurityGroup": [
+          {
+            "attr": "SecurityGroupIngress",
+            "label": "IngressRule",
+            "edge": "ingress",
+            "style": "cfn",
+            "attrs": { "proto": "IpProtocol", "from": "FromPort", "to": "ToPort", "cidrs": { "all": ["CidrIp", "CidrIpv6"] } },
+            "refs": { "SourceSecurityGroupId": "source" }
+          }
+        ]
+      }
+    },
+    {
+      "lexicon": "terraform",
+      "types": "terraform",
+      "body": "body",
+      "refs": "terraform",
+      "labels": {
+        "aws_instance": "Instance",
+        "aws_launch_template": "LaunchTemplate",
+        "aws_security_group": "SecurityGroup",
+        "aws_security_group_rule": { "label": "IngressRule", "when": { "type": "ingress" }, "style": "tf-sg-rule" },
+        "aws_vpc_security_group_ingress_rule": { "label": "IngressRule", "style": "tf-vpc-rule" },
+        "aws_subnet": "Subnet",
+        "aws_route_table_association": "RouteTableAssociation",
+        "aws_route_table": "RouteTable",
+        "aws_route": "Route",
+        "aws_internet_gateway": "InternetGateway"
+      },
+      "edges": {
+        "Instance": {
+          "vpc_security_group_ids": "sg",
+          "security_groups": "sg",
+          "launch_template": "template",
+          "subnet_id": "subnet"
+        },
+        "LaunchTemplate": {
+          "vpc_security_group_ids": "sg",
+          "security_group_names": "sg",
+          "network_interfaces": { "SecurityGroup": "sg" }
+        },
+        "IngressRule": {
+          "security_group_id": "-ingress",
+          "source_security_group_id": "source",
+          "referenced_security_group_id": "source"
+        },
+        "RouteTableAssociation": { "subnet_id": "subnet", "route_table_id": "table" },
+        "Route": { "route_table_id": "table", "gateway_id": "gateway" }
+      },
+      "attrs": {
+        "Route": { "dest": ["destination_cidr_block", "destination_ipv6_cidr_block"] },
+        "IngressRule": {
+          "proto": ["ip_protocol", "protocol"],
+          "from": "from_port",
+          "to": "to_port",
+          "cidrs": { "all": ["cidr_blocks", "ipv6_cidr_blocks", "cidr_ipv4", "cidr_ipv6"] }
+        }
+      },
+      "blocks": {
+        "SecurityGroup": [
+          {
+            "attr": "ingress",
+            "label": "IngressRule",
+            "edge": "ingress",
+            "style": "tf-inline",
+            "attrs": { "proto": "protocol", "from": "from_port", "to": "to_port", "cidrs": { "all": ["cidr_blocks", "ipv6_cidr_blocks"] } },
+            "refs": { "security_groups": "source" }
+          }
+        ],
+        "RouteTable": [
+          {
+            "attr": "route",
+            "label": "Route",
+            "edge": "-table",
+            "attrs": { "dest": ["cidr_block", "ipv6_cidr_block"] },
+            "refs": { "gateway_id": "gateway" }
+          }
+        ]
+      }
+    }
+  ]
+}

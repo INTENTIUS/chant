@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 258 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 261 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 58 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -91,7 +91,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace graph` | chant | graph.schema.json | Prints the composed IR of every member, with member links and, given --kind, the records and their links. A member whose stamp, toolchain, command line and environment are unchanged is served from the per-member cache in the user's cache directory, never written into the workspace (ws-059). |
 | workspace command | `workspace graph --intent` | chant | intent.schema.json | Prints the intent graph over one region, through the kinds given with --kind or else every kind the declaration names: its commits, the decisions that constrain it, the artifacts they pin, and findings as nodes. |
 | workspace command | `workspace graph --composites` | chant | composites.schema.json | Prints each composite instance with the components that can deploy it, how each match was made and whether it crossed a member link; an instance with no component is listed with none, and the choice is never made here. |
-| workspace command | `workspace search` | chant | search.schema.json | Runs chant search in every chant member under the member's own chant and prints one search document, with the &lt;member&gt;/&lt;id&gt; ids workspace graph gives the same nodes. Each member is searched alone, and one that can't be searched is listed with a reason code. --at is the git revision and --snapshot the recorded snapshot (#4374). |
+| workspace command | `workspace search` | chant | search.schema.json | Runs chant search in every chant member under the member's own chant and prints one search document, with the &lt;member&gt;/&lt;id&gt; ids workspace graph gives the same nodes. Each member is searched alone, and one that can't be searched is listed with a reason code. --at is the git revision and --snapshot the recorded snapshot (#4374). A query that names a capability runs its rules once over the composed graph instead, and --capabilities prints the capabilities document (#4375). |
 | workspace command | `workspace patch` | chant | patch.schema.json | Prints the hunks of a range, a work branch or one commit, file by file, cut to a size limit, for a reader that runs no git. |
 | workspace command | `workspace check` | chant | check.schema.json | Checks the declaration with WSP ids and the lineage lock with reason codes, and prints the result as a read-contract document. |
 | workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
@@ -210,12 +210,15 @@ Each row follows, in the order of the table above.
 | reason code | `revision-unknown` | chant | agent.schema.json, box-factory-write.schema.json, box-listing-write.schema.json, box-publish.schema.json, changes.schema.json, check.schema.json, ci-last-green.schema.json, ci-list.schema.json, composites.schema.json, evidence.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, member-write.schema.json, patch.schema.json, points.schema.json, records-since.schema.json, records.schema.json, run-statement.schema.json, runs-write.schema.json, runs.schema.json, search.schema.json, signers.schema.json, wip-write.schema.json, wip.schema.json | --at names no commit. |
 | reason code | `live-at-revision` | chant | graph.schema.json, search.schema.json | graph was given --live and --at: a live read is of the account now, not of a revision. |
 | reason code | `query-invalid` | chant | search.schema.json | search was given no query, a term its grammar can't parse, or a --count-by that is not a grouping. |
-| reason code | `usage-invalid` | chant | search.schema.json | search was given a flag that needs another one it lacks, or two that don't go together, such as --check-live without --snapshot. |
+| reason code | `usage-invalid` | chant | capabilities.schema.json, search.schema.json | search was given a flag that needs another one it lacks, or two that don't go together, such as --check-live without --snapshot. |
 | reason code | `environment-unknown` | chant | search.schema.json | --env names an environment the project's chant config does not declare. |
 | reason code | `snapshot-unavailable` | chant | search.schema.json | --snapshot names a snapshot chant can't replay: none is recorded for the environment, or the ref is one replay does not take. |
 | reason code | `build-failed` | chant | search.schema.json | The project's build, or one of its build roots, failed, so the graph search would answer over is incomplete. |
 | reason code | `snapshot-at-revision` | chant | search.schema.json | workspace search was given --snapshot and --at: a snapshot replays the estate as recorded over the source in the working tree, not at a revision. |
 | reason code | `member-chant-too-old` | chant | search.schema.json | The member's chant predates the document asked for: it has no such command, or prints it without the read contract. |
+| reason code | `lexicon-has-no-mapping` | chant | capabilities.schema.json | The lexicon ships no capability mapping, so no capability rule can read its resources. |
+| reason code | `capability-not-derivable` | chant | capabilities.schema.json | The lexicon's capability mapping labels none of the kinds the capability's rule needs. |
+| reason code | `lexicon-not-loaded` | chant | capabilities.schema.json | The lexicon isn't installed where the chant that wrote the catalog runs, so its mapping wasn't read. |
 | reason code | `environment-invalid` | chant | delivery-metrics.schema.json, status.schema.json | An environment name that can't name a ledger directory. |
 | reason code | `dir-missing` | chant | composites.schema.json, graph.schema.json, ls.schema.json, search.schema.json | The member's directory does not exist. |
 | reason code | `unknown-kind` | chant | composites.schema.json, graph.schema.json, ls.schema.json, search.schema.json | No built-in kind or pinned package supplies the member's kind. |

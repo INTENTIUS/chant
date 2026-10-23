@@ -7,6 +7,7 @@ import { explainTool, handleExplain } from "./tools/explain";
 import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
 import { compositesTool, createCompositesHandler } from "./tools/composites";
+import { capabilitiesTool, createCapabilitiesHandler } from "./tools/capabilities";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpClientInfo, McpRequest, McpResponse, McpRequestMeta, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
 import { findWorkspaceRoot } from "../../project-root";
@@ -126,6 +127,8 @@ export class McpServer {
     this.registerTool(scaffoldTool, createScaffoldHandler(plugins ?? []));
     this.registerTool(searchTool, createSearchHandler(plugins ?? []));
     this.registerTool(compositesTool, createCompositesHandler(plugins ?? []));
+    // The capability catalog (#4375), the read contract's capabilities document.
+    this.registerTool(capabilitiesTool, createCapabilitiesHandler(options.workspace?.cwd ?? process.cwd(), options.workspace?.chantCommand));
 
     // Register state tools
     const snapshot = createSnapshotTool(plugins ?? []);

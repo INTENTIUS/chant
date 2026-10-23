@@ -503,7 +503,7 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
 }
 
 /** Run chant and parse the one JSON document it printed. The exit code does not matter: an error document is a document. */
-function runRead(command: ChantCommand, argv: string[], cwd: string): Promise<unknown> {
+export function runRead(command: ChantCommand, argv: string[], cwd: string): Promise<unknown> {
   return new Promise((settle, fail) => {
     const child = spawn(command[0], [...command.slice(1), ...argv], { cwd, env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";

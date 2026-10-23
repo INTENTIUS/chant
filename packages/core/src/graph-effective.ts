@@ -1,4 +1,7 @@
 import type { GraphIR, IRNode } from "./graph-ir";
+import { CapabilityEngine, type Evidence } from "./capabilities/matcher";
+import { buildView, type CapabilityPack, type View } from "./capabilities/view";
+import { resolvePacks, shippedRules } from "./capabilities/catalog";
 
 /**
  * Fold DERIVED reachability facts onto EC2 instance nodes so a single-node query
@@ -21,91 +24,43 @@ import type { GraphIR, IRNode } from "./graph-ir";
  * With these, "instances SSH-reachable from the internet" is one predicate:
  *   `kind:EC2::Instance attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0`
  * — no hand-joined CLI sweep, no over/under-counting.
+ *
+ * Both are capability rules (#4375): `internet-facing`, `in-sg` and
+ * `ingress-of` in `capabilities/aws.paths`, over the lexicon-neutral view, so
+ * one rule serves CloudFormation kinds and Terraform's AWS types (#4362)
+ * alike. What stays here is the attribute surface: which nodes get the facts,
+ * and how a rule's evidence is spelled as `proto:port:cidr` and `...Via`.
  */
-export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
-  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
-  const edges = ir.edges ?? [];
-  const kind = (n?: IRNode): string => n?.kind ?? "";
-  const isKind = (n: IRNode | undefined, suffix: string): boolean =>
-    !!n && (kind(n) === suffix || kind(n).endsWith("::" + suffix));
-  const via = (...names: string[]) => (v: string): boolean => names.includes(v);
+export function enrichEffectiveTopology(ir: GraphIR, packs: CapabilityPack[] = []): GraphIR {
+  const view = buildView(ir, resolvePacks(packs));
+  const engine = new CapabilityEngine(view, shippedRules().rules);
+  const facing = engine.set("internet-facing");
+  const groups = engine.relation("in-sg").out;
 
-  /** Out-neighbours of `id` (edges from → to), optionally filtered by viaAttr. */
-  const out = (id: string, pred?: (v: string) => boolean): IRNode[] =>
-    edges
-      .filter((e) => e.from === id && (!pred || pred(e.viaAttr ?? e.kind ?? "")))
-      .map((e) => byId.get(e.to))
-      .filter((x): x is IRNode => !!x);
-  /** In-neighbours of `id` (edges to ← from), optionally filtered by viaAttr. */
-  const incoming = (id: string, pred?: (v: string) => boolean): IRNode[] =>
-    edges
-      .filter((e) => e.to === id && (!pred || pred(e.viaAttr ?? e.kind ?? "")))
-      .map((e) => byId.get(e.from))
-      .filter((x): x is IRNode => !!x);
-
-  const normalizeIngress = (sg: IRNode): string[] => {
-    const rules = (sg.attrs as Record<string, unknown> | undefined)?.["SecurityGroupIngress"];
-    if (!Array.isArray(rules)) return [];
-    return rules.map((r) => {
-      const rule = r as Record<string, unknown>;
-      const proto = String(rule.IpProtocol ?? "-1");
-      const from = rule.FromPort as number | undefined;
-      const to = rule.ToPort as number | undefined;
-      const port = from == null ? "all" : from === to ? `${from}` : `${from}-${to}`;
-      const cidr =
-        (rule.CidrIp as string | undefined) ??
-        (rule.CidrIpv6 as string | undefined) ??
-        (rule.SourceSecurityGroupId ? `sg:${String(rule.SourceSecurityGroupId)}` : "?");
-      return `${proto}:${port}:${cidr}`;
-    });
-  };
-
-  /** Security groups reachable from an instance — direct and via launch template. */
-  const effectiveSgs = (inst: IRNode): IRNode[] => {
-    const direct = out(inst.id, via("SecurityGroupIds", "SecurityGroupId"));
-    const templates = out(inst.id, via("LaunchTemplate", "LaunchTemplateId"));
-    const viaTemplate = templates
-      .flatMap((lt) => out(lt.id, via("LaunchTemplateData", "SecurityGroupIds", "SecurityGroupId")))
-      .filter((n) => isKind(n, "SecurityGroup"));
-    const all = [...direct.filter((n) => isKind(n, "SecurityGroup")), ...viaTemplate];
-    return [...new Map(all.map((s) => [s.id, s])).values()];
-  };
-
-  /** The IGW an instance's subnet routes to (evidence), or undefined. */
-  const internetFacingVia = (inst: IRNode): string | undefined => {
-    for (const subnet of out(inst.id, via("SubnetId")).filter((n) => isKind(n, "Subnet"))) {
-      const assocs = incoming(subnet.id, via("SubnetId")).filter((a) => isKind(a, "SubnetRouteTableAssociation"));
-      const routeTables = assocs.flatMap((a) => out(a.id, via("RouteTableId")).filter((n) => isKind(n, "RouteTable")));
-      for (const rt of routeTables) {
-        const routes = incoming(rt.id, via("RouteTableId")).filter((n) => isKind(n, "Route"));
-        for (const route of routes) {
-          const dest = (route.attrs as Record<string, unknown> | undefined)?.["DestinationCidrBlock"];
-          const igw = out(route.id, via("GatewayId")).find((g) => isKind(g, "InternetGateway"));
-          if (igw && (dest == null || dest === "0.0.0.0/0")) {
-            const id = igw.id.includes("::") ? igw.id.slice(igw.id.lastIndexOf("::") + 2) : igw.id;
-            return `${rt.id.includes("::") ? rt.id.slice(rt.id.lastIndexOf("::") + 2) : rt.id} → ${id}`;
-          }
-        }
-      }
-    }
-    return undefined;
-  };
-
-  const terraform = terraformFolds(byId, edges);
   const nodes = ir.nodes.map((n) => {
-    if (terraformResourceType(n) === "aws_instance") return terraform(n);
-    if (!isKind(n, "Instance")) return n;
-    const effectiveIngress = effectiveSgs(n).flatMap(normalizeIngress);
+    const tf = terraformResourceType(n) === "aws_instance";
+    if (!tf && !isKind(n, "Instance")) return n;
+    const attrs = (n.attrs ?? {}) as Record<string, unknown>;
+    const reached = [...(groups.get(n.id) ?? new Map<string, Evidence>())];
+    const ingress = reached.flatMap(([sg]) => ingressStrings(view, sg));
+    const effectiveIngress = tf ? [...new Set(ingress)] : ingress;
     // A live enrichment may already have set internetFacing (+ its evidence) for
     // a subnet chant doesn't model declaratively (e.g. the account's default
     // VPC). Keep that truth; otherwise derive it from the declared route topology.
-    const attrs = (n.attrs ?? {}) as Record<string, unknown>;
     const liveFacing = attrs["internetFacing"] === true;
-    const declaredVia = internetFacingVia(n);
+    const evidence = facing.get(n.id);
+    const declaredVia = evidence && evidence.hops.length > 0 ? facingVia(view, evidence, tf) : undefined;
     const via = (attrs["internetFacingVia"] as string | undefined) ?? declaredVia;
+    const ingressVia = tf ? reached.map(([sg, ev]) => groupPath(view, ev, sg)).join(", ") : "";
     return {
       ...n,
-      attrs: { ...attrs, effectiveIngress, internetFacing: liveFacing || !!declaredVia, ...(via ? { internetFacingVia: via } : {}) },
+      attrs: {
+        ...attrs,
+        effectiveIngress,
+        internetFacing: liveFacing || !!declaredVia,
+        ...(via ? { internetFacingVia: via } : {}),
+        ...(ingressVia ? { effectiveIngressVia: `security groups ${ingressVia}` } : {}),
+      },
     };
   });
   // Record what this pass computed, so a caller can report the graph's derived surface
@@ -120,6 +75,98 @@ export function enrichEffectiveTopology(ir: GraphIR): GraphIR {
       }
     : ir.derivedAttrs;
   return { ...ir, nodes, ...(derivedAttrs ? { derivedAttrs } : {}) };
+}
+
+function isKind(n: IRNode | undefined, suffix: string): boolean {
+  const kind = n?.kind ?? "";
+  return !!n && (kind === suffix || kind.endsWith("::" + suffix));
+}
+
+function bare(id: string): string {
+  return id.includes("::") ? id.slice(id.lastIndexOf("::") + 2) : id;
+}
+
+/** A node's name in a fold's evidence: a terraform address, or a bare logical id. */
+function display(view: View, id: string): string {
+  const v = view.nodes.get(id);
+  if (v && v.lexicon === "terraform") return id.slice(id.lastIndexOf("/") + 1);
+  return bare(id);
+}
+
+/** The ids an evidence path visits, in walk order. */
+function visited(ev: Evidence, start?: string): string[] {
+  const out: string[] = start ? [start] : [];
+  let at = start;
+  for (const h of ev.hops) {
+    const next = at === undefined ? h.to : h.from === at ? h.to : h.from;
+    if (at === undefined) out.push(h.from === next ? h.to : h.from);
+    out.push(next);
+    at = next;
+  }
+  return out;
+}
+
+/** `internetFacingVia`, as each fold always spelled it. */
+function facingVia(view: View, ev: Evidence, tf: boolean): string | undefined {
+  const ids = visited(ev);
+  const of = (label: string) => ids.find((id) => view.nodes.get(id)?.label === label);
+  const rt = of("RouteTable");
+  const igw = of("InternetGateway");
+  if (!rt || !igw) return undefined;
+  if (!tf) return `${bare(rt)} → ${bare(igw)}`;
+  const subnet = of("Subnet");
+  const route = of("Route");
+  const how = route && view.nodes.get(route)?.attrs.block ? "inline route" : route ? display(view, route) : "route";
+  return `subnet route ${subnet ? display(view, subnet) : "?"} -> ${display(view, rt)} -> ${display(view, igw)} (${how})`;
+}
+
+/** One reached group, as `effectiveIngressVia` names it: the group, or the template it came through. */
+function groupPath(view: View, ev: Evidence, sg: string): string {
+  const lt = visited(ev).find((id) => view.nodes.get(id)?.label === "LaunchTemplate");
+  return lt ? `${display(view, lt)} -> ${display(view, sg)}` : display(view, sg);
+}
+
+const STYLE_ORDER = ["cfn", "tf-inline", "tf-sg-rule", "tf-vpc-rule"];
+
+/** A group's ingress rules as `proto:port:source` strings, inline rules first. */
+function ingressStrings(view: View, sg: string): string[] {
+  const rules = view.edges
+    .filter((e) => e.from === sg && e.name === "ingress")
+    .map((e) => view.nodes.get(e.to)!)
+    .filter((r) => r && r.label === "IngressRule");
+  const order = (r: (typeof rules)[number]) => (r.attrs.block ? -1 : STYLE_ORDER.indexOf(String(r.attrs.style)));
+  return [...rules]
+    .sort((a, b) => order(a) - order(b))
+    .flatMap((r) => {
+      const raw = (r.body ?? {}) as Body;
+      switch (r.attrs.style) {
+        case "tf-inline":
+          return terraformIngress(raw, { proto: "protocol", cidrs: ["cidr_blocks", "ipv6_cidr_blocks", "prefix_list_ids"], groups: ["security_groups"] });
+        case "tf-sg-rule":
+          return terraformIngress(raw, { proto: "protocol", cidrs: ["cidr_blocks", "ipv6_cidr_blocks", "prefix_list_ids"], groups: ["source_security_group_id"] });
+        case "tf-vpc-rule":
+          return terraformIngress(raw, { proto: "ip_protocol", cidrs: ["cidr_ipv4", "cidr_ipv6", "prefix_list_id"], groups: ["referenced_security_group_id"] });
+        default:
+          return [cloudFormationIngress(raw)];
+      }
+    });
+}
+
+/** One CloudFormation ingress rule as `proto:port:source`. */
+function cloudFormationIngress(rule: Body): string {
+  const proto = String(rule.IpProtocol ?? "-1");
+  const from = rule.FromPort as number | undefined;
+  const to = rule.ToPort as number | undefined;
+  const port = from == null ? "all" : from === to ? `${from}` : `${from}-${to}`;
+  const source = rule.SourceSecurityGroupId;
+  const group = source && typeof source === "object" && typeof (source as { $ref?: unknown }).$ref === "string"
+    ? String((source as { $ref: string }).$ref).replace(/\.[A-Za-z]+$/, "")
+    : source;
+  const cidr =
+    (rule.CidrIp as string | undefined) ??
+    (rule.CidrIpv6 as string | undefined) ??
+    (group ? `sg:${String(group)}` : "?");
+  return `${proto}:${port}:${cidr}`;
 }
 
 /** The chant entity types every terraform `resource` and `data` block carries. */
@@ -190,14 +237,6 @@ function sourceRef(value: unknown): string {
   return m ? m[1] : s;
 }
 
-/** Whether a reference expression (`${aws_internet_gateway.main.id}`) names `address`. */
-function refersTo(value: unknown, address: string): boolean {
-  if (typeof value !== "string") return false;
-  return value.includes(`${address}.`) || value.includes(`${address}}`);
-}
-
-const ANY_DESTINATION = new Set(["0.0.0.0/0", "::/0"]);
-
 /**
  * One terraform ingress rule, in any of its three spellings, normalized to the
  * `proto:port:source` strings the CloudFormation fold produces. A rule with
@@ -225,127 +264,4 @@ function terraformIngress(rule: Body, fields: {
   if (rule["self"] === true) sources.push("sg:self");
   if (sources.length === 0) sources.push("?");
   return sources.map((src) => `${proto}:${port}:${src}`);
-}
-
-/**
- * The same two facts as the CloudFormation fold above, over terraform's AWS
- * resource types (#4362). The references the lexicon resolves into edges carry
- * the consumer-side top-level argument as `viaAttr` (#2265), which is what each
- * hop below filters on; literal values (ports, CIDRs, route destinations) are
- * read from the block body the lexicon keeps verbatim on `attrs.body`.
- *
- *  - `effectiveIngress`: `aws_instance` -> `aws_security_group` through
- *    `vpc_security_group_ids` or `security_groups`, and through
- *    `launch_template` -> `aws_launch_template` -> its `vpc_security_group_ids`
- *    (or a `network_interfaces` block's `security_groups`). Ingress is read from
- *    the group's inline `ingress` blocks, from `aws_security_group_rule`
- *    resources of `type = "ingress"` that point at it, and from
- *    `aws_vpc_security_group_ingress_rule` resources that point at it.
- *  - `internetFacing`: `aws_instance` -> `aws_subnet` through `subnet_id`,
- *    `aws_route_table_association` -> `aws_route_table`, and the table routes
- *    a default destination to an `aws_internet_gateway` through an inline
- *    `route` block or an `aws_route` resource. A subnet with no explicit
- *    association (the VPC's main table) is not followed.
- *
- * All of it is computed from declared references, so on a declared-only read
- * it is a fact about the source, not about the account.
- */
-function terraformFolds(byId: Map<string, IRNode>, edges: GraphIR["edges"]) {
-  const typeIs = (...types: string[]) => (n: IRNode): boolean => types.includes(terraformResourceType(n) ?? "");
-  const out = (id: string, ...vias: string[]): IRNode[] =>
-    edges
-      .filter((e) => e.from === id && vias.includes(e.viaAttr ?? ""))
-      .map((e) => byId.get(e.to))
-      .filter((x): x is IRNode => !!x);
-  const incoming = (id: string, ...vias: string[]): IRNode[] =>
-    edges
-      .filter((e) => e.to === id && vias.includes(e.viaAttr ?? ""))
-      .map((e) => byId.get(e.from))
-      .filter((x): x is IRNode => !!x);
-
-  const INLINE = { proto: "protocol", cidrs: ["cidr_blocks", "ipv6_cidr_blocks", "prefix_list_ids"], groups: ["security_groups"] };
-  const SG_RULE = { proto: "protocol", cidrs: ["cidr_blocks", "ipv6_cidr_blocks", "prefix_list_ids"], groups: ["source_security_group_id"] };
-  const VPC_RULE = { proto: "ip_protocol", cidrs: ["cidr_ipv4", "cidr_ipv6", "prefix_list_id"], groups: ["referenced_security_group_id"] };
-
-  const ingressOf = (sg: IRNode): string[] => {
-    const inline = list(bodyOf(sg)["ingress"]).flatMap((r) => terraformIngress(r as Body, INLINE));
-    const sgRules = incoming(sg.id, "security_group_id")
-      .filter(typeIs("aws_security_group_rule"))
-      .filter((r) => bodyOf(r)["type"] === "ingress")
-      .flatMap((r) => terraformIngress(bodyOf(r), SG_RULE));
-    const vpcRules = incoming(sg.id, "security_group_id")
-      .filter(typeIs("aws_vpc_security_group_ingress_rule"))
-      .flatMap((r) => terraformIngress(bodyOf(r), VPC_RULE));
-    return [...inline, ...sgRules, ...vpcRules];
-  };
-
-  /** Each security group the instance reaches, with the path it was reached by. */
-  const groupsOf = (inst: IRNode): Array<{ sg: IRNode; path: string }> => {
-    const isSg = typeIs("aws_security_group");
-    const found: Array<{ sg: IRNode; path: string }> = [];
-    for (const sg of out(inst.id, "vpc_security_group_ids", "security_groups").filter(isSg)) {
-      found.push({ sg, path: terraformAddress(sg) });
-    }
-    for (const lt of out(inst.id, "launch_template").filter(typeIs("aws_launch_template"))) {
-      for (const sg of out(lt.id, "vpc_security_group_ids", "security_group_names", "network_interfaces").filter(isSg)) {
-        found.push({ sg, path: `${terraformAddress(lt)} -> ${terraformAddress(sg)}` });
-      }
-    }
-    const seen = new Set<string>();
-    return found.filter(({ sg }) => !seen.has(sg.id) && !!seen.add(sg.id));
-  };
-
-  /** The route an instance's subnet takes to an internet gateway (evidence), or undefined. */
-  const internetFacingVia = (inst: IRNode): string | undefined => {
-    for (const subnet of out(inst.id, "subnet_id").filter(typeIs("aws_subnet"))) {
-      const tables = incoming(subnet.id, "subnet_id")
-        .filter(typeIs("aws_route_table_association"))
-        .flatMap((a) => out(a.id, "route_table_id").filter(typeIs("aws_route_table")));
-      for (const rt of tables) {
-        const hop = `subnet route ${terraformAddress(subnet)} -> ${terraformAddress(rt)}`;
-        // Inline `route { gateway_id = aws_internet_gateway.x.id }` blocks: the
-        // edge says the table reaches the gateway through `route`, the block
-        // says which destination that route covers.
-        for (const igw of out(rt.id, "route").filter(typeIs("aws_internet_gateway"))) {
-          const address = terraformAddress(igw);
-          const routed = list(bodyOf(rt)["route"]).some((r) => {
-            const route = r as Body;
-            const dest = route["cidr_block"] ?? route["ipv6_cidr_block"];
-            return refersTo(route["gateway_id"], address) && (dest == null || ANY_DESTINATION.has(String(dest)));
-          });
-          if (routed) return `${hop} -> ${address} (inline route)`;
-        }
-        // A separate `aws_route` resource pointing at the table.
-        for (const route of incoming(rt.id, "route_table_id").filter(typeIs("aws_route"))) {
-          const body = bodyOf(route);
-          const dest = body["destination_cidr_block"] ?? body["destination_ipv6_cidr_block"];
-          if (dest != null && !ANY_DESTINATION.has(String(dest))) continue;
-          const igw = out(route.id, "gateway_id").find(typeIs("aws_internet_gateway"));
-          if (igw) return `${hop} -> ${terraformAddress(igw)} (${terraformAddress(route)})`;
-        }
-      }
-    }
-    return undefined;
-  };
-
-  return (inst: IRNode): IRNode => {
-    const groups = groupsOf(inst);
-    const effectiveIngress = [...new Set(groups.flatMap(({ sg }) => ingressOf(sg)))];
-    const attrs = (inst.attrs ?? {}) as Record<string, unknown>;
-    // Same rule as the CloudFormation fold: a live enrichment's verdict stands.
-    const liveFacing = attrs["internetFacing"] === true;
-    const declaredVia = internetFacingVia(inst);
-    const via = (attrs["internetFacingVia"] as string | undefined) ?? declaredVia;
-    const ingressVia = groups.map(({ path }) => path).join(", ");
-    return {
-      ...inst,
-      attrs: {
-        ...attrs,
-        effectiveIngress,
-        internetFacing: liveFacing || !!declaredVia,
-        ...(via ? { internetFacingVia: via } : {}),
-        ...(ingressVia ? { effectiveIngressVia: `security groups ${ingressVia}` } : {}),
-      },
-    };
-  };
 }

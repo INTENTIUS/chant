@@ -535,6 +535,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.deep = true;
     } else if (arg === "--at") {
       result.at = args[++i];
+    } else if (arg === "--capabilities") {
+      // `chant search --capabilities` and `chant workspace search --capabilities` (#4375)
+      result.capabilities = true;
     } else if (arg === "--snapshot") {
       // `chant search` and `chant workspace search --snapshot <ref>` (#4374)
       result.snapshot = args[++i];

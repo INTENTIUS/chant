@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json",
   "title": "chant search output",
-  "description": "What `chant search --json` and `chant workspace search --json` print, version 1 of the read contract (#4374, ws-017). Plain `chant search` answers over one project. `chant workspace search` runs that same search in every chant member, under the member's own chant (ws-021), and composes the answers with the `<member>/<id>` ids `chant workspace graph` gives the same nodes; each member is searched alone, so no path crosses from one member into another. A result lists `matches`; with `--count-by` it lists `groups` and `total` instead; a refusal lists `error` and exits 1. Readers ignore fields they do not know; a field is only ever added within a version. The error and reason codes are closed lists from the one list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer; this document is written by chant 0.124.46 and newer, and an older `search --json` has no `contract` field.",
+  "description": "What `chant search --json` and `chant workspace search --json` print, version 1 of the read contract (#4374, ws-017). Plain `chant search` answers over one project. `chant workspace search` runs that same search in every chant member, under the member's own chant (ws-021), and composes the answers with the `<member>/<id>` ids `chant workspace graph` gives the same nodes; each member is searched alone, so no path crosses from one member into another, except for a query that names a capability (`cap:`, `->[cap=...]`, #4375): its rules run once, under the workspace's chant, over the graph `chant workspace graph` composes, and a path may cross wherever that graph has an edge. A result lists `matches`; with `--count-by` it lists `groups` and `total` instead; a refusal lists `error` and exits 1. Readers ignore fields they do not know; a field is only ever added within a version. The error and reason codes are closed lists from the one list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer; this document is written by chant 0.124.46 and newer, and an older `search --json` has no `contract` field.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -88,7 +88,37 @@
         },
         "countBy": false,
         "groups": false,
-        "error": false
+        "error": false,
+        "capabilities": {
+          "type": "array",
+          "description": "Present when the query names a capability (#4375): each one, the observation its facts were derived from, and what it does not evaluate.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "source",
+              "notEvaluated"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "declared",
+                  "live",
+                  "snapshot"
+                ]
+              },
+              "notEvaluated": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "counts": {
@@ -325,7 +355,7 @@
           "items": {
             "$ref": "#/$defs/path"
           },
-          "description": "One per positive edge term the node matched through. Empty when the query has none."
+          "description": "One per positive edge term and cap: term the node matched through. Empty when the query has none."
         }
       }
     },
@@ -339,7 +369,7 @@
       "properties": {
         "term": {
           "type": "string",
-          "description": "The edge term as the grammar spells it."
+          "description": "The edge term, or the cap: term, as the grammar spells it."
         },
         "dir": {
           "enum": [
@@ -369,10 +399,40 @@
               },
               "toAttr": {
                 "type": "string"
+              },
+              "edge": {
+                "type": "string",
+                "description": "On a capability's path (#4375): the name the capability rules give the edge, such as statement or resource. Its from or to may be a node inside a resource, `<id>#<attr>[n]...`."
               }
             }
           },
           "description": "In walk order from the match. Each hop keeps the edge's own direction."
+        },
+        "because": {
+          "type": "array",
+          "description": "On a cap: term (#4375): each set the match relied on, with the path that proved it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "capability",
+              "id",
+              "hops"
+            ],
+            "properties": {
+              "capability": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "hops": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
         }
       }
     },

@@ -1,0 +1,166 @@
+{
+  "lexicon": "terraform",
+  "types": "terraform",
+  "body": "body",
+  "refs": "terraform",
+  "labels": {
+    "aws_vpc": "Vpc",
+    "aws_default_vpc": {
+      "label": "Vpc",
+      "set": {
+        "isDefault": true
+      }
+    },
+    "aws_default_security_group": "SecurityGroup",
+    "aws_network_interface": "NetworkInterface",
+    "aws_ebs_volume": "Volume",
+    "aws_lambda_function": "Function",
+    "aws_lambda_function_url": "FunctionUrl",
+    "aws_iam_instance_profile": "InstanceProfile",
+    "aws_iam_role": "Role",
+    "aws_iam_policy": "Policy",
+    "aws_iam_role_policy": "Policy",
+    "aws_iam_role_policy_attachment": "PolicyAttachment",
+    "aws_s3_bucket_policy": "ResourcePolicy",
+    "aws_sqs_queue_policy": "ResourcePolicy",
+    "aws_s3_bucket": "Bucket",
+    "aws_s3_bucket_public_access_block": "PublicAccessBlock",
+    "aws_dynamodb_table": "Table",
+    "aws_db_instance": "Database",
+    "aws_rds_cluster": "Database",
+    "aws_secretsmanager_secret": "Secret",
+    "aws_sqs_queue": "Queue",
+    "aws_efs_file_system": "FileSystem",
+    "aws_ssm_parameter": "Parameter",
+    "aws_ecs_service": "Service",
+    "aws_ecs_task_definition": "TaskDefinition",
+    "aws_db_subnet_group": "SubnetGroup",
+    "aws_nat_gateway": "NatGateway",
+    "aws_lb": "LoadBalancer",
+    "aws_alb": "LoadBalancer"
+  },
+  "edges": {
+    "Instance": {
+      "iam_instance_profile": "profile"
+    },
+    "LaunchTemplate": {
+      "iam_instance_profile": "profile"
+    },
+    "Subnet": {
+      "vpc_id": "vpc"
+    },
+    "SecurityGroup": {
+      "vpc_id": "vpc"
+    },
+    "NetworkInterface": {
+      "subnet_id": "subnet",
+      "security_groups": "sg"
+    },
+    "Database": {
+      "vpc_security_group_ids": "sg",
+      "db_subnet_group_name": "subnetGroup"
+    },
+    "Function": {
+      "role": "role",
+      "vpc_config": {
+        "SecurityGroup": "sg",
+        "Subnet": "subnet"
+      }
+    },
+    "FunctionUrl": {
+      "function_name": "function"
+    },
+    "InstanceProfile": {
+      "role": "role"
+    },
+    "Policy": {
+      "role": "attachedTo"
+    },
+    "PolicyAttachment": {
+      "role": "role",
+      "policy_arn": "policy"
+    },
+    "ResourcePolicy": {
+      "bucket": "policyOf",
+      "queue_url": "policyOf"
+    },
+    "PublicAccessBlock": {
+      "bucket": "blocks"
+    },
+    "Service": {
+      "task_definition": "task",
+      "network_configuration": {
+        "SecurityGroup": "sg",
+        "Subnet": "subnet"
+      }
+    },
+    "TaskDefinition": {
+      "task_role_arn": "role"
+    },
+    "SubnetGroup": {
+      "subnet_ids": "subnet"
+    },
+    "NatGateway": {
+      "subnet_id": "subnet"
+    },
+    "LoadBalancer": {
+      "subnets": "subnet",
+      "security_groups": "sg"
+    }
+  },
+  "links": {
+    "PolicyAttachment": {
+      "from": "policy",
+      "to": "role",
+      "edge": "attachedTo"
+    }
+  },
+  "attrs": {
+    "FunctionUrl": {
+      "authType": "authorization_type"
+    },
+    "Role": {
+      "name": "name"
+    },
+    "Bucket": {
+      "name": "bucket",
+      "acl": "acl"
+    },
+    "PublicAccessBlock": {
+      "blockPublicPolicy": "block_public_policy"
+    },
+    "Table": {
+      "name": "name"
+    },
+    "Database": {
+      "encrypted": "storage_encrypted"
+    },
+    "FileSystem": {
+      "encrypted": "encrypted"
+    },
+    "Volume": {
+      "encrypted": "encrypted"
+    },
+    "Parameter": {
+      "paramType": "type"
+    }
+  },
+  "documents": {
+    "Role": {
+      "assume_role_policy": "trust",
+      "inline_policy[].policy": "permission"
+    },
+    "Policy": {
+      "policy": "permission"
+    },
+    "ResourcePolicy": {
+      "policy": "resource"
+    }
+  },
+  "tags": [
+    "tags"
+  ],
+  "classificationTags": [
+    "data-classification"
+  ]
+}

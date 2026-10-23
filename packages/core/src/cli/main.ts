@@ -176,7 +176,9 @@ Commands:
                         recorded snapshot; --show <attr>,
                         --count-by kind|module|attr:<name>, --explain prints
                         paths, --json, --check-live,
-                        --check-snapshot, --fail-on-drift)
+                        --check-snapshot, --fail-on-drift; cap:<name> and
+                        ->[cap=<name>] ask with a capability, and
+                        --capabilities prints the catalog)
   query "<sql>" [dir]   Run one read-only SQL statement over chant/lifecycle:
                         the resources and snapshots each lexicon observed, Op
                         runs, gates, deploys, releases and cuts, loaded into

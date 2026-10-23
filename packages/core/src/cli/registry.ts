@@ -455,6 +455,12 @@ export interface ParsedArgs {
    * everywhere else in the read contract `--at` is a git revision.
    */
   snapshot?: string;
+  /**
+   * `chant search --capabilities` and `chant workspace search --capabilities`
+   * (#4375): print the capability catalog, the `capabilities` document of the
+   * read contract, instead of answering a query.
+   */
+  capabilities?: boolean;
   /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
   kind?: string;
   /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */

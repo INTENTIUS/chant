@@ -3,6 +3,9 @@ import { build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
+import { attachCapabilities, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
+import { CapabilityError, type CapabilityEngine, type Evidence } from "../../capabilities/matcher";
+import type { CapabilityPack } from "../../capabilities/view";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -60,6 +63,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     if (args.json) console.log(JSON.stringify(searchErrorJson(query, error)));
     return 1;
   };
+  // The capability catalog (#4375): the `capabilities` document, not an answer.
+  if (args.capabilities) return printCapabilities(args, query, await resolveProjectLexicons(resolve(".")).catch(() => []));
   // The snapshot to replay (#4374): `--snapshot <ref>`, or `--at <ref>`, which
   // plain search keeps for compatibility. Everywhere else in the read contract
   // `--at` is a git revision, so the workspace form takes only `--snapshot`.
@@ -314,6 +319,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Fold derived reachability facts (effectiveIngress, internetFacing) onto
   // instance nodes so multi-hop/launch-template joins are one node predicate (#1139).
   ir = enrichEffectiveTopology(ir);
+  // Capability terms (#4375) read the graph through the lexicons' mappings.
+  if (terms.some(usesCapability)) {
+    const refused = await bindCapabilities(ctx, projectPath, ir, terms);
+    if (refused) return refuse({ code: "query-invalid", ...refused });
+  }
   // Resolve `kind:` terms against what is actually in this graph, before any
   // node is tested against them.
   resolveKindTerms(terms, ir.nodes);
@@ -347,7 +357,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
         : undefined;
     const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
-    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir)).replace(/^— /, "");
+    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]).replace(/^— /, "");
+    const capNotes = capabilityNotes(terms, ir, source);
     const driftJson = drift
       ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
       : driftUnavailable !== undefined
@@ -370,6 +381,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
           ...(env ? { env } : {}),
           show,
           provenance: provenanceText,
+          ...(capNotes.length > 0 ? { capabilities: capNotes } : {}),
           ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
           ...(driftJson ? { drift: driftJson } : {}),
         }),
@@ -400,7 +412,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
       ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
       : undefined;
-  provenance(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir));
+  provenance(matches, source, recorded, liveFailures, [...derivedUsed(terms, matches, ir), ...capabilitiesUsed(terms)]);
+  for (const c of capabilityNotes(terms, ir, source)) {
+    if (c.notEvaluated.length > 0) console.log(`— ${c.name} does not evaluate: ${c.notEvaluated.join("; ")}`);
+  }
   // Qualifies the provenance line, so it sits with it: one line per distinct
   // note for the whole run, not one per stack, and after the rows (#1265).
   for (const n of liveNotes) console.error(formatWarning({ message: n }));
@@ -556,6 +571,167 @@ async function declaredGraph(
     }
   }
   return withLexiconEdges(buildGraphIr(discovered.entities, projectPath), plugins, discovered.entities);
+}
+
+/**
+ * Print the capability catalog (#4375): the `capabilities` document under
+ * `--json`, a line per capability otherwise. It takes no query and no other
+ * search flag, since it answers nothing about the estate. Shared by `chant
+ * search` and `chant workspace search`, which differ only in the lexicons
+ * they report on.
+ */
+export async function printCapabilities(
+  args: { json?: boolean; live?: boolean; env?: string; snapshot?: string; at?: string; countBy?: string; explain?: boolean; show?: string },
+  query: string,
+  lexicons: string[],
+): Promise<number> {
+  const { capabilitiesDocument, capabilitiesFailure, formatCapabilities } = await import("../../workspace/capabilities-contract");
+  const extra = [
+    // `args.path` is "." when no query was given.
+    ...(query && query !== "." ? [`the query "${query}"`] : []),
+    ...(["live", "env", "snapshot", "at", "countBy", "explain", "show"] as const)
+      .filter((k) => args[k] !== undefined && args[k] !== false)
+      .map((k) => `--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`),
+  ];
+  if (extra.length > 0) {
+    const error = {
+      code: "usage-invalid" as const,
+      message: `--capabilities prints the catalog, so it takes no query and no other search flag; it was given ${extra.join(", ")}`,
+      hint: "ask with a capability instead: chant search \"cap:internet-reachable(22)\"",
+    };
+    console.error(formatError(error));
+    if (args.json) console.log(JSON.stringify(await capabilitiesFailure(error)));
+    return 1;
+  }
+  const doc = await capabilitiesDocument(lexicons);
+  if (args.json) console.log(JSON.stringify(doc));
+  else for (const line of formatCapabilities(doc)) console.log(line);
+  return 0;
+}
+
+/** The capabilities a query names, in query order, for the provenance line (#4375). */
+function capabilitiesUsed(terms: Term[]): string[] {
+  const out: string[] = [];
+  const walk = (t: Term): void => {
+    if (t.negated) return;
+    const call = t.kind === "cap" ? t.a : t.capability;
+    const name = call !== undefined ? parseCapabilityCall(call)?.name : undefined;
+    if (name && !out.includes(name)) out.push(name);
+    if (t.sub) walk(t.sub);
+  };
+  terms.forEach(walk);
+  return out;
+}
+
+/**
+ * What each capability the query used could not evaluate (#4375), with a
+ * count where this graph holds the thing left out: an answer computed from
+ * declared references says what it skipped, so a caller knows the rows are a
+ * floor, not the whole of it.
+ */
+function capabilityNotes(terms: Term[], ir: GraphIR, source: AnswerSource): { name: string; source: AnswerSource["kind"]; notEvaluated: string[] }[] {
+  const names = capabilitiesUsed(terms);
+  if (names.length === 0) return [];
+  const engine = capabilityEngine(ir);
+  const statements = [...engine.view.nodes.values()].filter((n) => n.label === "Statement" && n.attrs.effect === "Allow");
+  const counts: Record<string, number> = {
+    'Resource "*"': statements.filter((n) => n.attrs.anyResource).length,
+    "IAM Condition keys": statements.filter((n) => n.attrs.condition).length,
+    "resources the graph holds but can't resolve, such as an expression naming nothing declared": statements.filter((n) => n.attrs.unresolved).length,
+  };
+  return names.map((name) => ({
+    name,
+    source: source.kind,
+    notEvaluated: (engine.rule(name)?.meta["not-evaluated"] ?? "")
+      .split(/;|\n/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => (counts[x] ? `${x} (${counts[x]} statement${counts[x] === 1 ? "" : "s"} here)` : x)),
+  }));
+}
+
+/**
+ * Answer capability terms over a graph that is not this project's own (#4375):
+ * `chant workspace search` composes its members' graphs and asks here, so the
+ * rules run once over the whole of it with the packs given. Returns the rows
+ * as `--json` carries them, or the refusal for a capability the query names
+ * wrongly.
+ */
+export function answerOverGraph(
+  ir: GraphIR,
+  terms: Term[],
+  query: string,
+  packs: CapabilityPack[],
+): { matches: SearchJson["matches"]; capabilities: NonNullable<SearchJson["capabilities"]> } | { error: { message: string; hint?: string } } {
+  const engine = attachCapabilities(ir, packs);
+  const refused = checkCapabilityTerms(engine, terms);
+  if (refused) return { error: refused };
+  resolveKindTerms(terms, ir.nodes);
+  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
+  const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, byId)));
+  const doc = searchJson(query, { kind: "declared" }, matches, terms, ir, byId);
+  return { matches: doc.matches, capabilities: capabilityNotes(terms, ir, { kind: "declared" }) };
+}
+
+/** Whether a term, or the leaf under it, names a capability (#4375). */
+export function usesCapability(t: Term): boolean {
+  return t.kind === "cap" || t.capability !== undefined || (t.sub !== undefined && usesCapability(t.sub));
+}
+
+/**
+ * Bind the graph to its lexicons' capability packs and check every capability
+ * the query names (#4375): an unknown name, a set used as an edge or the
+ * wrong arguments is a refusal, never an empty answer.
+ */
+async function bindCapabilities(
+  ctx: CommandContext,
+  projectPath: string,
+  ir: GraphIR,
+  terms: Term[],
+): Promise<{ message: string; hint?: string } | undefined> {
+  let plugins: readonly LexiconPlugin[] = ctx.plugins;
+  if (plugins.length === 0) {
+    try {
+      plugins = await loadPlugins(await resolveProjectLexicons(projectPath));
+    } catch {
+      plugins = [];
+    }
+  }
+  const engine = attachCapabilities(ir, plugins.map((p) => p.capabilityPack).filter((p): p is CapabilityPack => !!p));
+  return checkCapabilityTerms(engine, terms);
+}
+
+/** Refuse a capability the query names that doesn't exist, a set used as an edge, or the wrong arguments. */
+function checkCapabilityTerms(engine: CapabilityEngine, terms: Term[]): { message: string; hint?: string } | undefined {
+  const known = [...new Set(engine.publicNames())].join(", ");
+  const check = (t: Term): { message: string; hint?: string } | undefined => {
+    if (t.sub) {
+      const inner = check(t.sub);
+      if (inner) return inner;
+    }
+    const call = t.kind === "cap" ? t.a : t.capability;
+    if (call === undefined) return undefined;
+    const parsed = parseCapabilityCall(call)!;
+    if (!engine.has(parsed.name)) {
+      return { message: `no capability "${parsed.name}"`, hint: `the capabilities are ${known}; chant search --capabilities describes each` };
+    }
+    const shape = engine.rule(parsed.name)!.vars.length === 1 ? "set" : "edge";
+    if (t.capability !== undefined && shape === "set") {
+      return { message: `"${parsed.name}" is a set, not an edge`, hint: `test it as a term: cap:${call}` };
+    }
+    try {
+      engine.bind(parsed.name, parsed.args);
+    } catch (err) {
+      if (err instanceof CapabilityError) return { message: `cap:${call}: ${err.message}`, hint: "chant search --capabilities lists each capability's parameters" };
+      throw err;
+    }
+    return undefined;
+  };
+  for (const t of terms) {
+    const r = check(t);
+    if (r) return r;
+  }
+  return undefined;
 }
 
 /** Where an answer's facts came from, for the provenance line (#1266). */
@@ -907,7 +1083,17 @@ function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string
   // The chain each match was reached by (#4359), so a caller can quote the
   // path instead of re-deriving it with one search per hop.
   for (const n of matches) {
-    for (const p of matchPaths(n, terms, ir, byId)) console.log(`  path ${formatPath(p.hops, p.term.dir!)}`);
+    for (const p of matchPaths(n, terms, ir, byId)) {
+      // A capability's path (#4375) turns as the rule does, so each hop says which way it went.
+      if (p.term.kind === "cap" || p.term.capability !== undefined) {
+        // A set a node is in by its own attributes (stores-data) has no path to print.
+        if (p.hops.length === 0 && !p.because) continue;
+        console.log(`  path ${bareId(n.id)} ${termText({ ...p.term, negated: false })}: ${formatHops(p.hops, n.id) || "(the node itself)"}`);
+        for (const b of p.because ?? []) {
+          console.log(`    ${b.capability} ${bareId(b.id)}: ${formatHops(b.hops, b.id) || "(an attribute of the node)"}`);
+        }
+      } else console.log(`  path ${formatPath(p.hops, p.term.dir!)}`);
+    }
   }
   for (const m of data.nearMisses) {
     console.log(`  · excluded ${bareId(m.id)} — fails ${m.term ? describeTerm(m.term) : "(query)"}`);
@@ -1010,6 +1196,7 @@ function describeTerm(t: Term): string {
 }
 
 function leafText(x: Term): string {
+  if (x.kind === "cap") return `cap:${x.a}`;
   return x.kind === "kind" ? `kind:${x.a}` : x.kind === "attr" ? `attr:${x.a}${x.b !== undefined ? "=" + x.b : ""}`
     : x.kind === "tag" ? `tag:${x.a}${x.b !== undefined ? "=" + x.b : ""}` : `"${x.a}"`;
 }
@@ -1069,7 +1256,7 @@ export interface SearchJson {
     physicalId?: string;
     unobserved?: string;
     show?: Record<string, unknown>;
-    paths: { term: string; dir: "out" | "in"; hops: PathHop[] }[];
+    paths: { term: string; dir: "out" | "in"; hops: PathHop[]; because?: { capability: string; id: string; hops: PathHop[] }[] }[];
   }[];
   provenance?: string;
   liveFailures?: string[];
@@ -1080,6 +1267,11 @@ export interface SearchJson {
     moreExcluded: number;
   };
   drift?: SearchDriftJson;
+  /**
+   * Present when the query names a capability (#4375): each one, the
+   * observation its facts were derived from, and what it does not evaluate.
+   */
+  capabilities?: { name: string; source: AnswerSource["kind"]; notEvaluated: string[] }[];
 }
 
 /**
@@ -1125,6 +1317,7 @@ function searchJson(
     env?: string;
     show?: string[];
     provenance?: string;
+    capabilities?: SearchJson["capabilities"];
     explain?: ReturnType<typeof explainData>;
     drift?: SearchDriftJson;
   } = {},
@@ -1145,12 +1338,14 @@ function searchJson(
         ...(show.length > 0 ? { show: Object.fromEntries(showValues(attrs, show)) } : {}),
         paths: matchPaths(n, terms, ir, byId).map((p) => ({
           term: termText({ ...p.term, negated: false }),
-          dir: p.term.dir!,
+          dir: p.term.dir ?? ("out" as const),
           hops: p.hops,
+          ...(p.because ? { because: p.because } : {}),
         })),
       };
     }),
     ...(extra.provenance !== undefined ? { provenance: extra.provenance } : {}),
+    ...(extra.capabilities ? { capabilities: extra.capabilities } : {}),
     ...(liveFailures.length > 0 ? { liveFailures } : {}),
     ...(extra.explain
       ? {
@@ -1174,7 +1369,7 @@ function termText(t: Term): string {
 }
 
 export interface Term {
-  kind: "word" | "kind" | "tag" | "attr" | "edge";
+  kind: "word" | "kind" | "tag" | "attr" | "edge" | "cap";
   /** `!term` — the node must NOT satisfy this (#1280). */
   negated?: boolean;
   a: string;
@@ -1191,6 +1386,12 @@ export interface Term {
   viaAttr?: string;
   /** For edge terms (#4359): every edge on the path reads this producer attribute (`IREdge.toAttr`). */
   toAttr?: string;
+  /**
+   * For edge terms (#4375): walk this edge capability (`reaches`,
+   * `grants(s3:GetObject)`) instead of the graph's own edges. A `cap:` leaf
+   * keeps its call in `a`.
+   */
+  capability?: string;
   /**
    * For kind terms: the kinds this term actually means, resolved against the
    * graph (see {@link resolveKindTerms}). Absent when nothing resolved it, in
@@ -1275,6 +1476,16 @@ function displayKind(n: IRNode): string | undefined {
 }
 
 function parseLeaf(tok: string): Term {
+  const cap = /^cap:(.*)$/i.exec(tok);
+  if (cap) {
+    if (!parseCapabilityCall(cap[1])) {
+      throw new QueryError(
+        `"${tok}" is not a capability term`,
+        "name a capability, with arguments in parentheses when it takes any: cap:internet-reachable, cap:open-ingress(22); chant search --capabilities lists them",
+      );
+    }
+    return { kind: "cap", a: cap[1] };
+  }
   const m = /^(kind|tag|attr):(.*)$/i.exec(tok);
   if (m) {
     const key = m[1].toLowerCase() as Term["kind"];
@@ -1352,13 +1563,19 @@ function parseEdge(tok: string, negated: boolean): Term {
   }
   if (rest.startsWith("[")) {
     const close = rest.indexOf("]");
-    const parts = close < 0 ? [""] : rest.slice(1, close).split(",").map((p) => p.trim());
+    // Split on commas outside parentheses, so `[cap=open-ingress(22,tcp)]` is one part.
+    const parts = close < 0 ? [""] : (rest.slice(1, close).match(/(?:[^,(]|\([^)]*\))+/g) ?? [""]).map((p) => p.trim());
     for (const part of parts) {
+      const c = /^cap=(.+)$/.exec(part);
+      if (c && parseCapabilityCall(c[1])) {
+        term.capability = c[1];
+        continue;
+      }
       const q = /^(via|to)=(.+)$/.exec(part);
       if (!q) {
         throw new QueryError(
           `"${tok}" has an edge qualifier this grammar cannot read`,
-          `qualify an edge by attribute with [via=<consumer attr>] or [to=<producer attr>], e.g. <-[via=vpc_id]kind:aws_subnet or ->[via=subnet_id,to=id]`,
+          `qualify an edge by attribute with [via=<consumer attr>] or [to=<producer attr>], e.g. <-[via=vpc_id]kind:aws_subnet or ->[via=subnet_id,to=id], or walk a capability with [cap=<name>], e.g. ->[cap=reaches]cap:stores-data`,
         );
       }
       if (q[1] === "via") term.viaAttr = q[2];
@@ -1367,7 +1584,7 @@ function parseEdge(tok: string, negated: boolean): Term {
     rest = rest.slice(close + 1);
   }
   if (rest.trim() === "") {
-    if (term.viaAttr === undefined && term.toAttr === undefined) {
+    if (term.viaAttr === undefined && term.toAttr === undefined && term.capability === undefined) {
       const bang = negated ? "!" : "";
       throw new QueryError(
         `"${bang}${tok}" needs a target`,
@@ -1457,7 +1674,7 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
     if (!ir || !byId) return false;
     // Depth and attribute qualifiers (#4359) go through the path search. A
     // plain one-hop term keeps the original code below, unchanged.
-    if (t.depth || t.viaAttr !== undefined || t.toAttr !== undefined) return findPath(n, t, ir, byId) !== null;
+    if (t.depth || t.viaAttr !== undefined || t.toAttr !== undefined || t.capability !== undefined) return findPath(n, t, ir, byId) !== null;
     if (!t.sub) return false;
     // A node matches if it has an edge (out or in) to a node satisfying `sub`.
     const edges = ir.edges ?? [];
@@ -1467,6 +1684,7 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
       .filter((x): x is IRNode => !!x);
     return neighbors.some((m) => matchTerm(m, t.sub!, ir, byId));
   }
+  if (t.kind === "cap") return !!ir && capabilityEvidence(n, t, ir) !== undefined;
   if (t.kind === "kind") {
     // Resolved kinds when the term lined up with `::` boundaries; the
     // documented substring otherwise. A term that named a terraform type
@@ -1513,6 +1731,12 @@ export interface PathHop {
   to: string;
   /** The producer attribute read (`IREdge.toAttr`), when known. */
   toAttr?: string;
+  /**
+   * On a capability's path (#4375): the name the capability rules give this
+   * edge (`subnet`, `statement`, `resource`). Its `from` may be a node inside
+   * another (a policy statement, `<holder>#policy[0].Statement[1]`).
+   */
+  edge?: string;
 }
 
 const adjacency = new WeakMap<GraphIR, { out: Map<string, IREdge[]>; in: Map<string, IREdge[]> }>();
@@ -1555,26 +1779,28 @@ function findPath(n: IRNode, t: Term, ir: GraphIR, byId: Map<string, IRNode>): P
   const idx = edgeIndex(ir);
   const out = t.dir === "out";
   type State = { id: string; depth: number; hops: PathHop[] };
+  // A capability edge (#4375) stands for the hops that proved it.
+  const steps = (id: string): { far: string; hops: PathHop[] }[] => {
+    if (t.capability !== undefined) return capabilitySteps(id, t.capability, out, ir);
+    return (((out ? idx.out.get(id) : idx.in.get(id)) ?? [])
+      .filter((e) => (t.viaAttr === undefined || sameName(e.viaAttr, t.viaAttr)) && (t.toAttr === undefined || sameName(e.toAttr, t.toAttr)))
+      .map((e) => ({
+        far: out ? e.to : e.from,
+        hops: [{ from: e.from, ...(e.viaAttr ? { fromAttr: e.viaAttr } : {}), to: e.to, ...(e.toAttr ? { toAttr: e.toAttr } : {}) }],
+      })));
+  };
   const seen = new Set<string>([`${n.id}|0`]);
   let frontier: State[] = [{ id: n.id, depth: 0, hops: [] }];
   while (frontier.length > 0) {
     const next: State[] = [];
     for (const s of frontier) {
       if (s.depth >= max) continue;
-      for (const e of (out ? idx.out.get(s.id) : idx.in.get(s.id)) ?? []) {
-        if (t.viaAttr !== undefined && !sameName(e.viaAttr, t.viaAttr)) continue;
-        if (t.toAttr !== undefined && !sameName(e.toAttr, t.toAttr)) continue;
-        const farId = out ? e.to : e.from;
+      for (const step of steps(s.id)) {
+        const farId = step.far;
         const far = byId.get(farId);
         if (!far) continue;
         const depth = s.depth + 1;
-        const hop: PathHop = {
-          from: e.from,
-          ...(e.viaAttr ? { fromAttr: e.viaAttr } : {}),
-          to: e.to,
-          ...(e.toAttr ? { toAttr: e.toAttr } : {}),
-        };
-        const hops = [...s.hops, hop];
+        const hops = [...s.hops, ...step.hops];
         if (depth >= min && (!t.sub || matchTerm(far, t.sub, ir, byId))) return hops;
         const key = `${farId}|${Math.min(depth, min)}`;
         if (seen.has(key)) continue;
@@ -1620,19 +1846,97 @@ function edgeOperator(t: Term, arrows: { out: string; in: string }): string {
   const quals = [
     ...(t.viaAttr !== undefined ? [`via=${t.viaAttr}`] : []),
     ...(t.toAttr !== undefined ? [`to=${t.toAttr}`] : []),
+    ...(t.capability !== undefined ? [`cap=${t.capability}`] : []),
   ];
   return `${arrow}${depth}${quals.length > 0 ? `[${quals.join(",")}]` : ""}`;
 }
 
 /** Each positive edge term's path to `n`, in query order (#4359). */
-function matchPaths(n: IRNode, terms: Term[], ir: GraphIR, byId: Map<string, IRNode>): { term: Term; hops: PathHop[] }[] {
-  const out: { term: Term; hops: PathHop[] }[] = [];
+function matchPaths(n: IRNode, terms: Term[], ir: GraphIR, byId: Map<string, IRNode>): MatchPath[] {
+  const out: MatchPath[] = [];
   for (const t of terms) {
-    if (t.kind !== "edge" || t.negated) continue;
+    if (t.negated) continue;
+    if (t.kind === "cap") {
+      const ev = capabilityEvidence(n, t, ir);
+      if (ev) out.push({ term: t, hops: ev.hops.map(pathHop), because: becauseOf(ev) });
+      continue;
+    }
+    if (t.kind !== "edge") continue;
     const hops = findPath(n, t, ir, byId);
     if (hops) out.push({ term: t, hops });
   }
   return out;
+}
+
+/** A term's path to a match: one per positive edge or `cap:` term. */
+interface MatchPath {
+  term: Term;
+  hops: PathHop[];
+  /** For a `cap:` term (#4375): the node sets the match relied on, each with its own path. */
+  because?: { capability: string; id: string; hops: PathHop[] }[];
+}
+
+/**
+ * The evidence for a `cap:` term on a node (#4375): its path when the node
+ * is in the set, or the source of an edge capability, else undefined. A
+ * capability or argument the catalog can't take throws a CapabilityError,
+ * which `runSearch` turns into a refusal before any node is tested.
+ */
+function capabilityEvidence(n: IRNode, t: Term, ir: GraphIR): Evidence | undefined {
+  const call = parseCapabilityCall(t.a);
+  if (!call) return undefined;
+  const engine = capabilityEngine(ir);
+  const args = engine.bind(call.name, call.args);
+  if (engine.rule(call.name)!.vars.length === 1) return engine.set(call.name, args).get(n.id);
+  const targets = engine.relation(call.name, args).out.get(n.id);
+  return targets ? targets.values().next().value : undefined;
+}
+
+/** One step along an edge capability from `id` (#4375), each with the hops that proved it, in walk order. */
+function capabilitySteps(id: string, call: string, out: boolean, ir: GraphIR): { far: string; hops: PathHop[] }[] {
+  const parsed = parseCapabilityCall(call);
+  if (!parsed) return [];
+  const engine = capabilityEngine(ir);
+  const rel = engine.relation(parsed.name, engine.bind(parsed.name, parsed.args));
+  const m = (out ? rel.out : rel.in).get(id);
+  if (!m) return [];
+  return [...m].map(([far, ev]) => ({ far, hops: (out ? ev.hops : [...ev.hops].reverse()).map(pathHop) }));
+}
+
+function pathHop(h: { from: string; fromAttr?: string; to: string; toAttr?: string; edge: string }): PathHop {
+  return { from: h.from, ...(h.fromAttr ? { fromAttr: h.fromAttr } : {}), to: h.to, ...(h.toAttr ? { toAttr: h.toAttr } : {}), edge: h.edge };
+}
+
+function becauseOf(ev: Evidence): MatchPath["because"] {
+  const out: NonNullable<MatchPath["because"]> = [];
+  const walk = (e: Evidence): void => {
+    for (const b of e.because) {
+      out.push({ capability: b.capability, id: b.id, hops: b.evidence.hops.map(pathHop) });
+      walk(b.evidence);
+    }
+  };
+  walk(ev);
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * A capability's path as one line (#4375), in #4359's hop format, read from
+ * `start`: each hop is `consumer.via -> producer.attr` when the walk follows
+ * the reference, `producer.attr <- consumer.via` when it goes against it. A
+ * hop with no IR attribute names the capability edge instead (`-statement->`).
+ */
+function formatHops(hops: PathHop[], start: string): string {
+  const end = (id: string, attr?: string): string => (attr ? `${bareId(id)}.${attr}` : bareId(id));
+  let at = start;
+  return hops
+    .map((h) => {
+      const forward = h.from === at || h.to !== at;
+      at = forward ? h.to : h.from;
+      return forward
+        ? `${end(h.from, h.fromAttr)} -> ${end(h.to, h.toAttr)}`
+        : `${end(h.to, h.toAttr)} <- ${end(h.from, h.fromAttr)}`;
+    })
+    .join("; ");
 }
 
 function formatRow(n: IRNode, show: string[]): string {

@@ -1,0 +1,234 @@
+---
+title: Capabilities
+description: The capability catalog chant search answers questions with, the path-pattern language its rules are written in, and the capabilities document.
+diataxis: reference
+---
+
+A capability is a fact about an estate that chant can prove from its graph:
+"this instance can be reached on SSH from the internet", "this role can reach
+that table". People ask questions in those words, and an agent turns one into
+a [`chant search`](/chant/cli/search/#capabilities) query with a `cap:` term
+([#4375](https://github.com/INTENTIUS/chant/issues/4375)). Each capability is
+a rule written as a path pattern, and the path a match took is its evidence.
+
+The rule language and the first vocabulary were ruled on in
+[#4361](https://github.com/INTENTIUS/chant/issues/4361), after a measurement
+of three candidate languages against one estate written twice, as a
+CloudFormation project and as a Terraform root.
+
+## The catalog
+
+| Capability | Shape | Meaning | Parameters | Depth |
+|---|---|---|---|---|
+| `internet-facing` | set | its subnet routes 0.0.0.0/0 to an internet gateway | | either |
+| `open-ingress` | set | a security group reaching it, directly or through a launch template, admits 0.0.0.0/0 or ::/0 | `port?`, `proto?` | declared |
+| `internet-reachable` | set | `internet-facing` and `open-ingress`, or a Lambda function URL with no auth | `port?` | either |
+| `attached-to-nothing` | set | no member, attachment or route references it: a security group, subnet, policy or internet gateway | | either |
+| `in-default-vpc` | set | in the account's default VPC | | either |
+| `network` | edge | host to host through security-group-to-group ingress | | declared |
+| `stores-data` | set | a bucket, table, database, queue, file system, secret or SSM parameter | | declared |
+| `holds-secret` | set | a secret, an SSM SecureString, or a data store tagged as restricted | | declared |
+| `encrypted-at-rest` | set | a database, file system or volume whose encryption attribute is set; buckets, tables, queues and secrets always are | | declared |
+| `publicly-readable` | set | a bucket whose policy allows principal `*` with no public-access block in the way, or a public ACL | | declared |
+| `runs-as` | edge | compute to the role it runs as (instance profile, also through a launch template; Lambda role; ECS task role) | | declared |
+| `can-assume` | edge | role to role, where the caller's permission and the target's trust both allow `sts:AssumeRole` | | declared |
+| `grants` | edge | role to resource, by an identity policy or a resource policy, with no explicit Deny on the same pair | `action?` | declared |
+| `reaches` | edge | `can-assume` any number of times, then `grants` | `action?` | declared |
+| `exfiltrates` | edge | `internet-reachable` compute that `runs-as` a role that `reaches` a store that `holds-secret` | | declared |
+| `blast` | edge | what a compromise reaches: `runs-as`, `can-assume` and `network` any number of times, then what each identity is granted | | declared |
+
+`grants` and `reaches` count as one row of the ruling's fifteen. Depth says
+which observation can supply the facts: `declared` from source, `live` from a
+live read or a snapshot, `either` from both. `in-default-vpc` is live on a
+CloudFormation project, since a template can't declare the default VPC, and
+declared on a Terraform root that declares `aws_default_vpc`.
+
+A set is tested with `cap:<name>`. An edge is walked with `->[cap=<name>]`,
+or with `<-[cap=<name>]` to read it in reverse ("what can reach the customer
+database" is `<-[cap=reaches]`). An optional parameter that is left out drops
+the test that reads it: `cap:open-ingress` is any port, and
+`cap:open-ingress(22)` only rules that cover 22.
+
+```bash
+chant search "cap:internet-reachable(22)" --explain
+chant search "cap:stores-data <-[cap=reaches]aws_iam_role.app_data"
+chant search "kind:aws_iam_role ->[cap=grants(dynamodb:GetItem)]kind:aws_dynamodb_table"
+chant search "kind:aws_security_group cap:attached-to-nothing"
+chant search "cap:exfiltrates" --explain --json
+```
+
+## What the rules do not evaluate
+
+A rule reads declared references. Each capability names what it leaves out,
+and `chant search` prints that list under every answer that uses it, with a
+count where the graph holds the thing left out:
+
+- IAM `Condition` keys, `NotAction`, `NotResource`, permission boundaries and
+  SCPs.
+- A statement on `Resource: "*"`. It names no resource, so no edge leads from
+  it. On behold#912's terralith, eight team roles allow DynamoDB actions on
+  `*`; `reaches` doesn't find them, and the not-evaluated line counts them.
+- AWS-managed policies, which a configuration names by ARN only.
+- A reference the graph holds but can't resolve, such as an expression that
+  names nothing declared. A reference inside a CloudFormation `Sub`
+  (``Sub`${bucket.Arn}/*` ``) is read through the `$sub` template the graph
+  keeps since [#4373](https://github.com/INTENTIUS/chant/issues/4373).
+- A subnet on its VPC's main route table, network ACLs, prefix lists, load
+  balancers and API gateways.
+
+An explicit `Deny` is evaluated: a Deny statement on the same role and
+resource cancels the Allow, for the same action when `grants` is given one.
+
+## The rule language
+
+Rules are path patterns over a lexicon-neutral view of the graph. Their steps
+are the edge terms of the [query grammar](/chant/cli/search/#query-grammar):
+an arrow, an optional depth, then what the edge is. Core ships the rules as a
+data file, `capabilities/aws.paths` in `@intentius/chant`, read at run time.
+
+```
+in-sg(x, g)          := x ->{0,1}template ->sg g:SecurityGroup
+open-ingress(c; port?, proto?)
+                     := c:Instance|Database|Function|Service ->ingress-of r:IngressRule[@world-open, from <= $port, to >= $port, proto in ($proto, "-1")]
+internet-reachable(c; port?) := c[@internet-facing, @open-ingress($port)]
+                      | c:Function <-function :FunctionUrl[authType = "NONE"]
+grants(r, x; action?) := r:Role ->allows($action) x !<-denies($action) r
+reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x
+```
+
+| Construct | Meaning |
+|---|---|
+| `name(x) := ...` | a set: the nodes `x` the pattern reaches |
+| `name(a, b) := ...` | an edge from `a` to `b`, carrying the hops that proved it |
+| `name(x; p?, q)` | parameters after `;`; `?` makes one optional |
+| `\| ...` | another alternative, on its own line |
+| `x:Label\|Other[tests]` | a node: an optional variable, labels, tests |
+| `->name`, `<-name`, `->(a\|b)` | a step along a view edge or an edge capability |
+| `->{0,1}name`, `->{2}`, `->{1,}`, `->*` | a depth; a rule may start at 0, which a query may not |
+| `!->name node`, `!<-name node` | a negated step: the walk stays put and goes on only when no such edge leads to such a node |
+| `attr = v`, `!=`, `in (v, ...)`, `<`, `<=`, `>`, `>=` | attribute tests; against a list, any element |
+| `attr ~ "glob"` | glob match, either way round, ignoring case (`actions ~ "sts:AssumeRole"` holds for `sts:*`) |
+| `attr` | present and not false |
+| `@cap`, `@cap(args)` | the node is in a set capability |
+| `!test` | any test, negated |
+| `$p` | a parameter's value |
+| `## key: value` | catalog metadata for the rule below it: `meaning`, `answers`, `depth`, `not-evaluated`, `param-<name>` |
+
+A variable bound earlier closes the pattern when it appears again: the trust
+statement in `can-assume` ends at `->principal a`. A rule with no `## meaning`
+is a helper the catalog doesn't list. A capability is computed once per graph,
+when something first asks for it, so a negated `[!@cap]` reads a complete set.
+Two capabilities that need each other are refused.
+
+## The view rules read
+
+chant's graph IR is not a rule surface as it stands: a policy statement or an
+inline ingress rule is a property tree inside one node, a Terraform policy is
+`jsonencode(...)` text, Terraform has link resources where CloudFormation has
+a direct reference, and every Terraform resource is `Terraform::Resource`. So
+rules read a view built through each lexicon's mapping:
+
+- a label per kind (`AWS::EC2::Instance` and `aws_instance` are both
+  `Instance`), and an edge name per referencing attribute (`SubnetId` and
+  `subnet_id` are both `subnet`);
+- a `Statement` node per policy statement, joined to its holder by
+  `statement` and to what it names by `resource` and `principal`;
+- an `IngressRule` per inline ingress block and a `Route` per inline route
+  block;
+- one `attachedTo` edge per policy attachment resource;
+- a `resource` edge for an ARN string that names a declared role, bucket or
+  table by name.
+
+Each lexicon ships its mapping as data: `src/capabilities/mapping.json` in
+`@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-terraform`. The
+kinds core's [derived attributes](/chant/cli/search/#derived-attributes) read
+are core's base mapping, so `internetFacing` and `effectiveIngress` work on a
+graph read without the lexicon loaded; a lexicon's mapping extends it. What a
+mapping can't say as data, a lexicon supplies as code: the terraform lexicon
+reads `jsonencode(...)` policies. Both reach `chant search` through the
+plugin's `capabilityPack`.
+
+The two derived attributes are rules too: `internetFacing` is
+`internet-facing`, and `effectiveIngress` is the ingress rules of every group
+`in-sg` reaches.
+
+## Lexicons
+
+A lexicon supplies a capability when its mapping labels every kind one
+alternative of the rule needs, or says it can't with a code. A lexicon with
+no mapping supplies none, with `lexicon-has-no-mapping`. A mapping that lacks
+the labels gives `capability-not-derivable`, naming them.
+
+| Lexicon | Supplies |
+|---|---|
+| `aws` | all of them |
+| `terraform` | all of them, for the AWS provider's types |
+| any other | none (`lexicon-has-no-mapping`) |
+
+## The capabilities document
+
+`chant search --capabilities --json` prints the catalog as the read
+contract's `capabilities` document, contract 1, held to
+`capabilities.schema.json` (`@intentius/chant/workspace/capabilities.schema.json`).
+Like every contract document it carries `contract`, `$schema` and `chant`, and
+a refusal is `error: { code, message }` with exit code 1 (`usage-invalid`,
+for a query or another search flag given with `--capabilities`). Without
+`--json` it prints one line per capability.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json",
+  "contract": 1,
+  "chant": "0.124.46",
+  "capabilities": [
+    {
+      "name": "reaches",
+      "meaning": "can-assume any number of times, then grants",
+      "shape": "edge",
+      "params": [{ "name": "action", "optional": true, "meaning": "an IAM action the grant must cover, such as s3:GetObject" }],
+      "search": "->[cap=reaches]",
+      "answers": ["if this role is compromised, what data can it reach"],
+      "depth": "declared",
+      "lexicons": { "aws": "supported", "terraform": "supported", "k8s": { "code": "lexicon-has-no-mapping", "message": "the k8s lexicon ships no capability mapping" } },
+      "notEvaluated": ["IAM Condition keys", "Resource \"*\""],
+      "uses": ["can-assume", "grants"],
+      "rule": "reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x"
+    }
+  ],
+  "helpers": [{ "name": "in-sg", "rule": "in-sg(x, g)          := x ->{0,1}template ->sg g:SecurityGroup" }]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `capabilities[].name`, `meaning` | the capability and what it says |
+| `shape` | `set` or `edge` |
+| `params[]` | `{ name, optional, meaning }`, in argument order |
+| `search` | the term that asks for it: `cap:<name>` or `->[cap=<name>]` |
+| `answers[]` | questions it serves, in people's words |
+| `depth` | `declared`, `live` or `either` |
+| `lexicons` | for each lexicon the project loads: `supported`, or `{ code, message }` with `lexicon-has-no-mapping`, `capability-not-derivable` or `lexicon-not-loaded` |
+| `notEvaluated[]` | what the rule leaves out |
+| `uses[]` | the capabilities and helpers its rule refers to |
+| `rule` | the rule as written |
+| `helpers[]` | `{ name, rule }` for each rule the capabilities use that the catalog doesn't list |
+
+In a declared workspace, `chant workspace search --capabilities --json`
+prints the same document from the workspace root's chant, for every lexicon
+a chant member loads, since that chant runs the rules over the composed graph
+(see [workspace search](/chant/cli/workspace-search/#capabilities)). The
+reader conformance suite covers it as `search --capabilities`. chant's MCP
+`capabilities` tool returns whichever of the two applies where the server
+runs, unchanged. An agent reads it once per session.
+
+## Evaluation time
+
+Measured on an M-series Mac with Node 24, median of 7, building the view and
+then evaluating all fifteen capabilities over the whole graph:
+
+| Estate | IR nodes | View | All capabilities |
+|---|---:|---:|---:|
+| terralith scale 4 with `-findings` (behold#912) | 202 | 1.7 ms | 4.1 ms |
+| terralith scale 4 | 185 | 1.1 ms | 1.9 ms |
+| aws-bench, CloudFormation form | 79 | 0.2 ms | 0.3 ms |
+| aws-bench, Terraform form | 61 | 0.2 ms | 0.3 ms |

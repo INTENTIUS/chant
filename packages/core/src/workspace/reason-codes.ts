@@ -59,6 +59,10 @@ export const REASONS = {
   "build-failed": "The project's build, or one of its build roots, failed, so the graph search would answer over is incomplete.",
   "snapshot-at-revision": "workspace search was given --snapshot and --at: a snapshot replays the estate as recorded over the source in the working tree, not at a revision.",
   "member-chant-too-old": "The member's chant predates the document asked for: it has no such command, or prints it without the read contract.",
+  // the capabilities catalog (#4375): why a lexicon can't supply a capability.
+  "lexicon-has-no-mapping": "The lexicon ships no capability mapping, so no capability rule can read its resources.",
+  "capability-not-derivable": "The lexicon's capability mapping labels none of the kinds the capability's rule needs.",
+  "lexicon-not-loaded": "The lexicon isn't installed where the chant that wrote the catalog runs, so its mapping wasn't read.",
   // A ledger status can't fully read.
   "ledger-unreadable": "Reading the ledger failed, so nothing from it is listed.",
   "ledger-malformed": "Some lines of the ledger aren't release records; the rest are listed.",

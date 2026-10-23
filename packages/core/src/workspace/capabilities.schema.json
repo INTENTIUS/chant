@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json",
+  "title": "chant capabilities catalog",
+  "description": "What `chant search --capabilities --json` prints (#4375): the capability catalog `chant search` answers `cap:` terms and `->[cap=...]` edges with, each capability's rule, and whether each lexicon the project loads can supply it. chant's MCP `capabilities` tool returns the same document. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.46 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "capabilities",
+        "helpers"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "capabilities": {
+          "type": "array",
+          "description": "Every capability the catalog lists, in the order the rule file defines them.",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "helpers": {
+          "type": "array",
+          "description": "Rules the capabilities use that the catalog does not list as capabilities of their own.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "rule"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": [
+        "name",
+        "meaning",
+        "shape",
+        "params",
+        "search",
+        "answers",
+        "depth",
+        "lexicons",
+        "notEvaluated",
+        "uses",
+        "rule"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "meaning": {
+          "type": "string",
+          "description": "What the capability says, in one line."
+        },
+        "shape": {
+          "enum": [
+            "set",
+            "edge"
+          ],
+          "description": "set: a set of nodes, tested with cap:<name>. edge: pairs of nodes, walked with ->[cap=<name>] or <-[cap=<name>]."
+        },
+        "params": {
+          "type": "array",
+          "description": "Arguments, in order: cap:<name>(<a>, <b>). An optional one left out drops the test that reads it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "optional",
+              "meaning"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "optional": {
+                "type": "boolean"
+              },
+              "meaning": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "search": {
+          "type": "string",
+          "description": "The search term that asks for it: cap:<name> for a set, ->[cap=<name>] for an edge."
+        },
+        "answers": {
+          "type": "array",
+          "description": "Questions it serves, in people's words.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "depth": {
+          "enum": [
+            "declared",
+            "live",
+            "either"
+          ],
+          "description": "Which observation can supply its facts: declared source, a live read or snapshot, or either."
+        },
+        "lexicons": {
+          "type": "object",
+          "description": "Each lexicon the project loads: supported, or why it can't supply the capability.",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "const": "supported"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "lexicon-has-no-mapping",
+                      "capability-not-derivable",
+                      "lexicon-not-loaded"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "notEvaluated": {
+          "type": "array",
+          "description": "What the rule leaves out. chant search prints this under every answer that uses the capability.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "uses": {
+          "type": "array",
+          "description": "The capabilities and helpers its rule refers to.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rule": {
+          "type": "string",
+          "description": "The rule as written, one alternative per line."
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "usage-invalid"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "hint": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
