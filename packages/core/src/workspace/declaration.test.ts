@@ -564,4 +564,11 @@ describe("ci.prEnvironment (#4298)", () => {
     expect(failure(base(members, { ci: { prEnvironment: {} } })).code).toBe("declaration-invalid");
     expect(failure(base(members, { ci: { prEnvironment: { template: "staging", ttl: "1w" } } })).code).toBe("declaration-invalid");
   });
+
+  test("a teardown command is read with its argv and the lexicons it covers (#4330)", () => {
+    const teardown = { name: "terragucci", command: ["terragucci", "pr-env", "teardown", "{stage}"], lexicons: ["terraform"] };
+    expect(parse(base(members, { ci: { prEnvironment: { template: "staging", teardown } } })).ci?.prEnvironment).toEqual({ template: "staging", ttl: "72h", teardown });
+    expect(failure(base(members, { ci: { prEnvironment: { template: "staging", teardown: { command: [] } } } })).code).toBe("declaration-invalid");
+    expect(failure(base(members, { ci: { prEnvironment: { template: "staging", teardown: { command: ["x"], runs: "y" } } } })).code).toBe("declaration-invalid");
+  });
 });

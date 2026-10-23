@@ -89,3 +89,23 @@ describe("the GitLab env-up job holds no forge token while the merge request's c
     expect(post.script.join("\n")).not.toMatch(/chant (build|lint)|pr-env up/);
   });
 });
+
+describe("the environment's cloud identity (#4330)", () => {
+  const prEnvIdentity = { aws: { role: "arn:aws:iam::000000000000:role/pr-env-apply", region: "us-east-1", audience: "sts.amazonaws.com", endpoint: "http://localhost:4566" } };
+  const doc = parseYAML(generateGitlabPipeline(ESTATE, { env: "staging", image: "node:22", prLoop: { prEnvironment: true, prEnvIdentity } }).yaml) as Record<string, Job & { id_tokens?: Record<string, unknown> }>;
+
+  test("env-up trades first, and the same line drops the forge tokens before the merge request's code runs", () => {
+    const up = doc["env-up"]!;
+    expect(up.id_tokens).toBeDefined();
+    expect(up.variables.CHANT_CLOUD_TRADE).toBe(JSON.stringify(prEnvIdentity));
+    expect(up.script).not.toContain(GITLAB_DROP_FORGE_TOKENS);
+    const unset = up.script.findIndex((l) => l.startsWith("unset ") && l.includes("CHANT_FORGE_TOKEN"));
+    expect(unset).toBeGreaterThan(-1);
+    expect(unset).toBeLessThan(up.script.findIndex((l) => l.startsWith("chant components pr-env up")));
+  });
+
+  test("env-down and env-sweep trade for it too, and env-post does not", () => {
+    for (const name of ["env-down", "env-sweep"]) expect(doc[name]!.variables.CHANT_CLOUD_TRADE).toBe(JSON.stringify(prEnvIdentity));
+    expect(doc["env-post"]!.variables.CHANT_CLOUD_TRADE).toBeUndefined();
+  });
+});

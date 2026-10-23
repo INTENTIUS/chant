@@ -475,17 +475,24 @@ function prEnvGithubJobs(
   const keep = (name: string) => ({ name: `Keep the ${name} report`, if: "always()", uses: UPLOAD_ARTIFACT, with: { name: `chant-pr-${name}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } });
   const opened = "github.event_name == 'pull_request' && github.event.action != 'closed'";
 
-  // #4295: env-up runs the change's code and holds no forge token while it does.
-  const drop = dropForgeTokens("sh");
+  // #4330: env-up, env-down and env-sweep trade the job's OIDC token for the pull request environments' identity, before the checkout.
+  const identity = loop.prEnvIdentity;
+  const tradeStep: Array<Record<string, unknown>> = identity
+    ? [{ name: "Trade the job's OIDC token for the pull request environment's identity", ...(rooted ? {} : { "working-directory": "." }), env: { [TRADE_SPEC_ENV]: JSON.stringify(identity) }, run: tradeLine("$GITHUB_ENV", "github-env") }]
+    : [];
+  const withIdToken = (permissions: Record<string, string>): Record<string, string> => (identity ? { ...permissions, "id-token": "write" } : permissions);
+  // #4295: env-up runs the change's code and holds no forge token while it does; #4330: nor the token request variables.
+  const drop = dropForgeTokens("sh", identity ? OIDC_REQUEST_VARS : []);
   const headStep = (line: string, name?: string, env?: Record<string, string>): Record<string, unknown> => ({ ...(name ? { name } : {}), ...(env ? { env } : {}), run: `${drop}\n${line}` });
   const upJob = {
     if: opened,
     "runs-on": GITHUB_RUNNER,
     container: image,
     concurrency: concurrency(group),
-    permissions: { contents: "read" },
+    permissions: withIdToken({ contents: "read" }),
     outputs: handoverOutputs(PR_ENV_UP_STEP_ID, forge),
     steps: [
+      ...tradeStep,
       {
         name: "Check out the change",
         ...(rooted ? {} : { "working-directory": "." }),
@@ -524,8 +531,9 @@ function prEnvGithubJobs(
     "runs-on": GITHUB_RUNNER,
     container: image,
     concurrency: concurrency(groupName),
-    permissions: writes,
+    permissions: withIdToken(writes),
     steps: [
+      ...tradeStep,
       { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0, ...(ref ? { ref } : {}) } },
       ...runSteps(prLoopSetup(image)),
       ...runSteps(beforeScript),

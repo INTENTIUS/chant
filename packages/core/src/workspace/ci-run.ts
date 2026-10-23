@@ -84,7 +84,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { PR_APPLY_RECORD, PR_LOOP_REPORT_DIR, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
+import { PR_APPLY_RECORD, PR_ENV_POST_JOB, PR_ENV_REPORT_DIR, PR_LOOP_REPORT_DIR, prEnvJobs, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrEnvJob, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
 import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind, type PrForge } from "../pr-forge";
 import { holdsForgeToken, withoutForgeTokens } from "../ci-handover";
 import { postPlanReport } from "../pr-post";
@@ -114,19 +114,41 @@ import { hostRunnerKey } from "./ci-runner-key";
 import { requireRunnerStart } from "./ci-runner-start";
 import { securityGroupsAt } from "./security";
 
-/** The jobs a pull-request pipeline has: plan, and on merge record (#4168) or, opted in, apply. */
-export type CiJobName = PrLoopJob["jobName"];
-export const CI_JOB_NAMES: readonly CiJobName[] = ["plan", "apply", "record"];
+/**
+ * The jobs a pull-request pipeline has: plan, and on merge record (#4168) or,
+ * opted in, apply; and with `--pr-env` (#4298, #4330) the jobs of a pull
+ * request's environment.
+ */
+export type CiJobName = PrLoopJob["jobName"] | PrEnvJob["jobName"];
+export const CI_JOB_NAMES: readonly CiJobName[] = ["plan", "apply", "record", "env-up", "env-post", "env-down", "env-sweep"];
 
-/** The Op each job is recorded as, which `ci.green` phases match. */
-export const CI_JOB_OPS: Record<CiJobName, string> = { plan: "pr-plan", apply: "pr-apply", record: "pr-record" };
+/** The jobs of a pull request's environment (#4330). */
+export const CI_ENV_JOB_NAMES: readonly PrEnvJob["jobName"][] = ["env-up", "env-post", "env-down", "env-sweep"];
+
+/** Whether `job` is one of a pull request environment's jobs. */
+export const isCiEnvJob = (job: CiJobName): job is PrEnvJob["jobName"] => (CI_ENV_JOB_NAMES as readonly string[]).includes(job);
+
+/** The Op each job is recorded as, which `ci.green` phases match. An environment job's is its report's stem too. */
+export const CI_JOB_OPS: Record<CiJobName, string> = { plan: "pr-plan", apply: "pr-apply", record: "pr-record", "env-up": "pr-env-up", "env-post": "pr-env-post", "env-down": "pr-env-down", "env-sweep": "pr-env-sweep" };
 
 /** What each job's Op says it does. */
 const CI_JOB_OVERVIEWS: Record<CiJobName, string> = {
   plan: "Plan the members this pull request reaches",
   apply: "Apply the plan a reviewer approved",
   record: "Record the plan on the merged commit; nothing applies",
+  "env-up": "Plan this pull request's environment and apply it once its plan is approved",
+  "env-post": "Keep the environment's record and post its note",
+  "env-down": "Tear down what this pull request's environment owns",
+  "env-sweep": "Tear down the environments whose TTL passed or whose pull request closed",
 };
+
+/** One job as `ci run` runs it: a pull-request job, or an environment job (#4330). */
+export type CiJob = Pick<PrLoopJob, "command" | "env" | "setup" | "build" | "wave"> & { jobName: CiJobName };
+
+/** Where a job writes its report, inside its checkout. */
+export function ciJobReportDir(job: CiJobName): string {
+  return isCiEnvJob(job) ? PR_ENV_REPORT_DIR : PR_LOOP_REPORT_DIR;
+}
 
 /** Where a job the chant runner ran says it ran (#4094). */
 export const CHANT_RUNNER_ORIGIN: RunOrigin = { forge: "chant" };
@@ -167,6 +189,10 @@ export interface CiRunValues {
   pr?: number;
   /** The full commit the job runs at. */
   commit: string;
+  /** `--head`: the pull request's head, `HEAD_SHA`, which `env-post` reads (#4330). */
+  head?: string;
+  /** `--result`: the env-up job's result, `UP_RESULT`, which `env-post` reads on GitHub and Forgejo (#4330). */
+  upResult?: string;
 }
 
 export class CiRunError extends Error {
@@ -188,7 +214,7 @@ export class CiRunError extends Error {
  * runner sets for the job. `CHANT_RUNNER_KEY` is never in it.
  */
 export function ciJobEnv(
-  job: PrLoopJob,
+  job: CiJob,
   input: {
     forge: ForgeKind;
     env: string;
@@ -211,12 +237,18 @@ export function ciJobEnv(
   const flags: Record<string, { value: string | undefined; flag: string }> = {
     BASE_SHA: { value: input.values.base, flag: "--base <sha>" },
     PR_NUMBER: { value: input.values.pr !== undefined ? String(input.values.pr) : undefined, flag: "--pr <number>" },
+    HEAD_SHA: { value: input.values.head, flag: "--head <sha>" },
+    UP_RESULT: { value: input.values.upResult, flag: "--result success|failure" },
   };
+  // #4330: an environment job's CHANT_ENV is pr-<n>, which a forge fills from the event.
+  const prEnv = isCiEnvJob(job.jobName) && input.values.pr !== undefined ? `pr-${input.values.pr}` : undefined;
   for (const [name, value] of Object.entries(job.env)) {
     const given = flags[name];
     if (given) {
       if (given.value === undefined) throw new CiRunError(`the ${job.jobName} job reads ${name}, which a forge fills from the event; pass ${given.flag}`);
       out[name] = given.value;
+    } else if (name === "CHANT_ENV" && prEnv) {
+      out[name] = prEnv;
     } else if (!value.includes("$")) {
       out[name] = value;
     } else if (input.secrets?.[name] !== undefined) {
@@ -231,7 +263,7 @@ export function ciJobEnv(
 
 /** What {@link ciJobOp} builds the Op from. */
 export interface CiJobOpInput {
-  job: PrLoopJob;
+  job: CiJob;
   env: string;
   /** The directory the steps run in, inside the fresh checkout. */
   cwd: string;
@@ -251,7 +283,7 @@ export function withChant(line: string, chant?: string): string {
 }
 
 /** The job's own setup lines and its command, as one shell script, with `chant` at its start replaced by the command the caller names. */
-export function ciJobCommand(job: PrLoopJob, chant?: string): string {
+export function ciJobCommand(job: CiJob, chant?: string): string {
   return [...(job.setup ?? []), withChant(job.command, chant)].join("\n");
 }
 
@@ -283,7 +315,7 @@ export function ciJobOp(input: CiJobOpInput): OpConfig {
 }
 
 /** The pull-request report statuses that mean the job did not do its work, which a failed job's `failure.code` takes. */
-const FAILED_REPORT_STATUSES = new Set(["plan-failed", "failed", "refused"]);
+const FAILED_REPORT_STATUSES = new Set(["plan-failed", "failed", "refused", "incomplete"]);
 
 /** The exit code a failed shell step's error names (`command exited <n>`), when it names one. */
 function exitCodeOf(error: string | undefined): number | undefined {
@@ -441,10 +473,14 @@ export interface CiRunRequest {
    * `forge` then only shapes the job's variables.
    */
   noForge?: boolean;
-  /** `--base`, `--pr` and `--commit` (default `HEAD`). */
+  /** `--base`, `--pr` and `--commit` (default `HEAD`; for `env-post`, `--base`). */
   base?: string;
   pr?: number;
   commit?: string;
+  /** `--head`: for `env-post` (#4330), the pull request's head its environment was applied from. */
+  head?: string;
+  /** `--result`: for `env-post` (#4330), the env-up job's result. */
+  upResult?: string;
   /**
    * The generator's options: `--gate`, `--branch`, `--events-json`,
    * `--report-url`, `--pr-build` and `--pr-build-command`, and `--wave-gate`
@@ -553,6 +589,11 @@ export interface CiRunResult {
   checkout: string;
   /** The job ran with `local` (#4161): its record stays on this machine. */
   local?: true;
+  /**
+   * For `env-up` (#4330): the `env-post` job the runner ran after it at
+   * `--base`, with its own token, which kept the record and posted the note.
+   */
+  post?: CiRunResult;
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -619,7 +660,7 @@ function freshCheckout(top: string, commit: string): { dir: string; remove(): vo
  */
 async function recordInIndex(input: {
   url: string;
-  job: CiJobName;
+  job: PrLoopJob["jobName"];
   commit: string;
   member?: string;
   pr?: number;
@@ -679,11 +720,14 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const cwd = realpathSync(resolve(req.cwd));
   const top = gitTop(cwd);
   if (!top) throw new CiRunError("a job runs in a fresh checkout of a commit, and this directory is not in a git repository");
-  const commit = resolveJobCommit(top, req.commit ?? "HEAD");
+  // #4330: env-post runs at the target branch's commit, none of the change's code.
+  const commit = resolveJobCommit(top, req.commit ?? (req.job === PR_ENV_POST_JOB && req.base ? req.base : "HEAD"));
   if (req.inPlace && commit !== resolveJobCommit(top, "HEAD")) throw new CiRunError(`--in-place runs the checkout's HEAD, and --commit names ${commit.slice(0, 12)}`);
   if (req.local && req.inPlace) throw new CiRunError("--in-place runs a forge job in the forge's checkout, and --local runs one on this machine; pass one of them");
   const place = ciJobPlace(cwd, top);
-  const jobs = prLoopJobs(req.forge, req.env, req.local ? localLoop(req.loop) : (req.loop ?? {}), place.member);
+  const loop = req.local ? localLoop(req.loop) : (req.loop ?? {});
+  // #4330: the jobs of a pull request's environment, as the generators wrap them with --pr-env.
+  const jobs: CiJob[] = isCiEnvJob(req.job) ? prEnvJobs(req.forge, loop, place.member) : prLoopJobs(req.forge, req.env, loop, place.member);
   const found = jobs.find((j) => j.jobName === req.job);
   if (!found) throw new CiRunError(`the pull-request pipeline has no ${req.job} job; it has ${jobs.map((j) => j.jobName).join(" and ")}`);
   if (req.wave !== undefined && (req.job !== "apply" || !req.loop?.waveGate)) throw new CiRunError("--wave names the one wave an apply runs, and takes --wave-gate: ci run apply --wave-gate <gate> --wave <k>");
@@ -699,15 +743,15 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const own = ciJobEnv(job, {
     forge: req.forge,
     env: req.env,
-    values: { base: req.base, pr: req.pr, commit },
+    values: { base: req.base, pr: req.pr, commit, ...(req.head ? { head: req.head } : {}), ...(req.upResult ? { upResult: req.upResult } : {}) },
     hostEnv,
     passEnv: req.passEnv,
     secrets: ciSecretsFor(req.secrets, req.job),
   });
   // #4156: in place, the forge job's environment is the job's, less the runner key.
-  // #4295: the plan runs the pull request's code, so no step of it gets a forge token, whatever gave it one.
+  // #4295: the plan and env-up run the pull request's code, so no step of them gets a forge token, whatever gave it one.
   const merged = req.inPlace ? { ...definedEnv(hostEnv), ...own } : own;
-  const jobEnv = req.job === "plan" ? withoutForgeTokens(merged) : merged;
+  const jobEnv = req.job === "plan" || req.job === "env-up" ? withoutForgeTokens(merged) : merged;
   delete jobEnv[RUNNER_KEY_ENV];
   const poster = req.job === "plan" ? planPoster(req, hostEnv) : undefined;
   // #4096: the secrets and the job's secret-looking variables, redacted from everything the run writes and returns.
@@ -716,12 +760,48 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   try {
     const ran = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
     const posted = poster ? await postFromReport(req, poster, ran, { commit, ...(place.member ? { member: place.member } : {}) }) : [];
-    const withPosts = posted.length > 0 ? { ...ran, warnings: [...ran.warnings, ...posted] } : ran;
+    const envPost = req.job === "env-up" ? await envPostAfterUp(req, { cwd, top, head: commit, place, jobs, hostEnv, ran }) : undefined;
+    const withPost = envPost ? ("result" in envPost ? { ...ran, post: envPost.result } : { ...ran, warnings: [...ran.warnings, envPost.warning] }) : ran;
+    const withPosts = posted.length > 0 ? { ...withPost, warnings: [...withPost.warnings, ...posted] } : withPost;
     const result = started ? { ...withPosts, notes: [started, ...withPosts.notes] } : withPosts;
     return redact ? { ...result, warnings: result.warnings.map(redact), notes: result.notes.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result;
   } catch (err) {
     if (redact && err instanceof Error) err.message = redact(err.message);
     throw err;
+  }
+}
+
+/**
+ * The env-post job after an env-up (#4330), as a generated pipeline runs it
+ * in a job of its own: at `--base`, the target branch's commit, with the
+ * forge token env-up's steps never got, taking the report and record env-up
+ * handed on. None on `--local`, in place (the forge's env-post job posts),
+ * for a plain git server, without `--base` and `--pr`, or without a token.
+ */
+async function envPostAfterUp(
+  req: CiRunRequest,
+  at: { cwd: string; top: string; head: string; place: { member?: string; dir: string }; jobs: CiJob[]; hostEnv: Record<string, string | undefined>; ran: CiRunResult },
+): Promise<{ result: CiRunResult } | { warning: string } | undefined> {
+  if (req.local || req.inPlace || req.noForge || req.pr === undefined) return undefined;
+  if (!req.base) return { warning: "env-post did not run: it runs at the target branch's commit, so pass --base <sha>" };
+  if (!holdsForgeToken(at.hostEnv)) return { warning: "env-post did not run: there is no forge token, so the environment's record is in the report and nothing kept it" };
+  const found = at.jobs.find((j) => j.jobName === PR_ENV_POST_JOB);
+  if (!found) return undefined;
+  const base = resolveJobCommit(at.top, req.base);
+  const job = { ...found, command: req.noForge ? found.command.replace(` --forge ${req.forge}`, "") : found.command };
+  const postReq: CiRunRequest = { ...req, job: PR_ENV_POST_JOB, commit: base, head: at.head, upResult: at.ran.status === "ok" ? "success" : "failure" };
+  delete postReq.status;
+  delete postReq.resumeRecord;
+  delete postReq.wave;
+  const jobEnv = ciJobEnv(job, { forge: req.forge, env: req.env, values: { base: req.base, pr: req.pr, commit: base, head: at.head, upResult: postReq.upResult! }, hostEnv: at.hostEnv, passEnv: req.passEnv, secrets: ciSecretsFor(req.secrets, PR_ENV_POST_JOB) });
+  delete jobEnv[RUNNER_KEY_ENV];
+  // Its own redactor: env-post holds the token env-up's steps never got.
+  const redact = ciRedactor(jobEnv, req.secrets);
+  try {
+    const result = await runCiJob(postReq, { cwd: at.cwd, top: at.top, commit: base, place: at.place, job, jobEnv, ...(redact ? { redact } : {}), ...(at.ran.report ? { seed: at.ran.report } : {}) });
+    return { result: redact ? { ...result, warnings: result.warnings.map(redact), notes: result.notes.map(redact), ...(result.pushWarning ? { pushWarning: redact(result.pushWarning) } : {}) } : result };
+  } catch (err) {
+    return { warning: `env-post did not run: ${message(err)}` };
   }
 }
 
@@ -854,7 +934,7 @@ function jobCheckout(top: string, commit: string, inPlace?: boolean): { dir: str
 /** {@link ciRun} once the job and its environment are known. */
 async function runCiJob(
   req: CiRunRequest,
-  at: { cwd: string; top: string; commit: string; place: { member?: string; dir: string }; job: PrLoopJob; jobEnv: Record<string, string>; redact?: Redact },
+  at: { cwd: string; top: string; commit: string; place: { member?: string; dir: string }; job: CiJob; jobEnv: Record<string, string>; redact?: Redact; seed?: string },
 ): Promise<CiRunResult> {
   const { cwd, top, commit, place, job, jobEnv, redact } = at;
   const local = req.local === true;
@@ -884,6 +964,8 @@ async function runCiJob(
       ...(req.chant ? { chant: req.chant } : {}),
     });
     const warnings: string[] = [...early];
+    // #4330: env-post takes the report env-up wrote, as a forge job takes it from the up job's outputs.
+    if (at.seed && existsSync(at.seed)) cpSync(at.seed, join(jobDir, ciJobReportDir(req.job)), { recursive: true });
     const resume = req.job === "apply" && req.resumeRecord ? { host: resolve(req.resumeRecord), job: join(jobDir, PR_APPLY_RECORD) } : undefined;
     if (resume && existsSync(resume.host)) {
       mkdirSync(dirname(resume.job), { recursive: true });
@@ -913,7 +995,7 @@ async function runCiJob(
         commit,
         ledger: { cwd: jobDir },
         runner: { kind: "pipeline", runtime: local ? "local" : "ci", runOrigin: origin },
-        describeFailure: (records) => ciJobFailure({ job: req.job, op, records, reportDir: join(jobDir, PR_LOOP_REPORT_DIR) }),
+        describeFailure: (records) => ciJobFailure({ job: req.job, op, records, reportDir: join(jobDir, ciJobReportDir(req.job)) }),
         ...(req.runEvents ? { runEvents: { write: req.runEvents } } : {}),
         ...(req.stepOutput ? { stepOutput: req.stepOutput } : {}),
         ...(signer ? { signRecord: (record: OpRunRecord) => signOpRunRecord(record, signer!) } : {}),
@@ -946,10 +1028,10 @@ async function runCiJob(
         warnings.push(`the resume record could not be kept at ${resume.host}: ${message(err)}`);
       }
     }
-    const written = join(jobDir, PR_LOOP_REPORT_DIR);
+    const written = join(jobDir, ciJobReportDir(req.job));
     let report: string | null = null;
     if (existsSync(written)) {
-      report = resolve(cwd, req.output ?? PR_LOOP_REPORT_DIR);
+      report = resolve(cwd, req.output ?? ciJobReportDir(req.job));
       // In place the report is already where the forge keeps it, and stays as the command wrote it.
       if (!(existsSync(report) && realpathSync(report) === realpathSync(written))) {
         cpSync(written, report, { recursive: true });
@@ -958,7 +1040,8 @@ async function runCiJob(
     }
     const failed = result.records.find((r) => r.status === "fail");
     const exitCode = failed?.phase === req.job ? exitCodeOf(failed.error) : undefined;
-    if (reportUrl) {
+    // The run index lists the pull-request jobs; an environment job's run is in its record only (#4330).
+    if (reportUrl && !isCiEnvJob(req.job)) {
       await recordInIndex({ url: reportUrl, job: req.job, commit, member: place.member, pr: req.pr, record: result.record, runOrigin: origin, signer: result.record.statement && signer ? signer.principal : null, exitCode: ciJobExitCode({ status: result.status, ...(exitCode !== undefined ? { exitCode } : {}) }), reportDir: written, limit: req.runIndexLimit, ...(redact ? { redact } : {}), warn: (w) => warnings.push(w) });
     }
     // In place the forge job's outcome is the command's, so a record that could not be written is a warning there.
@@ -1045,7 +1128,7 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
 }
 
 const USAGE =
-  "chant ci run plan|record|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
+  "chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--require-review] [--apply-before-merge] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
@@ -1101,9 +1184,11 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
   try {
     if (args.setupKey) return (await import("./ci-serve")).runnerKeySetupCommand(ctx);
     if (args.at !== undefined && args.extraPositional === undefined) return await requestBuildCommand(args.at);
-    const job = args.extraPositional;
-    if (job !== "plan" && job !== "apply" && job !== "record") throw new CiRunError(`ci run takes the job to run, plan, record or apply${job ? `, not ${JSON.stringify(job)}` : ""}`);
-    if (!args.env) throw new CiRunError("--env names the environment the pipeline is for, as chant build --components --generate <lexicon> --pr-loop took it: --env <env>");
+    const job = args.extraPositional as CiJobName | undefined;
+    if (!job || !CI_JOB_NAMES.includes(job)) throw new CiRunError(`ci run takes the job to run, ${CI_JOB_NAMES.join(", ")}${job ? `, not ${JSON.stringify(job)}` : ""}`);
+    // #4330: an environment job's environment is pr-<n>; the sweep's run is recorded under --env, else local.
+    const env = args.env ?? (isCiEnvJob(job) ? (args.pr !== undefined && job !== "env-sweep" ? `pr-${args.pr}` : "local") : undefined);
+    if (!env) throw new CiRunError("--env names the environment the pipeline is for, as chant build --components --generate <lexicon> --pr-loop took it: --env <env>");
     const forge = args.forge ?? detectForge(process.env);
     if (!forge) throw new CiRunError("--forge names the forge the job posts to: --forge github|gitlab|forgejo");
     if (!(FORGE_KINDS as readonly string[]).includes(forge)) throw new CiRunError(`--forge takes github, gitlab or forgejo, not ${JSON.stringify(forge)}`);
@@ -1124,11 +1209,13 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       cwd: process.cwd(),
       ...(status ? { status } : {}),
       job,
-      env: args.env,
+      env,
       forge: forge as ForgeKind,
       ...(args.base ? { base: args.base } : {}),
       ...(args.pr !== undefined ? { pr: args.pr } : {}),
       ...(args.commit ? { commit: args.commit } : {}),
+      ...(args.head ? { head: args.head } : {}),
+      ...(args.planResult ? { upResult: args.planResult } : {}),
       loop: ciLoopOptions(reportUrl ? { ...args, reportUrl } : args),
       ...(args.ciInPlace ? { inPlace: true } : {}),
       ...(args.local ? { local: true } : {}),
@@ -1149,8 +1236,14 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
     for (const w of result.warnings) console.error(formatWarning({ message: w }));
     if (args.verbose) for (const n of result.notes) console.error(`ci run: ${n}`);
     console.error(formatCiRun(result));
+    if (result.post) {
+      for (const w of result.post.warnings) console.error(formatWarning({ message: w }));
+      console.error(formatCiRun(result.post));
+    }
     // #4156: a failed command's own exit code, such as 3 for a moved plan, is the job's, as it was before the job ran through ci run.
-    return ciJobExitCode(result);
+    // #4330: an env-up whose env-post failed fails too, since its record was not kept.
+    const code = ciJobExitCode(result);
+    return code === 0 && result.post ? ciJobExitCode(result.post) : code;
   } catch (err) {
     console.error(formatError({ message: `chant ci run: ${message(err)}`, hint: USAGE }));
     return 1;

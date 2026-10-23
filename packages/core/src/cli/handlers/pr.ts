@@ -129,6 +129,7 @@ import { withComponentEndpoint } from "../component-endpoint";
 import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out";
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import type { CapabilityRegistry } from "../../components/capability";
+import type { ComponentEnvironmentDeclaration } from "../../components/component";
 import { prLoopHooksAt, runPrHooks, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
 import { decidePrPolicyOverride, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
@@ -157,6 +158,8 @@ export interface Prepared {
   signal: ComponentChangeSignal;
   registry: CapabilityRegistry;
   seededOutputs: Record<string, Record<string, unknown>>;
+  /** Component name to the environments it declares (#3153), whose sites `pr-env up` carries over (#4330). */
+  sites?: Record<string, ComponentEnvironmentDeclaration[]>;
   /** `ci.hooks` from the declaration at base (#4288). */
   hooks: PrLoopHooks;
   /** Every hook the stage ran so far, for the report's `hooks`. */
@@ -296,6 +299,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     components: derived.components,
     plan: routedAway ? { ...derived.plan, order: [], waves: [], seeds: [], indeterminate: [] } : derived.plan,
     signal: derived.signal,
+    ...(derived.sites ? { sites: derived.sites } : {}),
     registry,
     seededOutputs,
     hooks,

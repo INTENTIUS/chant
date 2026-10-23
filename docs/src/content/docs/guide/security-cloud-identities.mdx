@@ -92,8 +92,13 @@ The pull-request pipeline applies a member in one job. With `--apply-on-merge` o
 | `plan-note` | none | the target branch's commit |
 | `record` | plan | the merged commit |
 | `apply`, `apply-wave-<k>` | apply | the newest green commit |
+| `env-up` | apply, of a rule that names `pr-*` | the pull request's code |
+| `env-down`, `env-sweep` | apply, of the same rule | the base branch's commit |
+| `env-post` | none | the target branch's commit |
 
-On GitHub and Forgejo the plan, record and apply jobs get `id-token: write` (`withIdToken` in `lexicons/github/src/components/generate-pipeline.ts:290`). Forgejo's dialect keeps that one permission. Each job's first step is the trade, ahead of its checkout (`generate-pipeline.ts:293` and `:362`). On GitLab the same jobs take an `id_tokens:` entry per cloud, and the trade is the first line of the script (`lexicons/gitlab/src/components/generate-pipeline.ts:384`).
+The environment jobs come with `--pr-env` ([#4330](https://github.com/INTENTIUS/chant/issues/4330)). A rule that names no `environments` is skipped for them (`packages/core/src/ci-identity.ts:323`), so a catch-all apply identity never reaches a pull request's code. See [an environment per pull request](/chant/guide/pr-environments/#the-environments-cloud-identity).
+
+The plan, record and apply jobs get `id-token: write` on GitHub and Forgejo (`withIdToken` in `lexicons/github/src/components/generate-pipeline.ts:290`). Forgejo's dialect keeps that one permission. Each job's first step is the trade, ahead of its checkout (`generate-pipeline.ts:293` and `:362`). On GitLab the same jobs take an `id_tokens:` entry per cloud, and the trade is the first line of the script (`lexicons/gitlab/src/components/generate-pipeline.ts:384`).
 
 ## What the trade does
 

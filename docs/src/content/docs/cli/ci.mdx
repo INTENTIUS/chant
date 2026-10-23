@@ -10,7 +10,7 @@ diataxis: reference
 chant ci last-green [--json] [--from <rev>]
 chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
-chant ci run plan|record|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo]
+chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo]
                   [--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
                   [--image <image>]
                   [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--require-review] [--apply-before-merge]
@@ -226,6 +226,8 @@ A step of the plan job gets no forge token ([#4295](https://github.com/INTENTIUS
 The run is recorded as the job's Op (`pr-<job>`) in `<env>/runs__<op>.jsonl` on `chant/lifecycle`, with `gitSha` the commit and `runOrigin` `{ "forge": "chant" }`, and `ci run` then pushes `chant/lifecycle` to the remote, unless `--no-push`. A [tick from runs](#chant-runs-as-the-status-source) counts it. With `--key <file>`, or the PEM in `CHANT_RUNNER_KEY`, the record also carries a statement signed by the runner key. The key follows the rules for `chant run --key`, checked against `.chant/trust.json` at the commit the job runs. A phase pattern such as `"plan": ["pr-plan"]` matches the job. The run's events are kept on this host for [`chant run events`](/chant/cli/run/#run-events-run), with `kind: "pipeline"` and `runtime: "ci"`. With `--events-json` they are printed on stdout as well. Each line the job prints goes to stderr as it arrives, and the summary follows it there. It exits 0 when the job passed. When the command failed with an exit code, `ci run` exits with that code, such as 3 for a moved plan or a wave that waits on its gate, as the command did in a forge job. Any other failure exits 1.
 
 ### In a forge job
+
+`ci run` also runs the jobs of a [pull request's environment](/chant/guide/pr-environments/): `env-up`, `env-post`, `env-down` and `env-sweep` ([#4330](https://github.com/INTENTIUS/chant/issues/4330)). Their `--env` defaults to `pr-<n>`, and to `local` for the sweep. `env-up` runs with no forge token in its steps, and the runner then runs `env-post` at `--base` with the token and the report `env-up` wrote, unless the run is `--local` or `--in-place`. `env-post` on its own runs at `--base` and takes `--head <sha>` and, on GitHub and Forgejo, `--result <r>`. Their reports land under `.chant/pr-env`, and the run index lists only the pull-request jobs.
 
 A generated job runs `chant ci run plan|record|apply --in-place` ([#4156](https://github.com/INTENTIUS/chant/issues/4156)), so a forge job writes the same record as a job on this host. `--in-place` runs the job in the checkout it is started in, at its `HEAD`, with no worktree, no `setup` phase and no commit status of its own, since the forge shows the job. The steps get the job's whole environment except `CHANT_RUNNER_KEY`, since the forge job is already the boundary. The report stays where the command wrote it, and a record that can't be written is a warning. The record's `runOrigin` names the forge's run: `forge` (`github` for GitHub and Forgejo, `gitlab`), `repo`, `url`, `jobId` (`GITHUB_JOB`, or `CI_JOB_ID` on GitLab) and `attempt` (`GITHUB_RUN_ATTEMPT`).
 

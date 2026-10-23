@@ -26,7 +26,7 @@ import { sshFromEd25519 } from "./trust/dsse";
 import { verifyOpRunStatement } from "./trust/op-run-statement";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { resolveRunId } from "../lifecycle/release-ledger";
-import { prLoopJobs, PR_LOOP_SETUP } from "../components/pr-pipeline";
+import { prEnvJobs, prLoopJobs, PR_LOOP_SETUP } from "../components/pr-pipeline";
 import { parseArgs } from "../cli/parse-args";
 import { ciSecretsFor, readCiSecrets } from "./ci-secrets";
 import { runEventFileName, runEventsDir } from "../run-event-store";
@@ -1039,3 +1039,76 @@ describe("the plan's steps hold no forge token (#4295)", () => {
     expect(plan!.command.endsWith(" --no-status")).toBe(true);
   });
 });
+
+/**
+ * #4330: a pull request environment's jobs run through `ci run` too. The
+ * stand-in chant keeps each action's arguments, environment, directory and
+ * commit under `.chant/pr-env`, and `up` writes a report and a record there.
+ */
+function fakeEnvChant(): string {
+  const file = join(scratchDir("chant-ci-run-env-bin-"), "chant");
+  writeFileSync(
+    file,
+    [
+      "#!/bin/sh",
+      'action="$3"',
+      "mkdir -p .chant/pr-env",
+      'printf "%s\\n" "$@" > ".chant/pr-env/$action.args"',
+      'env | sort > ".chant/pr-env/$action.env"',
+      'git rev-parse HEAD > ".chant/pr-env/$action.commit"',
+      'ls .chant/pr-env > ".chant/pr-env/$action.found"',
+      'if [ "$action" = up ]; then echo "{\\"stage\\": \\"up\\"}" > .chant/pr-env/pr-env-up.json; echo "{}" > .chant/pr-env/pr-env-record.json; fi',
+      'exit "${FAKE_EXIT:-0}"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(file, 0o755);
+  return file;
+}
+
+describe("a pull request environment's jobs (#4330)", () => {
+  test("env-up runs with no forge token, then env-post runs at the base commit with it and the report env-up handed on", async () => {
+    const { app, base, sha } = workspace();
+    const out = join(scratchDir("chant-ci-run-env-out-"), "pr-env");
+    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "env-up", env: "pr-7", forge: "github", base, pr: 7, chant: fakeEnvChant(), hostEnv: HOST, output: out, push: false });
+    expect(r.op).toBe("pr-env-up");
+    expect(r.status).toBe("ok");
+    const upEnv = envFile(out, "up");
+    for (const name of FORGE_TOKEN_VARS) expect(upEnv[name]).toBeUndefined();
+    expect(upEnv.CHANT_ENV).toBe("pr-7");
+    expect(upEnv.PR_NUMBER).toBe("7");
+    expect(readFileSync(join(out, "up.commit"), "utf-8").trim()).toBe(sha);
+    expect(readFileSync(join(out, "up.args"), "utf-8")).not.toContain("--forge");
+
+    expect(r.post?.op).toBe("pr-env-post");
+    const postEnv = envFile(out, "post");
+    // The token reached env-post, and its copied report is redacted.
+    expect(postEnv.GITHUB_TOKEN).toBe("***");
+    expect(postEnv.HEAD_SHA).toBe(sha);
+    expect(postEnv.UP_RESULT).toBe("success");
+    expect(readFileSync(join(out, "post.commit"), "utf-8").trim()).toBe(base);
+    expect(readFileSync(join(out, "post.found"), "utf-8")).toContain("pr-env-record.json");
+  });
+
+  test("env-down runs with the token and writes its report under .chant/pr-env, and a local env-up posts nothing", async () => {
+    const { app, base } = workspace();
+    const out = join(scratchDir("chant-ci-run-env-out-"), "pr-env");
+    const down = await ciRun({ image: JOB_IMAGE, cwd: app, job: "env-down", env: "pr-7", forge: "github", base, pr: 7, chant: fakeEnvChant(), hostEnv: HOST, output: out, push: false });
+    expect(down.op).toBe("pr-env-down");
+    expect(envFile(out, "down").GITHUB_TOKEN).toBe("***");
+    expect(readFileSync(join(out, "down.args"), "utf-8")).toContain("closed");
+
+    const local = await ciRun({ image: JOB_IMAGE, cwd: app, job: "env-up", env: "pr-7", forge: "github", base, pr: 7, chant: fakeEnvChant(), hostEnv: HOST, output: join(scratchDir("chant-ci-run-env-out-"), "pr-env"), local: true });
+    expect(local.post).toBeUndefined();
+  });
+
+  test("env-post reads the head and the up job's result from flags", () => {
+    expect(() => ciRunEnvJobEnv({})).toThrow(/pass --head <sha>/);
+    expect(ciRunEnvJobEnv({ head: "h".repeat(40), upResult: "failure" })).toMatchObject({ HEAD_SHA: "h".repeat(40), UP_RESULT: "failure", PR_NUMBER: "7" });
+  });
+});
+
+function ciRunEnvJobEnv(values: { head?: string; upResult?: string }): Record<string, string> {
+  const post = prEnvJobs("github", {}, "app").find((j) => j.jobName === "env-post")!;
+  return ciJobEnv(post, { forge: "github", env: "pr-7", values: { pr: 7, base: "b".repeat(40), commit: "b".repeat(40), ...values }, hostEnv: HOST });
+}

@@ -204,3 +204,31 @@ describe("env-up's steps, run, see no forge token and hand the report and record
     expect(readFileSync(join(postWork, ".chant", "pr-env", "pr-env-up.json"), "utf-8")).toBe('{"stage":"up"}\n');
   });
 });
+
+describe("the environment's cloud identity (#4330)", () => {
+  const prEnvIdentity = { aws: { role: "arn:aws:iam::000000000000:role/pr-env-apply", region: "us-east-1", audience: "sts.amazonaws.com", endpoint: "http://localhost:4566" } };
+  const jobs = (parseYAML(generateGithubPipeline(ESTATE, { env: "staging", prLoop: { prEnvironment: true, prEnvIdentity } }).yaml) as { jobs: Record<string, Job> }).jobs;
+
+  test("env-up trades its OIDC token before the checkout, and every later step starts without the token request variables", () => {
+    const up = jobs["env-up"]!;
+    expect(up.permissions).toEqual({ contents: "read", "id-token": "write" });
+    expect(up.steps[0]!.name).toMatch(/Trade the job's OIDC token/);
+    expect(JSON.parse(up.steps[0]!.env!.CHANT_CLOUD_TRADE!)).toEqual(prEnvIdentity);
+    expect(up.steps[1]!.name).toBe("Check out the change");
+    for (const step of up.steps.slice(2)) expect(step.run).toContain("ACTIONS_ID_TOKEN_REQUEST_TOKEN");
+  });
+
+  test("env-down and env-sweep trade for the same identity, and env-post trades for none", () => {
+    for (const name of ["env-down", "env-sweep"]) {
+      expect(jobs[name]!.permissions["id-token"]).toBe("write");
+      expect(jobs[name]!.steps[0]!.env?.CHANT_CLOUD_TRADE).toBe(JSON.stringify(prEnvIdentity));
+    }
+    expect(jobs["env-post"]!.permissions["id-token"]).toBeUndefined();
+    expect(JSON.stringify(jobs["env-post"]!.steps)).not.toContain("CHANT_CLOUD_TRADE");
+  });
+
+  test("without one, no environment job asks for an OIDC token", () => {
+    const plain = (parseYAML(generateGithubPipeline(ESTATE, { env: "staging", prLoop: { prEnvironment: true } }).yaml) as { jobs: Record<string, Job> }).jobs;
+    for (const name of ["env-up", "env-down", "env-sweep"]) expect(plain[name]!.permissions["id-token"]).toBeUndefined();
+  });
+});

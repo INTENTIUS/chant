@@ -37,7 +37,8 @@ export const SECRET_NAME = /TOKEN|SECRET|KEY|PASSWORD/i;
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-const JOBS: readonly CiJobName[] = ["plan", "apply"];
+/** The jobs a secrets file can give a list of its own: the pull-request jobs, and a pull request environment's (#4330). */
+const JOBS: readonly CiJobName[] = ["plan", "apply", "env-up", "env-post", "env-down", "env-sweep"];
 
 /** The secrets file, read. */
 export interface CiSecrets {
@@ -176,9 +177,9 @@ export function parseCiSecrets(text: string, file: string): Omit<CiSecrets, "fil
   if (structured) {
     for (const key of Object.keys(doc)) if (key !== "secrets" && key !== "jobs") throw new CiSecretsError(`${file} has ${JSON.stringify(key)} beside secrets and jobs`);
     const given = doc.jobs ?? {};
-    if (given === null || typeof given !== "object" || Array.isArray(given)) throw new CiSecretsError(`${file}: jobs must map plan and apply to lists of secret names`);
+    if (given === null || typeof given !== "object" || Array.isArray(given)) throw new CiSecretsError(`${file}: jobs must map ${JOBS.join(", ")} to lists of secret names`);
     for (const [job, names] of Object.entries(given as Record<string, unknown>)) {
-      if (!(JOBS as readonly string[]).includes(job)) throw new CiSecretsError(`${file}: jobs names ${JSON.stringify(job)}, and the jobs are plan and apply`);
+      if (!(JOBS as readonly string[]).includes(job)) throw new CiSecretsError(`${file}: jobs names ${JSON.stringify(job)}, and the jobs are ${JOBS.join(", ")}`);
       if (!Array.isArray(names) || names.some((n) => typeof n !== "string")) throw new CiSecretsError(`${file}: jobs.${job} must be a list of secret names`);
       for (const n of names as string[]) if (!Object.prototype.hasOwnProperty.call(values, n)) throw new CiSecretsError(`${file}: jobs.${job} names ${n}, which the file does not set`);
       jobs[job as CiJobName] = [...(names as string[])];
