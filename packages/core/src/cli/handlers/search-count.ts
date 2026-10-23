@@ -1,4 +1,9 @@
 import type { GraphIR, IRNode } from "../../graph-ir";
+import { terraformType } from "../../graph-effective";
+
+// The one reading of a terraform node's type lives with the folds that also
+// select on it, so `--count-by kind` and `kind:` cannot disagree (#4366).
+export { terraformType };
 
 /**
  * `chant search --count-by <kind|module|attr:<name>>` (#4360): grouped counts
@@ -30,33 +35,6 @@ export function parseCountBy(raw: string): CountBy | { error: string; hint: stri
     error: `--count-by "${raw}" is not a grouping`,
     hint: "group by one of: --count-by kind, --count-by module, --count-by attr:<name>",
   };
-}
-
-/**
- * The Terraform type of a block, read from its address: `aws_instance` for
- * `aws_instance.web`, `data.aws_ami` for `data.aws_ami.ubuntu`. Undefined for
- * anything that is not a Terraform resource or data block.
- *
- * Every Terraform resource is `Terraform::Resource` in chant's IR, so grouping
- * a Terraform root by that kind puts the whole estate in one group. The
- * resource type is what `terraform state list` and the provider docs call the
- * type, so that is what `--count-by kind` groups by. A data source keeps its
- * `data.` prefix: `data.aws_ami` reads an AMI, it does not manage one.
- */
-export function terraformType(n: IRNode): string | undefined {
-  if (n.lexicon !== "terraform") return undefined;
-  if (n.kind !== "Terraform::Resource" && n.kind !== "Terraform::Data") return undefined;
-  const address = terraformAddress(n);
-  const parts = address.split(".");
-  if (n.kind === "Terraform::Data") return parts[0] === "data" && parts[1] ? `data.${parts[1]}` : undefined;
-  return parts[0] || undefined;
-}
-
-/** A Terraform node's own address (`aws_s3_bucket.assets`), from its attrs or, failing that, its id. */
-function terraformAddress(n: IRNode): string {
-  const attrs = (n.attrs ?? {}) as Record<string, unknown>;
-  if (typeof attrs.address === "string") return attrs.address;
-  return n.id.slice(n.id.lastIndexOf("/") + 1).replace(/~\d+$/, "");
 }
 
 /** A Terraform node's root name, from its attrs or the first segment of its id. */

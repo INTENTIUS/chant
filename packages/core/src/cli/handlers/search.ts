@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { build, mergeBuildRootEntities } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs, type GraphIR, type IRNode, type IREdge } from "../../graph-ir";
 import { buildDeclaredPerStack } from "../../graph-declared";
-import { enrichEffectiveTopology, terraformResourceType } from "../../graph-effective";
+import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
@@ -28,7 +28,8 @@ import type { CommandContext } from "../registry";
  *
  * Query grammar (space-separated terms, all must match — AND):
  *   bare word            case-insensitive substring over id, kind, and attrs
- *   kind:<substr>        node kind contains <substr> (e.g. kind:EC2::Instance)
+ *   kind:<substr>        node kind contains <substr> (e.g. kind:EC2::Instance);
+ *                        on a terraform resource, its type (kind:aws_instance, kind:aws_iam_)
  *   tag:<key>=<val>      a Tags entry with Key=key and Value containing val
  *   attr:<name>=<val>    attribute <name> equals/contains <val>
  *   ->kind:X / ->attr:.. this node has an edge TO a node matching the right side
@@ -866,8 +867,10 @@ function explainData(
   nearMisses: { id: string; term?: Term }[];
   moreExcluded: number;
 } {
-  const kinds = new Set(matches.map((n) => n.kind).filter((k): k is string => !!k));
-  const universe = kinds.size > 0 ? ir.nodes.filter((n) => n.kind && kinds.has(n.kind)) : ir.nodes;
+  // Counted against a terraform block's type, not `Terraform::Resource` (#4366):
+  // "2 of 2 aws_instance", not "2 of 185 Terraform::Resource".
+  const kinds = new Set(matches.map(displayKind).filter((k): k is string => !!k));
+  const universe = kinds.size > 0 ? ir.nodes.filter((n) => kinds.has(displayKind(n) ?? "")) : ir.nodes;
   const matched = new Set(matches.map((n) => n.id));
   const excluded = universe.filter((n) => !matched.has(n.id));
   const evidence: { id: string; attr: string; via: string }[] = [];
@@ -898,7 +901,7 @@ function explainData(
 function availableAttrs(terms: Term[], ir: GraphIR): void {
   const kindTerm = terms.find((t) => t.kind === "kind");
   if (!kindTerm) return;
-  const of = ir.nodes.filter((n) => n.kind?.includes(kindTerm.a));
+  const of = ir.nodes.filter((n) => matchTerm(n, { ...kindTerm, negated: false }));
   if (of.length === 0) return;
   const names = new Set<string>();
   for (const n of of) for (const k of Object.keys((n.attrs as Record<string, unknown>) ?? {})) names.add(k);
@@ -1096,6 +1099,12 @@ export interface Term {
    * which case the substring rule applies unchanged.
    */
   kinds?: Set<string>;
+  /**
+   * For kind terms (#4366): the terraform resource types this term means,
+   * resolved against the graph. A terraform resource matches the term when its
+   * type is in here, whatever `kinds` says.
+   */
+  tfTypes?: Set<string>;
 }
 
 /**
@@ -1119,12 +1128,25 @@ export interface Term {
  * Substring is kept as the fallback, so `kind:Gateway` still finds both
  * `InternetGateway` and `VPCGatewayAttachment` — a genuine substring search
  * that no segment rule would serve. Most specific wins; nothing else changes.
+ *
+ * A terraform resource is `Terraform::Resource` whatever it is, so the term is
+ * also read against each resource's type (#4366), with the same boundary rule
+ * on `_`: `kind:aws_iam_role` means that type exactly and never
+ * `aws_iam_role_policy`, and a term ending in `_` (`kind:aws_iam_`) or a bare
+ * provider name (`kind:aws`) means every type it begins. A data source's type
+ * keeps its `data.` prefix (`kind:data.aws_ami`), the same type `--count-by kind`
+ * groups it under, so `kind:aws_ami` is not a data source. A term that names a
+ * type turns off the substring fallback for the IR kind, so `kind:aws_instance`
+ * is the instances and nothing found by accident.
  */
 export function resolveKindTerms(terms: Term[], nodes: IRNode[]): void {
   const present = [...new Set(nodes.map((n) => n.kind).filter((k): k is string => !!k))];
+  const tfPresent = [...new Set(nodes.map(terraformType).filter((k): k is string => !!k))];
   const walk = (t: Term): void => {
     if (t.sub) walk(t.sub);
     if (t.kind !== "kind") return;
+    const types = resolveTerraformTypes(t.a, tfPresent);
+    if (types.length > 0) t.tfTypes = new Set(types);
     const want = t.a.toLowerCase().split("::").filter(Boolean);
     if (want.length === 0) return;
     const onBoundary = present.filter((k) => {
@@ -1137,6 +1159,21 @@ export function resolveKindTerms(terms: Term[], nodes: IRNode[]): void {
     if (onBoundary.length > 0) t.kinds = new Set(onBoundary);
   };
   terms.forEach(walk);
+}
+
+/** The terraform resource types a `kind:` term names, by the rule in {@link resolveKindTerms}. */
+function resolveTerraformTypes(term: string, present: string[]): string[] {
+  const want = term.toLowerCase();
+  if (want.length === 0 || want.includes("::")) return [];
+  const exact = present.filter((p) => p === want);
+  if (exact.length > 0) return exact;
+  const prefix = want.endsWith("_") || want.endsWith(".") ? want : /[_.]/.test(want) ? undefined : `${want}_`;
+  return prefix ? present.filter((p) => p.startsWith(prefix)) : [];
+}
+
+/** What a row and `--explain` call a node's kind: a terraform block's type (#4366), else its IR kind. Same as `--count-by kind`. */
+function displayKind(n: IRNode): string | undefined {
+  return terraformType(n) ?? n.kind;
 }
 
 function parseLeaf(tok: string): Term {
@@ -1321,8 +1358,11 @@ function matchTerm(n: IRNode, t: Term, ir?: GraphIR, byId?: Map<string, IRNode>)
   }
   if (t.kind === "kind") {
     // Resolved kinds when the term lined up with `::` boundaries; the
-    // documented substring otherwise.
+    // documented substring otherwise. A term that named a terraform type
+    // (#4366) matches resources of that type as well, and drops the substring.
+    if (t.tfTypes?.has(terraformType(n) ?? "")) return true;
     if (t.kinds) return t.kinds.has(n.kind ?? "");
+    if (t.tfTypes) return false;
     return (n.kind ?? "").toLowerCase().includes(t.a.toLowerCase());
   }
   if (t.kind === "attr") {
@@ -1483,7 +1523,8 @@ function formatRow(n: IRNode, show: string[]): string {
   const attrs = (n.attrs ?? {}) as Record<string, unknown>;
   // Display the bare logical id, not the `${stack}::` qualification (#1162).
   const displayId = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-  const parts: string[] = [displayId, n.kind ?? ""];
+  // A terraform resource shows its type (#4366); its IR kind is `Terraform::Resource` for all of them.
+  const parts: string[] = [displayId, displayKind(n) ?? ""];
   // Prefer the node-level live physicalId (set by the overlay), then attrs;
   // skip source-mode AttrRef placeholders (objects).
   const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];

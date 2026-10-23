@@ -262,7 +262,7 @@ describe("search --live over build-root entities (#4358)", () => {
       },
     ]);
     const exit = await runSearch({ args: makeArgs({ path: "attr:planAction=replace" }), plugins: [], serializers: [] });
-    expect(out.join("\n")).toContain("app/terraform_data.replaced  Terraform::Resource  id-1");
+    expect(out.join("\n")).toContain("app/terraform_data.replaced  terraform_data  id-1");
     expect(exit).toBe(0);
   });
 });

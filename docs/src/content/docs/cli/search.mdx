@@ -42,7 +42,7 @@ together.
 | Term | Matches |
 |------|---------|
 | `word` | case-insensitive substring over id, kind, and attribute values |
-| `kind:<substr>` | node kind contains `<substr>` (e.g. `kind:EC2::Instance`) |
+| `kind:<substr>` | node kind contains `<substr>` (e.g. `kind:EC2::Instance`); on a Terraform resource, its type (`kind:aws_instance`, see below) |
 | `attr:<name>` | attribute `<name>` is present |
 | `attr:<name>=<val>` | attribute `<name>` equals/contains `<val>` |
 | `tag:<key>=<val>` | a `Tags` entry with `Key=<key>` and `Value` containing `<val>` |
@@ -55,6 +55,33 @@ together.
 | `->[to=<attr>]X`, `<-[to=<attr>]X` | only edges that read the producer attribute (`toAttr`) `<attr>` |
 | `->[via=<attr>]`, `<-*[to=<attr>]` | a qualified edge may omit the target: any node at the far end |
 | `!<term>` | the node does **not** satisfy the term |
+
+### `kind:` on a Terraform resource
+
+Every Terraform `resource` block is `Terraform::Resource` in the graph, and
+carries its two labels as `attrs.type` and `attrs.name`. `kind:` reads the
+type as well as the kind, with the same boundary rule `kind:EC2::VPC` follows
+on `::`, applied to `_`:
+
+- `kind:aws_instance` is that type exactly. `kind:aws_iam_role` is the roles
+  and never `aws_iam_role_policy` or `aws_iam_role_policy_attachment`, even on
+  a root that has no `aws_iam_role` at all.
+- A term ending in `_` is a prefix: `kind:aws_iam_` is every IAM type.
+  A bare provider name is the same prefix, so `kind:aws` is every `aws_` type.
+- `kind:Terraform::Resource` (or `kind:Resource`) is still every resource.
+- A `data` block's type keeps its prefix: `kind:data.aws_ami` is the AMI
+  lookups, and `kind:aws_ami` matches no data source.
+
+A result row shows the type where a CloudFormation row shows its kind, and
+`--explain` counts against it ("2 of 2 aws_instance matched"). These are the
+same types `--count-by kind` groups by, so `kind:<group>` returns exactly the
+rows counted in that group. `attr:type=`
+is a substring test like any other `attr:`, so prefer `kind:` for a type.
+
+```bash
+chant search "kind:aws_iam_role"
+chant search "kind:aws_iam_ !kind:aws_iam_role"   # IAM types other than roles
+```
 
 The edge operators make the search **edge-aware**: a traversal becomes one
 term instead of a hand-join across results.
@@ -119,11 +146,13 @@ provenance line says so:
 
 ```text
 $ chant search "attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0" --explain
-net/aws_instance.web  Terraform::Resource
+net/aws_instance.web  aws_instance
 — declared only · no observation · physical ids unavailable · effectiveIngress, internetFacing derived from declared references
-— 1 of 24 Terraform::Resource matched  (query: attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0)
+— 1 of 3 aws_instance matched  (query: attr:internetFacing=true attr:effectiveIngress=tcp:22:0.0.0.0/0)
   ✓ net/aws_instance.web internetFacing via subnet route aws_subnet.public_a -> aws_route_table.public_inline -> aws_internet_gateway.main (inline route)
   ✓ net/aws_instance.web effectiveIngress via security groups aws_launch_template.web -> aws_security_group.web
+  · excluded net/aws_instance.batch — fails attr:effectiveIngress=tcp:22:0.0.0.0/0
+  · excluded net/aws_instance.db — fails attr:internetFacing=true
 ```
 
 ## Flags
