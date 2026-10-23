@@ -549,7 +549,7 @@ describe("runGraph", () => {
     // sets `graph.lint: "report"`, and a lint error is a finding about the
     // estate, carried on meta.lint, not a reason to draw nothing.
     describe('graph.lint: "report" (behold#919)', () => {
-      const finding = { file: "/abs/estate/db.tf", line: 4, column: 3, ruleId: "TF033", severity: "error", message: "storage_encrypted is false" };
+      const finding = { file: "/abs/estate/db.tf", line: 4, column: 3, ruleId: "TF033", severity: "error", message: "[estate/aws_db_instance.orders] storage_encrypted is false", entity: "estate/aws_db_instance.orders" };
       const warning = { file: "/abs/estate/net.tf", line: 9, column: 1, ruleId: "TF010", severity: "warning", message: "a warning" };
       const reportMode = (): void => {
         loadChantConfigUpwardMock.mockResolvedValue({ config: { graph: { lint: "report" } } });
@@ -566,7 +566,7 @@ describe("runGraph", () => {
           errors: 1,
           warnings: 1,
           findings: [
-            { ruleId: "TF033", severity: "error", message: "storage_encrypted is false", file: "/abs/estate/db.tf", line: 4, column: 3 },
+            { ruleId: "TF033", severity: "error", message: "[estate/aws_db_instance.orders] storage_encrypted is false", file: "/abs/estate/db.tf", line: 4, column: 3, entity: "estate/aws_db_instance.orders" },
             { ruleId: "TF010", severity: "warning", message: "a warning", file: "/abs/estate/net.tf", line: 9, column: 1 },
           ],
         });

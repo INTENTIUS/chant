@@ -45,6 +45,12 @@ export interface LintDiagnostic {
   severity: Severity;
   /** Human-readable message */
   message: string;
+  /**
+   * The entity a post-synth check reported against, when it named one: the
+   * same name the message leads with in brackets, and the graph node's id
+   * (behold#919). Absent for a source-file rule.
+   */
+  entity?: string;
   /** Optional fix that can be applied */
   fix?: LintFix;
 }

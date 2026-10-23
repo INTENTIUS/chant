@@ -86,9 +86,10 @@ describe("terraform and choudoufu members through the terraform lexicon (#2874)"
       expect(g.members.map((m) => [m.name, m.status, m.reason?.code ?? null])).toEqual([["db", "composed", null]]);
       expect(failed).toBe(false);
       expect(g.nodes.map((n) => n.id)).toContain("db/db/aws_db_instance.orders");
-      const lint = (g.members[0] as { meta?: { lint?: { errors: number; findings: { ruleId: string; severity: string }[] } } }).meta?.lint;
+      const lint = (g.members[0] as { meta?: { lint?: { errors: number; findings: { ruleId: string; severity: string; entity?: string }[] } } }).meta?.lint;
       expect(lint?.errors).toBeGreaterThanOrEqual(1);
-      expect(lint?.findings).toContainEqual(expect.objectContaining({ ruleId: "TF033", severity: "error" }));
+      // The finding names its entity, the id the member IR gives the node (before composition prefixes it).
+      expect(lint?.findings).toContainEqual(expect.objectContaining({ ruleId: "TF033", severity: "error", entity: "db/aws_db_instance.orders" }));
     },
     TIMEOUT,
   );

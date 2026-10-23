@@ -526,6 +526,8 @@ export interface GraphLintFinding {
   file: string;
   line: number;
   column: number;
+  /** The entity a post-synth check named, which is the graph node's id. Absent for a source-file rule. */
+  entity?: string;
 }
 
 /**
@@ -559,6 +561,7 @@ export function graphLintReport(lint: LintResult, projectPath: string): GraphLin
     file: rel(d.file),
     line: d.line,
     column: d.column,
+    ...(d.entity ? { entity: d.entity } : {}),
   }));
   return {
     errors: findings.filter((f) => f.severity === "error").length,
