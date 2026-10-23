@@ -128,6 +128,16 @@ export async function parseChantCommandLine(text: string): Promise<CommandLinePa
   try {
     args = parseArgs(argv);
   } catch (err) {
+    // A flag problem is only worth reporting for a real chant verb. For
+    // anything else (`rm -rf /`), core's unknown-flag refusal (#4369) would
+    // mask the reason that matters, which is that the prompt is not chant.
+    if (!isChantVerb(parseArgs, resolveCommand, commandRegistry, argv[0])) {
+      return {
+        ok: false,
+        message: `"${argv[0]}" is not a chant command`,
+        hint: usageHint(),
+      };
+    }
     return {
       ok: false,
       message: err instanceof Error ? err.message : String(err),
@@ -157,6 +167,20 @@ export async function parseChantCommandLine(text: string): Promise<CommandLinePa
     ok: true,
     command: { kind: "verb", name: match.def.name, def: match.def, compound: match.compound, args, argv },
   };
+}
+
+/** Whether the leading word alone resolves to a registered chant verb. */
+function isChantVerb(
+  parseArgs: (argv: string[]) => ParsedArgs,
+  resolveCommand: (args: ParsedArgs, registry: CommandDef[]) => unknown,
+  registry: CommandDef[],
+  word: string,
+): boolean {
+  try {
+    return resolveCommand(parseArgs([word]), registry) !== null;
+  } catch {
+    return false;
+  }
 }
 
 function usageHint(): string {
