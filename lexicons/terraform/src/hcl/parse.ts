@@ -25,6 +25,7 @@ import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable"
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
 import type { TerraformDeleteMode } from "../config";
+import { redactSensitiveBody, redactSensitiveSource } from "./redact";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
 
 /** A parsed HCL block body, as `@cdktn/hcl2json` encodes it. */
@@ -409,6 +410,9 @@ export async function blocksToEntities(
   const entities = new Map<string, Declarable>();
   const prefix = callers.length > 0 ? `${root}/${callers.join("/")}` : root;
 
+  /** Each file's text is carried by every entity of the file: redact it once. */
+  const redacted = new Map<string, string>();
+
   const add = (
     entityType: string,
     address: string,
@@ -418,10 +422,13 @@ export async function blocksToEntities(
     scanAddress: string = address,
   ): void => {
     const { line, suppressions } = directivesFor(scan, scanAddress);
+    let source = redacted.get(file.source);
+    if (source === undefined) redacted.set(file.source, (source = redactSensitiveSource(file.source)));
+    const plain = (typeof body === "object" && body !== null ? body : {}) as BlockBody;
     const entity = terraformEntity(
       entityType,
       address,
-      (typeof body === "object" && body !== null ? body : {}) as BlockBody,
+      entityType === VARIABLE_TYPE ? redactSensitiveBody(plain) : plain,
       file.name,
       root,
       {
@@ -430,7 +437,7 @@ export async function blocksToEntities(
         ...(modeOptions?.configEstate !== undefined ? { configEstate: modeOptions.configEstate } : {}),
         ...(callers.length > 0 ? { callers } : {}),
       },
-      file.source,
+      source,
       line,
       suppressions,
     );
