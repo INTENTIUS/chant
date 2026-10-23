@@ -1,0 +1,150 @@
+{
+  "lexicon": "aws",
+  "types": "kind",
+  "refs": "cloudformation",
+  "labels": {
+    "AWS::EC2::VPC": "Vpc",
+    "AWS::EC2::NetworkInterface": "NetworkInterface",
+    "AWS::EC2::Volume": "Volume",
+    "AWS::Lambda::Function": "Function",
+    "AWS::Lambda::Url": "FunctionUrl",
+    "AWS::IAM::InstanceProfile": "InstanceProfile",
+    "AWS::IAM::Role": "Role",
+    "AWS::IAM::Policy": "Policy",
+    "AWS::IAM::ManagedPolicy": "Policy",
+    "AWS::S3::BucketPolicy": "ResourcePolicy",
+    "AWS::SQS::QueuePolicy": "ResourcePolicy",
+    "AWS::S3::Bucket": "Bucket",
+    "AWS::DynamoDB::Table": "Table",
+    "AWS::DynamoDB::GlobalTable": "Table",
+    "AWS::RDS::DBInstance": "Database",
+    "AWS::RDS::DBCluster": "Database",
+    "AWS::SecretsManager::Secret": "Secret",
+    "AWS::SQS::Queue": "Queue",
+    "AWS::EFS::FileSystem": "FileSystem",
+    "AWS::SSM::Parameter": "Parameter",
+    "AWS::ECS::Service": "Service",
+    "AWS::ECS::TaskDefinition": "TaskDefinition",
+    "AWS::RDS::DBSubnetGroup": "SubnetGroup",
+    "AWS::EC2::NatGateway": "NatGateway",
+    "AWS::ElasticLoadBalancingV2::LoadBalancer": "LoadBalancer"
+  },
+  "edges": {
+    "Instance": {
+      "IamInstanceProfile": "profile",
+      "VpcId": "vpc"
+    },
+    "LaunchTemplate": {
+      "LaunchTemplateData": {
+        "InstanceProfile": "profile"
+      }
+    },
+    "Subnet": {
+      "VpcId": "vpc"
+    },
+    "SecurityGroup": {
+      "VpcId": "vpc"
+    },
+    "NetworkInterface": {
+      "SubnetId": "subnet",
+      "GroupSet": "sg"
+    },
+    "Database": {
+      "VPCSecurityGroups": "sg",
+      "VpcSecurityGroupIds": "sg",
+      "DBSubnetGroupName": "subnetGroup"
+    },
+    "Function": {
+      "Role": "role",
+      "VpcConfig": {
+        "SecurityGroup": "sg",
+        "Subnet": "subnet"
+      }
+    },
+    "FunctionUrl": {
+      "TargetFunctionArn": "function"
+    },
+    "InstanceProfile": {
+      "Roles": "role"
+    },
+    "Policy": {
+      "Roles": "attachedTo"
+    },
+    "Role": {
+      "ManagedPolicyArns": "-attachedTo"
+    },
+    "ResourcePolicy": {
+      "Bucket": "policyOf",
+      "Queues": "policyOf"
+    },
+    "Service": {
+      "TaskDefinition": "task",
+      "NetworkConfiguration": {
+        "SecurityGroup": "sg",
+        "Subnet": "subnet"
+      }
+    },
+    "TaskDefinition": {
+      "TaskRoleArn": "role"
+    },
+    "SubnetGroup": {
+      "SubnetIds": "subnet"
+    },
+    "NatGateway": {
+      "SubnetId": "subnet"
+    },
+    "LoadBalancer": {
+      "Subnets": "subnet",
+      "SecurityGroups": "sg"
+    }
+  },
+  "attrs": {
+    "FunctionUrl": {
+      "authType": "AuthType"
+    },
+    "Role": {
+      "name": "RoleName"
+    },
+    "Bucket": {
+      "name": "BucketName",
+      "acl": "AccessControl",
+      "blockPublicPolicy": "PublicAccessBlockConfiguration.BlockPublicPolicy"
+    },
+    "Table": {
+      "name": "TableName"
+    },
+    "Database": {
+      "encrypted": "StorageEncrypted"
+    },
+    "FileSystem": {
+      "encrypted": "Encrypted"
+    },
+    "Volume": {
+      "encrypted": "Encrypted"
+    },
+    "Parameter": {
+      "paramType": "Type"
+    },
+    "Vpc": {
+      "isDefault": "IsDefault"
+    }
+  },
+  "documents": {
+    "Role": {
+      "AssumeRolePolicyDocument": "trust",
+      "Policies[].PolicyDocument": "permission"
+    },
+    "Policy": {
+      "PolicyDocument": "permission"
+    },
+    "ResourcePolicy": {
+      "PolicyDocument": "resource"
+    }
+  },
+  "tags": [
+    "Tags"
+  ],
+  "classificationTags": [
+    "data-classification"
+  ]
+}

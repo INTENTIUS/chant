@@ -1,3 +1,4 @@
+import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
@@ -2081,6 +2082,15 @@ export interface LexiconPlugin {
    * method. Opt-in.
    */
   referenceCatalog?: ReferenceCatalog;
+
+  /**
+   * This lexicon's capability pack (#4375): its mapping onto the
+   * lexicon-neutral view the capability rules read (labels, edge names,
+   * attributes, policy documents, inline blocks, link resources), as data,
+   * plus an adapter for what the mapping can't say as data. `chant search`'s
+   * `cap:` terms and `--capabilities` read it. Opt-in.
+   */
+  capabilityPack?: CapabilityPack;
 
   /**
    * Enrich live IR node attributes for edge reconstruction (#784). Returns

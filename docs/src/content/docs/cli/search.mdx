@@ -63,6 +63,8 @@ together.
 | `->[via=<attr>]X`, `<-[via=<attr>]X` | only edges whose consumer attribute (`viaAttr`) is `<attr>` |
 | `->[to=<attr>]X`, `<-[to=<attr>]X` | only edges that read the producer attribute (`toAttr`) `<attr>` |
 | `->[via=<attr>]`, `<-*[to=<attr>]` | a qualified edge may omit the target: any node at the far end |
+| `cap:<name>`, `cap:<name>(<args>)` | the node is in a [capability](#capabilities)'s set, or is the source of a capability edge |
+| `->[cap=<name>]X`, `<-[cap=<name>]X` | walk a capability edge instead of the graph's own edges (`->[cap=reaches]cap:stores-data`) |
 | `!<term>` | the node does **not** satisfy the term |
 
 A bare word does not search a Terraform node's `source` attribute. That
@@ -169,6 +171,62 @@ net/aws_instance.web  aws_instance
   ✓ net/aws_instance.web effectiveIngress via security groups aws_launch_template.web -> aws_security_group.web
   · excluded net/aws_instance.batch — fails attr:effectiveIngress=tcp:22:0.0.0.0/0
   · excluded net/aws_instance.db — fails attr:internetFacing=true
+```
+
+## Capabilities
+
+A capability is a named fact the graph can prove, such as "this instance can be
+reached on SSH from the internet" or "this role can reach that table". Each is
+a rule in a small path-pattern language over chant's graph, shipped as data
+([#4375](https://github.com/INTENTIUS/chant/issues/4375), ruled on
+[#4361](https://github.com/INTENTIUS/chant/issues/4361)). The
+[capabilities page](/chant/reference/capabilities/) lists them and describes
+the language.
+
+A capability with one variable is a set, and `cap:<name>` tests membership. A
+capability with two is an edge, and `->[cap=<name>]` walks it. Arguments go
+in parentheses: `cap:open-ingress(22)`, `->[cap=grants(s3:GetObject)]`. An
+argument left out drops the test that would read it.
+
+```bash
+# what can be reached on SSH from the internet
+chant search "cap:internet-reachable(22)" --explain
+
+# if this role is compromised, what data can it reach
+chant search "cap:stores-data <-[cap=reaches]aws_iam_role.app_data"
+
+# internet-facing hosts that can read restricted data
+chant search "cap:exfiltrates" --explain
+```
+
+One rule file serves CloudFormation and Terraform's AWS provider: each
+lexicon maps its kinds onto the labels the rules name. `chant search
+--capabilities` prints the catalog. A capability the query names that doesn't
+exist, a set used as an edge, or arguments a capability doesn't take are
+refused with exit code 1, never answered with `(no matches)`.
+
+Every answer that names a capability says where its facts came from on the
+provenance line, and what the capability does not evaluate on a line of its
+own, with a count where the graph holds that thing:
+
+```text
+$ chant search "cap:stores-data <-[cap=reaches]aws_iam_role.app_data"
+findings/aws_dynamodb_table.sessions  aws_dynamodb_table
+— declared only · no observation · physical ids unavailable · stores-data, reaches derived from declared references
+— reaches does not evaluate: IAM Condition keys; Resource "*" (2 statements here); NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+```
+
+With `--explain`, each match prints the path that proved it, one hop per
+edge, in the hop format below. A hop that leaves the graph's own nodes names
+the node inside a resource it reached: a policy statement
+(`aws_iam_policy.app_data#policy[0].Statement[0]`) or an inline block
+(`aws_route_table.public#route[0]`). The sets a match relied on follow, each
+with its own path:
+
+```text
+  path findings/aws_instance.bastion cap:internet-reachable(22): (the node itself)
+    internet-facing findings/aws_instance.bastion: findings/aws_instance.bastion.subnet_id -> findings/aws_subnet.public.id; findings/aws_subnet.public.id <- findings/aws_route_table_association.public.subnet_id; ...
+    open-ingress findings/aws_instance.bastion: findings/aws_instance.bastion.launch_template -> findings/aws_launch_template.bastion.id; ...
 ```
 
 ## Flags
@@ -329,7 +387,9 @@ by its endpoints. Optional fields are left out when unknown.
 | `matches[].show` | with `--show`: each requested attribute the row carries, keyed by the name the graph spells it with; a name no row carries is left out |
 | `matches[].paths[].term` | the edge term, as the query would spell it |
 | `matches[].paths[].dir` | `out` for `->`, `in` for `<-` |
-| `matches[].paths[].hops[]` | `from`, `fromAttr` (the edge's `viaAttr`), `to`, `toAttr` |
+| `matches[].paths[].hops[]` | `from`, `fromAttr` (the edge's `viaAttr`), `to`, `toAttr`; on a capability's path also `edge`, the name the rules give it |
+| `matches[].paths[].because[]` | on a `cap:` term: `{ capability, id, hops }` for each set the match relied on |
+| `capabilities[]` | when the query names a capability: `{ name, source, notEvaluated }`, the observation its facts came from and what it leaves out |
 | `provenance` | the provenance line the text prints, without its leading dash |
 | `liveFailures` | present when a live read failed, one entry per lexicon (`<lexicon>: <cause>`); the command exits 1 as it does without `--json` |
 | `explain` | with `--explain` |

@@ -1,0 +1,148 @@
+# Capabilities over AWS resources (#4375, ruled on #4361).
+#
+# Rules read the lexicon-neutral view, not the IR. Labels (Instance, Role,
+# SecurityGroup) and edge names (subnet, sg, statement) come from each
+# lexicon's mapping, so this one file serves CloudFormation (the aws lexicon)
+# and Terraform's AWS provider (the terraform lexicon) alike.
+#
+# name(x) is a node set, tested with [@name]. name(a, b) is an edge, followed
+# with ->name. Parameters follow `;`. The language is in language.ts.
+#
+# `## key: value` lines describe the capability that follows them, for the
+# `capabilities` document: meaning, answers (one per line), depth, search,
+# not-evaluated, and a line per parameter (param-<name>). A rule with no
+# `## meaning` is a helper: other rules use it, the catalog doesn't list it.
+
+# ------------------------------------------------------------------ helpers
+
+in-sg(x, g)          := x ->{0,1}template ->sg g:SecurityGroup
+ingress-of(x, r)     := x ->in-sg ->ingress r:IngressRule
+world-open(r)        := r:IngressRule[cidrs in ("0.0.0.0/0", "::/0")]
+allows(r, x; action?) := r:Role <-{0,1}attachedTo ->statement :Statement[doc = "permission", effect = "Allow", actions ~ $action] ->resource x
+                      | r:Role <-principal :Statement[doc = "resource", effect = "Allow", actions ~ $action] ->resource x
+denies(r, x; action?) := r:Role <-{0,1}attachedTo ->statement :Statement[doc = "permission", effect = "Deny", actions ~ $action] ->resource x
+                      | r:Role <-principal :Statement[doc = "resource", effect = "Deny", actions ~ $action] ->resource x
+pivot(a, b)          := a ->(runs-as|can-assume|network) b
+
+# ------------------------------------------------------------------ network
+
+## meaning: its subnet routes 0.0.0.0/0 to an internet gateway
+## answers: which instances are in a public subnet
+## answers: what sits in a subnet that routes to the internet
+## depth: either
+## not-evaluated: a subnet on its VPC's main route table (no explicit association) is not followed
+internet-facing(c)   := c:Instance ->subnet :Subnet <-subnet :RouteTableAssociation ->table :RouteTable <-table :Route[dest in ("0.0.0.0/0", "::/0", null)] ->gateway :InternetGateway
+                      | c:Instance[internetFacing = true]
+
+## meaning: a security group reaching it, directly or through a launch template, admits 0.0.0.0/0 or ::/0
+## param-port: a port the open rule must cover, such as 22
+## param-proto: a protocol the open rule must allow, such as tcp; a rule for every protocol (-1) always does
+## answers: what admits SSH from anywhere
+## answers: which instances have a security group open to the world
+## depth: declared
+## not-evaluated: network ACLs; prefix lists
+open-ingress(c; port?, proto?) := c:Instance|Database|Function|Service ->ingress-of r:IngressRule[@world-open, from <= $port, to >= $port, proto in ($proto, "-1")]
+
+## meaning: internet-facing and open-ingress, or a Lambda function URL with no auth. Load balancers and API gateways come later
+## param-port: a port the open rule must cover, such as 22
+## answers: what in prod can be reached on SSH from the internet
+## answers: which instances are SSH-reachable from the internet
+## depth: either
+## not-evaluated: load balancers; API gateways; network ACLs
+internet-reachable(c; port?) := c[@internet-facing, @open-ingress($port)]
+                      | c:Function <-function :FunctionUrl[authType = "NONE"]
+
+## meaning: no member, attachment or route references it
+## answers: which security groups are unused
+## answers: which subnets have no instances or network interfaces
+## answers: which policies are attached to nothing
+## depth: either
+attached-to-nothing(x) := x:SecurityGroup !<-sg
+                      | x:Subnet !<-subnet
+                      | x:Policy !->attachedTo
+                      | x:InternetGateway !<-gateway
+
+## meaning: in the account's default VPC
+## answers: which instances run in the default VPC
+## answers: which instances are not in the default VPC (negate it: !cap:in-default-vpc)
+## depth: either
+in-default-vpc(x)    := x ->{1,2}(subnet|vpc) :Vpc[isDefault = true]
+
+## meaning: host to host through security-group-to-group ingress
+## answers: what can this instance reach on the network
+## depth: declared
+## not-evaluated: CIDR-to-CIDR reachability inside the VPC; network ACLs
+network(a, y)        := a:Instance|Database|Function|Service ->in-sg <-source :IngressRule <-ingress :SecurityGroup <-in-sg y:Instance|Database|Function|Service
+
+# ------------------------------------------------------------------ data
+
+## meaning: a bucket, table, database, queue, file system or secret
+## answers: where is our data
+## depth: declared
+stores-data(x)       := x:Bucket|Table|Database|Queue|FileSystem|Secret|Parameter
+
+## meaning: a secret, an SSM SecureString, or a data store tagged as restricted (the tag keys are the lexicon mapping's classificationTags)
+## answers: which stores hold secrets or restricted data
+## depth: declared
+holds-secret(x)      := x:Secret
+                      | x:Parameter[paramType = "SecureString"]
+                      | x:Bucket|Table|Database|Queue|FileSystem[classification in ("restricted", "secret", "confidential")]
+
+## meaning: encrypted at rest: a database, file system or volume whose encryption attribute is set; S3 buckets, DynamoDB tables, SQS queues and secrets always are
+## answers: which data stores are not encrypted at rest (negate it: !cap:encrypted-at-rest)
+## depth: declared
+## not-evaluated: account-level EBS encryption by default; which key (AWS-owned, AWS-managed or customer-managed)
+encrypted-at-rest(x) := x:Database|FileSystem|Volume[encrypted = true]
+                      | x:Bucket|Table|Queue|Secret
+
+## meaning: a bucket whose policy allows principal * and no public-access block stops it, or a public ACL
+## answers: what is public
+## answers: which buckets can anyone read
+## depth: declared
+## not-evaluated: IAM Condition keys; account-level public-access blocks
+publicly-readable(x) := x:Bucket[!blockPublicPolicy = true] !<-blocks :PublicAccessBlock[blockPublicPolicy = true] <-policyOf :ResourcePolicy ->statement :Statement[doc = "resource", effect = "Allow", principals in ("*")]
+                      | x:Bucket[acl in ("public-read", "public-read-write")]
+
+# ------------------------------------------------------------------ identity
+
+## meaning: compute to the role it runs as (instance profile, also through a launch template; Lambda role; ECS task role)
+## answers: what identity does this instance run as
+## depth: declared
+runs-as(c, r)        := c:Instance|Function|Service|TaskDefinition ->{0,1}template ->{0,1}(profile|task) ->role r:Role
+
+## meaning: role to role, where both the caller's permission and the target's trust allow sts:AssumeRole
+## answers: which roles can this role become
+## depth: declared
+## not-evaluated: IAM Condition keys; Resource "*"; a trust policy that names the account root
+can-assume(a, b)     := a:Role <-{0,1}attachedTo ->statement :Statement[doc = "permission", effect = "Allow", actions ~ "sts:AssumeRole"] ->resource b:Role ->statement :Statement[doc = "trust", actions ~ "sts:AssumeRole"] ->principal a
+
+## meaning: role to resource, by an identity policy or a resource policy, with no explicit Deny on the same pair
+## param-action: an IAM action the grant must cover, such as dynamodb:GetItem
+## answers: what can this role touch
+## answers: what can reach the customer database (read it in reverse: <-[cap=grants])
+## depth: declared
+## not-evaluated: IAM Condition keys; Resource "*"; NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+grants(r, x; action?) := r:Role ->allows($action) x !<-denies($action) r
+
+## meaning: can-assume any number of times, then grants
+## param-action: an IAM action the grant must cover, such as s3:GetObject
+## answers: if this role is compromised, what data can it reach
+## answers: what can reach the customer database (read it in reverse: <-[cap=reaches])
+## depth: declared
+## not-evaluated: IAM Condition keys; Resource "*"; NotAction and NotResource; permission boundaries and SCPs; AWS-managed policies, named by ARN only; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x
+
+# ------------------------------------------------------------------ paths
+
+## meaning: internet-reachable compute that runs as a role that reaches a store holding a secret
+## answers: is there an exfiltration path from the internet to our data
+## answers: which internet-facing hosts can read restricted data
+## depth: declared
+## not-evaluated: IAM Condition keys; Resource "*"; load balancers and API gateways; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+exfiltrates(c, x)    := c[@internet-reachable] ->runs-as ->reaches x[@holds-secret]
+
+## meaning: what a compromise of it reaches: runs-as, can-assume and network any number of times, then what each identity is granted
+## answers: what is the blast radius if this host is compromised
+## depth: declared
+## not-evaluated: IAM Condition keys; Resource "*"; CIDR-to-CIDR reachability; resources the graph holds but can't resolve, such as a CloudFormation Sub (chant#4373)
+blast(s, x)          := s ->{0,}pivot ->{0,1}grants x

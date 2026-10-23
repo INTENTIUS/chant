@@ -329,6 +329,7 @@ export default defineConfig({
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
 						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
 						{ label: 'Workspace Kinds', slug: 'reference/workspace-kinds' },
+						{ label: 'Capabilities', slug: 'reference/capabilities' },
 						{ label: 'Workspace Read Contract', slug: 'reference/workspace-read-contract' },
 						{ label: 'Workspace Writer Conformance', slug: 'reference/workspace-writer-conformance' },
 						{ label: 'Broker Protocol', slug: 'reference/broker-protocol' },
