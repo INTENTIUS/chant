@@ -2073,7 +2073,7 @@ Reference a resource or parameter in this template. A value from another lexicon
 
 **Tags are in the wrong property or the wrong shape for the resource type** (merge-worthy · guidance)
 
-Write the tags in the type's own tag property and shape: a [\{Key, Value}] list, or a map where the type takes one (UserPoolTags on AWS::Cognito::UserPool).
+Write the tags in the property the type uses and in the shape it takes, which is a list of Key and Value pairs for most types and a map for some, such as UserPoolTags on AWS::Cognito::UserPool.
 
 | | |
 |---|---|

@@ -91,7 +91,7 @@ export const awsAuditCatalog: Record<string, RuleMeta> = {
   WAW068: auditRule("WAW068", "report-only", "guidance", "VPN Gateway or Transit Gateway has only one attached VPN Connection", "Attach a second VPNConnection (ideally to a separate Customer Gateway) for redundancy.", { category: "best-practice" }),
   WAW069: auditRule("WAW069", "merge-worthy", "guidance", "Template references a condition it never declares", "Declare the condition in the Conditions section (new Condition(...)), or fix the referenced name.", { category: "correctness" }),
   WAW070: auditRule("WAW070", "merge-worthy", "guidance", "Ref or Fn::GetAtt names something the template doesn't declare", "Reference a resource or parameter in this template. A value from another lexicon's resource arrives as a parameter.", { category: "correctness" }),
-  WAW071: auditRule("WAW071", "merge-worthy", "guidance", "Tags are in the wrong property or the wrong shape for the resource type", "Write the tags in the type's own tag property and shape: a [{Key, Value}] list, or a map where the type takes one (UserPoolTags on AWS::Cognito::UserPool).", { category: "correctness" }),
+  WAW071: auditRule("WAW071", "merge-worthy", "guidance", "Tags are in the wrong property or the wrong shape for the resource type", "Write the tags in the property the type uses and in the shape it takes, which is a list of Key and Value pairs for most types and a map for some, such as UserPoolTags on AWS::Cognito::UserPool.", { category: "correctness" }),
 };
 
 // Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
