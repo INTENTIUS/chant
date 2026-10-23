@@ -126,6 +126,15 @@ describe("--count-by on a Terraform project", () => {
       { group: "network/(root)", count: 1 },
     ]);
     expect(body.matches).toBeUndefined();
+    // #4367: the provenance line rides beside the groups.
+    expect(body.provenance).toBe("declared only · no observation · physical ids unavailable");
+  });
+
+  it("with --json, a grouping it cannot read is a document with error (#4367)", async () => {
+    const { code, out } = await search({ countBy: "provider", json: true });
+    expect(code).toBe(1);
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0]).error.message).toBeTruthy();
   });
 
   it("refuses a grouping it cannot read", async () => {

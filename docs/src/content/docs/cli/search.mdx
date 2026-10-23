@@ -137,7 +137,7 @@ net/aws_instance.web  Terraform::Resource
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
 | `--count-by` | `string` | — | Print one count per group instead of one row per match: `kind`, `module` or `attr:<name>` (see [Grouped counts](#grouped-counts)) |
 | `--explain` | `boolean` | `false` | Print the match-universe footer, each match's path for edge terms, and near-miss exclusions |
-| `--json` | `boolean` | `false` | Print the matches and their paths as one JSON object instead of rows and footers (not with `--check-live`/`--check-snapshot`) |
+| `--json` | `boolean` | `false` | Print the whole answer (rows, paths, provenance, `--explain`, drift, failures) as one JSON object instead of rows and footers |
 | `--ambient` | `boolean` | `false` | Also report resources of a managed kind that exist without being declared or referenced |
 | `--check-live` | `boolean` | `false` | With `--at`: additionally read the estate live and diff the matched rows against the snapshot the answer came from |
 | `--check-snapshot` | `boolean` | `false` | With `--live`: additionally diff the matched rows against the most recently recorded snapshot |
@@ -172,7 +172,8 @@ holds. The provenance line still follows, so a grouped live answer says what
 backed it.
 
 With `--json`, the object carries the groups in the same order and the total
-in place of `matches`:
+in place of `matches`, plus `provenance`, `liveFailures` and `drift` as the
+[`--json`](#--json) document has them (`explain` is not carried here):
 
 ```json
 {
@@ -184,7 +185,8 @@ in place of `matches`:
     { "group": "app/module.cdn", "count": 1 },
     { "group": "network/(root)", "count": 1 }
   ],
-  "total": 4
+  "total": 4,
+  "provenance": "declared only · no observation · physical ids unavailable"
 }
 ```
 
@@ -222,45 +224,110 @@ expected answer.
 
 ## `--json`
 
-`--json` prints one object. Each match carries, for every edge term in the
-query that is not negated, the path it was reached by as a list of hops in walk
-order from the match. A hop keeps the edge's own direction (`from` holds the
-reference, `to` is what it names) whichever way the term walked, so a reader
-finds the edge in the graph by its endpoints. Ids are the graph's full ids.
-Optional fields are left out when unknown.
+`--json` prints one JSON object on stdout and nothing else there. Warnings and
+errors still go to stderr, and the exit code is the one the text output would
+give. It carries what the rows and footers say in prose: the full node id of
+every match, the provenance line, the `--explain` facts, the drift check and
+any live read that failed. [behold](https://github.com/INTENTIUS/behold) reads
+this document to draw the answer to a query.
+
+Each match carries, for every edge term in the query that is not negated, the
+path it was reached by as a list of hops in walk order from the match. A hop
+keeps the edge's own direction (`from` holds the reference, `to` is what it
+names) whichever way the term walked, so a reader finds the edge in the graph
+by its endpoints. Optional fields are left out when unknown.
 
 ```json
 {
   "query": "kind:aws_instance ->*aws_vpc.main",
-  "source": { "kind": "declared" },
+  "source": { "kind": "snapshot", "env": "prod", "commit": "a1b2c3d4e5f6", "timestamp": "2026-08-01T03:15:00.000Z" },
   "matches": [
     {
-      "id": "aws_instance.web",
+      "id": "east::aws_instance.web",
+      "displayId": "aws_instance.web",
       "kind": "aws_instance",
+      "physicalId": "i-0abc",
+      "show": { "instance_type": "t3.micro" },
       "paths": [
         {
           "term": "->*\"aws_vpc.main\"",
           "dir": "out",
           "hops": [
-            { "from": "aws_instance.web", "fromAttr": "subnet_id", "to": "aws_subnet.a", "toAttr": "id" },
-            { "from": "aws_subnet.a", "fromAttr": "vpc_id", "to": "aws_vpc.main", "toAttr": "id" }
+            { "from": "east::aws_instance.web", "fromAttr": "subnet_id", "to": "east::aws_subnet.a", "toAttr": "id" },
+            { "from": "east::aws_subnet.a", "fromAttr": "vpc_id", "to": "east::aws_vpc.main", "toAttr": "id" }
           ]
         }
       ]
     }
-  ]
+  ],
+  "provenance": "observed from snapshot a1b2c3d taken 2026-08-01T03:15:00.000Z · bound 1/1",
+  "explain": {
+    "universe": { "matched": 1, "of": 2, "kinds": ["aws_instance"] },
+    "evidence": [],
+    "nearMisses": [ { "id": "east::aws_instance.batch", "fails": "->*\"aws_vpc.main\"" } ],
+    "moreExcluded": 0
+  }
 }
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `source.kind` | `declared`, `live` or `snapshot`; a snapshot adds `commit` and `timestamp` |
+| `query` | the query as given |
+| `source.kind` | `declared`, `live` or `snapshot` |
+| `source.env` | the `--env` of a `live` or `snapshot` answer |
+| `source.commit`, `source.timestamp` | a snapshot's commit and when it was taken |
+| `matches[].id` | the graph's full node id, stack-qualified (`<stack>::<name>`) when the project has side-by-side stacks and the answer is live or from a snapshot; two stacks' resources of the same name have two ids |
+| `matches[].displayId` | the bare name the text row prints |
+| `matches[].kind` | the node's kind |
 | `matches[].physicalId` | the physical id, when known |
 | `matches[].unobserved` | why a live read could not cover this row (e.g. `read-failed`) |
+| `matches[].show` | with `--show`: each requested attribute the row carries, keyed by the name the graph spells it with; a name no row carries is left out |
 | `matches[].paths[].term` | the edge term, as the query would spell it |
 | `matches[].paths[].dir` | `out` for `->`, `in` for `<-` |
 | `matches[].paths[].hops[]` | `from`, `fromAttr` (the edge's `viaAttr`), `to`, `toAttr` |
-| `liveFailures` | present when a live read failed; the command exits 1 as it does without `--json` |
+| `provenance` | the provenance line the text prints, without its leading dash |
+| `liveFailures` | present when a live read failed, one entry per lexicon (`<lexicon>: <cause>`); the command exits 1 as it does without `--json` |
+| `explain` | with `--explain` |
+| `explain.universe` | `matched` of `of` nodes of the matched `kinds` (an empty `kinds` means every node, when nothing matched) |
+| `explain.evidence[]` | `{ id, attr, via }`: a derived fact a match qualified on, and what it was derived through |
+| `explain.nearMisses[]` | `{ id, fails }`: up to 8 excluded nodes of the universe, and the first query term each one fails, spelled as the query would spell it |
+| `explain.moreExcluded` | how many more were excluded than `nearMisses` lists |
+| `drift` | with `--check-live` or `--check-snapshot`; see below |
+| `error` | `{ message, hint? }`, see below |
+
+`drift` holds the query-scoped check. `against` is `live` or `snapshot`,
+`checked` is how many matched rows were checked, and `count` is how many
+drifted (the number the text summary prints). The lists are the
+[`lifecycle diff --live`](/chant/cli/lifecycle/) categories, scoped to the
+matched rows: `missing`, `orphan` and `disappeared` (ids), `drifted`
+(`{ id, path, old, new }`, one entry per changed attribute), `newlyObserved`
+(ids), `runtimeChildren` (`{ id, type, owner }`) and `unobserved`
+(`{ id, type?, reason, detail? }`). `depth` is `deep` when the snapshot was
+recorded deeper than the identity-level comparison made here. When
+`--check-snapshot` finds no recorded snapshot, `drift` is
+`{ "against": "snapshot", "unavailable": "<reason>" }` and nothing else.
+
+A query the grammar refuses, a missing or unknown `--env`, or any other
+refused invocation prints a document with the error instead of matches, and
+exits 1:
+
+```json
+{
+  "query": "effectiveIngress:tcp:22",
+  "error": {
+    "message": "\"effectiveIngress:tcp:22\" is not a term — there is no \"effectiveIngress:\" prefix",
+    "hint": "for an attribute, say attr:effectiveIngress=tcp:22; the prefixes are kind:, attr:, tag:, and ->/<- for edges"
+  }
+}
+```
+
+## Queries that start with `-`
+
+A query whose first term is an outgoing edge starts with `-`, and is read as
+the query: `chant search "->kind:S3::Bucket"`. Any token after a bare `--` is
+taken as written too, which is the spelling for a query that would otherwise
+look like a flag: `chant search -- "-x"`. An unknown short flag such as `-x`
+is refused with `Unknown flag`, like an unknown `--flag`.
 
 ## Live mode
 
@@ -349,4 +416,4 @@ chant search "kind:EC2::Instance" --env prod --live --check-snapshot --fail-on-d
 | Code | Meaning |
 |------|---------|
 | 0 | Query ran (including zero matches — prints `(no matches)`), including a scoped check that found drift without `--fail-on-drift` |
-| 1 | Missing query (without `--count-by`), a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |
+| 1 | Missing query (without `--count-by`), a query the grammar refuses, a `--count-by` value that is not a grouping, missing/unknown `--env`, build failure in `--live` mode, a `--live`/`--check-live` read that failed for at least one lexicon (rows are printed, marked unobserved), `--check-live`/`--check-snapshot` used without its required flag, `--fail-on-drift` used without either, or `--fail-on-drift` with drift found |

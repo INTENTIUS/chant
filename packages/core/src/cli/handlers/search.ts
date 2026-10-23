@@ -48,28 +48,31 @@ import type { CommandContext } from "../registry";
 export async function runSearch(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const query = (args.path ?? "").trim();
+  // A refusal (#4367): the error on stderr as always, and under --json the
+  // same message and hint as the one document on stdout, so a program reading
+  // stdout sees why there are no rows. Exit 1 either way.
+  const refuse = (error: { message: string; hint?: string }): number => {
+    console.error(formatError(error));
+    if (args.json) console.log(JSON.stringify(searchErrorJson(query, error)));
+    return 1;
+  };
   // `--count-by` groups the matched set (#4360). It takes any query, and no
   // query at all counts the whole graph: "which kinds does this estate hold".
   let countBy: CountBy | undefined;
   if (args.countBy !== undefined) {
     const parsed = parseCountBy(args.countBy);
-    if ("error" in parsed) {
-      console.error(formatError({ message: parsed.error, hint: parsed.hint }));
-      return 1;
-    }
+    if ("error" in parsed) return refuse({ message: parsed.error, hint: parsed.hint });
     countBy = parsed;
   }
   if (!query && !countBy) {
-    console.error(formatError({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" }));
-    return 1;
+    return refuse({ message: "chant search needs a query: chant search \"<terms>\" [--live --env <name>]" });
   }
   let terms: Term[];
   try {
     terms = parseQuery(query);
   } catch (err) {
     if (err instanceof QueryError) {
-      console.error(formatError({ message: err.message, hint: err.hint }));
-      return 1;
+      return refuse({ message: err.message, hint: err.hint });
     }
     throw err;
   }
@@ -79,32 +82,22 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // a live read, --check-snapshot checks a live answer against the recorded
   // snapshot — the direction each needs is the source it does NOT already have.
   if (args.checkLive && !args.at) {
-    console.error(formatError({
+    return refuse({
       message: "chant search --check-live needs --at <ref>",
       hint: "answer from a snapshot and check the matched rows against a live read: --at latest --check-live --env <name>",
-    }));
-    return 1;
+    });
   }
   if (args.checkSnapshot && !args.live) {
-    console.error(formatError({
+    return refuse({
       message: "chant search --check-snapshot needs --live",
       hint: "answer live and check the matched rows against the recorded snapshot: --live --check-snapshot --env <name>",
-    }));
-    return 1;
-  }
-  if (args.json && (args.checkLive || args.checkSnapshot)) {
-    console.error(formatError({
-      message: "chant search --json does not carry the --check-live/--check-snapshot report",
-      hint: "run the drift check without --json; --json prints the matched rows and their paths",
-    }));
-    return 1;
+    });
   }
   if (args.failOnDrift && !args.checkLive && !args.checkSnapshot) {
-    console.error(formatError({
+    return refuse({
       message: "chant search --fail-on-drift needs --check-live or --check-snapshot",
       hint: "it fails the check those flags run, so it is meaningless without one",
-    }));
-    return 1;
+    });
   }
 
   const projectPath = resolve(".");
@@ -132,28 +125,27 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   let declaredForDrift: GraphIR | undefined;
   let snapshotDepth: ObservationDepth | undefined;
   let driftFailure = false;
+  // Why --check-snapshot had nothing to check against, for --json (#4367).
+  let driftUnavailable: string | undefined;
   if (args.live || args.at) {
     const environment = args.env;
     if (!environment) {
       const flag = args.at ? "--at" : "--live";
-      console.error(formatError({ message: `chant search ${flag} needs an environment: ${flag} --env <name>` }));
-      return 1;
+      return refuse({ message: `chant search ${flag} needs an environment: ${flag} --env <name>` });
     }
     if (args.live && args.at) {
       // Two different observations of the same estate, and no rule for which
       // wins. Comparing them is a real question (#1268) but it is not this one.
-      console.error(formatError({
+      return refuse({
         message: "chant search takes --live or --at, not both",
         hint: "--live reads the estate now; --at answers from a recorded snapshot",
-      }));
-      return 1;
+      });
     }
     // Membership via matchesDeclaredEnvironment (#1221): handles `{ name,
     // endpoint }` entries (#1166) — a plain `.includes` never matched those —
     // and glob-pattern entries like `"pr-*"`.
     if (config.environments && config.environments.length > 0 && !matchesDeclaredEnvironment(config.environments, environment)) {
-      console.error(formatError({ message: `Unknown environment "${environment}"` }));
-      return 1;
+      return refuse({ message: `Unknown environment "${environment}"` });
     }
     const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
     // Build roots too (#4358), as `chant graph --live` does: a terraform
@@ -165,8 +157,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       config: config as unknown as Record<string, unknown>,
     });
     if (buildResult.errors.length > 0) {
-      console.error(formatError({ message: "Build failed — fix errors before searching live state" }));
-      return 1;
+      return refuse({ message: "Build failed — fix errors before searching live state" });
     }
     const observing = plugins.filter((p) => p.describeResources);
     ambientKinds = observing.flatMap((p) => p.ambientKinds?.() ?? []);
@@ -182,8 +173,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       const scoped = new Set(stacks.filter((st) => st.src).map((st) => st.name));
       const replay = await replaySnapshots(environment, String(args.at), scoped);
       if ("error" in replay) {
-        console.error(formatError({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) }));
-        return 1;
+        return refuse({ message: replay.error, ...(replay.hint ? { hint: replay.hint } : {}) });
       }
       observations = replay.observations;
       replayAmbient = {
@@ -232,6 +222,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         const checkReplay = await replaySnapshots(environment, "latest", scoped);
         if ("error" in checkReplay) {
           console.error(formatWarning({ message: `--check-snapshot: ${checkReplay.error}` }));
+          driftUnavailable = checkReplay.error;
         } else {
           checkObservations = checkReplay.observations;
           snapshotDepth = checkReplay.depth;
@@ -362,16 +353,60 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   resolveKindTerms(terms, ir.nodes);
   const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
   const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, nodeById)));
-  // Machine-readable rows and paths (#4359), for a caller that draws them.
+  // Query-scoped drift (#1268): the matched rows, and only the matched rows,
+  // checked against the observation the primary answer did NOT use. Scoping
+  // both sides of diffLive() to the matched ids is what keeps a query-scoped-
+  // out resource from reading as `missing` or `unobserved` — it was never
+  // asked about, which is a third thing from both.
+  let drift: LiveDiffResult | undefined;
+  if (checkObservations && declaredForDrift && primaryObservations) {
+    const declaredIds = new Set(declaredForDrift.nodes.map((n) => n.id));
+    const matchedIds = new Set(matches.map((n) => n.id));
+    const nowObservations = args.checkLive ? checkObservations : primaryObservations;
+    const thenObservations = args.checkLive ? primaryObservations : checkObservations;
+    drift = diffLive({
+      declared: new Set([...matchedIds].filter((id) => declaredIds.has(id))),
+      observedNow: pickResources(mergeResources(nowObservations), matchedIds),
+      observedThen: pickResources(mergeResources(thenObservations), matchedIds),
+      unobserved: pickResources(collectUnobserved(nowObservations), matchedIds),
+    });
+  }
+  const driftAgainst: "live" | "snapshot" = args.checkLive ? "live" : "snapshot";
+  // Machine-readable answer (#4359, #4367): the rows, their paths, and every
+  // footer the text prints as prose, as one document for a caller that draws
+  // it (behold#913). Same exit codes as the text path.
   if (args.json) {
+    const recorded =
+      source.kind === "live" && !matches.some((n) => n.physicalId) && args.env
+        ? (await hasSnapshot(String(args.env))) ? "yes" : undefined
+        : undefined;
+    const env = args.env && source.kind !== "declared" ? String(args.env) : undefined;
+    const provenanceText = provenanceLine(matches, source, recorded, liveFailures, derivedUsed(terms, matches, ir)).replace(/^— /, "");
+    const driftJson = drift
+      ? searchDriftJson(drift, matches.length, driftAgainst, snapshotDepth)
+      : driftUnavailable !== undefined
+        ? { against: driftAgainst, unavailable: driftUnavailable }
+        : undefined;
     // With --count-by (#4360) the object carries the groups and the total in
-    // place of the matches, the same answer the grouped lines give.
+    // place of the matches, the same answer the grouped lines give, with the
+    // provenance line beside it (#4367).
     const payload = countBy
-      ? countsJson(query, source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures)
-      : searchJson(query, source, matches, terms, ir, nodeById, liveFailures);
+      ? {
+          ...countsJson(query, env ? { ...source, env } : source, countGroups(matches, countBy, hasManyTerraformRoots(ir)), countBy, liveFailures),
+          provenance: provenanceText,
+          ...(driftJson ? { drift: driftJson } : {}),
+        }
+      : searchJson(query, source, matches, terms, ir, nodeById, liveFailures, {
+          ...(env ? { env } : {}),
+          show,
+          provenance: provenanceText,
+          ...(args.explain ? { explain: explainData(terms, matches, ir, nodeById) } : {}),
+          ...(driftJson ? { drift: driftJson } : {}),
+        });
     console.log(JSON.stringify(payload));
     for (const n of liveNotes) console.error(formatWarning({ message: n }));
-    return liveFailures.length > 0 ? 1 : 0;
+    if (liveFailures.length > 0) return 1;
+    return args.failOnDrift && drift && driftCountOf(drift) > 0 ? 1 : 0;
   }
   if (matches.length === 0) {
     console.log(countBy ? "(no matches) · 0 total" : "(no matches)");
@@ -398,27 +433,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Qualifies the provenance line, so it sits with it: one line per distinct
   // note for the whole run, not one per stack, and after the rows (#1265).
   for (const n of liveNotes) console.error(formatWarning({ message: n }));
-  // Query-scoped drift (#1268): the matched rows, and only the matched rows,
-  // checked against the observation the primary answer did NOT use. Scoping
-  // both sides of diffLive() to the matched ids is what keeps a query-scoped-
-  // out resource from reading as `missing` or `unobserved` — it was never
-  // asked about, which is a third thing from both.
-  if (checkObservations && declaredForDrift && primaryObservations) {
-    const declaredIds = new Set(declaredForDrift.nodes.map((n) => n.id));
-    const matchedIds = new Set(matches.map((n) => n.id));
-    const nowObservations = args.checkLive ? checkObservations : primaryObservations;
-    const thenObservations = args.checkLive ? primaryObservations : checkObservations;
-    const driftCount = renderDrift(
-      diffLive({
-        declared: new Set([...matchedIds].filter((id) => declaredIds.has(id))),
-        observedNow: pickResources(mergeResources(nowObservations), matchedIds),
-        observedThen: pickResources(mergeResources(thenObservations), matchedIds),
-        unobserved: pickResources(collectUnobserved(nowObservations), matchedIds),
-      }),
-      matches.length,
-      args.checkLive ? "live" : "snapshot",
-      snapshotDepth,
-    );
+  if (drift) {
+    const driftCount = renderDrift(drift, matches.length, driftAgainst, snapshotDepth);
     if (args.failOnDrift && driftCount > 0) driftFailure = true;
   }
   ambientHint(matches, ambientKinds, args.ambient === true, replayAmbient);
@@ -589,19 +605,18 @@ function ambientHint(
  * already done. That is a fact about the query, printed for every query, and it
  * encodes no expected answer.
  */
-function provenance(
+function provenanceLine(
   matches: IRNode[],
   source: AnswerSource,
   recorded?: string,
   liveFailures: string[] = [],
   derived: string[] = [],
-): void {
+): string {
   if (source.kind === "declared") {
     // A derived fact the query relied on (#4362) was folded from declared
     // references alone, so it describes the source, not the account.
     const from = derived.length > 0 ? ` · ${derived.join(", ")} derived from declared references` : "";
-    console.log(`— declared only · no observation · physical ids unavailable${from}`);
-    return;
+    return `— declared only · no observation · physical ids unavailable${from}`;
   }
   const bound = matches.filter((n) => n.physicalId).length;
   const what = source.kind === "live" ? "live read" : "snapshot";
@@ -613,8 +628,7 @@ function provenance(
     const rest = recorded
       ? "a snapshot of this environment is recorded — answer from it with --at latest"
       : "answered from the declared graph · physical ids unavailable";
-    console.log(`— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`);
-    return;
+    return `— live read failed (${lexicons}) · ${unobserved}/${matches.length} rows unobserved · ${rest}`;
   }
   if (bound === 0) {
     // The estate was asked for and nothing came back bound. Naming it is the
@@ -624,25 +638,33 @@ function provenance(
     // retrying `--live` — the tool knew the estate was unreachable AND that a
     // recording of it was on disk, and said only the first half.
     if (recorded) {
-      console.log(
-        `— ${what} returned no bound resources · a snapshot of this environment is recorded — answer from it with --at latest`,
-      );
-      return;
-    }
-    console.log(
-      `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`,
+      return (
+        `— ${what} returned no bound resources · a snapshot of this environment is recorded — answer from it with --at latest`
     );
-    return;
+    }
+    return (
+      `— ${what} returned no bound resources · answered from the declared graph · physical ids unavailable`
+    );
   }
   if (source.kind === "live") {
-    console.log(`— observed live · bound ${bound}/${matches.length}`);
-    return;
+    return `— observed live · bound ${bound}/${matches.length}`;
   }
   // Time is the whole risk of a recorded answer, so it leads. A caller can see
   // how old this is and decide, rather than discovering staleness later.
   const taken = source.timestamp ? ` taken ${source.timestamp}` : "";
   const at = source.commit ? ` ${source.commit.slice(0, 7)}` : "";
-  console.log(`— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`);
+  return `— observed from snapshot${at}${taken} · bound ${bound}/${matches.length}`;
+}
+
+/** Print {@link provenanceLine}: the text footer. */
+function provenance(
+  matches: IRNode[],
+  source: AnswerSource,
+  recorded?: string,
+  liveFailures: string[] = [],
+  derived: string[] = [],
+): void {
+  console.log(provenanceLine(matches, source, recorded, liveFailures, derived));
 }
 
 /** Union `LiveObservation.resources` across lexicons into one name-keyed map. */
@@ -686,13 +708,66 @@ function renderDrift(
   for (const name of diff.newlyObserved) console.log(`  · ${name} — newly observed since the recorded snapshot`);
   for (const r of diff.runtimeChildren) console.log(`  · ${r.name} (${r.type}) — runtime, owned by ${r.owner}`);
   for (const u of diff.unobserved) console.log(`  ? ${formatUnobserved(u.name, u)}`);
-  const driftCount = diff.missing.length + diff.orphan.length + diff.disappeared.length + diff.driftedSinceSnapshot.length;
+  const driftCount = driftCountOf(diff);
   const label = direction === "live" ? "a live read" : "the recorded snapshot";
   const depthNote = depth === "deep" ? " · snapshot recorded at deep depth, compared here at identity" : "";
   console.log(
     `— checked against ${label} · ${driftCount > 0 ? `${driftCount} of ${checked} matched drifted` : `no drift across ${checked} matched`}${depthNote}`,
   );
   return driftCount;
+}
+
+/** What counts as drift: the set `lifecycle diff` totals (#1268). */
+function driftCountOf(diff: LiveDiffResult): number {
+  return diff.missing.length + diff.orphan.length + diff.disappeared.length + diff.driftedSinceSnapshot.length;
+}
+
+/** The query-scoped drift check as `--json` carries it (#4367). See {@link SearchJson}. */
+export interface SearchDriftJson {
+  against: "live" | "snapshot";
+  /** Matched rows checked. */
+  checked?: number;
+  /** Rows that drifted: missing + orphan + disappeared + drifted, as the text summary counts. */
+  count?: number;
+  missing?: string[];
+  orphan?: string[];
+  disappeared?: string[];
+  drifted?: { id: string; path: string; old?: unknown; new?: unknown }[];
+  newlyObserved?: string[];
+  runtimeChildren?: { id: string; type: string; owner: string }[];
+  unobserved?: { id: string; type?: string; reason: string; detail?: string }[];
+  /** The snapshot was recorded deeper than the identity-level comparison made here. */
+  depth?: ObservationDepth;
+  /** --check-snapshot found no snapshot to check against: the reason, and no other field. */
+  unavailable?: string;
+}
+
+function searchDriftJson(
+  diff: LiveDiffResult,
+  checked: number,
+  against: "live" | "snapshot",
+  depth?: ObservationDepth,
+): SearchDriftJson {
+  return {
+    against,
+    checked,
+    count: driftCountOf(diff),
+    missing: diff.missing,
+    orphan: diff.orphan,
+    disappeared: diff.disappeared,
+    drifted: diff.driftedSinceSnapshot.flatMap((d) =>
+      d.changes.map((c) => ({ id: d.name, path: c.path, old: c.oldValue, new: c.newValue })),
+    ),
+    newlyObserved: diff.newlyObserved,
+    runtimeChildren: diff.runtimeChildren.map((r) => ({ id: r.name, type: r.type, owner: r.owner })),
+    unobserved: diff.unobserved.map((u) => ({
+      id: u.name,
+      ...(u.type ? { type: u.type } : {}),
+      reason: u.reason,
+      ...(u.detail ? { detail: u.detail } : {}),
+    })),
+    ...(depth ? { depth } : {}),
+  };
 }
 
 function formatValue(v: unknown): string {
@@ -753,35 +828,63 @@ function derivedUsed(terms: Term[], matches: IRNode[], ir: GraphIR): string[] {
  * any expected answer, so it stays a fair, question-agnostic capability.
  */
 function explain(terms: Term[], matches: IRNode[], ir: GraphIR, byId: Map<string, IRNode>, query: string): void {
-  const kinds = new Set(matches.map((n) => n.kind).filter((k): k is string => !!k));
-  const universe = kinds.size > 0 ? ir.nodes.filter((n) => n.kind && kinds.has(n.kind)) : ir.nodes;
-  const matched = new Set(matches.map((n) => n.id));
-  const excluded = universe.filter((n) => !matched.has(n.id));
-  const kindLabel = kinds.size > 0 ? [...kinds].join("/") : "nodes";
-  console.log(`— ${matches.length} of ${universe.length} ${kindLabel} matched  (query: ${query})`);
+  const data = explainData(terms, matches, ir, byId);
+  const kindLabel = data.universe.kinds.length > 0 ? data.universe.kinds.join("/") : "nodes";
+  console.log(`— ${data.universe.matched} of ${data.universe.of} ${kindLabel} matched  (query: ${query})`);
   // Inclusion evidence: for a derived fact a CLI can't easily re-verify
   // (internetFacing, resolved across the default VPC's routing), name WHY each
   // match qualifies, so the agent trusts the result instead of dropping it.
-  for (const t of terms) {
-    if (t.kind !== "attr") continue;
-    for (const n of matches) {
-      const via = (n.attrs as Record<string, unknown> | undefined)?.[`${t.a}Via`];
-      const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-      if (typeof via === "string") console.log(`  ✓ ${id} ${t.a} via ${via}`);
-    }
-  }
+  for (const e of data.evidence) console.log(`  ✓ ${bareId(e.id)} ${e.attr} via ${e.via}`);
   // The chain each match was reached by (#4359), so a caller can quote the
   // path instead of re-deriving it with one search per hop.
   for (const n of matches) {
     for (const p of matchPaths(n, terms, ir, byId)) console.log(`  path ${formatPath(p.hops, p.term.dir!)}`);
   }
-  const shown = excluded.slice(0, 8);
-  for (const n of shown) {
-    const failing = terms.find((t) => !matchTerm(n, t, ir, byId));
-    const id = n.id.includes("::") ? n.id.slice(n.id.lastIndexOf("::") + 2) : n.id;
-    console.log(`  · excluded ${id} — fails ${failing ? describeTerm(failing) : "(query)"}`);
+  for (const m of data.nearMisses) {
+    console.log(`  · excluded ${bareId(m.id)} — fails ${m.term ? describeTerm(m.term) : "(query)"}`);
   }
-  if (excluded.length > shown.length) console.log(`  · …and ${excluded.length - shown.length} more excluded`);
+  if (data.moreExcluded > 0) console.log(`  · …and ${data.moreExcluded} more excluded`);
+}
+
+/** How many near-misses `--explain` names before summarising the rest. */
+const NEAR_MISS_LIMIT = 8;
+
+/**
+ * The facts behind the `--explain` footer, shared by the text and `--json`
+ * (#4367). The universe is every node of the matched kinds (every node when
+ * nothing matched); a near-miss is a node of that universe the query
+ * excluded, with the first term it fails.
+ */
+function explainData(
+  terms: Term[],
+  matches: IRNode[],
+  ir: GraphIR,
+  byId: Map<string, IRNode>,
+): {
+  universe: { matched: number; of: number; kinds: string[] };
+  evidence: { id: string; attr: string; via: string }[];
+  nearMisses: { id: string; term?: Term }[];
+  moreExcluded: number;
+} {
+  const kinds = new Set(matches.map((n) => n.kind).filter((k): k is string => !!k));
+  const universe = kinds.size > 0 ? ir.nodes.filter((n) => n.kind && kinds.has(n.kind)) : ir.nodes;
+  const matched = new Set(matches.map((n) => n.id));
+  const excluded = universe.filter((n) => !matched.has(n.id));
+  const evidence: { id: string; attr: string; via: string }[] = [];
+  for (const t of terms) {
+    if (t.kind !== "attr") continue;
+    for (const n of matches) {
+      const via = (n.attrs as Record<string, unknown> | undefined)?.[`${t.a}Via`];
+      if (typeof via === "string") evidence.push({ id: n.id, attr: t.a, via });
+    }
+  }
+  const shown = excluded.slice(0, NEAR_MISS_LIMIT);
+  return {
+    universe: { matched: matches.length, of: universe.length, kinds: [...kinds] },
+    evidence,
+    nearMisses: shown.map((n) => ({ id: n.id, term: terms.find((t) => !matchTerm(n, t, ir, byId)) })),
+    moreExcluded: excluded.length - shown.length,
+  };
 }
 
 /**
@@ -841,36 +944,72 @@ function leafText(x: Term): string {
 }
 
 /**
- * `chant search --json` (#4359): the matched rows and, per positive edge
- * term, the path each match was reached by. Drawn by behold (behold#913).
+ * `chant search --json` (#4359, #4367): the whole answer as one document on
+ * stdout, read by behold (behold#913). Warnings and errors still go to stderr;
+ * the exit code is the text path's.
  *
  *   {
  *     "query": "kind:aws_instance ->*kind:aws_vpc",
- *     "source": { "kind": "declared" | "live" | "snapshot", "commit"?, "timestamp"? },
+ *     "source": { "kind": "declared" | "live" | "snapshot", "env"?, "commit"?, "timestamp"? },
  *     "matches": [
- *       { "id": "web", "kind": "aws_instance", "physicalId"?: "i-1", "unobserved"?: "read-failed",
+ *       { "id": "east::web", "displayId": "web", "kind": "aws_instance", "physicalId"?: "i-1",
+ *         "unobserved"?: "read-failed", "show"?: { "InstanceType": "t3.micro" },
  *         "paths": [ { "term": "->*kind:aws_vpc", "dir": "out",
  *                      "hops": [ { "from": "web", "fromAttr": "subnet_id", "to": "a", "toAttr": "id" },
  *                                { "from": "a", "fromAttr": "vpc_id", "to": "main", "toAttr": "id" } ] } ] }
  *     ],
- *     "liveFailures"?: ["aws: ..."]
+ *     "provenance": "observed live · bound 2/2",
+ *     "liveFailures"?: ["aws: ..."],
+ *     "explain"?: { "universe": { "matched": 2, "of": 6, "kinds": ["aws_instance"] },
+ *                   "evidence": [ { "id": "web", "attr": "internetFacing", "via": "..." } ],
+ *                   "nearMisses": [ { "id": "db", "fails": "attr:internetFacing=true" } ],
+ *                   "moreExcluded": 0 },
+ *     "drift"?: { "against": "live" | "snapshot", ... see SearchDriftJson }
  *   }
  *
- * `hops` is in walk order from the match; each hop keeps the edge's own
- * direction (see {@link PathHop}). `paths` is empty when the query has no
- * positive edge term. Ids are the graph's full ids.
+ * A refused query or invocation prints `{ "query", "error": { "message", "hint"? } }`
+ * instead, and exits 1.
+ *
+ * `id` is the graph's full id, stack-qualified (`stack::name`) where the graph
+ * qualifies it; `displayId` is the bare name the text row prints. `hops` is in
+ * walk order from the match; each hop keeps the edge's own direction (see
+ * {@link PathHop}). `paths` is empty when the query has no positive edge
+ * term. `show` is present when `--show` was given, holding the requested
+ * attributes a row carries, under the name the graph spells them with.
+ * `explain` is present with `--explain`; `drift` with `--check-live` or
+ * `--check-snapshot`.
  */
 export interface SearchJson {
   query: string;
-  source: AnswerSource;
+  source: AnswerSource & { env?: string };
   matches: {
     id: string;
+    displayId: string;
     kind?: string;
     physicalId?: string;
     unobserved?: string;
+    show?: Record<string, unknown>;
     paths: { term: string; dir: "out" | "in"; hops: PathHop[] }[];
   }[];
+  provenance?: string;
   liveFailures?: string[];
+  explain?: {
+    universe: { matched: number; of: number; kinds: string[] };
+    evidence: { id: string; attr: string; via: string }[];
+    nearMisses: { id: string; fails?: string }[];
+    moreExcluded: number;
+  };
+  drift?: SearchDriftJson;
+}
+
+/** A refusal under `--json` (#4367): the same message and hint stderr carries. */
+export interface SearchErrorJson {
+  query: string;
+  error: { message: string; hint?: string };
+}
+
+function searchErrorJson(query: string, error: { message: string; hint?: string }): SearchErrorJson {
+  return { query, error: { message: error.message, ...(error.hint ? { hint: error.hint } : {}) } };
 }
 
 function searchJson(
@@ -881,27 +1020,56 @@ function searchJson(
   ir: GraphIR,
   byId: Map<string, IRNode>,
   liveFailures: string[] = [],
+  extra: {
+    env?: string;
+    show?: string[];
+    provenance?: string;
+    explain?: ReturnType<typeof explainData>;
+    drift?: SearchDriftJson;
+  } = {},
 ): SearchJson {
+  const show = extra.show ?? [];
   return {
     query,
-    source,
+    source: extra.env ? { ...source, env: extra.env } : source,
     matches: matches.map((n) => {
       const attrs = (n.attrs ?? {}) as Record<string, unknown>;
       const physical = (n as { physicalId?: unknown }).physicalId ?? attrs["physicalId"] ?? attrs["InstanceId"] ?? attrs["Id"];
       return {
         id: n.id,
+        displayId: bareId(n.id),
         ...(n.kind ? { kind: n.kind } : {}),
         ...(physical != null && typeof physical !== "object" ? { physicalId: String(physical) } : {}),
         ...(typeof attrs["_unobserved"] === "string" ? { unobserved: attrs["_unobserved"] } : {}),
+        ...(show.length > 0 ? { show: Object.fromEntries(showValues(attrs, show)) } : {}),
         paths: matchPaths(n, terms, ir, byId).map((p) => ({
-          term: `${edgeOperator(p.term, { out: "->", in: "<-" })}${p.term.sub ? leafText(p.term.sub) : ""}`,
+          term: termText({ ...p.term, negated: false }),
           dir: p.term.dir!,
           hops: p.hops,
         })),
       };
     }),
+    ...(extra.provenance !== undefined ? { provenance: extra.provenance } : {}),
     ...(liveFailures.length > 0 ? { liveFailures } : {}),
+    ...(extra.explain
+      ? {
+          explain: {
+            universe: extra.explain.universe,
+            evidence: extra.explain.evidence,
+            nearMisses: extra.explain.nearMisses.map((m) => ({ id: m.id, ...(m.term ? { fails: termText(m.term) } : {}) })),
+            moreExcluded: extra.explain.moreExcluded,
+          },
+        }
+      : {}),
+    ...(extra.drift ? { drift: extra.drift } : {}),
   };
+}
+
+/** A term as the query grammar spells it, `!` and ASCII arrows included (#4367). */
+function termText(t: Term): string {
+  if (t.negated) return `!${termText({ ...t, negated: false })}`;
+  if (t.kind === "edge") return `${edgeOperator(t, { out: "->", in: "<-" })}${t.sub ? leafText(t.sub) : ""}`;
+  return leafText(t);
 }
 
 export interface Term {
@@ -1324,15 +1492,7 @@ function formatRow(n: IRNode, show: string[]): string {
   // blank there reads as "declared, not provisioned", which the read never
   // established; the reason is the tri-state's (#1089).
   else if (typeof attrs["_unobserved"] === "string") parts.push(`(unobserved: ${attrs["_unobserved"]})`);
-  for (const key of show) {
-    // Match the name case-insensitively, and report what was actually found.
-    // AWS attribute names are PascalCase and chant's derived ones are not, so a
-    // caller mixing them is normal: `--show region` and `--show Region` are the
-    // same request, and one of them silently printed nothing. Seven of the
-    // `--show` names in one benchmark run missed on case alone.
-    const actual = key in attrs ? key : Object.keys(attrs).find((k) => k.toLowerCase() === key.toLowerCase());
-    const v = actual == null ? undefined : attrs[actual];
-    if (v == null) continue;
+  for (const [actual, v] of showValues(attrs, show)) {
     // A column the caller explicitly asked for is shown whatever shape it is.
     // Skipping non-scalars silently meant `--show effectiveIngress` — the
     // derived reachability fact, and the reason to reach for chant at all —
@@ -1344,5 +1504,25 @@ function formatRow(n: IRNode, show: string[]): string {
   return parts.filter(Boolean).join("  ");
 }
 
+/**
+ * The `--show` columns a row carries, as `[name as the graph spells it, value]`,
+ * in the order asked. Shared by the text row and `--json` (#4367).
+ */
+function showValues(attrs: Record<string, unknown>, show: string[]): [string, unknown][] {
+  const out: [string, unknown][] = [];
+  for (const key of show) {
+    // Match the name case-insensitively, and report what was actually found.
+    // AWS attribute names are PascalCase and chant's derived ones are not, so a
+    // caller mixing them is normal: `--show region` and `--show Region` are the
+    // same request, and one of them silently printed nothing. Seven of the
+    // `--show` names in one benchmark run missed on case alone.
+    const actual = key in attrs ? key : Object.keys(attrs).find((k) => k.toLowerCase() === key.toLowerCase());
+    const v = actual == null ? undefined : attrs[actual];
+    if (v == null) continue;
+    out.push([actual!, v]);
+  }
+  return out;
+}
+
 /** Internals exposed for unit tests. */
-export const __searchInternals = { parseQuery, matchTerm, findPath, formatPath, searchJson, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, renderDrift, mergeResources, pickResources };
+export const __searchInternals = { parseQuery, matchTerm, findPath, formatPath, searchJson, searchErrorJson, explainData, termText, formatRow, explain, describeTerm, derivedSurface, availableAttrs, ambientHint, regionSpread, showMiss, provenance, provenanceLine, renderDrift, searchDriftJson, mergeResources, pickResources };
