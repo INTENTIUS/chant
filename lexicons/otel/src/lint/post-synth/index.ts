@@ -25,6 +25,7 @@ import { otel124 } from "./otel124";
 import { otel125 } from "./otel125";
 import { otel126 } from "./otel126";
 import { otel127 } from "./otel127";
+import { otel128 } from "./otel128";
 
 export const postSynthChecks: PostSynthCheck[] = [
   otel101,
@@ -52,4 +53,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   otel125,
   otel126,
   otel127,
+  otel128,
 ];

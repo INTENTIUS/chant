@@ -68,7 +68,7 @@ export function collectorConfigs(ctx: PostSynthContext): FoundCollectorConfig[] 
   return out;
 }
 
-function toDiagnostic(issue: CollectorIssue, found?: Omit<FoundCollectorConfig, "config">): PostSynthDiagnostic {
+export function toDiagnostic(issue: CollectorIssue, found?: Omit<FoundCollectorConfig, "config">): PostSynthDiagnostic {
   const where = found?.configMap
     ? describeConfigMapConfig(found.configMap)
     : found?.operator

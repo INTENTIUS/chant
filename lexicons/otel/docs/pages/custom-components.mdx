@@ -56,6 +56,28 @@ The pin is recorded in three places:
 
 chant records the pin. It does not fetch the schema or verify the digest.
 
+## Build a collector that includes it
+
+A component chant doesn't ship is often in no published collector image either. A team then builds its own collector with `ocb`, the OpenTelemetry Collector Builder, from a builder manifest. `Distribution` declares that manifest ([#3374](https://github.com/INTENTIUS/chant/issues/3374)):
+
+```ts title="src/distribution.ts"
+import { Distribution, OtlpReceiver, BatchProcessor, OtlpExporter } from "@intentius/chant-lexicon-otel";
+import { SplunkHecExporter } from "./vendor-exporter";
+
+export const dist = new Distribution({
+  dist: { name: "otelcol-acme", description: "Acme collector", output_path: "./_build", version: "1.0.0" },
+  receivers: [OtlpReceiver],
+  processors: [BatchProcessor],
+  exporters: [OtlpExporter, SplunkHecExporter],
+});
+```
+
+The fields are the builder's own at the pinned release: `dist` (`module`, `name`, `go`, `description`, `output_path`, `version`, `build_tags`, `debug_compilation`, `cgo_enabled`, `use_absolute_replace_paths`), one list per component kind, `providers`, `converters`, `replaces`, `excludes` and `conf_resolver`. A component list takes component classes or modules (`{ gomod, import?, name?, path? }`). A built-in class writes its Go module at `COLLECTOR_PIN`, so `OtlpReceiver` becomes `go.opentelemetry.io/collector/receiver/otlpreceiver v0.130.0`. A `defineComponent` class writes its pin's `source` and `version`, so the pin has to name the Go module for this to work.
+
+`chant build` writes the manifest as `builder-config.yaml` beside the collector config. OTEL128 then reports any component the collector config declares that the distribution doesn't build, because a collector built from it refuses that config with "unknown type". When a list holds a module whose component type can't be read from its path, OTEL128 reports a warning instead of an error and names the module. A project without a `Distribution` gets no extra file and no check.
+
+To build the collector as a component, use the `ocb-build` verb the otel lexicon contributes: `build: ocbBuild({ config: "dist/builder-config.yaml" })`. It runs `ocb --config` in the manifest's directory and returns `{ kind: "dir", dir, manifestDigest }`, where `dir` is the manifest's `dist.output_path`. A manifest without `output_path` is refused, since ocb would otherwise write to a temporary directory that no later step could name. A `docker-build` step with `dir` as its `context` and a Dockerfile you provide builds the image, and from there it takes the same path as any other image.
+
 ## Limits
 
 - A built-in type can't be redefined. Declare a named instance instead, such as `new OtlpExporter({ name: "vendor", ... })`.

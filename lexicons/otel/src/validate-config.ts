@@ -45,7 +45,8 @@ export type CollectorIssueCode =
   | "OTEL124"
   | "OTEL125"
   | "OTEL126"
-  | "OTEL127";
+  | "OTEL127"
+  | "OTEL128";
 
 export interface CollectorIssue {
   code: CollectorIssueCode;
