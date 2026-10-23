@@ -37,7 +37,7 @@ import { formatError, formatSuccess } from "../cli/format";
 import { parseYAMLDocument } from "../yaml";
 import { CI_WORKFLOW_CHECKS } from "./checks/ci-workflow";
 import type { WorkspaceDiagnostic } from "./checks";
-import { CI_WORKFLOWS, STUB_MARKER, appliesOnMerge } from "./ci-workflow";
+import { CI_WORKFLOWS, STUB_MARKER, appliesBeforeMerge, appliesOnMerge } from "./ci-workflow";
 
 export { STUB_MARKER };
 import { CI_GREEN_WORKFLOW_FILE, jobCheckRuns, readWorkflowSources, workflowsHolding } from "./ci-green-workflow";
@@ -48,7 +48,7 @@ import { SECURITY_GROUPS, type SecurityGroup } from "./security";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { RELEASE_WORKFLOW_FORGES, type ReleaseWorkflowForge } from "./release-workflow";
 
-const USAGE = "chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]";
+const USAGE = "chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]";
 
 
 /** The environments a config with none is given. */
@@ -280,11 +280,12 @@ export function proposeCiInit(root: string, options: CiInitOptions): CiInitPropo
     if (reported("ci-workflow-pipeline-missing") || reported("ci-workflow-pipeline-differs")) {
       for (const m of releasing) {
         const env = firstEnv.get(m.name);
+        const workflow = m.ciWorkflow ?? proposed.ci!.workflow!;
         commands.push({
           cwd: memberDir(m.dir) || ".",
           // The root member builds alone: at a workspace root, chant build refuses without --root-only (WSP000).
-          args: ["build", "--components", "--generate", forge, "--pr-loop", ...(m.dir === "." ? ["--root-only"] : []), ...(env ? ["--env", env] : []), ...(appliesOnMerge(m.ciWorkflow ?? proposed.ci!.workflow!) ? ["--apply-on-merge"] : [])],
-          why: `the pull-request pipeline for ${m.name}: plan on a pull request, ${appliesOnMerge(m.ciWorkflow ?? proposed.ci!.workflow!) ? "apply" : "record"} on merge`,
+          args: ["build", "--components", "--generate", forge, "--pr-loop", ...(m.dir === "." ? ["--root-only"] : []), ...(env ? ["--env", env] : []), ...(appliesOnMerge(workflow) ? ["--apply-on-merge"] : []), ...(appliesBeforeMerge(workflow) ? ["--apply-before-merge"] : [])],
+          why: `the pull-request pipeline for ${m.name}: plan on a pull request, ${appliesBeforeMerge(workflow) ? "apply on request before merge, record" : appliesOnMerge(workflow) ? "apply" : "record"} on merge`,
         });
       }
       if (forge === "github") {

@@ -1718,8 +1718,8 @@
       "additionalProperties": false
     },
     "ciWorkflow": {
-      "enum": ["trunk-curated", "trunk-curated+apply-on-merge"],
-      "description": "A prescribed delivery workflow (#4168). trunk-curated: a merge records the plan and deploys nothing; releases are cut from green commits and promoted through each member's environments, gated in the last. trunk-curated+apply-on-merge: the same, with the apply on merge turned back on. chant workspace check reports what a member under one still lacks (WSP151), and chant ci init writes it. At the top level for every member, or on a member, which wins. Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer."
+      "enum": ["trunk-curated", "trunk-curated+apply-on-merge", "apply-before-merge"],
+      "description": "A prescribed delivery workflow (#4168). trunk-curated: a merge records the plan and deploys nothing; releases are cut from green commits and promoted through each member's environments, gated in the last. trunk-curated+apply-on-merge: the same, with the apply on merge turned back on. apply-before-merge (#4301, ws-106): the same as trunk-curated, and a person may also apply an open pull request's plan from its head under its gate, once it is approved, mergeable, undiverged and its checks passed (chant components pr-apply --before-merge); added by chant 0.124.42, so a declaration that uses it sets minReader to 0.124.42 or newer. chant workspace check reports what a member under one still lacks (WSP151), and chant ci init writes it. At the top level for every member, or on a member, which wins. Added in schema 1 by chant 0.124.34, so a declaration that uses it sets minReader to 0.124.34 or newer."
     },
     "ciHooks": {
       "type": "object",

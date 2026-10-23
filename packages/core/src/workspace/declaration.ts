@@ -258,10 +258,13 @@ export type CiSource = "checks" | "runs";
  * A prescribed delivery workflow (#4168 section 7). `trunk-curated`: a merge
  * records the plan and deploys nothing, and releases are cut from green
  * commits and promoted through the environments. `trunk-curated+apply-on-merge`
- * adds the apply on merge as an opt-in. `chant workspace check` reports what a
- * member under one still lacks (./checks/ci-workflow.ts, WSP151).
+ * adds the apply on merge as an opt-in. `apply-before-merge` (#4301, ws-106)
+ * is `trunk-curated` with an open pull request's plan applied from its head
+ * on request, once it is approved, mergeable, undiverged and green. `chant
+ * workspace check` reports what a member under one still lacks
+ * (./checks/ci-workflow.ts, WSP151).
  */
-export type CiWorkflow = "trunk-curated" | "trunk-curated+apply-on-merge";
+export type CiWorkflow = "trunk-curated" | "trunk-curated+apply-on-merge" | "apply-before-merge";
 
 /**
  * When a pull request takes its target locks (#4293, ../lifecycle/target-lock.ts).

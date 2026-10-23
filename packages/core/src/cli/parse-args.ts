@@ -441,6 +441,12 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--green") {
       // `chant components pr-apply --green` (#4168 step 9): apply the green commit at HEAD.
       result.green = true;
+    } else if (arg === "--before-merge") {
+      // `chant components pr-apply --before-merge` (#4301, ws-106): apply an open pull request's plan from its head.
+      result.beforeMerge = true;
+    } else if (arg === "--apply-before-merge") {
+      // `chant build --pr-loop --apply-before-merge` and `chant ci run apply --apply-before-merge` (#4301): the job that applies before merge.
+      result.applyBeforeMerge = true;
     } else if (arg === "--apply-on-merge") {
       // `chant build --pr-loop --apply-on-merge` and `chant ci serve --apply-on-merge` (#4168): opt into applying on merge.
       result.applyOnMerge = true;

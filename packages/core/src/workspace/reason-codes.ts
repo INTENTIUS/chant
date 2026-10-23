@@ -255,7 +255,7 @@ export const REASONS = {
   "ci-workflow-no-environments": "Under ci.workflow, a member's chant.config.ts declares no environments, so a release has nowhere to be promoted to.",
   "ci-workflow-ungated-env": "Under ci.workflow, a component has no gate, so a promote to the last environment waits on no approval.",
   "ci-workflow-pipeline-missing": "Under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick.",
-  "ci-workflow-pipeline-differs": "Under ci.workflow, the merge job does not match the workflow: it applies under trunk-curated, or records under trunk-curated+apply-on-merge.",
+  "ci-workflow-pipeline-differs": "Under ci.workflow, the pipeline does not match the workflow: it applies on merge under trunk-curated, records under trunk-curated+apply-on-merge, or applies before merge, or fails to, against apply-before-merge.",
   "ci-workflow-publish-missing": "Under ci.workflow, no pipeline file runs chant release publish.",
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",

@@ -149,6 +149,16 @@ export interface PrLoopPipelineOptions {
    */
   applyOnMerge?: boolean;
   /**
+   * Apply an open pull request before it merges (#4301, ws-106): the apply
+   * job runs `pr-apply --before-merge` at the pull request's head, started
+   * by a `/chant apply` comment on GitHub and Forgejo, or on GitLab by a
+   * pipeline of the target branch with `CHANT_APPLY_PR` set. A merge still
+   * records. `pr-apply` refuses unless the declaration at base sets
+   * `ci.workflow: "apply-before-merge"`. It takes neither `applyOnMerge`,
+   * `waveGate` nor `build`.
+   */
+  applyBeforeMerge?: boolean;
+  /**
    * Stream each job's run events (#4007): `--events-json` on both commands,
    * and `CHANT_RUN_EVENTS_DIR` set to {@link PR_LOOP_EVENTS_DIR}. Default false.
    */
@@ -259,6 +269,10 @@ export function prLoopBuildLines(env: string, options: PrLoopPipelineOptions = {
  */
 export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}, member?: string): PrLoopJob[] {
   const gate = options.gate ?? PR_APPLY_GATE;
+  const early = options.applyBeforeMerge === true;
+  if (early && options.applyOnMerge) throw new Error("--apply-before-merge applies an open pull request and a merge records, so it takes no --apply-on-merge; pass one of them");
+  if (early && options.waveGate) throw new Error("--apply-before-merge applies the pull request's plan in one job, so it takes no --wave-gate");
+  if (early && (options.build || options.buildCommand)) throw new Error("--apply-before-merge runs no build before its requires checks, so it takes no --pr-build or --pr-build-command yet");
   const common = [
     "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
@@ -275,7 +289,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   // #4156: the flags `chant ci run` rebuilds `command` from. It finds the member from the directory it runs in.
   const ciRun = (job: PrLoopJob["jobName"]): string[] => [
     "chant", "ci", "run", job, "--in-place", ...(job === "plan" ? ["--no-push"] : []),
-    ...(job === "apply" ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" ? ["--pr", '"$PR_NUMBER"'] : []),
+    ...(job === "apply" && !early ? [] : ["--base", '"$BASE_SHA"']), ...(job === "plan" || (job === "apply" && early) ? ["--pr", '"$PR_NUMBER"'] : []),
+    ...(job === "apply" && early ? ["--apply-before-merge"] : []),
     "--env", env, "--gate", gate, "--forge", forge,
     ...(job !== "record" && options.waveGate ? ["--wave-gate", options.waveGate] : []),
     ...(job !== "plan" && options.branch ? ["--branch", JSON.stringify(options.branch)] : []),
@@ -292,6 +307,37 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...withoutForgeTokens(jobEnv) };
   const greenBranch = github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
   const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
+  // #4301: the apply before merge runs in a job of the target branch, whose commit is the base, at the pull request's head.
+  const earlyEnv = github
+    ? { BASE_SHA: "${{ github.sha }}", PR_NUMBER: "${{ github.event.issue.number }}", ...jobEnv }
+    : { BASE_SHA: "$CI_COMMIT_SHA", PR_NUMBER: `$${GITLAB_APPLY_PR_VAR}`, ...jobEnv };
+  const greenApply: PrLoopJob = {
+    // #4168 step 9: the apply applies the newest green commit, measured from the one applied before it.
+    jobName: "apply",
+    command: [
+      "chant", "components", "pr-apply", "--green", ...common,
+      ...(options.requireReview === true ? ["--require-review"] : []),
+      ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
+      "--resume", PR_APPLY_RECORD,
+    ].join(" "),
+    env: jobEnv,
+    checkout: [greenCheckout(greenBranch)],
+    greenBranch,
+    ...build,
+    run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
+  };
+  const earlyApply: PrLoopJob = {
+    // #4301: the requires checks run inside pr-apply, before any of the head's code loads.
+    jobName: "apply",
+    command: [
+      "chant", "components", "pr-apply", "--before-merge", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common,
+      ...(options.requireReview === true ? ["--require-review"] : []),
+      "--resume", PR_APPLY_RECORD,
+    ].join(" "),
+    env: earlyEnv,
+    checkout: [pullRequestCheckout(forge)],
+    run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
+  };
   return [
     {
       jobName: "plan",
@@ -301,21 +347,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       ...build,
       run: { command: ciRun("plan").join(" "), env: runEnv(planEnv) },
     },
-    {
-      // #4168 step 9: the apply applies the newest green commit, measured from the one applied before it.
-      jobName: "apply",
-      command: [
-        "chant", "components", "pr-apply", "--green", ...common,
-        ...(options.requireReview === true ? ["--require-review"] : []),
-        ...(options.waveGate ? ["--wave-gate", options.waveGate] : []),
-        "--resume", PR_APPLY_RECORD,
-      ].join(" "),
-      env: jobEnv,
-      checkout: [greenCheckout(greenBranch)],
-      greenBranch,
-      ...build,
-      run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
-    },
+    early ? earlyApply : greenApply,
     {
       jobName: "record",
       command: ["chant", "components", "pr-record", "--base", '"$BASE_SHA"', ...common].join(" "),
@@ -458,6 +490,22 @@ function pushBaseFallback(target: string, commit: string, diffBase?: string): st
     (diffBase ? `BASE_SHA="\${${diffBase}:-}"; if [ -z "$BASE_SHA" ]; then ${fromBranch}fi; ` : fromBranch) +
     "fi; export BASE_SHA"
   );
+}
+
+/** The GitLab variable a person sets on a pipeline of the target branch to apply a merge request before it merges (#4301). */
+export const GITLAB_APPLY_PR_VAR = "CHANT_APPLY_PR";
+
+/** The comment that starts the apply before merge on GitHub and Forgejo (#4301). */
+export const APPLY_COMMENT = "/chant apply";
+
+/**
+ * The line that checks out pull request `$PR_NUMBER`'s head (#4301) in a job
+ * of the target branch: the forge's `refs/pull/<n>/head`, or GitLab's
+ * `refs/merge-requests/<n>/head`. A number that is not one fails the job.
+ */
+export function pullRequestCheckout(forge: ForgeKind): string {
+  const ref = forge === "gitlab" ? 'refs/merge-requests/$PR_NUMBER/head' : 'refs/pull/$PR_NUMBER/head';
+  return `echo "$PR_NUMBER" | grep -Eq '^[0-9]+$' && git fetch --quiet origin "+${ref}:refs/remotes/origin/chant-apply/$PR_NUMBER" && git checkout --quiet --detach "refs/remotes/origin/chant-apply/$PR_NUMBER"`;
 }
 
 /**

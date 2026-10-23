@@ -22,6 +22,8 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
  * is `--require-runner-start`, or the `isolated-runners` group. `--apply-on-merge`
  * (#4168) writes the apply job on merge in place of the record job.
  * `--pr-env` (#4298) adds the jobs of a pull request's environment.
+ * `--apply-before-merge` (#4301) writes the apply job that applies an open
+ * pull request before it merges, beside the record job.
  */
 function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
   return {
@@ -35,6 +37,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.requireRunnerStart === true || requireRunnerStart ? { requireRunnerStart: true } : {}),
     ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
     ...(args.prEnv ? { prEnvironment: true } : {}),
+    ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
   };
 }
 

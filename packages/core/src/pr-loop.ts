@@ -48,6 +48,7 @@
  */
 
 import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
+import type { PrRequireOutcome } from "./pr-requires";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
 
 /** The schema a pull-request report names in `$schema`. */
@@ -79,6 +80,9 @@ export const PR_REPORT_OVERDUE_FLOOR = "0.124.41";
 
 /** The first chant whose report can carry `policy` and the `policy-denied` and `policy-error` refusals (#4294). */
 export const PR_REPORT_POLICY_FLOOR = "0.124.41";
+
+/** The first chant whose apply report can carry `beforeMerge` and the `requires-unmet` and `before-merge-off` refusals (#4301, ws-106). */
+export const PR_REPORT_BEFORE_MERGE_FLOOR = "0.124.42";
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -275,7 +279,16 @@ export type PrRefusal =
   /** `ci.policy` at base denied the plan (#4294), and no override of it counts. */
   | "policy-denied"
   /** `ci.policy` at base could not be run, or gave no answer chant can read (#4294). */
-  | "policy-error";
+  | "policy-error"
+  /** `pr-apply --before-merge` (#4301): the pull request is not approved, mergeable, undiverged or green; `beforeMerge` says which. */
+  | "requires-unmet"
+  /** `pr-apply --before-merge`: the declaration at base does not set `ci.workflow` to `apply-before-merge` for the member. */
+  | "before-merge-off";
+
+/** An apply before merge (#4301, ws-106): the requires checks the forge answered, in order. */
+export interface PrBeforeMerge {
+  requires: PrRequireOutcome[];
+}
 
 /**
  * One wave of an apply with `--wave-gate` (#4003): what it planned, where it
@@ -445,6 +458,12 @@ export interface PrReport {
    * within contract 1 by chant {@link PR_REPORT_POLICY_FLOOR}.
    */
   policy?: PrPolicyReport;
+  /**
+   * `pr-apply --before-merge` (#4301): the requires checks. Absent on every
+   * other stage. Added within contract 1 by chant
+   * {@link PR_REPORT_BEFORE_MERGE_FLOOR}.
+   */
+  beforeMerge?: PrBeforeMerge;
 }
 
 /** The counts a member's entries add up to. */
@@ -769,6 +788,11 @@ export function prStatusDescription(report: PrReport): string {
       }
       if (report.refusal === "earlier-wave") {
         text = "refused: an earlier wave has not applied";
+        break;
+      }
+      if (report.refusal === "requires-unmet" || report.refusal === "before-merge-off") {
+        const unmet = (report.beforeMerge?.requires ?? []).filter((r) => !r.passed).map((r) => r.name);
+        text = report.refusal === "before-merge-off" ? "refused: this workspace does not apply before merge" : `refused: ${unmet.join(", ") || "a require"} unmet for an apply before merge`;
         break;
       }
       if (report.refusal === "policy-denied" || report.refusal === "policy-error") {

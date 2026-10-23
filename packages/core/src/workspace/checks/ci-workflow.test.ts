@@ -120,6 +120,15 @@ describe("ci.workflow (WSP151)", () => {
     expect(await found(repo(complete({ "chant.workspace.json": decl, ".github/workflows/chant-pr.yml": noRecord })))).toEqual([["ci-workflow-pipeline-missing", null]]);
   });
 
+  test("apply-before-merge needs a job that applies before merge, and the other workflows refuse one (#4301)", async () => {
+    const early = `${PIPELINE}  apply:\n    steps:\n      - run: chant ci run apply --in-place --base "$BASE_SHA" --pr "$PR_NUMBER" --apply-before-merge --env prod --gate pr-apply --forge github\n`;
+    const decl = declaration({ ci: { workflow: "apply-before-merge", green: green() } });
+    expect(await found(repo(complete({ "chant.workspace.json": decl })))).toEqual([["ci-workflow-pipeline-differs", null]]);
+    expect(await found(repo(complete({ "chant.workspace.json": decl, ".github/workflows/chant-pr.yml": early })))).toEqual([]);
+    expect(await found(repo(complete({ ".github/workflows/chant-pr.yml": early })))).toEqual([["ci-workflow-pipeline-differs", null]]);
+    expect(workflowOf({ ci: { green: null, reportUrl: null, workflow: "apply-before-merge" } } as never, null)).toBe("apply-before-merge");
+  });
+
   test("a member's own workflow wins, and a top-level workflow skips members that don't build with chant", async () => {
     const root = repo({
       ...complete(),

@@ -1040,13 +1040,14 @@ export function ciLoopOptions(args: CommandContext["args"]): PrLoopPipelineOptio
     ...(args.prBuildCommand ? { buildCommand: args.prBuildCommand } : {}),
     ...(args.waveGate ? { waveGate: args.waveGate } : {}),
     ...(args.requireReview === true ? { requireReview: true } : {}),
+    ...(args.applyBeforeMerge ? { applyBeforeMerge: true } : {}),
   };
 }
 
 const USAGE =
   "chant ci run plan|record|apply --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
-  "[--pr-build] [--pr-build-command <line>] [--require-review] [--no-status] [--status-url <url template>] " +
+  "[--pr-build] [--pr-build-command <line>] [--require-review] [--apply-before-merge] [--no-status] [--status-url <url template>] " +
   "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
