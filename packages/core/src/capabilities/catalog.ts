@@ -171,3 +171,50 @@ export function usesOf(rule: Rule): string[] {
   const names = new Set(rules.map((r) => r.name));
   return [...ruleDependencies(rule)].filter((n) => names.has(n));
 }
+
+/** One capability as the `capabilities` document lists it (#4375). */
+export interface CapabilityEntry {
+  name: string;
+  meaning: string;
+  shape: "set" | "edge";
+  params: { name: string; optional: boolean; meaning: string }[];
+  /** The search term that asks for it: `cap:<name>` for a set, `->[cap=<name>]` for an edge. */
+  search: string;
+  answers: string[];
+  depth: "declared" | "live" | "either";
+  lexicons: Record<string, "supported" | { code: string; message: string }>;
+  notEvaluated: string[];
+  /** The capabilities and helpers its rule uses. */
+  uses: string[];
+  rule: string;
+}
+
+/**
+ * The catalog as the `capabilities` document carries it: every public
+ * capability, with whether each lexicon given can supply it, and the helper
+ * rules they use. `lexicons` maps each lexicon to its mapping, or to
+ * undefined when it ships none.
+ */
+export function capabilityCatalog(lexicons: Record<string, CapabilityMapping | undefined>): {
+  capabilities: CapabilityEntry[];
+  helpers: { name: string; rule: string }[];
+} {
+  const { rules } = shippedRules();
+  const list = (s: string | undefined): string[] =>
+    (s ?? "").split(/\n|;/).map((x) => x.trim()).filter(Boolean);
+  const capabilities = rules.filter(isPublic).map((r): CapabilityEntry => ({
+    name: r.name,
+    meaning: r.meta.meaning,
+    shape: r.vars.length === 1 ? "set" : "edge",
+    params: r.params.map((p) => ({ name: p.name, optional: p.optional, meaning: r.meta[`param-${p.name}`] ?? "" })),
+    search: r.vars.length === 1 ? `cap:${r.name}` : `->[cap=${r.name}]`,
+    answers: (r.meta.answers ?? "").split("\n").map((x) => x.trim()).filter(Boolean),
+    depth: (r.meta.depth ?? "declared") as CapabilityEntry["depth"],
+    lexicons: Object.fromEntries(Object.entries(lexicons).map(([lex, m]) => [lex, lexiconSupport(r, m, lex)])),
+    notEvaluated: list(r.meta["not-evaluated"]),
+    uses: usesOf(r),
+    rule: r.text,
+  }));
+  const helpers = rules.filter((r) => !isPublic(r)).map((r) => ({ name: r.name, rule: r.text }));
+  return { capabilities, helpers };
+}
