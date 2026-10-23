@@ -61,7 +61,12 @@ describe("observeResources", () => {
 
   it("returns what a lexicon learned about an absent entity as annotations, outside the observations (#4372)", async () => {
     const plugins = [
-      awsPlugin(() => observation({}, undefined, undefined, undefined, undefined, undefined, { "web-vpc": { planAction: "create" } })),
+      {
+        name: "aws",
+        serializer: {} as ObservationLexicon["serializer"],
+        describeResources: async () =>
+          observation({}, undefined, undefined, undefined, undefined, undefined, { "web-vpc": { planAction: "create" } }),
+      } as unknown as ObservationLexicon,
     ];
     const { observations, annotations } = await observeResources("prod", plugins, mockBuild());
     // Absent: no observation row anywhere, so nothing that classifies sees it.
