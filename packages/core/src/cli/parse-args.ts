@@ -339,6 +339,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.explain = true;
     } else if (arg === "--show") {
       result.show = args[++i];
+    } else if (arg === "--count-by") {
+      // `chant search --count-by kind|module|attr:<name>` (#4360)
+      result.countBy = args[++i];
+      if (!result.countBy || result.countBy.startsWith("-")) throw new Error("--count-by needs a grouping: --count-by kind, --count-by module or --count-by attr:<name>");
     } else if (arg === "--up") {
       result.up = true;
     } else if (arg === "--down") {
