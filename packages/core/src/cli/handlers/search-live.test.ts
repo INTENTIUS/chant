@@ -514,6 +514,43 @@ describe("search --live names the plan read (#4384)", () => {
     expect(doc.source.depth).toBeUndefined();
   });
 
+  test("a live root's plan read that failed says live-plan answered alone", async () => {
+    const LIVE_NOTE = "terraform.roots.app: the plan read failed (the plan failed: x), so `live-plan -json` alone answered; plan attributes are absent";
+    setup({ orders: "live" }, [LIVE_NOTE], null, { "terraform.roots.app": { depth: "live+plan", fellBackTo: "live", reason: "plan-failed" } });
+    expect(await run()).toContain("observed live · bound 1/1 · the plan read fell back to live-plan alone");
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("live");
+    expect(doc.source.depth).toBeUndefined();
+  });
+
+  test("a live root whose plan read answered names both reads and no fallback", async () => {
+    setup({ orders: "live+plan" }, [PLAN_NOTE], null, { "terraform.roots.app": { depth: "live+plan" } });
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBeUndefined();
+    expect(doc.provenance).toBe("observed live and at the plan depth (live-plan -json, terraform plan -lock=false) · bound 1/1");
+  });
+
+  test("a live root whose live-plan failed reports no plan fallback", async () => {
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "terraform",
+        describeResources: async () => ({
+          observation: "v1" as const,
+          resources: {},
+          unobserved: { orders: { reason: "read-failed" as const, type: "Terraform::Resource" } },
+          sources: { orders: "live" },
+          notes: ["terraform.roots.app: no read answered (`live-plan -json` failed, so the plan read was not tried)"],
+        }),
+      }),
+    ]);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBeUndefined();
+    expect(doc.provenance).not.toContain("fell back");
+  });
+
   test("a plan read that fell back to declared says so", async () => {
     setup(
       { orders: "plan" },

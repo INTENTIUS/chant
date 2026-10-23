@@ -1422,7 +1422,7 @@ function livePlanDepthAdapter(
   root: string,
   cwd: string | undefined,
   deps: TerraformReadDeps,
-  outcome: { answered: LivePlanDepthAnswer; note: string },
+  outcome: { answered: LivePlanDepthAnswer; note: string; read?: RootRead },
 ): ObserverAdapter<LivePlanDepthIndex> {
   const where = cwd ? { cwd } : {};
   const live = liveAdapter(root, cwd, deps);
@@ -1439,6 +1439,7 @@ function livePlanDepthAdapter(
         const read = await planRead({ root, ...where });
         command = read.command.replace(read.planDir, "<tmp>");
         outcome.answered = "live+plan";
+        outcome.read = { depth: "live+plan" };
         outcome.note = `terraform.roots.${root}: the plan read answered (\`${command}\`), beside \`live-plan -json\`, which answered presence and ownership`;
         return { live: index, plan: indexPlan(read.json) };
       } catch (err) {
@@ -1451,6 +1452,11 @@ function livePlanDepthAdapter(
               : kind === "backend"
                 ? "the plan read could not reach the backend"
                 : "the plan failed";
+        outcome.read = {
+          depth: "live+plan",
+          fellBackTo: "live",
+          reason: kind === "not-initialised" ? "needs-init" : kind === "backend" ? "backend-unreachable" : why === "no provider credentials" ? "no-credentials" : "plan-failed",
+        };
         outcome.note = `terraform.roots.${root}: the plan read failed (${why}: ${firstLine(err)}), so \`live-plan -json\` alone answered; plan attributes are absent`;
         return { live: index };
       }
@@ -1580,9 +1586,10 @@ export async function describeResources(
       if (depth === "plan") {
         // Both reads (#4371): `live-plan` for ownership, the plan for the
         // attributes on what it bound. `sources` is known only after the read.
-        const outcome: { answered: LivePlanDepthAnswer; note: string } = { answered: "live", note: "" };
+        const outcome: { answered: LivePlanDepthAnswer; note: string; read?: RootRead } = { answered: "live", note: "" };
         const read = await observeEntities(declared, livePlanDepthAdapter(root, options.cwd, deps, outcome));
         for (const entity of declared) sources[entity.name] = outcome.answered;
+        if (outcome.read) rootReads[`terraform.roots.${root}`] = outcome.read;
         if (outcome.note) notes.push(outcome.note);
         parts.push(normalizeObservation(read));
         continue;

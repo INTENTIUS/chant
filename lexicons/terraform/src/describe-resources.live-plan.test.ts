@@ -166,6 +166,7 @@ describe("which reads answered is on the wire: \"live+plan\" (#4371)", () => {
     const result = normalizeObservation(await describeResources(opts, deps()));
     expect(Object.keys(result.sources).sort()).toEqual([...opts.entityNames].sort());
     expect(new Set(Object.values(result.sources))).toEqual(new Set(["live+plan"]));
+    expect(result.rootReads).toEqual({ "terraform.roots.estate": { depth: "live+plan" } });
     expect(result.notes.join("\n")).toContain(
       "terraform.roots.estate: the plan read answered (`choudoufu plan -input=false -lock=false -out=<tmp>/plan.tfplan`), beside `live-plan -json`, which answered presence and ownership",
     );
@@ -192,6 +193,7 @@ describe("a live root falls back to live-plan alone, and says so (#4371)", () =>
     expect(result.notes.join("\n")).toMatch(
       /terraform\.roots\.estate: the plan read failed \(no provider credentials: .*No valid credential sources found\), so `live-plan -json` alone answered; plan attributes are absent/,
     );
+    expect(result.rootReads).toEqual({ "terraform.roots.estate": { depth: "live+plan", fellBackTo: "live", reason: "no-credentials" } });
   });
 
   it("a root that needs init says so, and live-plan's answer stands", async () => {
@@ -201,6 +203,18 @@ describe("a live root falls back to live-plan alone, and says so (#4371)", () =>
     const result = normalizeObservation(await describeResources(await options(), deps({ planRead })));
     expect(result.resources["estate/aws_vpc.main"]!.ownership).toBe("owned");
     expect(result.notes.join("\n")).toMatch(/the plan read failed \(the root needs init, which chant never runs: /);
+    expect(result.rootReads).toEqual({ "terraform.roots.estate": { depth: "live+plan", fellBackTo: "live", reason: "needs-init" } });
+  });
+
+  it("a plan read that cannot reach the backend, or fails otherwise, gets its own reason", async () => {
+    const failing = (kind: "backend" | "plan", message: string) =>
+      (async () => {
+        throw new TerraformPlanReadError(kind, message, ROOT_DIR);
+      }) as TerraformReadDeps["planRead"];
+    const backend = normalizeObservation(await describeResources(await options(), deps({ planRead: failing("backend", "Error: Failed to get existing workspaces") })));
+    expect(backend.rootReads).toEqual({ "terraform.roots.estate": { depth: "live+plan", fellBackTo: "live", reason: "backend-unreachable" } });
+    const plain = normalizeObservation(await describeResources(await options(), deps({ planRead: failing("plan", "Error: Invalid count argument") })));
+    expect(plain.rootReads).toEqual({ "terraform.roots.estate": { depth: "live+plan", fellBackTo: "live", reason: "plan-failed" } });
   });
 
   it("a failed live-plan leaves the root not observed and never tries the plan read", async () => {
@@ -212,6 +226,7 @@ describe("a live root falls back to live-plan alone, and says so (#4371)", () =>
     expect(result.unobserved["estate/aws_vpc.main"]!.reason).toBe("read-failed");
     expect(new Set(Object.values(result.sources))).toEqual(new Set(["live"]));
     expect(result.notes.join("\n")).toMatch(/terraform\.roots\.estate: no read answered \(`live-plan -json` failed, so the plan read was not tried\)/);
+    expect(result.rootReads).toBeUndefined();
   });
 });
 

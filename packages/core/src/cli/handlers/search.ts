@@ -765,7 +765,7 @@ export interface ReadDepth {
   /** The distinct reads that answered the matches, sorted. */
   reads?: string[];
   /** The plan read was asked for and failed: the read that answered instead. */
-  planFellBackTo?: "state" | "declared";
+  planFellBackTo?: "state" | "live" | "declared";
 }
 
 /**
@@ -773,9 +773,12 @@ export interface ReadDepth {
  * per-root report. Never from note text. "state" wins over "declared" when
  * roots disagree, because some read still answered.
  */
-function planFallback(rootReads: Record<string, RootRead>): "state" | "declared" | undefined {
-  const falls = Object.values(rootReads).filter((r) => r.depth === "plan" && r.fellBackTo).map((r) => r.fellBackTo);
+function planFallback(rootReads: Record<string, RootRead>): "state" | "live" | "declared" | undefined {
+  const falls = Object.values(rootReads)
+    .filter((r) => (r.depth === "plan" || r.depth === "live+plan") && r.fellBackTo)
+    .map((r) => r.fellBackTo);
   if (falls.includes("state")) return "state";
+  if (falls.includes("live")) return "live";
   if (falls.includes("declared")) return "declared";
   return undefined;
 }
@@ -940,7 +943,10 @@ function provenanceLine(
 
 /** ` · the plan read fell back to state`, or nothing. */
 function fellBackText(source: ReadDepth): string {
-  return source.planFellBackTo ? ` · the plan read fell back to ${source.planFellBackTo}` : "";
+  if (!source.planFellBackTo) return "";
+  // A live root has no state read to fall to: live-plan answered alone.
+  const to = source.planFellBackTo === "live" ? "live-plan alone" : source.planFellBackTo;
+  return ` · the plan read fell back to ${to}`;
 }
 
 function provenanceBase(

@@ -341,6 +341,7 @@
         "planFellBackTo": {
           "enum": [
             "state",
+            "live",
             "declared"
           ],
           "description": "`live` only: the plan read was asked for and failed, and this read answered instead. `declared` means no read answered and the rows are unobserved."

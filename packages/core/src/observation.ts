@@ -196,13 +196,15 @@ export interface ObservationResult {
 
 /**
  * The read a root was asked for and the one that answered. `depth` is the read
- * asked for (`"plan"` for a plan-depth root). `fellBackTo` is set only when that
- * read failed: the read that answered instead, or `"declared"` when none did.
+ * asked for (`"plan"` for a plan-depth root, `"live+plan"` for a live root at
+ * the plan depth). `fellBackTo` is set only when that read failed: the read that
+ * answered instead (`"live"` is live-plan alone, for a live root), or
+ * `"declared"` when none did.
  * `reason` is a short machine-stable cause, not prose to match on.
  */
 export interface RootRead {
   depth: string;
-  fellBackTo?: "state" | "declared";
+  fellBackTo?: "state" | "live" | "declared";
   reason?: string;
 }
 

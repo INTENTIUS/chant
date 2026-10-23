@@ -493,7 +493,7 @@ Every answer ends with a provenance line saying what backed it: `declared only`,
 plan read answered, the line says so: `observed at the plan depth (terraform plan
 -lock=false) · bound N/M`, or `observed live and at the plan depth (...)` for a
 live root. Matches read at different depths name each. If the plan read fell
-back, the line ends `the plan read fell back to state` (or `declared`). A live read that fails
+back, the line ends `the plan read fell back to state` (or `live-plan alone`, for a live root whose plan read failed, or `declared`). A live read that fails
 (unreachable endpoint, denied credentials) is reported as a failure rather than
 an empty estate. Each row the read could not cover prints `(unobserved:
 read-failed)` where its physical id would go, stderr names the lexicon and the
