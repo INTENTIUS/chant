@@ -544,6 +544,66 @@ describe("runGraph", () => {
       });
     });
 
+    // behold#919: a project that reads source it did not author (a workspace
+    // reader project, behold's scratch project for a bare Terraform folder)
+    // sets `graph.lint: "report"`, and a lint error is a finding about the
+    // estate, carried on meta.lint, not a reason to draw nothing.
+    describe('graph.lint: "report" (behold#919)', () => {
+      const finding = { file: "/abs/estate/db.tf", line: 4, column: 3, ruleId: "TF033", severity: "error", message: "storage_encrypted is false" };
+      const warning = { file: "/abs/estate/net.tf", line: 9, column: 1, ruleId: "TF010", severity: "warning", message: "a warning" };
+      const reportMode = (): void => {
+        loadChantConfigUpwardMock.mockResolvedValue({ config: { graph: { lint: "report" } } });
+      };
+
+      test("emits the graph with lint errors, every finding on meta.lint", async () => {
+        reportMode(); discovered();
+        lintMock.mockResolvedValue({ success: false, diagnostics: [finding, warning] });
+        const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        const ir = JSON.parse(stdoutBuf.join("\n"));
+        expect(ir.nodes.map((n: { id: string }) => n.id).sort()).toEqual(["pod", "subnet", "vpc"]);
+        expect(ir.meta.lint).toEqual({
+          errors: 1,
+          warnings: 1,
+          findings: [
+            { ruleId: "TF033", severity: "error", message: "storage_encrypted is false", file: "/abs/estate/db.tf", line: 4, column: 3 },
+            { ruleId: "TF010", severity: "warning", message: "a warning", file: "/abs/estate/net.tf", line: 9, column: 1 },
+          ],
+        });
+        expect(stderrBuf.join("\n")).toMatch(/with 1 lint error: graph\.lint is "report"/);
+      });
+
+      test("a clean read still carries meta.lint, so a reader can tell clean from not looked", async () => {
+        reportMode(); lintClean(); discovered();
+        const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+        expect(exit).toBe(0);
+        expect(JSON.parse(stdoutBuf.join("\n")).meta.lint).toEqual({ errors: 0, warnings: 0, findings: [] });
+      });
+
+      test("the default gate is unchanged, and adds no meta.lint", async () => {
+        lintClean(); discovered();
+        await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+        expect(JSON.parse(stdoutBuf.join("\n")).meta?.lint).toBeUndefined();
+      });
+
+      test("an uninstalled dependency still refuses: there is no source to read", async () => {
+        const project = realpathSync(mkdtempSync(join(tmpdir(), "chant-919-graph-")));
+        try {
+          reportMode(); discovered();
+          lintMock.mockResolvedValue({
+            success: false,
+            diagnostics: [{ file: join(project, "a.ts"), line: 1, column: 1, ruleId: "LEX002", severity: "error", message: `Cannot find package '@intentius/chant-lexicon-aws' imported from ${join(project, "a.ts")}` }],
+          });
+          const exit = await runGraph({ args: makeArgs({ format: "ir", path: project }), plugins: [], serializers: [] });
+          expect(exit).toBe(1);
+          expect(stdoutBuf.join("\n")).toBe("");
+          expect(stderrBuf.join("\n")).toContain("dependencies not installed");
+        } finally {
+          rmSync(project, { recursive: true, force: true });
+        }
+      });
+    });
+
     test("--format mermaid emits a flowchart", async () => {
       lintClean(); discovered();
       const exit = await runGraph({ args: makeArgs({ format: "mermaid" }), plugins: [], serializers: [] });

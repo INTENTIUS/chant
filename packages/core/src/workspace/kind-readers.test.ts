@@ -80,7 +80,7 @@ describe("workspace graph reads a package kind with a graph block (#2874)", () =
     ]);
     expect(g.nodes.map((n) => n.id)).toEqual(["net/root/Thing"]);
     const attrs = g.nodes[0].attrs as { found: boolean; pwd: string; argv: string; config: Record<string, unknown> };
-    expect(attrs.config).toEqual({ lexicons: ["fake"], fake: { moduleRoot: root, roots: { net: { dir: `${root}/estates/net` } } } });
+    expect(attrs.config).toEqual({ lexicons: ["fake"], fake: { moduleRoot: root, roots: { net: { dir: `${root}/estates/net` } } }, graph: { lint: "report" } });
     expect(attrs.found).toBe(true);
     // A reader project declares no environments, so --env stays with the chant members.
     expect(attrs.argv).toBe("graph . --format ir");
