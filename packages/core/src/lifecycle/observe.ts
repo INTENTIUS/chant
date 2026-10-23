@@ -22,6 +22,7 @@ import {
   unobservedAll,
   formatUnobserved,
   type NormalizedObservation,
+  type RootRead,
 } from "../observation";
 import { zeroResourcesWarning } from "../live-endpoint";
 import { unqualifiedKey } from "./identity";
@@ -53,6 +54,8 @@ export interface ObserveResult {
    * from the terraform lexicon. Present only for lexicons that report it.
    */
   sources?: Record<string, string>;
+  /** Which read answered each root, and why it fell back (structured, from the lexicon). */
+  rootReads?: Record<string, RootRead>;
 }
 
 /**
@@ -166,6 +169,7 @@ export async function observeResources(
   const notes: string[] = [];
   const annotations: Record<string, Record<string, unknown>> = {};
   const sources: Record<string, string> = {};
+  const rootReads: Record<string, RootRead> = {};
 
   for (const plugin of plugins) {
     if (!plugin.describeResources) continue;
@@ -267,6 +271,7 @@ export async function observeResources(
       }
       Object.assign(annotations, observed.annotations ?? {});
       Object.assign(sources, observed.sources);
+      Object.assign(rootReads, observed.rootReads ?? {});
       // What the estate depends on but does not declare (#1273). Read after the
       // managed resources, because the declared observation is the closure's
       // roots — there is nothing to reference out from until it exists.
@@ -336,7 +341,7 @@ export async function observeResources(
     }
   }
 
-  return { observations, warnings, errors, notes, annotations, ...(Object.keys(sources).length > 0 ? { sources } : {}) };
+  return { observations, warnings, errors, notes, annotations, ...(Object.keys(sources).length > 0 ? { sources } : {}), ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}) };
 }
 
 /**

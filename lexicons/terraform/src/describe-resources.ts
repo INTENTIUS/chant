@@ -219,6 +219,7 @@ import {
   type DeclaredEntity,
   type EntityObservation,
   type ObserverAdapter,
+  type RootRead,
   type UnobservedReason,
 } from "@intentius/chant/observation";
 import type { OwnershipMarker } from "@intentius/chant/ownership";
@@ -1321,7 +1322,7 @@ function planAdapter(
   root: string,
   cwd: string | undefined,
   deps: TerraformReadDeps,
-  outcome: { answered: PlanDepthAnswer; note: string },
+  outcome: { answered: PlanDepthAnswer; note: string; read?: RootRead },
 ): ObserverAdapter<PlanDepthIndex> {
   const where = cwd ? { cwd } : {};
   const planRead = deps.planRead ?? terraformPlanRead;
@@ -1338,6 +1339,7 @@ function planAdapter(
         dir = read.dir;
         const plan = indexPlan(read.json);
         outcome.answered = "plan";
+        outcome.read = { depth: "plan" };
         outcome.note = `terraform.roots.${root}: the plan read answered (\`${read.command.replace(read.planDir, "<tmp>")}\`)`;
         return { kind: "plan", plan, state: indexStateResources({ values: asRecord(plan.priorState).values }) };
       } catch (err) {
@@ -1351,6 +1353,7 @@ function planAdapter(
           reason: kind === "backend" && planFailureIsCredentials(String((planErr as Error).message)) ? "no-credentials" : kind === "backend" ? "read-failed" : "no-binding",
           detail: `terraform.roots.${root}${dir ? ` (${dir})` : ""}: declared only. ${firstLine(planErr)}${kind === "backend" ? " The state read needs the same backend, so it was not tried." : ""}`,
         };
+        outcome.read = { depth: "plan", fellBackTo: "declared", reason: kind === "backend" ? "backend-unreachable" : "needs-init" };
         outcome.note = `terraform.roots.${root}: no read answered, declared only (${kind === "backend" ? "the plan read could not reach the backend" : "the root needs init, which chant never runs"})`;
         throw planErr;
       }
@@ -1360,6 +1363,7 @@ function planAdapter(
         const shown = await deps.show({ root, ...where });
         dir = shown.dir;
         outcome.answered = "state";
+        outcome.read = { depth: "plan", fellBackTo: "state", reason: why === "no provider credentials" ? "no-credentials" : "plan-failed" };
         outcome.note = `terraform.roots.${root}: the plan read failed (${why}: ${firstLine(planErr)}), so the state read answered; plan attributes are absent`;
         return { kind: "state", state: indexStateResources(shown.json) };
       } catch (err) {
@@ -1367,6 +1371,7 @@ function planAdapter(
           reason: "read-failed",
           detail: `terraform.roots.${root}${dir ? ` (${dir})` : ""}: declared only. The plan read failed (${firstLine(planErr)}) and the state read after it failed too (${firstLine(err)})`,
         };
+        outcome.read = { depth: "plan", fellBackTo: "declared", reason: "state-read-failed" };
         outcome.note = `terraform.roots.${root}: no read answered, declared only (the plan read failed, ${why}, and the state read failed after it)`;
         throw err;
       }
@@ -1559,6 +1564,7 @@ export async function describeResources(
   // over state the same green as a live read of the account is the drift lie
   // an overlay exists to prevent.
   const sources: Record<string, string> = {};
+  const rootReads: Record<string, RootRead> = {};
   const depthOf = byRoot.size > 0 ? await observeDepths(options, notes) : () => "state" as const;
   for (const [root, declared] of byRoot) {
     // One fact decides the whole read, and the parse already recorded it on
@@ -1590,10 +1596,11 @@ export async function describeResources(
       // a plan-depth root is only known after the read: the plan, the state
       // read it fell back to, or neither, in which case it names the read
       // that was attempted last.
-      const outcome: { answered: PlanDepthAnswer; note: string } = { answered: "declared", note: "" };
+      const outcome: { answered: PlanDepthAnswer; note: string; read?: RootRead } = { answered: "declared", note: "" };
       const read = await observeEntities(declared, planAdapter(root, options.cwd, deps, outcome));
       const value = outcome.answered === "state" ? "state" : "plan";
       for (const entity of declared) sources[entity.name] = value;
+      if (outcome.read) rootReads[`terraform.roots.${root}`] = outcome.read;
       if (outcome.note) notes.push(outcome.note);
       parts.push(normalizeObservation(read));
       continue;
@@ -1632,5 +1639,5 @@ export async function describeResources(
 
   // A planned create's plan attributes (#4372) ride beside the verdict, never
   // in `resources`: the block stays absent.
-  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations);
+  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations, rootReads);
 }

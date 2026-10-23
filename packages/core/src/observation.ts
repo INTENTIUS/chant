@@ -167,6 +167,14 @@ export interface ObservationResult {
    */
   annotations?: Record<string, Record<string, unknown>>;
   /**
+   * Which read answered each root, and why it fell back when it did (#4384
+   * follow-up), keyed by a lexicon-chosen root key (terraform uses
+   * `terraform.roots.<root>`). Structured beside {@link notes}, which say the
+   * same thing in prose: a consumer reads this field and never matches note
+   * text, so rewording a note cannot change what it reports.
+   */
+  rootReads?: Record<string, RootRead>;
+  /**
    * Notices about the read as a whole, not about any one entity (#1265) —
    * "the ownership filter could not be applied on this surface" is the
    * canonical one. A note is a property of the environment or the read path,
@@ -187,6 +195,18 @@ export interface ObservationResult {
 }
 
 /**
+ * The read a root was asked for and the one that answered. `depth` is the read
+ * asked for (`"plan"` for a plan-depth root). `fellBackTo` is set only when that
+ * read failed: the read that answered instead, or `"declared"` when none did.
+ * `reason` is a short machine-stable cause, not prose to match on.
+ */
+export interface RootRead {
+  depth: string;
+  fellBackTo?: "state" | "declared";
+  reason?: string;
+}
+
+/**
  * What `describeResources()` may return: the bare map (pre-#1089, still valid —
  * "I looked at everything") or the {@link ObservationResult} envelope.
  */
@@ -202,6 +222,8 @@ export interface NormalizedObservation {
   sources: Record<string, string>;
   /** Facts beside the verdict, per entity name (#4372). Absent when the lexicon reported none. */
   annotations?: Record<string, Record<string, unknown>>;
+  /** Which read answered each root, structured. Absent when the lexicon reported none. */
+  rootReads?: Record<string, RootRead>;
   /** Run-level notices (#1265), distinct. Empty when the lexicon reported none. */
   notes: string[];
   /** Per-stack exports (#1279), keyed by stack name. Absent when the lexicon reported none. */
@@ -229,6 +251,7 @@ export function observation(
   stackExports?: Record<string, Record<string, unknown>>,
   sources?: Record<string, string>,
   annotations?: Record<string, Record<string, unknown>>,
+  rootReads?: Record<string, RootRead>,
 ): ObservationResult {
   return {
     observation: "v1",
@@ -237,6 +260,7 @@ export function observation(
     ...(queried && Object.keys(queried).length > 0 ? { queried } : {}),
     ...(sources && Object.keys(sources).length > 0 ? { sources } : {}),
     ...(annotations && Object.keys(annotations).length > 0 ? { annotations } : {}),
+    ...(rootReads && Object.keys(rootReads).length > 0 ? { rootReads } : {}),
     ...(notes && notes.length > 0 ? { notes } : {}),
     ...(stackExports && Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
@@ -258,6 +282,7 @@ export function normalizeObservation(value: DescribeResourcesResult | undefined)
       sources: value.sources ?? {},
       notes: [...new Set(value.notes ?? [])],
       ...(value.annotations && Object.keys(value.annotations).length > 0 ? { annotations: value.annotations } : {}),
+      ...(value.rootReads && Object.keys(value.rootReads).length > 0 ? { rootReads: value.rootReads } : {}),
       ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
     };
   }
@@ -311,12 +336,14 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   const stackExports: Record<string, Record<string, unknown>> = {};
   // Annotations (#4372) merge like `sources`: per entity, disjoint parts.
   const annotations: Record<string, Record<string, unknown>> = {};
+  const rootReads: Record<string, RootRead> = {};
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
     Object.assign(queried, part.queried);
     Object.assign(sources, part.sources);
     Object.assign(annotations, part.annotations ?? {});
+    Object.assign(rootReads, part.rootReads ?? {});
     for (const n of part.notes) notes.add(n);
     Object.assign(stackExports, part.stackExports ?? {});
   }
@@ -330,6 +357,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     sources,
     notes: [...notes],
     ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
+    ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}),
     ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
 }

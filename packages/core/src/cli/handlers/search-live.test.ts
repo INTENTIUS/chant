@@ -45,6 +45,7 @@ vi.mock("../../build", async () => {
 });
 
 import type { ResourceMetadata } from "../../lexicon";
+import type { RootRead } from "../../observation";
 import searchSchema from "../../workspace/search.schema.json";
 import { contract } from "../../workspace/__fixtures__/contract-repo";
 const { expectValid } = contract(searchSchema);
@@ -417,7 +418,15 @@ describe("search --live names the plan read (#4384)", () => {
   const STATE_NOTE = "terraform.roots.app: the plan read failed (no provider credentials: x), so the state read answered; plan attributes are absent";
   const DECLARED_NOTE = "terraform.roots.app: no read answered, declared only (the plan read could not reach the backend)";
 
-  function setup(sources: Record<string, string>, notes: string[], resources: Record<string, ResourceMetadata> | null = null) {
+  const FELL_TO_STATE: Record<string, RootRead> = { "terraform.roots.app": { depth: "plan", fellBackTo: "state", reason: "no-credentials" } };
+  const FELL_TO_DECLARED: Record<string, RootRead> = { "terraform.roots.app": { depth: "plan", fellBackTo: "declared", reason: "backend-unreachable" } };
+
+  function setup(
+    sources: Record<string, string>,
+    notes: string[],
+    resources: Record<string, ResourceMetadata> | null = null,
+    rootReads?: Record<string, RootRead>,
+  ) {
     loadPluginsMock.mockResolvedValue([
       createMockPlugin({
         name: "terraform",
@@ -426,6 +435,7 @@ describe("search --live names the plan read (#4384)", () => {
           resources: resources ?? { orders: { type: "Terraform::Resource", physicalId: "db-1", status: "OK", ownership: "owned" as const } },
           sources,
           notes,
+          ...(rootReads ? { rootReads } : {}),
         }),
       }),
     ]);
@@ -495,7 +505,7 @@ describe("search --live names the plan read (#4384)", () => {
   });
 
   test("a plan read that fell back to state says so", async () => {
-    setup({ orders: "state" }, [STATE_NOTE]);
+    setup({ orders: "state" }, [STATE_NOTE], null, FELL_TO_STATE);
     const text = await run();
     expect(text).toContain("observed live · bound 1/1 · the plan read fell back to state");
     const doc = JSON.parse(await run(true));
@@ -519,6 +529,7 @@ describe("search --live names the plan read (#4384)", () => {
           unobserved: { orders: { reason: "no-binding" as const, type: "Terraform::Resource" } },
           sources: { orders: "plan" },
           notes: [DECLARED_NOTE],
+          rootReads: FELL_TO_DECLARED,
         }),
       }),
     ]);
@@ -527,6 +538,22 @@ describe("search --live names the plan read (#4384)", () => {
     expect(doc.source.planFellBackTo).toBe("declared");
     expect(doc.source.depth).toBeUndefined();
     expect(doc.provenance).toContain("the plan read fell back to declared");
+  });
+
+  test("rewording the notes changes nothing: the fallback is read from the structured field", async () => {
+    setup({ orders: "state" }, ["the app root: plan unavailable, state used instead"], null, FELL_TO_STATE);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBe("state");
+    expect(doc.provenance).toBe("observed live · bound 1/1 · the plan read fell back to state");
+  });
+
+  test("a note that reads like a fallback does not make one", async () => {
+    setup({ orders: "state" }, [STATE_NOTE, DECLARED_NOTE]);
+    const doc = JSON.parse(await run(true));
+    expectValid(doc);
+    expect(doc.source.planFellBackTo).toBeUndefined();
+    expect(doc.provenance).toBe("observed live · bound 1/1");
   });
 
   test("a plain live or state answer is unchanged", async () => {

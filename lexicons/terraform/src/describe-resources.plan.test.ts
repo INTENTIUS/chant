@@ -300,6 +300,7 @@ describe("which read answered is on the wire: \"plan\" (#2267, #4358)", () => {
     process.env[TERRAFORM_OBSERVE_ENV] = "plan";
     const result = normalizeObservation(await describeResources(await options(undefined), deps()));
     expect(new Set(Object.values(result.sources))).toEqual(new Set(["plan"]));
+    expect(result.rootReads).toEqual({ "terraform.roots.app": { depth: "plan" } });
   });
 });
 
@@ -320,6 +321,7 @@ describe("the plan depth falls back by depth, and says which read answered (#435
     expect(replaced.detail).toContain("declared only");
     expect(result.sources["app/terraform_data.replaced"]).toBe("plan");
     expect(result.notes.join("\n")).toMatch(/no read answered, declared only \(the root needs init/);
+    expect(result.rootReads).toEqual({ "terraform.roots.app": { depth: "plan", fellBackTo: "declared", reason: "needs-init" } });
   });
 
   it("missing provider credentials fall back to the state read, which answers without plan attributes", async () => {
@@ -334,6 +336,7 @@ describe("the plan depth falls back by depth, and says which read answered (#435
     expect((replaced.attributes as Record<string, unknown>).planAction).toBeUndefined();
     expect(new Set(Object.values(result.sources))).toEqual(new Set(["state"]));
     expect(result.notes.join("\n")).toMatch(/the plan read failed \(no provider credentials: .*\), so the state read answered/);
+    expect(result.rootReads).toEqual({ "terraform.roots.app": { depth: "plan", fellBackTo: "state", reason: "no-credentials" } });
   });
 
   it("missing backend access falls back to declared only, and the state read is never tried", async () => {
@@ -347,6 +350,7 @@ describe("the plan depth falls back by depth, and says which read answered (#435
     const replaced = result.unobserved["app/terraform_data.replaced"]!;
     expect(replaced.detail).toMatch(/declared only\. .*Failed to get existing workspaces.*The state read needs the same backend/);
     expect(result.notes.join("\n")).toMatch(/no read answered, declared only \(the plan read could not reach the backend\)/);
+    expect(result.rootReads).toEqual({ "terraform.roots.app": { depth: "plan", fellBackTo: "declared", reason: "backend-unreachable" } });
   });
 
   it("a state read that fails after the plan read is declared only too, never absent", async () => {
