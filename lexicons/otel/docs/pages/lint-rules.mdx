@@ -5,7 +5,7 @@ diataxis: reference
 order: 5
 ---
 
-The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 to OTEL127 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
+The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 to OTEL127 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities, and OTEL128 reads the config beside a declared `Distribution`. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
 
 | Id | Severity | Catches |
 |---|---|---|
@@ -36,6 +36,7 @@ The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeSc
 | OTEL125 | warning | a pipeline sending to a remote `otlp` or `otlphttp` exporter with no `batch` processor and no `sending_queue.batch` |
 | OTEL126 | error | a `k8sattributes` `extract.metadata` field the processor doesn't support, see [below](#otel126-and-otel127-names-from-a-fixed-list) |
 | OTEL127 | error | a `resourcedetection` detector the processor doesn't have |
+| OTEL128 | error | when the project declares a `Distribution`, a component the config declares that the distribution doesn't build; a warning when the distribution lists a module whose type can't be read from its path, see [Custom Components](../custom-components/#build-a-collector-that-includes-it) |
 
 ## Configs in Kubernetes ConfigMaps
 
