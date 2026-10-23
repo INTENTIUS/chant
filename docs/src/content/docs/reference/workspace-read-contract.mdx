@@ -1164,9 +1164,9 @@ A reader such as hud or behold reads only through this contract and writes only 
 
 `READ_CONTRACT_COMMANDS` lists the read commands covered, and since [#3160](https://github.com/INTENTIUS/chant/issues/3160) it includes `records --uncommitted`. Since [#3172](https://github.com/INTENTIUS/chant/issues/3172) it includes `wip`, run as `workspace wip --json`. A reader runs it as `workspace records --uncommitted <args> --json`. That document is held to the records schema, which requires `checkout` when `uncommitted` is true and a `worktree` on every record.
 
-`search` is listed since [#4374](https://github.com/INTENTIUS/chant/issues/4374). A reader runs it as `workspace search <query> --json`, the query `app` here, and the document is held to `search.schema.json`. Over MCP the `workspace-search` tool answers it. Plain `chant search --json` prints the same document for one project, and chant's own tests hold that one to the schema too.
+`search` is listed since [#4374](https://github.com/INTENTIUS/chant/issues/4374). The reader command is `workspace search <query> --json` with the query `app` here, and the document is held to `search.schema.json`. Over MCP the `workspace-search` tool answers it. Plain `chant search --json` prints the same document for one project, and chant's own tests hold that one to the schema too.
 
-`search --capabilities` is listed since [#4375](https://github.com/INTENTIUS/chant/issues/4375). A reader runs it as `workspace search --capabilities --json`, with no arguments, and the document is held to `capabilities.schema.json`. Over MCP the `capabilities` tool answers it.
+`search --capabilities` is listed since [#4375](https://github.com/INTENTIUS/chant/issues/4375). The reader command is `workspace search --capabilities --json`, with no arguments, and the document is held to `capabilities.schema.json`. Over MCP the `capabilities` tool answers it.
 
 The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document. `commands` lists the commands the reader reads. The suite reads only those, and the report names the others in `skipped` as not applicable.
 

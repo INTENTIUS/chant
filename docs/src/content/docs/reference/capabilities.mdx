@@ -11,10 +11,10 @@ a [`chant search`](/chant/cli/search/#capabilities) query with a `cap:` term
 ([#4375](https://github.com/INTENTIUS/chant/issues/4375)). Each capability is
 a rule written as a path pattern, and the path a match took is its evidence.
 
-The rule language and the first vocabulary were ruled on in
-[#4361](https://github.com/INTENTIUS/chant/issues/4361), after a measurement
-of three candidate languages against one estate written twice, as a
-CloudFormation project and as a Terraform root.
+[#4361](https://github.com/INTENTIUS/chant/issues/4361) settled the rule
+language and the first vocabulary. It followed a measurement of three
+candidate languages on one estate written twice, once as a CloudFormation
+project and once as a Terraform root.
 
 ## The catalog
 
@@ -63,20 +63,23 @@ A rule reads declared references. Each capability names what it leaves out,
 and `chant search` prints that list under every answer that uses it, with a
 count where the graph holds the thing left out:
 
-- IAM `Condition` keys, `NotAction`, `NotResource`, permission boundaries and
-  SCPs.
-- A statement on `Resource: "*"`. It names no resource, so no edge leads from
-  it. On behold#912's terralith, eight team roles allow DynamoDB actions on
-  `*`; `reaches` doesn't find them, and the not-evaluated line counts them.
-- AWS-managed policies, which a configuration names by ARN only.
-- A reference the graph holds but can't resolve, such as an expression that
-  names nothing declared. A reference inside a CloudFormation `Sub`
-  (``Sub`${bucket.Arn}/*` ``) is read through the `$sub` template the graph
-  keeps since [#4373](https://github.com/INTENTIUS/chant/issues/4373).
-- A subnet on its VPC's main route table, network ACLs, prefix lists, load
-  balancers and API gateways.
+IAM `Condition` keys, `NotAction`, `NotResource`, permission boundaries and
+SCPs are not read. Neither is a statement on `Resource: "*"`, which names no
+resource, so no edge leads from it. On behold#912's terralith, eight team roles
+allow DynamoDB actions on `*`; `reaches` doesn't find them, and the
+not-evaluated line counts them. AWS-managed policies, which a configuration
+names by ARN only, have no edges either.
 
-An explicit `Deny` is evaluated: a Deny statement on the same role and
+A reference the graph holds but can't resolve, such as an expression that
+names nothing declared, is left out too. A reference inside a CloudFormation
+`Sub` (``Sub`${bucket.Arn}/*` ``) is the exception: it is read through the
+`$sub` template the graph keeps since
+[#4373](https://github.com/INTENTIUS/chant/issues/4373). Network placement
+beyond a subnet's own route table is also outside the rules. That covers
+network ACLs and prefix lists, and the load balancers and API gateways in
+front of an instance.
+
+An explicit `Deny` is evaluated. A Deny statement on the same role and
 resource cancels the Allow, for the same action when `grants` is given one.
 
 ## The rule language
@@ -139,13 +142,12 @@ rules read a view built through each lexicon's mapping:
 - a `resource` edge for an ARN string that names a declared role, bucket or
   table by name.
 
-Each lexicon ships its mapping as data: `src/capabilities/mapping.json` in
+The mapping ships as data in each lexicon: `src/capabilities/mapping.json` in
 `@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-terraform`. The
 kinds core's [derived attributes](/chant/cli/search/#derived-attributes) read
 are core's base mapping, so `internetFacing` and `effectiveIngress` work on a
-graph read without the lexicon loaded; a lexicon's mapping extends it. What a
-mapping can't say as data, a lexicon supplies as code: the terraform lexicon
-reads `jsonencode(...)` policies. Both reach `chant search` through the
+graph read without the lexicon loaded, and the mapping extends it. What a
+mapping can't say as data comes as code: the terraform lexicon reads `jsonencode(...)` policies. Both reach `chant search` through the
 plugin's `capabilityPack`.
 
 The two derived attributes are rules too: `internetFacing` is
@@ -217,19 +219,19 @@ In a declared workspace, `chant workspace search --capabilities --json`
 prints the same document from the workspace root's chant, for every lexicon
 a chant member loads, since that chant runs the rules over the composed graph
 (see [workspace search](/chant/cli/workspace-search/#capabilities)). The
-rules are the root chant's; each member's mapping and adapter run under the
+rules are the root chant's. Each member's mapping and adapter run under the
 member's own chant, which prints its part of the view
-([#4378](https://github.com/INTENTIUS/chant/issues/4378)), so the `lexicons`
-support this document states is the root's installed lexicons, and a member
-pinned to another lexicon version answers by that version's mapping. The
+([#4378](https://github.com/INTENTIUS/chant/issues/4378)). The `lexicons`
+support this document states is therefore the root's installed lexicons. A
+member pinned to another lexicon version answers by that version's mapping. The
 reader conformance suite covers it as `search --capabilities`. chant's MCP
 `capabilities` tool returns whichever of the two applies where the server
 runs, unchanged. An agent reads it once per session.
 
 ## Evaluation time
 
-Measured on an M-series Mac with Node 24, median of 7, building the view and
-then evaluating all fifteen capabilities over the whole graph:
+Median of 7 runs on an M-series Mac with Node 24. Each run builds the view
+and then evaluates all fifteen capabilities over the whole graph:
 
 | Estate | IR nodes | View | All capabilities |
 |---|---:|---:|---:|
