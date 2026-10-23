@@ -121,7 +121,7 @@ Plain [`chant search --at <ref>`](/chant/cli/search/) still means a snapshot, fo
 | `members[].source`, `provenance`, `liveFailures`, `explain`, `drift` | the member's own answer, as [`chant search --json`](/chant/cli/search/#--json) carries them, with every node id `<member>/<id>` |
 | `matches[]` | every member's rows, sorted by id, each as `chant search --json` prints it with `id` and the ends of every hop `<member>/<id>`, and `member` added |
 
-With `--count-by`, `countBy`, `groups` and `total` take the place of `matches`. `groups` adds the members' groups up by name, except that a `module` group is prefixed with its member (`east/module.vpc`), since a module of the same name in two members is two modules. Each member entry carries its own `groups` and `total`.
+With `--count-by`, `countBy`, `groups` and `total` take the place of `matches`. `groups` adds the members' groups up by name, except that a `module` group is prefixed with its member (`east/module.vpc`), since a module of the same name in two members is two modules. A group's `ids` are `<member>/<id>`, the ids `chant workspace graph` gives the same nodes; a merged group lists them only when every member that counted into it listed its own. Each member entry carries its own `groups` and `total`.
 
 A member that can't be searched is listed with a reason code and never as zero matches:
 

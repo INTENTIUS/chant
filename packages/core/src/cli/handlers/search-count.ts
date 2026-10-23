@@ -97,22 +97,34 @@ export function hasManyTerraformRoots(ir: GraphIR): boolean {
 
 /** Count `matches` per group, sorted by count (highest first) and then by name. */
 export function countGroups(matches: IRNode[], countBy: CountBy, multiRoot = false): Array<{ group: string; count: number }> {
-  const counts = new Map<string, number>();
+  return groupMembers(matches, countBy, multiRoot).map(({ group, count }) => ({ group, count }));
+}
+
+/**
+ * The groups with the ids of the matches in each, in match order (#4382), in
+ * the order {@link countGroups} gives. `count` is always `ids.length`. A
+ * reader that draws the groups (behold#922) lights each group's nodes from
+ * `ids`, so it never has to read a node's group itself.
+ */
+export function groupMembers(matches: IRNode[], countBy: CountBy, multiRoot = false): Array<{ group: string; count: number; ids: string[] }> {
+  const ids = new Map<string, string[]>();
   for (const n of matches) {
     const g = groupOf(n, countBy, multiRoot);
-    counts.set(g, (counts.get(g) ?? 0) + 1);
+    const list = ids.get(g);
+    if (list) list.push(n.id);
+    else ids.set(g, [n.id]);
   }
-  return [...counts]
-    .map(([group, count]) => ({ group, count }))
+  return [...ids]
+    .map(([group, members]) => ({ group, count: members.length, ids: members }))
     .sort((a, b) => b.count - a.count || (a.group < b.group ? -1 : a.group > b.group ? 1 : 0));
 }
 
-/** `--count-by` with `--json`: the groups, in printed order, and the total they add up to. */
+/** `--count-by` with `--json`: the groups, in printed order, each with its matched ids, and the total they add up to. */
 export interface CountsJson {
   query: string;
   source: unknown;
   countBy: string;
-  groups: Array<{ group: string; count: number }>;
+  groups: Array<{ group: string; count: number; ids: string[] }>;
   total: number;
   liveFailures?: string[];
 }
@@ -120,7 +132,7 @@ export interface CountsJson {
 export function countsJson(
   query: string,
   source: unknown,
-  groups: Array<{ group: string; count: number }>,
+  groups: Array<{ group: string; count: number; ids: string[] }>,
   countBy: CountBy,
   liveFailures: string[] = [],
 ): CountsJson {

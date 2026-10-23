@@ -152,7 +152,9 @@ describe("search --json is the read contract's search document (#4374)", () => {
     const { exit, doc } = await search({ path: "", countBy: "kind" });
     expect(exit).toBe(0);
     expect(doc).toMatchObject({ ...HEAD, at: null, countBy: "kind", total: 3 });
-    expect(doc.groups).toEqual([{ group: "AWS::EC2::Instance", count: 2 }, { group: "AWS::S3::Bucket", count: 1 }]);
+    expect(doc.groups.map(({ group, count }: { group: string; count: number }) => ({ group, count }))).toEqual([{ group: "AWS::EC2::Instance", count: 2 }, { group: "AWS::S3::Bucket", count: 1 }]);
+    // #4382: each group names its matches.
+    for (const g of doc.groups as Array<{ count: number; ids: string[] }>) expect(g.ids).toHaveLength(g.count);
     expect(doc).not.toHaveProperty("matches");
   });
 
