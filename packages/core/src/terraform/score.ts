@@ -133,6 +133,12 @@ export interface ScoreOptions {
    */
   tierOf?: (type: string) => TierInfo | null;
   signalsFor?: (node: TfNode) => ScoreSignals;
+  /**
+   * Compute each node's blast radius (#2326). Default true; a caller that only
+   * wants the score (`boundaryReport`) turns it off rather than walk the graph
+   * once per node for a field it drops.
+   */
+  radius?: boolean;
 }
 
 const clamp = (n: number): number => Math.max(0, Math.min(100, n));
@@ -239,6 +245,9 @@ export function scoreEstate(graph: TfGraph, opts: ScoreOptions = {}): Peelabilit
   const { folded, childrenOf } = computeFolds(graph);
   return graph.nodes
     .filter((n) => !folded.has(n.address))
-    .map((n) => ({ ...scoreNode(n, graph, childrenOf.get(n.address) ?? new Set(), opts), radius: blastRadius(graph, n.address) }))
+    .map((n) => {
+      const scored = scoreNode(n, graph, childrenOf.get(n.address) ?? new Set(), opts);
+      return opts.radius === false ? scored : { ...scored, radius: blastRadius(graph, n.address) };
+    })
     .sort((a, b) => b.score - a.score || (a.address < b.address ? -1 : a.address > b.address ? 1 : 0));
 }

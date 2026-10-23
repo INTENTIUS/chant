@@ -167,7 +167,7 @@ export function boundaryReport(graph: TfGraph, target: string, opts: BoundaryOpt
     }
   }
 
-  const score = scoreEstate(graph, opts.score).find((r) => r.address === target);
+  const score = scoreEstate(graph, { ...opts.score, radius: false }).find((r) => r.address === target);
   const diagnostics: string[] = [];
   const tierOf = opts.score?.tierOf ?? resolveTier;
   if (
