@@ -212,8 +212,8 @@ function compose(
 export function planGraph(query: GraphQuery): MemberPlan {
   const located = locateWorkspace(query.cwd, query.at);
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
-  const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
-  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
+  const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
+  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems: problems.map((p) => p.message) });
 }
 
 /** The members of a workspace read, each read under its own toolchain: what graph and search compose (#4374). */
@@ -260,8 +260,9 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
     const located = locateWorkspace(query.cwd, query.at);
     const declaration = readDeclaration(located.tree, "", { rootChant: true });
     // Kinds are read before planning: a package kind with a graph block runs (#2874).
-    const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
-    let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
+    const { registry: kinds, problems } = loadKindRegistry(declaration.pins, located.rootOnDisk);
+    const kindProblems = problems.map((p) => p.message);
+    let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds, kindProblems });
     const args = (query.args ?? {}) as ParsedArgs;
     // Members whose last source read still stands are answered from the cache (#2876).
     // A composites read runs every member's component graph as well, so it reads everything.
@@ -271,7 +272,7 @@ export async function readMembers(query: GraphQuery, options: MemberReadOptions)
     const served = new Set(split?.hits.map((h) => h.id));
     if (located.at !== null && withoutUnits(plan, served).groups.length > 0) {
       exported = exportRevision(located, withoutUnits(plan, served).groups.flatMap((g) => g.units.map((u) => u.dir)));
-      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds });
+      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds, kindProblems });
     }
     // Only the members that run get a reader project; a served member needs none.
     const toRun = withoutUnits(plan, served);
