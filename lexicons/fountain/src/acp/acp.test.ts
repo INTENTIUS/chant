@@ -330,6 +330,12 @@ describe("parseChantCommandLine", () => {
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.message).toContain("not a chant command");
   });
+
+  it("still reports an unknown flag on a real chant verb (#4369)", async () => {
+    const parsed = await parseChantCommandLine("build -z");
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.message).toContain("Unknown flag: -z");
+  });
 });
 
 describe("chant acp", () => {
