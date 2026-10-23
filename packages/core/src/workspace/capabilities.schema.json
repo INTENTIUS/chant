@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json",
   "title": "chant capabilities catalog",
-  "description": "What `chant search --capabilities --json` prints (#4375): the capability catalog `chant search` answers `cap:` terms and `->[cap=...]` edges with, each capability's rule, and whether each lexicon the project loads can supply it. chant's MCP `capabilities` tool returns the same document. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.125.0 and newer; the read contract as a whole by chant 0.81.0 and newer.",
+  "description": "What `chant search --capabilities --json` prints (#4375): the capability catalog `chant search` answers `cap:` terms and `->[cap=...]` edges with, each capability's rule, and whether each lexicon the project loads can supply it. chant's MCP `capabilities` tool returns the same document. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.46 and newer; the read contract as a whole by chant 0.81.0 and newer.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -152,7 +152,8 @@
                   "code": {
                     "enum": [
                       "lexicon-has-no-mapping",
-                      "capability-not-derivable"
+                      "capability-not-derivable",
+                      "lexicon-not-loaded"
                     ]
                   },
                   "message": {

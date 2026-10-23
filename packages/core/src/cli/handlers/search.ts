@@ -4,7 +4,7 @@ import { buildGraphIr, buildLiveGraphIr, collectUnobserved, sourceOverlayGraphs,
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { enrichEffectiveTopology, terraformResourceType, terraformType } from "../../graph-effective";
 import { attachCapabilities, capabilityEngine, parseCapabilityCall } from "../../capabilities/catalog";
-import { CapabilityError, type Evidence } from "../../capabilities/matcher";
+import { CapabilityError, type CapabilityEngine, type Evidence } from "../../capabilities/matcher";
 import type { CapabilityPack } from "../../capabilities/view";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
@@ -63,6 +63,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     if (args.json) console.log(JSON.stringify(searchErrorJson(query, error)));
     return 1;
   };
+  // The capability catalog (#4375): the `capabilities` document, not an answer.
+  if (args.capabilities) return printCapabilities(args, query, await resolveProjectLexicons(resolve(".")).catch(() => []));
   // The snapshot to replay (#4374): `--snapshot <ref>`, or `--at <ref>`, which
   // plain search keeps for compatibility. Everywhere else in the read contract
   // `--at` is a git revision, so the workspace form takes only `--snapshot`.
@@ -320,7 +322,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
   // Capability terms (#4375) read the graph through the lexicons' mappings.
   if (terms.some(usesCapability)) {
     const refused = await bindCapabilities(ctx, projectPath, ir, terms);
-    if (refused) return refuse(refused);
+    if (refused) return refuse({ code: "query-invalid", ...refused });
   }
   // Resolve `kind:` terms against what is actually in this graph, before any
   // node is tested against them.
@@ -571,6 +573,42 @@ async function declaredGraph(
   return withLexiconEdges(buildGraphIr(discovered.entities, projectPath), plugins, discovered.entities);
 }
 
+/**
+ * Print the capability catalog (#4375): the `capabilities` document under
+ * `--json`, a line per capability otherwise. It takes no query and no other
+ * search flag, since it answers nothing about the estate. Shared by `chant
+ * search` and `chant workspace search`, which differ only in the lexicons
+ * they report on.
+ */
+export async function printCapabilities(
+  args: { json?: boolean; live?: boolean; env?: string; snapshot?: string; at?: string; countBy?: string; explain?: boolean; show?: string },
+  query: string,
+  lexicons: string[],
+): Promise<number> {
+  const { capabilitiesDocument, capabilitiesFailure, formatCapabilities } = await import("../../workspace/capabilities-contract");
+  const extra = [
+    // `args.path` is "." when no query was given.
+    ...(query && query !== "." ? [`the query "${query}"`] : []),
+    ...(["live", "env", "snapshot", "at", "countBy", "explain", "show"] as const)
+      .filter((k) => args[k] !== undefined && args[k] !== false)
+      .map((k) => `--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`),
+  ];
+  if (extra.length > 0) {
+    const error = {
+      code: "usage-invalid" as const,
+      message: `--capabilities prints the catalog, so it takes no query and no other search flag; it was given ${extra.join(", ")}`,
+      hint: "ask with a capability instead: chant search \"cap:internet-reachable(22)\"",
+    };
+    console.error(formatError(error));
+    if (args.json) console.log(JSON.stringify(await capabilitiesFailure(error)));
+    return 1;
+  }
+  const doc = await capabilitiesDocument(lexicons);
+  if (args.json) console.log(JSON.stringify(doc));
+  else for (const line of formatCapabilities(doc)) console.log(line);
+  return 0;
+}
+
 /** The capabilities a query names, in query order, for the provenance line (#4375). */
 function capabilitiesUsed(terms: Term[]): string[] {
   const out: string[] = [];
@@ -612,8 +650,31 @@ function capabilityNotes(terms: Term[], ir: GraphIR, source: AnswerSource): { na
   }));
 }
 
+/**
+ * Answer capability terms over a graph that is not this project's own (#4375):
+ * `chant workspace search` composes its members' graphs and asks here, so the
+ * rules run once over the whole of it with the packs given. Returns the rows
+ * as `--json` carries them, or the refusal for a capability the query names
+ * wrongly.
+ */
+export function answerOverGraph(
+  ir: GraphIR,
+  terms: Term[],
+  query: string,
+  packs: CapabilityPack[],
+): { matches: SearchJson["matches"]; capabilities: NonNullable<SearchJson["capabilities"]> } | { error: { message: string; hint?: string } } {
+  const engine = attachCapabilities(ir, packs);
+  const refused = checkCapabilityTerms(engine, terms);
+  if (refused) return { error: refused };
+  resolveKindTerms(terms, ir.nodes);
+  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
+  const matches = ir.nodes.filter((n) => terms.every((t) => matchTerm(n, t, ir, byId)));
+  const doc = searchJson(query, { kind: "declared" }, matches, terms, ir, byId);
+  return { matches: doc.matches, capabilities: capabilityNotes(terms, ir, { kind: "declared" }) };
+}
+
 /** Whether a term, or the leaf under it, names a capability (#4375). */
-function usesCapability(t: Term): boolean {
+export function usesCapability(t: Term): boolean {
   return t.kind === "cap" || t.capability !== undefined || (t.sub !== undefined && usesCapability(t.sub));
 }
 
@@ -637,6 +698,11 @@ async function bindCapabilities(
     }
   }
   const engine = attachCapabilities(ir, plugins.map((p) => p.capabilityPack).filter((p): p is CapabilityPack => !!p));
+  return checkCapabilityTerms(engine, terms);
+}
+
+/** Refuse a capability the query names that doesn't exist, a set used as an edge, or the wrong arguments. */
+function checkCapabilityTerms(engine: CapabilityEngine, terms: Term[]): { message: string; hint?: string } | undefined {
   const known = [...new Set(engine.publicNames())].join(", ");
   const check = (t: Term): { message: string; hint?: string } | undefined => {
     if (t.sub) {

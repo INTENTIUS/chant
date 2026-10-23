@@ -20,6 +20,7 @@ export function minimalReader(chant: ChantTransport) {
     runs: ["--json"],
     wip: ["--json"],
     search: ["--json"],
+    "search --capabilities": ["--json"],
   };
   return {
     async read(command: ReadContractCommand, args: string[]) {

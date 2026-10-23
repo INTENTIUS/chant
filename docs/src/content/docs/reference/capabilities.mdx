@@ -165,6 +165,62 @@ the labels gives `capability-not-derivable`, naming them.
 | `terraform` | all of them, for the AWS provider's types |
 | any other | none (`lexicon-has-no-mapping`) |
 
+## The capabilities document
+
+`chant search --capabilities --json` prints the catalog as the read
+contract's `capabilities` document, contract 1, held to
+`capabilities.schema.json` (`@intentius/chant/workspace/capabilities.schema.json`).
+Like every contract document it carries `contract`, `$schema` and `chant`, and
+a refusal is `error: { code, message }` with exit code 1 (`usage-invalid`,
+for a query or another search flag given with `--capabilities`). Without
+`--json` it prints one line per capability.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json",
+  "contract": 1,
+  "chant": "0.124.46",
+  "capabilities": [
+    {
+      "name": "reaches",
+      "meaning": "can-assume any number of times, then grants",
+      "shape": "edge",
+      "params": [{ "name": "action", "optional": true, "meaning": "an IAM action the grant must cover, such as s3:GetObject" }],
+      "search": "->[cap=reaches]",
+      "answers": ["if this role is compromised, what data can it reach"],
+      "depth": "declared",
+      "lexicons": { "aws": "supported", "terraform": "supported", "k8s": { "code": "lexicon-has-no-mapping", "message": "the k8s lexicon ships no capability mapping" } },
+      "notEvaluated": ["IAM Condition keys", "Resource \"*\""],
+      "uses": ["can-assume", "grants"],
+      "rule": "reaches(r, x; action?) := r:Role ->{0,}can-assume ->grants($action) x"
+    }
+  ],
+  "helpers": [{ "name": "in-sg", "rule": "in-sg(x, g)          := x ->{0,1}template ->sg g:SecurityGroup" }]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `capabilities[].name`, `meaning` | the capability and what it says |
+| `shape` | `set` or `edge` |
+| `params[]` | `{ name, optional, meaning }`, in argument order |
+| `search` | the term that asks for it: `cap:<name>` or `->[cap=<name>]` |
+| `answers[]` | questions it serves, in people's words |
+| `depth` | `declared`, `live` or `either` |
+| `lexicons` | for each lexicon the project loads: `supported`, or `{ code, message }` with `lexicon-has-no-mapping`, `capability-not-derivable` or `lexicon-not-loaded` |
+| `notEvaluated[]` | what the rule leaves out |
+| `uses[]` | the capabilities and helpers its rule refers to |
+| `rule` | the rule as written |
+| `helpers[]` | `{ name, rule }` for each rule the capabilities use that the catalog doesn't list |
+
+In a declared workspace, `chant workspace search --capabilities --json`
+prints the same document from the workspace root's chant, for every lexicon
+a chant member loads, since that chant runs the rules over the composed graph
+(see [workspace search](/chant/cli/workspace-search/#capabilities)). The
+reader conformance suite covers it as `search --capabilities`. chant's MCP
+`capabilities` tool returns whichever of the two applies where the server
+runs, unchanged. An agent reads it once per session.
+
 ## Evaluation time
 
 Measured on an M-series Mac with Node 24, median of 7, building the view and

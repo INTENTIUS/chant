@@ -109,6 +109,12 @@ List the composites the loaded lexicons export. "What composites do you have for
 
 Returns `{ lexicons, total, composites }`, plus the `lexicon` and `query` that were given. `lexicons` names every loaded lexicon, so an empty list for a lexicon it names means that lexicon exports no composites. Each composite is `{ name, lexicon, description, bundles, params }`. Its `bundles` are the resource kinds it creates, nested composites included, and each entry in `params` is `{ name, type, required, description }`. With a `query`, name matches come first. The data is the catalog each lexicon ships in its package. Reading it loads no composite and calls no provider.
 
+### `capabilities`
+
+The capability catalog `chant search` answers `cap:` terms with ([#4375](https://github.com/INTENTIUS/chant/issues/4375)): each capability's meaning, parameters, the search term that asks for it, the questions it answers, whether each lexicon can supply it, what it does not evaluate, and its rule. It takes no parameters.
+
+Returns the read contract's `capabilities` document (`capabilities.schema.json`) unchanged: what `chant workspace search --capabilities --json` prints when the server runs inside a declared workspace, and what `chant search --capabilities --json` prints anywhere else. An agent reads it once per session. It is not the resource-type catalog, which the `search` tool searches. See [Capabilities](/chant/reference/capabilities/).
+
 ### `lifecycle-snapshot`
 
 Capture deployed state for an environment, reading every loaded lexicon that implements `describeResources`.

@@ -56,6 +56,7 @@ import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
 import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
 import { METRICS_ERROR_CODES, METRICS_REASON_CODES } from "./delivery-metrics";
 import { SEARCH_ERROR_CODES, SEARCH_MEMBER_REASON_CODES, WORKSPACE_SEARCH_ERROR_CODES } from "./search-contract";
+import { CAPABILITIES_ERROR_CODES, CAPABILITY_SUPPORT_CODES } from "./capabilities-contract";
 
 const HERE = import.meta.dirname;
 
@@ -136,6 +137,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   SEARCH_ERROR_CODES,
   WORKSPACE_SEARCH_ERROR_CODES,
   SEARCH_MEMBER_REASON_CODES,
+  CAPABILITIES_ERROR_CODES,
+  CAPABILITY_SUPPORT_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */

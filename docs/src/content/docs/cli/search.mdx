@@ -241,6 +241,7 @@ with its own path:
 | `--show` | `string` | — | Comma-separated attribute names to append to each result row |
 | `--count-by` | `string` | — | Print one count per group instead of one row per match: `kind`, `module` or `attr:<name>` (see [Grouped counts](#grouped-counts)) |
 | `--explain` | `boolean` | `false` | Print the match-universe footer, each match's path for edge terms, and near-miss exclusions |
+| `--capabilities` | `boolean` | `false` | Print the [capability catalog](/chant/reference/capabilities/#the-capabilities-document) instead of answering a query; with `--json`, the `capabilities` document. Takes no query and no other search flag |
 | `--json` | `boolean` | `false` | Print the whole answer (rows, paths, provenance, `--explain`, drift, failures) as the read contract's `search` document instead of rows and footers |
 | `--ambient` | `boolean` | `false` | Also report resources of a managed kind that exist without being declared or referenced |
 | `--check-live` | `boolean` | `false` | With `--snapshot` (or `--at`): additionally read the estate live and diff the matched rows against the snapshot the answer came from |

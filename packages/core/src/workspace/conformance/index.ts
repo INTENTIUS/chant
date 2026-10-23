@@ -56,7 +56,7 @@ import { isDeepStrictEqual } from "node:util";
 import { READ_CONTRACT_VERSION } from "../reason-codes";
 
 /** The read-contract commands, as a reader names them. */
-export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites", "runs", "wip", "search"] as const;
+export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites", "runs", "wip", "search", "search --capabilities"] as const;
 export type ReadContractCommand = (typeof READ_CONTRACT_COMMANDS)[number];
 
 /**
@@ -77,6 +77,8 @@ export const READ_CONTRACT_SCHEMAS: Record<ReadContractCommand, string> = {
   wip: "wip.schema.json",
   // `workspace search` (#4374). Plain `chant search --json` prints the same document for one project.
   search: "search.schema.json",
+  // The capability catalog (#4375), from the workspace's chant.
+  "search --capabilities": "capabilities.schema.json",
 };
 
 /** The flags that ask each command for its JSON document. A reader adds one of these and nothing else. */
@@ -92,6 +94,7 @@ export const READ_CONTRACT_JSON_FLAGS: Record<ReadContractCommand, readonly (rea
   runs: [["--json"]],
   wip: [["--json"]],
   search: [["--json"]],
+  "search --capabilities": [["--json"]],
 };
 
 /** The arguments the suite passes each read, on the reference workspace or the generated one. */
@@ -108,6 +111,7 @@ export const REFERENCE_READS: Record<ReadContractCommand, string[]> = {
   wip: [],
   // A bare word: on either workspace it searches the chant member, delivery, and lists the others.
   search: ["app"],
+  "search --capabilities": [],
 };
 
 /** One chant run: the arguments after `chant`, what it was given on stdin, and what it printed. */
@@ -350,6 +354,7 @@ export const MCP_READ_TOOLS: Partial<Record<ReadContractCommand, string>> = {
   "graph --composites": "workspace-graph",
   runs: "workspace-runs",
   search: "workspace-search",
+  "search --capabilities": "capabilities",
 };
 
 /**
@@ -398,6 +403,7 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
     else if (verb === "search" && a === "--count-by") args.countBy = value();
     else if (verb === "search" && a === "--show") args.show = value();
     else if (verb === "search" && a === "--explain") args.explain = true;
+    else if (verb === "search" && a === "--capabilities") args.capabilities = true;
     else if (/^-[A-Za-z-]/.test(a)) return undefined;
     else positional.push(a);
   }
@@ -415,6 +421,8 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
     case "runs":
       return positional.length === 0 && kinds.length === 0 ? { name: "workspace-runs", arguments: args } : undefined;
     case "search":
+      // The catalog (#4375) is its own tool, and takes nothing.
+      if (args.capabilities) return positional.length === 0 && Object.keys(args).length === 1 && kinds.length === 0 && members.length === 0 ? { name: "capabilities", arguments: {} } : undefined;
       return positional.length <= 1 && kinds.length === 0
         ? { name: "workspace-search", arguments: { ...args, query: positional[0] ?? "", ...(members.length ? { member: members } : {}) } }
         : undefined;

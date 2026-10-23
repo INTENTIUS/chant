@@ -34,9 +34,31 @@ The query grammar, `--show`, `--explain` and `--count-by` are those of [`chant s
 | `--show` | `string` | none | Comma-separated attributes to carry on each row |
 | `--count-by` | `string` | none | Group the matches: `kind`, `module` or `attr:<name>` |
 | `--explain` | `boolean` | `false` | Each member's universe and near misses |
+| `--capabilities` | `boolean` | `false` | Print the [capability catalog](/chant/reference/capabilities/#the-capabilities-document) instead of answering a query: the `capabilities` document, from the workspace root's chant, for every lexicon a chant member loads |
 | `--json` | `boolean` | `false` | Print the document. Without it, one row per match, `<member>/<name>  <kind>  <physical id>`, then a line per member that has no answer on stderr |
 
 `--ambient`, `--check-live`, `--check-snapshot` and `--fail-on-drift` are passed to each member as they are.
+
+## Capabilities
+
+A query that names a [capability](/chant/reference/capabilities/) (`cap:<name>`
+or `->[cap=<name>]`) is not run member by member. Its rules run once, under
+the workspace's chant, over the graph [`chant workspace
+graph`](/chant/cli/workspace-graph/) composes at detail 3, with each member's
+graph read under the member's own chant as that command reads it
+([#4375](https://github.com/INTENTIUS/chant/issues/4375)). The lexicon
+mappings are the workspace chant's. So a path may cross from one member into
+another: a role in `platform` whose policy names a bucket in `data` by ARN
+`reaches` that bucket, which no member's own search could see.
+
+```bash
+chant workspace search "cap:holds-secret <-[cap=reaches]kind:aws_iam_role" --json
+```
+
+Every member then reads `searched` without `alone`, and the document carries
+`capabilities`, what each capability named does not evaluate. Such a query
+answers from the declared graph, so it refuses `--live`, `--snapshot`,
+`--check-live`, `--check-snapshot` and `--count-by` with `usage-invalid`.
 
 ## Two times
 

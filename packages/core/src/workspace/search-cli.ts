@@ -33,10 +33,12 @@ import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { composedId } from "./compose-graph";
 import { readerVersion, WorkspaceReadError } from "./declaration";
 import { readMembers } from "./graph-cli";
+import type { GraphIR } from "../graph-ir";
 import type { Toolchain, UnitResult } from "./member-commands";
 import {
   SEARCH_CONTRACT_VERSION,
   SEARCH_ERROR_CODES,
+  SEARCH_MEMBER_REASON_CODES,
   SEARCH_OUTPUT_SCHEMA_ID,
   type SearchErrorCode,
   type SearchHead,
@@ -77,7 +79,13 @@ interface MemberMatch {
   physicalId?: string;
   unobserved?: string;
   show?: Record<string, unknown>;
-  paths: { term: string; dir: "out" | "in"; hops: { from: string; fromAttr?: string; to: string; toAttr?: string }[] }[];
+  paths: {
+    term: string;
+    dir: "out" | "in";
+    hops: { from: string; fromAttr?: string; to: string; toAttr?: string; edge?: string }[];
+    /** On a `cap:` term (#4375): the sets the match relied on, each with its path. */
+    because?: { capability: string; id: string; hops: { from: string; to: string }[] }[];
+  }[];
 }
 
 /** The answer of one member's `chant search --json`, rows or groups. */
@@ -246,7 +254,13 @@ function prefixMatch(member: string, m: MemberMatch): MemberMatch & { member: st
     ...m,
     id: composedId(member, m.id),
     member,
-    paths: (m.paths ?? []).map((p) => ({ ...p, hops: p.hops.map((h) => ({ ...h, from: composedId(member, h.from), to: composedId(member, h.to) })) })),
+    paths: (m.paths ?? []).map((p) => ({
+      ...p,
+      hops: p.hops.map((h) => ({ ...h, from: composedId(member, h.from), to: composedId(member, h.to) })),
+      ...(p.because
+        ? { because: p.because.map((b) => ({ ...b, id: composedId(member, b.id), hops: b.hops.map((h) => ({ ...h, from: composedId(member, h.from), to: composedId(member, h.to) })) })) }
+        : {}),
+    })),
   };
 }
 
@@ -289,6 +303,18 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
   const { checkSearchArgs } = await import("../cli/handlers/search");
   const checked = checkSearchArgs(flags, query, { ref: flags.snapshot, flag: "--snapshot" });
   if ("error" in checked) return refuse(checked.error.code, checked.error.message, checked.error.hint);
+  // Capability terms (#4375) run once, over the composed graph.
+  const { usesCapability } = await import("../cli/handlers/search");
+  if (checked.terms.some(usesCapability)) {
+    if (flags.live || flags.snapshot !== undefined || checked.countBy || flags.checkLive || flags.checkSnapshot) {
+      return refuse(
+        "usage-invalid",
+        "a capability term over a workspace answers from the composed declared graph, so it takes no --live, --snapshot, --check-live, --check-snapshot or --count-by",
+        "search a member's own project for a live answer: chant search \"cap:...\" --live --env <name>",
+      );
+    }
+    return composedCapabilitySearch(q, head, query, checked.terms);
+  }
 
   try {
     const read = await readMembers(
@@ -380,6 +406,90 @@ export async function workspaceSearch(q: WorkspaceSearchQuery): Promise<Workspac
   }
 }
 
+/**
+ * A query with capability terms (#4375): the rules run once, under this
+ * chant, over the graph `chant workspace graph` composes, so a path may cross
+ * from one member into another wherever the composed graph has an edge. Each
+ * member's graph is read under its own chant, as `workspace graph` reads it
+ * (`readMembers`); the lexicon mappings are this chant's, loaded for every
+ * lexicon a chant member uses. A member is `searched` without `alone`.
+ */
+async function composedCapabilitySearch(
+  q: WorkspaceSearchQuery,
+  head: SearchHead,
+  query: string,
+  terms: Parameters<typeof import("../cli/handlers/search").answerOverGraph>[1],
+): Promise<WorkspaceSearchResult> {
+  const { answerOverGraph } = await import("../cli/handlers/search");
+  const { workspaceGraph } = await import("./graph-cli");
+  const { workspaceLexicons } = await import("./capabilities-contract");
+  const { loadPlugin } = await import("../cli/plugins");
+  // Detail 3: each member's full property trees, which the rules read
+  // (a policy document, an inline ingress block).
+  const { doc: graph, failed: graphFailed } = await workspaceGraph({ cwd: q.cwd, at: q.at, members: q.members, reader: q.reader, onStderr: q.onStderr, args: { detail: 3 } });
+  if ("error" in graph) {
+    const e = graph.error as { code: string; message: string };
+    return { doc: { ...head, query, error: { code: e.code as WorkspaceSearchErrorCode, message: e.message } }, failed: true };
+  }
+  const packs = [];
+  for (const name of await workspaceLexicons(q.cwd)) {
+    try {
+      const pack = (await loadPlugin(name)).capabilityPack;
+      if (pack) packs.push(pack);
+    } catch {
+      // Not installed here: the catalog's lexicons say so (lexicon-not-loaded).
+    }
+  }
+  const g = graph as unknown as {
+    workspace: { name: string; root: string };
+    at: string | null;
+    nodes: GraphIR["nodes"];
+    edges: GraphIR["edges"];
+    members: { name: string; dir: string; kind: string; status: string; reason: { code: string; message: string } | null; chant?: string | null; stamp?: string | null }[];
+  };
+  const ir: GraphIR = { nodes: g.nodes, edges: g.edges, groups: {} } as GraphIR;
+  const answer = answerOverGraph(ir, terms, query, packs);
+  if ("error" in answer) {
+    return { doc: { ...head, query, error: { code: "query-invalid", message: answer.error.message, ...(answer.error.hint ? { hint: answer.error.hint } : {}) } }, failed: true };
+  }
+  const known = new Set<string>(SEARCH_MEMBER_REASON_CODES);
+  const members: SearchMember[] = g.members.map((m) => ({
+    name: m.name,
+    dir: m.dir,
+    kind: m.kind,
+    status: m.status === "composed" ? "searched" : m.reason ? "failed" : "skipped",
+    reason: m.reason
+      ? { code: (known.has(m.reason.code) ? m.reason.code : "output-unreadable") as SearchMemberReasonCode, message: m.reason.message }
+      : null,
+    chant: m.chant ?? null,
+    stamp: m.stamp ?? null,
+    ...(m.status === "composed"
+      ? {
+          source: { kind: "declared" },
+          matches: answer.matches.filter((x) => x.id.startsWith(`${m.name}/`)).map((x) => x.id),
+          provenance: "declared only · capabilities evaluated once over the composed workspace graph",
+        }
+      : {}),
+  }));
+  const matches = answer.matches
+    .map((x) => {
+      const member = x.id.slice(0, x.id.indexOf("/"));
+      return { ...x, member, displayId: x.id.slice(member.length + 1) };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const doc = {
+    ...head,
+    workspace: g.workspace,
+    at: g.at,
+    query,
+    source: { kind: "declared" },
+    members,
+    matches,
+    capabilities: answer.capabilities,
+  } as unknown as WorkspaceSearchDocument;
+  return { doc, failed: graphFailed };
+}
+
 /** The text form: one row per match, or the merged groups, then each member that has no answer. */
 function printText(doc: WorkspaceSearchDocument): void {
   if ("error" in doc) return;
@@ -396,10 +506,14 @@ function printText(doc: WorkspaceSearchDocument): void {
     }
   }
   const searched = doc.members.filter((m) => m.status === "searched").length;
+  // Capability terms (#4375) ran once over the composed graph, not per member.
+  const caps = (doc as { capabilities?: { name: string; notEvaluated: string[] }[] }).capabilities;
+  for (const c of caps ?? []) if (c.notEvaluated.length > 0) console.log(`— ${c.name} does not evaluate: ${c.notEvaluated.join("; ")}`);
+  const together = searched > 0 && doc.members.every((m) => m.status !== "searched" || !m.alone);
   for (const m of doc.members) if (m.status === "failed" && m.reason) console.error(formatError({ message: `member ${m.name}: ${m.reason.code}: ${m.reason.message}` }));
   const failed = doc.members.filter((m) => m.status === "failed").length;
   const skipped = doc.members.filter((m) => m.status === "skipped").length;
-  console.error(`chant workspace search: ${searched} member${searched === 1 ? "" : "s"} searched, each alone; ${failed} failed; ${skipped} skipped`);
+  console.error(`chant workspace search: ${searched} member${searched === 1 ? "" : "s"} searched, ${together ? "together over the composed graph" : "each alone"}; ${failed} failed; ${skipped} skipped`);
 }
 
 export async function runWorkspaceSearch(ctx: CommandContext): Promise<number> {
@@ -412,6 +526,13 @@ export async function runWorkspaceSearch(ctx: CommandContext): Promise<number> {
   // The root's chant reads the declaration (ws-021).
   const handed = await handToRootChant(cwd, args.at);
   if (handed !== undefined) return handed;
+  // The capability catalog (#4375): rules run once, under the workspace's
+  // chant, so the catalog is this chant's, for every lexicon a member loads.
+  if (args.capabilities) {
+    const { printCapabilities } = await import("../cli/handlers/search");
+    const { workspaceLexicons } = await import("./capabilities-contract");
+    return printCapabilities(args, args.extraPositional ?? "", await workspaceLexicons(cwd));
+  }
   const { doc, failed } = await workspaceSearch({
     cwd,
     query: args.extraPositional ?? "",
