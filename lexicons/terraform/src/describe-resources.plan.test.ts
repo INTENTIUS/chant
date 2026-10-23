@@ -17,7 +17,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { normalizeObservation } from "@intentius/chant/observation";
 import type { Declarable } from "@intentius/chant/declarable";
-import { buildLiveGraphIr } from "@intentius/chant/graph-ir";
+import { buildLiveGraphIr, sourceOverlayGraphs, type GraphIR } from "@intentius/chant/graph-ir";
+import { carryAnnotations } from "@intentius/chant/lifecycle/observe";
+import { buildChangeSet } from "@intentius/chant/lifecycle/change-set";
 import { __searchInternals } from "@intentius/chant/cli/handlers/search";
 import {
   describeResources,
@@ -26,7 +28,7 @@ import {
   type TerraformReadDeps,
 } from "./describe-resources";
 import { TerraformPlanReadError } from "./op/activities/terraform";
-import { diffChange, indexPlan, KNOWN_AFTER_APPLY, PLAN_ATTRIBUTE_NAMES, SENSITIVE_VALUE } from "./plan-observation";
+import { diffChange, indexPlan, KNOWN_AFTER_APPLY, PLAN_ATTRIBUTE_NAMES, plannedAttributesFor, SENSITIVE_VALUE } from "./plan-observation";
 import { renderTerraformRoots } from "./hcl/roots";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "__fixtures__");
@@ -161,6 +163,118 @@ describe("the plan depth puts the plan on the IR (#4358)", () => {
     expect(search("attr:planAfterUnknown=input")).toEqual(["app/terraform_data.downstream", "app/terraform_data.reader"]);
     expect(search("attr:planDrift")).toEqual(["app/shell_script.conf"]);
     expect(search(SECRET)).toEqual([]);
+  });
+});
+
+/**
+ * The recorded plan with `terraform_data.downstream` turned into a planned
+ * create (#4372): no row in `prior_state`, `actions: ["create"]`, no before,
+ * and `id`, `input` and `output` unknown until apply, which is what a real
+ * plan says about a new `terraform_data` reading another block's new id.
+ */
+function planWithCreate(): unknown {
+  const plan = structuredClone(PLAN) as {
+    prior_state: { values: { root_module: { resources: Array<{ address: string }> } } };
+    resource_changes: Array<{ address: string; change: Record<string, unknown> }>;
+  };
+  const module = plan.prior_state.values.root_module;
+  module.resources = module.resources.filter((r) => r.address !== "terraform_data.downstream");
+  const entry = plan.resource_changes.find((r) => r.address === "terraform_data.downstream")!;
+  entry.change = {
+    actions: ["create"],
+    before: null,
+    after: { triggers_replace: null },
+    after_unknown: { id: true, input: true, output: true },
+    before_sensitive: false,
+    after_sensitive: {},
+  };
+  return plan;
+}
+
+const withCreate = (): TerraformReadDeps =>
+  deps({
+    planRead: (async () => ({
+      json: planWithCreate(),
+      dir: ROOT_DIR,
+      planDir: "/tmp/chant-terraform-plan-x",
+      command: "terraform plan -input=false -lock=false -out=/tmp/chant-terraform-plan-x/plan.tfplan",
+    })) as TerraformReadDeps["planRead"],
+  });
+
+describe("a planned create carries its plan attributes and stays absent (#4372)", () => {
+  const CREATED = "app/terraform_data.downstream";
+
+  it("is in neither map, and its plan attributes are annotations", async () => {
+    const raw = await describeResources(await options(), withCreate());
+    const result = normalizeObservation(raw);
+    expect(result.resources[CREATED]).toBeUndefined();
+    expect(result.unobserved[CREATED]).toBeUndefined();
+    expect(result.sources[CREATED]).toBe("plan");
+    expect(result.annotations?.[CREATED]).toEqual({
+      planAction: "create",
+      planActions: { "terraform_data.downstream": ["create"] },
+      planAfterUnknown: ["id", "input", "output"],
+    });
+    // Only the planned create is annotated: a present block keeps its
+    // attributes on its row, and nothing else is absent.
+    expect(Object.keys(result.annotations ?? {})).toEqual([CREATED]);
+    expect(result.resources["app/terraform_data.replaced"]!.attributes).toMatchObject({ planAction: "replace" });
+  });
+
+  it("every annotation name is one PLAN_ATTRIBUTE_NAMES lists", async () => {
+    const result = normalizeObservation(await describeResources(await options(), withCreate()));
+    const listed = new Set<string>(PLAN_ATTRIBUTE_NAMES);
+    for (const key of Object.keys(result.annotations?.[CREATED] ?? {})) expect(listed.has(key), key).toBe(true);
+  });
+
+  it("a block the plan does not mention has no annotations", () => {
+    const index = indexPlan(planWithCreate());
+    expect(plannedAttributesFor("terraform_data.nowhere", index)).toBeUndefined();
+    expect(plannedAttributesFor("terraform_data.downstream", index)).toMatchObject({ planAction: "create" });
+  });
+
+  it("the state read never annotates", async () => {
+    const result = normalizeObservation(await describeResources(await options("state"), withCreate()));
+    expect(result.annotations).toBeUndefined();
+  });
+
+  it("lifecycle plan still proposes the create", async () => {
+    const opts = await options();
+    const result = normalizeObservation(await describeResources(opts, withCreate()));
+    const set = buildChangeSet("prod", {
+      declared: new Set(opts.entityNames),
+      observedNow: result.resources,
+      observedThen: undefined,
+      unobserved: result.unobserved,
+    });
+    expect(set.entries.find((e) => e.name === CREATED)?.action).toBe("create");
+    expect(set.entries.find((e) => e.name === "app/terraform_data.replaced")?.action).not.toBe("create");
+  });
+
+  it("chant search matches it on the overlay, which still paints it pending", async () => {
+    const opts = await options();
+    const result = normalizeObservation(await describeResources(opts, withCreate()));
+    const live = buildLiveGraphIr([{ lexicon: "terraform", resources: result.resources }]);
+    const declared: GraphIR = {
+      ...live,
+      nodes: opts.entityNames.map((id) => ({ id, kind: opts.entities.get(id)!.entityType, lexicon: "terraform", attrs: {} })),
+      edges: [],
+    };
+    const overlaid = sourceOverlayGraphs(declared, live, {});
+    const ir = { ...overlaid, nodes: carryAnnotations(overlaid.nodes, result.annotations) };
+    const node = ir.nodes.find((n) => n.id === CREATED)!;
+    expect(node.attrs._status).toBe("accent");
+    expect(node.physicalId).toBeUndefined();
+
+    const { parseQuery, matchTerm } = __searchInternals;
+    const search = (query: string) =>
+      ir.nodes
+        .filter((n) => parseQuery(query).every((t) => matchTerm(n, t, ir)))
+        .map((n) => n.id)
+        .sort();
+    expect(search("attr:planAction=create")).toEqual([CREATED]);
+    // A replace's new id is unknown too, so the create is one of three.
+    expect(search("attr:planAfterUnknown=id")).toEqual(["app/shell_script.conf", CREATED, "app/terraform_data.replaced"]);
   });
 });
 

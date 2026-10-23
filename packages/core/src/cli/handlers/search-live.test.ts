@@ -266,3 +266,65 @@ describe("search --live over build-root entities (#4358)", () => {
     expect(exit).toBe(0);
   });
 });
+
+// #4372 — a planned create is absent, and the plan's attributes ride beside
+// the verdict as annotations. The handler puts them on the declared row, so
+// `attr:planAction=create` matches a block that does not exist yet, and the
+// row still has no physical id.
+describe("search --live over a planned create (#4372)", () => {
+  let out: string[];
+
+  beforeEach(() => {
+    out = [];
+    vi.spyOn(console, "log").mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, "error").mockImplementation((s: string) => { out.push(`ERR ${s}`); });
+    discoverMock.mockReset();
+    discoverMock.mockImplementation(async () => ({ entities: new Map(), errors: [], sourceFiles: [] }));
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveLexMock.mockReset();
+    resolveLexMock.mockResolvedValue(["terraform"]);
+    hasSnapshotMock.mockReset();
+    hasSnapshotMock.mockResolvedValue(false);
+  });
+
+  test("attr:planAction=create and attr:planAfterUnknown=id match it, and it stays without a physical id", async () => {
+    const rooted = new Map<string, Declarable>([
+      ["app/terraform_data.replaced", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+      ["app/terraform_data.created", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+    ]);
+    buildResultMock.mockReset();
+    buildResultMock.mockImplementation((_src: unknown, _s: unknown, _x: unknown, opts?: { buildRoots?: unknown[] }) => ({
+      errors: [],
+      entities: (opts?.buildRoots?.length ?? 0) > 0 ? rooted : new Map(),
+      outputs: new Map([["terraform", ""]]),
+      warnings: [],
+    }));
+    loadPluginsMock.mockResolvedValue([
+      {
+        ...createMockPlugin({
+          name: "terraform",
+          describeResources: async () => ({
+            observation: "v1",
+            resources: {
+              "app/terraform_data.replaced": { type: "Terraform::Resource", physicalId: "id-1", status: "managed", ownership: "owned", attributes: { planAction: "replace" } },
+            },
+            annotations: { "app/terraform_data.created": { planAction: "create", planAfterUnknown: ["id", "input"] } },
+          }),
+        }),
+        buildRoots: async () => ({ entities: rooted, warnings: [] }),
+      },
+    ]);
+
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAction=create", json: true }), plugins: [], serializers: [] })).toBe(0);
+    const json = JSON.parse(out.filter((l) => !l.startsWith("ERR ")).join("\n")) as { matches: Array<{ id: string; physicalId?: string | null }> };
+    expect(json.matches.map((m) => m.id)).toEqual(["app/terraform_data.created"]);
+    expect(json.matches[0]!.physicalId ?? null).toBeNull();
+
+    out = [];
+    expect(await runSearch({ args: makeArgs({ path: "attr:planAfterUnknown=id" }), plugins: [], serializers: [] })).toBe(0);
+    const text = out.join("\n");
+    expect(text).toContain("app/terraform_data.created");
+    expect(text).not.toContain("app/terraform_data.replaced");
+  });
+});

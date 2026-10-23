@@ -13,13 +13,14 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { normalizeObservation } from "@intentius/chant/observation";
 import type { Declarable } from "@intentius/chant/declarable";
+import { buildChangeSet } from "@intentius/chant/lifecycle/change-set";
 import { describeResources } from "./describe-resources";
 import { renderTerraformRoots } from "./hcl/roots";
 import { PLAN_READ_DIR_PREFIX, terraformPlanRead } from "./op/activities/terraform";
@@ -85,7 +86,7 @@ async function observe(dir: string) {
     map.set(key, { entityType: entity.entityType, props: (entity as Declarable & { props: Record<string, unknown> }).props });
   }
   const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: [...map.keys()].sort(), entities: map, cwd: dir });
-  return { raw: result, result: normalizeObservation(result) };
+  return { raw: result, result: normalizeObservation(result), names: [...map.keys()].sort() };
 }
 
 for (const binary of ["terraform", "tofu"]) {
@@ -113,6 +114,34 @@ for (const binary of ["terraform", "tofu"]) {
         expect.arrayContaining([{ path: "input.name", before: "app-1", after: "app-2" }]),
       );
       expect(JSON.stringify(raw)).not.toContain("hunter2");
+    }, 120_000);
+
+    it("a block added after the apply is a planned create: absent, annotated, and still a create (#4372)", async () => {
+      const { dir, root } = project(binary, true);
+      // A new resource the applied state has never seen, reading another
+      // block's new id, so its own id and its input are unknown until apply.
+      appendFileSync(join(root, "main.tf"), `\nresource "terraform_data" "created" {\n  input = terraform_data.replaced.id\n}\n`);
+
+      const { result, names } = await observe(dir);
+      const CREATED = "app/terraform_data.created";
+      expect(names).toContain(CREATED);
+      expect(result.resources[CREATED]).toBeUndefined();
+      expect(result.unobserved[CREATED]).toBeUndefined();
+      expect(result.sources[CREATED]).toBe("plan");
+      expect(result.annotations?.[CREATED]).toMatchObject({
+        planAction: "create",
+        planActions: { "terraform_data.created": ["create"] },
+      });
+      expect(result.annotations?.[CREATED]?.planAfterUnknown).toEqual(expect.arrayContaining(["id", "input"]));
+      expect(Object.keys(result.annotations ?? {})).toEqual([CREATED]);
+
+      const set = buildChangeSet("prod", {
+        declared: new Set(names),
+        observedNow: result.resources,
+        observedThen: undefined,
+        unobserved: result.unobserved,
+      });
+      expect(set.entries.find((e) => e.name === CREATED)?.action).toBe("create");
     }, 120_000);
 
     it("reads while another run holds the state lock, which a plan without -lock=false cannot", async () => {

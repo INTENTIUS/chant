@@ -75,9 +75,10 @@ vi.mock("../../lifecycle/replay", () => ({
   hasSnapshot: (...a: unknown[]) => hasSnapshotMock(...a),
 }));
 
-vi.mock("../../lifecycle/observe", () => ({
-  observeResources: (...a: unknown[]) => observeMock(...a),
-}));
+vi.mock("../../lifecycle/observe", async () => {
+  const actual = await vi.importActual<typeof import("../../lifecycle/observe")>("../../lifecycle/observe");
+  return { carryAnnotations: actual.carryAnnotations, observeResources: (...a: unknown[]) => observeMock(...a) };
+});
 // `runGraphLive` resolves each component's `cfn-deploy` stack(s) (#57) so a
 // multi-stack, per-component project observes the right stacks; default to
 // "no components" (empty map, no errors) so the existing single-stack --live
@@ -930,6 +931,36 @@ describe("runGraph", () => {
       const out = stdoutBuf.join("\n");
       expect(out).not.toContain("No lexicons implement describeResources");
       expect(out).toContain("web-vpc");
+    });
+
+    // #4372 — a planned create is absent, and its plan attributes ride beside
+    // the verdict as annotations. `--overlay` puts them on the declared node,
+    // which keeps its pending paint: behold's plan cards read this IR.
+    test("--overlay carries an absent entity's annotations onto its declared node, still pending", async () => {
+      resolveLexMock.mockResolvedValue(["terraform"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "terraform", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      discoverMock.mockResolvedValue({
+        entities: new Map([
+          ["app/terraform_data.created", decl({ lexicon: "terraform", entityType: "Terraform::Resource", props: {} })],
+        ]),
+        errors: [],
+        sourceFiles: [],
+      });
+      observeMock.mockResolvedValue({
+        observations: [],
+        errors: [],
+        warnings: [],
+        annotations: { "app/terraform_data.created": { planAction: "create", planAfterUnknown: ["id"] } },
+      });
+      // `--detail 3`, as behold asks: lower tiers thin list attributes.
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", detail: 3 }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n")) as { nodes: Array<{ id: string; physicalId?: string; attrs: Record<string, unknown> }> };
+      const node = ir.nodes.find((n) => n.id === "app/terraform_data.created");
+      expect(node?.attrs).toMatchObject({ _status: "accent", planAction: "create", planAfterUnknown: ["id"] });
+      expect(node?.physicalId).toBeUndefined();
     });
 
     // #2377 — the overlay carries the prediction. behold's reader takes

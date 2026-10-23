@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { observeResources, collectAmbient } from "./observe";
+import { observeResources, collectAmbient, carryAnnotations } from "./observe";
 import { observation } from "../observation";
 import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
@@ -57,6 +57,27 @@ describe("observeResources", () => {
     expect(observations).toHaveLength(1);
     expect(observations[0].lexicon).toBe("aws");
     expect(Object.keys(observations[0].resources)).toEqual(["web-vpc"]);
+  });
+
+  it("returns what a lexicon learned about an absent entity as annotations, outside the observations (#4372)", async () => {
+    const plugins = [
+      awsPlugin(() => observation({}, undefined, undefined, undefined, undefined, undefined, { "web-vpc": { planAction: "create" } })),
+    ];
+    const { observations, annotations } = await observeResources("prod", plugins, mockBuild());
+    // Absent: no observation row anywhere, so nothing that classifies sees it.
+    expect(observations.flatMap((o) => Object.keys(o.resources))).toEqual([]);
+    expect(annotations).toEqual({ "web-vpc": { planAction: "create" } });
+  });
+
+  it("carryAnnotations sets attributes by id and touches nothing else (#4372)", () => {
+    const nodes = [
+      { id: "a", kind: "K", lexicon: "x", attrs: { _status: "accent", name: "a" } },
+      { id: "b", kind: "K", lexicon: "x", attrs: { _status: "good" } },
+    ];
+    const out = carryAnnotations(nodes, { a: { planAction: "create" } });
+    expect(out[0]).toEqual({ id: "a", kind: "K", lexicon: "x", attrs: { _status: "accent", name: "a", planAction: "create" } });
+    expect(out[1]).toBe(nodes[1]);
+    expect(carryAnnotations(nodes, undefined)).toBe(nodes);
   });
 
   it("passes the declared entity names for scoping", async () => {

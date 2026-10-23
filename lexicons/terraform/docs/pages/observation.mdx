@@ -255,7 +255,24 @@ chant search "attr:planDrift" --live --env prod
 
 A planned create reads absent, exactly as it does on the state read: there is
 no row in `prior_state` for it, and absent plus declared is what makes a
-`create`. Its plan attributes have no row to ride on.
+`create`. Its plan attributes go on the observation's `annotations` map
+instead of a `resources` row: `planAction: "create"`, `planActions`, and
+`planAfterUnknown`, which on a new resource names its `id` and anything else
+it only learns at apply. `planChanges` is empty on a create, as it is on any
+create: there is no before side to compare. Annotations are facts beside the
+verdict, never part of it, so the block stays absent and `lifecycle plan`
+still proposes the create. `chant graph --live --overlay` and
+`chant search --live` put them on the declared node, which keeps its pending
+status and has no physical id:
+
+```sh
+chant search "attr:planAction=create" --live --env prod --show planAfterUnknown
+chant search "attr:planAfterUnknown=id" --live --env prod
+```
+
+A data block the plan reads during apply is annotated the same way, with
+`planAction: "read"`. Annotations come from a fresh read only: a recorded
+snapshot does not keep them.
 
 ### Sensitive values
 

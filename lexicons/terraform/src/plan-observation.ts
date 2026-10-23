@@ -364,7 +364,7 @@ export function actionWord(actions: readonly string[]): string {
  * The plan attributes of one declared block, aggregated over its instances.
  * `instances` are the block's instance addresses in `prior_state`; a block in
  * the plan that has none there is a planned create, which the reader reports
- * absent before it ever asks for these.
+ * absent and annotates with {@link plannedAttributesFor} instead.
  */
 export function planAttributesFor(address: string, index: PlanIndex): Record<string, unknown> {
   const mine = <T>(map: Map<string, T>): Array<[string, T]> =>
@@ -395,4 +395,20 @@ export function planAttributesFor(address: string, index: PlanIndex): Record<str
     ...(drift.length > 0 ? { planDriftAction: driftWords.join(","), planDrift: driftChanges } : {}),
     ...(relevantPaths.length > 0 ? { planRelevantAttributes: relevantPaths } : {}),
   };
+}
+
+/**
+ * The plan attributes of a block that has no row in `prior_state` (#4372),
+ * or undefined when the plan has no change for it either. The usual case is
+ * a planned create: `planAction: "create"`, `planActions`, and
+ * `planAfterUnknown` naming what stays unknown until apply (its `id` among
+ * them). A data block read during apply comes back as `planAction: "read"`.
+ *
+ * The reader puts these on the observation's `annotations`, not on a
+ * `resources` row, so the block stays absent and `lifecycle plan` still
+ * proposes the create.
+ */
+export function plannedAttributesFor(address: string, index: PlanIndex): Record<string, unknown> | undefined {
+  const planned = [...index.changes.keys()].some((instance) => blockAddressOf(instance) === address);
+  return planned ? planAttributesFor(address, index) : undefined;
 }

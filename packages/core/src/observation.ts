@@ -150,6 +150,23 @@ export interface ObservationResult {
    */
   sources?: Record<string, string>;
   /**
+   * Facts the read learned about an entity beside its verdict (#4372), keyed
+   * by chant entity name, as attribute name -> value. The case it exists for
+   * is a Terraform plan's planned create: the plan says the block will be
+   * created and which of its values stay unknown until apply, but the block
+   * has no row in the plan's prior state, so it is OBSERVED-ABSENT, and
+   * absence is spelled "in neither map". Without this map those facts had
+   * nowhere to go.
+   *
+   * Additive metadata over the tri-state, like {@link queried} and
+   * {@link sources}: classification never reads it, ownership never comes
+   * from it, and an entity with annotations and no `resources` row is still
+   * absent. A renderer or search carries the attributes onto the declared
+   * node (`carryAnnotations` in ./lifecycle/observe.ts), where they read like
+   * any other attribute without making the node present.
+   */
+  annotations?: Record<string, Record<string, unknown>>;
+  /**
    * Notices about the read as a whole, not about any one entity (#1265) —
    * "the ownership filter could not be applied on this surface" is the
    * canonical one. A note is a property of the environment or the read path,
@@ -183,6 +200,8 @@ export interface NormalizedObservation {
   queried: Record<string, string>;
   /** Which read answered, per entity name (#2267). Empty when the lexicon reported none. */
   sources: Record<string, string>;
+  /** Facts beside the verdict, per entity name (#4372). Absent when the lexicon reported none. */
+  annotations?: Record<string, Record<string, unknown>>;
   /** Run-level notices (#1265), distinct. Empty when the lexicon reported none. */
   notes: string[];
   /** Per-stack exports (#1279), keyed by stack name. Absent when the lexicon reported none. */
@@ -209,6 +228,7 @@ export function observation(
   notes?: string[],
   stackExports?: Record<string, Record<string, unknown>>,
   sources?: Record<string, string>,
+  annotations?: Record<string, Record<string, unknown>>,
 ): ObservationResult {
   return {
     observation: "v1",
@@ -216,6 +236,7 @@ export function observation(
     ...(unobserved && Object.keys(unobserved).length > 0 ? { unobserved } : {}),
     ...(queried && Object.keys(queried).length > 0 ? { queried } : {}),
     ...(sources && Object.keys(sources).length > 0 ? { sources } : {}),
+    ...(annotations && Object.keys(annotations).length > 0 ? { annotations } : {}),
     ...(notes && notes.length > 0 ? { notes } : {}),
     ...(stackExports && Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
@@ -236,6 +257,7 @@ export function normalizeObservation(value: DescribeResourcesResult | undefined)
       queried: value.queried ?? {},
       sources: value.sources ?? {},
       notes: [...new Set(value.notes ?? [])],
+      ...(value.annotations && Object.keys(value.annotations).length > 0 ? { annotations: value.annotations } : {}),
       ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
     };
   }
@@ -287,11 +309,14 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   // is one note (#1265).
   const notes = new Set<string>();
   const stackExports: Record<string, Record<string, unknown>> = {};
+  // Annotations (#4372) merge like `sources`: per entity, disjoint parts.
+  const annotations: Record<string, Record<string, unknown>> = {};
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
     Object.assign(queried, part.queried);
     Object.assign(sources, part.sources);
+    Object.assign(annotations, part.annotations ?? {});
     for (const n of part.notes) notes.add(n);
     Object.assign(stackExports, part.stackExports ?? {});
   }
@@ -304,6 +329,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     queried,
     sources,
     notes: [...notes],
+    ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
     ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
   };
 }
@@ -370,10 +396,14 @@ export interface DeclaredEntity {
  * issued against. The harness collects it into the result's `queried` map (and
  * onto the unobserved entry), so even an absent verdict — which records
  * nothing else — says where the provider was asked.
+ *
+ * An absent verdict may also carry `annotations` (#4372): attributes the read
+ * learned about the entity without finding it, collected into the result's
+ * `annotations` map. They never make it present.
  */
 export type EntityObservation =
   | { present: ResourceMetadata; queried?: string }
-  | { absent: true; queried?: string }
+  | { absent: true; queried?: string; annotations?: Record<string, unknown> }
   | { unobserved: { reason: UnobservedReason; detail?: string }; queried?: string };
 
 /** What a lexicon supplies to drive the harness. `Client` is its transport handle. */
@@ -463,6 +493,7 @@ export async function observeEntities<Client>(
   const resources: Record<string, ResourceMetadata> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const queried: Record<string, string> = {};
+  const annotations: Record<string, Record<string, unknown>> = {};
   const run = adapter.concurrently ?? ((items, fn) => boundedConcurrently(items, fn));
 
   await run(declared, async (entity) => {
@@ -486,11 +517,14 @@ export async function observeEntities<Client>(
         ...result.unobserved,
         ...(result.queried ? { queried: result.queried } : {}),
       };
+    } else if (result.annotations && Object.keys(result.annotations).length > 0) {
+      // `absent`: the verdict records nothing — in neither map is how the
+      // contract spells absence — but its address, when the adapter supplied
+      // one, lands in `queried` (#1620) so the absence can explain itself, and
+      // what the read learned about it lands in `annotations` (#4372).
+      annotations[entity.name] = result.annotations;
     }
-    // `absent`: the verdict records nothing — in neither map is how the
-    // contract spells absence — but its address, when the adapter supplied
-    // one, lands in `queried` (#1620) so the absence can explain itself.
   });
 
-  return observation(resources, unobserved, queried);
+  return observation(resources, unobserved, queried, undefined, undefined, undefined, annotations);
 }
