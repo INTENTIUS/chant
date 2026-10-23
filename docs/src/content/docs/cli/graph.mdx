@@ -146,6 +146,10 @@ The IR's first field is `version`, currently `1`. Every `--format ir` output car
 
 The format changes only additively. A release may add a field, an edge kind or a group, and none of those moves the number. A consumer must ignore any field and any edge `kind` it does not recognise, and keep reading the rest of the document. `version` moves only for a change a consumer could not safely ignore, such as a removed or renamed field or a changed meaning, and a consumer that sees a version it does not know should stop rather than guess.
 
+### The capability view: `--capability-view`
+
+`chant graph --format ir --capability-view` adds `capabilityView` to the IR ([#4378](https://github.com/INTENTIUS/chant/issues/4378)): the lexicon-neutral view the [capability rules](/chant/reference/capabilities/) read, built by this chant through the mappings and adapters of the lexicons this project loads. It is what [`chant workspace graph --capability-view`](/chant/cli/workspace-graph/#the-capability-view) asks each member for, so a workspace's rules read every member as that member's own toolchain maps it. Its shape is the `capabilityView` definition in `graph.schema.json`: `version` (1), `lexicons`, `nodes` (`id`, `label`, `irId`, `lexicon`, `attrs`), `edges` (`from`, `to`, `name`, `hops`) and `unresolved`, the ARNs that name a role, bucket or table the project declares nothing of. The flag needs `--format ir` on the declared graph, and is refused with `--components`, `--live` or `--at`.
+
 ### Reference envelopes in `attrs`
 
 A node's `attrs` keep its declared configuration, with references replaced by small envelopes a reader can recognise:

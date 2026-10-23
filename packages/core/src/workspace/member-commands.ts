@@ -308,6 +308,8 @@ export function memberArgv(verb: WorkspaceVerb, unit: RunUnit, args: ParsedArgs)
     // The detail tier too, so `workspace graph --detail 1` composes collapsed
     // composites with their rolled-up status (#4228).
     if (args.detail !== undefined) argv.push("--detail", String(args.detail));
+    // Each member's chant maps its own capability view (#4378).
+    if (args.capabilityView) argv.push("--capability-view");
   }
   return argv;
 }

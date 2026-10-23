@@ -724,7 +724,7 @@
                     "snapshot-unavailable",
                     "build-failed"
                   ],
-                  "description": "A member that ran and refused carries its own search refusal code. `member-chant-too-old` is a member whose chant prints no search document of the contract."
+                  "description": "A member that ran and refused carries its own search refusal code. `member-chant-too-old` is a member whose chant prints no search document of the contract, or, for a query with a capability term, no capability view (#4378)."
                 },
                 "message": {
                   "type": "string"

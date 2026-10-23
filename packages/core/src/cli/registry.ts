@@ -461,6 +461,13 @@ export interface ParsedArgs {
    * read contract, instead of answering a query.
    */
   capabilities?: boolean;
+  /**
+   * `chant graph --format ir --capability-view` (#4378): add the lexicon-neutral
+   * view capability rules read, mapped by this chant's lexicons, to the IR as
+   * `capabilityView`. `chant workspace graph --capability-view` asks each
+   * member's chant for it and carries it on the member.
+   */
+  capabilityView?: boolean;
   /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
   kind?: string;
   /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
