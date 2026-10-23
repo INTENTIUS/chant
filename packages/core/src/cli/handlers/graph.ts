@@ -9,7 +9,7 @@ import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-g
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
-import { observeResources } from "../../lifecycle/observe";
+import { carryAnnotations, observeResources } from "../../lifecycle/observe";
 import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
@@ -268,6 +268,8 @@ async function runGraphLive(
 
     let ir: GraphIR;
     let observations: LiveObservation[];
+    // Facts about absent entities (#4372), carried onto the overlay's nodes.
+    let annotations: Record<string, Record<string, unknown>> | undefined;
     // A replay is a graph of what was recorded, so it must not reach the provider
     // at all — not for observation and not for enrichment. Anything that quietly
     // called out would make `--at` a live read with an older label on it.
@@ -296,6 +298,7 @@ async function runGraphLive(
         ...(args.namespace ? { namespace: args.namespace } : {}),
       });
       observations = observeResult.observations;
+      annotations = observeResult.annotations;
       const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
       // Unobserved entities (#1089) arrive as warnings — a node missing from the
@@ -408,6 +411,10 @@ async function runGraphLive(
             : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
       }
     }
+    // What a read learned about an entity it found absent (#4372), on the
+    // declared node beside the overlay's `_status`. A planned create keeps its
+    // pending paint and carries the plan's attributes.
+    ir = { ...ir, nodes: carryAnnotations(ir.nodes, annotations) };
   }
 
   // Behaviour overlay (#2377, epic #2355): carry a prediction on the graph.

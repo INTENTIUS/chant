@@ -221,6 +221,31 @@ describe("observeEntities harness (#1201)", () => {
     });
   });
 
+  test("an absent entity's annotations are collected, and it stays in neither map (#4372)", async () => {
+    const result = await observeEntities(
+      [entity("a"), entity("b"), entity("c")],
+      adapterOf({
+        a: { present: meta() },
+        b: { absent: true, annotations: { planAction: "create", planAfterUnknown: ["id"] } },
+        c: { absent: true, annotations: {} },
+      }),
+    );
+    expect(Object.keys(result.resources)).toEqual(["a"]);
+    expect(result.unobserved).toBeUndefined();
+    expect(result.annotations).toEqual({ b: { planAction: "create", planAfterUnknown: ["id"] } });
+    // Through the normalizer and a merge with another part, unchanged.
+    const merged = mergeObservations([normalizeObservation(result), normalizeObservation({ other: meta() })]);
+    expect(merged.annotations).toEqual({ b: { planAction: "create", planAfterUnknown: ["id"] } });
+    expect(Object.keys(merged.resources).sort()).toEqual(["a", "other"]);
+  });
+
+  test("no annotations means no annotations key, on the envelope and the normalized form", async () => {
+    const result = await observeEntities([entity("b")], adapterOf({ b: { absent: true } }));
+    expect("annotations" in result).toBe(false);
+    expect("annotations" in normalizeObservation(result)).toBe(false);
+    expect("annotations" in mergeObservations([normalizeObservation(result)])).toBe(false);
+  });
+
   test("collects the queried address from every variant — the absent one especially (#1620)", async () => {
     const result = await observeEntities(
       [entity("a"), entity("b"), entity("c")],

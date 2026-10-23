@@ -9,7 +9,7 @@ import type { CapabilityPack } from "../../capabilities/view";
 import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { discover } from "../../discovery/index";
 
-import { observeResources } from "../../lifecycle/observe";
+import { carryAnnotations, observeResources } from "../../lifecycle/observe";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { diffLive, type LiveDiffResult } from "../../lifecycle/live-diff";
 import type { LiveObservation } from "../../graph-ir";
@@ -135,6 +135,8 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
 
     let observations: LiveObservation[];
+    // Facts about absent entities (#4372): a planned create's plan attributes.
+    let annotations: Record<string, Record<string, unknown>> | undefined;
     const liveAttrs: Record<string, Record<string, unknown>> = {};
     if (snapshotRef) {
       // Answer from a recorded observation (#1266). Everything downstream is
@@ -182,6 +184,7 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
         console.error(formatError({ message: `live read failed — ${e}` }));
       }
       observations = observed.observations;
+      annotations = observed.annotations;
       liveNotes = observed.notes ?? [];
       source = { kind: "live" };
       if (args.checkSnapshot) {
@@ -310,6 +313,10 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     // account's default VPC, whose route table chant does not model). The
     // overlay copies physical identity but not attrs, so merge them here.
     ir = { ...ir, nodes: ir.nodes.map((n) => (liveAttrs[n.id] ? { ...n, attrs: { ...n.attrs, ...liveAttrs[n.id] } } : n)) };
+    // And what the read learned about an entity it found absent (#4372), so
+    // `attr:planAction=create` matches a block the plan will create. The node
+    // stays pending: only its attributes change.
+    ir = { ...ir, nodes: carryAnnotations(ir.nodes, annotations) };
   } else {
     const declared = await declaredGraph(ctx, projectPath, resolve(args.src ?? config.sourceDir ?? "."));
     if (!declared) return refuse(BUILD_ROOT_FAILED);

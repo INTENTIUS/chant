@@ -230,7 +230,7 @@ import {
   terraformShow,
   TerraformPlanReadError,
 } from "./op/activities/terraform";
-import { blockAddressOf, indexPlan, planAttributesFor, type PlanIndex } from "./plan-observation";
+import { blockAddressOf, indexPlan, planAttributesFor, plannedAttributesFor, type PlanIndex } from "./plan-observation";
 import type { TerraformObserveDepth } from "./config";
 import { DATA_TYPE, MODULE_TYPE, RESOURCE_TYPE, callersOfKey } from "./hcl/parse";
 
@@ -1343,13 +1343,22 @@ function planAdapter(
         return readStateEntity(index.state, entity, root, `terraform show -json (root "${root}", address "${address}", after the plan read failed)`);
       }
       const plan = index.plan;
-      return readStateEntity(
+      const seen = readStateEntity(
         index.state,
         entity,
         root,
         `terraform plan -lock=false + show -json <planfile> (root "${root}", address "${address}")`,
         (a) => planAttributesFor(a, plan),
       );
+      // A planned create (#4372): no row in `prior_state`, so absent, which is
+      // what makes `lifecycle plan` propose the create. The plan still says
+      // what it will do and which values stay unknown until apply, so those
+      // ride as annotations, which never make the block present.
+      if ("absent" in seen && (entity.type === RESOURCE_TYPE || entity.type === DATA_TYPE)) {
+        const planned = plannedAttributesFor(address, plan);
+        if (planned) return { ...seen, annotations: planned };
+      }
+      return seen;
     },
   };
 }
@@ -1582,5 +1591,7 @@ export async function describeResources(
     }
   }
 
-  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources);
+  // A planned create's plan attributes (#4372) ride beside the verdict, never
+  // in `resources`: the block stays absent.
+  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations);
 }
