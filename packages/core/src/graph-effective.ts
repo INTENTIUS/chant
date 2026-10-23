@@ -130,13 +130,17 @@ const TERRAFORM_RESOURCE = "Terraform::Resource";
  * or undefined for any other node.
  *
  * The terraform lexicon puts every resource on the IR as `Terraform::Resource`
- * and keeps the block's address (`aws_instance.web`, or
- * `module.app.aws_instance.web` from older producers) in `attrs.address`. The
- * type is the second-to-last segment of that address. A node without an
- * address falls back to its id, whose last path segment is the address too.
+ * and carries the block's type label as `attrs.type` (chant #4366), which is
+ * read first. A node without one (an older producer, or a `chant graph --live`
+ * node built from state) falls back to the block's address (`aws_instance.web`,
+ * or `module.app.aws_instance.web`) in `attrs.address`, whose second-to-last
+ * segment is the type, and failing that to its id, whose last path segment is
+ * the address too.
  */
 export function terraformResourceType(n: IRNode | undefined): string | undefined {
   if (!n || n.kind !== TERRAFORM_RESOURCE) return undefined;
+  const type = (n.attrs as Record<string, unknown> | undefined)?.["type"];
+  if (typeof type === "string" && type.length > 0) return type;
   const parts = terraformAddress(n).split(".");
   return parts.length >= 2 ? parts[parts.length - 2] : undefined;
 }

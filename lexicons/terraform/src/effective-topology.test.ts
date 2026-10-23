@@ -41,6 +41,13 @@ describe("terraformResourceType", () => {
     expect(terraformResourceType(web)).toBe("aws_instance");
     expect(terraformResourceType({ id: "x", kind: "AWS::EC2::Instance", attrs: {} } as never)).toBeUndefined();
   });
+
+  it("reads the lexicon's attrs.type first, and the address only without one (#4366)", () => {
+    expect(ir.nodes.find((n) => n.id === "net/aws_instance.web")?.attrs.type).toBe("aws_instance");
+    const node = (attrs: Record<string, unknown>) => ({ id: "r/x.y", kind: "Terraform::Resource", attrs }) as never;
+    expect(terraformResourceType(node({ type: "aws_subnet", address: "aws_instance.y" }))).toBe("aws_subnet");
+    expect(terraformResourceType(node({ address: "module.app.aws_instance.y" }))).toBe("aws_instance");
+  });
 });
 
 describe("internetFacing on terraform's AWS kinds", () => {
@@ -120,7 +127,7 @@ describe(`search "${QUERY}"`, () => {
       process.chdir(cwd);
     }
     expect(lines).toEqual([
-      "net/aws_instance.web  Terraform::Resource",
+      "net/aws_instance.web  aws_instance",
       "— declared only · no observation · physical ids unavailable · effectiveIngress, internetFacing derived from declared references",
     ]);
   });
