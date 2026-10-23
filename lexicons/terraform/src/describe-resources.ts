@@ -24,18 +24,23 @@
  * is a different one.
  *
  * So the returned `ObservationResult` carries `sources`, keyed by chant entity
- * name, with one of exactly two values:
+ * name, with one of exactly three values:
  *
- * - `"state"` — this entity's root was read with `terraform show -json`.
- * - `"live"` — this entity's root was read with `choudoufu live-plan -json`.
+ * - `"state"`: this entity's root was read with `terraform show -json`.
+ * - `"live"`: this entity's root was read with `choudoufu live-plan -json`.
+ * - `"plan"`: this entity's root was read at the plan depth (#4358), a saved
+ *   plan's `show -json`, which says what the next apply would do. See the
+ *   plan depth section below.
  *
  * Three guarantees a consumer may rely on. Every entity `describeResources`
  * was asked about that belongs to a root has an entry, whatever verdict it
  * came back with: present, absent and not-observed alike, because which read
- * was attempted is a fact independent of what it found. The value equals the
- * declared entity's own `props.mode` (`./hcl/parse.ts`), since one fact
- * decides both, so `props.mode` is also a valid join key for a consumer
- * holding the declared graph and no observation. And a project mixing stock
+ * was attempted is a fact independent of what it found. On a root read at the
+ * default depth the value equals the declared entity's own `props.mode`
+ * (`./hcl/parse.ts`), since one fact decides both, so `props.mode` is also a
+ * valid join key for a consumer holding the declared graph and no
+ * observation; the plan depth is chosen at read time, so only `sources` says
+ * it was used. And a project mixing stock
  * and live roots gets both values in one document, which is why this is a map
  * and not a field on the result as a whole.
  *
@@ -144,6 +149,24 @@
  * (`live-ls`'s own help text) and a listing taken right after an apply can
  * otherwise show a resource under both its old and new estate, or neither.
  *
+ * ## The plan depth (#4358)
+ *
+ * A stock root can be read one depth further: `terraform.observe` (or a
+ * root's own `observe`) set to `"plan"`, or `CHANT_TERRAFORM_OBSERVE=plan`,
+ * or `depth: "plan"` from a caller. The read is `terraformPlanRead`:
+ * `plan -input=false -lock=false -out=<tmp>/plan.tfplan`, then `show -json`,
+ * with `<tmp>` under the OS temp directory and removed afterwards, and no
+ * `init`. Presence and ownership come from the plan's `prior_state` by the
+ * state read's own rule; `./plan-observation.ts` adds the plan's attributes
+ * (`planAction`, `planReplacePaths`, `planAfterUnknown`, `planDrift`, ...)
+ * to each present block, with sensitive values redacted.
+ *
+ * It falls back by depth (`planAdapter`): no provider credentials -> the
+ * state read; no backend, or a root that needs `init` -> declared only. Each
+ * root gets a note saying which read answered. A planned create has no row in
+ * `prior_state` and reads absent, as on the state read, so its plan
+ * attributes have nowhere to ride.
+ *
  * ## Nothing from `values` is surfaced
  *
  * A state row's `values` are the resource's full attribute set, secrets
@@ -175,8 +198,12 @@ import {
   choudoufuLiveLs,
   choudoufuLivePlanDocument,
   terraformInit,
+  terraformPlanRead,
   terraformShow,
+  TerraformPlanReadError,
 } from "./op/activities/terraform";
+import { blockAddressOf, indexPlan, planAttributesFor, type PlanIndex } from "./plan-observation";
+import type { TerraformObserveDepth } from "./config";
 import { DATA_TYPE, MODULE_TYPE, RESOURCE_TYPE, callersOfKey } from "./hcl/parse";
 
 // The channel keys live in their own module so `plugin.ts` can declare
@@ -1010,6 +1037,11 @@ export interface TerraformReadDeps {
   /** The document alone (chant #2498): this reader indexes it and never reads the human render. */
   livePlan: typeof choudoufuLivePlanDocument;
   liveLs: typeof choudoufuLiveLs;
+  /**
+   * The plan depth's read (#4358). Optional so a test that never asks for the
+   * plan depth need not stub it; omitted, the real activity runs.
+   */
+  planRead?: typeof terraformPlanRead;
 }
 
 const REAL_DEPS: TerraformReadDeps = {
@@ -1017,6 +1049,7 @@ const REAL_DEPS: TerraformReadDeps = {
   show: terraformShow,
   livePlan: choudoufuLivePlanDocument,
   liveLs: choudoufuLiveLs,
+  planRead: terraformPlanRead,
 };
 
 /** A declared entity, plus the root, address and mode `buildRoots()` recorded on it. */
@@ -1079,7 +1112,11 @@ export function declaredOf(name: string, entity: { entityType: string; props: Re
   };
 }
 
-/** One root's reader: `init`, then `show` over state, then address matching. */
+/**
+ * One root's reader: `init`, then `show` over state, then address matching.
+ * The entity-level reads are {@link readStateEntity}, which the plan depth's
+ * fallback shares.
+ */
 function adapter(root: string, cwd: string | undefined, deps: TerraformReadDeps): ObserverAdapter<StateIndex> {
   const where = cwd ? { cwd } : {};
   let dir: string | undefined;
@@ -1105,56 +1142,217 @@ function adapter(root: string, cwd: string | undefined, deps: TerraformReadDeps)
     },
 
     async read(index, entity): Promise<EntityObservation> {
-      const { address } = entity as TerraformDeclared;
-      const queried = `terraform show -json (root "${root}", address "${address}")`;
-
-      if (entity.type === RESOURCE_TYPE || entity.type === DATA_TYPE) {
-        const row = index.rows.get(address);
-        if (!row) return { absent: true, queried };
-        return {
-          present: {
-            type: entity.type,
-            physicalId: row.id ?? address,
-            status: row.mode ?? "managed",
-            ownership: classifyStateOwnership(address, index),
-            attributes: {
-              address,
-              root,
-              ...(row.type ? { resourceType: row.type } : {}),
-              ...(row.mode ? { mode: row.mode } : {}),
-              ...(row.providerName ? { provider: row.providerName } : {}),
-            },
-          },
-          queried,
-        };
-      }
-
-      if (entity.type === MODULE_TYPE) {
-        if (!moduleIsLive(address, index)) return { absent: true, queried };
-        // The state has resources under this module but no row for the block
-        // itself, so state membership, which is the whole ownership channel
-        // here, has nothing to say about it. See the module doc.
-        return {
-          present: {
-            type: entity.type,
-            physicalId: address,
-            status: "module",
-            ownership: classifyStateOwnership(address, index),
-            attributes: { address, root },
-          },
-          queried,
-        };
-      }
-
-      return {
-        unobserved: {
-          reason: "unsupported-kind",
-          detail: `${entity.type} has no row in terraform state: only resource and data blocks do`,
-        },
-        queried,
-      };
+      return readStateEntity(index, entity, root, `terraform show -json (root "${root}", address "${(entity as TerraformDeclared).address}")`);
     },
   };
+}
+
+/** True when the index carries any row for the block `address`, at any instance key. */
+function blockRows(address: string, index: StateIndex): StateResourceRow[] {
+  const exact = index.rows.get(address);
+  if (exact) return [exact];
+  return [...index.rows.values()].filter((row) => blockAddressOf(row.address) === address);
+}
+
+/**
+ * One declared entity against a state index: the state read's whole verdict,
+ * and the plan depth's too, since a plan's `prior_state` is the same shape.
+ * `extra` is what the plan depth adds to a present resource or data block.
+ */
+function readStateEntity(
+  index: StateIndex,
+  entity: DeclaredEntity,
+  root: string,
+  queried: string,
+  extra?: (address: string) => Record<string, unknown>,
+): EntityObservation {
+  const { address } = entity as TerraformDeclared;
+
+  if (entity.type === RESOURCE_TYPE || entity.type === DATA_TYPE) {
+    // The exact row first, which is the state read's rule since #2087; the
+    // plan depth also finds a `count` or `for_each` block by its instances.
+    const rows = extra ? blockRows(address, index) : index.rows.get(address) ? [index.rows.get(address)!] : [];
+    if (rows.length === 0) return { absent: true, queried };
+    const row = rows[0]!;
+    return {
+      present: {
+        type: entity.type,
+        physicalId: rows.length === 1 ? (row.id ?? address) : address,
+        status: row.mode ?? "managed",
+        ownership: "owned",
+        attributes: {
+          address,
+          root,
+          ...(row.type ? { resourceType: row.type } : {}),
+          ...(row.mode ? { mode: row.mode } : {}),
+          ...(row.providerName ? { provider: row.providerName } : {}),
+          ...(rows.length > 1 ? { instances: rows.map((r) => r.address).sort() } : {}),
+          ...(extra ? extra(address) : {}),
+        },
+      },
+      queried,
+    };
+  }
+
+  if (entity.type === MODULE_TYPE) {
+    if (!moduleIsLive(address, index)) return { absent: true, queried };
+    // The state has resources under this module but no row for the block
+    // itself, so state membership, which is the whole ownership channel
+    // here, has nothing to say about it. See the module doc.
+    return {
+      present: {
+        type: entity.type,
+        physicalId: address,
+        status: "module",
+        ownership: classifyStateOwnership(address, index),
+        attributes: { address, root },
+      },
+      queried,
+    };
+  }
+
+  return {
+    unobserved: {
+      reason: "unsupported-kind",
+      detail: `${entity.type} has no row in terraform state: only resource and data blocks do`,
+    },
+    queried,
+  };
+}
+
+/* ───────────────────────────── the plan depth (#4358) ───────────────────────────── */
+
+/** Which read answered a plan-depth root. */
+export type PlanDepthAnswer = "plan" | "state" | "declared";
+
+/** What a plan-depth root's bind produced: the plan, or the state read it fell back to. */
+type PlanDepthIndex = { kind: "plan"; plan: PlanIndex; state: StateIndex } | { kind: "state"; state: StateIndex };
+
+/** Does this text name a credentials or authorization failure? Exported for the fallback tests. */
+export function planFailureIsCredentials(text: string): boolean {
+  return readsAsCredentials(text) || /no valid credential sources|could not find default credentials|failed to refresh cached credentials|NoCredentialProviders|AADSTS|InvalidAccessKeyId|token has expired/i.test(text);
+}
+
+/**
+ * One plan-depth root's reader. `bind` is the fallback ladder:
+ *
+ *  1. An uninitialised root (or one that needs `init` again) is refused with
+ *     the line to run, and nothing else is read: the state read would need
+ *     `init` too, and chant never runs it on a read. Declared only.
+ *  2. The plan read answers: `"plan"`.
+ *  3. The plan read failed reaching the backend: the state read needs the
+ *     same backend, so declared only.
+ *  4. The plan read failed any other way, missing provider credentials
+ *     first among them: `terraform show -json` over state, with no `init`
+ *     (the root is initialised, step 1 checked). `"state"`.
+ *  5. That failed too: declared only.
+ *
+ * `answered` is filled as the ladder runs, for the caller's `sources` and
+ * notes.
+ */
+function planAdapter(
+  root: string,
+  cwd: string | undefined,
+  deps: TerraformReadDeps,
+  outcome: { answered: PlanDepthAnswer; note: string },
+): ObserverAdapter<PlanDepthIndex> {
+  const where = cwd ? { cwd } : {};
+  const planRead = deps.planRead ?? terraformPlanRead;
+  let dir: string | undefined;
+  let refusal: { reason: UnobservedReason; detail: string } | undefined;
+  const firstLine = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
+
+  return {
+    async bind(): Promise<PlanDepthIndex> {
+      outcome.answered = "declared";
+      let planErr: unknown;
+      try {
+        const read = await planRead({ root, ...where });
+        dir = read.dir;
+        const plan = indexPlan(read.json);
+        outcome.answered = "plan";
+        outcome.note = `terraform.roots.${root}: the plan read answered (\`${read.command.replace(read.planDir, "<tmp>")}\`)`;
+        return { kind: "plan", plan, state: indexStateResources({ values: asRecord(plan.priorState).values }) };
+      } catch (err) {
+        planErr = err;
+        if (err instanceof TerraformPlanReadError) dir = err.dir;
+      }
+
+      const kind = planErr instanceof TerraformPlanReadError ? planErr.kind : "plan";
+      if (kind === "not-initialised" || kind === "backend") {
+        refusal = {
+          reason: kind === "backend" && planFailureIsCredentials(String((planErr as Error).message)) ? "no-credentials" : kind === "backend" ? "read-failed" : "no-binding",
+          detail: `terraform.roots.${root}${dir ? ` (${dir})` : ""}: declared only. ${firstLine(planErr)}${kind === "backend" ? " The state read needs the same backend, so it was not tried." : ""}`,
+        };
+        outcome.note = `terraform.roots.${root}: no read answered, declared only (${kind === "backend" ? "the plan read could not reach the backend" : "the root needs init, which chant never runs"})`;
+        throw planErr;
+      }
+
+      const why = planFailureIsCredentials(String((planErr as Error)?.message ?? planErr)) ? "no provider credentials" : "the plan failed";
+      try {
+        const shown = await deps.show({ root, ...where });
+        dir = shown.dir;
+        outcome.answered = "state";
+        outcome.note = `terraform.roots.${root}: the plan read failed (${why}: ${firstLine(planErr)}), so the state read answered; plan attributes are absent`;
+        return { kind: "state", state: indexStateResources(shown.json) };
+      } catch (err) {
+        refusal = {
+          reason: "read-failed",
+          detail: `terraform.roots.${root}${dir ? ` (${dir})` : ""}: declared only. The plan read failed (${firstLine(planErr)}) and the state read after it failed too (${firstLine(err)})`,
+        };
+        outcome.note = `terraform.roots.${root}: no read answered, declared only (the plan read failed, ${why}, and the state read failed after it)`;
+        throw err;
+      }
+    },
+
+    classifyBindFailure(err) {
+      return refusal ?? { reason: "read-failed", detail: `terraform.roots.${root}${dir ? ` (${dir})` : ""}: ${firstLine(err)}` };
+    },
+
+    async read(index, entity): Promise<EntityObservation> {
+      const { address } = entity as TerraformDeclared;
+      if (index.kind === "state") {
+        return readStateEntity(index.state, entity, root, `terraform show -json (root "${root}", address "${address}", after the plan read failed)`);
+      }
+      const plan = index.plan;
+      return readStateEntity(
+        index.state,
+        entity,
+        root,
+        `terraform plan -lock=false + show -json <planfile> (root "${root}", address "${address}")`,
+        (a) => planAttributesFor(a, plan),
+      );
+    },
+  };
+}
+
+/** The environment variable that overrides every root's observation depth for one run (#4358). */
+export const TERRAFORM_OBSERVE_ENV = "CHANT_TERRAFORM_OBSERVE";
+
+/**
+ * Each root's observation depth, in precedence order: the caller's `depth`,
+ * then {@link TERRAFORM_OBSERVE_ENV}, then the root's own `observe`, then the
+ * namespace's, then `"state"`. The config is read only when neither of the
+ * first two settles it, and a config that cannot be read means `"state"`,
+ * which is what every root read before the plan depth existed.
+ */
+async function observeDepths(
+  options: Pick<DescribeResourcesOptions, "depth" | "cwd">,
+  notes: string[],
+): Promise<(root: string) => TerraformObserveDepth> {
+  if (options.depth) return () => options.depth!;
+  const env = process.env[TERRAFORM_OBSERVE_ENV];
+  if (env === "plan" || env === "state") return () => env;
+  if (env) notes.push(`${TERRAFORM_OBSERVE_ENV}=${JSON.stringify(env)} is neither "state" nor "plan" and was ignored`);
+  try {
+    const { loadChantConfigUpward } = await import("@intentius/chant/config");
+    const { resolve } = await import("node:path");
+    const { config } = await loadChantConfigUpward(resolve(options.cwd ?? process.cwd()));
+    const namespace = (config as { terraform?: { observe?: TerraformObserveDepth; roots?: Record<string, { observe?: TerraformObserveDepth }> } }).terraform;
+    return (root) => namespace?.roots?.[root]?.observe ?? namespace?.observe ?? "state";
+  } catch {
+    return () => "state";
+  }
 }
 
 export interface DescribeResourcesOptions {
@@ -1173,6 +1371,14 @@ export interface DescribeResourcesOptions {
    * the running process's cwd. Same meaning as `TerraformWatchOpConfig.cwd`.
    */
   cwd?: string;
+  /**
+   * Read every stock root at this depth (#4358), over the config's
+   * `terraform.observe` and `terraform.roots.<name>.observe` and the
+   * `CHANT_TERRAFORM_OBSERVE` variable. Not a core option: a caller holding
+   * this lexicon directly (behold) passes it, and the CLI reaches it through
+   * the config or the variable.
+   */
+  depth?: TerraformObserveDepth;
 }
 
 /**
@@ -1207,22 +1413,42 @@ export async function describeResources(
   // over state the same green as a live read of the account is the drift lie
   // an overlay exists to prevent.
   const sources: Record<string, string> = {};
+  const depthOf = byRoot.size > 0 ? await observeDepths(options, notes) : () => "state" as const;
   for (const [root, declared] of byRoot) {
     // One fact decides the whole read, and the parse already recorded it on
     // every entity of the root (#2103). A root is live when its binary is
     // choudoufu AND it declares an estate, so a single entity carrying
     // `mode: "live"` settles it for the root.
     const live = declared.some((entity) => entity.mode === "live");
-    for (const entity of declared) sources[entity.name] = live ? "live" : "state";
+    const depth = depthOf(root);
     if (live) {
+      for (const entity of declared) sources[entity.name] = "live";
       notes.push(
         `terraform.roots.${root} is a live root: ownership came from choudoufu's tofu-estate/tofu-address markers via \`live-plan -json\`, not from a state file`,
       );
+      if (depth === "plan") {
+        notes.push(
+          `terraform.roots.${root}: the plan depth reads stock roots only; this live root was read with \`live-plan -json\` (see the observation page, "A choudoufu root")`,
+        );
+      }
+      parts.push(normalizeObservation(await observeEntities(declared, liveAdapter(root, options.cwd, deps))));
+      continue;
     }
-    const read = live
-      ? await observeEntities(declared, liveAdapter(root, options.cwd, deps))
-      : await observeEntities(declared, adapter(root, options.cwd, deps));
-    parts.push(normalizeObservation(read));
+    if (depth === "plan") {
+      // The third depth (#4358). `sources` says which read answered, which on
+      // a plan-depth root is only known after the read: the plan, the state
+      // read it fell back to, or neither, in which case it names the read
+      // that was attempted last.
+      const outcome: { answered: PlanDepthAnswer; note: string } = { answered: "declared", note: "" };
+      const read = await observeEntities(declared, planAdapter(root, options.cwd, deps, outcome));
+      const value = outcome.answered === "state" ? "state" : "plan";
+      for (const entity of declared) sources[entity.name] = value;
+      if (outcome.note) notes.push(outcome.note);
+      parts.push(normalizeObservation(read));
+      continue;
+    }
+    for (const entity of declared) sources[entity.name] = "state";
+    parts.push(normalizeObservation(await observeEntities(declared, adapter(root, options.cwd, deps))));
   }
 
   const merged = mergeObservations(parts);

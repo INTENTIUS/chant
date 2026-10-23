@@ -156,7 +156,12 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
+    // Build roots too (#4358), as `chant graph --live` does: a terraform
+    // root's blocks are entities only once its root is rendered, and an
+    // entity the build never produced is never observed.
+    const buildRoots = collectBuildRootContributors(plugins, config as unknown as Record<string, unknown>, projectPath);
     const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer), undefined, {
+      buildRoots,
       config: config as unknown as Record<string, unknown>,
     });
     if (buildResult.errors.length > 0) {
@@ -296,7 +301,13 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
     const declared =
       stacks.length > 0
         ? await buildDeclaredPerStack(stacks, projectPath)
-        : buildGraphIr((await discover(resolve(args.src ?? config.sourceDir ?? "."))).entities, projectPath);
+        : await (async () => {
+            const discovered = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+            // The same join the declared-only path makes (#4362), so a live
+            // answer over a terraform root has its blocks on the canvas (#4358).
+            await joinBuildRoots(discovered.entities, ctx, projectPath, config);
+            return buildGraphIr(discovered.entities, projectPath);
+          })();
     declaredForDrift = declared;
     // Carry the NOT-OBSERVED half of the tri-state (#1089) onto the rows, so a
     // declared entity nobody could read is painted `_unobserved` and a row can
