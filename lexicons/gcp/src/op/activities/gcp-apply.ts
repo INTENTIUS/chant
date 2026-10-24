@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
 import { sleep } from "@intentius/chant/op";
-import { hasOwnershipMarker, readOwnership, LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
-import { GCP_RESOURCE_OWNERSHIP_KEYS, gcpLabelValue } from "../../ownership";
+import { hasOwnershipMarker } from "@intentius/chant/ownership";
+import { GCP_RESOURCE_OWNERSHIP_KEYS, chantOwnershipLabels, gcpPassThroughLabels } from "../../ownership";
 import { iamPolicyMemberMapper } from "./gcp-iam";
 import {
   changedFields,
@@ -24,32 +24,7 @@ import {
 
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 
-/**
- * The GCP labels chant stamps on resources it creates: `managed-by`, plus the
- * `chant-stack` and `chant-env` labels `describeStackStatus` reads (#3143).
- *
- * The stack and env come from the serialized Config Connector object's own
- * ownership labels (`chant.intentius.io/stack|env`, stamped by the serializer
- * from project config), the way the aws applier takes its stack tags from the
- * template's marker. Values are coerced to GCP label rules. A manifest that
- * already carries a GCP-style `chant-stack` / `chant-env` keeps it. With no
- * marker on the object, only `managed-by` is stamped.
- */
-export function chantOwnershipLabels(
-  manifestLabels?: Record<string, unknown> | null,
-): Record<string, string> {
-  const out: Record<string, string> = { [GCP_RESOURCE_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
-  const marker = manifestLabels ? readOwnership(manifestLabels, LABEL_OWNERSHIP_KEYS) : undefined;
-  const pick = (gcpKey: string, fallback: string | undefined): string | undefined => {
-    const own = manifestLabels?.[gcpKey];
-    return gcpLabelValue(typeof own === "string" && own ? own : fallback);
-  };
-  const stack = pick(GCP_RESOURCE_OWNERSHIP_KEYS.stack, marker?.stack);
-  const env = pick(GCP_RESOURCE_OWNERSHIP_KEYS.env, marker?.env);
-  if (stack) out[GCP_RESOURCE_OWNERSHIP_KEYS.stack] = stack;
-  if (env) out[GCP_RESOURCE_OWNERSHIP_KEYS.env] = env;
-  return out;
-}
+export { chantOwnershipLabels };
 
 /**
  * True when a live resource's labels carry chant's ownership marker.
@@ -261,8 +236,8 @@ export function bucketInsertBody(cnrm: CnrmStorageBucket): BucketInsertBody {
 export function pubSubTopicBody(resource: GcpResource): PubSubTopicBody {
   const spec = (resource.spec ?? {}) as { messageRetentionDuration?: string };
   const body: PubSubTopicBody = {};
-  const labels = resource.metadata?.labels;
-  if (labels && Object.keys(labels).length) body.labels = labels;
+  const labels = gcpPassThroughLabels(resource.metadata?.labels);
+  if (Object.keys(labels).length) body.labels = labels;
   if (spec.messageRetentionDuration) body.messageRetentionDuration = spec.messageRetentionDuration;
   return body;
 }
