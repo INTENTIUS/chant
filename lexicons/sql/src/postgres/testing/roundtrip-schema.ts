@@ -6,7 +6,8 @@
  * domain over its type, a collation, composite and range types (and a
  * multirange column), plain and ordered-set aggregates, a cast and an event
  * trigger, an operator, extended statistics, a foreign data wrapper and server, and a
- * publication (#3911), a partitioned table and a partition, an ORM's
+ * publication (#3911), a foreign table, an operator class and family, a text
+ * search dictionary and configuration (#4406), a partitioned table and a partition, an ORM's
  * revision table that import leaves out, and an object carrying chant's
  * ownership trailer.
  */
@@ -72,5 +73,15 @@ CREATE SERVER app_replica TYPE 'pg' VERSION '16' FOREIGN DATA WRAPPER app_fdw OP
 COMMENT ON SERVER app_replica IS 'The read replica';
 CREATE PUBLICATION app_pub FOR TABLE app.orders, app.users WITH (publish = 'insert, update');
 COMMENT ON PUBLICATION app_pub IS 'Order changes';
+CREATE FOREIGN TABLE app.remote_orders (id integer OPTIONS (column_name 'order_id') NOT NULL, status text DEFAULT 'placed', CONSTRAINT status_known CHECK (status IS NOT NULL)) SERVER app_replica OPTIONS (table_name 'orders');
+COMMENT ON FOREIGN TABLE app.remote_orders IS 'Orders on the replica';
+CREATE OPERATOR CLASS app.int_hash_ops FOR TYPE integer USING hash AS OPERATOR 1 =, FUNCTION 1 hashint4(integer);
+COMMENT ON OPERATOR CLASS app.int_hash_ops USING hash IS 'Hash by value';
+CREATE OPERATOR FAMILY app.spare_ops USING btree;
+CREATE TEXT SEARCH DICTIONARY app.shop_stop (TEMPLATE = simple, StopWords = english);
+CREATE TEXT SEARCH CONFIGURATION app.shop (PARSER = pg_catalog."default");
+ALTER TEXT SEARCH CONFIGURATION app.shop ADD MAPPING FOR asciiword, word WITH app.shop_stop, english_stem;
+ALTER TEXT SEARCH CONFIGURATION app.shop ADD MAPPING FOR int, uint WITH simple;
+COMMENT ON TEXT SEARCH CONFIGURATION app.shop IS 'Shop search';
 CREATE TABLE public._prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64) NOT NULL);
 `;

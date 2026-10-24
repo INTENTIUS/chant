@@ -50,7 +50,7 @@ import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
 import { appliedGatePath, isApprovalSpent, parseAppliedGateLines, type AppliedGateRecord } from "../lifecycle/gate-applied";
 import { sortedJsonReplacer } from "../utils";
-import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
+import { gateContextDigest, type GateApprover, type GateBaseApproval, type ResolvedGateApproval } from "./gate-approval";
 import {
   quorumNeed, quorumRuleProgress, quorumRules, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
   type GateQuorumJudge, type GateQuorumRuleProgress, type GateQuorumSpec,
@@ -130,10 +130,11 @@ export interface GateLedgerPort {
 export interface GateApprovalRule {
   /**
    * `quorum` (#4324) is the entry's `identity.gates.<gate>.quorum` at base:
-   * the rules an Op gate of that name takes in place of its own. Absent or
+   * the rules an Op gate of that name takes in place of its own. `policy`,
+   * `mode` and `context` (#4404) are read the same way. Each is absent or
    * null when the entry sets none.
    */
-  requirement: { gate: string; class: string | null; quorum?: GateQuorumSpec | null };
+  requirement: { gate: string; class: string | null; quorum?: GateQuorumSpec | null } & GateBaseApproval;
   /** Why `approval` doesn't count, or null when it does. */
   refuses(approval: GateResolutionRecord): string | null;
 }

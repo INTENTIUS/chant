@@ -1,7 +1,7 @@
 ---
 title: "Declaring Postgres Objects"
 label: "Declaring Objects"
-description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, operators, extended statistics, foreign data wrappers and servers, publications, policies, roles and grants as tagged templates: the twenty-three tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, operators, operator classes and families, extended statistics, foreign data wrappers, servers and tables, publications, text search configurations and dictionaries, policies, roles and grants as tagged templates: the twenty-eight tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
 group: "Postgres"
 order: 11
@@ -56,6 +56,11 @@ export const ticketsTitle = index`
 | `trigger` | `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER` | `Postgres::Trigger` |
 | `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
 | `operator` | `CREATE OPERATOR` | `Postgres::Operator` |
+| `operatorClass` | `CREATE OPERATOR CLASS` | `Postgres::OperatorClass` |
+| `operatorFamily` | `CREATE OPERATOR FAMILY` | `Postgres::OperatorFamily` |
+| `foreignTable` | `CREATE FOREIGN TABLE` | `Postgres::ForeignTable` |
+| `textSearchConfiguration` | `CREATE TEXT SEARCH CONFIGURATION`, then `ALTER TEXT SEARCH CONFIGURATION ... ADD MAPPING` | `Postgres::TextSearchConfiguration` |
+| `textSearchDictionary` | `CREATE TEXT SEARCH DICTIONARY` | `Postgres::TextSearchDictionary` |
 | `statistics` | `CREATE STATISTICS` | `Postgres::Statistics` |
 | `foreignDataWrapper` | `CREATE FOREIGN DATA WRAPPER` | `Postgres::ForeignDataWrapper` |
 | `foreignServer` | `CREATE SERVER` | `Postgres::ForeignServer` |
@@ -66,7 +71,7 @@ export const ticketsTitle = index`
 | `role` | `CREATE ROLE`, without a password or memberships | `Postgres::Role` |
 | `grant` | `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` | `Postgres::Grant`, `Postgres::DefaultPrivileges` |
 
-A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. A clause chant's parser does not know yet, after a table's column list, on a column, after an index's elements or before a view's `AS`, is kept and sent as written with a build warning, and a plan classes a change to it as one to review (SQLPG299); [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls. The `type` tag declares enum, composite and range types; a base type (`CREATE TYPE name (INPUT = ...)`), whose functions are C code, and a shell type are refused. [Object Coverage](../object-coverage/) lists every `CREATE` command and whether a tag declares it.
+A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object (and, in a `textSearchConfiguration`, its `ADD MAPPING` statements). A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. A clause chant's parser does not know yet, after a table's column list, on a column, after an index's elements or before a view's `AS`, is kept and sent as written with a build warning, and a plan classes a change to it as one to review (SQLPG299); [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls. The `type` tag declares enum, composite and range types; a base type (`CREATE TYPE name (INPUT = ...)`), whose functions are C code, and a shell type are refused. [Object Coverage](../object-coverage/) lists every `CREATE` command and whether a tag declares it.
 
 A table's template may also turn row-level security on after its `CREATE TABLE` (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`). Policies, roles, grants and row-level security are planned and applied only where the profile manages access; see [Access](../postgres-access/).
 
@@ -238,13 +243,46 @@ export const orderEvents = publication`
   WITH (publish = 'insert, update')`;
 ```
 
-An operator is identified, as an aggregate is, by its name and operand types, `app.===(integer,integer)`, with `NONE` for a missing side. Its function, restrict and join estimators are compared by qualified name (a built-in one bare), and a COMMUTATOR or NEGATOR as `schema.symbol`: written bare, it is in the operator's own schema. `HASHES` and `MERGES` count only when set. A change is a drop and a create (SQLPG300), refused while an operator class, an index or a view depends on it (SQLPG301). `CREATE OPERATOR CLASS` and `CREATE OPERATOR FAMILY` are not declared.
+An operator is identified, as an aggregate is, by its name and operand types, `app.===(integer,integer)`, with `NONE` for a missing side. Its function, restrict and join estimators are compared by qualified name (a built-in one bare), and a COMMUTATOR or NEGATOR as `schema.symbol`: written bare, it is in the operator's own schema. `HASHES` and `MERGES` count only when set. `ALTER OPERATOR ... SET` changes what the server lets it change, so those edits are made in place (SQLPG304): RESTRICT and JOIN on every supported major, set, changed or removed (`NONE`); and from 17 a COMMUTATOR or NEGATOR the operator does not have yet, and HASHES or MERGES turned on. The Postgres 18 page says a commutator and a negator "can only be changed if the operator does not have an existing" one and the two flags "can only be enabled and not disabled", and setting a commutator or negator also sets the other operator's. Everything else is a drop and a create (SQLPG300), refused while an operator class, an index or a view depends on it (SQLPG301): the function, the operands, a commutator or negator that is already set, a flag turned off, and on 14 to 16 every attribute but RESTRICT and JOIN (those majors' `ALTER OPERATOR` has no other). The rule is `operatorAlterable` in `src/postgres/plan/diff.ts`, and the major is `sql.postgresMajor`.
 
 Extended statistics are a schema's, named in the table's schema when you qualify them. Their kinds are compared as a set, and a list that names all three (`ndistinct`, `dependencies`, `mcv`) is the same as none, which is what the server prints. A column and an expression are compared in the order the server keeps them, so `ON b, a` and `ON a, b` are one declaration. A change is a drop and a create (SQLPG300), and the new statistics hold nothing until the next `ANALYZE`.
 
 A foreign data wrapper, a foreign server and a publication belong to the database, with unqualified names; creating a wrapper takes a superuser. A wrapper's handler and validator are compared by function name, a server's type and wrapper by name, and options by name. A wrapper's change is `ALTER FOREIGN DATA WRAPPER`, a server's version and options are `ALTER SERVER`, and a publication's options, tables and schemas are `ALTER PUBLICATION` (SQLPG303), so none of them is dropped for an edit. The exceptions are a server's type or wrapper and a publication's `FOR ALL TABLES`, which have no `ALTER`: they are dropped and created (SQLPG300), or refused while something depends on the object (SQLPG301). A publication that is dropped stops its subscribers until it exists again, so prefer the edit that keeps it.
 
 An option named like a credential (`password`, `sslpassword`, `secret`, `token`, `api_key`) is refused in a wrapper or a server. The user mapping that carries the remote user and password is the environment's: `CREATE USER MAPPING` is not declared, and neither is `CREATE SUBSCRIPTION`, whose connection string holds a credential. Import reads a server without such an option and says it left it out.
+
+## Foreign tables, operator classes and families, and text search
+
+```ts
+import { foreignTable, operatorClass, operatorFamily, textSearchConfiguration, textSearchDictionary } from "@intentius/chant-lexicon-sql/postgres";
+
+export const remoteOrders = foreignTable`
+  CREATE FOREIGN TABLE ${app}.remote_orders (
+    id     integer OPTIONS (column_name 'order_id') NOT NULL,
+    status text DEFAULT 'placed',
+    CONSTRAINT status_known CHECK (status IS NOT NULL)
+  ) SERVER ${replica} OPTIONS (table_name 'orders')`;
+
+export const intOps = operatorClass`
+  CREATE OPERATOR CLASS ${app}.int_hash_ops FOR TYPE integer USING hash AS
+    OPERATOR 1 =,
+    FUNCTION 1 hashint4(integer)`;
+
+export const shopStop = textSearchDictionary`
+  CREATE TEXT SEARCH DICTIONARY ${app}.shop_stop (TEMPLATE = simple, StopWords = english)`;
+
+export const shopSearch = textSearchConfiguration`
+  CREATE TEXT SEARCH CONFIGURATION ${app}.shop (PARSER = pg_catalog."default");
+  ALTER TEXT SEARCH CONFIGURATION ${app}.shop ADD MAPPING FOR asciiword, word WITH ${shopStop}, english_stem`;
+```
+
+A foreign table has its own tag, and `table` refuses `CREATE FOREIGN TABLE`. It is another kind of relation, with its own `CREATE` and `ALTER FOREIGN TABLE` (`ALTER TABLE` refuses it). It takes no key, index, identity, partitioning, storage or tablespace clause, and it names a server that no `ALTER` can change. Folding it into `table` would put a branch for each of those in the parser, the classifier and the statements of every table. It shares the relation namespace with tables, views and sequences, as on the server. The tag declares its columns (type, collation, default, `NOT NULL`, and a column's `OPTIONS`), `CHECK` and `NOT NULL` constraints, `SERVER` and `OPTIONS`. `INHERITS`, `PARTITION OF`, `LIKE`, a key, a generated column and `ENFORCED` or `NOT ENFORCED` are refused when you write them; import reads a foreign table with any of them as unsupported and says why. Columns, constraints and options change with `ALTER FOREIGN TABLE` (SQLPG306), which reads nothing from the remote side. A change of server is a drop and a create (SQLPG300), refused while a view uses the table (SQLPG301). An option named like a credential is refused, here and in a column's options.
+
+An operator class is identified by its name and index method, `app.int_hash_ops USING hash`, so one name for two methods is two classes. Its members are written as `CREATE OPERATOR CLASS` writes them. Operand types left out are the class's type, and a support function's are what the server gives it (a B-tree comparison function's and a hash function's are the function's own input types), so a declaration compares equal to what the catalog prints. A class with no `FAMILY` is in a family of its own name, which the server makes for it; that family is the class's, and import does not read it as a family of its own, so an `operatorFamily` named as a class of the same method is that class's family and is not declared. `ALTER OPERATOR CLASS` renames, changes the owner and moves; it does not touch the members. So any change to a class is a drop and a create (SQLPG300), refused while an index uses it (SQLPG301). An operator family is its name and method, with the members its classes bring; members added to a family with `ALTER OPERATOR FAMILY ... ADD` are loose, and import leaves them out with a warning. Creating either takes a superuser.
+
+A dictionary's options are compared as the server keeps them, as strings by name, so `StopWords = english` and `stopwords = 'english'` are one option. A configuration is its parser and its mappings, one `ADD MAPPING` per group of token types; `COPY = other` is refused, since it copies mappings chant does not read, and a token type mapped twice is an error. Mappings and options change in place (SQLPG305): `ADD`, `ALTER` and `DROP MAPPING` for a configuration, one `ALTER TEXT SEARCH DICTIONARY` for a dictionary, in which an option named without a value is removed. A `tsvector` already stored keeps the tokens it was built with, so rebuild the columns and indexes that hold one when an edit changes what a word becomes. A configuration's parser and a dictionary's template have no `ALTER` and are dropped and created (SQLPG300), refused while an index or a configuration uses the object (SQLPG301). The parsers and templates themselves are C code an extension installs and are not declared.
+
+Across the supported majors 14 to 18 the grammar of an operator class, a family and the two text search kinds is the same: the pinned catalogs (`src/spec/postgres-catalog-14.snapshot.json` to `-18`) list the same access methods, the same 177 operator classes and the same key words (`CLASS`, `FAMILY`, `MAPPING`, `PARSER`, `TEMPLATE`, `DICTIONARY`). A foreign table differs in two key words only 18 has, `ENFORCED` and `VIRTUAL`, and neither is declared. The one difference that matters is `ALTER OPERATOR`, above.
 
 ## Comments
 

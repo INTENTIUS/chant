@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/exit/v1/exit.schema.json",
+  "title": "chant workspace exit output",
+  "description": "What `chant workspace exit [<member>...] --json` prints (#3177): the drill report with --drill, and otherwise the staged exit, its drill report and the outcome of the gate. A refused member carries one of the codes in $defs.memberResult.properties.code, and a drill finding one of the codes in $defs.finding.properties.code; both are in the one closed list of `reason-codes.ts`. A failure that stops the command before it prints this document (no such member, a dirty tree, no git repository) prints an error message and exits 1. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/drill"
+    },
+    {
+      "$ref": "#/$defs/exit"
+    }
+  ],
+  "$defs": {
+    "drill": {
+      "description": "--drill: the exit run on a scratch copy and checked. Exit code 0 when ok, else 1.",
+      "type": "object",
+      "required": [
+        "outcome",
+        "ok",
+        "members"
+      ],
+      "properties": {
+        "outcome": {
+          "const": "drill"
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "True when no member failed. A not-run member does not fail the drill."
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/drillMember"
+          }
+        }
+      }
+    },
+    "exit": {
+      "description": "The exit staged in a worktree. Exit code 0 for nothing-to-exit, dry-run and applied, 1 for checks-failed and 3 for gated.",
+      "type": "object",
+      "required": [
+        "outcome",
+        "digest",
+        "members",
+        "report"
+      ],
+      "properties": {
+        "outcome": {
+          "enum": [
+            "nothing-to-exit",
+            "checks-failed",
+            "dry-run",
+            "gated",
+            "applied"
+          ]
+        },
+        "digest": {
+          "type": "string",
+          "description": "sha256: and the first 16 hex digits of the staged patch. The gate binds it."
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memberResult"
+          }
+        },
+        "report": {
+          "$ref": "#/$defs/report"
+        },
+        "pending": {
+          "description": "With outcome gated: the pending gate fact, as the gate ledger records it."
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "With outcome applied: who approved the gate."
+        }
+      }
+    },
+    "report": {
+      "description": "The drill's checks of the staged tree.",
+      "type": "object",
+      "required": [
+        "ok",
+        "members"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/drillMember"
+          }
+        }
+      }
+    },
+    "memberResult": {
+      "description": "What the exit did to one member.",
+      "type": "object",
+      "required": [
+        "name",
+        "dir",
+        "kind",
+        "status",
+        "native",
+        "deploy",
+        "ci",
+        "ops",
+        "steps"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "exited",
+            "kept",
+            "manual",
+            "refused",
+            "failed"
+          ]
+        },
+        "code": {
+          "enum": [
+            "missing-dir",
+            "no-lexicon",
+            "lexicon-unsupported"
+          ],
+          "description": "With status refused: why the member can't be exited."
+        },
+        "native": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Native files written, relative to the workspace root."
+        },
+        "deploy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The stock command for each native file, relative to the member's directory."
+        },
+        "ci": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "CI files rewritten or written, relative to the workspace root."
+        },
+        "ops": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "op.json files left in place, relative to the workspace root."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Steps a person runs, for a member the exit can't do alone."
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "drillMember": {
+      "description": "The drill's verdict on one member.",
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "status",
+        "findings",
+        "native",
+        "deploy"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "not-run",
+            "kept"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "description": "Why the member is not-run or kept."
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "native": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deploy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "finding": {
+      "description": "One thing the drill found wrong with an exited member.",
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "native-missing",
+            "native-unreadable",
+            "chant-dependency",
+            "chant-config-left",
+            "chant-in-ci",
+            "no-deploy-command",
+            "declaration-not-other",
+            "exit-failed",
+            "choudoufu-steps-missing"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

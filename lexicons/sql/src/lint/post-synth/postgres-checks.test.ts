@@ -4,7 +4,7 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { sqlSerializer } from "../../serializer";
 import { table as chTable } from "../../clickhouse/entities";
-import { domain, extension, func, grant, index, role, schema, sequence, table, type as pgType, view } from "../../postgres/entities";
+import { domain, extension, func, grant, index, operatorClass, role, schema, sequence, table, type as pgType, view } from "../../postgres/entities";
 import { sqlAuditCatalog } from "../audit-catalog";
 import { postSynthChecks } from "./index";
 
@@ -444,6 +444,13 @@ describe("SQLPG125: access methods and operator classes", () => {
     clean("SQLPG125", { t, i, e: extension`CREATE EXTENSION pg_trgm` });
   });
   test("an operator class in an undeclared schema is left alone", () => clean("SQLPG125", { t, i: index`CREATE INDEX t_x ON ${t} (email ext.my_ops)` }));
+  test("an operator class the project declares passes for its own method only (#4406)", () => {
+    const app = schema`CREATE SCHEMA app`;
+    const ops = operatorClass`CREATE OPERATOR CLASS ${app}.shop_ops FOR TYPE text USING btree AS OPERATOR 1 <, OPERATOR 2 <=, OPERATOR 3 =, OPERATOR 4 >=, OPERATOR 5 >, FUNCTION 1 bttextcmp(text, text)`;
+    clean("SQLPG125", { app, t, ops, i: index`CREATE INDEX t_x ON ${t} (email shop_ops)` });
+    clean("SQLPG125", { app, t, ops, i: index`CREATE INDEX t_x ON ${t} (email app.shop_ops)` });
+    flagged("SQLPG125", { app, t, ops, i: index`CREATE INDEX t_x ON ${t} USING hash (email shop_ops)` }, /shop_ops, which Postgres 18 does not have for hash/);
+  });
 });
 
 describe("SQLPG126: functions", () => {

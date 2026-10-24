@@ -31,6 +31,7 @@ import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { SECURITY_FINDING_CODES } from "./checks/security";
 import { CI_WORKFLOW_FINDING_CODES } from "./ci-workflow";
 import { CI_BRANCH_FINDING_CODES } from "./checks/ci-branch";
+import { GATE_APPROVAL_FINDING_CODES } from "./checks/gate-approval";
 import { WORK_ERROR_CODES, WORK_HISTORY_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
 import { RUN_STATEMENT_ERROR_CODES, RUNS_ERROR_CODES, RUNS_REASON_CODES, RUNS_WRITE_ERROR_CODES } from "./runs-cli";
 import { RUN_STATEMENT_FAILURE_CODES } from "./trust/run-statement";
@@ -51,6 +52,7 @@ import { DECLARATION_WRITE_ERROR_CODES } from "./declaration-write";
 import { TRUST_WRITE_ERROR_CODES } from "./trust/trust-write";
 import { BOX_PUBLISH_ERROR_CODES } from "./box-publish";
 import { WRITE_LOCK_ERROR_CODES } from "./write-lock-cli";
+import { EXIT_CODES } from "./exit";
 import { WIP_ERROR_CODES, WIP_WRITE_ERROR_CODES } from "./wip";
 import { CI_GREEN_ERROR_CODES } from "./ci-green";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
@@ -75,6 +77,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   SECURITY_FINDING_CODES,
   CI_WORKFLOW_FINDING_CODES,
   CI_BRANCH_FINDING_CODES,
+  GATE_APPROVAL_FINDING_CODES,
   STATUS_REASON_CODES,
   STATUS_ERROR_CODES,
   STATUS_GATE_REASON_CODES,
@@ -144,6 +147,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   SEARCH_MEMBER_REASON_CODES,
   CAPABILITIES_ERROR_CODES,
   CAPABILITY_SUPPORT_CODES,
+  EXIT_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */

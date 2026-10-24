@@ -49,7 +49,7 @@ import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import type { ColumnDef } from "../entities";
 import type { DeclaredPgObject } from "../apply/statements";
 import { col, migrationNames, MIGRATION_TRAILER_KEY, pgName, type MigrationChange, type MigrationNames } from "./names";
-import { publicationsOf, type PublicationHit } from "./replication";
+import { publicationsOf, subscriptionRefusal, subscriptionsOf, type PublicationHit } from "./replication";
 import { keyText, type KeyColumn } from "./batches";
 import { carriedStates, carriedSubject, columnSequence, discoverDependents, replaceColumn, storedType, type CarriedObject, type CarriedState, type CarriedView, type ColumnSequence, type Dependents } from "./carry";
 
@@ -405,6 +405,8 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
           `A migration of the publisher and the subscriber together is chant #3332.`,
       );
     }
+    const subscriptions = await subscriptionsOf(client, schema, table, major);
+    if (subscriptions.length > 0) throw new MigrationRefusal(subscriptionRefusal(where, input.column, subscriptions));
   }
 
   // After a rename's switch the old column still holds the default or the identity the contract moves, and its sequence is read for it.

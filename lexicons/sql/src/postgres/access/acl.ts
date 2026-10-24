@@ -188,7 +188,7 @@ export function declaredAccess(objects: ReadonlyArray<{ key: string; canonical: 
   for (const { canonical: o } of objects) {
     const name = `${o.schema ? `${quoteIdent(o.schema)}.` : ""}${quoteIdent(o.name)}`;
     if (o.kind === "schema") declaredTargets.push({ kind: "schema", name: quoteIdent(o.name) });
-    else if (o.kind === "table" || o.kind === "view" || o.kind === "materializedView") {
+    else if (o.kind === "table" || o.kind === "foreignTable" || o.kind === "view" || o.kind === "materializedView") {
       relationKind.set(name, "table");
       declaredTargets.push({ kind: "table", name });
     } else if (o.kind === "sequence") {

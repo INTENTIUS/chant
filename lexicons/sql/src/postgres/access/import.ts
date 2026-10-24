@@ -21,7 +21,7 @@ function targetsOf(objects: readonly LivePgObject[]): AclTarget[] {
   for (const o of objects) {
     const name = `${o.schema ? `${quoteIdent(o.schema)}.` : ""}${quoteIdent(o.name)}`;
     if (o.type === POSTGRES_ENTITY_TYPES.schema) out.push({ kind: "schema", name: quoteIdent(o.name) });
-    else if (o.type === POSTGRES_ENTITY_TYPES.table || o.type === POSTGRES_ENTITY_TYPES.view || o.type === POSTGRES_ENTITY_TYPES.materializedView) out.push({ kind: "table", name });
+    else if (o.type === POSTGRES_ENTITY_TYPES.table || o.type === POSTGRES_ENTITY_TYPES.foreignTable || o.type === POSTGRES_ENTITY_TYPES.view || o.type === POSTGRES_ENTITY_TYPES.materializedView) out.push({ kind: "table", name });
     else if (o.type === POSTGRES_ENTITY_TYPES.sequence) out.push({ kind: "sequence", name });
     else if (o.type === POSTGRES_ENTITY_TYPES.function || o.type === POSTGRES_ENTITY_TYPES.procedure) {
       out.push({ kind: o.type === POSTGRES_ENTITY_TYPES.function ? "function" : "procedure", name: `${name}${o.signature ?? ""}` });

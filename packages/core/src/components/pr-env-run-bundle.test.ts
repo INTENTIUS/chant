@@ -47,6 +47,7 @@ describe("the pr-env-run bundle", () => {
       "packages/core/src/op/emulator-lifecycle.ts",
       "packages/core/src/plan-summary.ts",
       "packages/core/src/pr-loop.ts",
+      "packages/core/src/pr-migrations.ts",
     ]);
     expect(inputs.some((i) => /node_modules\/(ajv|js-yaml)\//.test(i) || i.endsWith("/op/gate.ts") || i.endsWith("/src/config.ts") || i.endsWith("/ts-loader.ts"))).toBe(false);
     expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(40 * 1024);

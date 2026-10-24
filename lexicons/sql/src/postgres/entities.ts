@@ -2,7 +2,8 @@
  * The Postgres entities: `schema`, `table`, `index`, `view`, `sequence`,
  * `type` (enum, composite and range), `domain`, `extension`, `func`,
  * `procedure`, `aggregate`, `trigger`, `eventTrigger`, `collation`, `cast`,
- * `policy`, `role` and `grant` tagged templates that parse their DDL at fold
+ * `operatorClass`, `operatorFamily`, `foreignTable`, `textSearchConfiguration`,
+ * `textSearchDictionary`, `policy`, `role` and `grant` tagged templates that parse their DDL at fold
  * time into one Declarable each (chant #3278, #3279, #3680, #3681, #3911).
  *
  * ```ts
@@ -57,7 +58,7 @@
 import type { AttrRef } from "@intentius/chant/attrref";
 import { setInterpolationFields } from "@intentius/chant/provenance";
 import { isTrivia, POSTGRES_LEXICAL, SqlSyntaxError, untokenize, type Token } from "./tokens";
-import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type DefElem, type GenericOption, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode } from "./parser";
+import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type DefElem, type GenericOption, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode, type TextSearchMappingNode } from "./parser";
 import { keywordCategory, quoteIdent } from "./keywords";
 import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, unparsedClauses, type TemplateCtx, type TemplateDialect, type UnparsedClause } from "../core/interpolation";
 import { SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
@@ -93,6 +94,8 @@ export interface ColumnDef {
   collate?: string;
   compression?: string;
   storage?: string;
+  /** A foreign table column's `OPTIONS (...)`: each option by its name to its string value. */
+  options?: Record<string, string>;
   comment?: string;
 }
 
@@ -353,6 +356,73 @@ export interface OperatorProps extends CommonProps {
    * to `true`. `procedure`, the old spelling, is `function`.
    */
   options: Record<string, string>;
+}
+
+/** One member of an operator class, as written. */
+export type OperatorClassItemDef =
+  | {
+      kind: "operator";
+      number: string;
+      /** The operator, `schema.symbol` or a bare symbol. */
+      operator: string;
+      /** `(left, right)` as written, parentheses excluded; absent when both are the class's type. */
+      types?: string;
+      /** `FOR ORDER BY`'s btree operator family; absent for `FOR SEARCH`, the default. */
+      orderBy?: string;
+    }
+  | { kind: "function"; number: string; types?: string; function: string; args: string }
+  | { kind: "storage"; type: string };
+
+/** `CREATE OPERATOR CLASS`: the operators and support functions an index access method uses for a data type. */
+export interface OperatorClassProps extends CommonProps {
+  default?: boolean;
+  /** `FOR TYPE`, as written. Not `type`: a serialized object has that key for its entity type. */
+  dataType: string;
+  /** `USING`: the index access method, folded. */
+  method: string;
+  /** `FAMILY`, as written; absent when the class is in a family of its own name. */
+  family?: string;
+  items: OperatorClassItemDef[];
+}
+
+/** `CREATE OPERATOR FAMILY`: a set of operator classes that work together; members arrive with the classes. */
+export interface OperatorFamilyProps extends CommonProps {
+  /** `USING`: the index access method, folded. */
+  method: string;
+}
+
+/** `CREATE FOREIGN TABLE`: a table whose rows are on a foreign server. */
+export interface ForeignTableProps extends CommonProps {
+  ifNotExists?: boolean;
+  columns: ColumnDef[];
+  checks: CheckDef[];
+  /** `SERVER`: the foreign server's SQL name. */
+  serverName: string;
+  /** `OPTIONS (...)`: each option by its name to its string value. */
+  options: Record<string, string>;
+}
+
+/** `CREATE TEXT SEARCH DICTIONARY`: a template with its options. */
+export interface TextSearchDictionaryProps extends CommonProps {
+  /** `TEMPLATE`, as written. */
+  template: string;
+  /** The template's options by name, folded, to their value as written. */
+  options: Record<string, string>;
+}
+
+/** One `ADD MAPPING FOR tokens WITH dictionaries` of a text search configuration. */
+export interface TextSearchMappingDef {
+  /** The token types, folded. */
+  tokens: string[];
+  /** The dictionaries in the order they are consulted, as written. */
+  dictionaries: string[];
+}
+
+/** `CREATE TEXT SEARCH CONFIGURATION`: a parser and what each token type it finds is mapped to. */
+export interface TextSearchConfigurationProps extends CommonProps {
+  /** `PARSER`, as written. */
+  parser: string;
+  mappings: TextSearchMappingDef[];
 }
 
 /** `CREATE STATISTICS`: extended statistics on columns or expressions of one table. */
@@ -681,6 +751,31 @@ export interface PostgresOperator extends PostgresObject {
   readonly props: OperatorProps;
 }
 
+export interface PostgresOperatorClass extends PostgresObject {
+  readonly entityType: "Postgres::OperatorClass";
+  readonly props: OperatorClassProps;
+}
+
+export interface PostgresOperatorFamily extends PostgresObject {
+  readonly entityType: "Postgres::OperatorFamily";
+  readonly props: OperatorFamilyProps;
+}
+
+export interface PostgresForeignTable extends PostgresObject {
+  readonly entityType: "Postgres::ForeignTable";
+  readonly props: ForeignTableProps;
+}
+
+export interface PostgresTextSearchDictionary extends PostgresObject {
+  readonly entityType: "Postgres::TextSearchDictionary";
+  readonly props: TextSearchDictionaryProps;
+}
+
+export interface PostgresTextSearchConfiguration extends PostgresObject {
+  readonly entityType: "Postgres::TextSearchConfiguration";
+  readonly props: TextSearchConfigurationProps;
+}
+
 export interface PostgresStatistics extends PostgresObject {
   readonly entityType: "Postgres::Statistics";
   readonly props: StatisticsProps;
@@ -860,6 +955,11 @@ export type PostgresTag =
   | "trigger"
   | "eventTrigger"
   | "operator"
+  | "operatorClass"
+  | "operatorFamily"
+  | "foreignTable"
+  | "textSearchConfiguration"
+  | "textSearchDictionary"
   | "statistics"
   | "foreignDataWrapper"
   | "foreignServer"
@@ -886,6 +986,11 @@ export const STATEMENTS_OF: Record<PostgresTag, readonly StatementNode["statemen
   trigger: ["trigger"],
   eventTrigger: ["eventTrigger"],
   operator: ["operator"],
+  operatorClass: ["operatorClass"],
+  operatorFamily: ["operatorFamily"],
+  foreignTable: ["foreignTable"],
+  textSearchConfiguration: ["textSearchConfiguration"],
+  textSearchDictionary: ["textSearchDictionary"],
   statistics: ["statistics"],
   foreignDataWrapper: ["foreignDataWrapper"],
   foreignServer: ["foreignServer"],
@@ -914,6 +1019,12 @@ const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
   trigger: "trigger",
   eventTrigger: "eventTrigger",
   operator: "operator",
+  operatorClass: "operatorClass",
+  operatorFamily: "operatorFamily",
+  foreignTable: "foreignTable",
+  textSearchConfiguration: "textSearchConfiguration",
+  textSearchDictionary: "textSearchDictionary",
+  textSearchMapping: undefined,
   statistics: "statistics",
   foreignDataWrapper: "foreignDataWrapper",
   foreignServer: "foreignServer",
@@ -945,6 +1056,12 @@ export const STATEMENT_NAMES: Record<StatementNode["statement"], string> = {
   trigger: "CREATE TRIGGER",
   eventTrigger: "CREATE EVENT TRIGGER",
   operator: "CREATE OPERATOR",
+  operatorClass: "CREATE OPERATOR CLASS",
+  operatorFamily: "CREATE OPERATOR FAMILY",
+  foreignTable: "CREATE FOREIGN TABLE",
+  textSearchConfiguration: "CREATE TEXT SEARCH CONFIGURATION",
+  textSearchDictionary: "CREATE TEXT SEARCH DICTIONARY",
+  textSearchMapping: "ALTER TEXT SEARCH CONFIGURATION",
   statistics: "CREATE STATISTICS",
   foreignDataWrapper: "CREATE FOREIGN DATA WRAPPER",
   foreignServer: "CREATE SERVER",
@@ -1061,7 +1178,7 @@ function columnName(ctx: Ctx, c: { name: string; span: Span }): string {
   return isColumnRef(v) ? v.attribute : req(text(ctx, c.span));
 }
 
-function columnDef(ctx: Ctx, c: ColumnNode): ColumnDef {
+function columnDef(ctx: Ctx, c: ColumnNode, tag: PostgresTag = "table"): ColumnDef {
   for (const span of [c.nameSpan, c.type, c.default, c.collate, c.compression, c.storage, c.generated?.expr, c.generated?.options]) feed(ctx, span, "columns");
   const def: ColumnDef = { name: columnName(ctx, { name: c.name, span: c.nameSpan }) };
   const set = <K extends keyof ColumnDef>(k: K, v: ColumnDef[K] | undefined) => {
@@ -1084,6 +1201,7 @@ function columnDef(ctx: Ctx, c: ColumnNode): ColumnDef {
   set("collate", text(ctx, c.collate));
   set("compression", text(ctx, c.compression));
   set("storage", text(ctx, c.storage));
+  if (c.options && c.options.length > 0) def.options = genericOptionValues(tag, ctx, c.options);
   return def;
 }
 
@@ -1182,6 +1300,7 @@ function applyComments(
   self: { schema?: string; name: string },
   objectTypes: readonly string[],
   parts: { columns?: Map<string, Commentable>; constraints?: Map<string, Commentable>; columnComments?: Record<string, string> } = {},
+  using?: string,
 ): string | undefined {
   let comment: string | undefined;
   const isSelf = (q: { schema?: string; name: string }) => q.name === self.name && (q.schema === undefined || self.schema === undefined || q.schema === self.schema);
@@ -1223,6 +1342,8 @@ function applyComments(
         // `COMMENT ON TRIGGER name ON table`: the name is the trigger's, the table its own.
         if (qualified(ctx, c.target).name !== self.name || !c.on || !isSelf({ ...qualified(ctx, c.on), name: self.name })) refuse(c, `names another ${c.objectType.toLowerCase()} than ${self.name}`);
       } else if (!isSelf(qualified(ctx, c.target))) refuse(c, `names another object than ${sqlNameOf(self)}`);
+      // An operator class or family is named by its index method too.
+      if (using !== undefined && c.using !== using) refuse(c, `names another index method than ${using}`);
       comment = value;
     }
   }
@@ -1246,7 +1367,7 @@ function lastDot(ctx: Ctx, span: Span): number {
  */
 export function followOnStray(tag: PostgresTag, rest: readonly StatementNode[]): StatementNode | undefined {
   if (tag === "grant") return rest[0];
-  return rest.find((n) => n.statement !== "comment" && !(tag === "table" && n.statement === "rowSecurity"));
+  return rest.find((n) => n.statement !== "comment" && !(tag === "table" && n.statement === "rowSecurity") && !(tag === "textSearchConfiguration" && n.statement === "textSearchMapping"));
 }
 
 /**
@@ -1463,7 +1584,7 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
   if (stray) {
     throw new SqlTemplateError(
       tag,
-      `holds a second statement (${STATEMENT_NAMES[stray.statement]}); a template declares one object, followed only by COMMENT ON statements for it${tag === "table" ? " and ALTER TABLE ... ROW LEVEL SECURITY" : ""}`,
+      `holds a second statement (${STATEMENT_NAMES[stray.statement]}); a template declares one object, followed only by COMMENT ON statements for it${tag === "table" ? " and ALTER TABLE ... ROW LEVEL SECURITY" : tag === "textSearchConfiguration" ? " and ALTER TEXT SEARCH CONFIGURATION ... ADD MAPPING" : ""}`,
       0,
       0,
     );
@@ -1634,6 +1755,112 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       // The symbol is unquoted wherever the operator is named: `app.===`.
       return make(POSTGRES_ENTITY_TYPES.operator, q, props, undefined, q.schema ? `${quoteIdent(q.schema)}.${q.name}` : q.name);
     }
+    case "operatorClass": {
+      const q = qualified(ctx, node.name);
+      if (node.method === "") throw new SqlTemplateError(tag, "the index method is written out, not interpolated", 0, 0);
+      const comment = applyComments(tag, ctx, comments, q, ["OPERATOR CLASS"], {}, node.method);
+      const items = node.items.map((i): OperatorClassItemDef => {
+        if (i.kind === "storage") return { kind: "storage", type: req(text(ctx, i.type, "items")) };
+        if (i.kind === "function") {
+          feed(ctx, i.function.span, "items");
+          return stripUnset({ kind: "function", number: req(text(ctx, i.number, "items")), types: text(ctx, i.types, "items"), function: targetName(ctx, i.function), args: text(ctx, i.args, "items") ?? "" }) as OperatorClassItemDef;
+        }
+        return stripUnset({
+          kind: "operator",
+          number: req(text(ctx, i.number, "items")),
+          operator: req(text(ctx, i.operator.span, "items")),
+          types: text(ctx, i.types, "items"),
+          orderBy: i.orderBy ? targetName(ctx, i.orderBy) : undefined,
+        }) as OperatorClassItemDef;
+      });
+      const props: OperatorClassProps = stripUnset({
+        ...q,
+        default: node.default || undefined,
+        dataType: req(text(ctx, node.type, "dataType")),
+        method: node.method,
+        family: node.family ? targetName(ctx, node.family) : undefined,
+        items,
+        comment,
+        ddl,
+        source,
+      });
+      return make(POSTGRES_ENTITY_TYPES.operatorClass, q, props);
+    }
+    case "operatorFamily": {
+      const q = qualified(ctx, node.name);
+      if (node.method === "") throw new SqlTemplateError(tag, "the index method is written out, not interpolated", 0, 0);
+      const comment = applyComments(tag, ctx, comments, q, ["OPERATOR FAMILY"], {}, node.method);
+      const props: OperatorFamilyProps = stripUnset({ ...q, method: node.method, comment, ddl, source });
+      return make(POSTGRES_ENTITY_TYPES.operatorFamily, q, props);
+    }
+    case "foreignTable": {
+      const q = qualified(ctx, node.name);
+      const columns = node.columns.map((c) => columnDef(ctx, c, tag));
+      const checks: CheckDef[] = [];
+      const file = (c: ConstraintNode, cols: string[]) => {
+        if (c.kind === "CHECK") checks.push(checkDef(ctx, c));
+        else if (c.kind === "NOT NULL") {
+          const col = columns.find((x) => x.name === cols[0]);
+          if (!col) throw new SqlTemplateError(tag, `NOT NULL ${cols[0]} names no column of ${sqlNameOf(q)}`, 0, 0);
+          col.notNull = true;
+          if (c.name) col.notNullName = c.name;
+        }
+      };
+      node.columns.forEach((c, i) => c.constraints.forEach((k) => file(k, [columns[i]!.name])));
+      node.constraints.forEach((k) => file(k, k.columns.map((x) => columnName(ctx, x))));
+      const named = new Map<string, Commentable>();
+      for (const c of checks) if (c.name) named.set(c.name, c);
+      const comment = applyComments(tag, ctx, comments, q, ["FOREIGN TABLE"], { columns: new Map(columns.map((c) => [c.name, c])), constraints: named });
+      const props: ForeignTableProps = strip(
+        {
+          ...q,
+          ifNotExists: node.ifNotExists || undefined,
+          columns,
+          checks,
+          serverName: databaseObjectName(ctx, node.server),
+          options: genericOptionValues(tag, ctx, node.options),
+          comment,
+          ddl,
+          source,
+        },
+        ["columns", "checks", "options"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.foreignTable, q, props, columns.map((c) => c.name));
+    }
+    case "textSearchDictionary": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["TEXT SEARCH DICTIONARY"]);
+      const { template, ...options } = definitionValues(ctx, node.options, "options");
+      const props: TextSearchDictionaryProps = strip({ ...q, template: req(template), options, comment, ddl, source }, ["options"]);
+      return make(POSTGRES_ENTITY_TYPES.textSearchDictionary, q, props);
+    }
+    case "textSearchConfiguration": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["TEXT SEARCH CONFIGURATION"]);
+      const opt = definitionValues(ctx, node.options, "options");
+      const seen = new Set<string>();
+      const mappings = rest
+        .filter((n): n is TextSearchMappingNode => n.statement === "textSearchMapping")
+        .map((m): TextSearchMappingDef => {
+          feed(ctx, m.name.span, "mappings");
+          const t = qualified(ctx, m.name);
+          if (t.name !== q.name || (t.schema !== undefined && q.schema !== undefined && t.schema !== q.schema)) {
+            throw new SqlTemplateError(tag, `ADD MAPPING names another configuration (${sqlNameOf(t)}) than ${sqlNameOf(q)}`, 0, 0);
+          }
+          const tokens = m.tokens.map((x) => x.name || identValue(req(text(ctx, x.span, "mappings"))));
+          for (const tok of tokens) {
+            if (seen.has(tok)) throw new SqlTemplateError(tag, `the token type ${tok} is mapped twice in ${sqlNameOf(q)}`, 0, 0);
+            seen.add(tok);
+          }
+          for (const d of m.dictionaries) feed(ctx, d.span, "mappings");
+          return { tokens, dictionaries: m.dictionaries.map((d) => sqlNameOf(qualified(ctx, d))) };
+        });
+      const props: TextSearchConfigurationProps = strip({ ...q, parser: req(opt.parser), mappings, comment, ddl, source }, ["mappings"]);
+      return make(POSTGRES_ENTITY_TYPES.textSearchConfiguration, q, props);
+    }
+    case "textSearchMapping":
+      // Only a configuration's follow-on statement (`followOnStray`); first in a template it is refused above.
+      throw new SqlTemplateError(tag, "holds an ALTER TEXT SEARCH CONFIGURATION before any CREATE", 0, 0);
     case "statistics": {
       const q = qualified(ctx, node.name);
       const comment = applyComments(tag, ctx, comments, q, ["STATISTICS"]);
@@ -2191,6 +2418,50 @@ export function eventTrigger(strings: TemplateStringsArray, ...values: unknown[]
  */
 export function operator(strings: TemplateStringsArray, ...values: unknown[]): PostgresOperator {
   return build("operator", strings, values) as PostgresOperator;
+}
+
+/**
+ * `` operatorClass`CREATE OPERATOR CLASS app.ops DEFAULT FOR TYPE int USING btree AS OPERATOR 1 <, FUNCTION 1 ${cmp}(int, int)` ``:
+ * one operator class, identified by its name and index method. Creating one takes a superuser.
+ */
+export function operatorClass(strings: TemplateStringsArray, ...values: unknown[]): PostgresOperatorClass {
+  return build("operatorClass", strings, values) as PostgresOperatorClass;
+}
+
+/**
+ * `` operatorFamily`CREATE OPERATOR FAMILY app.ops USING btree` ``: one operator
+ * family, identified by its name and index method. Its members come with the
+ * operator classes that name it. Creating one takes a superuser.
+ */
+export function operatorFamily(strings: TemplateStringsArray, ...values: unknown[]): PostgresOperatorFamily {
+  return build("operatorFamily", strings, values) as PostgresOperatorFamily;
+}
+
+/**
+ * `` foreignTable`CREATE FOREIGN TABLE app.remote_orders (id int, total numeric) SERVER ${remote} OPTIONS (table_name 'orders')` ``:
+ * one foreign table. It has its own tag, not `table`, because it is another
+ * kind of relation: another CREATE and ALTER, no key, index, partitioning or
+ * storage clauses, and a server it cannot move off.
+ */
+export function foreignTable(strings: TemplateStringsArray, ...values: unknown[]): PostgresForeignTable {
+  return build("foreignTable", strings, values) as PostgresForeignTable;
+}
+
+/**
+ * `` textSearchDictionary`CREATE TEXT SEARCH DICTIONARY app.english_stop (TEMPLATE = snowball, Language = english, StopWords = english)` ``:
+ * one text search dictionary: a template and its options.
+ */
+export function textSearchDictionary(strings: TemplateStringsArray, ...values: unknown[]): PostgresTextSearchDictionary {
+  return build("textSearchDictionary", strings, values) as PostgresTextSearchDictionary;
+}
+
+/**
+ * `` textSearchConfiguration`CREATE TEXT SEARCH CONFIGURATION app.english2 (PARSER = default); ALTER TEXT SEARCH CONFIGURATION app.english2 ADD MAPPING FOR asciiword WITH ${dict}` ``:
+ * one text search configuration: a parser, and the dictionaries each token
+ * type it finds is looked up in.
+ */
+export function textSearchConfiguration(strings: TemplateStringsArray, ...values: unknown[]): PostgresTextSearchConfiguration {
+  return build("textSearchConfiguration", strings, values) as PostgresTextSearchConfiguration;
 }
 
 /**

@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { readDeclaration, type Member } from "./declaration";
 import { setProperty } from "./json-edit";
+import type { ReasonCode } from "./reason-codes";
 import { workingTree } from "./tree";
 
 /** Runs `chant build` in a directory. The same shape as `ChantRunner` in lineage-upgrade.ts. */
@@ -90,6 +91,10 @@ export function memberLexicons(dir: string): string[] {
 
 export type ExitAction = "native-build" | "choudoufu-roundtrip" | "keep";
 
+/** Why a chant member cannot be exited. Closed; each is in `reason-codes.ts`. */
+export const EXIT_REFUSAL_CODES = ["missing-dir", "no-lexicon", "lexicon-unsupported"] as const satisfies readonly ReasonCode[];
+export type ExitRefusalCode = (typeof EXIT_REFUSAL_CODES)[number];
+
 export interface MemberPlan {
   name: string;
   dir: string;
@@ -97,7 +102,7 @@ export interface MemberPlan {
   action: ExitAction;
   lexicons: string[];
   /** Set when the member cannot be exited, with the reason code. */
-  refused?: { code: "no-lexicon" | "lexicon-unsupported" | "missing-dir"; message: string };
+  refused?: { code: ExitRefusalCode; message: string };
 }
 
 export interface ExitPlan {
@@ -147,6 +152,8 @@ export interface MemberResult {
   dir: string;
   kind: string;
   status: "exited" | "kept" | "manual" | "refused" | "failed";
+  /** Why the member was refused; set only with status `refused`. */
+  code?: ExitRefusalCode;
   /** Native files written, relative to the workspace root. */
   native: string[];
   /** The stock command for each native file, relative to the member's directory. */
@@ -190,6 +197,7 @@ export async function exitInDir(plan: ExitPlan, runBuild: ExitBuildRunner): Prom
     results.push(result);
     if (m.refused) {
       result.status = "refused";
+      result.code = m.refused.code;
       result.detail = `${m.refused.code}: ${m.refused.message}`;
       continue;
     }
@@ -395,16 +403,22 @@ function setKindOther(root: string, exited: MemberResult[]): void {
 
 // ── The drill ────────────────────────────────────────────────────────────────
 
-export type DrillCode =
-  | "native-missing"
-  | "native-unreadable"
-  | "chant-dependency"
-  | "chant-config-left"
-  | "chant-in-ci"
-  | "no-deploy-command"
-  | "declaration-not-other"
-  | "exit-failed"
-  | "choudoufu-steps-missing";
+/** What the exit drill finds wrong with an exited member. Closed; each is in `reason-codes.ts`. */
+export const DRILL_CODES = [
+  "native-missing",
+  "native-unreadable",
+  "chant-dependency",
+  "chant-config-left",
+  "chant-in-ci",
+  "no-deploy-command",
+  "declaration-not-other",
+  "exit-failed",
+  "choudoufu-steps-missing",
+] as const satisfies readonly ReasonCode[];
+export type DrillCode = (typeof DRILL_CODES)[number];
+
+/** Every code `workspace exit` prints: why a member was refused, and what the drill found. */
+export const EXIT_CODES = [...EXIT_REFUSAL_CODES, ...DRILL_CODES] as const;
 
 export interface DrillFinding {
   code: DrillCode;

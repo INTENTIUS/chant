@@ -113,6 +113,8 @@ export interface ColumnNode {
   notNullName?: string;
   default?: Span;
   generated?: { kind: "stored" | "virtual" | "identity"; expr?: Span; always: boolean; options?: Span };
+  /** A foreign table column's `OPTIONS (...)`. */
+  options?: GenericOption[];
   /** Column constraints other than NOT NULL, NULL, DEFAULT and GENERATED. */
   constraints: ConstraintNode[];
 }
@@ -298,6 +300,66 @@ export interface GenericOption {
   value: Span;
 }
 
+/** `CREATE FOREIGN TABLE [IF NOT EXISTS] name (columns) SERVER server [OPTIONS (...)]`. */
+export interface ForeignTableNode {
+  statement: "foreignTable";
+  /** Clauses the parser does not know (#3872), kept in the DDL as written; absent when there are none. */
+  unknown?: UnknownClause[];
+  ifNotExists: boolean;
+  name: NameNode;
+  columns: ColumnNode[];
+  constraints: ConstraintNode[];
+  server: NameNode;
+  options: GenericOption[];
+}
+
+/** One member of an operator class: an operator, a support function, or the storage type. */
+export type OperatorClassItem =
+  | { kind: "operator"; number: Span; operator: NameNode; types?: Span; orderBy?: NameNode }
+  | { kind: "function"; number: Span; types?: Span; function: NameNode; args: Span }
+  | { kind: "storage"; type: Span };
+
+/** `CREATE OPERATOR CLASS name [DEFAULT] FOR TYPE type USING method [FAMILY family] AS item, ...`. */
+export interface OperatorClassNode {
+  statement: "operatorClass";
+  name: NameNode;
+  default: boolean;
+  type: Span;
+  /** The index access method, folded. */
+  method: string;
+  family?: NameNode;
+  items: OperatorClassItem[];
+}
+
+/** `CREATE OPERATOR FAMILY name USING method`. */
+export interface OperatorFamilyNode {
+  statement: "operatorFamily";
+  name: NameNode;
+  method: string;
+}
+
+/** `CREATE TEXT SEARCH DICTIONARY name (TEMPLATE = t [, option = value, ...])`; the template is the `template` option. */
+export interface TextSearchDictionaryNode {
+  statement: "textSearchDictionary";
+  name: NameNode;
+  options: DefElem[];
+}
+
+/** `CREATE TEXT SEARCH CONFIGURATION name (PARSER = p)`. */
+export interface TextSearchConfigurationNode {
+  statement: "textSearchConfiguration";
+  name: NameNode;
+  options: DefElem[];
+}
+
+/** `ALTER TEXT SEARCH CONFIGURATION name ADD MAPPING FOR token_type, ... WITH dictionary, ...`: a configuration's mapping, written after its CREATE. */
+export interface TextSearchMappingNode {
+  statement: "textSearchMapping";
+  name: NameNode;
+  tokens: Array<{ name: string; span: Span }>;
+  dictionaries: NameNode[];
+}
+
 /** `CREATE FOREIGN DATA WRAPPER name [HANDLER f | NO HANDLER] [VALIDATOR f | NO VALIDATOR] [OPTIONS (...)]`. */
 export interface ForeignDataWrapperNode {
   statement: "foreignDataWrapper";
@@ -462,6 +524,8 @@ export interface CommentNode {
   on?: NameNode;
   /** For `COMMENT ON FUNCTION f(...)` and `AGGREGATE a(...)`: the parameter list, parentheses excluded. */
   args?: Span;
+  /** For `COMMENT ON OPERATOR CLASS c USING m` and `OPERATOR FAMILY`: the index method, folded. */
+  using?: string;
   /** For `COMMENT ON CAST (source AS target)`: the two types. */
   cast?: { source: Span; target: Span };
   /** The comment, a string, or undefined for `IS NULL`. */
@@ -482,6 +546,12 @@ export type StatementNode =
   | CastNode
   | EventTriggerNode
   | OperatorNode
+  | OperatorClassNode
+  | OperatorFamilyNode
+  | ForeignTableNode
+  | TextSearchDictionaryNode
+  | TextSearchConfigurationNode
+  | TextSearchMappingNode
   | StatisticsNode
   | ForeignDataWrapperNode
   | ForeignServerNode
@@ -845,7 +915,7 @@ class PgParser extends SqlCursor {
     return node;
   }
 
-  private column(typed: boolean): ColumnNode {
+  private column(typed: boolean, foreign = false): ColumnNode {
     const { text, span } = this.nameTok("a column name");
     const col: ColumnNode = { name: text, nameSpan: span, constraints: [] };
     if (!typed) this.acceptSeq("WITH", "OPTIONS");
@@ -854,7 +924,10 @@ class PgParser extends SqlCursor {
     if (typed && !bare && !this.stopsAt(COLUMN_CLAUSE)) col.type = this.typeName();
     else if (typed) this.fail("expected a column type");
     for (;;) {
-      if (this.accept("COMPRESSION")) col.compression = this.expr(COLUMN_CLAUSE);
+      if (foreign && kw(this.peek(), "OPTIONS") && this.isPunct("(", 1)) {
+        this.p++;
+        col.options = this.genericOptions();
+      } else if (this.accept("COMPRESSION")) col.compression = this.expr(COLUMN_CLAUSE);
       else if (this.accept("STORAGE")) col.storage = this.expr(COLUMN_CLAUSE);
       else if (this.accept("COLLATE")) col.collate = this.expr(COLUMN_CLAUSE);
       else if (!this.columnConstraint(col) && !this.unknownClause(COLUMN_WORDS, { inList: true, column: text || undefined })) break;
@@ -1070,6 +1143,7 @@ class PgParser extends SqlCursor {
     if (this.accept("GRANT")) return this.grant(false, false);
     if (this.accept("REVOKE")) return this.grant(true, false);
     if (this.acceptSeq("ALTER", "DEFAULT", "PRIVILEGES")) return this.defaultPrivileges();
+    if (this.acceptSeq("ALTER", "TEXT", "SEARCH", "CONFIGURATION")) return this.textSearchMapping();
     if (this.acceptSeq("ALTER", "TABLE")) return this.rowSecurity();
     this.expect("CREATE");
     const orReplace = this.acceptSeq("OR", "REPLACE");
@@ -1089,8 +1163,21 @@ class PgParser extends SqlCursor {
       if (this.accept("COLLATION")) return this.collation();
       if (this.accept("CAST")) return this.cast();
       if (this.acceptSeq("EVENT", "TRIGGER")) return this.eventTrigger();
-      if (this.accept("OPERATOR")) return this.operator();
+      if (this.accept("OPERATOR")) {
+        // CLASS and FAMILY are words an operator's schema may be named: `class.+` is still an operator.
+        if (kw(this.peek(), "CLASS") && !this.isPunct(".", 1)) {
+          this.p++;
+          return this.operatorClass();
+        }
+        if (kw(this.peek(), "FAMILY") && !this.isPunct(".", 1)) {
+          this.p++;
+          return this.operatorFamily();
+        }
+        return this.operator();
+      }
+      if (this.acceptSeq("TEXT", "SEARCH")) return this.textSearch();
       if (this.accept("STATISTICS")) return this.statistics();
+      if (this.acceptSeq("FOREIGN", "TABLE")) return this.foreignTable();
       if (this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) return this.foreignDataWrapper();
       if (this.accept("SERVER")) return this.foreignServer();
       if (this.accept("PUBLICATION")) return this.publication();
@@ -1103,7 +1190,7 @@ class PgParser extends SqlCursor {
     const recursive = this.accept("RECURSIVE");
     if (!orReplace && !recursive && persistence === undefined && this.acceptSeq("MATERIALIZED", "VIEW")) return this.view(true, false, false, false);
     if (this.accept("VIEW")) return this.view(false, orReplace, persistence === "temporary", recursive);
-    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, OPERATOR, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY or ROLE");
+    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, OPERATOR, OPERATOR CLASS, OPERATOR FAMILY, TEXT SEARCH CONFIGURATION, TEXT SEARCH DICTIONARY, STATISTICS, FOREIGN TABLE, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY or ROLE");
   }
 
   private schema(): SchemaNode {
@@ -1372,12 +1459,127 @@ class PgParser extends SqlCursor {
   }
 
   private operator(): OperatorNode {
-    if (kw(this.peek(), "CLASS", "FAMILY") && !this.isPunct(".", 1)) this.fail("expected the operator's name (CREATE OPERATOR CLASS and CREATE OPERATOR FAMILY are not declared)");
     const name = this.operatorName();
     const options = this.definition("an operator option");
     this.checkDefinition(options, OPERATOR_OPTIONS, [], "an operator");
     if (!options.some((o) => o.name === "function" || o.name === "procedure")) this.fail("expected FUNCTION (an operator needs the function it calls)", this.lastSeen());
     return { statement: "operator", name, options };
+  }
+
+  /** The member list of `CREATE OPERATOR CLASS ... AS`: an operator, a support function or the storage type. */
+  private operatorClassItem(): OperatorClassItem {
+    const number = (): Span => {
+      const t = this.next();
+      if (t.kind !== "number" && t.kind !== "ref") this.fail("expected the strategy or support number", t);
+      return this.span(this.idx(-1), t.kind === "ref" ? [t.part] : []);
+    };
+    if (this.accept("OPERATOR")) {
+      const item: Extract<OperatorClassItem, { kind: "operator" }> = { kind: "operator", number: number(), operator: this.operatorName() };
+      if (this.isPunct("(")) item.types = this.parenthesized();
+      if (this.accept("FOR")) {
+        if (this.accept("SEARCH")) return item;
+        if (!this.acceptSeq("ORDER", "BY")) this.fail("expected SEARCH or ORDER BY");
+        item.orderBy = this.qualifiedName("a sort operator family");
+      }
+      return item;
+    }
+    if (this.accept("FUNCTION")) {
+      const n = number();
+      const types = this.isPunct("(") ? this.parenthesized() : undefined;
+      const fn = this.qualifiedName("a function name");
+      if (!this.isPunct("(")) this.fail("expected '(' and the function's argument types");
+      return { kind: "function", number: n, ...(types ? { types } : {}), function: fn, args: this.parenthesized() };
+    }
+    if (this.accept("STORAGE")) return { kind: "storage", type: this.typeName() };
+    return this.fail("expected OPERATOR, FUNCTION or STORAGE");
+  }
+
+  private operatorClass(): OperatorClassNode {
+    const name = this.qualifiedName("an operator class name");
+    const isDefault = this.accept("DEFAULT");
+    this.expect("FOR");
+    this.expect("TYPE");
+    const type = this.typeName();
+    this.expect("USING");
+    const method = this.nameTok("an index access method").text;
+    const node: OperatorClassNode = { statement: "operatorClass", name, default: isDefault, type, method, items: [] };
+    if (this.accept("FAMILY")) node.family = this.qualifiedName("an operator family name");
+    this.expect("AS");
+    do node.items.push(this.operatorClassItem());
+    while (this.acceptPunct(","));
+    return node;
+  }
+
+  private operatorFamily(): OperatorFamilyNode {
+    const name = this.qualifiedName("an operator family name");
+    this.expect("USING");
+    return { statement: "operatorFamily", name, method: this.nameTok("an index access method").text };
+  }
+
+  /** After `CREATE TEXT SEARCH`: a dictionary or a configuration. A parser and a template are C code. */
+  private textSearch(): TextSearchDictionaryNode | TextSearchConfigurationNode {
+    if (this.accept("DICTIONARY")) {
+      const name = this.qualifiedName("a text search dictionary name");
+      const options = this.definition("a dictionary option");
+      // The options past TEMPLATE belong to the template; a name given twice is still wrong.
+      this.checkDefinition(options, options.map((o) => o.name), ["template"], "a text search dictionary");
+      return { statement: "textSearchDictionary", name, options };
+    }
+    if (this.accept("CONFIGURATION")) {
+      const name = this.qualifiedName("a text search configuration name");
+      const options = this.definition("a configuration option");
+      this.checkDefinition(options, ["parser", "copy"], [], "a text search configuration");
+      if (options.some((o) => o.name === "copy")) this.fail("expected PARSER (COPY copies mappings chant does not read; name the parser and write the mappings)", this.tokens[options.find((o) => o.name === "copy")!.nameSpan.from]);
+      if (!options.some((o) => o.name === "parser")) this.fail("expected PARSER (a configuration needs the parser that splits text into tokens)", this.lastSeen());
+      return { statement: "textSearchConfiguration", name, options };
+    }
+    return this.fail("expected DICTIONARY or CONFIGURATION (a text search parser and a text search template are C code an extension installs)");
+  }
+
+  /** `ALTER TEXT SEARCH CONFIGURATION name ADD MAPPING FOR token_type [, ...] WITH dictionary [, ...]`. */
+  private textSearchMapping(): TextSearchMappingNode {
+    const name = this.qualifiedName("a text search configuration name");
+    if (!this.acceptSeq("ADD", "MAPPING")) this.fail("expected ADD MAPPING (a configuration's mappings are declared with ADD MAPPING after its CREATE)");
+    this.expect("FOR");
+    const node: TextSearchMappingNode = { statement: "textSearchMapping", name, tokens: [], dictionaries: [] };
+    do node.tokens.push((({ text, span }) => ({ name: text, span }))(this.nameTok("a token type")));
+    while (this.acceptPunct(","));
+    this.expect("WITH");
+    do node.dictionaries.push(this.qualifiedName("a text search dictionary name"));
+    while (this.acceptPunct(","));
+    return node;
+  }
+
+  /** `CREATE FOREIGN TABLE`: the column list form. A key, a generated column, INHERITS and PARTITION OF are not declared. */
+  private foreignTable(): ForeignTableNode {
+    const ifNotExists = this.ifNotExists();
+    const name = this.qualifiedName("a foreign table name");
+    if (kw(this.peek(), "PARTITION")) this.fail("expected the column list (a foreign table that is a partition, PARTITION OF, is not declared here)");
+    const node: ForeignTableNode = { statement: "foreignTable", ifNotExists, name, columns: [], constraints: [], server: { pieces: [], span: this.span(this.idx(), []) }, options: [] };
+    this.expectPunct("(");
+    if (!this.acceptPunct(")")) {
+      for (;;) {
+        if (kw(this.peek(), "LIKE")) this.fail("LIKE is not declared on a foreign table; write its columns");
+        const c = this.tableConstraint();
+        if (c) node.constraints.push(c);
+        else node.columns.push(this.column(true, true));
+        if (this.acceptPunct(",")) continue;
+        this.expectPunct(")");
+        break;
+      }
+    }
+    if (kw(this.peek(), "INHERITS")) this.fail("expected SERVER (INHERITS is not declared on a foreign table)");
+    this.expect("SERVER");
+    node.server = this.databaseName("a server name");
+    if (this.accept("OPTIONS")) node.options = this.genericOptions();
+    // A foreign table has CHECK and NOT NULL constraints and a default; Postgres refuses the rest, and a generated column is not read.
+    const bad = (c: ConstraintNode, what: string): never => this.fail(`${what} (a foreign table holds CHECK and NOT NULL constraints only; the remote server keeps the rest)`, this.tokens[c.span.from]);
+    for (const c of [...node.constraints, ...node.columns.flatMap((x) => x.constraints)]) {
+      if (c.kind !== "CHECK" && c.kind !== "NOT NULL") bad(c, `expected CHECK or NOT NULL, not ${c.kind}`);
+      if (c.notEnforced !== undefined) bad(c, "ENFORCED and NOT ENFORCED are 18's and are not declared on a foreign table");
+    }
+    for (const col of node.columns) if (col.generated) this.fail(`expected no generated column (${col.name} is GENERATED ${col.generated.kind.toUpperCase()}; a foreign table's generated columns are not declared)`, this.tokens[col.nameSpan.from]);
+    return node;
   }
 
   private statistics(): StatisticsNode {
@@ -2074,6 +2276,23 @@ class PgParser extends SqlCursor {
     } else if (this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) {
       objectType = "FOREIGN DATA WRAPPER";
       target = this.qualifiedName("a foreign data wrapper name");
+    } else if (kw(this.peek(), "OPERATOR") && kw(this.peek(1), "CLASS", "FAMILY") && !this.isPunct(".", 2)) {
+      this.p++;
+      objectType = `OPERATOR ${this.next().text.toUpperCase()}`;
+      target = this.qualifiedName(`an ${objectType.toLowerCase()} name`);
+      this.expect("USING");
+      const using = this.nameTok("an index access method").text;
+      this.expect("IS");
+      const node: CommentNode = { statement: "comment", objectType, target, using };
+      if (!this.accept("NULL")) node.text = this.commentText();
+      return node;
+    } else if (this.acceptSeq("TEXT", "SEARCH")) {
+      if (!this.accept("CONFIGURATION", "DICTIONARY")) this.fail("expected CONFIGURATION or DICTIONARY");
+      objectType = `TEXT SEARCH ${this.lastSeen()!.text.toUpperCase()}`;
+      target = this.qualifiedName(`a ${objectType.toLowerCase()} name`);
+    } else if (this.acceptSeq("FOREIGN", "TABLE")) {
+      objectType = "FOREIGN TABLE";
+      target = this.qualifiedName("a foreign table name");
     } else if (this.accept("OPERATOR")) {
       objectType = "OPERATOR";
       target = this.operatorName();
@@ -2093,7 +2312,7 @@ class PgParser extends SqlCursor {
       if (this.acceptSeq("MATERIALIZED", "VIEW")) objectType = "MATERIALIZED VIEW";
       else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION", "FUNCTION", "PROCEDURE")) {
         objectType = this.tokens[this.idx(-1)]!.text.toUpperCase();
-      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, OPERATOR, TRIGGER, EVENT TRIGGER, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY, ROLE or CONSTRAINT");
+      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, OPERATOR, TRIGGER, EVENT TRIGGER, STATISTICS, FOREIGN TABLE, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, OPERATOR CLASS, OPERATOR FAMILY, TEXT SEARCH CONFIGURATION, TEXT SEARCH DICTIONARY, POLICY, ROLE or CONSTRAINT");
       target = this.qualifiedName("an object name");
       if ((objectType === "FUNCTION" || objectType === "PROCEDURE") && this.isPunct("(")) args = this.parenthesized();
     }

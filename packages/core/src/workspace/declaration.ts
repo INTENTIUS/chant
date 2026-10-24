@@ -31,6 +31,7 @@ import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
 import { assertPrLoopHooks, type OpWaveHooks } from "../op/op-waves";
 import { quorumProblems, type GateQuorumSpec } from "../op/gate-quorum";
+import { gateBaseApprovalProblems, type GateApprovalMode, type GatePolicyRef } from "../op/gate-approval";
 import { assertGatePolicySettings, type GatePolicySettings } from "../gate-policy";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
@@ -167,6 +168,12 @@ export interface SignedGate {
    * the Op's own `approval.quorum` then applies.
    */
   quorum: GateQuorumSpec | null;
+  /** The policy an Op gate of this name takes in place of its own `approval.policy` (#4404). Null when the entry sets none. */
+  policy: GatePolicyRef | null;
+  /** The mode an Op gate of this name runs its policy in, in place of its own `approval.mode` (#4404). Null when the entry sets none. */
+  mode: GateApprovalMode | null;
+  /** The context an Op gate of this name hands its policy, in place of its own `approval.context` (#4404). Null when the entry sets none. */
+  context: Record<string, string | number | boolean | string[]> | null;
   pointer: string;
 }
 
@@ -1247,7 +1254,7 @@ function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key
  */
 function identityOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): IdentityPolicy | null {
   if (raw === undefined) return null;
-  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string; quorum?: GateQuorumSpec }> };
+  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string; quorum?: GateQuorumSpec; policy?: GatePolicyRef; mode?: GateApprovalMode; context?: Record<string, string | number | boolean | string[]> }> };
   const gates: Record<string, SignedGate> = {};
   for (const [gate, entry] of Object.entries(block.gates ?? {})) {
     const pointer = `/identity/gates/${gate.replace(/~/g, "~0").replace(/\//g, "~1")}`;
@@ -1255,7 +1262,17 @@ function identityOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorL
       const [problem] = quorumProblems(entry.quorum, `identity.gates.${gate}.quorum`, { notAuthor: false });
       if (problem) throw new WorkspaceReadError("declaration-invalid", problem.replace(/`/g, ""), at(`${pointer}/quorum`));
     }
-    gates[gate] = { gate, class: entry.class ?? null, quorum: entry.quorum !== undefined ? structuredClone(entry.quorum) : null, pointer };
+    const [rest] = gateBaseApprovalProblems(entry, `identity.gates.${gate}`);
+    if (rest) throw new WorkspaceReadError("declaration-invalid", rest.replace(/`/g, ""), at(pointer));
+    gates[gate] = {
+      gate,
+      class: entry.class ?? null,
+      quorum: entry.quorum !== undefined ? structuredClone(entry.quorum) : null,
+      policy: entry.policy !== undefined ? structuredClone(entry.policy) : null,
+      mode: entry.mode ?? null,
+      context: entry.context !== undefined ? structuredClone(entry.context) : null,
+      pointer,
+    };
   }
   return { attribution: block.attribution ?? "any", gates };
 }

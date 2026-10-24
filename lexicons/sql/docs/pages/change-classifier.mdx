@@ -71,6 +71,29 @@ A rebuild is never DDL: it is a step naming `ClickHouseRebuildOp`, or for a view
 
 `--topology` renders the statements for where they will run: `single` (the default), `cluster:<name>`, `replicated` or `cloud`. On a cluster every statement carries `ON CLUSTER` and a MergeTree-family table becomes `Replicated*MergeTree` with its Keeper path; in a `Replicated` database the tables are `Replicated*MergeTree` with no path and no `ON CLUSTER`. `diffStatements(before, after, { topology })` takes the same choice; see [Applying to a Server](../applying/#topology).
 
+## Migration files on a pull request
+
+A workspace member that is a goose, golang-migrate, clickhouse-migrations or Flyway directory (see [Workspace kinds](/chant/reference/workspace-kinds/)) has no declaration to diff. On a pull request, `chant components pr-plan` lists each migration file the pull request adds to such a member, and the plan note gives every statement in it the class the rules below give the same change. This is the "check" level of adopting chant beside an existing migration tool: it reads files, applies nothing and contacts no server, so it needs no `--env`.
+
+The up statements are the ones `chant sql replay` would run: goose's `-- +goose Up` section, the whole `.up.sql` file for golang-migrate, the whole file for clickhouse-migrations, and a Flyway file after placeholder substitution with the values in `flyway.toml` or `flyway.conf`. A file the base commit already has is not new, whatever the pull request does to it. Undo files are left out.
+
+```text
+`db/00002_orders.sql` (member `ledger`, postgres)
+- 1. `CREATE INDEX orders_status_idx ON orders (status)`: needs CONCURRENTLY (SQLPG241, SHARE)
+- 2. `ALTER TABLE orders ALTER COLUMN a TYPE bigint`: undecided between SQLPG206 metadata only and SQLPG207 ACCESS EXCLUSIVE rewrite or scan
+```
+
+Each statement is read with the dialect's parser (`CREATE`, `GRANT`, `COMMENT ON`) or word by word (`ALTER`, `DROP`, `RENAME`), and the lock on a Postgres statement is the one its rule's text names. The code is `lexicons/sql/src/postgres/plan/statements.ts` and `lexicons/sql/src/clickhouse/plan/statements.ts`.
+
+A statement alone cannot always decide a rule, and then the note names the candidates and does not guess:
+
+- `ALTER COLUMN ... TYPE` is SQLPG206 or SQLPG207 by the column's old type, and SQLPG208 as well with a `USING` expression.
+- `MODIFY COLUMN <type>` is SQLCH210 or SQLCH211, `DROP COLUMN` SQLCH202 or SQLCH213, and `RENAME COLUMN` SQLCH212 or SQLCH213, by whether the column is in a key. When the same file creates the table, its keys are known and the statement is classified.
+- `MODIFY ORDER BY` is SQLCH220, a rebuild. It is SQLCH216 or SQLCH220 when the same `ALTER` adds the columns the new key ends with, unless the file created the table and shows the old key is kept.
+- `CREATE OR REPLACE VIEW` is SQLPG250 or SQLPG251 by whether the view keeps its columns.
+
+A statement that reads or writes rows (`INSERT`, `UPDATE`, `TRUNCATE`) is listed as data. A schema change no rule covers, such as `ALTER TABLE ... OWNER TO` or a ClickHouse `DROP PARTITION`, is listed as having no class.
+
 ## Identity and renames
 
 An object is identified by its export name between two builds, so a changed name in the SQL under the same export is a rename. Against a server, which has no export names, an object is identified by `database.name`; a declaration renamed since the server last saw it says so with `-- previously: <old name>` before its CREATE.

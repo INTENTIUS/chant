@@ -150,6 +150,10 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
         mark(node.table);
         followOns.push({ tokens, node, inserts });
         continue;
+      case "textSearchMapping":
+        mark(node.name);
+        followOns.push({ tokens, node, inserts });
+        continue;
       case "index":
       case "trigger":
       case "policy":
@@ -189,7 +193,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     const k = followOnOwner(f.node, f.tokens, nameOf, qualify);
     const owner = k ? owners.get(k) : undefined;
     if (!owner) {
-      const what = f.node.statement === "comment" ? `COMMENT ON ${f.node.objectType}` : "ALTER TABLE ... ROW LEVEL SECURITY";
+      const what = f.node.statement === "comment" ? `COMMENT ON ${f.node.objectType}` : f.node.statement === "textSearchMapping" ? "ALTER TEXT SEARCH CONFIGURATION ... ADD MAPPING" : "ALTER TABLE ... ROW LEVEL SECURITY";
       problems.push(`${what} for an object the file does not create: ${firstLine(tokensText(f.tokens))}`);
       continue;
     }
@@ -283,11 +287,19 @@ function ownerKey(node: StatementNode, tokens: Token[], nameOf: NameOf, qualify:
     case "foreignServer":
     case "publication":
       return `${node.statement} ${nameOf(tokens, node.name).at(-1) ?? ""}`;
+    // A class or family is named by its index method too, and a configuration and a dictionary are different namespaces.
+    case "operatorClass":
+    case "operatorFamily":
+      return `${node.statement} ${qkey(qualify(nameOf(tokens, node.name)))} USING ${node.method}`;
+    case "textSearchConfiguration":
+    case "textSearchDictionary":
+      return `${node.statement} ${qkey(qualify(nameOf(tokens, node.name)))}`;
     case "cast":
       return `cast ${castKey(tokens, node.source, node.target)}`;
     case "grant":
     case "comment":
     case "rowSecurity":
+    case "textSearchMapping":
       return undefined;
     default:
       return `rel ${qkey(qualify(nameOf(tokens, node.name)))}`;
@@ -297,6 +309,7 @@ function ownerKey(node: StatementNode, tokens: Token[], nameOf: NameOf, qualify:
 /** The key of the object a COMMENT ON or ALTER TABLE ... ROW LEVEL SECURITY finishes. */
 function followOnOwner(node: StatementNode, tokens: Token[], nameOf: NameOf, qualify: Qualify): string | undefined {
   if (node.statement === "rowSecurity") return `rel ${qkey(qualify(nameOf(tokens, node.table)))}`;
+  if (node.statement === "textSearchMapping") return `textSearchConfiguration ${qkey(qualify(nameOf(tokens, node.name)))}`;
   if (node.statement !== "comment") return undefined;
   const target = nameOf(tokens, node.target);
   switch (node.objectType) {
@@ -321,6 +334,14 @@ function followOnOwner(node: StatementNode, tokens: Token[], nameOf: NameOf, qua
       return `foreignServer ${target.at(-1) ?? ""}`;
     case "PUBLICATION":
       return `publication ${target.at(-1) ?? ""}`;
+    case "OPERATOR CLASS":
+      return `operatorClass ${qkey(qualify(target))} USING ${node.using ?? ""}`;
+    case "OPERATOR FAMILY":
+      return `operatorFamily ${qkey(qualify(target))} USING ${node.using ?? ""}`;
+    case "TEXT SEARCH CONFIGURATION":
+      return `textSearchConfiguration ${qkey(qualify(target))}`;
+    case "TEXT SEARCH DICTIONARY":
+      return `textSearchDictionary ${qkey(qualify(target))}`;
     case "CAST":
       return node.cast ? `cast ${castKey(tokens, node.cast.source, node.cast.target)}` : undefined;
     case "CONSTRAINT":

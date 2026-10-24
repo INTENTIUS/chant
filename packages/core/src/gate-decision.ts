@@ -67,6 +67,8 @@ import { diskFiles, findInstalledPackage, mergePinClasses, parseClassDataByHand,
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
 import type { MergedReview } from "./op/gate-review";
 import { quorumProblems as quorumProblemsOf, type GateQuorumSpec as QuorumSpec } from "./op/gate-quorum";
+import { gateBaseApprovalProblems } from "./op/gate-approval-base";
+import type { GateApprovalMode, GatePolicyRef } from "./op/gate-approval";
 import type { GateApprovalSource } from "./op/op-waves";
 
 export { GATE_APPROVAL_SOURCES, type GateApprovalSource } from "./op/op-waves";
@@ -230,6 +232,14 @@ export interface IdentityGate {
    * this name takes in place of its own. Absent when the entry sets none.
    */
   quorum?: QuorumSpec;
+  /**
+   * `identity.gates.<gate>.policy`, `.mode` and `.context` (#4404): what an Op
+   * gate of this name takes in place of its own `approval` fields. Each is
+   * absent when the entry sets none.
+   */
+  policy?: GatePolicyRef;
+  mode?: GateApprovalMode;
+  context?: Record<string, string | number | boolean | string[]>;
 }
 
 /** The declaration at `base`, parsed, or null when there is none. Throws when it cannot be parsed. */
@@ -245,13 +255,23 @@ function declarationAt(repo: string, base: string): { file: string; value: unkno
 }
 
 function identityGatesOf(declaration: unknown): IdentityGate[] {
-  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown; quorum?: unknown } | null> } } | null)?.identity?.gates ?? {};
+  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown; quorum?: unknown; policy?: unknown; mode?: unknown; context?: unknown } | null> } } | null)?.identity?.gates ?? {};
   return Object.entries(gates).map(([gate, entry]) => {
-    if (entry?.quorum === undefined) return { gate, class: typeof entry?.class === "string" ? entry.class : null };
-    // #4324: a quorum chant would refuse leaves the gate undecidable, as chant's own read does.
-    const [problem] = quorumProblemsOf(entry.quorum, `identity.gates.${gate}.quorum`, { notAuthor: false });
-    if (problem) throw new Error(`chant.workspace.json at base: ${problem.replace(/`/g, "")}, so the gate cannot be decided`);
-    return { gate, class: typeof entry.class === "string" ? entry.class : null, quorum: structuredClone(entry.quorum) as QuorumSpec };
+    const out: IdentityGate = { gate, class: typeof entry?.class === "string" ? entry.class : null };
+    if (!entry) return out;
+    if (entry.quorum !== undefined) {
+      // #4324: a quorum chant would refuse leaves the gate undecidable, as chant's own read does.
+      const [problem] = quorumProblemsOf(entry.quorum, `identity.gates.${gate}.quorum`, { notAuthor: false });
+      if (problem) throw new Error(`chant.workspace.json at base: ${problem.replace(/`/g, "")}, so the gate cannot be decided`);
+      out.quorum = structuredClone(entry.quorum) as QuorumSpec;
+    }
+    // #4404: the same for the policy, mode and context.
+    const [rest] = gateBaseApprovalProblems(entry, `identity.gates.${gate}`);
+    if (rest) throw new Error(`chant.workspace.json at base: ${rest.replace(/`/g, "")}, so the gate cannot be decided`);
+    if (entry.policy !== undefined) out.policy = structuredClone(entry.policy) as GatePolicyRef;
+    if (entry.mode !== undefined) out.mode = entry.mode as GateApprovalMode;
+    if (entry.context !== undefined) out.context = structuredClone(entry.context) as NonNullable<IdentityGate["context"]>;
+    return out;
   });
 }
 

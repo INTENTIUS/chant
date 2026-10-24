@@ -275,6 +275,7 @@ export const REASONS = {
   "ci-workflow-pipeline-missing": "Under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick.",
   "ci-workflow-pipeline-differs": "Under ci.workflow, the pipeline does not match the workflow: it applies on merge under trunk-curated, records under trunk-curated+apply-on-merge, or applies before merge, or fails to, against apply-before-merge.",
   "ci-workflow-publish-missing": "Under ci.workflow, no pipeline file runs chant release publish.",
+  "gate-approval-unbased": "An Op gate's approval block sets a quorum, policy, mode or context that identity.gates does not set at base, so the change being run can edit it.",
   "ci-branch-route-differs": "A member's generated pull-request pipeline targets a branch other than the one ci.branches routes the member to.",
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
@@ -376,6 +377,19 @@ export const REASONS = {
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",
+  // workspace exit (#3177): why a member can't be exited, and what the exit drill finds wrong with one that was.
+  "missing-dir": "The chant member's directory does not exist, so there is nothing to build.",
+  "no-lexicon": "No lexicon is named in the member's chant.config.* or package.json, so there is nothing to build.",
+  "lexicon-unsupported": "A lexicon the member uses has no native target in workspace exit.",
+  "exit-failed": "The member's exit did not finish: its build failed, or it was refused.",
+  "choudoufu-steps-missing": "A choudoufu member's exit listed no roundtrip steps.",
+  "native-missing": "A native file the exit wrote is missing or empty.",
+  "native-unreadable": "A native file the exit wrote is not valid JSON, or has no content.",
+  "no-deploy-command": "A native file that can be deployed has no stock deploy command.",
+  "chant-config-left": "A chant.config.* file is still in the exited member.",
+  "chant-dependency": "The member's package.json still has a chant dependency, or a script that calls chant.",
+  "chant-in-ci": "A CI file of the exited member still calls chant.",
+  "declaration-not-other": "The declaration still gives the exited member a kind other than other.",
 } as const;
 
 export type ReasonCode = keyof typeof REASONS;

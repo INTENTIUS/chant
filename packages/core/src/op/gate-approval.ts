@@ -43,6 +43,9 @@ import { createHash } from "node:crypto";
 import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
 import { GATE_PLAN_CONTEXT_KEY } from "./gate-plan-context";
+import { GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isContextValue, isGatePolicyRef } from "./gate-approval-base";
+
+export { GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isGatePolicyRef } from "./gate-approval-base";
 import { quorumProblems, type GateQuorumRule, type GateQuorumSpec } from "./gate-quorum";
 
 export type { GateQuorumRule, GateQuorumSpec } from "./gate-quorum";
@@ -50,7 +53,6 @@ export type { GateQuorumRule, GateQuorumSpec } from "./gate-quorum";
 /** What a policy's decision does to the gate. */
 export type GateApprovalMode = "log-only" | "enforce";
 
-export const GATE_APPROVAL_MODES: readonly GateApprovalMode[] = ["log-only", "enforce"];
 
 /**
  * A policy set a lexicon rendered for a gate — plain data, so it lands in the
@@ -159,10 +161,6 @@ export interface GatePolicyEvaluator {
   evaluateGatePolicy(policy: GatePolicyRef, request: GatePolicyRequest): Promise<GatePolicyAnswer> | GatePolicyAnswer;
 }
 
-/** The version of a gate policy: `sha256:` and the hex digest of its text. A lexicon's helper stamps it, and OPS015 checks it still matches. */
-export function gatePolicyVersion(text: string): string {
-  return `sha256:${createHash("sha256").update(text).digest("hex")}`;
-}
 
 /**
  * The digest of a gate's resolved approval context (#3774): `sha256:` and the
@@ -180,17 +178,6 @@ function sortedKeys(_key: string, value: unknown): unknown {
   return value;
 }
 
-export function isGatePolicyRef(value: unknown): value is GatePolicyRef {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    v.kind === "gate-policy" &&
-    typeof v.lexicon === "string" && v.lexicon !== "" &&
-    typeof v.name === "string" && v.name !== "" &&
-    typeof v.version === "string" && v.version !== "" &&
-    typeof v.text === "string" && v.text.trim() !== ""
-  );
-}
 
 /**
  * Everything wrong with an `approval` block, one line each. The `gate()`
@@ -256,12 +243,14 @@ export function gateApprovalProblems(approval: unknown): string[] {
   return problems;
 }
 
-function isContextValue(value: unknown): boolean {
-  if (typeof value === "string" || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every((v) => typeof v === "string");
-  return isStepOutputRef(value);
+/** A gate's `policy`, `mode` and `context` as `identity.gates.<gate>` declares them at base (#4404). A step output reference is not data a declaration can hold, so a context value is a plain one. */
+export interface GateBaseApproval {
+  policy?: GatePolicyRef | null;
+  mode?: GateApprovalMode | null;
+  context?: Record<string, string | number | boolean | string[]> | null;
 }
+
+
 
 /** Import `lexicon`'s evaluator. Throws a message that names the package when it is not installed or exports none. */
 export async function loadGatePolicyEvaluator(lexicon: string): Promise<GatePolicyEvaluator> {

@@ -355,7 +355,7 @@ chant approve release ship --approver github:sam --sign
 
 `quorum` may also be a list of rules, each scoped to the run's environment by `targets` globs. [Approval Rules](/chant/guide/approval-rules/) has the list form and the migration from claimed roles.
 
-The `approval` block is part of the Op's build, so a change can edit the quorum its own run is judged by. A quorum declared as `identity.gates.<gate>.quorum` in `chant.workspace.json` is read at base instead and replaces the Op's ([#4324](https://github.com/INTENTIUS/chant/issues/4324), [Approval Rules](/chant/guide/approval-rules/#on-an-op-gate)).
+The `approval` block is part of the Op's build, so a change can edit the quorum its own run is judged by. A quorum declared as `identity.gates.<gate>.quorum` in `chant.workspace.json` is read at base instead and replaces the Op's ([#4324](https://github.com/INTENTIUS/chant/issues/4324), [Approval Rules](/chant/guide/approval-rules/#on-an-op-gate)). The entry also takes `policy`, `mode` and `context`, so a change can't switch its own gate to `log-only` or swap in a permissive policy ([#4404](https://github.com/INTENTIUS/chant/issues/4404), [Approval Rules](/chant/guide/approval-rules/#the-policy-mode-and-context-at-base)).
 
 Each `chant approve` is its own line on the gate ledger. An approval counts only for the plan it names, so a new plan starts the count again. `chant approve` prints how far the quorum has got.
 

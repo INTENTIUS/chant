@@ -44,6 +44,11 @@ const TAG: Record<string, (s: TemplateStringsArray) => { props: object }> = {
   [POSTGRES_ENTITY_TYPES.cast]: tags.cast,
   [POSTGRES_ENTITY_TYPES.eventTrigger]: tags.eventTrigger,
   [POSTGRES_ENTITY_TYPES.operator]: tags.operator,
+  [POSTGRES_ENTITY_TYPES.operatorClass]: tags.operatorClass,
+  [POSTGRES_ENTITY_TYPES.operatorFamily]: tags.operatorFamily,
+  [POSTGRES_ENTITY_TYPES.foreignTable]: tags.foreignTable,
+  [POSTGRES_ENTITY_TYPES.textSearchConfiguration]: tags.textSearchConfiguration,
+  [POSTGRES_ENTITY_TYPES.textSearchDictionary]: tags.textSearchDictionary,
   [POSTGRES_ENTITY_TYPES.statistics]: tags.statistics,
   [POSTGRES_ENTITY_TYPES.foreignDataWrapper]: tags.foreignDataWrapper,
   [POSTGRES_ENTITY_TYPES.foreignServer]: tags.foreignServer,
@@ -148,6 +153,12 @@ const PROP_OF_FIELD: Record<string, string[]> = {
   validator: ["validator", "validatorName", "noValidator"],
   serverType: ["serverType"],
   wrapper: ["wrapper", "wrapperName"],
+  server: ["serverName"],
+  family: ["family"],
+  items: ["items"],
+  template: ["template"],
+  parser: ["parser"],
+  mappings: ["mappings"],
   allTables: ["allTables"],
   tables: ["tables"],
   schemas: ["schemas"],
@@ -190,7 +201,7 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
     if (!fieldKeys.has(f)) for (const key of keys) if (f !== "schema" || d.kind === "extension") adopt(key);
   }
 
-  if (d.kind === "table") {
+  if (d.kind === "table" || d.kind === "foreignTable") {
     const declaredColumns = (declared.columns as unknown[] | undefined) ?? [];
     const liveColumns = (live.columns as unknown[] | undefined) ?? [];
     // Columns are matched by name and listed in the declaration's order, the
@@ -216,7 +227,7 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
       ? ["definition"]
       : d.kind === "collation"
         ? ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"]
-        : d.kind === "foreignDataWrapper" || d.kind === "foreignServer"
+        : d.kind === "foreignDataWrapper" || d.kind === "foreignServer" || d.kind === "foreignTable" || d.kind === "textSearchDictionary"
           ? ["options"]
           : d.kind === "publication"
             ? ["publish", "viaRoot", "generatedColumns"]
@@ -230,9 +241,9 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
     out.method = live.method;
     out.functionArgs = live.functionArgs;
   }
-  if (d.kind === "table" || d.kind === "domain") {
+  if (d.kind === "table" || d.kind === "domain" || d.kind === "foreignTable") {
     // A constraint the declaration says the same as the server is the declaration's (its name included or left out).
-    const kinds = d.kind === "domain" ? ["CHECK"] : Object.keys(CONSTRAINT_PROPS);
+    const kinds = d.kind === "table" ? Object.keys(CONSTRAINT_PROPS) : ["CHECK"];
     for (const kind of kinds) {
       const key = CONSTRAINT_PROPS[kind]!;
       const dl = d.constraints.filter((c) => c.kind === kind);

@@ -115,6 +115,11 @@ export const sqlPlugin: LexiconPlugin = {
       { name: "trigger", isTag: true, description: "A Postgres CREATE TRIGGER, parsed into a trigger entity on its table" },
       { name: "eventTrigger", isTag: true, description: "A Postgres CREATE EVENT TRIGGER, parsed into the database's event trigger entity" },
       { name: "operator", isTag: true, description: "A Postgres CREATE OPERATOR, parsed into an operator entity identified by its name and operand types" },
+      { name: "operatorClass", isTag: true, description: "A Postgres CREATE OPERATOR CLASS, parsed into an operator class entity identified by its name and index method" },
+      { name: "operatorFamily", isTag: true, description: "A Postgres CREATE OPERATOR FAMILY, parsed into an operator family entity identified by its name and index method" },
+      { name: "foreignTable", isTag: true, description: "A Postgres CREATE FOREIGN TABLE, parsed into a foreign table entity with its columns, server and options" },
+      { name: "textSearchConfiguration", isTag: true, description: "A Postgres CREATE TEXT SEARCH CONFIGURATION with its ADD MAPPING statements, parsed into a configuration entity" },
+      { name: "textSearchDictionary", isTag: true, description: "A Postgres CREATE TEXT SEARCH DICTIONARY, parsed into a dictionary entity with its template and options" },
       { name: "statistics", isTag: true, description: "A Postgres CREATE STATISTICS, parsed into an extended statistics entity on its table" },
       { name: "foreignDataWrapper", isTag: true, description: "A Postgres CREATE FOREIGN DATA WRAPPER, parsed into the database's wrapper entity" },
       { name: "foreignServer", isTag: true, description: "A Postgres CREATE SERVER, parsed into the database's foreign server entity (user mappings are not declared)" },
@@ -293,6 +298,15 @@ export const sqlPlugin: LexiconPlugin = {
     const { classifyDisruption } = await import("./clickhouse/plan/disruption");
     const { classifyPgDisruption } = await import("./postgres/plan/disruption");
     return { ...classifyDisruption(options), ...classifyPgDisruption(options) };
+  },
+
+  /**
+   * The migration files a pull request adds (#4407): each up statement given
+   * the class the schema-diff classifier gives the same change. Offline.
+   */
+  async classifyMigrations(options) {
+    const { classifyMigrationFiles } = await import("./migration-classify");
+    return classifyMigrationFiles(options);
   },
 
   /** `chant sql diff` and `chant sql plan`: schema changes, classified. */
