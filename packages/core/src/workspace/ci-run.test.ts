@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
 import { checkRunEventLines } from "./__fixtures__/run-event-check";
-import { ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciLoopOptions, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
+import { chantNodeModules, ciJobCommand, ciJobEnv, ciJobFailure, ciJobOp, ciLoopOptions, ciRun, CiRunError, ciStatusContext, ciStatusFromEnv, ciStatusUrl, formatCiRun } from "./ci-run";
 import type { CommitStatus, ForgeStatus, PrForge } from "../pr-forge";
 import { FORGE_TOKEN_VARS } from "../ci-handover";
 import { ciList, ciTick, evaluateCommit, readOpRunSource, revokedAnnotation } from "./ci-green";
@@ -1037,6 +1037,77 @@ describe("the plan's steps hold no forge token (#4295)", () => {
     expect(plan!.env).not.toHaveProperty("GITHUB_TOKEN");
     expect(plan!.run.env).not.toHaveProperty("GITHUB_TOKEN");
     expect(plan!.command.endsWith(" --no-status")).toBe(true);
+  });
+});
+
+/** A scheduled watch Op's file, shaped as discovery reads one (entity.props = OpConfig), importing nothing. */
+const WATCH_OP = (name: string): string =>
+  `export default { props: { name: ${JSON.stringify(name)}, overview: "t", schedule: { cron: "0 * * * *" }, labels: { Watch: "true" }, phases: [{ name: "Run", steps: [] }] } };\n`;
+
+describe("chant ci run plan checks the scheduled Ops at --base for the note (#4328)", () => {
+  /**
+   * The base declares watch Op `drift`, with its generated workflow. The
+   * change deletes it and adds `sneaky`. The note names the Op the base has,
+   * since the check reads the Ops at --base, and never the change's own.
+   */
+  function stale(): { app: string; base: string; sha: string } {
+    const { root, app } = workspace();
+    writeFiles(root, {
+      "app/chant.config.json": "{}",
+      "app/ops/drift.op.ts": WATCH_OP("drift"),
+      ".forgejo/workflows/app-drift.yml": "on: schedule\n",
+    });
+    const base = commitAt(root, 1, "app/b.txt");
+    execFileSync("git", ["rm", "-q", "app/ops/drift.op.ts"], { cwd: root });
+    writeFiles(root, { "app/ops/sneaky.op.ts": WATCH_OP("sneaky"), ".forgejo/workflows/app-sneaky.yml": "on: schedule\n" });
+    const sha = commitAt(root, 0.5, "app/c.txt");
+    return { app, base, sha };
+  }
+
+  function overdueForge(): { forge: PrForge; notes: string[]; asked: string[] } {
+    const notes: string[] = [];
+    const asked: string[] = [];
+    const forge = {
+      kind: "forgejo",
+      host: "forgejo.localhost",
+      async setStatus() {},
+      async upsertNote(_pr: number, _marker: string, body: string) {
+        notes.push(body);
+        return "1";
+      },
+      // Every Op last ran a year ago: overdue whichever is asked about.
+      async scheduledRuns(q: { op: string }) {
+        asked.push(q.op);
+        return { last: "2025-10-01T00:00:00Z" };
+      },
+    } as unknown as PrForge;
+    return { forge, notes, asked };
+  }
+
+  test("on the runner, the note warns of the base's overdue Op and not of one the change added", async () => {
+    const { app, base, sha } = stale();
+    const forge = overdueForge();
+    const r = await ciRun({ image: JOB_IMAGE, cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...HOST, FAKE_REPORT: planReport(sha) }, passEnv: ["FAKE_REPORT"], planForge: forge.forge, push: false, output: join(scratchDir("chant-ci-overdue-"), "pr") });
+    expect(r.status).toBe("ok");
+    expect(forge.asked).toEqual(["drift"]);
+    expect(forge.notes).toHaveLength(1);
+    expect(forge.notes[0]).toContain("Op `drift` is overdue");
+    expect(forge.notes[0]).not.toContain("sneaky");
+    expect(r.warnings).toEqual([expect.stringMatching(/Op `drift` is overdue/)]);
+  });
+
+  test("in place, the check still reads the base, not the checkout the change runs in", async () => {
+    const { app, base, sha } = stale();
+    const forge = overdueForge();
+    const r = await ciRun({ cwd: app, job: "plan", env: "prod", forge: "forgejo", base, pr: 7, chant: fakeChant(), hostEnv: { ...HOST, GITHUB_JOB: "plan", FAKE_REPORT: planReport(sha) }, inPlace: true, push: false, planForge: forge.forge });
+    expect(r.status).toBe("ok");
+    expect(forge.asked).toEqual(["drift"]);
+    expect(forge.notes[0]).toContain("Op `drift` is overdue");
+  });
+
+  test("the base checkout resolves packages from the node_modules the running chant is installed in", () => {
+    expect(chantNodeModules("/opt/ci/node_modules/@intentius/chant/dist/workspace/ci-run.js")).toBe("/opt/ci/node_modules");
+    expect(chantNodeModules("/src/chant/packages/core/src/workspace/ci-run.ts")).toBeUndefined();
   });
 });
 

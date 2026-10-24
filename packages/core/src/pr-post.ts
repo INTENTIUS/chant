@@ -14,9 +14,16 @@
  * every hidden HTML comment after its first line is defused, so a forged
  * marker cannot claim another environment's note. A plan job that failed
  * fails the status whatever its report says.
+ *
+ * On GitLab the post runs in a pipeline of the target branch (#4328): a
+ * merge request pipeline is built from the merge request's own files, so a
+ * job there that holds `CHANT_FORGE_TOKEN` runs whatever the change wrote.
+ * `pr-post --open` ({@link postOpenPlanReports}) asks GitLab for each open
+ * merge request's plan job and reads the report from its artifacts.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prNoteMarker, prStatusContext, prStatusDescription, prStatusState, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
@@ -156,4 +163,85 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
     }
   }
   return { state, description: cut(description), noted: note !== undefined, ...(refused ? { refused } : {}), warnings };
+}
+
+/** What {@link postOpenPlanReports} posts for. */
+export interface OpenPlanPostInput {
+  /** A GitLab client with {@link PrForge.mergeRequestJobs}, {@link PrForge.jobArtifact} and {@link PrForge.statusUrl}. */
+  forge: PrForge;
+  /** The branch the merge requests merge into: the pipeline's own. */
+  branch: string;
+  /** The plan job's name in the merge request pipeline: `plan`, or `<member>-plan`. */
+  job: string;
+  /** The report directory from the repository root, as the plan job kept it as its artifact. */
+  artifactDir: string;
+  env: string;
+  member?: string;
+  overdue?: () => Promise<PrOverdue[]>;
+}
+
+/** What {@link postOpenPlanReports} did for one merge request. */
+export interface OpenPlanPost {
+  pr: number;
+  head: string;
+  /** What was posted, or why nothing was: the plan job has not settled, or its result is already posted. */
+  posted?: PlanPostResult;
+  skipped?: string;
+}
+
+/**
+ * Post the plan note and status of every open merge request into `branch`
+ * whose plan job settled (#4328), from a pipeline of `branch`. GitLab says
+ * which merge requests are open, their heads, and their newest pipeline's
+ * plan job; the report is the one file `pr-plan.json` of that job's
+ * artifacts, read as data as {@link postPlanReport} reads any. The status
+ * links to the plan job, and a status that already links to it is the
+ * job's result posted, so a job is posted for once. The overdue check runs
+ * once for every merge request.
+ */
+export async function postOpenPlanReports(input: OpenPlanPostInput): Promise<{ posts: OpenPlanPost[]; warnings: string[] }> {
+  const { forge } = input;
+  if (!forge.mergeRequestJobs || !forge.jobArtifact || !forge.statusUrl) {
+    throw new Error(`pr-post --open reads the plan jobs of open merge requests, which ${forge.kind} cannot say; it is for GitLab`);
+  }
+  const context = prStatusContext("plan", input.member);
+  const warnings: string[] = [];
+  let overdue: Promise<PrOverdue[]> | undefined;
+  const overdueOnce = input.overdue ? () => (overdue ??= input.overdue!()) : undefined;
+  const posts: OpenPlanPost[] = [];
+  for (const job of await forge.mergeRequestJobs(input.branch, input.job)) {
+    const settled = job.status === "success" ? "success" : job.status === "failed" ? "failure" : job.status === "canceled" ? "cancelled" : undefined;
+    if (!settled) {
+      posts.push({ pr: job.pr, head: job.head, skipped: `the plan job is ${job.status}` });
+      continue;
+    }
+    try {
+      if (job.url && (await forge.statusUrl(job.head, context)) === job.url) {
+        posts.push({ pr: job.pr, head: job.head, skipped: "this plan job's result is already posted" });
+        continue;
+      }
+      const dir = mkdtempSync(join(tmpdir(), "chant-pr-post-"));
+      try {
+        const text = await forge.jobArtifact(job.id, `${input.artifactDir.replace(/\/+$/, "")}/${PR_PLAN_REPORT_FILE}`);
+        if (text !== undefined) writeFileSync(join(dir, PR_PLAN_REPORT_FILE), text);
+        const posted = await postPlanReport({
+          // The status links to the plan job it reports on, which is how the next run knows it is posted.
+          forge: job.url ? { ...forge, runUrl: job.url } : forge,
+          dir,
+          pr: job.pr,
+          head: job.head,
+          env: input.env,
+          ...(input.member ? { member: input.member } : {}),
+          result: settled,
+          ...(overdueOnce ? { overdue: overdueOnce } : {}),
+        });
+        posts.push({ pr: job.pr, head: job.head, posted });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    } catch (err) {
+      warnings.push(`!${job.pr}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { posts, warnings };
 }

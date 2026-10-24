@@ -13,7 +13,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGitlabPipeline } from "./generate-pipeline";
-import { greenCheckout, PR_LOOP_SETUP, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
+import { gitlabPlanJobName, greenCheckout, PR_LOOP_SETUP, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 import { GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
 
 const ESTATE: DriverComponent[] = [
@@ -129,7 +129,8 @@ describe("the GitLab merge-request pipeline", () => {
     expect(mdoc.plan).toBeUndefined();
     // Included files merge top-level keys: no name, so members do not collide on it.
     expect(mdoc.workflow.name).toBeUndefined();
-    expect(mdoc.workflow.rules).toHaveLength(3);
+    // The merge request, the push and the plan notes' pipeline (#4328), and the green tag.
+    expect(mdoc.workflow.rules).toHaveLength(4);
     const plan = mdoc["network-plan"] as Job;
     const apply = mdoc["network-apply"] as Job;
     expect(plan.script).toContain("cd infra/network");
@@ -143,6 +144,11 @@ describe("the GitLab merge-request pipeline", () => {
     expect(plan.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
     expect(apply.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
     expect(apply.cache).toEqual({ key: "chant-apply.network.prod-$CI_COMMIT_SHA", paths: ["infra/network/.chant/pr-resume/pr-apply.json"], when: "always" });
+    // #4328: the member's plan-note job finds the member's plan job by name and reads its artifact from the member's directory.
+    const note = mdoc["network-plan-note"] as Job;
+    expect(note.script.slice(0, 1)).toEqual(["cd infra/network"]);
+    expect(note.script.at(-1)).toBe("chant components pr-post --open --env prod --output .chant/pr --forge gitlab --member network");
+    expect(gitlabPlanJobName("network")).toBe("network-plan");
   });
 });
 
@@ -239,14 +245,16 @@ describe("the GitLab plan job holds no forge token while the merge request's cod
     expect(prLoopJobs("gitlab", "prod")[0]!.command.endsWith(" --no-status")).toBe(true);
   });
 
-  test("the plan-note job takes the plan's artifact, checks out the target branch's commit, and posts", () => {
+  test("the plan-note job runs in a pipeline of the target branch, never the merge request's, and posts every open merge request's plan (#4328)", () => {
     const note = doc["plan-note"]!;
     expect(note.stage).toBe("plan-note");
-    expect(note.needs).toEqual(["plan"]);
-    expect(note.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"', when: "always" }]);
-    expect(note.variables).toEqual({ PR_NUMBER: "$CI_MERGE_REQUEST_IID", HEAD_SHA: "$CI_COMMIT_SHA", BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA" });
-    expect(note.script[0]).toBe('git checkout --quiet --detach "$BASE_SHA"');
-    expect(note.script.at(-1)).toBe('chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env prod --output .chant/pr --forge gitlab');
+    expect(note.needs).toBeUndefined();
+    const rule = '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH';
+    expect(note.rules).toEqual([{ if: rule }]);
+    expect(note.rules.some((r) => r.if.includes("merge_request_event"))).toBe(false);
+    expect((doc.workflow as unknown as { rules: Array<{ if: string }> }).rules).toContainEqual({ if: rule });
+    expect(note.variables).toBeUndefined();
+    expect(note.script.at(-1)).toBe("chant components pr-post --open --env prod --output .chant/pr --forge gitlab");
     // It runs no build, lint or plan: none of the merge request's code.
     expect(note.script.join("\n")).not.toMatch(/chant (build|lint|ci run)/);
     expect(result.stages).toEqual(["plan", "plan-note", "record"]);

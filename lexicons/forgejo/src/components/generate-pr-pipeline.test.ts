@@ -42,9 +42,9 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
-  test("both jobs run chant ci run with the runner key secret, as on GitHub (#4156)", () => {
+  test("the jobs run chant ci run, with the runner key secret on every job but the plan, as on GitHub (#4156, #4328)", () => {
     expect(result.yaml).toContain("chant ci run plan --in-place --no-push");
-    expect(result.yaml.match(/CHANT_RUNNER_KEY: '\$\{\{ secrets\.CHANT_RUNNER_KEY \}\}'/g)).toHaveLength(3);
+    expect(result.yaml.match(/CHANT_RUNNER_KEY: '\$\{\{ secrets\.CHANT_RUNNER_KEY \}\}'/g)).toHaveLength(2);
     expect(result.yaml).not.toContain("chant components pr-plan");
     expect(result.yaml).not.toContain("chant components pr-apply");
     // #4295: the plan-note job posts with pr-post, to Forgejo.

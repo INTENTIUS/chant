@@ -55,8 +55,8 @@ describe("the GitLab merge-request pipeline with a merge request environment", (
     expect(down.resource_group).toBe(up.resource_group);
   });
 
-  test("env-sweep runs from a pipeline schedule, which the workflow rules let start", () => {
-    expect(doc["env-sweep"]!.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule"' }]);
+  test("env-sweep runs from a pipeline schedule other than the plan notes' (#4328), which the workflow rules let start", () => {
+    expect(doc["env-sweep"]!.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_PLAN_NOTES != "1"' }]);
     expect(doc.workflow.rules).toContainEqual({ if: '$CI_PIPELINE_SOURCE == "schedule"' });
     expect(doc["env-sweep"]!.script.at(-1)).toBe("chant components pr-env sweep --forge gitlab --output .chant/pr-env");
   });

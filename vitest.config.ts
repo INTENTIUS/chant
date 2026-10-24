@@ -128,6 +128,10 @@ export const UNIT_INCLUDE = [
   // chant #2915 — the smoke Dockerfiles pack every workspace dependency of
   // the tarballs they pack. Reads the Dockerfiles and package.json files only.
   "test/smoke-tarball-deps.test.ts",
+  // chant #4328 — no job that runs a pull request's code holds a forge token
+  // or the runner key, over the github, forgejo and gitlab generators at once.
+  // Generates YAML in memory only.
+  "test/pr-pipeline-secrets.test.ts",
 ];
 
 /**
