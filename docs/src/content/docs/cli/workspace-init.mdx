@@ -26,6 +26,7 @@ It runs no project code. It reads file names, `package.json` files, and the text
 | a `chant.config.ts` or `chant.config.json` at the root | a `chant` member with directory `"."`, named `root` |
 | any other outermost chant project | a `chant` member |
 | a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at |
+| a directory that a [kind from an installed package](/chant/reference/workspace-kinds/#platform-kinds) claims, outside any other member (a chart, a kustomize overlay, an Argo app) | a member of that kind, with the package added to `pins`. It replaces the `other` member the same directory would get |
 | an npm workspace package, or any other `package.json` outside those, with no chant project | an `other` member, with a `because` |
 | chant projects under an `examples`, `example`, `samples`, `test`, `tests` or `fixtures` directory | an [example group](/chant/reference/workspace-declaration/#example-groups) |
 

@@ -1,0 +1,47 @@
+{
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. No graph blocks yet: nothing reads a hand-written CloudFormation template or a CDK app into the graph.",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "cloudformation",
+      "description": "a CloudFormation template: a YAML or JSON file with AWSTemplateFormatVersion or Resources at its top",
+      "precedence": 320,
+      "probe": {
+        "anyDocument": {
+          "in": [
+            "*.yaml",
+            "*.yml",
+            "*.json",
+            "*.template"
+          ],
+          "match": [
+            {
+              "/AWSTemplateFormatVersion": [
+                "*"
+              ]
+            },
+            {
+              "/Resources": [
+                "*"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "cdk",
+      "description": "an AWS CDK app, with a cdk.json in its directory",
+      "precedence": 315,
+      "probe": {
+        "anyFile": [
+          "cdk.json"
+        ]
+      },
+      "memberFile": {
+        "path": "cdk.json",
+        "schema": "schemas/cdk.schema.json"
+      }
+    }
+  ]
+}

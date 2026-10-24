@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chart.yaml",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "name",
+    "version"
+  ],
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "v1",
+        "v2"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "enum": [
+        "application",
+        "library"
+      ]
+    }
+  }
+}

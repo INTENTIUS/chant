@@ -54,6 +54,18 @@ export interface FileProbe {
    * without claiming every Node package (#3151).
    */
   anyJsonKey?: { in: string[]; pointers: string[] };
+  /**
+   * A file directly in the directory whose name matches one of `in` parses
+   * as YAML or JSON (every document of a multi-document file is read), and
+   * one document satisfies one of the `match` entries. An entry maps JSON
+   * Pointers to the values allowed there, and a document satisfies it when
+   * every pointer holds a value that matches one of its patterns. A `*` in
+   * a pattern matches any run of characters, so `["*"]` means "has a
+   * value". This is how an Argo Application, a Flux Kustomization and a
+   * CloudFormation template are found by what they say, not by their file
+   * names (#3179). A file that doesn't parse is no evidence either way.
+   */
+  anyDocument?: { in: string[]; match: Record<string, string[]>[] };
 }
 
 /** A string, integer or boolean field a kind declares for its members (#3151). */
@@ -271,7 +283,7 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
   if ("directory" in kind.probe) return true;
   if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
   if ("repo" in kind.probe) return true;
-  const { anyFile, anyBlock, anyJsonKey } = kind.probe;
+  const { anyFile, anyBlock, anyJsonKey, anyDocument } = kind.probe;
   if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
   if (anyJsonKey) {
     for (const file of filesMatching(tree, dir, anyJsonKey.in)) {
@@ -280,6 +292,15 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
         if (anyJsonKey.pointers.some((p) => atPointer(json, p) !== undefined)) return true;
       } catch {
         // A file that isn't JSON is no evidence either way.
+      }
+    }
+  }
+  if (anyDocument) {
+    for (const file of filesMatching(tree, dir, anyDocument.in)) {
+      try {
+        if (documentsOf(tree.read(file)).some((doc) => anyDocument.match.some((m) => documentMatches(doc, m)))) return true;
+      } catch {
+        // An unreadable file is no evidence either way.
       }
     }
   }
@@ -319,6 +340,37 @@ function filesMatching(tree: WorkspaceTree, dir: string, names: readonly string[
     }
   }
   return out.sort();
+}
+
+/**
+ * The documents in `text`, read as YAML (which holds JSON). A CloudFormation
+ * short-form tag such as `!Ref` or `!Sub` is not YAML js-yaml knows, so a
+ * file that fails to parse is read again with those tags dropped. Text that
+ * still doesn't parse has no documents.
+ */
+function documentsOf(text: string): unknown[] {
+  try {
+    return yaml.loadAll(text);
+  } catch {
+    try {
+      return yaml.loadAll(text.replace(/(^|[\s:\-[,{])!(?:[A-Za-z][\w]*:?)+/gm, "$1"));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/** Whether every pointer in `match` holds a value matching one of its patterns. */
+function documentMatches(doc: unknown, match: Record<string, string[]>): boolean {
+  const pointers = Object.entries(match);
+  return (
+    pointers.length > 0 &&
+    pointers.every(([pointer, patterns]) => {
+      const value = atPointer(doc, pointer);
+      if (value === undefined) return false;
+      return patterns.some((pattern) => new RegExp(`^${pattern.split("*").map(escapeRegExp).join(".*")}$`).test(String(value)));
+    })
+  );
 }
 
 /** The value at JSON Pointer `pointer` in `json`, or undefined when there is none. */
@@ -456,6 +508,7 @@ export function parseKindData(text: string, source: string): KindData {
         ...(k.probe.anyFile ? { anyFile: [...k.probe.anyFile] } : {}),
         ...(k.probe.anyBlock ? { anyBlock: { in: [...k.probe.anyBlock.in], blocks: [...k.probe.anyBlock.blocks] } } : {}),
         ...(k.probe.anyJsonKey ? { anyJsonKey: { in: [...k.probe.anyJsonKey.in], pointers: [...k.probe.anyJsonKey.pointers] } } : {}),
+        ...(k.probe.anyDocument ? { anyDocument: { in: [...k.probe.anyDocument.in], match: k.probe.anyDocument.match.map((m) => structuredClone(m)) } } : {}),
       },
       precedence: k.precedence,
       shape: "member",
