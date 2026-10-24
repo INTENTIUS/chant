@@ -15,6 +15,7 @@ import { applyPrSet, planPrSet, prReport } from "@intentius/chant/components/pr-
 import { composeChangeSet } from "@intentius/chant/change-set";
 import { groupChangeSet, planSummaryHeadline } from "@intentius/chant/plan-summary";
 import { memberCounts, prStatusDescription, renderPrNote } from "@intentius/chant/pr-loop";
+import { PlanShapeMovedError } from "@intentius/chant/lifecycle/plan-shape";
 import { CfnPlanMovedError, CfnReplacementBlockedError, cfnChangeEntry, createCfnDeployCapability, type CfnDeployInput } from "./apply";
 import { isPlanMovedError } from "@intentius/chant/components/capability";
 import { planMovedIn } from "@intentius/chant/components/driver";
@@ -240,7 +241,8 @@ describe("pr-plan over cfn-deploy members (#4084)", () => {
     expect(set.plannedOutputs).toEqual({ network: [] });
     expect(set.members.find((m) => m.member === "cluster-a")?.unknownInputs).toEqual(["network.TopicArn"]);
     const note = renderPrNote(report);
-    expect(note).toContain("| `cluster-a` | cluster-a | planned; inputs from network; re-checked on apply | ? | ? | ? | ? |");
+    // The member is previewed against a stand-in, so it counts its changes (#4419).
+    expect(note).toContain("| `cluster-a` | cluster-a | planned | 1 | 0 | 0 | 0 |");
     expect(note).toContain("Known only after apply: `cluster-a` reads `network.TopicArn`.");
   });
 
@@ -259,19 +261,28 @@ describe("pr-plan over cfn-deploy members (#4084)", () => {
     expect(created.find((c) => c.stackName === "cluster-a")?.parameters).toEqual({ TopicArn: "arn:topic" });
   });
 
-  it("a member whose inputs come from a stack the run creates first says so, with no counts and no change set", async () => {
+  it("a member whose inputs come from a stack the run creates first is previewed against a stand-in, and the stand-in is deleted (#4419)", async () => {
     const { mock, set, report } = await planBoth({
       network: { missing: true, changes: [{ action: "Add", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false }] },
-      "cluster-a": { missing: true },
+      "cluster-a": { missing: true, changes: [{ action: "Add", logicalResourceId: "clusterAQueue", resourceType: "AWS::SQS::Queue", replacement: false }] },
     });
     const clusterA = set.doc.members.find((m) => m.member === "cluster-a")!;
-    expect(clusterA).toMatchObject({ status: "planned", holes: [{ address: "cluster-a", reason: "inputs from network; re-checked on apply" }] });
-    expect(set.doc.entries.filter((e) => e.member === "cluster-a")).toEqual([]);
-    expect(mock.calls.filter((c) => c.method === "createChangeSet").map((c) => (c.args as { stackName: string }).stackName)).toEqual(["network"]);
+    expect(clusterA).toMatchObject({ status: "planned", holes: [] });
+    expect(set.doc.entries.filter((e) => e.member === "cluster-a")).toHaveLength(1);
+    const created = mock.calls.filter((c) => c.method === "createChangeSet").map((c) => c.args as { stackName: string; parameters?: Record<string, string> });
+    expect(created.find((c) => c.stackName === "cluster-a")?.parameters).toEqual({ TopicArn: "known-after-apply" });
+    const deleted = mock.calls.filter((c) => c.method === "deleteChangeSet").map((c) => (c.args as { stackName: string }).stackName);
+    expect(deleted.sort()).toEqual(["cluster-a", "network"]);
     const note = renderPrNote(report);
-    expect(note).toContain("| `cluster-a` | cluster-a | planned; inputs from network; re-checked on apply | ? | ? | ? | ? |");
+    expect(note).toContain("| `cluster-a` | cluster-a | planned | 1 | 0 | 0 | 0 |");
     expect(note).toContain("| `network` | network | planned | 1 | 0 | 0 | 0 |");
-    expect(prStatusDescription(report)).toContain("1 with holes");
+  });
+
+  it("a member whose upstream is unresolved but names no unknown input stays a hole", async () => {
+    const mock = createMockCloudExecutor({ stacks: { network: {} } });
+    const planned = await createCfnDeployCapability(mock.executor).plan!({ ...ctx, unresolvedInputs: ["up"] }, { stack: "network", template });
+    expect(planned.changeSet?.member.holes).toMatchObject([{ reason: "inputs from up; re-checked on apply" }]);
+    expect(mock.calls.filter((c) => c.method === "createChangeSet")).toEqual([]);
   });
 
   it("planning the same state twice gives the same digest, so the apply's plan matches the approved one", async () => {
@@ -335,7 +346,7 @@ describe("cfn-deploy applies the change set it planned (#3997)", () => {
     expect(methods(mock).slice(3)).toEqual(["createChangeSet", "deleteChangeSet", "deleteStackShell"]);
   });
 
-  it("a member with holes hands run no artifact, so run plans it afresh", async () => {
+  it("a member with a hole it could not preview hands run no artifact, so run plans it afresh", async () => {
     const mock = createMockCloudExecutor({ stacks: { network: { changes: [queueAdd] } } });
     const capability = createCfnDeployCapability(mock.executor);
     const planned = await capability.plan!({ ...ctx, unresolvedInputs: ["upstream"] }, { stack: "network", template });
@@ -436,5 +447,102 @@ describe("cfn-deploy targets (#4300)", () => {
   it("refuses targets by name: a change set covers the whole stack", async () => {
     const { targetRefusal } = await import("@intentius/chant/components/capability");
     expect(targetRefusal(createCfnDeployCapability(createMockCloudExecutor().executor))).toMatch(/cfn-deploy can't narrow/);
+  });
+});
+
+describe("cfn-deploy previews a member whose inputs are unknown, and checks the real change against it (#4419)", () => {
+  const eni = { action: "Modify" as const, logicalResourceId: "Eni", resourceType: "AWS::EC2::NetworkInterface", replacement: false, replacementMode: "False" as const };
+  const withDriver = (property: string, causingEntity = "SubnetId") => ({
+    ...eni,
+    details: [property, "Description"],
+    drivers: [{ property, changeSource: "ParameterReference", causingEntity }, { property: "Description", changeSource: "DirectModification" }],
+  });
+  const input = (): CfnDeployInput => ({ stack: "net", template, inputs: { SubnetId: undefined as never } });
+
+  beforeEach(() => {
+    writeFileSync(
+      template,
+      JSON.stringify({
+        Parameters: { SubnetId: { Type: "AWS::EC2::Subnet::Id" }, Desc: { Type: "String", Default: "x" } },
+        Resources: {
+          Eni: { Type: "AWS::EC2::NetworkInterface", Properties: { SubnetId: { Ref: "SubnetId" }, Description: "d" } },
+          Q: { Type: "AWS::SQS::Queue", Properties: { QueueName: { "Fn::Sub": "q-${SubnetId}" } } },
+        },
+      }),
+    );
+  });
+
+  const q = { action: "Add" as const, logicalResourceId: "Q", resourceType: "AWS::SQS::Queue", replacement: false };
+
+  it("creates the change set with an id-shaped stand-in, marks the driven properties unknown, and deletes the change set", async () => {
+    const mock = createMockCloudExecutor({ stacks: { net: { changes: [withDriver("SubnetId"), q] } } });
+    const planned = await createCfnDeployCapability(mock.executor).plan!({ ...ctx, unresolvedInputs: ["vpc"] }, input());
+    const created = mock.calls.find((c) => c.method === "createChangeSet")!.args as { parameters: Record<string, string> };
+    expect(created.parameters).toEqual({ SubnetId: "subnet-00000000known-after-apply" });
+    const entries = planned.changeSet!.entries;
+    expect(entries.find((e) => e.address === "Eni")?.attributes).toEqual([
+      { path: "Description" },
+      { path: "SubnetId", unknown: true },
+    ]);
+    // A create names no properties; the template says which one reads the parameter.
+    expect(entries.find((e) => e.address === "Q")?.attributes).toEqual([{ path: "QueueName", unknown: true }]);
+    expect(planned.changeSet!.member.holes).toEqual([]);
+    expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet"]);
+    expect(planned.artifact).toMatchObject({ kind: "cfn-deploy-shape" });
+  });
+
+  it("falls back to a hole when CloudFormation refuses the stand-in", async () => {
+    const mock = createMockCloudExecutor({ stacks: { net: { changes: [] } } });
+    const real = mock.executor.cloudformation.createChangeSet;
+    mock.executor.cloudformation.createChangeSet = async () => {
+      throw new Error("Parameter validation failed: parameter value subnet-00000000known-after-apply for parameter name SubnetId does not exist");
+    };
+    void real;
+    const planned = await createCfnDeployCapability(mock.executor).plan!(ctx, input());
+    expect(planned.artifact).toBeUndefined();
+    expect(planned.changeSet!.member.holes[0].reason).toMatch(/no preview: CloudFormation refused .*does not exist/);
+  });
+
+  async function previewThenRun(previewed: ReturnType<typeof withDriver>[], real: Array<typeof eni | typeof q | ReturnType<typeof withDriver>>) {
+    const mock = createMockCloudExecutor({ stacks: { net: { changes: previewed } } });
+    const capability = createCfnDeployCapability(mock.executor);
+    const planned = await capability.plan!(ctx, input());
+    mock.setStack("net", { changes: real });
+    const result = await capability.run({ ...ctx, plans: { net: planned.artifact } }, { stack: "net", template, inputs: { SubnetId: "subnet-1" } }).catch((e: unknown) => e);
+    return { mock, result };
+  }
+
+  it("executes when the real change matches the preview", async () => {
+    const { mock, result } = await previewThenRun([withDriver("SubnetId")], [withDriver("SubnetId")]);
+    expect(result).toMatchObject({ stackStatus: expect.any(String) });
+    expect(methods(mock)).toContain("executeChangeSet");
+  });
+
+  it("executes when an unknown-driven property drops out because the real value equals the current one", async () => {
+    const { mock, result } = await previewThenRun([withDriver("SubnetId")], [{ ...eni, details: ["Description"] }]);
+    expect(result).toMatchObject({ stackStatus: expect.any(String) });
+    expect(methods(mock)).toContain("executeChangeSet");
+  });
+
+  it("refuses, executing nothing, when the real change adds a resource", async () => {
+    const { mock, result } = await previewThenRun([withDriver("SubnetId")], [withDriver("SubnetId"), q]);
+    expect(result).toBeInstanceOf(PlanShapeMovedError);
+    expect((result as Error).message).toContain("Q: the change set now proposes a Add of AWS::SQS::Queue");
+    expect((result as { planMoved?: boolean }).planMoved).toBe(true);
+    expect(methods(mock)).not.toContain("executeChangeSet");
+    expect(methods(mock).at(-1)).toBe("deleteChangeSet");
+  });
+
+  it("refuses when a property no unknown input drives stops changing", async () => {
+    const { mock, result } = await previewThenRun([withDriver("SubnetId")], [{ ...eni, details: ["SubnetId"] }]);
+    expect(result).toBeInstanceOf(PlanShapeMovedError);
+    expect((result as Error).message).toContain("no longer changes Description");
+    expect(methods(mock)).not.toContain("executeChangeSet");
+  });
+
+  it("refuses when the real change replaces and the preview did not", async () => {
+    const { result } = await previewThenRun([withDriver("SubnetId")], [{ ...withDriver("SubnetId"), replacementMode: "Conditional" as never }]);
+    expect(result).toBeInstanceOf(PlanShapeMovedError);
+    expect((result as Error).message).toContain("replacement was no, now maybe");
   });
 });

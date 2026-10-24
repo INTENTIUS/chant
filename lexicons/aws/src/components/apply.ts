@@ -24,6 +24,16 @@ import { readFileSync } from "node:fs";
 import type { Capability, CapabilityPlan, DeployContext, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import {
+  comparePlanShape,
+  normalizePlanShape,
+  PlanShapeMovedError,
+  planShapeDigest,
+  type PlanShape,
+  type PlanShapeArtifact,
+  type PlanShapeEntry,
+  type ShapeReplacement,
+} from "@intentius/chant/lifecycle/plan-shape";
 import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
 
 /** CloudFormation's wording when a change set has nothing to apply — the stack
@@ -65,8 +75,11 @@ export function cfnChangeReplaces(change: CfnChange): boolean {
  * replace, `Remove` a delete, `Import` an import that changes nothing else,
  * and `Dynamic` an update CloudFormation could not describe further.
  */
-export function cfnChangeEntry(member: string, change: CfnChange): ChangeSetEntry {
-  const attributes = [...new Set(change.details ?? [])].sort().map((path) => ({ path }));
+export function cfnChangeEntry(member: string, change: CfnChange, unknown: readonly string[] = []): ChangeSetEntry {
+  // A property an unknown input drives is known after apply (#4419); one the
+  // change set did not list (a create names no properties) is added for it.
+  const paths = [...new Set([...(change.details ?? []), ...unknown])].sort();
+  const attributes = paths.map((path) => (unknown.includes(path) ? { path, unknown: true as const } : { path }));
   // A change inside a nested stack (#3997) sits under the nested stacks'
   // logical ids, the way a terraform address sits under its module.
   const module = change.nestedStack?.length ? change.nestedStack.join("/") : undefined;
@@ -238,15 +251,23 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
   });
 
   if (unresolved.length > 0 || missing.length > 0) {
-    const reason =
-      unresolved.length > 0
-        ? `inputs from ${unresolved.join(", ")}; re-checked on apply`
-        : `inputs ${missing.sort().join(", ")} are known only at apply; re-checked on apply`;
-    return {
+    const hole = (why: string): CapabilityPlan => ({
       member: stack,
       planDigest,
-      changeSet: { member: member([{ address: stack, type: "AWS::CloudFormation::Stack", reason }]), entries: [] },
-    };
+      changeSet: { member: member([{ address: stack, type: "AWS::CloudFormation::Stack", reason: why }]), entries: [] },
+    });
+    const fallback =
+      unresolved.length > 0
+        ? `inputs from ${unresolved.join(", ")}; re-checked on apply`
+        : `inputs ${[...missing].sort().join(", ")} are known only at apply; re-checked on apply`;
+    // Which parameters are unknown: the inputs that hold nothing yet. When the
+    // upstream is unresolved but no input says which, nothing can be previewed.
+    if (missing.length === 0) return hole(fallback);
+    const preview = await previewCfnDeploy(executor, stack, input, [...missing].sort());
+    if (typeof preview === "string") return hole(`${fallback}; no preview: ${preview}`);
+    const { entries, shape } = preview;
+    const artifact: CfnShapeArtifact = { kind: "cfn-deploy-shape", member: stack, shape, digest: planShapeDigest(shape) };
+    return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries } };
   }
 
   const changeSet = await executor.cloudformation.createChangeSet({
@@ -273,6 +294,168 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
     const outputs = changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes);
     return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries }, ...(outputs ? { outputs } : {}) };
+  } finally {
+    await cleanUpPlanChangeSet(executor, changeSet);
+  }
+}
+
+// ── preview of a member whose inputs are unknown (#4419) ────────────────────
+
+/** What a previewed member hands `run`: the shape its change set had against stand-in values. */
+export interface CfnShapeArtifact extends PlanShapeArtifact {
+  kind: "cfn-deploy-shape";
+}
+
+function isCfnShapeArtifact(value: unknown): value is CfnShapeArtifact {
+  const v = value as Partial<CfnShapeArtifact> | undefined;
+  return v?.kind === "cfn-deploy-shape" && typeof v.digest === "string" && typeof v.shape === "object" && v.shape !== null;
+}
+
+/** The marker every stand-in carries, so a reader of a change set can tell it from a real value. */
+export const CFN_UNKNOWN_MARK = "known-after-apply";
+
+const ID_PREFIX: Record<string, string> = {
+  "AWS::EC2::Subnet::Id": "subnet",
+  "AWS::EC2::VPC::Id": "vpc",
+  "AWS::EC2::SecurityGroup::Id": "sg",
+  "AWS::EC2::Instance::Id": "i",
+  "AWS::EC2::Image::Id": "ami",
+  "AWS::EC2::Volume::Id": "vol",
+};
+
+/**
+ * A stand-in for a parameter whose value is not known yet: valid for the
+ * parameter's type and recognisable. An EC2 id type gets the id's prefix
+ * (`subnet-00000000known-after-apply`), a number gets 0, anything else gets
+ * `known-after-apply`. Real CloudFormation checks the AWS-specific types
+ * against the account and refuses an id that does not exist; the preview
+ * then falls back to a hole. Floci does not check.
+ */
+export function cfnPlaceholder(type: string | undefined): string {
+  if (type && ID_PREFIX[type]) return `${ID_PREFIX[type]}-00000000${CFN_UNKNOWN_MARK}`;
+  if (type === "Number") return "0";
+  if (type?.startsWith("AWS::SSM::Parameter::Value<")) return `/${CFN_UNKNOWN_MARK}`;
+  return CFN_UNKNOWN_MARK;
+}
+
+interface TemplateFacts {
+  parameterTypes: Record<string, string>;
+  /** Per logical id, the top-level properties whose value reads one of the keys. */
+  driven: Map<string, Set<string>>;
+}
+
+function readsParameter(value: unknown, key: string): boolean {
+  if (typeof value === "string") return false;
+  if (Array.isArray(value)) return value.some((v) => readsParameter(v, key));
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (obj.Ref === key) return true;
+    const sub = obj["Fn::Sub"];
+    const text = typeof sub === "string" ? sub : Array.isArray(sub) && typeof sub[0] === "string" ? sub[0] : undefined;
+    if (text !== undefined && (text.includes("${" + key + "}") || text.includes("${" + key + "."))) return true;
+    return Object.values(obj).some((v) => readsParameter(v, key));
+  }
+  return false;
+}
+
+/** The parameter types and the properties that read `keys`, from the template. A template that cannot be read gives no facts. */
+function templateFacts(path: string, keys: string[]): TemplateFacts {
+  const facts: TemplateFacts = { parameterTypes: {}, driven: new Map() };
+  try {
+    const t = JSON.parse(readFileSync(path, "utf8")) as {
+      Parameters?: Record<string, { Type?: string }>;
+      Resources?: Record<string, { Properties?: Record<string, unknown> }>;
+    };
+    for (const k of keys) if (t.Parameters?.[k]?.Type) facts.parameterTypes[k] = t.Parameters[k].Type!;
+    for (const [id, r] of Object.entries(t.Resources ?? {})) {
+      for (const [prop, value] of Object.entries(r.Properties ?? {})) {
+        if (keys.some((k) => readsParameter(value, k))) (facts.driven.get(id) ?? facts.driven.set(id, new Set()).get(id)!).add(prop);
+      }
+    }
+  } catch {
+    /* unreadable or not JSON: the change set reports why, and no property is attributed */
+  }
+  return facts;
+}
+
+/** The properties of one change that the unknown parameters drive. */
+function drivenProperties(change: CfnChange, keys: string[], facts: TemplateFacts): string[] {
+  const out = new Set<string>();
+  for (const d of change.drivers ?? []) {
+    if (d.changeSource === "ParameterReference" && d.causingEntity && keys.some((k) => d.causingEntity === k || d.causingEntity!.startsWith(`${k}.`))) {
+      out.add(d.property);
+    }
+  }
+  const scanned = facts.driven.get(change.logicalResourceId);
+  if (scanned && change.action !== "Remove") {
+    const listed = change.details ?? [];
+    for (const p of scanned) if (change.action === "Add" || listed.length === 0 || listed.includes(p)) out.add(p);
+  }
+  return [...out].sort();
+}
+
+function shapeReplacement(change: CfnChange): ShapeReplacement {
+  if (change.replacementMode === "True" || change.replacement) return "yes";
+  return change.replacementMode === "Conditional" ? "maybe" : "no";
+}
+
+/**
+ * A change set's shape: each change's resource, action, replacement and
+ * properties, with the ones the `unknown` parameters drive marked. `unknown`
+ * is empty for the change set made against real values.
+ */
+export function cfnPlanShape(stack: string, changeSet: CfnChangeSet, unknown: string[], templatePath?: string): PlanShape {
+  const facts = unknown.length > 0 && templatePath ? templateFacts(templatePath, unknown) : { parameterTypes: {}, driven: new Map() };
+  const entries: PlanShapeEntry[] = isNoopChangeSet(changeSet)
+    ? []
+    : changeSet.changes.map((c) => ({
+        address: cfnChangeEntry(stack, c).address,
+        type: c.resourceType,
+        action: c.action,
+        replacement: shapeReplacement(c),
+        properties: [...new Set(c.details ?? [])],
+        unknown: drivenProperties(c, unknown, facts),
+      }));
+  return normalizePlanShape({ member: stack, lexicon: "aws", unknownInputs: unknown, entries });
+}
+
+/**
+ * Preview a stack whose parameters `unknown` are not known yet: create its
+ * change set with a stand-in for each, read the changes into entries that
+ * mark the properties those parameters drive as known after apply, take the
+ * shape, and delete the change set. Returns why instead when CloudFormation
+ * would not make the change set (real CloudFormation refuses an id that does
+ * not exist), so the caller plans a hole.
+ *
+ * Floci accepts a change set that real CloudFormation refuses (a missing
+ * export, an id that does not exist), reports `Parameters: null`, and says
+ * `Replacement: False` for a change that replaces. So a cross-stack value
+ * goes through a parameter here, never an export, and the replacement a
+ * preview reports is whatever the backend says; the shape check at apply
+ * compares like with like.
+ */
+async function previewCfnDeploy(
+  executor: CloudExecutor,
+  stack: string,
+  input: CfnDeployInput,
+  unknown: string[],
+): Promise<{ entries: ChangeSetEntry[]; shape: PlanShape } | string> {
+  const facts = templateFacts(input.template, unknown);
+  const parameters: Record<string, string> = { ...(flattenCfnInputs(input) ?? {}) };
+  for (const k of unknown) parameters[k] = cfnPlaceholder(facts.parameterTypes[k]);
+  let changeSet: CfnChangeSet;
+  try {
+    changeSet = await executor.cloudformation.createChangeSet({ stackName: stack, templatePath: input.template, parameters });
+  } catch (err) {
+    return `CloudFormation refused the change set with stand-in values: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  try {
+    if (changeSet.status === "FAILED" && !isNoopChangeSet(changeSet)) {
+      return `CloudFormation could not create the change set with stand-in values${changeSet.statusReason ? `: ${changeSet.statusReason}` : ""}`;
+    }
+    const noop = isNoopChangeSet(changeSet);
+    const entries = noop ? [] : changeSet.changes.map((c) => cfnChangeEntry(stack, c, drivenProperties(c, unknown, facts)));
+    return { entries, shape: cfnPlanShape(stack, changeSet, unknown, input.template) };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
   }
@@ -530,7 +713,16 @@ export function createCfnDeployCapability(
       // set that proposes the same changes. Anything else means the stack,
       // the template or the parameters moved since the plan.
       const planned = ctx.plans?.[stack];
-      if (isCfnPlanArtifact(planned)) {
+      if (isCfnShapeArtifact(planned)) {
+        // A member planned before its inputs were known (#4419): the change
+        // set made now is against the real values. It must have the shape the
+        // preview had, differing only in what the unknown inputs drive.
+        const differences = comparePlanShape(planned.shape, cfnPlanShape(stack, changeSet, []));
+        if (differences.length > 0) {
+          await cleanUpPlanChangeSet(executor, changeSet);
+          throw new PlanShapeMovedError(stack, differences);
+        }
+      } else if (isCfnPlanArtifact(planned)) {
         const now = cfnChangesDigest(stack, changeSet);
         if (now !== planned.changesDigest) {
           await cleanUpPlanChangeSet(executor, changeSet);

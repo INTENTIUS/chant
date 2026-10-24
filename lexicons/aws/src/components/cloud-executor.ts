@@ -55,6 +55,13 @@ export interface CfnChange {
   /** Resource-specific detail, when the executor's changeset backend provides it (e.g. property/scope). */
   details?: string[];
   /**
+   * What CloudFormation says drives each property change, when it says: the
+   * property, `ChangeSource` and `CausingEntity`. A property driven by a
+   * parameter reads `ParameterReference` with the parameter's name, which is
+   * how a preview marks it known after apply (#4419).
+   */
+  drivers?: Array<{ property: string; changeSource?: string; causingEntity?: string }>;
+  /**
    * The logical ids of the nested stacks this change sits in, outermost
    * first (#3997). Absent for a change to the stack's own resources. Set when
    * the change set was created with nested stacks included and CloudFormation
@@ -461,7 +468,7 @@ export interface DescribedCfnChangeSet {
       LogicalResourceId: string;
       ResourceType: string;
       Replacement?: string;
-      Details?: Array<{ Target?: { Name?: string } }>;
+      Details?: Array<{ Target?: { Name?: string }; ChangeSource?: string | null; CausingEntity?: string | null }>;
       /** Set on an `AWS::CloudFormation::Stack` change when the change set includes nested stacks: the nested change set's ARN. */
       ChangeSetId?: string | null;
     };
@@ -498,6 +505,15 @@ export async function readCfnChanges(
       replacement: rc.Replacement === "True",
       ...(rc.Replacement === "True" || rc.Replacement === "False" || rc.Replacement === "Conditional" ? { replacementMode: rc.Replacement } : {}),
       details: rc.Details?.map((d) => d.Target?.Name).filter((x): x is string => !!x),
+      ...(rc.Details?.some((d) => d.Target?.Name && (d.ChangeSource || d.CausingEntity))
+        ? {
+            drivers: rc.Details.filter((d) => d.Target?.Name).map((d) => ({
+              property: d.Target!.Name!,
+              ...(d.ChangeSource ? { changeSource: d.ChangeSource } : {}),
+              ...(d.CausingEntity ? { causingEntity: d.CausingEntity } : {}),
+            })),
+          }
+        : {}),
       ...(nestedStack.length > 0 ? { nestedStack } : {}),
     });
     if (rc.ResourceType === "AWS::CloudFormation::Stack" && rc.ChangeSetId) {
