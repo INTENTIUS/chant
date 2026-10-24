@@ -4,7 +4,7 @@ import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec } from "./import/parser";
+import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec, ImportDiagnostic } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
@@ -1317,6 +1317,15 @@ export interface LexiconPlugin {
    * any name not listed here, so a lexicon with no options leaves this out.
    */
   parserOptions?(): ParserOptionSpec[];
+
+  /**
+   * `chant import --validate` (#4398): check what the import would write
+   * against the lexicon's own emulator, and return one diagnostic per
+   * failure (severity `error`). Called with the parsed IR and the checked
+   * parser options. A lexicon without an emulator leaves this out, and
+   * `--validate` then fails the import with a message saying so.
+   */
+  validateImport?(ir: TemplateIR, options: ParserOptions): Promise<ImportDiagnostic[]>;
 
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;

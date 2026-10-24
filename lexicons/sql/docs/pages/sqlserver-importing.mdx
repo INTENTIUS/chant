@@ -1,0 +1,104 @@
+---
+title: "Importing a SQL Server Schema"
+description: "chant import --parser-option from=sqlserver reads T-SQL CREATE TABLE, VIEW and INDEX into ClickHouse declarations, with each judgment call a needs-review diagnostic"
+diataxis: how-to
+order: 3
+label: "Importing SQL Server"
+group: "ClickHouse"
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/sqlserver-importing/.
+  Run `npx chant import schema.sql --lexicon sql --parser-option from=sqlserver --output src/ --report review.sarif` on the T-SQL file I name, then `npx chant build` and `npx chant lint`.
+  Go through review.sarif one diagnostic at a time: change the declaration where the suggestion fits the table, and leave a comment on the line where it does not. List every statement the import refused.
+  Open a pull request with the declarations and the report. Use no real server; `--validate` starts a local emulator.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Analytical tables that outgrew a SQL Server instance often end up in ClickHouse. `chant import` reads the T-SQL that creates them and writes ClickHouse `database`, `table` and `view` declarations, the same ones [a live ClickHouse import](../importing/) writes. The type map is mechanical. Every other choice, such as the sort key, the engine and which columns stay `Nullable`, is a diagnostic with the facts it was read from.
+
+SQL Server is an import source and not a dialect. A build holds one dialect, and nothing is declared in T-SQL. What the import writes is ClickHouse.
+
+## Import
+
+```bash
+chant import schema.sql --lexicon sql --parser-option from=sqlserver --output src/ --report review.sarif
+```
+
+A file with T-SQL's own markers (a `GO` line, `[bracketed]` names, `CLUSTERED` or `COLUMNSTORE`, `nvarchar`, `IDENTITY(1,1)`) is read the same way without the option, so it is never taken for Postgres. The markers are `TSQL_MARKERS` in `lexicons/sql/src/import-parser.ts` (line 59). `--parser-option dialect=postgres` on such a file keeps the Postgres reading, and `from=sqlserver` together with `dialect` is refused.
+
+The import reads these statements:
+
+- `CREATE TABLE`, with column and table constraints, `IDENTITY`, computed columns, `GENERATED ALWAYS AS ROW START`, `PERIOD FOR SYSTEM_TIME` and a trailing `WITH (...)`, `ON` or `TEXTIMAGE_ON` clause.
+- `CREATE [UNIQUE] [CLUSTERED | NONCLUSTERED] INDEX`, and `CREATE CLUSTERED COLUMNSTORE INDEX` with its `ORDER (column [, ...n])` clause before or after `WITH`, as Microsoft writes it for each product ([CREATE COLUMNSTORE INDEX](https://learn.microsoft.com/en-us/sql/t-sql/statements/create-columnstore-index-transact-sql)).
+- `CREATE VIEW`.
+- `CREATE SCHEMA`, which becomes a ClickHouse database. A schema that only tables name becomes one too, with an `info` note. The `dbo` schema is the default and is dropped from names.
+- `ALTER TABLE ... ADD CONSTRAINT` for a primary key, unique, foreign key, check or default.
+- `sp_addextendedproperty` with a `Description` on a table or column, which becomes a `COMMENT`.
+
+Batches end at a line holding only `GO`. A statement needs no `;`.
+
+## What is refused
+
+A statement outside that list stops the import, and the error names each one with its line: `trigger dbo.trg_audit (line 40)`, `procedure dbo.usp_load`, `function Application.DetermineCustomerAccess`, a sequence, a user-defined type, an `EXEC`. So does a column whose type has no single ClickHouse match (`sql_variant`) or is a user-defined alias type, and an index on a view. Nothing is left out silently.
+
+`--parser-option skipUndeclarable` imports the rest and lists each refusal as a `warning` diagnostic starting `Left out (skipUndeclarable)`. A `SET`, `USE` or `DROP` declares nothing, so it is an `info` diagnostic and does not stop the import.
+
+Data movement, and translating procedures or queries, are out of scope.
+
+## The type map
+
+These columns map with no diagnostic. The source types, defaults and ranges are from Microsoft's [data types reference](https://learn.microsoft.com/en-us/sql/t-sql/data-types/data-types-transact-sql) and the page of each type under it. Every target type is a family of the ClickHouse catalog generated from the pinned server (`lexicons/sql/src/spec/pin.ts`, ClickHouse 26.8), and `types.test.ts` checks each against `TYPE_FAMILIES` and its precision against the type's range.
+
+| T-SQL | ClickHouse |
+|---|---|
+| `nvarchar`, `varchar`, `nchar`, `char`, `ntext`, `text`, `sysname`, `binary`, `varbinary`, `image` | `String` |
+| `bit` | `Bool` |
+| `tinyint`, `smallint`, `int`, `bigint` | `UInt8`, `Int16`, `Int32`, `Int64` |
+| `decimal(p,s)`, `numeric(p,s)` | `Decimal(p, s)`, default `Decimal(18, 0)` |
+| `money`, `smallmoney` | `Decimal(19, 4)`, `Decimal(10, 4)` |
+| `real`, `float(n)` | `Float32` for `real` and for n up to 24; `Float64` above, as Microsoft treats n |
+| `date`, `time(p)` | `Date32`, `Time64(p)` |
+| `datetime2(p)` | `DateTime64(p)`, default precision 7 as in SQL Server |
+| `datetime`, `smalldatetime` | `DateTime64(3)`, `DateTime64(0)` |
+| `uniqueidentifier` | `UUID` |
+| `json` | `JSON` |
+
+`Date32` and `DateTime64` cover 1900 to 2299, and SQL Server's `date` and `datetime2` start in year 1. A value before 1900 does not fit.
+
+These types map with a diagnostic, because something is lost. `datetimeoffset` loses its offset. `xml`, `rowversion`, `timestamp`, `hierarchyid` and the spatial types become `String`, and `vector` becomes `Array(Float32)` without its dimension count.
+
+## What is a diagnostic
+
+Each rule has an id. The first five come from a catalog that does not know SQL Server (`lexicons/sql/src/clickhouse/review-catalog.ts`), so the Postgres import can raise the same findings for the same reasons.
+
+| Rule | Raised for | Evidence it carries |
+|---|---|---|
+| SQLRV001 | The `ORDER BY` key of every table | The index it came from and the ones it passed over. The order of preference is a columnstore `ORDER`, then the clustered index or clustered primary key, then the primary key, then the first unique key, then `tuple()`. A nullable key column adds `allow_nullable_key = 1`. |
+| SQLRV002 | The engine of every table | `MergeTree`; whether the table has a columnstore index and a unique key the engine does not enforce. |
+| SQLRV003 | Each nullable column | It becomes `Nullable(T)`. The finding says whether the column has a default that could replace `Nullable`. |
+| SQLRV004 | A `String` column whose name ends in a word such as `status`, `type`, `country` or `code` | The name, the type and the declared length. No data is read, so the distinct count is unknown. The type is not changed. |
+| SQLRV005 | Each foreign key, check and unique constraint or unique index | ClickHouse does not enforce it. It is kept as a `--` comment before the `CREATE`. |
+| SQLRV006 | `IDENTITY`, a `NEXT VALUE FOR` default, a computed column, a `GENERATED ALWAYS` column | The column and the source clause. A computed column is left out of the table, because its T-SQL expression is not translated. |
+| SQLRV007 | A judgment in a type or a column collation | What the map could not keep. |
+| SQLRV008 | A default | A function default is written in ClickHouse (`sysdatetime()` as `now64(7)`, `newid()` as `generateUUIDv4()`); one it cannot translate is dropped and shown. |
+| SQLRV009 | Storage options, and each nonclustered index | Filegroups, partition schemes, compression, `SYSTEM_VERSIONING`, `MEMORY_OPTIMIZED`. An index that is not carried suggests a skip index. |
+| SQLRV010 | Each view | The body is copied with identifiers requoted and `dbo` dropped. The finding lists the T-SQL words found by name, such as `TOP` and `ISNULL`. |
+| SQLRV011 | A refusal under `skipUndeclarable` (`warning`), and a note for `SET`, `USE`, `DROP` and an extended property that is not a description (`info`) | The statement. |
+| SQLRV012 | A statement the emulator rejects under `--validate` (`error`) | The server's first message line. |
+
+A `warning` is a decision to confirm and an `info` is a note that needs none. The diagnostic's line and column point into the T-SQL file.
+
+## Report and strict
+
+`--report <path>` writes the diagnostics as SARIF 2.1.0, the way `chant migrate --report` does ([migrate](/chant/cli/migrate/)). A summary goes to stderr either way. `--strict` exits 1 while any `warning` or `error` is open, and `info` notes never fail a run (`importExitCode` in `packages/core/src/cli/commands/import-report.ts`, line 52).
+
+## Validate
+
+`--validate` creates the emitted DDL on the pinned ClickHouse server, databases first, then tables, then views. It starts its own throwaway container and removes it, and it never reads `CLICKHOUSE_URL`. Each refusal is an `error` diagnostic that names the object, and any error exits 1 without `--strict`. It needs Docker.
+
+The view's body is copied as written, so a T-SQL function in it is the likeliest thing to fail here.
+
+## Try it on a public schema
+
+`lexicons/sql/test-fixtures/sqlserver/wwi-excerpt.sql` is an excerpt of Microsoft's WideWorldImporters sample, MIT licensed ([sql-server-samples](https://github.com/microsoft/sql-server-samples), `samples/databases/wide-world-importers/wwi-ssdt/wwi-ssdt/`), with its licence beside it. `fixture.test.ts` imports it, checks that each non-mechanical decision is a diagnostic, builds the output and lints it.
+
+For a Postgres source, see [Importing a Postgres Server](../postgres-importing/). A Postgres to ClickHouse translation through `chant migrate` is tracked in [#4399](https://github.com/INTENTIUS/chant/issues/4399) and shares the catalog above.
