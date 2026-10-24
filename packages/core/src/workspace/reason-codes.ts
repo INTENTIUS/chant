@@ -297,6 +297,10 @@ export const REASONS = {
   "lease-held": "Someone holds a live lease on the work item: another worker, or, for a claim, the same one.",
   "lease-not-held": "Nobody holds a live lease on the work item: it expired, was released or was never claimed.",
   "lease-token-mismatch": "The live lease on the work item carries another fencing token than the one given.",
+  // Evidence that cites an ops result (work evidence, #3171): why the citation was refused. Nothing is written.
+  "work-evidence-ops-missing": "Work evidence cites a run, deploy, gate answer or release plan the local chant/lifecycle branch does not hold.",
+  "work-evidence-ops-mismatch": "Work evidence cites an ops record that does not hash to the sha256 given, or a run whose outcome disagrees with the evidence's result.",
+  "work-evidence-ops-unfinished": "Work evidence cites a run that is still gated or waiting, so it has no outcome to show.",
   "lease-race": "Another writer changed the lease between this command's read and its write.",
   "lease-push-rejected": "The remote refused the lease push: another clone claimed the item first, or the remote could not be reached.",
   // The agent run record (chant workspace runs, #3033): why a write was refused, and what a read could not see. Nothing is written on a refusal.

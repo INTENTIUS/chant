@@ -436,7 +436,8 @@ export function formatWorkHistory(doc: Extract<WorkHistoryDocument, { claims: un
  * <file|->` (#3159): the `workEvidence` activity (#2772) as a command, so a
  * writer that is not an Op, such as hud, attaches evidence through chant under
  * the lease it holds. `--from` gives the entry as JSON: criterion, result,
- * title, a url or a path, and optionally as_of. It always prints the
+ * title, a url, a path or an ops result to cite (#3171), and optionally
+ * as_of. It always prints the
  * work-evidence document; exit 0 when the entry was appended, 1 otherwise.
  */
 async function runWorkEvidence(ctx: CommandContext): Promise<number> {
@@ -452,7 +453,7 @@ async function runWorkEvidence(ctx: CommandContext): Promise<number> {
   if (!id) return fail("evidence needs a work item id");
   if (!args.holder) return fail("evidence needs --holder <name>: the lease's holder");
   if (!args.token) return fail("evidence needs --token <token>: the lease's fencing token, as its claim printed it");
-  if (args.migrateFrom === undefined) return fail("evidence needs --from <file|->: the entry as JSON, with criterion, result, title and a url or a path");
+  if (args.migrateFrom === undefined) return fail("evidence needs --from <file|->: the entry as JSON, with criterion, result, title and a url, a path or an ops result");
   for (const [flag, v] of [["--ttl", args.ttl], ["--outcome", args.outcome], ["--note", args.note]] as const) {
     if (v !== undefined) return fail(`evidence takes no ${flag}`);
   }
@@ -470,7 +471,7 @@ async function runWorkEvidence(ctx: CommandContext): Promise<number> {
       1,
     );
   }
-  const known = ["criterion", "result", "title", "url", "path", "as_of"];
+  const known = ["criterion", "result", "title", "url", "path", "ops", "as_of"];
   const unknown = Object.keys(fields).filter((k) => !known.includes(k));
   if (unknown.length > 0) return fail(`the entry takes ${known.join(", ")}, not ${unknown.join(", ")}`);
   const str = (k: string): string | undefined => (typeof fields[k] === "string" ? (fields[k] as string) : undefined);
@@ -485,6 +486,7 @@ async function runWorkEvidence(ctx: CommandContext): Promise<number> {
     title: str("title") ?? "",
     url: str("url"),
     path: str("path"),
+    ops: fields.ops as never,
     asOf: str("as_of"),
   });
   return print(doc, "error" in doc ? 1 : 0);
