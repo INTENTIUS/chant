@@ -861,6 +861,15 @@ Workspace (level 1, #2524):
                         manual steps. Needs no workspace file
   workspace lineage resolve <path>
                         Close a manual step once the file is merged by hand
+  workspace exit [<member>...] [--dry-run] [--drill] [--output <file>] [--json]
+                        Leave chant: build each chant member once, commit the
+                        native output (CloudFormation, ARM, Kubernetes YAML,
+                        Compose, CI files), point its CI at the platform's own
+                        CLI, drop the chant dependencies and set the member to
+                        other. Staged in a worktree and gated on the patch
+                        digest (chant approve workspace-exit <scope>). op.json
+                        files stay. --drill runs it on a scratch copy and
+                        checks each member, changing nothing.
   workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <file>]
                         Bring a lineage scope to a newer template version: fetch
                         it, migrate and merge per file in a worktree, run build,
@@ -1649,6 +1658,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace metrics", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/delivery-metrics")).runWorkspaceMetrics(ctx) },
   { name: "workspace status", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
+  { name: "workspace exit", handler: async (ctx) => (await import("../workspace/exit-cli")).runWorkspaceExit(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   // #2551 — adopt a lineage, the hash index it matches against, and the versions of a family of workspaces.
   { name: "workspace adopt-lineage", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceAdoptLineage(ctx) },

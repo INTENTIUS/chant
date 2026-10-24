@@ -284,6 +284,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.emit = args[++i];
     } else if (arg === "--dry-run") {
       result.dryRun = true;
+    } else if (arg === "--drill") {
+      // #3177 — `chant workspace exit --drill` runs the exit on a scratch copy.
+      result.drill = true;
     } else if (arg === "--yes") {
       result.yes = true;
     } else if (arg === "--push") {
