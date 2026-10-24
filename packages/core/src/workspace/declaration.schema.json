@@ -30,6 +30,13 @@
       "$ref": "#/$defs/version",
       "description": "The oldest chant that may read this declaration. An older chant refuses it with reader-too-old."
     },
+    "scope": {
+      "enum": [
+        "repo",
+        "org"
+      ],
+      "description": "What the workspace spans (#3168). repo, the default, is one repository's workspace. org is an org-level workspace: it holds only members of kind repo, each a reference to another repository's workspace, and chant workspace check fails any other member (WSP013). A warden generates an org workspace from its policy, or checks one against the forge's repository list with chant workspace check --forge-repos. Added in schema 1 by chant 0.124.47, so a declaration that uses it sets minReader to 0.124.47 or newer."
+    },
     "members": {
       "type": "array",
       "description": "Members and example groups, in the order readers list them.",
@@ -573,7 +580,6 @@
       "description": "A member (#2524 D2). Its directory leaves the root project, and it gets its own build, lint and ledger.",
       "required": [
         "name",
-        "dir",
         "kind"
       ],
       "properties": {
@@ -586,7 +592,10 @@
         },
         "kind": {
           "$ref": "#/$defs/kindName",
-          "description": "How to read the member: chant, workspace, other, or a kind a pinned plugin supplies (#2535)."
+          "description": "How to read the member: chant, workspace, repo, other, or a kind a pinned plugin supplies (#2535). Every kind but repo needs dir; a repo member has repo instead (#3168)."
+        },
+        "repo": {
+          "$ref": "#/$defs/repoRef"
         },
         "roles": {
           "type": "array",
@@ -706,28 +715,91 @@
         "^x-": true
       },
       "additionalProperties": false,
-      "if": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "const": "other"
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "other"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "because": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "because"
+            ]
           }
         },
-        "required": [
-          "kind"
-        ]
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "repo"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "repo"
+            ],
+            "properties": {
+              "repo": true,
+              "dir": false
+            }
+          },
+          "else": {
+            "required": [
+              "dir"
+            ],
+            "properties": {
+              "dir": true,
+              "repo": false
+            }
+          }
+        }
+      ]
+    },
+    "repoRef": {
+      "type": "object",
+      "description": "Another repository's workspace, named by URL and pinned revision (#3168). A member of kind repo carries it and has no dir. chant reads that workspace read-only through the other repository's own read contract, its chant workspace graph at the revision, the way it reads a nested workspace member, and never writes there. Added in schema 1 by chant 0.124.47, so a declaration that uses it sets minReader to 0.124.47 or newer.",
+      "required": [
+        "url",
+        "rev"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^[^\\s]+$",
+          "description": "Where git fetches the repository from: an https, ssh or file URL, a local path, or an scp-style git@host:org/repo. A URL that carries a password or token is refused when it is read."
+        },
+        "rev": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+          "description": "The pinned revision, a full commit id. A branch or tag is not a pin."
+        },
+        "workspace": {
+          "$ref": "#/$defs/dir",
+          "description": "The workspace root inside that repository, relative to its git root. Defaults to \".\"."
+        }
       },
-      "then": {
-        "type": "object",
-        "properties": {
-          "because": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "because"
-        ]
-      }
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
     },
     "memberFields": {
       "type": "object",

@@ -640,6 +640,8 @@ export interface ParsedArgs {
    * generators run member code.
    */
   generated?: boolean;
+  /** `chant workspace check --forge-repos <file>` (#3168): the forge's repository list, checked against an org workspace's repo members (WSP014, WSP015). */
+  forgeRepos?: string;
   /**
    * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
    * the named members or example groups. Repeatable, and a comma list works too.

@@ -24,13 +24,14 @@
  * (`changes-cli.ts`, #2773), which prints a document of its own.
  */
 
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { formatError, formatSuccess } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import type { LintDiagnostic, LintRule } from "../lint/rule";
 import { findWorkspaceRoot } from "../project-root";
 import type { DeclarationCheckReport } from "./checks";
+import type { ForgeRepoList } from "./checks/org";
 import type { RecordFacts } from "./checks/records";
 import { LOCK_FILE, LockError, parseLock, readLock } from "./lineage-lock";
 import type { ReasonCode } from "./reason-codes";
@@ -91,7 +92,7 @@ export function findingKey(f: CheckFinding): string {
 }
 
 const USAGE =
-  "chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]\n       chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]";
+  "chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>] [--forge-repos <file>]\n       chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]";
 const FORMATS = ["stylish", "json", "sarif"] as const;
 
 /** A lock finding as a lint diagnostic, for `--format json` and `--format sarif`. */
@@ -141,7 +142,7 @@ export type CheckDocument =
       chant: string;
       at: string | null;
       /** The declaration's workspace, or null when there is none; `name` is null when it can't be read. */
-      workspace: { name: string | null; root: string } | null;
+      workspace: { name: string | null; root: string; repo: string | null } | null;
       declaration?: DeclarationCheckReport;
     })
   | { $schema: string; contract: number; chant: string; error: { code: CheckErrorCode; message: string; location: null } };
@@ -152,7 +153,11 @@ export type CheckDocument =
  * to `cwd`. `runGenerators` is `--generated`; with `at` it does nothing,
  * since the member facts describe the working tree, not the revision.
  */
-export async function runChecks(cwd: string, at?: string, options: { runGenerators?: boolean; kind?: string; live?: { env: string; onStderr?: (text: string) => void } } = {}): Promise<CheckDocument> {
+export async function runChecks(
+  cwd: string,
+  at?: string,
+  options: { runGenerators?: boolean; kind?: string; live?: { env: string; onStderr?: (text: string) => void }; forgeRepos?: ForgeRepoList } = {},
+): Promise<CheckDocument> {
   // Loaded here, not at the top: `workspace upgrade` imports this module for checkLineage alone.
   const [{ findDeclarationDir, readDeclaration, readerVersion }, { gitTop, gitTree, resolveCommit, workingTree }] = await Promise.all([
     import("./declaration"),
@@ -190,7 +195,7 @@ export async function runChecks(cwd: string, at?: string, options: { runGenerato
   }
 
   let declaration: DeclarationCheckReport | undefined;
-  let workspace: { name: string | null; root: string } | null = null;
+  let workspace: { name: string | null; root: string; repo: string | null } | null = null;
   if (found) {
     const { runDeclarationChecks } = await import("./checks");
     const { dir, tree } = found;
@@ -200,6 +205,7 @@ export async function runChecks(cwd: string, at?: string, options: { runGenerato
       ...(commit !== null ? { tree } : {}),
       ...(records ? { records } : {}),
       ...(options.live ? { live: options.live } : {}),
+      ...(options.forgeRepos ? { forgeRepos: options.forgeRepos } : {}),
     });
     let name: string | null = null;
     try {
@@ -207,7 +213,8 @@ export async function runChecks(cwd: string, at?: string, options: { runGenerato
     } catch {
       // The WSP001 finding already says why.
     }
-    workspace = { name, root: found.root };
+    const { repoIdentity } = await import("./repo-ref");
+    workspace = { name, root: found.root, repo: repoIdentity(dir) };
   }
   const ok = report.ok && (declaration?.ok ?? true);
   return { ...head, at: commit, workspace, ...report, ok, ...(declaration ? { declaration } : {}) };
@@ -267,7 +274,23 @@ export async function runWorkspaceCheck(ctx: CommandContext): Promise<number> {
     const handed = await handToRootChant(root, ctx.args.at);
     if (handed !== undefined) return handed;
   }
-  const doc = await runChecks(root, ctx.args.at, { runGenerators: ctx.args.generated === true, ...(ctx.args.kind !== undefined ? { kind: ctx.args.kind } : {}), ...(ctx.args.live && ctx.args.env ? { live: { env: ctx.args.env, onStderr: (text: string) => process.stderr.write(text) } } : {}) });
+  // The forge's repository list (#3168) is input a warden writes; chant never asks the forge itself.
+  let forgeRepos: ForgeRepoList | undefined;
+  if (ctx.args.forgeRepos !== undefined) {
+    const { parseForgeRepos } = await import("./checks/org");
+    try {
+      forgeRepos = parseForgeRepos(readFileSync(resolve(ctx.args.forgeRepos), "utf-8"), ctx.args.forgeRepos);
+    } catch (err) {
+      console.error(formatError({ message: `--forge-repos: ${(err as Error).message}`, hint: USAGE }));
+      return 1;
+    }
+  }
+  const doc = await runChecks(root, ctx.args.at, {
+    runGenerators: ctx.args.generated === true,
+    ...(ctx.args.kind !== undefined ? { kind: ctx.args.kind } : {}),
+    ...(ctx.args.live && ctx.args.env ? { live: { env: ctx.args.env, onStderr: (text: string) => process.stderr.write(text) } } : {}),
+    ...(forgeRepos ? { forgeRepos } : {}),
+  });
   if ("error" in doc) {
     if (ctx.args.json || format === "json") console.log(JSON.stringify(doc, null, 2));
     else console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));

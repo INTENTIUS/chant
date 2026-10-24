@@ -82,7 +82,9 @@ export type KindProbe =
   /** The directory exists; nothing else is checked (`other`). */
   | { directory: true }
   /** The directory holds a chant project, as {@link holdsChantProject} says (`examples`). */
-  | { chantProject: true };
+  | { chantProject: true }
+  /** Nothing local: the member names another repository's workspace (`repo`, #3168). */
+  | { repo: true };
 
 /**
  * Which outputs a member of a kind exposes as link targets (#2524 D6,
@@ -181,6 +183,9 @@ export interface KindRegistry {
 /** The group kind (ws-051). An entry of this kind is a group, not a member. */
 export const EXAMPLES_KIND = "examples";
 
+/** The member kind that names another repository's workspace by URL and pinned revision (#3168). */
+export const REPO_KIND = "repo";
+
 /** The data member kind that holds design artifacts (#2549, ws-062). */
 export const DESIGN_KIND = "design";
 
@@ -199,6 +204,15 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
     description: "a nested workspace, with its own chant.workspace.json; the outer one reads it through its own chant workspace graph and never writes inside it",
     probe: { anyFile: ["chant.workspace.json", "chant.workspace.jsonc"] },
     precedence: 1000,
+    shape: "member",
+    outputs: { from: "none" },
+    source: "builtin",
+  },
+  {
+    name: REPO_KIND,
+    description: "another repository's workspace, named by URL and pinned revision; chant reads it through that repository's own chant workspace graph and never writes there",
+    probe: { repo: true },
+    precedence: 0,
     shape: "member",
     outputs: { from: "none" },
     source: "builtin",
@@ -256,6 +270,7 @@ export function builtinKindRegistry(): KindRegistry {
 export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): boolean {
   if ("directory" in kind.probe) return true;
   if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
+  if ("repo" in kind.probe) return true;
   const { anyFile, anyBlock, anyJsonKey } = kind.probe;
   if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
   if (anyJsonKey) {
@@ -283,7 +298,7 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
 
 /** Whether a probe looks at the directory's files, and so can claim it. */
 function isFileProbe(probe: KindProbe): probe is FileProbe {
-  return !("directory" in probe) && !("chantProject" in probe);
+  return !("directory" in probe) && !("chantProject" in probe) && !("repo" in probe);
 }
 
 /**

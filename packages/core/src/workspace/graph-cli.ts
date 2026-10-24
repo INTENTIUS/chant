@@ -35,9 +35,10 @@ import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, t
 import { isViewDocument, prefixView } from "../capabilities/view";
 import { refusedCapabilityView } from "./nested-graph";
 import { openGraphCache, planStamps, splitCached, storeReads, withoutUnits } from "./graph-cache";
-import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation } from "./declaration";
+import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation, type RepoRef } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberArgv, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
-import { loadKindRegistry, type KindRegistry } from "./kinds";
+import { loadKindRegistry, REPO_KIND, type KindRegistry } from "./kinds";
+import { repoIdentity } from "./repo-ref";
 import { readKindLinks } from "./kind-link-readers";
 import { prepareKindReaders, type PreparedReaders } from "./kind-readers";
 import { recordLinkRows } from "./record-assets";
@@ -335,10 +336,11 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     }
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     // A kind's link reader (#3932) reads the member's files in the tree read, as check does.
-    const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
+    const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root, repo: repoIdentity(located.rootOnDisk) }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
     for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
+    // Repo members (#3168): another repository's workspace at its pinned revision, read the same way.
     const nestedFailed = await expandNested(graph, declaration.members, query, located.rootOnDisk, located.at);
     let recordsFailed = false;
     if (query.kind !== undefined) {
@@ -365,33 +367,46 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
 
 /**
  * Expand every member of kind `workspace` the query covers, read-only (#2551,
- * ws-071). Returns whether one could not be read.
+ * ws-071), and every member of kind `repo` the same way, at its pinned
+ * revision, fetched into the user's cache (#3168). Returns whether one could
+ * not be read.
  */
 async function expandNested(
   graph: WorkspaceGraph,
-  members: readonly { name: string; dir: string; kind: string }[],
+  members: readonly { name: string; dir: string; kind: string; repo: RepoRef | null }[],
   query: GraphQuery,
   rootOnDisk: string,
   at: string | null,
 ): Promise<boolean> {
-  const nested = members.filter((m) => m.kind === "workspace" && (!query.members?.length || query.members.includes(m.name)));
+  const covered = (m: { name: string }) => !query.members?.length || query.members.includes(m.name);
+  const nested = members.filter((m) => (m.kind === "workspace" || (m.kind === REPO_KIND && m.repo !== null)) && covered(m));
   if (nested.length === 0) return false;
   const { foldNested, readNested } = await import("./nested-graph");
+  const { fetchRepoAt } = await import("./repo-ref");
   const reads = await Promise.all(
     nested.map(async (m) => {
+      if (m.repo) {
+        // The other repository at its pinned revision, whatever revision the outer read is at.
+        const fetched = fetchRepoAt(m.repo, rootOnDisk);
+        if (!fetched.ok) return { m, read: null, missing: fetched.message };
+        if (!existsSync(fetched.dir)) return { m, read: null, missing: `${m.repo.url} at ${m.repo.rev} has no directory ${m.repo.workspace}` };
+        return { m, read: await readNested(fetched.dir, query.args ?? {}, m.repo.rev, GRAPH_OUTPUT_SCHEMA_ID, GRAPH_CONTRACT_VERSION, query.reader), missing: null };
+      }
       const abs = join(rootOnDisk, ...m.dir.split("/"));
-      if (!existsSync(abs)) return { m, read: null };
-      return { m, read: await readNested(abs, query.args ?? {}, at, GRAPH_OUTPUT_SCHEMA_ID, GRAPH_CONTRACT_VERSION, query.reader) };
+      if (!existsSync(abs)) return { m, read: null, missing: null };
+      return { m, read: await readNested(abs, query.args ?? {}, at, GRAPH_OUTPUT_SCHEMA_ID, GRAPH_CONTRACT_VERSION, query.reader), missing: null };
     }),
   );
   let failed = false;
-  for (const { m, read } of reads) {
+  for (const { m, read, missing } of reads) {
     const member = graph.members.find((x) => x.name === m.name);
     if (!member) continue;
+    if (m.repo) member.repo = { ...m.repo, read: read?.ok ? (read.doc.workspace.repo ?? null) : null };
     if (!read) {
       failed = true;
       member.status = "failed";
-      member.reason = { code: "dir-missing", message: `the nested workspace's directory ${m.dir} does not exist` };
+      // A repo that can't be fetched is a read that failed; the contract's codes stay as they are.
+      member.reason = missing !== null ? { code: "command-failed", message: missing } : { code: "dir-missing", message: `the nested workspace's directory ${m.dir} does not exist` };
       continue;
     }
     if (read.stderr.trim() && query.onStderr) query.onStderr(read.stderr.endsWith("\n") ? read.stderr : `${read.stderr}\n`);

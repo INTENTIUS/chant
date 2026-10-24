@@ -101,6 +101,12 @@ export interface ComposedMember {
    */
   nested?: NestedWorkspace;
   /**
+   * For a member of kind `repo` (#3168): the repository and pinned revision it
+   * names, and `read`, the repo identity the other repository's own graph
+   * document gave, or null. Its nodes fold in as a nested workspace's do.
+   */
+  repo?: { url: string; rev: string; workspace: string; read: string | null };
+  /**
    * The factory and listing the member's box block declares (#3146, ws-077),
    * read from the declaration at the revision read. Set by
    * `chant workspace graph` on every member; null when the box declares neither.
@@ -181,7 +187,8 @@ export type ComposedDangling = IRDanglingRef & { member: string; nested?: string
 
 export interface WorkspaceGraph {
   version: number;
-  workspace: { name: string; root: string };
+  /** `repo` (#3168): the repository the document came from, its origin URL redacted, or null; absent from a chant before it. */
+  workspace: { name: string; root: string; repo?: string | null };
   members: ComposedMember[];
   nodes: ComposedNode[];
   edges: ComposedEdge[];
@@ -335,7 +342,7 @@ function sorted(rec: Record<string, string[]>): Record<string, string[]> {
  * `read` holds the links each member's kind reader found in its files (#3932).
  */
 export function composeWorkspaceGraph(
-  workspace: { name: string; root: string },
+  workspace: { name: string; root: string; repo?: string | null },
   inputs: ComposeInput[],
   links?: { declaration: Declaration; kinds?: KindRegistry; read?: ReadonlyMap<string, KindLinkRead> },
 ): WorkspaceGraph {

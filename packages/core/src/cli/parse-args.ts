@@ -971,6 +971,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2537 — `chant build` and `chant lint` at a declared workspace root
       // run on the root project alone instead of refusing with WSP000.
       result.rootOnly = true;
+    } else if (arg === "--forge-repos") {
+      // #3168 — `chant workspace check --forge-repos <file>`: the forge's
+      // repository list, as a warden reads it, for an org workspace's checks.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--forge-repos needs a file: --forge-repos <repos.json>");
+      result.forgeRepos = value;
     } else if (arg === "--generated") {
       // #2641 — `chant workspace check --generated` runs each declared
       // generator and compares its output with the file in the tree.

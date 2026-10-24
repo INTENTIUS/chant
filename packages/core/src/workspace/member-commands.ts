@@ -241,6 +241,8 @@ export function planMembers(verb: WorkspaceVerb, root: string, options: PlanOpti
       const why =
         entry.kind === "workspace"
           ? "a nested workspace runs its own chant workspace commands"
+          : entry.kind === "repo"
+            ? "a repo member is another repository's workspace, which runs its own chant workspace commands; chant workspace graph reads it at its pinned revision"
           : entry.kind === "design"
             ? "a design member is data: chant reads its files for record pins and builds nothing"
             : `chant workspace ${verb} runs members of kind chant, and this one is kind ${entry.kind}`;

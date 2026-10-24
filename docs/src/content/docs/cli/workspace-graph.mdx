@@ -46,6 +46,14 @@ The chant repository declares `reference-workspace/` this way, so `chant workspa
 
 The outer workspace never writes inside a nested one. `build`, `lint` and `audit` skip it with `kind-not-run`, and [`chant workspace upgrade`](/chant/cli/workspace-upgrade/#nested-workspaces) refuses a patch that reaches into it.
 
+## Repo members
+
+A member of kind `repo` names another repository's workspace by URL and pinned revision ([#3168](https://github.com/INTENTIUS/chant/issues/3168)). It is read the way a nested workspace is, through that repository's own `chant workspace graph` at the pinned revision, and folded in under the member's name with the same `outer/inner/id` ids. The outer read's own `--at` doesn't move it, since the revision is the declaration's pin.
+
+To have a tree to run the read in, chant fetches the revision into the user's cache directory, `$CHANT_CACHE_DIR/repos`, else `$XDG_CACHE_HOME/chant/repos`, else `~/.cache/chant/repos`. Each URL gets one clone and each revision one detached worktree, which is never moved, so a revision is fetched once and nothing is written under the workspace. The fetch is git's, with git's own credentials, and it is the only network reach `chant workspace graph` makes outside `--live`. It is listed in [Network egress](/chant/reference/network-egress/).
+
+The member's entry carries `repo`: `url`, `rev`, `workspace` (the workspace root inside that repository) and `read`, the `workspace.repo` the other repository's own document gave. A revision that can't be fetched leaves the member `failed` with `command-failed`. The other repository's members need their own installs to read their sources, so a member there that can't run is reported in `nested.members` as that repository's own chant reports it.
+
 ## The live read
 
 With `--live`, each member runs `chant graph --live` under its own toolchain, so its graph is the account as it stands rather than its source ([#2875](https://github.com/INTENTIUS/chant/issues/2875)). `--overlay`, `--traffic <level>` and `--detail` are passed along too, and a member's chant then writes the drift overlay and the behaviour prediction onto its nodes. Composition keeps every attribute a member printed and rewrites only `$ref` values, so the `_drift`, `_overlay` and `_behaviour` attributes arrive as the member's chant wrote them. A member's `meta`, where the prediction's whole-estate figures sit, stays on its entry.

@@ -59,7 +59,7 @@ An in-process guard says nothing about a child process, so the offline phases' s
 
 ### Reading and changing an estate
 
-`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that do (`chant workspace check` without `--live` reads files only). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.
+`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that reach an account (`chant workspace check` without `--live` reads files only; `chant workspace graph` also fetches the pinned revision of a `repo` member, listed under its own heading). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.
 
 | Module | Primitive | Destination | Why |
 |---|---|---|---|
@@ -184,6 +184,14 @@ A `k8sInclude` whose `source` is an `http(s)` URL is fetched by `chant build` th
 | Command | Spawns | Module | Destination | Why |
 |---|---|---|---|---|
 | `chant workspace graph --intent --follow-squash, chant workspace graph --intent --record --follow-squash and chant workspace runs --follow-squash` | `git fetch` | `packages/core/src/workspace/squash.ts` | the clone's `origin` remote, GitHub or Forgejo, which keeps each pull request's head at `refs/pull/<n>/head`. A local repository reaches nothing | `git fetch --no-tags origin +refs/pull/<n>/head:refs/chant/pull/<n>/head` for each squash whose pull request head the clone lacks, in one fetch, so the walk can read the pull request's original commits (#3035). Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and the fetch times out after a minute. Without `--follow-squash` it never runs. |
+
+### Reading another repository's workspace
+
+`chant workspace graph` on a workspace with members of kind `repo` fetches each one's pinned revision from the URL it names, into the user's cache directory, and runs that repository's own `chant workspace graph` there (#3168). A revision already in the cache is not fetched again, and a URL that is a local path or a local bare repository reaches nothing. `chant workspace check` never fetches: `--forge-repos` reads the forge's repository list from a file a warden writes. The fetch is a `git` child process, listed below as a shell-out.
+
+| Command | Spawns | Module | Destination | Why |
+|---|---|---|---|---|
+| `chant workspace graph, for a member of kind repo` | `git fetch` | `packages/core/src/workspace/repo-ref.ts` | the URL the repo member names, a forge or any git remote. A local path reaches nothing | `git fetch origin <rev>` into a clone in the user's cache directory, and a fetch of every branch and tag when the server refuses a commit by id, so the member's pinned revision can be read through that repository's own `chant workspace graph` (#3168). Only when the cache lacks the revision. Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and each fetch times out after two minutes. |
 
 ### Auditing a remote repository
 
