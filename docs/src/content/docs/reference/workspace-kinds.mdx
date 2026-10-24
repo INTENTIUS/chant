@@ -127,10 +127,28 @@ A kind's members are directories chant can probe, but a directory of `.tf` files
 
 | Field | Value |
 |---|---|
-| `graph.lexicon` | The lexicon that reads the member, by name. The package that supplies the kind must be `@intentius/chant-lexicon-<lexicon>`, so the lexicon chant loads is the one the declaration pins. A kind whose package has another name keeps its probe and loses its `graph` block, with a `WSP002` problem |
-| `graph.config` | The lexicon's config namespace for the reader project. In every string key and value, `{member}` becomes the member's name, `{dir}` its absolute directory and `{workspace}` the absolute workspace root. Nothing else is interpreted |
+| `graph.lexicon` | The lexicon that reads the member, by name. The package that supplies the kind must be `@intentius/chant-lexicon-<lexicon>`, so the lexicon chant loads is the one the declaration pins. A kind whose package has another name keeps its probe and loses its `graph` block, with a `WSP002` problem. Not with `graph.reader` |
+| `graph.reader` | A [graph reader module](#a-graph-reader-from-any-package), as a path inside the supplying package. Any package may supply it. Not with `graph.lexicon` |
+| `graph.config` | The lexicon's config namespace for the reader project (required with `lexicon`), or the config the reader module is called with (optional with `reader`). In every string key and value, `{member}` becomes the member's name, `{dir}` its absolute directory and `{workspace}` the absolute workspace root. Nothing else is interpreted |
 
 For each member, `chant workspace graph` writes a reader project in a temporary directory: a `chant.config.json` with `lexicons: [<lexicon>]` and `config` under the lexicon's key, and a `node_modules` link to the directory that holds the pinned package. The member's `chant graph --format ir` runs there, and the project is removed afterwards. Nothing is written under the workspace. The block is data like the rest of the file: listing a workspace still imports nothing, and only `graph` loads the lexicon.
+
+### A graph reader from any package
+
+A lexicon is not the only package with something to draw. A package that is not a lexicon, such as a forge warden, can supply a graph reader instead ([#4413](https://github.com/INTENTIUS/chant/issues/4413)). The kind's `graph` block names a module in the package, in place of a lexicon:
+
+```json
+{
+  "name": "forge-governance",
+  "graph": { "reader": "dist/graph-reader.mjs", "config": { "dir": "{dir}" } }
+}
+```
+
+The module is an ES module inside the package, so a path that leaves it, or a file that is missing, is a `WSP002` problem and the kind keeps its probe without a `graph` block. Its default export takes `{ dir, config }`, with `config` as the block gives it (placeholders substituted) and `dir` taken from `config.dir`, and returns graph IR, `{ nodes, edges }` with optional `groups` and `meta`. It may be async.
+
+For each member, `chant workspace graph` writes a reader project in a temporary directory, as for a lexicon, with a `chant.config.json` that declares no lexicon and sets `graph.reader` to the module and its config. The member's own `chant graph --format ir` loads the module there, so it runs under the member's toolchain, and the project is removed afterwards. A chant from before the field can't read a kinds file that uses it, and a member's own chant from before it ignores `graph.reader` and has nothing to print, so the member fails.
+
+The reader is code from the package the declaration pins, and the contract is that it reads files and returns data: it takes no forge or network call, and writes nothing. chant enforces the part it can. The module must sit inside the package, it is imported only by `chant graph` and never when the kinds are read or the workspace is listed or checked, and its output is validated as graph IR like any member's. The graph cache keys a reader member on the module's size and modification time, so an edit shows without a new package version.
 
 ### Links read from a member's files
 
@@ -276,7 +294,7 @@ The three wardens, [github-warden](https://github.com/INTENTIUS/github-warden), 
 
 Each package checks its file against a JSON Schema it ships, so `chant workspace check` fails a policy with a misspelled or misplaced field as `WSP012` before the warden reconciles it. `repos` and `teams` are the names a [member link](/chant/reference/workspace-declaration/#member-links) can point at. For gitlab-warden, `repos` stands for projects and `teams` for groups.
 
-The kinds have no `graph` block yet. A `graph` block names a lexicon, and chant only accepts it from the package `@intentius/chant-lexicon-<lexicon>`, which a warden is not. Until a warden emits graph IR and chant has a way to read it, `chant workspace graph` lists a `forge-governance` member with `kind-not-run`, and coloring it by drift waits on that. The org-level workspace that [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) describe is the other half: a warden generating or checking it is separate work.
+Each kind carries a `graph.reader` block ([above](#a-graph-reader-from-any-package)), since a warden is not a lexicon. The reader turns the governance YAML into graph IR with no forge call: nodes for the org, its repos, teams, rulesets (branch protection on gitlab-warden and forgejo-warden) and apps, and edges for a team's access to a repo and a ruleset's reach over a repo. It draws the policy as declared. Coloring a node by drift needs the warden's live read and is not part of it. Binding a reconcile to a gate, and a warden generating or checking the org-level workspace that [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) describe, are separate work.
 
 ## dbt
 

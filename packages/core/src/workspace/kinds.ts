@@ -17,7 +17,7 @@
  * fails ({@link resolveKind}).
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import schema from "./workspace-kinds.schema.json" with { type: "json" };
 import type { WorkspaceTree } from "./tree";
@@ -116,7 +116,15 @@ export type KindOutputs =
  * chant writes itself. See {@link substituteGraphConfig} for the placeholders.
  */
 export interface KindGraph {
-  lexicon: string;
+  /** The lexicon that reads the member; unset when `reader` is. */
+  lexicon?: string;
+  /**
+   * A graph reader module (#4413), as the kinds file names it: a path inside
+   * the supplying package, which may be any package. Unset when `lexicon` is.
+   */
+  reader?: string;
+  /** The reader module, absolute; set once the package directory is known. */
+  readerFile?: string;
   config: Record<string, unknown>;
 }
 
@@ -514,7 +522,9 @@ export function parseKindData(text: string, source: string): KindData {
       shape: "member",
       outputs: { from: "declared", names: [...(k.outputs ?? [])] },
       source,
-      ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
+      ...(k.graph
+        ? { graph: { ...(k.graph.lexicon ? { lexicon: k.graph.lexicon } : {}), ...(k.graph.reader ? { reader: k.graph.reader } : {}), config: structuredClone(k.graph.config ?? {}) } }
+        : {}),
       ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
       ...(k.reader && (KIND_LINK_READERS as readonly string[]).includes(k.reader) ? { reader: k.reader as KindLinkReaderName } : {}),
       ...(k.memberFile ? { memberFile: { path: k.memberFile.path, schema: k.memberFile.schema } } : {}),
@@ -574,7 +584,20 @@ export function readPackageKinds(packageDir: string, source?: string): PackageKi
       const problem = loadMemberFileSchema(k.memberFile, packageDir);
       if (problem) data.problems.push(`${name}: kind ${k.name} ${problem}; members of the kind fail WSP012 until it is fixed`);
     }
-    if (k.graph && packageName !== lexiconPackageName(k.graph.lexicon)) {
+    if (k.graph?.reader) {
+      // A reader module is any package's own file (#4413): it must sit inside the package and exist. Nothing is imported here.
+      const file = resolve(packageDir, ...k.graph.reader.split("/"));
+      const inside = relative(packageDir, file);
+      if (inside.startsWith("..") || isAbsolute(inside)) {
+        data.problems.push(`${name}: kind ${k.name} names graph reader ${k.graph.reader}, which is outside the package; the kind is kept, and workspace graph lists its members with kind-not-run`);
+        delete k.graph;
+      } else if (!existsSync(file)) {
+        data.problems.push(`${name}: kind ${k.name} names graph reader ${k.graph.reader}, which does not exist in the package; the kind is kept, and workspace graph lists its members with kind-not-run`);
+        delete k.graph;
+      } else {
+        k.graph.readerFile = file;
+      }
+    } else if (k.graph?.lexicon && packageName !== lexiconPackageName(k.graph.lexicon)) {
       data.problems.push(
         `${name}: kind ${k.name} reads its members with lexicon ${k.graph.lexicon}, which is ${lexiconPackageName(k.graph.lexicon)}, ` +
           `and this package is ${packageName ?? "unnamed"}; the kind is kept, and workspace graph lists its members with kind-not-run`,
