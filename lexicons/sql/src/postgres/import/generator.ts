@@ -61,6 +61,11 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.cast]: "cast",
   [POSTGRES_ENTITY_TYPES.eventTrigger]: "eventTrigger",
   [POSTGRES_ENTITY_TYPES.operator]: "operator",
+  [POSTGRES_ENTITY_TYPES.operatorClass]: "operatorClass",
+  [POSTGRES_ENTITY_TYPES.operatorFamily]: "operatorFamily",
+  [POSTGRES_ENTITY_TYPES.foreignTable]: "foreignTable",
+  [POSTGRES_ENTITY_TYPES.textSearchConfiguration]: "textSearchConfiguration",
+  [POSTGRES_ENTITY_TYPES.textSearchDictionary]: "textSearchDictionary",
   [POSTGRES_ENTITY_TYPES.statistics]: "statistics",
   [POSTGRES_ENTITY_TYPES.foreignDataWrapper]: "foreignDataWrapper",
   [POSTGRES_ENTITY_TYPES.foreignServer]: "foreignServer",
@@ -87,8 +92,10 @@ const UNREFERENCED: ReadonlySet<string> = new Set([
   POSTGRES_ENTITY_TYPES.cast,
   POSTGRES_ENTITY_TYPES.eventTrigger,
   POSTGRES_ENTITY_TYPES.operator,
+  // An index names a class, but a class and its own family share a name; a configuration shares one with a dictionary, which a mapping names.
+  POSTGRES_ENTITY_TYPES.operatorClass,
+  POSTGRES_ENTITY_TYPES.textSearchConfiguration,
   POSTGRES_ENTITY_TYPES.statistics,
-  POSTGRES_ENTITY_TYPES.foreignServer,
   POSTGRES_ENTITY_TYPES.publication,
 ]);
 
@@ -141,6 +148,11 @@ function bareSpots(tokens: Token[]): Set<number> {
     }
     if (node.statement === "eventTrigger") name(node.function);
     if (node.statement === "foreignServer") name(node.wrapper);
+    if (node.statement === "foreignTable") {
+      for (const c of node.columns) if (c.type) first(c.type.from, c.type.to);
+      name(node.server);
+    }
+    if (node.statement === "operatorClass") first(node.type.from, node.type.to);
     if (node.statement === "foreignDataWrapper") {
       name(node.handler ?? undefined);
       name(node.validator ?? undefined);

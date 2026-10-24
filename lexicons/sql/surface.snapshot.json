@@ -66,6 +66,10 @@
       "kind": "resource",
       "resourceType": "Postgres::ForeignServer"
     },
+    "PostgresForeignTable": {
+      "kind": "resource",
+      "resourceType": "Postgres::ForeignTable"
+    },
     "PostgresFunction": {
       "kind": "resource",
       "resourceType": "Postgres::Function"
@@ -85,6 +89,14 @@
     "PostgresOperator": {
       "kind": "resource",
       "resourceType": "Postgres::Operator"
+    },
+    "PostgresOperatorClass": {
+      "kind": "resource",
+      "resourceType": "Postgres::OperatorClass"
+    },
+    "PostgresOperatorFamily": {
+      "kind": "resource",
+      "resourceType": "Postgres::OperatorFamily"
     },
     "PostgresPolicy": {
       "kind": "resource",
@@ -121,6 +133,14 @@
     "PostgresTable": {
       "kind": "resource",
       "resourceType": "Postgres::Table"
+    },
+    "PostgresTextSearchConfiguration": {
+      "kind": "resource",
+      "resourceType": "Postgres::TextSearchConfiguration"
+    },
+    "PostgresTextSearchDictionary": {
+      "kind": "resource",
+      "resourceType": "Postgres::TextSearchDictionary"
     },
     "PostgresTrigger": {
       "kind": "resource",

@@ -215,7 +215,7 @@ function diffUnparsed(key: string, before: PgDiffObject, after: PgDiffObject, ou
 }
 
 /** The kinds (#3911) whose definition has no ALTER: a change is a drop and a create, or (an aggregate's) CREATE OR REPLACE. */
-const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger", "operator", "statistics"]);
+const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger", "operator", "operatorClass", "operatorFamily", "statistics"]);
 
 /** What each of {@link REPLACED_KINDS} compares besides its name and comment. */
 const DEFINITION: Readonly<Record<string, readonly string[]>> = {
@@ -226,14 +226,20 @@ const DEFINITION: Readonly<Record<string, readonly string[]>> = {
   cast: ["castMethod", "function", "context"],
   eventTrigger: ["event", "tags", "function"],
   operator: ["definition"],
+  // A class's members, type, family and default flag have no ALTER; a family has no definition besides its name and method (its identity).
+  operatorClass: ["default", "dataType", "family", "items"],
+  operatorFamily: [],
   statistics: ["table", "kinds", "targets"],
 };
 
 /** The kinds (#3911) the server alters in place, with the fields that cannot be altered (the object is dropped and created) and those that can. */
-const ALTERED_KINDS: Readonly<Record<string, { recreate: readonly string[]; inPlace: readonly string[] }>> = {
+const ALTERED_KINDS: Readonly<Record<string, { recreate: readonly string[]; inPlace: readonly string[]; rule?: PgClassifierRuleId }>> = {
   foreignDataWrapper: { recreate: [], inPlace: ["handler", "validator", "options"] },
   foreignServer: { recreate: ["serverType", "wrapper"], inPlace: ["version", "options"] },
   publication: { recreate: ["allTables"], inPlace: ["tables", "schemas", "publish", "viaRoot", "generatedColumns"] },
+  // ALTER TEXT SEARCH DICTIONARY sets options and cannot change the template; ALTER TEXT SEARCH CONFIGURATION maps token types and cannot change the parser (SQLPG305).
+  textSearchDictionary: { recreate: ["template"], inPlace: ["options"], rule: "SQLPG305" },
+  textSearchConfiguration: { recreate: ["parser"], inPlace: ["mappings"], rule: "SQLPG305" },
 };
 
 /**
@@ -245,17 +251,98 @@ const ALTERED_KINDS: Readonly<Record<string, { recreate: readonly string[]; inPl
  */
 function diffAltered(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[]): void {
   if (!same(before.fields.comment, after.fields.comment)) out.push(change(key, "comment", "SQLPG216", show(before.fields.comment), show(after.fields.comment)));
-  const { recreate, inPlace } = ALTERED_KINDS[after.kind]!;
+  const { recreate, inPlace, rule = "SQLPG303" } = ALTERED_KINDS[after.kind]!;
   const replaced = recreate.filter((k) => !same(before.fields[k], after.fields[k]));
+  // An object that lives in a schema is another object under another name: a rename between builds is a drop and a create.
+  if (after.schema !== undefined && (before.schema !== after.schema || before.name !== after.name)) replaced.unshift("name");
   if (replaced.length > 0) {
-    const was = replaced.map((k) => `${k} ${show(before.fields[k]) ?? "-"}`).join("; ");
-    const now = replaced.map((k) => `${k} ${show(after.fields[k]) ?? "-"}`).join("; ");
+    const value = (o: PgDiffObject, k: string) => (k === "name" ? qualified(o) : (show(o.fields[k]) ?? "-"));
+    const was = replaced.map((k) => `${k} ${value(before, k)}`).join("; ");
+    const now = replaced.map((k) => `${k} ${value(after, k)}`).join("; ");
     if (before.dependents && before.dependents.length > 0) {
       out.push(change(key, replaced.join(", "), "SQLPG301", was, now, { note: `${before.dependents.join(", ")} depend${before.dependents.length === 1 ? "s" : ""} on it` }));
     } else out.push(change(key, replaced.join(", "), "SQLPG300", was, now));
     return;
   }
-  for (const k of inPlace) if (!same(before.fields[k], after.fields[k])) out.push(change(key, k, "SQLPG303", show(before.fields[k]), show(after.fields[k])));
+  for (const k of inPlace) if (!same(before.fields[k], after.fields[k])) out.push(change(key, k, rule, show(before.fields[k]), show(after.fields[k])));
+}
+
+/**
+ * Which of an operator's attributes `ALTER OPERATOR ... SET` can change from
+ * what the server holds (the Postgres 18 page, with the supported majors):
+ * RESTRICT and JOIN on every major, set or removed; from 17 COMMUTATOR and
+ * NEGATOR when the operator has none, and HASHES and MERGES when off, never
+ * back. Anything else about the definition is dropped and created.
+ */
+function operatorAlterable(key: string, before: Record<string, unknown>, after: Record<string, unknown>, major: number): boolean {
+  if (key === "restrict" || key === "join") return true;
+  if (major < 17) return false;
+  if (key === "commutator" || key === "negator") return before[key] === undefined && after[key] !== undefined;
+  if (key === "hashes" || key === "merges") return before[key] === undefined && after[key] === "true";
+  return false;
+}
+
+/** An operator's change: in place (SQLPG304) when every attribute that changed is one ALTER OPERATOR reaches, else dropped and created like the other kinds without an ALTER. */
+function diffOperator(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], major: number): void {
+  const bo = (before.fields.definition ?? {}) as Record<string, unknown>;
+  const ao = (after.fields.definition ?? {}) as Record<string, unknown>;
+  const renamed = before.schema !== after.schema || before.name !== after.name || before.signature !== after.signature;
+  // In the order the page lists them, so the statement reads the same whatever the order the options were written in.
+  const ORDER = ["restrict", "join", "commutator", "negator", "hashes", "merges"];
+  const rank = (k: string) => (ORDER.includes(k) ? ORDER.indexOf(k) : ORDER.length);
+  const changed = [...new Set([...Object.keys(bo), ...Object.keys(ao)])].filter((k) => !same(bo[k], ao[k])).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
+  if (renamed || !changed.every((k) => operatorAlterable(k, bo, ao, major))) {
+    diffReplaced(key, before, after, out);
+    return;
+  }
+  if (!same(before.fields.comment, after.fields.comment)) out.push(change(key, "comment", "SQLPG216", show(before.fields.comment), show(after.fields.comment)));
+  const note = major < 17 ? undefined : "from 17 ALTER OPERATOR also sets a commutator's or negator's own commutator or negator";
+  for (const k of changed) out.push(change(key, `definition.${k}`, "SQLPG304", show(bo[k]), show(ao[k]), note && (k === "commutator" || k === "negator") ? { note } : {}));
+}
+
+/**
+ * A foreign table's columns, as ALTER FOREIGN TABLE changes them (SQLPG306):
+ * all catalog changes, none reading the remote side. A column is its name
+ * (a rename is a drop and an add); its comment is the generic comment rule.
+ */
+function diffForeignColumns(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[]): void {
+  const byName = new Map(before.columns.map((c) => [c.name, c]));
+  const afterNames = new Set(after.columns.map((c) => c.name));
+  for (const b of before.columns) if (!afterNames.has(b.name)) out.push(change(key, `columns.${b.name}`, "SQLPG306", `${b.name} ${b.type ?? ""}`.trim(), undefined));
+  for (const a of after.columns) {
+    const b = byName.get(a.name);
+    if (!b) {
+      out.push(change(key, `columns.${a.name}`, "SQLPG306", undefined, `${a.name} ${a.type ?? ""}`.trim()));
+      continue;
+    }
+    const at = `columns.${a.name}`;
+    if (b.type !== a.type) out.push(change(key, `${at}.type`, "SQLPG306", b.type, a.type));
+    if (b.collate !== a.collate) out.push(change(key, `${at}.collate`, "SQLPG306", b.collate, a.collate));
+    if (b.default !== a.default) out.push(change(key, `${at}.default`, "SQLPG306", b.default, a.default));
+    if (b.notNull !== a.notNull) out.push(change(key, `${at}.notNull`, "SQLPG306", b.notNull ? "NOT NULL" : "NULL", a.notNull ? "NOT NULL" : "NULL"));
+    if (!same(b.options, a.options)) out.push(change(key, `${at}.options`, "SQLPG306", show(b.options), show(a.options)));
+    if (b.comment !== a.comment) out.push(change(key, `${at}.comment`, "SQLPG216", b.comment, a.comment));
+  }
+}
+
+/** A foreign table's CHECK constraints: a dropped one first, so a constraint replaced under its name is dropped before it is added. */
+function diffForeignConstraints(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[]): void {
+  const label = (c: CanonicalConstraint) => (c.name ? `${c.name}: ${c.body}` : c.body);
+  const remaining = [...before.constraints];
+  const added: CanonicalConstraint[] = [];
+  const comments: PgChange[] = [];
+  for (const a of after.constraints) {
+    const i = remaining.findIndex((b) => sameConstraint(a, b));
+    if (i < 0) {
+      added.push(a);
+      continue;
+    }
+    const b = remaining.splice(i, 1)[0]!;
+    if (b.comment !== a.comment) comments.push(change(key, `constraints.${a.name ?? b.name}.comment`, "SQLPG216", b.comment, a.comment));
+  }
+  for (const b of remaining) out.push(change(key, `constraints.${b.name ?? b.kind.toLowerCase()}`, "SQLPG306", label(b), undefined));
+  for (const a of added) out.push(change(key, `constraints.${a.name ?? a.kind.toLowerCase()}`, "SQLPG306", undefined, label(a)));
+  out.push(...comments);
 }
 
 /**
@@ -292,6 +379,15 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
     const [b, a] = f(name);
     if (!same(b, a)) out.push(change(key, name, rule, show(b), show(a), extra));
   };
+  if (after.kind === "operator") {
+    diffOperator(key, before, after, out, major);
+    return;
+  }
+  // A foreign table moved to another server is another table: ALTER FOREIGN TABLE has no SERVER action.
+  if (after.kind === "foreignTable" && before.schema === after.schema && before.name === after.name && !same(before.fields.server, after.fields.server)) {
+    out.push(change(key, "server", before.dependents && before.dependents.length > 0 ? "SQLPG301" : "SQLPG300", show(before.fields.server), show(after.fields.server), before.dependents && before.dependents.length > 0 ? { note: `${before.dependents.join(", ")} depend${before.dependents.length === 1 ? "s" : ""} on it` } : {}));
+    return;
+  }
   if (REPLACED_KINDS.has(after.kind)) {
     // A cast is named by its types, and an aggregate's argument types are its identity: either changed, between two builds, is another object.
     if (after.kind === "cast" && before.name !== after.name) {
@@ -420,6 +516,11 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
     case "role":
       field("attributes", "SQLPG294");
       field("connectionLimit", "SQLPG294");
+      break;
+    case "foreignTable":
+      diffForeignColumns(key, before, after, out);
+      diffForeignConstraints(key, before, after, out);
+      field("options", "SQLPG306");
       break;
     case "table":
       if (!same(before.fields.rowSecurity, after.fields.rowSecurity) || !same(before.fields.forceRowSecurity, after.fields.forceRowSecurity)) {

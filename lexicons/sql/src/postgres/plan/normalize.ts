@@ -52,6 +52,11 @@ import { sequenceDefaults } from "../live/catalog";
 import type {
   AggregateArgDef,
   OperatorProps,
+  OperatorClassProps,
+  OperatorFamilyProps,
+  ForeignTableProps,
+  TextSearchConfigurationProps,
+  TextSearchDictionaryProps,
   AggregateProps,
   CastProps,
   CheckDef,
@@ -323,6 +328,8 @@ export interface CanonicalColumn {
   collate?: string;
   compression?: string;
   storage?: string;
+  /** A foreign table column's `OPTIONS`, sorted by name. */
+  options?: Record<string, string>;
   comment?: string;
 }
 
@@ -354,6 +361,11 @@ export type CanonicalKind =
   | "cast"
   | "eventTrigger"
   | "operator"
+  | "operatorClass"
+  | "operatorFamily"
+  | "foreignTable"
+  | "textSearchConfiguration"
+  | "textSearchDictionary"
   | "statistics"
   | "foreignDataWrapper"
   | "foreignServer"
@@ -404,6 +416,11 @@ const kindOf: Record<string, CanonicalKind> = {
   "Postgres::Cast": "cast",
   "Postgres::EventTrigger": "eventTrigger",
   "Postgres::Operator": "operator",
+  "Postgres::OperatorClass": "operatorClass",
+  "Postgres::OperatorFamily": "operatorFamily",
+  "Postgres::ForeignTable": "foreignTable",
+  "Postgres::TextSearchConfiguration": "textSearchConfiguration",
+  "Postgres::TextSearchDictionary": "textSearchDictionary",
   "Postgres::Statistics": "statistics",
   "Postgres::ForeignDataWrapper": "foreignDataWrapper",
   "Postgres::ForeignServer": "foreignServer",
@@ -745,6 +762,105 @@ function operatorOptions(p: OperatorProps, ownSchema: string, defaultSchema: str
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
 
+/**
+ * A name where an object is named (a text search parser, template or
+ * dictionary, an operator family): the schema left off when it is
+ * `pg_catalog` or the default schema, since a bare name is looked for in both.
+ * The catalog prints every schema, so both sides are brought to this form.
+ */
+export function canonicalRef(text: string, defaultSchema: string): string {
+  const pieces = canonicalName(text).split(/\.(?=(?:[^"]*"[^"]*")*[^"]*$)/);
+  if (pieces.length >= 2) {
+    const schema = identValue(pieces[0]!);
+    return schema === "pg_catalog" || schema === defaultSchema ? pieces.slice(1).join(".") : pieces.join(".");
+  }
+  return pieces[0]!;
+}
+
+/** An operator named in an operator class: `OPERATOR(app.<<)`, `app.<<` or a bare symbol, by `canonicalRef`'s rule for the schema. */
+export function canonicalOperatorName(text: string, defaultSchema: string): string {
+  const inner = text.trim().replace(/^OPERATOR\s*\(\s*(.*?)\s*\)$/is, "$1").trim();
+  const m = /^("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*(\S.*)$/s.exec(inner);
+  if (!m) return inner;
+  const schema = identValue(m[1]!);
+  return schema === "pg_catalog" || schema === defaultSchema ? m[2]!.trim() : `${quoteIdent(schema)}.${m[2]!.trim()}`;
+}
+
+/** A comma list split at its top level: `numeric(12,2), text` is two items. */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of text) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(current.trim());
+      current = "";
+    } else current += ch;
+  }
+  if (current.trim() !== "") out.push(current.trim());
+  return out;
+}
+
+/**
+ * The operand types a support function of an operator class is registered
+ * for when `FUNCTION n (left, right)` does not say (sql-createopclass): a
+ * B-tree comparison function's (1) and a hash function's (1, 2) are the
+ * function's own input types, a B-tree `in_range` function's (3) its first
+ * and third, and every other support function's the class's type. The catalog
+ * always stores both, so a declaration is brought to them.
+ */
+function supportTypes(method: string, number: number, classType: string, args: readonly string[]): [string, string] {
+  if (method === "btree" && number === 1) return [args[0] ?? classType, args[1] ?? args[0] ?? classType];
+  if (method === "btree" && number === 3) return [args[0] ?? classType, args[2] ?? classType];
+  if (method === "hash" && (number === 1 || number === 2)) return [args[0] ?? classType, args[0] ?? classType];
+  return [classType, classType];
+}
+
+/** An operator class as compared: its type, family, default flag and members, each member canonical and the list sorted. */
+function operatorClassFields(p: OperatorClassProps, schema: string, defaultSchema: string, fields: Record<string, unknown>): void {
+  const type = canonicalType(p.dataType, defaultSchema)!;
+  fields.default = p.default === true;
+  fields.dataType = type;
+  // A class with no FAMILY is in a family of its own name; so is one that names that family.
+  const own = canonicalRef(`${quoteIdent(schema)}.${quoteIdent(p.name)}`, defaultSchema);
+  const named = p.family === undefined ? own : /^\s*("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s*$/.test(p.family) && identValue(p.family.trim()) === p.name ? own : canonicalRef(p.family, defaultSchema);
+  fields.family = named === own ? undefined : named;
+  const side = (t: string) => (t.trim().toUpperCase() === "NONE" ? "NONE" : canonicalArgType(t, defaultSchema));
+  const members = p.items.map((i): { rank: number; number: number; text: string } => {
+    if (i.kind === "storage") return { rank: 2, number: 0, text: `storage ${canonicalType(i.type, defaultSchema)}` };
+    const n = Number(i.number);
+    if (i.kind === "operator") {
+      const [l, r] = i.types !== undefined ? splitTopLevel(i.types) : [type, type];
+      const sorted = i.orderBy !== undefined ? ` for order by ${canonicalRef(i.orderBy, defaultSchema)}` : "";
+      return { rank: 0, number: n, text: `operator ${n} ${canonicalOperatorName(i.operator, defaultSchema)} (${side(l ?? type)},${side(r ?? l ?? type)})${sorted}` };
+    }
+    const args = splitTopLevel(i.args).map((a) => canonicalArgType(a, defaultSchema));
+    const given = i.types !== undefined ? splitTopLevel(i.types).map(side) : undefined;
+    const [l, r] = given ? [given[0]!, given[1] ?? given[0]!] : supportTypes(p.method, n, type, args);
+    return { rank: 1, number: n, text: `function ${n} (${l},${r}) ${canonicalFunctionName(i.function, defaultSchema)}(${args.join(",")})` };
+  });
+  members.sort((a, b) => a.rank - b.rank || a.number - b.number || (a.text < b.text ? -1 : 1));
+  fields.items = members.map((m) => m.text);
+}
+
+/** A dictionary option's value as compared: a string constant's value, a quoted name's, a bare word folded, a number as written. */
+function dictionaryValue(v: string): string {
+  const t = v.trim();
+  if (/^([Ee]?'|\$)/.test(t)) return stringValue(t) ?? t;
+  if (/^"/.test(t)) return identValue(t);
+  return t.toLowerCase();
+}
+
+/** A text search configuration's mappings as compared: each token type to its dictionaries in order, sorted by token type. */
+function mappingFields(p: TextSearchConfigurationProps, defaultSchema: string): Record<string, string[]> | undefined {
+  const out: Record<string, string[]> = {};
+  for (const m of p.mappings) for (const t of m.tokens) out[t.toLowerCase()] = m.dictionaries.map((d) => canonicalRef(d, defaultSchema));
+  const entries = Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 /** An `OPTIONS (...)` list as compared: by name, none as nothing. */
 function sortedOptions(options: Record<string, string> | undefined): Record<string, string> | undefined {
   const entries = Object.entries(options ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
@@ -867,6 +983,45 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
       const p = props as unknown as OperatorProps;
       base.signature = operatorSignature(p, defaultSchema);
       fields.definition = operatorOptions(p, base.schema!, defaultSchema);
+      break;
+    }
+    case "operatorClass":
+      operatorClassFields(props as unknown as OperatorClassProps, base.schema!, defaultSchema, fields);
+      base.signature = ` USING ${(props as unknown as OperatorClassProps).method}`;
+      break;
+    case "operatorFamily":
+      base.signature = ` USING ${(props as unknown as OperatorFamilyProps).method}`;
+      break;
+    case "textSearchDictionary": {
+      const p = props as unknown as TextSearchDictionaryProps;
+      fields.template = canonicalRef(p.template, defaultSchema);
+      fields.options = sortedOptions(Object.fromEntries(Object.entries(p.options).map(([k, v]) => [k.toLowerCase(), dictionaryValue(v)])));
+      break;
+    }
+    case "textSearchConfiguration": {
+      const p = props as unknown as TextSearchConfigurationProps;
+      fields.parser = canonicalRef(p.parser, defaultSchema);
+      fields.mappings = mappingFields(p, defaultSchema);
+      break;
+    }
+    case "foreignTable": {
+      const p = props as unknown as ForeignTableProps;
+      p.columns.forEach((c: ColumnDef, position) => {
+        const options = sortedOptions(c.options);
+        columns.push({
+          name: c.name,
+          position,
+          type: canonicalType(c.type, defaultSchema),
+          notNull: c.notNull === true,
+          default: canonicalExpr(c.default),
+          collate: c.collate ? canonicalName(c.collate) : undefined,
+          comment: comment(c.comment),
+          ...(options ? { options } : {}),
+        });
+      });
+      for (const c of p.checks) constraints.push({ kind: "CHECK", name: c.name, body: ["check", canonicalExpr(c.expr), c.noInherit ? "no inherit" : ""].filter(Boolean).join(" "), ...(c.notValid ? { notValid: true } : {}), comment: comment(c.comment) });
+      fields.server = quoteIdent(p.serverName);
+      fields.options = sortedOptions(p.options);
       break;
     }
     case "statistics": {

@@ -43,6 +43,11 @@ The export name (`users`) is the object's identity in chant. The name in the SQL
 | `trigger` | `CREATE TRIGGER` | `Postgres::Trigger` |
 | `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
 | `operator` | `CREATE OPERATOR` | `Postgres::Operator` |
+| `operatorClass` | `CREATE OPERATOR CLASS` | `Postgres::OperatorClass` |
+| `operatorFamily` | `CREATE OPERATOR FAMILY` | `Postgres::OperatorFamily` |
+| `foreignTable` | `CREATE FOREIGN TABLE` | `Postgres::ForeignTable` |
+| `textSearchConfiguration` | `CREATE TEXT SEARCH CONFIGURATION`, then `ALTER TEXT SEARCH CONFIGURATION ... ADD MAPPING` | `Postgres::TextSearchConfiguration` |
+| `textSearchDictionary` | `CREATE TEXT SEARCH DICTIONARY` | `Postgres::TextSearchDictionary` |
 | `statistics` | `CREATE STATISTICS` | `Postgres::Statistics` |
 | `foreignDataWrapper` | `CREATE FOREIGN DATA WRAPPER` | `Postgres::ForeignDataWrapper` |
 | `foreignServer` | `CREATE SERVER` | `Postgres::ForeignServer` |
