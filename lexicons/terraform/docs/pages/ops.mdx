@@ -264,7 +264,7 @@ jobs:
       gate: '${{ steps.chant-run.outputs.gate }}'
       approve: '${{ steps.chant-run.outputs.approve }}'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: '${{ vars.AWS_APPLY_ROLE_ARN }}'

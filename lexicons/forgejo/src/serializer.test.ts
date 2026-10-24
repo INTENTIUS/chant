@@ -88,15 +88,16 @@ describe("forgejoSerializer — uses: action resolution", () => {
     const { primary } = asResult(
       forgejoSerializer.serialize(withSteps(Checkout({}).step, SetupNode({ nodeVersion: "22" }).step)),
     );
-    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/checkout@v7`);
-    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/setup-node@v7`);
+    // Composites pin by commit SHA since #4410; the rewrite still puts them under the actions root.
+    expect(primary).toMatch(new RegExp(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/checkout@[0-9a-f]{40}`));
+    expect(primary).toMatch(new RegExp(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/setup-node@[0-9a-f]{40}`));
   });
 
   test("forgejo.actionsRoot override changes the rewritten base", () => {
     const out = forgejoSerializer.serialize(withSteps(Checkout({}).step), undefined, {
       config: { forgejo: { actionsRoot: "https://codeberg.org" } },
     });
-    expect(asResult(out).primary).toContain("uses: https://codeberg.org/actions/checkout@v7");
+    expect(asResult(out).primary).toMatch(/uses: https:\/\/codeberg\.org\/actions\/checkout@[0-9a-f]{40}/);
   });
 
   test("an unmapped action ref is passed through (WFJ010 reports it post-synth)", () => {

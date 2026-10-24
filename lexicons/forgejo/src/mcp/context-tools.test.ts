@@ -80,7 +80,8 @@ describe("forgejo context tools", () => {
   test("forgejo:references reports the rewritten + unmapped refs", async () => {
     const refs = (await tool("forgejo:references").handler({ path: join(dir, "src") })) as Array<{ source: string }>;
     const sources = refs.map((r) => r.source);
-    expect(sources).toContain("https://code.forgejo.org/actions/checkout@v7");
+    // Composites pin by commit SHA since #4410.
+    expect(sources.some((s: string) => /^https:\/\/code\.forgejo\.org\/actions\/checkout@[0-9a-f]{40}$/.test(s))).toBe(true);
     expect(sources).toContain("some-org/custom-action@v1");
   });
 
