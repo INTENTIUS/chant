@@ -92,6 +92,7 @@ What uses the column moves with it, so `integer` to `bigint` on a primary key th
 - Views that read the column, and views on those, are dropped deepest first and created again from their declarations in the switch, with their grants and owner. A view the build does not declare is refused, since there is nothing to create it from.
 - An identity column's type change moves the identity to the new column under its sequence's name, carrying on from the old sequence's position, which the switch reads after locking the table. A `serial` column's sequence is handed over with `OWNED BY` and stays the column's default, widened to `bigint` for `bigserial`.
 - A partitioned table is migrated as one: the new column, the trigger, the check, the backfill and the swap run on the partitioned table, and each partition follows it.
+- An index on a partitioned table cannot be built `CONCURRENTLY`, so the Op makes it the way the Postgres docs give for adding one while writes go on (`carryPartitionedIndex` in `migrate/steps.ts`): `CREATE INDEX ... ON ONLY` the table, which builds nothing and stays invalid, then `CREATE INDEX CONCURRENTLY` on each partition that holds rows, then `ALTER INDEX ... ATTACH PARTITION` for each, deepest first. The partitioned index becomes valid when the last one is attached. A run after a crash keeps the partitions already attached and builds the rest, and a partition attached to the table meanwhile gets its index from Postgres. At the switch the partitioned index is renamed like any other; the partitions' indexes keep their working names (`<partition>_<index>__chant_new`). Primary keys, unique constraints and foreign keys on a partitioned table's column are still refused (see below): `ADD CONSTRAINT ... USING INDEX` is not supported on a partitioned table.
 
 A type change keeps every name. A rename takes the name the build declares for a key, foreign key or index on the new column; otherwise a name Postgres made from the old column (`users_email_key`) becomes the one it makes from the new (`users_login_key`); otherwise the name is kept. The old column's unique constraints and indexes are kept, renamed with `__chant_old`, for readers of the old name until the contract.
 
@@ -161,6 +162,23 @@ export const { op } = PostgresMigrationOp({
 
 `onFailure: "keep"` leaves out onFailure. A step that fails leaves the new column, its trigger, the carried indexes and constraints and the batches' receipts, and the next run resumes the backfill at the first batch without a receipt, as it does after a run that was stopped. A failure that a rerun would hit again (a verification difference, or a refusal) says so in its error. To start again from a new column, run the Op once with `onFailure: "drop"`: when the step fails again, its onFailure drops what the expand added.
 
+## Renaming a column that has a default
+
+During a rename both columns are written, each from the other. If both kept the default, a writer that names only the old column would give the new column its default too, and the trigger (`dualWriteBody` in `migrate/steps.ts`, which takes the new column's value whenever it is not NULL) could not tell that value from one the writer chose. So the Op leaves the new column without a default. The declared default, a serial's sequence and default, or an identity is given to it in the contract's transaction (`contractStatements` in `migrate/steps.ts`), after the old column is dropped. A serial's sequence is handed over with `OWNED BY` first, because dropping the old column would drop it. An identity is dropped from the old column and added to the new one under the same sequence name, set to where the old one stood, while the contract holds the table's ACCESS EXCLUSIVE lock.
+
+Until the contract, the old column keeps its default, so a writer that omits both columns gets the default in both, and a writer that names either column gets that value in both. Two writes still differ from the declaration, and `defaultAtContract: true` says you accept them:
+
+- an `INSERT` that names the new column with an explicit `NULL` gets the default, not `NULL`, because the trigger reads a `NULL` new column as not given;
+- `UPDATE ... SET <new> = DEFAULT` sets `NULL`, because the new column has no default yet.
+
+A serial or an identity on the old column also spends a value for each row a writer inserts under the new name.
+
+The plan shows the default missing from the new column between the switch and the contract, and an `ApplyOp` in that window must not set it: that would give both columns a default again. The Op needs its contract to finish the rename, so with `gates: "outer"` run it again with the default `gates: "own"` after the retention date, or set the default yourself when you drop the old column.
+
+## Renaming and changing the type
+
+A rename with a type change gives the new column the declared type and keeps both written through the contract, like a rename. Writers of the old name get `using` applied to their value, and writers of the new name get `reverse` applied (`dualWriteBody`, `migrate/steps.ts`). The verification adds one count to its statement: rows where `reverse` over the new value differs from the old value. Any such row fails the run with nothing switched. A new value the old type cannot hold fails the writer's statement until the contract drops the old column, so applications should not write such values before then. Indexes and constraints are carried over as for any rename, and a view that reads the column is made again at the switch. `using` and `reverse` are yours to get right: the verification proves them on the rows that exist, not on rows written later.
+
 ## Replication
 
 A backfill writes every row of the table once more, and every standby and logical subscriber receives it. Before each batch the Op reads `pg_stat_replication` on the primary and waits while any replica's `replay_lag` is above `replicationLag.max` (default `10s`), for up to `replicationLag.wait` (default `30m`) at a time, then stops naming the replica. No rows means no WAL senders, a single server or a managed service whose replicas share storage, and the check passes at once. A role that is neither a superuser nor a member of `pg_monitor` sees the lag as NULL, so the backfill stops and names the grant to make (`GRANT pg_monitor TO <role>`) rather than go on blind. `replicationLag: false` turns the check off.
@@ -172,7 +190,9 @@ A table a logical replication publication sends the column of is refused, naming
 | Option | Default | |
 |---|---|---|
 | `name`, `env`, `table`, `column` | | required; `table` is `schema.name` or the table's export name |
-| `using` | `CAST(<column> AS <declared type>)` | a type change's expression over the old row's columns, as `ALTER COLUMN ... TYPE ... USING` takes it; refused on a rename |
+| `using` | `CAST(<column> AS <declared type>)` | a type change's expression over the old row's columns, as `ALTER COLUMN ... TYPE ... USING` takes it; refused on a rename without a type change |
+| `reverse` | | a rename with a type change: the expression over the row's columns (the new column by its declared name) that gives the old column's value back |
+| `defaultAtContract` | `false` | a rename of a column with a default, an identity or a serial: the default lands on the new column at the contract; see below |
 | `batchSize` | `1000` | the width of a range of a one-integer-column key, or the keys between two recorded boundaries of any other key |
 | `retain` | `7d` | how long the old column is kept after the switch |
 | `replicationLag` | `{ max: "10s", wait: "30m" }` | or `false` |
@@ -193,12 +213,14 @@ The Plan phase refuses, naming each object and what to do, before anything is ad
 | an exclusion constraint, a constraint trigger, a materialized view, a rule, a user trigger, a policy or a statistics object on the column; a generated column computed from it; an `INVALID` index on it | none has a concurrent or catalog-only way to be made again on the new column |
 | a view on the column the build does not declare | there is no declaration to create it from; declare it |
 | a generated column itself | Postgres cannot make an existing column generated; the applier changes it in place |
-| on a partitioned table, an index, key or foreign key on the column, or the column in the partition key | no `CONCURRENTLY` or `USING INDEX` there, and rows would move between partitions; [#3333](https://github.com/INTENTIUS/chant/issues/3333) |
+| on a partitioned table, a primary or unique key or a foreign key on the column, or the column in the partition key | a key cannot be attached from an index built `CONCURRENTLY` there (`ADD CONSTRAINT ... USING INDEX` is not supported on a partitioned table) and a foreign key cannot be added `NOT VALID`, so carrying one over would hold ACCESS EXCLUSIVE for a full build; and rows would move between partitions; drop it, migrate, declare it again |
+| on a partitioned table, an index over a foreign-table partition | a foreign table holds no index to attach |
 | a partition | run the Op on its partitioned table |
 | an inheritance tree | a write to a child does not fire the parent's trigger; [#3333](https://github.com/INTENTIUS/chant/issues/3333) |
 | a table with no primary key | there is nothing to batch by |
-| a rename of a column with a default, an identity or a serial sequence | a writer naming one column would get the other's default, which the trigger cannot tell from a value it was given; drop the default, rename, declare it again; [#3331](https://github.com/INTENTIUS/chant/issues/3331) |
-| a rename and a type change in one declaration | run the Op twice, the rename first; [#3331](https://github.com/INTENTIUS/chant/issues/3331) |
+| a rename of a column with a default, an identity or a serial sequence, without `defaultAtContract: true` | a writer naming one column would get the other's default, which the trigger cannot tell from a value it was given; see "Renaming a column that has a default" |
+| a rename and a type change in one declaration, without `reverse` | a writer of the new name needs its value converted back to the old type |
+| a rename and a type change of a column that also has a default, a serial or an identity | the default is an expression of the old type, and its conversion would be a third one that nothing verifies; rename first, then change the type |
 | a column a logical replication publication sends | the subscriber's table must change at the same moment; a column list that leaves the column out does not stop the Op; [#3332](https://github.com/INTENTIUS/chant/issues/3332) |
 | an old column from the last migration still kept | run its contract first |
 | a change the applier makes in place | use `ApplyOp` |

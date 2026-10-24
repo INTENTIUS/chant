@@ -109,6 +109,8 @@ async function bound<T>(args: PostgresMigrationArgs, signal: AbortSignal | undef
       objects,
       column: args.column,
       ...(args.using !== undefined ? { using: args.using } : {}),
+      ...(args.reverse !== undefined ? { reverse: args.reverse } : {}),
+      ...(args.defaultAtContract ? { defaultAtContract: true } : {}),
       ...(marker ? { marker } : {}),
       ...(major !== undefined ? { major } : {}),
       batchSize: args.batchSize ?? 1000,
@@ -158,6 +160,8 @@ export async function postgresMigrationPlan(args: PostgresMigrationArgs, signal?
       column: run.column,
       ...(run.marker ? { marker: run.marker } : {}),
       ...(run.using !== undefined ? { using: run.using } : {}),
+      ...(run.reverse !== undefined ? { reverse: run.reverse } : {}),
+      ...(run.defaultAtContract ? { defaultAtContract: true } : {}),
       ...(run.major !== undefined ? { major: run.major } : {}),
     });
     const n = o.names;
