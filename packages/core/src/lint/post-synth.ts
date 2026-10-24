@@ -322,6 +322,24 @@ export interface RootedOutputDoc extends OutputDoc {
   root: string;
 }
 
+/**
+ * A link between two build roots, as the caller knows it (chant #2549): in a
+ * workspace, a member link from the declaration or one the members' graphs
+ * surface. A cross-root check that compares what the outputs say with what
+ * was written down reads these from {@link CrossRootContext.links}.
+ */
+export interface CrossRootLink {
+  consumer: string;
+  producer: string;
+  output: string;
+  /** How the link was found: `declared`, `kind-reader`, or `inferred:<rule>` for one the roots' graphs surface. */
+  origin: string;
+  /** The consumer's parameter an inferred link feeds; null or absent for a declared one. */
+  input?: string | null;
+  /** Whether the link resolved against the producer's outputs, as the caller judged it. */
+  status?: string;
+}
+
 /** An entity tagged with the build root that declared it. */
 export interface RootedEntity {
   root: string;
@@ -346,6 +364,16 @@ export interface CrossRootContext {
   /** The run's environment, when the caller set one for the whole run. */
   readonly env?: string;
   readonly activityContracts?: ReadonlyMap<string, ActivityContract>;
+  /** The links between roots the caller passed (#2549), or absent when it passed none. */
+  readonly links?: readonly CrossRootLink[];
+}
+
+/** What a cross-root run takes besides its roots. */
+export interface CrossRootOptions {
+  env?: string;
+  activityContracts?: ReadonlyMap<string, ActivityContract>;
+  /** The links between roots (#2549), handed to every check as {@link CrossRootContext.links}. */
+  links?: readonly CrossRootLink[];
 }
 
 /**
@@ -382,7 +410,7 @@ export function isCrossRootCheck(value: unknown): value is CrossRootCheck {
  */
 export function createCrossRootContext(
   inputs: readonly CrossRootInput[],
-  opts?: { env?: string; activityContracts?: ReadonlyMap<string, ActivityContract> },
+  opts?: CrossRootOptions,
 ): CrossRootContext {
   const seen = new Set<string>();
   const roots: BuildRootView[] = inputs.map((input) => {
@@ -423,6 +451,7 @@ export function createCrossRootContext(
     },
     ...(opts?.env ? { env: opts.env } : {}),
     ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
+    ...(opts?.links ? { links: opts.links } : {}),
   };
 }
 
@@ -435,7 +464,7 @@ export function createCrossRootContext(
 export function runCrossRootChecks(
   checks: ReadonlyArray<CrossRootCheck | PostSynthCheck>,
   roots: readonly CrossRootInput[],
-  opts?: { env?: string; activityContracts?: ReadonlyMap<string, ActivityContract> },
+  opts?: CrossRootOptions,
 ): PostSynthDiagnostic[] {
   const selected = checks.filter(isCrossRootCheck);
   if (selected.length === 0) return [];
