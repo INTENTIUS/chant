@@ -856,9 +856,8 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
         ? humanQuorumSince(pending, standing)
         : since;
     // #4290: who an approval proves, and their roles at base, for rules that read them.
-    const judge = quorumRules(input.approval.quorum).some(ruleNeedsProof)
-      ? (input.judge ?? (await port.quorumJudge?.(input.gate)) ?? UNPROVEN_JUDGE)
-      : UNPROVEN_JUDGE;
+    // #4333: a caller's judge applies to every rule, since it may leave out everyone involved in the change.
+    const judge = input.judge ?? (quorumRules(input.approval.quorum).some(ruleNeedsProof) ? ((await port.quorumJudge?.(input.gate)) ?? UNPROVEN_JUDGE) : UNPROVEN_JUDGE);
     const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval, humansSince, judge);
     if (tally.permit) {
       return { satisfied: true, resolution: tally.permit, via: "policy", approvals: tally.counted };

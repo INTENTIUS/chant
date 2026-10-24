@@ -301,6 +301,20 @@ export function reviewSourceFromEnv(env: Record<string, string | undefined> = pr
 }
 
 /**
+ * The principal a forge login on the CI job's forge goes by (#4333):
+ * `github:<login>` on github.com, `gitlab@<host>:<login>` on another host,
+ * as {@link reviewSourceFromEnv}'s reviews name their approvers. A product
+ * records its reviewers and its `Requested-by:` trailers by login, and this
+ * reads them as the approvals they stand beside. A value that already has a
+ * forge's prefix is kept.
+ */
+export function forgePrincipalFromEnv(env: Record<string, string | undefined> = process.env): (login: string) => string {
+  const kind: ForgeKind = env.GITLAB_CI === "true" ? "gitlab" : env.FORGEJO_ACTIONS === "true" || env.GITEA_ACTIONS === "true" ? "forgejo" : "github";
+  const host = kind === "gitlab" ? (env.CI_SERVER_HOST ?? hostOf(env.CI_SERVER_URL, "gitlab.com")) : hostOf(env.GITHUB_SERVER_URL, "github.com");
+  return (login) => (/^(?:github|gitlab|forgejo|gitea|codeberg)(?:@[^:\s]+)?:/i.test(login.trim()) ? login : forgePrincipalOf(kind, host, login));
+}
+
+/**
  * The head of the pull request a CI job runs for, from its environment: the
  * event payload's `pull_request.head.sha` on GitHub and Forgejo (whose
  * checkout is a merge preview, not the head), and on GitLab the merge

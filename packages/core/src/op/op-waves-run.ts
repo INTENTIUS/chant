@@ -85,8 +85,8 @@ import type { TrustPolicy } from "../workspace/trust/policy";
 import type { GateSigners } from "../lifecycle/gate-seal";
 import { ciRunIdFromEnv } from "./gate-run-locator";
 import {
-  quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, ruleNeedsProof, samePrincipal, trustQuorumJudge,
-  type GateQuorumRule, type GateQuorumRuleProgress,
+  changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, ruleNeedsProof, samePrincipal, trustQuorumJudge,
+  type GateQuorumJudge, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
 } from "./gate-quorum";
 import {
   OP_WAVE_DEFAULT_APPLY,
@@ -114,7 +114,10 @@ import {
   type OpWaveHookMoment,
   type OpWavePoint,
   type OpWaveRun,
+  type OpWavesInvolved,
   type OpWavesSpec,
+  OP_LEDGER_NAME,
+  opWavesInvolvedProblems,
 } from "./op-waves";
 import {
   OP_WAVE_PENDING_RESERVED,
@@ -253,6 +256,10 @@ export interface OpWaveDecision {
   review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
   /** The approval rules at base the wave's targets take (#4290). Absent when it takes none. */
   quorum?: GateQuorumRule[];
+  /** The op whose ledger holds the product's own reviews, read at base (#4333). */
+  reviewLedger?: string;
+  /** Who else counts as involved in the change, read at base (#4333). */
+  involved?: OpWavesInvolved;
   /** Where each of those rules stands (#4290), while the wave waits. */
   quorumProgress?: GateQuorumRuleProgress[];
   /** The command that approves this digest, when waiting. */
@@ -500,6 +507,10 @@ export interface OpWaveBaseRules {
   quorum?: GateQuorumRule[];
   /** Set when the rules at base cannot be read: the wave fails rather than wait on fewer approvers than they ask. */
   quorumRefused?: string;
+  /** `approvals.reviewLedger` at base (#4333): the op whose ledger holds a product's own reviews. */
+  reviewLedger?: string;
+  /** `approvals.involved` at base (#4333). */
+  involved?: OpWavesInvolved;
 }
 
 const noHooks = (): Record<OpWaveHookMoment, OpWaveHook[]> =>
@@ -552,12 +563,24 @@ export function readOpWavePolicy(
 }
 
 /** The approval rules at base (#4290), or why they cannot be read. A spec at base with none has none. */
-function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "quorum" | "quorumRefused"> {
-  const raw = (spec as { approvals?: { quorum?: unknown } }).approvals?.quorum;
+function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "quorum" | "quorumRefused" | "reviewLedger" | "involved"> {
+  const a = (spec as { approvals?: { quorum?: unknown; reviewLedger?: unknown; involved?: unknown } }).approvals;
+  const raw = a?.quorum;
+  // #4333: where a product's reviews are, and who counts as involved, read at base with the rules.
+  const extra: Pick<OpWaveBaseRules, "reviewLedger" | "involved"> = {};
+  if (a?.reviewLedger !== undefined) {
+    if (typeof a.reviewLedger !== "string" || !OP_LEDGER_NAME.test(a.reviewLedger)) return { quorumRefused: `the approval rules in ${where} cannot be read (approvals.reviewLedger must name an op)` };
+    extra.reviewLedger = a.reviewLedger;
+  }
+  if (a?.involved !== undefined) {
+    const bad = opWavesInvolvedProblems(a.involved);
+    if (bad.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${bad.join("; ")})` };
+    extra.involved = structuredClone(a.involved as OpWavesInvolved);
+  }
   if (raw === undefined) return {};
   const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true }) : ["`approvals.quorum` must be a list of rules"];
   if (problems.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${problems.join("; ")})` };
-  return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[] } : {};
+  return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[], ...extra } : {};
 }
 
 /** The point wave `name` asks at base (#3836), or why it cannot be asked. */
@@ -624,6 +647,8 @@ export interface RunOpWaveOptions {
    * and writes its own there. Default {@link opWaveOutcomeDir}.
    */
   outcomeDir?: string;
+  /** The commits after base up to the applied head, for `Requested-by:` trailers (#4333). Default: `git log`. */
+  commits?: (base: string, head: string) => { sha: string; message: string }[];
 }
 
 export interface RunOpWaveResult {
@@ -1607,7 +1632,11 @@ async function decideOpWave(
   decision.members = members;
   // #4290: the rules at base whose targets glob matches one of the wave's runs.
   const takes = planned.rules.quorum ? quorumRulesFor(planned.rules.quorum, members.map((m) => m.member)) : [];
-  if (takes.length > 0) decision.quorum = takes;
+  if (takes.length > 0) {
+    decision.quorum = takes;
+    if (planned.rules.reviewLedger) decision.reviewLedger = planned.rules.reviewLedger;
+    if (planned.rules.involved) decision.involved = planned.rules.involved;
+  }
   if (extras) decision.extras = extras;
   if (pending) decision.pending = pending;
   const after = await runHooks(ctx, "after-plan", planned.rules.hooks["after-plan"], wave.runs, planned.planned, digest);
@@ -1925,6 +1954,16 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   decision.approve = approveCommand(spec.name, gate, undefined, digest, approval === "sealed");
 }
 
+/** The commits after `base` up to `head`, merge commits left out, for the `Requested-by:` trailers on them (#4333). */
+const gitCommitsBetween = (cwd: string) => (base: string, head: string): { sha: string; message: string }[] => {
+  try {
+    const out = execFileSync("git", ["log", "--no-merges", "--format=%H%x00%B%x01", `${base}..${head}`], { cwd, encoding: "utf-8" });
+    return out.split("\x01").map((c) => c.replace(/^\n/, "")).filter((c) => c.includes("\x00")).map((c) => ({ sha: c.slice(0, c.indexOf("\x00")), message: c.slice(c.indexOf("\x00") + 1) }));
+  } catch {
+    return [];
+  }
+};
+
 /**
  * Decide a gate under approval rules (#4290): the rules at base the wave's
  * targets take, each met by distinct human approvers of the digest. Roles
@@ -1948,7 +1987,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
   // The merged pull request: its author for notAuthor, and its review under pr-review.
   let merged: MergedReview | null = null;
   let unknown: string | undefined;
-  const asks = approval === "pr-review" || rules.some((r) => r.notAuthor);
+  const asks = approval === "pr-review" || rules.some((r) => r.notAuthor) || decision.involved !== undefined;
   const head = asks ? (options.head ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).trim()) : "";
   if (asks) {
     try {
@@ -1993,12 +2032,54 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     }
   }
 
-  const judge = trustQuorumJudge({
+  // #4333: reviews a product recorded itself, on the ledger the spec at base names. The ledger is
+  // the lifecycle branch's, never the change's, and proves a reviewer only under `pr-review`.
+  const principal = review.forgePrincipalFromEnv();
+  let recorded: { head: string; approvers: string[] }[] = [];
+  if (decision.reviewLedger && approval === "pr-review") {
+    const lines = (await ledger.read(decision.reviewLedger)).resolutions.filter((r) => r.gate === gate && samePlanDigest(r.planDigest, digest));
+    const read = recordedReviewApprovals(lines, principal);
+    recorded = read.reviews.filter((x) => !(spent !== undefined && isApprovalSpent(spent, { gate, planDigest: digest, review: { head: x.head } })));
+    const had = (await ledger.read(spec.name)).resolutions.filter((r) => r.gate === gate && samePlanDigest(r.planDigest, digest));
+    for (const rec of read.records) {
+      if (!rec.review || !recorded.some((x) => x.head === rec.review!.head) || had.some((r) => r.review?.head === rec.review!.head && samePrincipal(r.resolvedBy, rec.resolvedBy))) continue;
+      await ledger.appendResolution?.({
+        ...rec,
+        op: spec.name,
+        gate,
+        timestamp: now,
+        planDigest: digest,
+        note: `approved by a review ${decision.reviewLedger} recorded for ${rec.review.head.slice(0, 12)}: ${rec.review.approvers.join(", ")}`,
+      });
+    }
+    if (recorded.length > 0) log(`${label}: ${decision.reviewLedger} recorded a review of ${digest} by ${[...new Set(recorded.flatMap((x) => x.approvers))].join(", ")}`);
+  }
+
+  // #4333: everyone involved in the change, from the commits after base and the agents' accounts at base.
+  const involved = decision.involved || merged ? changeInvolvement({
+    ...(merged ? { author: merged.author } : {}),
+    commits: decision.involved ? (options.commits ?? gitCommitsBetween(cwd))(base, head) : [],
+    ...(decision.involved?.agents ? { agents: decision.involved.agents.map(principal) } : {}),
+    principal,
+  }) : [];
+  const said = new Set<string>();
+  const sayExcluded = (j: QuorumJudgement): QuorumJudgement => {
+    if (j.excluded !== undefined && !said.has(j.excluded)) {
+      said.add(j.excluded);
+      log(`${label}: ${j.excluded}`);
+    }
+    return j;
+  };
+  const judgeBase = trustQuorumJudge({
     signers: trust,
     roles: trust.roles,
     ...(merged ? { authors: [merged.author] } : {}),
+    ...(involved.length > 0 ? { involved } : {}),
+    ...(decision.involved?.exclude ? { excludeInvolved: true } : {}),
     ...(reviewed ? { review: reviewed } : {}),
+    ...(recorded.length > 0 ? { recorded } : {}),
   });
+  const judge: GateQuorumJudge = (r) => sayExcluded(judgeBase(r));
   const held = decision.heldBy?.length ? `, held by ${decision.heldBy.join(", ")}` : "";
   const check = await decideWaveGate(port, {
     op: spec.name,
