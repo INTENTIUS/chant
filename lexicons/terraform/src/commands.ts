@@ -107,10 +107,10 @@ async function runPinRolloutVerb(ctx: CommandGroupContext): Promise<number> {
 
 const REPORT_USAGE =
   "usage: chant terraform report --stage tf-plan|tf-apply --plan <show.json> [--applied <show-after-apply.json>] (--out <dir> | --to <url>) " +
-  "[--project <host/path>] [--commit <sha>] [--pull-request <n>] [--binary <name>] [--binary-version <v>] [--root-dir <dir>] [--self-root <dir>] " +
+  "[--project <host/path>] [--commit <sha>] [--pull-request <n>] [--binary <name>] [--binary-version <v>] [--root-dir <dir>] [--self-root <dir>] [--repo <dir>] " +
   "[--started <iso>] [--finished <iso>] [--json]";
 
-const REPORT_VALUE_FLAGS = new Set(["--stage", "--plan", "--applied", "--out", "--to", "--project", "--commit", "--pull-request", "--binary", "--binary-version", "--root-dir", "--self-root", "--started", "--finished"]);
+const REPORT_VALUE_FLAGS = new Set(["--stage", "--plan", "--applied", "--out", "--to", "--project", "--commit", "--pull-request", "--binary", "--binary-version", "--root-dir", "--self-root", "--repo", "--started", "--finished"]);
 
 /** Parse `chant terraform report`'s flags. Throws on an unknown flag, a missing value or a missing required flag. */
 export function parseReportArgs(rawArgs: string[]): { values: Map<string, string>; json: boolean } {
@@ -140,7 +140,7 @@ async function runReportVerb(ctx: CommandGroupContext): Promise<number> {
   try {
     const { values, json } = parseReportArgs(ctx.rawArgs);
     const { readFileSync } = await import("node:fs");
-    const { runFactsFromEnv, terraformReport, writeReport, httpStore, dirStore } = await import("./report");
+    const { runFactsFromEnv, terraformReport, writeReport, httpStore, dirStore, moduleEstates, topModule } = await import("./report");
     const read = (flag: string): unknown => {
       const file = values.get(flag)!;
       try {
@@ -150,9 +150,15 @@ async function runReportVerb(ctx: CommandGroupContext): Promise<number> {
       }
     };
     const run = runFactsFromEnv(process.env, { pullRequest: values.get("--pull-request"), project: values.get("--project"), commit: values.get("--commit") });
+    const plan = read("--plan");
+    // The plan holds no `live` block: each module's estate is read from its directory, <repo>/<root-dir>/<module>.
+    const repo = values.get("--repo") ?? process.env.GITHUB_WORKSPACE ?? process.cwd();
+    const modules = [...new Set(((plan as { resource_changes?: { address?: string; module_address?: string }[] }).resource_changes ?? []).map((r) => topModule(String(r.module_address ?? r.address ?? ""))).filter((m): m is string => m !== undefined))];
+    const estates = moduleEstates(repo, values.get("--root-dir") ?? "", modules);
     const result = terraformReport({
       stage: values.get("--stage") as "tf-plan" | "tf-apply",
-      plan: read("--plan"),
+      plan,
+      ...(Object.keys(estates).length > 0 ? { estates } : {}),
       ...(values.has("--applied") ? { applied: read("--applied") } : {}),
       run,
       ...(values.has("--binary") ? { binary: values.get("--binary")! } : {}),
