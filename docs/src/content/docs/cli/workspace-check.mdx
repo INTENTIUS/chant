@@ -54,6 +54,7 @@ chant.workspace.json
 | `WSP009` | other-member | warning | yes | A member is kind `other`. `chant doctor` shows it too |
 | `WSP010` | group-empty | warning | yes | An example group matches no chant project |
 | `WSP011` | check-settings-invalid | error | no | `checks` or a `suppress` entry names an unknown id or one that can't be set |
+| `WSP012` | member-file-invalid | error | yes | A member's file is missing or fails the JSON Schema its kind names in [`memberFile`](/chant/reference/workspace-kinds/#a-members-own-file) |
 | `WSP071` | ownership-stack-shared | error | no | Two `chant` members set the same `ownership.stack` ([ledgers](/chant/reference/workspace-declaration/#ledgers)) |
 | `WSP072` | flat-ledger-environment-shared | error | no | Two members that write the top of the ledger branch share an environment name ([ledgers](/chant/reference/workspace-declaration/#ledgers)) |
 | `WSP073` | ledger-settings-unread | info | yes | A `chant` member's `ownership` or `environments` can't be read from its config without running it, so `WSP071` and `WSP072` skip the member |

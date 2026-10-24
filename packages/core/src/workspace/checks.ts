@@ -21,7 +21,7 @@
  *
  * | Ids | Checks |
  * |---|---|
- * | WSP001 to WSP011 | the declaration and member kinds (this file) |
+ * | WSP001 to WSP012 | the declaration and member kinds (this file), and a member's file against its kind's schema (#3672) |
  * | WSP071, WSP072 | member ledgers |
  * | WSP081 to WSP083 | recorded pipelines |
  * | WSP091 to WSP099 | member links (#2539, #2558), and those a kind's reader finds in a member's files (#3932) |
@@ -48,7 +48,7 @@ import type { PostSynthDiagnostic } from "../lint/post-synth";
 import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, type Entry, type ErrorLocation, type ResolvedGroup } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
-import { loadKindRegistry, probeKind, resolveKind, resolveMemberFields, type KindLoadProblem, type KindRegistry } from "./kinds";
+import { checkMemberFile, loadKindRegistry, probeKind, resolveKind, resolveMemberFields, type KindLoadProblem, type KindRegistry } from "./kinds";
 import { coreClassRegistry, loadClassRegistry, unknownScopeClasses, type ClassRegistry } from "./principal-classes";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { LINK_CHECKS, linkTable } from "./checks/links";
@@ -355,6 +355,41 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
           const problem = settingProblem(s.check);
           if (problem) out.push(entryFinding(this, e, `suppress/${i}/check`, `${e.name} suppresses ${s.check}, which ${problem}`));
         });
+      }
+      return out;
+    },
+  },
+  {
+    id: "WSP012",
+    name: "member-file-invalid",
+    description: "Every member of a kind that names a member file has that file, and it passes the kind's JSON Schema (#3672).",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of readableMembers(ctx)) {
+        const kind = ctx.kinds.get(m.kind)!;
+        const mf = kind.memberFile;
+        if (!mf) continue;
+        const file = memberDir(m.dir) === "" ? mf.path : `${memberDir(m.dir)}/${mf.path}`;
+        if (!mf.validate) {
+          out.push(entryFinding(this, m, "kind", `member ${m.name}'s ${mf.path} can't be checked: kind ${m.kind}'s schema ${mf.schema} did not load (see WSP002)`));
+          continue;
+        }
+        if (ctx.tree.stat(file) !== "file") {
+          out.push(entryFinding(this, m, "dir", `member ${m.name} (${m.dir}) has no ${mf.path}, which kind ${m.kind} requires${ctx.tree.label}`));
+          continue;
+        }
+        let text: string;
+        try {
+          text = ctx.tree.read(file);
+        } catch (err) {
+          out.push(entryFinding(this, m, "dir", `member ${m.name}'s ${mf.path} can't be read: ${(err as Error).message}`));
+          continue;
+        }
+        for (const p of checkMemberFile(mf, mf.path, text)) {
+          out.push({ ...entryFinding(this, m, null, `member ${m.name}'s ${mf.path} fails kind ${m.kind}'s schema ${mf.schema}: ${p.message}`), treeFile: file, line: 1, column: 1 });
+        }
       }
       return out;
     },
