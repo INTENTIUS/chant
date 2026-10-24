@@ -71,6 +71,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
 | `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
 | `kinds[].reader` | Optional. The link reader chant runs over a member's own files. See [Links read from a member's files](#links-read-from-a-members-files) |
+| `kinds[].memberFile` | Optional. A file every member has and the JSON Schema it must pass. See [A member's own file](#a-members-own-file) |
 
 A probe needs at least one of `anyFile`, `anyBlock` and `anyJsonKey`, and it passes when any one does. All three only look at files directly in the directory, never below it.
 
@@ -138,6 +139,24 @@ The readers are chant's code, and the kinds file only names one. The file stays 
 A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
 
 A link names its producer when the member's fields say which member that is. When they don't, chant picks the one other member that exposes the output the link is anchored on (for a dbt column, its table). If none does and exactly one other member exposes outputs at all, the link goes to that member, so a dropped table is reported as missing from the only place it could be. Any other case is ambiguous (`WSP095`), and the message names the field that settles it.
+
+### A member's own file
+
+Records are checked against their kind, and a kind can also check a file each of its members carries, such as the `terragucci.yml` of a terragucci control repo ([#3672](https://github.com/INTENTIUS/chant/issues/3672)).
+
+```json
+{
+  "name": "control",
+  "memberFile": { "path": "terragucci.yml", "schema": "schemas/terragucci.schema.json" }
+}
+```
+
+| Field | Value |
+|---|---|
+| `memberFile.path` | The file, relative to the member's directory, with forward slashes and no `..` |
+| `memberFile.schema` | A draft 2020-12 JSON Schema, a `.json` file inside the supplying package, relative to the package's directory |
+
+chant reads the schema when it reads the package's kinds, as data, the same way it reads the kinds file. A schema that is missing, isn't JSON or doesn't compile is a `WSP002` problem. [`chant workspace check`](/chant/cli/workspace-check/) reads each member's file, parsing it as YAML when its name ends in `.yml` or `.yaml` and as JSON otherwise, and fails a member whose file is missing, doesn't parse or doesn't pass the schema with `WSP012`, one finding per reason. A `$ref` to another file is not followed. A chant older than this field fails a kinds file that uses it, so ship the schema in the package's `files` and raise the chant floor with it.
 
 ### Which packages are read
 

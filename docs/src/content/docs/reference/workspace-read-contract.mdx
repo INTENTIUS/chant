@@ -68,7 +68,7 @@ A workspace is identified by its declared `name` and a git revision ([ws-016](ht
 | Command | What `--at` reads |
 |---|---|
 | `ls` | the declaration, and the member and group directories, at the revision |
-| `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
+| `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP012`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
 | `records` | the records at the revision, and the files their pins name, as committed at the revision. For a session kind, its subject records at the revision too |
 | `records --since` | the records at `--since` and at `--at`, or in the working tree without `--at`, compared by id |
 | `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |

@@ -25,6 +25,7 @@ import { joinPath, skippedDir } from "./tree";
 import { checkPinIntegrity } from "./pin-integrity";
 import { dataExportTarget, findInstalledPackage } from "./class-data";
 import { loadAjv2020 } from "./ajv2020";
+import yaml from "js-yaml";
 
 export const KINDS_SCHEMA_ID = schema.$id;
 
@@ -135,7 +136,30 @@ export interface MemberKind {
    * entry states.
    */
   reader?: KindLinkReaderName;
+  /** A file every member of the kind has, and the JSON Schema it must pass (#3672); unset, the kind checks no member file. */
+  memberFile?: KindMemberFile;
 }
+
+/**
+ * A kind's member file (#3672): `path` in each member's directory must pass
+ * the JSON Schema at `schema` in the supplying package. `chant workspace
+ * check` reads and validates it (WSP012). The schema is read as data when the
+ * package's kinds are read, so a schema that is missing or doesn't compile is
+ * a load problem (WSP002), and `validate` is unset.
+ */
+export interface KindMemberFile {
+  /** The file, relative to the member's directory. */
+  path: string;
+  /** The schema, as the kinds file names it, relative to the package. */
+  schema: string;
+  /** The schema, absolute; unset until the package directory is known. */
+  schemaFile?: string;
+  /** The compiled schema; unset when it could not be read or compiled. */
+  validate?: MemberFileValidate;
+}
+
+/** A compiled member-file schema, in Ajv's shape. */
+export type MemberFileValidate = ((data: unknown) => boolean) & { errors?: { instancePath: string; message?: string; params?: Record<string, unknown> }[] | null };
 
 /**
  * The link readers chant ships (#3932). A kind names one in its kinds file as
@@ -400,7 +424,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField>; reader?: string }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField>; reader?: string; memberFile?: { path: string; schema: string } }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -425,6 +449,7 @@ export function parseKindData(text: string, source: string): KindData {
       ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
       ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
       ...(k.reader && (KIND_LINK_READERS as readonly string[]).includes(k.reader) ? { reader: k.reader as KindLinkReaderName } : {}),
+      ...(k.memberFile ? { memberFile: { path: k.memberFile.path, schema: k.memberFile.schema } } : {}),
     });
     if (k.reader && !(KIND_LINK_READERS as readonly string[]).includes(k.reader)) {
       problems.push(`${source}: kind ${k.name} names link reader ${k.reader}, which this chant does not have (it has ${KIND_LINK_READERS.join(", ")}); the kind is kept, and its members' links are only those their entries state`);
@@ -477,6 +502,10 @@ export function readPackageKinds(packageDir: string, source?: string): PackageKi
   const packageName = typeof pkg.name === "string" ? pkg.name : undefined;
   for (const k of data.kinds) {
     k.packageDir = packageDir;
+    if (k.memberFile) {
+      const problem = loadMemberFileSchema(k.memberFile, packageDir);
+      if (problem) data.problems.push(`${name}: kind ${k.name} ${problem}; members of the kind fail WSP012 until it is fixed`);
+    }
     if (k.graph && packageName !== lexiconPackageName(k.graph.lexicon)) {
       data.problems.push(
         `${name}: kind ${k.name} reads its members with lexicon ${k.graph.lexicon}, which is ${lexiconPackageName(k.graph.lexicon)}, ` +
@@ -486,6 +515,67 @@ export function readPackageKinds(packageDir: string, source?: string): PackageKi
     }
   }
   return { ...data, file };
+}
+
+/**
+ * Read and compile a kind's member-file schema from `packageDir` (#3672),
+ * setting `schemaFile` and `validate`. Returns why it can't be used, or
+ * undefined. The schema is a JSON file inside the package; it is data, so
+ * nothing is imported, and a `$ref` outside the file is not followed.
+ */
+export function loadMemberFileSchema(memberFile: KindMemberFile, packageDir: string): string | undefined {
+  const file = resolve(packageDir, ...memberFile.schema.split("/"));
+  memberFile.schemaFile = file;
+  const inside = relative(packageDir, file);
+  if (inside.startsWith("..") || isAbsolute(inside)) return `names member-file schema ${memberFile.schema}, which is outside the package`;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(readFileSync(file, "utf-8"));
+  } catch (err) {
+    const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
+    return missing ? `names member-file schema ${memberFile.schema}, which does not exist` : `names member-file schema ${memberFile.schema}, which is not JSON (${(err as Error).message})`;
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return `names member-file schema ${memberFile.schema}, which is not a JSON Schema object`;
+  try {
+    const Ajv = loadAjv2020() as new (opts: object) => { compile(s: object): MemberFileValidate };
+    memberFile.validate = new Ajv({ allErrors: true, strict: false }).compile(doc);
+  } catch (err) {
+    return `names member-file schema ${memberFile.schema}, which does not compile as a draft 2020-12 schema (${(err as Error).message})`;
+  }
+  return undefined;
+}
+
+/** One reason a member's file fails its kind's schema (#3672): a JSON Pointer into the file, and why. */
+export interface MemberFileProblem {
+  pointer: string;
+  message: string;
+}
+
+/**
+ * Check a member's file text against its kind's schema (#3672). `file` is the
+ * file's name, which picks the parser: YAML for `.yml` and `.yaml`, JSON
+ * otherwise. The kind's schema must have loaded; when it didn't, WSP002 has
+ * already said why, and this returns nothing.
+ */
+export function checkMemberFile(memberFile: KindMemberFile, file: string, text: string): MemberFileProblem[] {
+  if (!memberFile.validate) return [];
+  let data: unknown;
+  try {
+    data = /\.ya?ml$/i.test(file) ? yaml.load(text) : JSON.parse(text);
+  } catch (err) {
+    return [{ pointer: "", message: `is not ${/\.ya?ml$/i.test(file) ? "YAML" : "JSON"} (${(err as Error).message.split("\n")[0]})` }];
+  }
+  if (memberFile.validate(data)) return [];
+  const seen = new Set<string>();
+  const out: MemberFileProblem[] = [];
+  for (const e of memberFile.validate.errors ?? []) {
+    const extra = e.params && typeof e.params.additionalProperty === "string" ? ` (${e.params.additionalProperty})` : "";
+    const message = `${e.instancePath || "the file"} ${e.message ?? "is invalid"}${extra}`;
+    if (seen.has(message)) continue;
+    seen.add(message);
+    out.push({ pointer: e.instancePath, message });
+  }
+  return out;
 }
 
 /** The package a lexicon name resolves to. */
