@@ -94,6 +94,7 @@ import {
 import { deployUnits } from "./deploy-units";
 import { runFanOut, type FanOutRunResult } from "./fan-out-run";
 import { remainingFanOut, type ComponentChangeSignal, type FanOutPlan } from "./fan-out";
+import { coveredRound, type PlanShape, type RoundCoverage } from "./covered-round";
 import type { PrApplyRecord } from "./fan-out-record";
 import type { CapabilityRegistry, PlannedOutputs } from "./capability";
 import type { RunProgressEvent } from "./run-progress";
@@ -145,6 +146,8 @@ export interface PrPlanSet {
    * report's `plannedOutputs`.
    */
   plannedOutputs?: Record<string, string[]>;
+  /** The shapes lexicons supplied with their plans (#4419), by member. */
+  shapes?: Record<string, PlanShape>;
   /** Whether any component failed to plan. */
   failed: boolean;
 }
@@ -179,6 +182,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const componentOf = new Map<string, string>();
   const unknownOf = new Map<string, { unknown: string[]; build: string[] }>();
   const plans: Record<string, Record<string, unknown>> = {};
+  const shapes: Record<string, PlanShape> = {};
   let failed = false;
   const emit = options.onRunEvent;
   emit?.({ type: "phase-start", component: null, phase: PR_PLAN_PHASE });
@@ -234,6 +238,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       }
       plannedBy.set(p.component, p.outputs);
       plans[p.component] = p.plans;
+      Object.assign(shapes, p.shapes);
       for (const part of p.parts) {
         parts.push(part);
         componentOf.set(part.member.member, p.component);
@@ -266,6 +271,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     plans,
     outputs,
     failed,
+    ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
     ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}),
     ...(Object.keys(plannedOutputs).length > 0 ? { plannedOutputs } : {}),
   };
@@ -409,13 +415,23 @@ export interface PrApplyOptions {
    * The gate is {@link prRoundGate}. Without it, held members are left
    * `waiting` and nothing is planned again.
    */
-  decideRound?: (round: { round: number; gate: string; set: PrPlanSet; plan: FanOutPlan }) => Promise<PrRoundDecision>;
+  /**
+   * Where the approval of `set` stands (#4419). When it is `approved`, a round
+   * whose fresh plan does only what `set` previewed, with only the inputs it
+   * marked unknown filled in, applies under that approval without a gate of
+   * its own (`coveredRound`), and the round records it (`PrRound.covered`).
+   * Without it every round decides its own gate.
+   */
+  approval?: PrApproval;
+  decideRound?: (round: { round: number; gate: string; set: PrPlanSet; plan: FanOutPlan; notCovered?: string }) => Promise<PrRoundDecision>;
 }
 
 /** How a round's gate was decided: whether it applies, and where its approval stands. */
 export interface PrRoundDecision {
   satisfied: boolean;
   approval: PrApproval;
+  /** Set when the first approval covered the round (#4419): no gate of its own was decided. */
+  covered?: PrRound["covered"];
   /** Why it does not apply, when an approval stands but does not count (`--require-review`). */
   message?: string;
 }
@@ -428,6 +444,51 @@ export interface PrApplyResult {
   run: FanOutRunResult;
   /** Each round after the first, in order. Absent when nothing was held back. */
   rounds?: PrRound[];
+}
+
+/**
+ * Whether the first approval covers a round's fresh plan (#4419). The
+ * approval binds `options.set.doc.digest`; the round's components and
+ * members must be ones that plan previewed, and what differs is only what
+ * it marked unknown.
+ */
+function roundCover(
+  options: PrApplyOptions,
+  fresh: PrPlanSet,
+  plan: FanOutPlan,
+  now: Record<string, Record<string, unknown>>,
+  inChange: ReadonlySet<string>,
+  byName: ReadonlyMap<string, DriverComponent>,
+): RoundCoverage {
+  if (options.approval?.status !== "approved") return { covered: false, reason: "no approval of the first plan stands" };
+  const changedKnown: Record<string, string[]> = {};
+  for (const name of plan.order) {
+    const component = byName.get(name);
+    if (!component) continue;
+    const refs = new Set<string>();
+    for (const step of capabilitySteps(component.deploy)) {
+      const { kind: _kind, ...rest } = step;
+      for (const r of movedWiringReferences(rest, options.set.outputs, now)) if (!(r.publish && inChange.has(r.source))) refs.add(r.ref);
+    }
+    changedKnown[name] = [...refs].sort();
+  }
+  const approved = { doc: options.set.doc, members: options.set.members, ...(options.set.shapes ? { shapes: options.set.shapes } : {}) };
+  return coveredRound({
+    approved,
+    approvedDigest: options.set.doc.digest,
+    fresh: { doc: fresh.doc, members: fresh.members, ...(fresh.shapes ? { shapes: fresh.shapes } : {}) },
+    changedKnown,
+    attributes: (member) => {
+      if (!fresh.shapes?.[member]) {
+        const now = fresh.doc.members.find((m) => m.member === member);
+        const was = options.set.doc.members.find((m) => m.member === member);
+        if (now && was && now.planner === "chant" && now.lexicon === "chant" && now.status === "planned" && now.planDigest !== was.planDigest) {
+          return `${member} now plans to ${now.planDigest}, and its planner describes no changes to compare with the first plan`;
+        }
+      }
+      return planCoveredBy(options.set.doc, fresh.doc, member);
+    },
+  });
 }
 
 /** Two runs of one apply as one: `b` ran after `a`, against the outputs `a` left. */
@@ -500,22 +561,37 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       ...(options.targets ? { targets: options.targets } : {}),
     });
     for (const name of plan.order) roundOf.set(name, { round, set });
-    const record = (status: PrRound["status"], approval: PrApproval, message?: string): void => {
-      rounds.push({ round, gate, digest: set.doc.digest, components: plan.order, approval, status, ...(message ? { message } : {}), changeSet: set.doc });
+    const cover = roundCover(options, set, plan, run.componentOutputs, inChange, byName);
+    const record = (status: PrRound["status"], approval: PrApproval, message?: string, covered?: PrRound["covered"]): void => {
+      rounds.push({
+        round,
+        gate,
+        digest: set.doc.digest,
+        components: plan.order,
+        approval,
+        status,
+        ...(message ? { message } : {}),
+        ...(covered ? { covered } : {}),
+        ...(!covered && options.approval?.status === "approved" && cover.covered === false ? { notCovered: cover.reason } : {}),
+        changeSet: set.doc,
+      });
     };
     if (set.failed) {
       record("plan-failed", { status: "pending" });
       stopped = "plan-failed";
       break;
     }
-    const decision = await options.decideRound({ round, gate, set, plan });
+    const decision: PrRoundDecision =
+      cover.covered && options.approval
+        ? { satisfied: true, approval: options.approval, covered: { digest: cover.digest, filledInputs: cover.filledInputs } }
+        : await options.decideRound({ round, gate, set, plan, ...(options.approval?.status === "approved" && !cover.covered ? { notCovered: cover.reason } : {}) });
     if (!decision.satisfied) {
       record("waiting", decision.approval, decision.message);
       stopped = "waiting";
       break;
     }
     const next = await runRound(plan, set.plans, set.outputs, run.componentOutputs);
-    record(next.status === "fail" ? "failed" : "applied", decision.approval);
+    record(next.status === "fail" ? "failed" : "applied", decision.approval, undefined, decision.covered);
     run = joinRuns(run, next);
   }
 

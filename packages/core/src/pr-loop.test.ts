@@ -204,12 +204,25 @@ describe("the note", () => {
   test("a plan names the outputs read from upstream plans and the ones known only after apply (#3999)", () => {
     const note = renderPrNote(unknownReport);
     expect(note).toContain("Planned against the outputs this change's plans say its upstreams will have: `a` (`arn`).");
-    expect(note).toContain("Known only after apply: `app` reads `a.id`. This approval does not cover what those members do with them.");
+    expect(note).toContain("Known only after apply: `app` reads `a.id`. The apply plans those members again once their upstream applied.");
+    expect(note).toContain("anything else asks for an approval of its own");
     expect(renderPrNote(planReport)).not.toContain("Known only after apply");
     expect(note).toContain("From this pull request's build: `app` reads `img.publish.digest`. The image digest comes from this pull request's build");
     expect(renderPrNote(planReport)).not.toContain("From this pull request's build");
     expect(PR_REPORT_PLANNED_OUTPUTS_FLOOR).toBe("0.124.32");
     expect(schema.required).not.toContain("plannedOutputs");
+  });
+
+  test("a covered round names the first digest and the inputs filled in; an uncovered one gives the reason (#4419)", () => {
+    const covered = renderPrNote({
+      ...unknownReport,
+      status: "applied",
+      rounds: [{ ...waitingReport.rounds![0]!, status: "applied", approval: { status: "approved", approvedBy: ["github:rev"] }, covered: { digest: unknownReport.digest, filledInputs: ["a.id"] } }],
+    } as never);
+    expect(covered).toContain(`covered by the approval of \`${unknownReport.digest}\`, with \`a.id\` filled in, so it applied without a new approval`);
+    const not = renderPrNote({ ...unknownReport, rounds: [{ ...waitingReport.rounds![0]!, notCovered: "app now plans to create Bucket, which the first plan did not" }] } as never);
+    expect(not).toContain(`not covered by the approval of \`${unknownReport.digest}\`: app now plans to create Bucket, which the first plan did not.`);
+    expect(not).toContain("Not approved yet");
   });
 
   test("a waiting apply names the round's digest and the command that approves it (#3999)", () => {

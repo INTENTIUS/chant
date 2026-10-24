@@ -30,7 +30,7 @@ import {
 } from "./pr-run";
 import { changeSetDigest, changeSetDocumentDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import type { PrApplyRecord } from "./fan-out-record";
-import { renderPrNote } from "../pr-loop";
+import { renderPrNote, type PrApproval } from "../pr-loop";
 import type { FanOutPlan } from "./fan-out";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { DriverComponent } from "./driver";
@@ -78,6 +78,8 @@ function world() {
     predict: {} as Record<string, (() => PlannedOutputs | undefined) | undefined>,
     /** What `a` writes when it applies, when not what its version gives. */
     appliesAs: undefined as string | undefined,
+    /** `a` applying makes `app` plan a change its first plan did not show. */
+    bumpAppOnApply: false,
   };
   w.predict.net = () => ({ known: { ...(w.state.net ?? {}) }, unknown: [] });
   w.predict.a = () => ({ known: { id: `a-${w.versions.a ?? "v1"}` }, unknown: [] });
@@ -122,6 +124,7 @@ function world() {
       w.ranWith[input.root] = input.vars;
       if (w.failing.has(input.root)) throw new Error(`${input.root} failed`);
       w.applied.push(input.root);
+      if (input.root === "a" && w.bumpAppOnApply) w.versions.app = "v2";
       if (input.root === "a") w.state.a = { id: w.appliesAs ?? `a-${w.versions.a ?? "v1"}` };
       return { outputs: { ...(w.state[input.root] ?? {}) } };
     },
@@ -455,6 +458,86 @@ describe("a dependent planned on its upstream's planned outputs (#3999)", () => 
     expect(w2.ranWith.app).toEqual({ subnet: "a-v2" });
     expect(applied.rounds?.map((r) => [r.round, r.status, r.approval.status])).toEqual([[2, "applied", "approved"]]);
     expect(applied.members.find((m) => m.member === "app")).toMatchObject({ status: "applied", round: 2 });
+  });
+
+  const approvedFirst: PrApproval = { status: "approved", approvedBy: ["github:rev"] };
+
+  test("the first approval covers the round that only fills in what was unknown: no gate of its own, recorded as covered (#4419)", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    let asked = 0;
+    const applied = await applyPrSet({
+      components: ESTATE,
+      plan: plan(),
+      registry: w.registry,
+      env: "prod",
+      set,
+      approval: approvedFirst,
+      decideRound: async () => {
+        asked++;
+        return { satisfied: false, approval: { status: "pending" } };
+      },
+    });
+    expect(asked).toBe(0);
+    expect(applied.status).toBe("applied");
+    expect(w.applied).toEqual(["a", "app"]);
+    expect(w.ranWith.app).toEqual({ subnet: "a-v2" });
+    expect(applied.rounds).toHaveLength(1);
+    expect(applied.rounds![0]).toMatchObject({
+      round: 2,
+      status: "applied",
+      approval: approvedFirst,
+      covered: { digest: set.doc.digest, filledInputs: ["a.id"] },
+    });
+  });
+
+  test("a round that plans a change the first plan did not show asks for its own approval, with the reason (#4419)", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    w.bumpAppOnApply = true;
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    const seen: Array<string | undefined> = [];
+    const applied = await applyPrSet({
+      components: ESTATE,
+      plan: plan(),
+      registry: w.registry,
+      env: "prod",
+      set,
+      approval: approvedFirst,
+      decideRound: async ({ notCovered }) => {
+        seen.push(notCovered);
+        return { satisfied: false, approval: { status: "pending" } };
+      },
+    });
+    expect(applied.status).toBe("waiting");
+    expect(w.applied).toEqual(["a"]);
+    expect(seen).toEqual(["app now plans to update terraform_data.x, which the first plan did not"]);
+    expect(applied.rounds![0]).toMatchObject({ status: "waiting", notCovered: seen[0] });
+    expect(applied.rounds![0]!.covered).toBeUndefined();
+  });
+
+  test("an input the first plan read with a value that moved is not covered (#4419)", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    w.appliesAs = "a-v2-real";
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    const seen: Array<string | undefined> = [];
+    await applyPrSet({
+      components: ESTATE,
+      plan: plan(),
+      registry: w.registry,
+      env: "prod",
+      set,
+      approval: approvedFirst,
+      decideRound: async ({ notCovered }) => {
+        seen.push(notCovered);
+        return { satisfied: false, approval: { status: "pending" } };
+      },
+    });
+    expect(seen).toEqual(["app reads a.id, which the first plan read as another value"]);
   });
 
   test("an upstream new in the same pull request plans, and so does its dependent", async () => {

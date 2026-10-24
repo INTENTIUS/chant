@@ -210,6 +210,15 @@ export interface PrRound {
   status: "applied" | "failed" | "waiting" | "plan-failed";
   /** With `waiting`: why an approval that stands does not count (`--require-review`). */
   message?: string;
+  /**
+   * The first approval covered this round's plan (#4419): no gate of its own was
+   * decided. `digest` is the first approval's, which the coverage is bound
+   * to; `filledInputs` are the inputs it previewed as unknown and this plan
+   * had a value for, as `<component>.<output>`.
+   */
+  covered?: { digest: string; filledInputs: string[] };
+  /** Why the first approval did not cover this round, so it asked for its own (#4419). */
+  notCovered?: string;
   /** The change-set document the round planned. */
   changeSet: ChangeSetDocument;
 }
@@ -719,8 +728,8 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   if (unknown.length > 0) {
     out.push(
       "",
-      `Known only after apply: ${unknown.join("; ")}. This approval does not cover what those members do with them. ` +
-        "The apply plans them again once their upstream applied and asks for an approval of that plan.",
+      `Known only after apply: ${unknown.join("; ")}. ` +
+        "The apply plans those members again once their upstream applied. When that plan does only what this one shows, with only those inputs filled in, this approval covers it; anything else asks for an approval of its own.",
     );
   }
   const fromBuild = [...new Set(report.members.flatMap((m) => (m.buildInputs ?? []).map((ref) => `${code(m.component)} reads ${code(ref)}`)))];
@@ -733,6 +742,12 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   }
   for (const r of report.rounds ?? []) {
     const what = `Round ${r.round} planned ${r.components.map(code).join(", ")} again after their upstream applied, digest ${code(r.digest)}`;
+    if (r.covered) {
+      const filled = r.covered.filledInputs.length > 0 ? `, with ${r.covered.filledInputs.map(code).join(", ")} filled in` : "";
+      out.push("", `${what}: covered by the approval of ${code(r.covered.digest)}${filled}, so it ${r.status === "applied" ? "applied" : "did not apply"} without a new approval${r.status === "failed" ? " (the apply failed)" : ""}.`);
+      continue;
+    }
+    if (r.notCovered) out.push("", `Round ${r.round}'s plan is not covered by the approval of ${code(report.digest)}: ${r.notCovered}.`);
     if (r.status === "waiting") {
       if (r.message) out.push("", `> ${r.message}`);
       out.push("", `${what}. Not approved yet. Approve it, then run the apply again with the same \`--resume\` record:`, "", "```", prApproveCommand({ op: report.op, gate: r.gate, digest: r.digest }, options.approver ?? "<you>"), "```");

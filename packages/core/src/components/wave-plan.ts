@@ -27,6 +27,7 @@
  * `@<component>.publish.*`) resolves.
  */
 
+import type { PlanShape } from "./covered-round";
 import { assertTargetsAccepted, resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { componentDeployInputs, type ComponentDeployInputs } from "./deploy-inputs";
@@ -44,7 +45,7 @@ import type { ChangeSetPart } from "../change-set";
  * merges a run's outputs; absent when no step's plan says.
  */
 export type WaveComponentPlan =
-  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs }
+  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[]; outputs?: PlannedOutputs; shapes?: Record<string, PlanShape> }
   | { component: string; error: string };
 
 /** A part with no entries, for a member whose planner describes no changes. `unbound` steps become its holes (#4155). */
@@ -101,6 +102,7 @@ export async function planWaveComponent(
     const plans: Record<string, unknown> = {};
     const parts: ChangeSetPart[] = [];
     let outputs: PlannedOutputs | undefined;
+    const shapes: Record<string, PlanShape> = {};
     assertTargetsAccepted(component, registry, ctx);
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
@@ -112,6 +114,7 @@ export async function planWaveComponent(
       members.push(member);
       parts.push(planned.changeSet ?? emptyPart(member));
       if (planned.artifact !== undefined) plans[planned.member] = planned.artifact;
+      if (planned.shape) shapes[planned.member] = { ...planned.shape, member: planned.member };
       if (planned.outputs) outputs = mergePlannedOutputs(outputs, planned.outputs);
     }
     // #4155: the steps without a plan, which no member above covers.
@@ -141,7 +144,7 @@ export async function planWaveComponent(
         parts.push(emptyPart(member, read.unbound));
       }
     }
-    return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}) };
+    return { component: component.name, members, plans, parts, ...(outputs ? { outputs } : {}), ...(Object.keys(shapes).length > 0 ? { shapes } : {}) };
   } catch (err) {
     return { component: component.name, error: err instanceof Error ? err.message : String(err) };
   }
