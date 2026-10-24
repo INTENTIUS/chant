@@ -385,6 +385,12 @@ export const bucket = new StorageBucket({
     await generateDocs(options);
   },
 
+  /** Deploy-unit status for `gcp-apply`'s stack (#3143). */
+  async describeStackStatus(options) {
+    const { describeStackStatus } = await import("./describe-stack-status");
+    return describeStackStatus(options);
+  },
+
   async describeResources(options) {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);

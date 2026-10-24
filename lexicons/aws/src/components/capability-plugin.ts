@@ -11,7 +11,7 @@
 import type { Capability } from "@intentius/chant/components/capability";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 
-import { publishImageCapability, loadImageOnHostCapability, publishArtifactCapability } from "./publish";
+import { ecrRegistryBackend, loadImageOnHostCapability, publishArtifactCapability } from "./publish";
 import { extractConfigBomCapability } from "./config-bom";
 import {
   cfnDeployCapability,
@@ -30,7 +30,8 @@ import { snapshotBeforeCapability, rollbackPreviousCapability } from "./safety";
 export const AWS_VERB_FAMILIES = {
   // `extract-config-bom` parses a synthesized CloudFormation template (#684).
   sbom: ["extract-config-bom"],
-  publish: ["publish-image", "load-image-on-host", "publish-artifact"],
+  // `publish-image` is core's verb (#3142, #3143); aws contributes its ECR login as a registry backend.
+  publish: ["load-image-on-host", "publish-artifact"],
   apply: ["cfn-deploy", "ecs-update-service", "lambda-deploy", "s3-sync", "cdn-invalidate", "run-migration"],
   jobSubmission: ["emr-start-job-run", "emr-submit-step"],
   hostDelivery: ["code-deploy", "copy-to-host", "remote-exec"],
@@ -42,7 +43,6 @@ export const AWS_VERB_FAMILIES = {
 function awsCapabilities(): Array<Capability<never, unknown>> {
   return [
     extractConfigBomCapability,
-    publishImageCapability,
     loadImageOnHostCapability,
     publishArtifactCapability,
     cfnDeployCapability,
@@ -75,5 +75,6 @@ export const awsCapabilityPlugin: CapabilityPlugin = {
     return ownPackageVersion(import.meta.url);
   },
   capabilities: awsCapabilities,
+  registryBackends: () => [ecrRegistryBackend],
   families: () => AWS_VERB_FAMILIES,
 };
