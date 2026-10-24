@@ -76,6 +76,13 @@ export const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   // product (OpenTelemetry is one word with two capitals) and leaves the
   // operator's kinds as `K8s::Opentelemetry::OpenTelemetryCollector`.
   "opentelemetry.io": "OpenTelemetry",
+  // Two ClickHouse operators, kept apart. The first-segment rule would give
+  // `Clickhouse` to both clickhouse.com (ClickHouse Inc.) and
+  // clickhouse.altinity.com (Altinity). The vendor's takes the product's
+  // spelling; Altinity's two groups (the Keeper CRD has its own) share one name.
+  "clickhouse.com": "ClickHouse",
+  "clickhouse.altinity.com": "Altinity",
+  "clickhouse-keeper.altinity.com": "Altinity",
 };
 
 /**

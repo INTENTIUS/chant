@@ -529,6 +529,48 @@ const GRAFANA_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/grafana/gra
 const OTEL_OPERATOR_VERSION = "v0.160.0";
 const OTEL_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/open-telemetry/opentelemetry-operator/${OTEL_OPERATOR_VERSION}/config/crd/bases`;
 
+/**
+ * ClickHouse Kubernetes Operator CRDs (ClickHouse Inc.) — clickhouse.com/v1alpha1
+ *
+ * The vendor's own operator, repo `ClickHouse/clickhouse-operator`. Pinned to
+ * tag v0.0.8 (the latest release; commit ebcb5b6). Both CRDs are read from
+ * `config/crd/bases/` at that tag, which exists there. Produces, under the
+ * `ClickHouse` namespace (GROUP_NAMESPACE_OVERRIDES in group-namespace.ts):
+ *   K8s::ClickHouse::ClickHouseCluster  → apiVersion: clickhouse.com/v1alpha1, kind: ClickHouseCluster
+ *   K8s::ClickHouse::KeeperCluster      → apiVersion: clickhouse.com/v1alpha1, kind: KeeperCluster
+ *
+ * Not the same operator as Altinity's below: different group, different kinds,
+ * and a `ClickHouseCluster` here is unrelated to Altinity's
+ * `ClickHouseInstallation`. Do not install both against one cluster.
+ *
+ * Operator install: kubectl apply -f
+ *   https://github.com/ClickHouse/clickhouse-operator/releases/download/v0.0.8/clickhouse-operator.yaml
+ */
+const CLICKHOUSE_OPERATOR_VERSION = "v0.0.8";
+const CLICKHOUSE_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/ClickHouse/clickhouse-operator/${CLICKHOUSE_OPERATOR_VERSION}/config/crd/bases`;
+
+/**
+ * Altinity ClickHouse Operator CRDs — clickhouse.altinity.com/v1 and
+ * clickhouse-keeper.altinity.com/v1
+ *
+ * Repo `Altinity/clickhouse-operator`. Pinned to tag release-0.27.4 (the latest
+ * release; commit 8249865). The CRDs are read from
+ * `deploy/helm/clickhouse-operator/crds/` at that tag, which exists there; the
+ * file names carry a `CustomResourceDefinition-` prefix. Both groups map to the
+ * `Altinity` namespace (GROUP_NAMESPACE_OVERRIDES in group-namespace.ts); the
+ * first-segment rule would give `Clickhouse` for both, which
+ * would sit beside the vendor operator above under a near-identical name:
+ *   K8s::Altinity::ClickHouseInstallation          → clickhouse.altinity.com/v1
+ *   K8s::Altinity::ClickHouseInstallationTemplate  → clickhouse.altinity.com/v1
+ *   K8s::Altinity::ClickHouseOperatorConfiguration → clickhouse.altinity.com/v1
+ *   K8s::Altinity::ClickHouseKeeperInstallation    → clickhouse-keeper.altinity.com/v1
+ *
+ * Operator install: kubectl apply -f
+ *   https://raw.githubusercontent.com/Altinity/clickhouse-operator/release-0.27.4/deploy/operator/clickhouse-operator-install-bundle.yaml
+ */
+const ALTINITY_OPERATOR_VERSION = "release-0.27.4";
+const ALTINITY_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/Altinity/clickhouse-operator/${ALTINITY_OPERATOR_VERSION}/deploy/helm/clickhouse-operator/crds`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -637,4 +679,10 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_targetallocators.yaml` },
   { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_opampbridges.yaml` },
   { type: "url", url: `${OTEL_OPERATOR_CRD_BASE}/opentelemetry.io_clusterobservabilities.yaml` },
+  { type: "url", url: `${CLICKHOUSE_OPERATOR_CRD_BASE}/clickhouse.com_clickhouseclusters.yaml` },
+  { type: "url", url: `${CLICKHOUSE_OPERATOR_CRD_BASE}/clickhouse.com_keeperclusters.yaml` },
+  { type: "url", url: `${ALTINITY_OPERATOR_CRD_BASE}/CustomResourceDefinition-clickhouseinstallations.clickhouse.altinity.com.yaml` },
+  { type: "url", url: `${ALTINITY_OPERATOR_CRD_BASE}/CustomResourceDefinition-clickhouseinstallationtemplates.clickhouse.altinity.com.yaml` },
+  { type: "url", url: `${ALTINITY_OPERATOR_CRD_BASE}/CustomResourceDefinition-clickhousekeeperinstallations.clickhouse-keeper.altinity.com.yaml` },
+  { type: "url", url: `${ALTINITY_OPERATOR_CRD_BASE}/CustomResourceDefinition-clickhouseoperatorconfigurations.clickhouse.altinity.com.yaml` },
 ];

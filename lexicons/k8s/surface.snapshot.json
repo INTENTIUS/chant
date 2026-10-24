@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-06T20:56:03.719Z",
+  "generatedAt": "2026-10-24T04:59:28.640Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -219,6 +219,14 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.additionalOutputFormats"
     },
+    "AdditionalPort": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.additionalPorts"
+    },
+    "AdditionalVolumeClaimTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.additionalVolumeClaimTemplates"
+    },
     "Addon": {
       "kind": "resource",
       "resourceType": "K8s::K3s::Addon",
@@ -423,6 +431,10 @@
     "Analytic": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.analytics"
+    },
+    "Annotation": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.annotation"
     },
     "ApacheHttpd": {
       "kind": "property",
@@ -860,6 +872,226 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.circuitBreaker"
     },
+    "ClickHouseCluster": {
+      "kind": "resource",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ClickHouseCluster_AdditionalPort": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.additionalPorts"
+    },
+    "ClickHouseCluster_AdditionalVolumeClaimTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.additionalVolumeClaimTemplates"
+    },
+    "ClickHouseCluster_ContainerTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.containerTemplate"
+    },
+    "ClickHouseCluster_DataVolumeClaimSpec": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.dataVolumeClaimSpec"
+    },
+    "ClickHouseCluster_ExternalSecret": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.externalSecret"
+    },
+    "ClickHouseCluster_KeeperClusterRef": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.keeperClusterRef"
+    },
+    "ClickHouseCluster_NetworkPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.networkPolicy"
+    },
+    "ClickHouseCluster_PodDisruptionBudget": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.podDisruptionBudget"
+    },
+    "ClickHouseCluster_PodTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.podTemplate"
+    },
+    "ClickHouseCluster_Settings": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.settings"
+    },
+    "ClickHouseCluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.status"
+    },
+    "ClickHouseCluster_VersionProbeTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.versionProbeTemplate"
+    },
+    "ClickHouseInstallation": {
+      "kind": "resource",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ClickHouseInstallationTemplate": {
+      "kind": "resource",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ClickHouseInstallationTemplate_Configuration": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.configuration"
+    },
+    "ClickHouseInstallationTemplate_Defaults": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.defaults"
+    },
+    "ClickHouseInstallationTemplate_Reconcile": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.reconcile"
+    },
+    "ClickHouseInstallationTemplate_Reconciling": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.reconciling"
+    },
+    "ClickHouseInstallationTemplate_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.status"
+    },
+    "ClickHouseInstallationTemplate_Templates": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.templates"
+    },
+    "ClickHouseInstallationTemplate_Templating": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.templating"
+    },
+    "ClickHouseInstallationTemplate_UseTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallationTemplate.useTemplates"
+    },
+    "ClickHouseInstallation_Configuration": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.configuration"
+    },
+    "ClickHouseInstallation_Defaults": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.defaults"
+    },
+    "ClickHouseInstallation_Reconcile": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.reconcile"
+    },
+    "ClickHouseInstallation_Reconciling": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.reconciling"
+    },
+    "ClickHouseInstallation_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.status"
+    },
+    "ClickHouseInstallation_Templates": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.templates"
+    },
+    "ClickHouseInstallation_Templating": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.templating"
+    },
+    "ClickHouseInstallation_UseTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseInstallation.useTemplates"
+    },
+    "ClickHouseKeeperInstallation": {
+      "kind": "resource",
+      "resourceType": "K8s::Altinity::ClickHouseKeeperInstallation",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ClickHouseKeeperInstallation_Configuration": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseKeeperInstallation.configuration"
+    },
+    "ClickHouseKeeperInstallation_Defaults": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseKeeperInstallation.defaults"
+    },
+    "ClickHouseKeeperInstallation_Reconciling": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseKeeperInstallation.reconciling"
+    },
+    "ClickHouseKeeperInstallation_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseKeeperInstallation.status"
+    },
+    "ClickHouseKeeperInstallation_Templates": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseKeeperInstallation.templates"
+    },
+    "ClickHouseOperatorConfiguration": {
+      "kind": "resource",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ClickHouseOperatorConfiguration_Annotation": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.annotation"
+    },
+    "ClickHouseOperatorConfiguration_Clickhouse": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.clickhouse"
+    },
+    "ClickHouseOperatorConfiguration_Label": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.label"
+    },
+    "ClickHouseOperatorConfiguration_Logger": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.logger"
+    },
+    "ClickHouseOperatorConfiguration_Metrics": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.metrics"
+    },
+    "ClickHouseOperatorConfiguration_Pod": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.pod"
+    },
+    "ClickHouseOperatorConfiguration_Reconcile": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.reconcile"
+    },
+    "ClickHouseOperatorConfiguration_StatefulSet": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.statefulSet"
+    },
+    "ClickHouseOperatorConfiguration_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.status"
+    },
+    "ClickHouseOperatorConfiguration_Template": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.template"
+    },
+    "ClickHouseOperatorConfiguration_Watch": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.watch"
+    },
+    "Clickhouse": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.clickhouse"
+    },
     "ClientAuth": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TLSOption.clientAuth"
@@ -1240,10 +1472,6 @@
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.configmaps"
     },
-    "Configuration": {
-      "kind": "property",
-      "resourceType": "K8s::Cnpg::ObjectStore.configuration"
-    },
     "ConsulSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.consulSDConfigs"
@@ -1480,10 +1708,6 @@
     "DefaultGeneratedCert": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TLSStore.defaultGeneratedCert"
-    },
-    "Defaults": {
-      "kind": "property",
-      "resourceType": "K8s::OpenTelemetry::Instrumentation.defaults"
     },
     "DeleteOptions": {
       "kind": "resource",
@@ -1772,6 +1996,10 @@
     "ExternalCluster": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.externalClusters"
+    },
+    "ExternalSecret": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.externalSecret"
     },
     "Failover": {
       "kind": "property",
@@ -3149,6 +3377,50 @@
       "kind": "property",
       "resourceType": "K8s::K3s::HelmChart.valuesSecrets"
     },
+    "KeeperCluster": {
+      "kind": "resource",
+      "resourceType": "K8s::ClickHouse::KeeperCluster",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "KeeperClusterRef": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::ClickHouseCluster.keeperClusterRef"
+    },
+    "KeeperCluster_ContainerTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.containerTemplate"
+    },
+    "KeeperCluster_DataVolumeClaimSpec": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.dataVolumeClaimSpec"
+    },
+    "KeeperCluster_NetworkPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.networkPolicy"
+    },
+    "KeeperCluster_PodDisruptionBudget": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.podDisruptionBudget"
+    },
+    "KeeperCluster_PodTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.podTemplate"
+    },
+    "KeeperCluster_Settings": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.settings"
+    },
+    "KeeperCluster_Status": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.status"
+    },
+    "KeeperCluster_VersionProbeTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::ClickHouse::KeeperCluster.versionProbeTemplate"
+    },
     "KeyToPath": {
       "kind": "property",
       "resourceType": "K8s::Core::KeyToPath"
@@ -3232,6 +3504,10 @@
     "Kustomize": {
       "kind": "property",
       "resourceType": "K8s::Flux::FluxInstance.kustomize"
+    },
+    "Label": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.label"
     },
     "LabelSelector": {
       "kind": "property",
@@ -3329,6 +3605,10 @@
         "spec:true"
       ]
     },
+    "Logger": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.logger"
+    },
     "MachinePool": {
       "kind": "resource",
       "resourceType": "K8s::CAPI::MachinePool",
@@ -3376,6 +3656,10 @@
     "MetricSpec": {
       "kind": "property",
       "resourceType": "K8s::Autoscaling::MetricSpec"
+    },
+    "Metrics": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.metrics"
     },
     "MicroVM": {
       "kind": "resource",
@@ -6629,6 +6913,10 @@
     "WalStorage": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.walStorage"
+    },
+    "Watch": {
+      "kind": "property",
+      "resourceType": "K8s::Altinity::ClickHouseOperatorConfiguration.watch"
     },
     "WatchEvent": {
       "kind": "resource",
