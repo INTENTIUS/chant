@@ -870,6 +870,19 @@ export interface ScheduledOpSpec {
    * per-job environment mapping to put a value in.
    */
   variables?: Record<string, string>;
+  /**
+   * The Op runs a `reviewAgent` step in `handoff` mode (#4326): generate the
+   * review as two jobs. The first runs `chant run <name>` with no forge write
+   * token (the checkout's fetches get the job's token and nothing after
+   * them does) and hands the review on as job outputs. The second checks
+   * nothing out, takes the review as data and posts it as one note with the
+   * write token (`postReviewNote`). GitHub and Forgejo only: a GitLab merge
+   * request pipeline hands every job the project's unprotected variables, so
+   * the gitlab generator refuses this by name. The trigger must be
+   * `pull_request` and the finding-mode `report`, since the first job posts
+   * nothing.
+   */
+  reviewAgent?: boolean;
 }
 
 /**

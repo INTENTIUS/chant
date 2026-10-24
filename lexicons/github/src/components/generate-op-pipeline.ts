@@ -96,6 +96,7 @@ import type {
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
 import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps } from "./ci-jobs";
+import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs";
 
 export type { GenerateGithubOpOptions, GenerateGithubOpResult };
 
@@ -154,6 +155,13 @@ export interface GithubOpPipelineDoc {
    * artifact instead (#2256).
    */
   gatedNoticeDoc?: Record<string, unknown>;
+  /**
+   * The review note job (#4326), when the spec sets `reviewAgent`. Kept out
+   * of {@link jobsDoc} for the reason the gate notice is: a member's
+   * `working-directory` default belongs to the job that runs the Op, and a
+   * dialect transforms this job on its own terms.
+   */
+  reviewNoteDoc?: Record<string, unknown>;
 }
 
 /** One generated file: a suggested name plus its pipeline document, pre-emission. */
@@ -427,7 +435,10 @@ export function buildGithubOpPipelineDocs(
 
     // A live-resolution read (rate limits) always benefits from a token;
     // creating an issue/PR additionally needs `gh` CLI's own token variable.
-    const stepEnv = jobTokenEnv(findingMode !== "report");
+    // A split review (#4326) runs the change's code beside a model: no step of that job holds a forge token.
+    const split = spec.reviewAgent === true;
+    if (split) assertReviewSplit(spec.name, trigger, findingMode, spec.permissions);
+    const stepEnv = split ? {} : jobTokenEnv(findingMode !== "report");
 
     const setup = spec.setup ?? [];
     assertSetupSteps(spec.name, setup);
@@ -449,6 +460,20 @@ export function buildGithubOpPipelineDocs(
         : { run: invocation, env: stepEnv },
     );
     steps.push(...runSteps(extraScript));
+
+    const review = split
+      ? reviewJobs({
+          name: spec.name,
+          jobName,
+          image,
+          invocation,
+          setup: setup.map(setupStepDoc),
+          beforeScript,
+          extraScript,
+          ...(spec.variables ? { variables: spec.variables } : {}),
+          ...(options.member ? { member: options.member } : {}),
+        })
+      : undefined;
 
     const doc: GithubOpPipelineDoc = {
       name: spec.name,
@@ -492,6 +517,11 @@ export function buildGithubOpPipelineDocs(
       },
       ...(gated ? { gatedNoticeDoc: { [`${jobName}-gate-notice`]: gateNoticeJob(jobName, image) } } : {}),
     };
+    // A split review (#4326): the Op's job is the review job, and the note job rides beside it.
+    if (review) {
+      doc.jobsDoc = { [jobName]: { ...review.review, ...(spec.environment ? { environment: environmentDoc(spec.environment) } : {}) } };
+      doc.reviewNoteDoc = { [reviewNoteJobName(jobName)]: review.note };
+    }
 
     files.push({ name: `${spec.name}.yml`, doc });
   }
@@ -550,8 +580,8 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   // The gated-apply notice job rides in `jobs:` beside the Op's own job; it
   // is carried separately on the doc so a dialect transforms it on its own.
   // A dialect's `header` note (#2257) is absent on github.
-  const { gatedNoticeDoc, ...workflow } = doc;
-  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}) } });
+  const { gatedNoticeDoc, reviewNoteDoc, ...workflow } = doc;
+  return emitWorkflowYAML({ ...workflow, jobsDoc: { ...doc.jobsDoc, ...(gatedNoticeDoc ?? {}), ...(reviewNoteDoc ?? {}) } });
 }
 
 /**
