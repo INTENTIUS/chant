@@ -1,6 +1,6 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs (Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, the Grafana Operator, KubeRay, Argo CD, and Flux), plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs (Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, the two ClickHouse operators, the Grafana Operator, KubeRay, Argo CD, and Flux), plus how the CRD source list works and how to add your own."
 diataxis: reference
 ---
 
@@ -29,6 +29,8 @@ traefik.io                     Traefik          K8s::Traefik::IngressRoute
 cert-manager.io                CertManager      K8s::CertManager::Certificate
 acme.cert-manager.io           Acme             K8s::Acme::Challenge
 secrets.infisical.com          Infisical        K8s::Infisical::InfisicalSecret
+clickhouse.com                 ClickHouse       K8s::ClickHouse::ClickHouseCluster
+*.altinity.com                 Altinity         K8s::Altinity::ClickHouseInstallation
 grafana.integreatly.org        Grafana          K8s::Grafana::GrafanaDashboard
 *.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
 fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
@@ -357,6 +359,47 @@ export const db = new CrdbCluster({
 <Aside type="tip">
 The operator-managed `CrdbCluster` is the common single-region production path. For the self-managed, multi-region StatefulSet pattern, use the [`CockroachDbCluster` composite](/chant/tutorials/cockroachdb-multi-region/) instead — the two are complementary.
 </Aside>
+
+## ClickHouse operators
+
+Two operators manage ClickHouse on Kubernetes. They share no group or kind, so each has its own namespace. Install one per cluster.
+
+| Operator | Pin | Types (apiVersion / kind) |
+|---|---|---|
+| [ClickHouse Inc.](https://github.com/ClickHouse/clickhouse-operator) | **v0.0.8** | `ClickHouseCluster`, `KeeperCluster` (`clickhouse.com/v1alpha1`) |
+| [Altinity](https://github.com/Altinity/clickhouse-operator) | **release-0.27.4** | `ClickHouseInstallation`, `ClickHouseInstallationTemplate`, `ClickHouseOperatorConfiguration` (`clickhouse.altinity.com/v1`); `ClickHouseKeeperInstallation` (`clickhouse-keeper.altinity.com/v1`) |
+
+The first-segment rule would put both under `Clickhouse`, so `clickhouse.com` maps to `ClickHouse` and both Altinity groups map to `Altinity` (`GROUP_NAMESPACE_OVERRIDES` in `src/group-namespace.ts`). The CRDs are read from `config/crd/bases/` at the ClickHouse tag and from `deploy/helm/clickhouse-operator/crds/` at the Altinity tag (`src/crd/crd-sources.ts`). Both `spec` types are open records: the schemas are too deep to type field by field.
+
+```bash
+# ClickHouse Inc.
+kubectl apply -f https://github.com/ClickHouse/clickhouse-operator/releases/download/v0.0.8/clickhouse-operator.yaml
+# Altinity
+kubectl apply -f https://raw.githubusercontent.com/Altinity/clickhouse-operator/release-0.27.4/deploy/operator/clickhouse-operator-install-bundle.yaml
+```
+
+An operator-managed cluster is where the sql lexicon's `replicated` topology runs. The installation below has one shard of two replicas, and the table next to it is rendered for that topology:
+
+```typescript
+import { ClickHouseInstallation } from "@intentius/chant-lexicon-k8s";
+import { database, table } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const chi = new ClickHouseInstallation({
+  metadata: { name: "analytics", namespace: "data" },
+  spec: {
+    configuration: {
+      clusters: [{ name: "main", layout: { shardsCount: 1, replicasCount: 2 } }],
+    },
+  },
+});
+
+export const analytics = database`CREATE DATABASE analytics ENGINE = Atomic`;
+export const events = table`
+  CREATE TABLE ${analytics}.events (user_id UUID, ts DateTime)
+  ENGINE = MergeTree ORDER BY (user_id, ts)`;
+```
+
+With the profile's `topology` set to `replicated`, the database is created as `ENGINE = Replicated('/clickhouse/databases/analytics', '{shard}', '{replica}')` and `events` becomes `ReplicatedMergeTree` with no Keeper path. See the topology table in [Applying to a Server](/chant/lexicons/sql/applying/#topology). The installation also needs a Keeper to coordinate the replicas, either a `ClickHouseKeeperInstallation` or a ZooKeeper named in `spec.configuration.zookeeper`.
 
 ## Grafana Operator
 
