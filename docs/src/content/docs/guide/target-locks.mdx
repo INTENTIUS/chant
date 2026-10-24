@@ -44,7 +44,7 @@ A fork's pull request gets a read-only token, so its lock job cannot push `chant
 
 To block the merge of a pull request whose components another one holds, make `chant/lock` a required status in the branch protection rule.
 
-Forgejo gets the same jobs from the same generator. On GitLab the commands are the same, but the pipeline does not write the jobs yet. Run `chant lock` in a job that checks out the target branch and has the plan job's `.chant/pr` as an artifact, with `--forge gitlab` or `--forge forgejo`.
+Forgejo gets the same jobs from the same generator. On GitLab the commands are the same, but the pipeline does not write the jobs yet. Run `chant lock` in a job that checks out the target branch and has the plan job's `.chant/pr` as an artifact, with `--forge gitlab`.
 
 ## See who holds what
 
