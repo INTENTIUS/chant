@@ -45,6 +45,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/notify-verify.ts",
       "packages/core/src/notify.ts",
+      "packages/core/src/op/gate-approval-base.ts",
+      "packages/core/src/op/gate-plan-context.ts",
       "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/gate-quorum.ts",
       "packages/core/src/op/op-waves.ts",
@@ -55,8 +57,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
-    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290).
+    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB.
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
-    expect(bytes).toBeLessThan(54 * 1024);
+    expect(bytes).toBeLessThan(58 * 1024);
   });
 });
