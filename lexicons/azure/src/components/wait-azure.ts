@@ -22,7 +22,7 @@ export interface AzureWaitOptions {
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-interface TargetInput {
+export interface TargetInput {
   /** The resource group. Default: the component's name. */
   resourceGroup?: string;
   /** ARM endpoint. Default: `AZURE_ENDPOINT_URL`, else real Azure. */
