@@ -41,6 +41,37 @@ export function routeConflicts(branches: MemberGlobs | undefined, members: reado
 }
 
 /**
+ * The branches `chant ci serve` polls (#4325), and the ones among them a job
+ * is told with `--branch`.
+ *
+ * - A routed member polls its route alone. A `named` branch that differs
+ *   from the route is refused, as `chant build --pr-loop` refuses it.
+ * - An unrouted member polls `fallback`, which may not be a routed branch.
+ * - Where no member is in play (the workspace root), `fallback` and then each
+ *   routed branch, so every branch a member applies from is watched.
+ *
+ * `fallback` is the branch `--branch` names, else the default branch.
+ */
+export function servedBranches(
+  branches: MemberGlobs | undefined,
+  member: string | undefined,
+  fallback: string,
+  named: boolean,
+): { served: string[]; routed: string[] } {
+  const keys = Object.keys(branches ?? {});
+  if (member === undefined) return { served: [fallback, ...keys.filter((k) => k !== fallback)], routed: keys };
+  const own = routedBranch(branches, member);
+  if (own !== null) {
+    if (named && fallback !== own) throw new Error(`--branch ${fallback}: ci.branches routes member ${member} to ${own}, so ci serve polls ${own}`);
+    return { served: [own], routed: [own] };
+  }
+  if (keys.includes(fallback)) {
+    throw new Error(`--branch ${fallback}: ci.branches applies only the members its globs match from ${fallback}, and member ${member} is not one`);
+  }
+  return { served: [fallback], routed: [] };
+}
+
+/**
  * Whether a push to `pushed` applies `member`, with a line that says why.
  * A routed member applies only from its branch. Any other member applies
  * from every branch `ci.branches` does not name.

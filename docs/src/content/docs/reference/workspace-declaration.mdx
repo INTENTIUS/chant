@@ -334,7 +334,7 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 
 | Field | Required | Value |
 |---|---|---|
-| `branch` | yes | The branch whose first-parent commits are tagged. |
+| `branch` | yes | The branch whose first-parent commits are tagged, or a list of branches ([#4325](https://github.com/INTENTIUS/chant/issues/4325)). With a list, the tick judges each one, and the first is the trunk that readers and `release cut` use when they are not told a branch. List a branch that [`ci.branches`](/chant/guide/branch-routing/) routes members to, so it gets a green verdict and can release. A string reads as it always did. Older chant refuse a list, so set `minReader` with it. |
 | `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
 | `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass", "build": "newest" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. `build` is `every` or `newest`, described below; read by chant 0.124.33 and newer, so set `minReader` with it. |
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |

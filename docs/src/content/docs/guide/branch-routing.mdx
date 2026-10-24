@@ -41,7 +41,7 @@ The pipeline targets `release` without `--branch` (`packages/core/src/cli/handle
 
 The record and apply jobs read `ci.branches` from the declaration at base (`packages/core/src/cli/handlers/pr.ts:336`). They take the pushed ref from `--branch`, else from `GITHUB_REF_NAME` on GitHub and Forgejo or `CI_COMMIT_BRANCH` on GitLab (`packages/core/src/workspace/ci-branches.ts:77`). A member routed elsewhere plans nothing and reports `nothing`, with the reason as the report's message (`packages/core/src/cli/handlers/pr.ts:278`). The record job writes no merge record for it (`packages/core/src/cli/handlers/pr.ts:933`).
 
-A release is still one green commit (ws-104), so each mapped target has to produce a green commit of its own. [`ci.green`](/chant/reference/workspace-declaration/#ci) judges only the ref it names, and a mapped target gets no verdict from it today.
+Releases come from green commits (ws-104), and `ci.green` judges one target unless told otherwise. [Give a routed target a green verdict](#give-a-routed-target-a-green-verdict) before you cut from it.
 
 ## Narrow what a labelled pull request plans
 
@@ -58,6 +58,41 @@ A release is still one green commit (ws-104), so each mapped target has to produ
 When a pull request carries one of these labels, each member's plan job plans that member only if one of the labels matches it (`packages/core/src/workspace/ci-branches.ts:67`). The others report `nothing`. A pull request with none of the labels plans every member. The plan job needs `--forge` to read the labels, and a forge that cannot answer leaves every member planning (`packages/core/src/cli/handlers/pr.ts:350`).
 
 A label never gates. Anyone with triage access can set one, so only the plan job reads labels. The record and apply jobs plan every member the change reaches, and an apply still waits for an approval of the digest it plans. The stages on a push return before the label read (`packages/core/src/cli/handlers/pr.ts:337`). A member a label left out of the pull request plan is planned at merge, and its approval is asked for then.
+
+## Give a routed target a green verdict
+
+Each routed target needs green commits of its own. `ci.green.branch` takes a list as well as a string, and `chant ci tick` judges every entry as it judges a single one (`packages/core/src/workspace/ci-green.ts:623`):
+
+```json
+"ci": {
+  "branches": { "release": ["prod-*"] },
+  "green": {
+    "branch": ["main", "release"],
+    "phases": { "check": ["check"] },
+    "require": ["check"]
+  }
+}
+```
+
+The first entry is the trunk. Readers that are not told otherwise use it, and the generated tick workflow checks it out (`packages/core/src/workspace/declaration.ts:1358`). A declaration with a string reads as it always did, and a list of one entry is the same declaration. Older chant refuse a list, so set `minReader` to the release that ships this change.
+
+A tag is named by the commit, `ci/green/<sha>`, and its record names the target it judged. Pass `--branch` to read one target:
+
+```sh
+chant ci last-green --branch release
+chant ci list --branch release
+chant release candidates --branch release
+```
+
+A `--branch` that `ci.green` does not list is refused with `ci-branch-unknown` (`packages/core/src/workspace/ci-green.ts:523`). `chant release cut` takes a commit of any listed entry and refuses one that is on none of them (`packages/core/src/lifecycle/release-workstation.ts:79`). Run `chant ci workflow` again after you add an entry, so the tick workflow's `workflow_run` trigger lists it (`packages/core/src/workspace/ci-green-workflow.ts:250`).
+
+## Serve the routed targets and check their pipelines
+
+`chant ci serve` reads `ci.branches` where it runs (`packages/core/src/workspace/ci-serve.ts:419`). In a routed member's directory it polls that member's route alone, and the member's record and apply jobs get `--branch <route>`. A `--branch` that names anything else is refused (`packages/core/src/workspace/ci-branches.ts:65`). In an unrouted member's directory it polls `main` or the `--branch` you give, and it refuses a `--branch` that `ci.branches` reserves for other members. At the workspace root it polls `main` and then each routed target (`packages/core/src/workspace/ci-branches.ts:62`).
+
+The state file keeps a head per polled target, `target` for the first and `targets` for the rest, so a push to `release` records from the head `release` had. With `--apply-on-merge`, a routed target applies its own newest green commit, and none when `ci.green` does not list it (`packages/core/src/workspace/ci-serve.ts:505`).
+
+`chant build` refuses a pipeline that disagrees with the route, but only when it writes the file. `chant workspace check` reports `WSP152` (`ci-branch-route-differs`) as an error when a pipeline in a member's generated-file record aims elsewhere (`packages/core/src/workspace/checks/ci-branch.ts:105`). It compares the route with the `--branch` on the pipeline's record and apply commands, and with the `branches` of its `push` and `pull_request` triggers. A record or apply command with no `--branch` aims at the default, so it differs from a route. A member with no route may not name a target that `ci.branches` reserves. Regenerate the pipeline with the command in its header to clear a finding.
 
 ## Related
 

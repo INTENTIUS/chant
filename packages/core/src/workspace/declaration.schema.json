@@ -1715,10 +1715,24 @@
       ],
       "properties": {
         "branch": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[^\\s~^:?*\\[\\\\]+$",
-          "description": "The branch whose commits are tagged, such as main. Only its first-parent commits count."
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\s~^:?*\\[\\\\]+$"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\s~^:?*\\[\\\\]+$"
+              }
+            }
+          ],
+          "description": "The branch whose commits are tagged, such as main. Only its first-parent commits count. A list judges each branch, so a branch ci.branches routes members to gets a green verdict and can release (#4325); the first is the trunk that readers use when they are not told a branch. A string reads as it always did."
         },
         "window": {
           "type": "string",

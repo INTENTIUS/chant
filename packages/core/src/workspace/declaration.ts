@@ -220,13 +220,24 @@ export interface CiPhase {
   pointer: string;
 }
 
+/** Every branch `ci.green` judges (#4325): `branches` when the declaration names several, else `branch`. */
+export function greenBranches(green: Pick<CiGreen, "branch" | "branches">): string[] {
+  return green.branches ?? [green.branch];
+}
+
 /** The default `ci.green.window`. */
 export const DEFAULT_CI_WINDOW = "24h";
 
 /** The declaration's `ci.green` block (#3573, ws-103), with its defaults. */
 export interface CiGreen {
-  /** The branch whose first-parent commits are tagged. */
+  /** The branch whose first-parent commits are tagged. With several (#4325), the first one declared. */
   branch: string;
+  /**
+   * Every branch whose first-parent commits are tagged (#4325), in declaration
+   * order, the first being `branch`. Present only when the declaration names
+   * more than one, so a one-branch declaration reads as it always did.
+   */
+  branches?: string[];
   /** How far back a tick looks, such as `24h`. */
   window: string;
   /** The phases, in file order. */
@@ -1283,7 +1294,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1344,7 +1355,8 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
       at(`/ci/green/preMerge/${i}`),
     );
   }
-  return { green: { branch: g.branch, window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" }, ...workflow, reportUrl };
+  const judged = Array.isArray(g.branch) ? g.branch : [g.branch];
+  return { green: { branch: judged[0]!, ...(judged.length > 1 ? { branches: [...judged] } : {}), window: g.window ?? DEFAULT_CI_WINDOW, phases, require: [...g.require], ...(g.preMerge !== undefined ? { preMerge: [...g.preMerge] } : {}), signedSince: g.signedSince ?? null, source: g.source ?? "checks", pointer: "/ci/green" }, ...workflow, reportUrl };
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {

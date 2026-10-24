@@ -59,6 +59,11 @@
  *   contains the other. Each is a warning. A local branch ahead of the
  *   forge's keeps its facts, and the job's push sends them. Nothing here
  *   pushes the ledger.
+ * - Routed branches (#4325). `ci.branches` decides the branches one serve
+ *   polls: a routed member's route alone, an unrouted member's `--branch`
+ *   (default `main`), and at the workspace root `main` and each routed
+ *   branch. Jobs on a routed branch get `--branch`. The state file keeps a
+ *   head per branch (`target`, then `targets`).
  *
  * - Land branches (#4168 4.4). With `land`, each `chant/land/<name>` branch
  *   pushed to the remote is a change asking to land without a pull request.
@@ -104,6 +109,7 @@ import { CI_JOB_OPS, ciJobPlace, ciLoopOptions, ciSecretsOf, ciRun, ciStatusFrom
 import { CiGreenError, ciTick, judgePreMerge, lastGreen, RUNNER_KEY_ENV, signedRunsRequired, type CommitVerdict } from "./ci-green";
 import { gitTop } from "./tree";
 import { readDeclaration } from "./declaration";
+import { servedBranches } from "./ci-branches";
 import { locateWorkspace } from "./which-chant";
 import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
 
@@ -124,8 +130,8 @@ export interface CiServeForge {
  * apply of the newest green commit (#4168 step 9).
  */
 export type CiServeTrigger =
-  | { job: "plan"; commit: string; base: string; pr: number; rerun?: boolean }
-  | { job: "apply" | "record"; commit: string; base: string; rerun?: boolean };
+  | { job: "plan"; commit: string; base: string; pr: number; rerun?: boolean; branch?: string }
+  | { job: "apply" | "record"; commit: string; base: string; rerun?: boolean; branch?: string };
 
 /**
  * The `git` forge kind (#4016 gap 6): the branch head from `git ls-remote`
@@ -193,6 +199,8 @@ export interface CiServeState {
   member?: string;
   /** The target branch's head the last apply was measured to, or the last head seen and not applied. */
   target?: string;
+  /** The same for each further branch `ci.branches` routes (#4325), by branch. `target` is the first served branch's. */
+  targets?: Record<string, string>;
   jobs: Record<string, CiServeJobState>;
   /** Plans seen and not run, by state key, with why (#4122). */
   skipped?: Record<string, "skip-ci">;
@@ -381,7 +389,12 @@ export function defaultCiServeStateDir(cwd: string): string {
 interface ServePlace {
   top: string;
   member?: string;
+  /** The first branch served: the one the state file's `target` follows. */
   branch: string;
+  /** Every branch served (#4325), `branch` first: a routed member's route, or at the workspace root the default and each routed branch. */
+  branches: string[];
+  /** The served branches a job is told with `--branch`: the ones `ci.branches` names. */
+  routed: string[];
   group: string;
   stateDir: string;
   stateFile: string;
@@ -394,7 +407,21 @@ function servePlace(opts: CiServeOptions): ServePlace {
   const { member } = ciJobPlace(cwd, top);
   const group = prApplyGroup(opts.env, member);
   const stateDir = opts.stateDir ? resolve(cwd, opts.stateDir) : defaultCiServeStateDir(cwd);
-  return { top, ...(member ? { member } : {}), branch: opts.job?.loop?.branch ?? "main", group, stateDir, stateFile: join(stateDir, `${group}.json`) };
+  // #4325: ci.branches decides which branches this serve polls. A workspace that can't be read routes nothing.
+  let routes: Record<string, string[]> | undefined;
+  try {
+    routes = readDeclaration(locateWorkspace(cwd).tree).ci?.branches;
+  } catch {
+    routes = undefined;
+  }
+  const named = opts.job?.loop?.branch;
+  let served: ReturnType<typeof servedBranches>;
+  try {
+    served = servedBranches(routes, member, named ?? "main", named !== undefined);
+  } catch (err) {
+    throw new CiRunError(message(err));
+  }
+  return { top, ...(member ? { member } : {}), branch: served.served[0]!, branches: served.served, routed: served.routed, group, stateDir, stateFile: join(stateDir, `${group}.json`) };
 }
 
 /** The state file, or a new one. */
@@ -439,73 +466,81 @@ export async function ciServeObserve(opts: CiServeOptions, rt: CiServeRuntime = 
   };
   const triggers: CiServeTrigger[] = [];
   const events: CiServeEvent[] = [];
-  const [head, prs] = await Promise.all([opts.client.branchHead(place.branch), opts.client.openPullRequests(place.branch)]);
   // #4168: a new target commit is recorded. With applyOnMerge the newest green commit is applied, below.
   const onMerge = "record" as const;
-
-  if (head === undefined) {
-    events.push({ type: "no-branch", branch: place.branch });
-  } else if (state.target === undefined) {
-    // What the branch held before this runner watched it was applied by whatever ran then.
-    update((s) => {
-      s.target = head;
-    });
-    events.push({ type: "baseline", commit: head });
-  } else if (head !== state.target) {
-    const from = state.target;
-    const move = targetMove(place.top, place.branch, from, head);
-    const entry = state.jobs[ciServeKey({ job: onMerge, commit: head })];
-    if (move === "unknown") {
-      events.push({ type: "error", message: `${place.branch} is at ${head.slice(0, 12)} on the forge, and that commit could not be fetched; the next poll tries again` });
-    } else if (move === "other" || (!entry && skipsCi(place.top, head))) {
-      // #4122: a move that is not a fast-forward, or a head that asks for no run, is seen and not applied.
-      update((s) => {
-        s.target = head;
-      });
-      events.push({ type: "not-run", job: onMerge, commit: head, reason: move === "other" ? "not-fast-forward" : "skip-ci", ...(move === "other" ? { branch: place.branch, from } : {}) });
-    } else if (!entry) triggers.push({ job: onMerge, commit: head, base: from });
-    else if (opts.rerunFailed && failedEntry(entry, ciServeKey(entry), rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true });
-  } else {
-    const key = ciServeKey({ job: onMerge, commit: head });
-    const entry = state.jobs[key];
-    if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true });
-  }
-
-  if (opts.applyOnMerge && head !== undefined) {
-    const green = newestGreen(place.top, opts.cwd, place.branch);
-    if (green) {
-      const key = ciServeKey({ job: "apply", commit: green });
-      const entry = state.jobs[key];
-      if (!entry) triggers.push({ job: "apply", commit: green, base: green });
-      else if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "apply", commit: green, base: entry.base, rerun: true });
-    }
-  }
-
   const authors = opts.authors?.length ? new Set(opts.authors.map((a) => a.toLowerCase())) : undefined;
-  for (const pr of prs) {
-    if (pr.fork) {
-      events.push({ type: "skipped", pr: pr.number, reason: "fork" });
-      continue;
+
+  // #4325: each served branch is polled on its own, with its own head to measure moves from.
+  for (const branch of place.branches) {
+    const [head, prs] = await Promise.all([opts.client.branchHead(branch), opts.client.openPullRequests(branch)]);
+    const first = branch === place.branch;
+    const target = first ? state.target : state.targets?.[branch];
+    const setTarget = (s: CiServeState, sha: string): void => {
+      if (first) s.target = sha;
+      else s.targets = { ...s.targets, [branch]: sha };
+    };
+    // A job on a routed branch is told which, so its apply routes members as the pushed branch does.
+    const routed = place.routed.includes(branch) ? { branch } : {};
+
+    if (head === undefined) {
+      events.push({ type: "no-branch", branch });
+    } else if (target === undefined) {
+      // What the branch held before this runner watched it was applied by whatever ran then.
+      update((s) => setTarget(s, head));
+      events.push({ type: "baseline", commit: head });
+    } else if (head !== target) {
+      const from = target;
+      const move = targetMove(place.top, branch, from, head);
+      const entry = state.jobs[ciServeKey({ job: onMerge, commit: head })];
+      if (move === "unknown") {
+        events.push({ type: "error", message: `${branch} is at ${head.slice(0, 12)} on the forge, and that commit could not be fetched; the next poll tries again` });
+      } else if (move === "other" || (!entry && skipsCi(place.top, head))) {
+        // #4122: a move that is not a fast-forward, or a head that asks for no run, is seen and not applied.
+        update((s) => setTarget(s, head));
+        events.push({ type: "not-run", job: onMerge, commit: head, reason: move === "other" ? "not-fast-forward" : "skip-ci", ...(move === "other" ? { branch, from } : {}) });
+      } else if (!entry) triggers.push({ job: onMerge, commit: head, base: from, ...routed });
+      else if (opts.rerunFailed && failedEntry(entry, ciServeKey(entry), rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true, ...routed });
+    } else {
+      const key = ciServeKey({ job: onMerge, commit: head });
+      const entry = state.jobs[key];
+      if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: onMerge, commit: head, base: entry.base, rerun: true, ...routed });
     }
-    if (authors && !authors.has((pr.author ?? "").toLowerCase())) {
-      events.push({ type: "skipped", pr: pr.number, reason: "author", ...(pr.author ? { author: pr.author } : {}) });
-      continue;
+
+    if (opts.applyOnMerge && head !== undefined) {
+      const green = newestGreen(place.top, opts.cwd, branch, place.routed.includes(branch));
+      if (green) {
+        const key = ciServeKey({ job: "apply", commit: green });
+        const entry = state.jobs[key];
+        if (!entry) triggers.push({ job: "apply", commit: green, base: green, ...routed });
+        else if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "apply", commit: green, base: entry.base, rerun: true, ...routed });
+      }
     }
-    const key = ciServeKey({ job: "plan", commit: pr.headSha, pr: pr.number });
-    const entry = state.jobs[key];
-    const base = pr.baseSha ?? head;
-    if (!base || state.skipped?.[key]) continue;
-    if (!entry) {
-      // #4122: a head whose message asks for no run is seen and not planned.
-      if (gitStatus(place.top, ["cat-file", "-e", `${pr.headSha}^{commit}`]).code !== 0) tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", `refs/pull/${pr.number}/head`]);
-      if (skipsCi(place.top, pr.headSha)) {
-        update((s) => {
-          s.skipped = { ...s.skipped, [key]: "skip-ci" };
-        });
-        events.push({ type: "not-run", job: "plan", commit: pr.headSha, pr: pr.number, reason: "skip-ci" });
-      } else triggers.push({ job: "plan", commit: pr.headSha, base, pr: pr.number });
+
+    for (const pr of prs) {
+      if (pr.fork) {
+        events.push({ type: "skipped", pr: pr.number, reason: "fork" });
+        continue;
+      }
+      if (authors && !authors.has((pr.author ?? "").toLowerCase())) {
+        events.push({ type: "skipped", pr: pr.number, reason: "author", ...(pr.author ? { author: pr.author } : {}) });
+        continue;
+      }
+      const key = ciServeKey({ job: "plan", commit: pr.headSha, pr: pr.number });
+      const entry = state.jobs[key];
+      const base = pr.baseSha ?? head;
+      if (!base || state.skipped?.[key]) continue;
+      if (!entry) {
+        // #4122: a head whose message asks for no run is seen and not planned.
+        if (gitStatus(place.top, ["cat-file", "-e", `${pr.headSha}^{commit}`]).code !== 0) tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", `refs/pull/${pr.number}/head`]);
+        if (skipsCi(place.top, pr.headSha)) {
+          update((s) => {
+            s.skipped = { ...s.skipped, [key]: "skip-ci" };
+          });
+          events.push({ type: "not-run", job: "plan", commit: pr.headSha, pr: pr.number, reason: "skip-ci" });
+        } else triggers.push({ job: "plan", commit: pr.headSha, base, pr: pr.number, ...routed });
+      }
+      else if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "plan", commit: pr.headSha, base: entry.base, pr: pr.number, rerun: true, ...routed });
     }
-    else if (opts.rerunFailed && failedEntry(entry, key, rt)) triggers.push({ job: "plan", commit: pr.headSha, base: entry.base, pr: pr.number, rerun: true });
   }
   return { triggers, events };
 }
@@ -581,7 +616,10 @@ export async function ciServeSchedule(opts: CiServeOptions, triggers: readonly C
     const entry: CiServeJobState = { job: t.job, commit: t.commit, base: t.base, ...pr, status: "running", runId, attempts: attempt, startedAt: now().toISOString() };
     update((s) => {
       s.jobs[key] = entry;
-      if (t.job === "record" && !t.rerun) s.target = t.commit;
+      if (t.job === "record" && !t.rerun) {
+        if (t.branch === undefined || t.branch === place.branch) s.target = t.commit;
+        else s.targets = { ...s.targets, [t.branch]: t.commit };
+      }
     });
     emit({ type: "started", job: t.job, commit: t.commit, ...pr, base: t.base, runId, attempt, ...(resume && existsSync(resume) ? { resume } : {}) });
 
@@ -621,13 +659,15 @@ async function runJob(
   let merged: number | undefined;
   try {
     // The pull request's head is on the forge's refs/pull/<n>/head, the target's on the branch.
-    tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", t.job === "plan" ? `refs/pull/${t.pr}/head` : place.branch]);
+    tryGit(place.top, ["fetch", "--quiet", "--no-tags", "origin", t.job === "plan" ? `refs/pull/${t.pr}/head` : (t.branch ?? place.branch)]);
     const hostEnv = { ...(opts.job?.hostEnv ?? process.env), GITHUB_REPOSITORY: opts.repo };
     // An apply is for a merge: pass the pull request whose merge commit it is, so the commit status link and the run index use `<pr>/<commit>`. None found, or a forge that errs, is today's behaviour.
     if (t.job === "record" && opts.client.pullRequestFor) merged = (await opts.client.pullRequestFor(t.commit).catch(() => null)) ?? undefined;
     const run = opts.run ?? ciRun;
     const r = await run({
       ...opts.job,
+      // #4325: a job on a routed branch is told the branch, so it routes members as a push to it does.
+      ...(t.branch !== undefined ? { loop: { ...opts.job?.loop, branch: t.branch } } : {}),
       hostEnv,
       cwd: opts.cwd,
       job: t.job,
@@ -656,10 +696,11 @@ async function runJob(
  * fetching the ci tags, or undefined when none is green or the workspace
  * declares no `ci.green`.
  */
-function newestGreen(top: string, cwd: string, branch: string): string | undefined {
+function newestGreen(top: string, cwd: string, branch: string, routed = false): string | undefined {
   tryGit(top, ["fetch", "--quiet", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`, "+refs/tags/ci/*:refs/tags/ci/*"]);
   try {
-    const doc = lastGreen({ cwd });
+    // #4325: a routed branch has its own verdict, and none when ci.green does not name it.
+    const doc = lastGreen({ cwd, ...(routed ? { branch } : {}) });
     return "commit" in doc && doc.commit ? doc.commit.sha : undefined;
   } catch {
     return undefined;

@@ -174,9 +174,12 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const { scopeSource } = await import("../../workspace/write-scope");
       const { releaseRuleFrom } = await import("../../workspace/identity");
       const source = scopeSource(cwd);
-      trunk = ws.resolveTrunk(top, source.declaration?.ci?.green?.branch ?? null);
+      const greenDecl = source.declaration?.ci?.green ?? null;
+      const primary = ws.resolveTrunk(top, greenDecl?.branch ?? null);
+      trunk = primary;
       try {
-        ws.checkOnTrunk(top, commit, trunk);
+        // #4325: a commit of a branch ci.green also judges (one ci.branches routes members to) is cut like trunk's.
+        trunk = ws.checkOnGreenBranches(top, commit, primary, (greenDecl?.branches ?? []).slice(1));
       } catch (err) {
         // #4168 4.3: a commit of a pushed compose branch is cut too, and the cut records what it carries.
         if (!(err instanceof ws.WorkstationCheckError) || err.code !== "release-commit-not-on-trunk") throw err;
@@ -552,7 +555,7 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
  */
 export async function runReleaseCandidates(ctx: CommandContext): Promise<number> {
   const { releaseCandidatesDocument } = await import("../../workspace/release-candidates");
-  const doc = await releaseCandidatesDocument({ cwd: resolve("."), ...(ctx.args.env ? { env: ctx.args.env } : {}) });
+  const doc = await releaseCandidatesDocument({ cwd: resolve("."), ...(ctx.args.env ? { env: ctx.args.env } : {}), ...(ctx.args.branch ? { branch: ctx.args.branch } : {}) });
   if (ctx.args.json) {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;

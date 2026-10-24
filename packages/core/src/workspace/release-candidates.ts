@@ -39,7 +39,7 @@ import { latestPerComponent, readReleaseLedger } from "../lifecycle/release-ledg
 import { readAllReleases, readCuts } from "../lifecycle/release-store";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { readBlobFromPath } from "../lifecycle/git";
-import { readerVersion } from "./declaration";
+import { greenBranches, readerVersion } from "./declaration";
 
 export const RELEASE_CANDIDATES_CONTRACT_VERSION = 1;
 export const RELEASE_CANDIDATES_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json";
@@ -145,6 +145,8 @@ export interface ReleaseCandidatesQuery {
   /** Only this environment's view: the walk stops at what it runs, and `newFor` names only it. */
   env?: string;
   limit?: number;
+  /** Walk this branch of `ci.green.branch` (#4325) instead of the first. */
+  branch?: string;
 }
 
 function git(top: string, args: string[]): string {
@@ -218,7 +220,10 @@ export async function releaseCandidatesDocument(query: ReleaseCandidatesQuery): 
     const { commitDetails } = await import("./intent");
     const source = scopeSource(cwd);
     const green = source.declaration?.ci?.green ?? null;
-    const trunk = resolveTrunk(top, green?.branch ?? null);
+    if (query.branch !== undefined && !(green && greenBranches(green).includes(query.branch))) {
+      throw new Error(`--branch ${query.branch} is not a branch ci.green judges${green ? ` (${greenBranches(green).join(", ")})` : ", and the declaration has no ci.green"}`);
+    }
+    const trunk = resolveTrunk(top, query.branch ?? green?.branch ?? null);
     const tip =
       tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/remotes/${trunk.remote}/${trunk.branch}^{commit}`]) ??
       tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${trunk.branch}^{commit}`]);

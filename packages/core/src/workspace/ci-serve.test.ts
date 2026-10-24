@@ -602,3 +602,98 @@ describe("ci serve runs fast-forwards only, and honours [skip ci] (#4122)", () =
     expect(ofType(events, "not-run")).toHaveLength(1);
   });
 });
+
+describe("ci serve follows ci.branches (#4325)", () => {
+  /** A forge with a head per branch, and the branches it was asked about. */
+  function branchForge(heads: Record<string, string>): CiServeForge & { heads: Record<string, string>; polled: string[] } {
+    const f = {
+      heads,
+      polled: [] as string[],
+      async pullRequestFor() {
+        return null;
+      },
+      async openPullRequests(base: string) {
+        f.polled.push(base);
+        return [];
+      },
+      async branchHead(branch: string) {
+        return f.heads[branch];
+      },
+    };
+    return f;
+  }
+
+  /** The workspace with `ci.branches` routing `app` to `release`, and a `release` branch on the forge. */
+  function routed(globs: string[] = ["app"]): ReturnType<typeof workspace> & { release: string } {
+    const w = workspace();
+    writeFiles(w.root, { "chant.workspace.json": declaration([{ name: "app", dir: "app", kind: "other", because: "the app" }], { ci: { branches: { release: globs } } }) });
+    commit(w.root, "app/route.txt", "route app to release");
+    git(w.root, "push", "-q", "origin", "main");
+    git(w.root, "checkout", "-q", "-b", "release");
+    const release = commit(w.root, "app/rel.txt");
+    git(w.root, "push", "-q", "origin", "release");
+    git(w.root, "checkout", "-q", "main");
+    return { ...w, main: git(w.root, "rev-parse", "main"), release };
+  }
+
+  test("a routed member polls its route alone, and its record job gets --branch", async () => {
+    const { root, app, main, release } = routed();
+    const forge = branchForge({ main, release });
+    const { opts, events } = serve(app, forge);
+    await ciServePass(opts);
+    expect(forge.polled).toEqual(["release"]);
+    expect(ofType(events, "baseline")).toEqual([{ type: "baseline", commit: release }]);
+
+    git(root, "checkout", "-q", "release");
+    const next = commit(root, "app/rel2.txt");
+    git(root, "push", "-q", "origin", "release");
+    git(root, "checkout", "-q", "main");
+    forge.heads.release = next;
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: next, base: release, status: "ok" })]);
+    const argv = argsOf(pass.jobs[0]!.report!, "pr-record");
+    expect(argv[argv.indexOf("--branch") + 1]).toBe("release");
+    // A push to main is not this member's.
+    forge.heads.main = "0".repeat(40);
+    expect((await ciServePass(opts)).jobs).toEqual([]);
+  });
+
+  test("a member no glob matches polls main and passes no --branch", async () => {
+    const { root, app, main } = routed(["other-*"]);
+    const forge = branchForge({ main });
+    const { opts } = serve(app, forge);
+    await ciServePass(opts);
+    expect(forge.polled).toEqual(["main"]);
+    const merged = commit(root, "app/merged.txt");
+    git(root, "push", "-q", "origin", "main");
+    forge.heads.main = merged;
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: merged, base: main })]);
+    expect(argsOf(pass.jobs[0]!.report!, "pr-record")).not.toContain("--branch");
+  });
+
+  test("the workspace root polls main and each routed branch, each from its own head", async () => {
+    const { root, main, release } = routed();
+    const forge = branchForge({ main, release });
+    const { opts } = serve(root, forge);
+    await ciServePass(opts);
+    expect(forge.polled).toEqual(["main", "release"]);
+    git(root, "checkout", "-q", "release");
+    const next = commit(root, "app/rel2.txt");
+    git(root, "push", "-q", "origin", "release");
+    git(root, "checkout", "-q", "main");
+    forge.heads.release = next;
+    const pass = await ciServePass(opts);
+    expect(pass.jobs).toEqual([expect.objectContaining({ job: "record", commit: next, base: release })]);
+    const state = readCiServeState(join(opts.stateDir!, `${prApplyGroup("prod")}.json`), { forge: "forgejo", repo: "demo/estate", env: "prod", branch: "main" });
+    expect(state.target).toBe(main);
+    expect(state.targets).toEqual({ release: next });
+    expect((await ciServePass(opts)).jobs).toEqual([]);
+  });
+
+  test("a --branch that disagrees with the route is refused", async () => {
+    const { app, main, release } = routed();
+    const { opts } = serve(app, branchForge({ main, release }), { job: { loop: { branch: "main" } } });
+    await expect(ciServePass(opts)).rejects.toThrow(/routes member app to release/);
+  });
+});

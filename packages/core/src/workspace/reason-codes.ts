@@ -269,6 +269,7 @@ export const REASONS = {
   "ci-workflow-pipeline-missing": "Under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick.",
   "ci-workflow-pipeline-differs": "Under ci.workflow, the pipeline does not match the workflow: it applies on merge under trunk-curated, records under trunk-curated+apply-on-merge, or applies before merge, or fails to, against apply-before-merge.",
   "ci-workflow-publish-missing": "Under ci.workflow, no pipeline file runs chant release publish.",
+  "ci-branch-route-differs": "A member's generated pull-request pipeline targets a branch other than the one ci.branches routes the member to.",
   // A box that holds a credential (check, #2726). Each is also a WSP finding.
   "box-credential-declared": "A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one.",
   "box-capability-unbrokered": "A capability in a member's box block names no broker, so the box would hold its credential.",
