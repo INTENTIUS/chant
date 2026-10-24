@@ -8,9 +8,11 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "vitest";
-import { postPlanReport, readPlanReport } from "./pr-post";
-import { prNoteMarker, type PrReport } from "./pr-loop";
+import { afterAll, describe, expect, test, vi } from "vitest";
+import type { CommandContext } from "./cli/registry";
+import { parseArgs } from "./cli/parse-args";
+import { postOpenPlanReports, postPlanReport, readPlanReport } from "./pr-post";
+import { prNoteMarker, prStatusState, type PrReport } from "./pr-loop";
 import type { ForgeStatus, PrForge } from "./pr-forge";
 
 const FIXTURE = join(import.meta.dirname, "__fixtures__", "pr-loop", "pr-plan.golden.json");
@@ -137,5 +139,127 @@ describe("pr-post asks for overdue scheduled Ops itself (#4289, #4295)", () => {
     const quiet = fakeForge();
     await postPlanReport({ forge: quiet.forge, dir: reportDir(forged), ...at, overdue: async () => [] });
     expect(quiet.notes[0]!.body).not.toContain("forged warning");
+  });
+});
+
+describe("pr-post --open posts each open merge request's plan from a pipeline of the target branch (#4328)", () => {
+  const JOB_URL = (id: number) => `https://gitlab.com/acme/estate/-/jobs/${id}`;
+  const OTHER = "c".repeat(40);
+
+  /** A GitLab client with the merge requests' plan jobs, their artifacts and the statuses already posted. */
+  function gitlab(input: { jobs: Array<{ pr: number; head: string; id: number; status: string }>; artifacts: Record<number, string>; posted?: Record<string, string> }) {
+    const statuses: Array<{ sha: string; status: ForgeStatus; url?: string }> = [];
+    const notes: Array<{ pr: number; body: string }> = [];
+    const asked: Array<[string, string]> = [];
+    const reads: string[] = [];
+    let overdue = 0;
+    const forge = {
+      kind: "gitlab",
+      host: "gitlab.com",
+      async mergeRequestJobs(branch: string, job: string) {
+        asked.push([branch, job]);
+        return input.jobs.map((j) => ({ ...j, url: JOB_URL(j.id) }));
+      },
+      async jobArtifact(id: number, path: string) {
+        reads.push(`${id}:${path}`);
+        return input.artifacts[id];
+      },
+      async statusUrl(sha: string) {
+        return input.posted?.[sha];
+      },
+      async setStatus(this: PrForge, sha: string, status: ForgeStatus) {
+        statuses.push({ sha, status, ...(this.runUrl ? { url: this.runUrl } : {}) });
+      },
+      async upsertNote(pr: number, _marker: string, body: string) {
+        notes.push({ pr, body });
+        return "1";
+      },
+    } as unknown as PrForge;
+    const count = async () => {
+      overdue++;
+      return [{ op: "drift", cron: "0 * * * *", since: "2025-10-01T00:00:00Z", message: "Op `drift` is overdue" }];
+    };
+    return { forge, statuses, notes, asked, reads, overdue: count, overdueCalls: () => overdue };
+  }
+
+  test("a settled plan job's report is read from its artifacts and posted, linking the job; a running one waits", async () => {
+    const g = gitlab({
+      jobs: [
+        { pr: REPORT.pr, head: HEAD, id: 101, status: "success" },
+        { pr: 8, head: OTHER, id: 102, status: "running" },
+      ],
+      artifacts: { 101: JSON.stringify(REPORT) },
+    });
+    const { posts, warnings } = await postOpenPlanReports({ forge: g.forge, branch: "main", job: "plan", artifactDir: ".chant/pr/", env: REPORT.env, overdue: g.overdue });
+    expect(warnings).toEqual([]);
+    expect(g.asked).toEqual([["main", "plan"]]);
+    expect(g.reads).toEqual(["101:.chant/pr/pr-plan.json"]);
+    expect(posts.map((p) => [p.pr, p.skipped ?? p.posted!.state])).toEqual([[REPORT.pr, prStatusState(REPORT)], [8, "the plan job is running"]]);
+    expect(g.statuses).toEqual([{ sha: HEAD, status: expect.objectContaining({ context: "chant/plan", state: prStatusState(REPORT), url: JOB_URL(101) }), url: JOB_URL(101) }]);
+    expect(g.notes.map((n) => n.pr)).toEqual([REPORT.pr]);
+    expect(g.notes[0]!.body).toContain("Op `drift` is overdue");
+  });
+
+  test("a job whose result is already posted is not posted again", async () => {
+    const g = gitlab({ jobs: [{ pr: REPORT.pr, head: HEAD, id: 101, status: "success" }], artifacts: { 101: JSON.stringify(REPORT) }, posted: { [HEAD]: JOB_URL(101) } });
+    const { posts } = await postOpenPlanReports({ forge: g.forge, branch: "main", job: "plan", artifactDir: ".chant/pr", env: REPORT.env });
+    expect(posts).toEqual([{ pr: REPORT.pr, head: HEAD, skipped: "this plan job's result is already posted" }]);
+    expect(g.statuses).toEqual([]);
+  });
+
+  test("the pull request and head are GitLab's: a report for another head, a missing one and a failed job each fail the status", async () => {
+    const g = gitlab({
+      jobs: [
+        { pr: REPORT.pr, head: OTHER, id: 101, status: "success" },
+        { pr: 8, head: HEAD, id: 102, status: "failed" },
+        { pr: 9, head: HEAD, id: 103, status: "failed" },
+      ],
+      artifacts: { 101: JSON.stringify(REPORT), 103: JSON.stringify({ ...REPORT, pr: 9 }) },
+    });
+    const { posts } = await postOpenPlanReports({ forge: g.forge, branch: "main", job: "plan", artifactDir: ".chant/pr", env: REPORT.env, overdue: g.overdue });
+    expect(posts.map((p) => [p.pr, p.posted!.state, p.posted!.refused ?? ""])).toEqual([
+      [REPORT.pr, "failure", expect.stringMatching(/the report is for head/)],
+      [8, "failure", "the plan job wrote no report"],
+      [9, "failure", ""],
+    ]);
+    expect(g.notes.map((n) => n.pr)).toEqual([9]);
+    // The check runs once, however many merge requests it posts for.
+    expect(g.overdueCalls()).toBe(1);
+  });
+
+  test("a forge that cannot list merge request jobs is refused", async () => {
+    await expect(postOpenPlanReports({ forge: fakeForge().forge, branch: "main", job: "plan", artifactDir: ".chant/pr", env: REPORT.env })).rejects.toThrow(/it is for GitLab/);
+  });
+});
+
+describe("chant components pr-post --open refuses what it cannot post for (#4328)", () => {
+  const run = async (args: Record<string, unknown>): Promise<number> => {
+    const { runComponentsPrPost } = await import("./cli/handlers/pr");
+    return runComponentsPrPost({ args } as unknown as CommandContext);
+  };
+
+  test("--pr or --head, a forge other than GitLab, and no branch are each refused", async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line: unknown) => void errors.push(String(line)));
+    try {
+      expect(await run({ open: true, pr: 7, env: "prod", forge: "gitlab" })).toBe(1);
+      expect(await run({ open: true, env: "prod", forge: "github" })).toBe(1);
+      const branch = process.env.CI_COMMIT_BRANCH;
+      delete process.env.CI_COMMIT_BRANCH;
+      try {
+        expect(await run({ open: true, env: "prod", forge: "gitlab" })).toBe(1);
+      } finally {
+        if (branch !== undefined) process.env.CI_COMMIT_BRANCH = branch;
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    expect(errors.join("\n")).toMatch(/takes no --pr or --head/);
+    expect(errors.join("\n")).toMatch(/--forge gitlab/);
+    expect(errors.join("\n")).toMatch(/pass --branch <branch>/);
+  });
+
+  test("the flags parse", () => {
+    expect(parseArgs(["components", "pr-post", "--open", "--env", "prod", "--forge", "gitlab", "--branch", "main"])).toMatchObject({ open: true, env: "prod", forge: "gitlab", branch: "main" });
   });
 });

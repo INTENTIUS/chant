@@ -63,7 +63,6 @@ jobs:
         env:
           BASE_SHA: '${{ github.event.pull_request.base.sha }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
-          CHANT_RUNNER_KEY: '${{ secrets.CHANT_RUNNER_KEY }}'
         run: |
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           chant_report="$PWD/.chant/pr"

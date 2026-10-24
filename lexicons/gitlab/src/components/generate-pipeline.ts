@@ -53,6 +53,8 @@ import {
   prApplyWaveJobName,
   prLoopJobs,
   GITLAB_APPLY_PR_VAR,
+  GITLAB_PLAN_NOTES_VAR,
+  gitlabPlanJobName,
   prLoopPostJob,
   prLoopSetup,
   PR_PLAN_NOTE_JOB,
@@ -313,12 +315,16 @@ function gatedWaveGitlabPipeline(
  * The plan job holds no forge token while the merge request's code runs
  * (#4295, `@intentius/chant/ci-handover`): its script starts by unsetting
  * the token variables, and `pr-plan --no-status` writes the note and the
- * status into its report. The `plan-note` job after it, which GitLab hands
- * the report artifact, checks out the target branch's commit and posts them
- * with `chant components pr-post`. A CI/CD variable reaches every job of a
- * merge request pipeline, so `unset` keeps it from the plan's code, and
- * `CHANT_FORGE_TOKEN` as a protected variable keeps it from the pipeline
- * altogether.
+ * status into its report, which it keeps as its artifact. GitLab builds a
+ * merge request pipeline from the merge request's own files, so no job in it
+ * may hold the token (#4328): `CHANT_FORGE_TOKEN` and `CHANT_RUNNER_KEY` are
+ * protected variables, which a merge request pipeline never gets. The
+ * `plan-note` job runs in a pipeline of the target branch, built from that
+ * branch's files, that a pipeline schedule (or a person) starts with
+ * `CHANT_PLAN_NOTES` set to `1`. It runs `chant components pr-post --open`,
+ * which asks GitLab for each open merge request's plan job, reads the report
+ * from its artifacts and posts the note and the status for each job that
+ * settled since the last run.
  *
  * With `identity` (#4296, `@intentius/chant/ci-identity`) the plan, record
  * and apply jobs take an `id_tokens:` entry per cloud, and each script
@@ -342,6 +348,16 @@ function gitlabApplyPrRule(branch: string): string {
   return `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/ && $${GITLAB_APPLY_PR_VAR} =~ /^[0-9]+$/ && $CI_COMMIT_BRANCH == ${branch}`;
 }
 
+/**
+ * The rule of the plan-note job (#4328): a pipeline of `branch` that a
+ * pipeline schedule, a person or a trigger started with `CHANT_PLAN_NOTES`
+ * set to `1`. A merge request pipeline's own trigger job starts a pipeline
+ * whose source is `pipeline`, which this rule leaves out.
+ */
+function gitlabPlanNotesRule(branch: string): string {
+  return `$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $${GITLAB_PLAN_NOTES_VAR} == "1" && $CI_COMMIT_BRANCH == ${branch}`;
+}
+
 /** The rule of a pipeline for a pushed `ci/green/` tag (#4168 step 9), which runs the apply under apply on merge. */
 const GITLAB_GREEN_TAG_RULE = '$CI_COMMIT_TAG =~ /^ci\\/green\\//';
 
@@ -358,7 +374,8 @@ function prLoopGitlabPipeline(
   const rooted = !member || member.dir === "." || member.dir === "";
   const [plan, apply, record] = prLoopJobs("gitlab", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
-  const planJob = member ? `${member.name}-plan` : "plan";
+  // #4328: the plan-note job's pr-post --open finds the plan job by this name.
+  const planJob = gitlabPlanJobName(member?.name);
   const named = (job: string) => (member ? `${member.name}-${job}` : job);
   const waveJobs = loop.waveGate ? prLoopWaveJobs(components, apply) : [];
   // #4168 step 9: a push to the branch records, and under apply on merge a ci/green/ tag pipeline applies.
@@ -372,6 +389,8 @@ function prLoopGitlabPipeline(
   if (loop.branch !== undefined) assertGitlabBranch("The merge-request pipeline", loop.branch);
   const onMerge = gitlabPushRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
   // #4301: the apply before merge runs in a pipeline of the target branch a person starts with CHANT_APPLY_PR set.
+  // #4328: the plan notes are posted from a pipeline of the target branch, never from the merge request's own.
+  const onPlanNotes = gitlabPlanNotesRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH");
   const onGreen = loop.applyBeforeMerge ? gitlabApplyPrRule(loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH") : GITLAB_GREEN_TAG_RULE;
   // A member's jobs start in its directory, after the image's install lines.
   const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
@@ -393,7 +412,7 @@ function prLoopGitlabPipeline(
   const doc: Record<string, unknown> = {
     // Included files merge their top-level keys, so a member's file carries
     // the rules every member shares and no name: two names would collide.
-    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
+    workflow: { ...(member ? {} : { name: `chant-pr-${env}` }), rules: [{ if: onMergeRequest }, { if: onMerge }, { if: onPlanNotes }, ...(greens.length > 0 ? [{ if: onGreen }] : []), ...(prEnv ? [{ if: GITLAB_SCHEDULE_RULE }] : [])] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, ...GITLAB_FULL_HISTORY },
     [planJob]: {
@@ -407,14 +426,12 @@ function prLoopGitlabPipeline(
       script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...script(plan)],
       artifacts: { when: "always", paths: [reportPath] },
     },
-    // #4295: a fresh job at the target branch's commit posts the note and the status from the plan's report.
+    // #4295, #4328: a job of the target branch's pipeline posts each open merge request's note and status from its plan job's report.
     [noteJob]: {
       stage: PR_PLAN_NOTE_JOB,
       image,
-      needs: [planJob],
-      rules: [{ if: onMergeRequest, when: "always" }],
-      variables: post.env,
-      script: ['git checkout --quiet --detach "$BASE_SHA"', ...enter, ...beforeScript, post.command],
+      rules: [{ if: onPlanNotes }],
+      script: [...enter, ...beforeScript, post.command],
     },
     ...Object.fromEntries(
       applies.map(({ job, name, stage }, i) => [
@@ -449,7 +466,7 @@ function prLoopGitlabPipeline(
   };
   const jobs: GeneratedJob[] = [
     { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
-    { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [planJob] },
+    { jobName: noteJob, component: "merge request plan note", stage: PR_PLAN_NOTE_JOB, needs: [] },
     ...applies.map(({ job, name, stage }, i) => ({
       jobName: name,
       component: job.wave ? `green apply, wave ${job.wave}` : job.jobName === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : "green apply",
@@ -539,7 +556,8 @@ function prEnvGitlabJobs(
       [named("env-sweep")]: {
         stage: PR_ENV_STAGE,
         image,
-        rules: [{ if: GITLAB_SCHEDULE_RULE }],
+        // #4328: not in the plan notes' schedule, which runs far more often than a sweep needs.
+        rules: [{ if: `${GITLAB_SCHEDULE_RULE} && $${GITLAB_PLAN_NOTES_VAR} != "1"` }],
         resource_group: `chant-pr-env-sweep${member ? `-${member.name}` : ""}`,
         ...trading,
         variables: { ...sweep.env, ...tradeVars },

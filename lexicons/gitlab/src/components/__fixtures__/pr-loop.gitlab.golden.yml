@@ -3,6 +3,7 @@ workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG =~ /^ci\/green\//'
 
 stages:
@@ -35,18 +36,10 @@ plan:
 plan-note:
   stage: plan-note
   image: node:22
-  needs:
-    - plan
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      when: always
-  variables:
-    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
-    HEAD_SHA: '$CI_COMMIT_SHA'
-    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - git checkout --quiet --detach "$BASE_SHA"
-    - chant components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env prod --output .chant/pr --forge gitlab
+    - chant components pr-post --open --env prod --output .chant/pr --forge gitlab
 
 record:
   stage: record

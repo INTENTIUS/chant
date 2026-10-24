@@ -1040,7 +1040,9 @@ Component release ledger + status:
                             from the report pr-plan --no-status wrote
                             (--pr <n> --head <sha> --env <env> --forge
                             <kind>), in a job that runs none of the
-                            change's code (#4295)
+                            change's code (#4295); --open posts every
+                            open merge request's from a GitLab pipeline
+                            of the target branch (#4328)
   components pr-record     On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses

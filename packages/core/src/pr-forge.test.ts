@@ -321,6 +321,53 @@ describe("gitlab", () => {
     expect(await forge.pullRequestOpen!(5)).toBe(true);
     expect(await forge.pullRequestOpen!(6)).toBe(false);
   });
+
+  test("the plan job of each open merge request's newest pipeline at its head, in this project (#4328)", async () => {
+    const OLD = "b".repeat(40);
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/42/merge_requests": [
+        { iid: 9, sha: SHA, project_id: 42 },
+        { iid: 5, sha: SHA, project_id: 42 },
+        { iid: 6, sha: OLD, project_id: 42 },
+      ],
+      // Newest at the head first is 301; 300 is an older pipeline of the same head; 299 is of an older head.
+      "GET /api/v4/projects/42/merge_requests/5/pipelines": [
+        { id: 299, sha: OLD, project_id: 42 },
+        { id: 301, sha: SHA, project_id: 42 },
+        { id: 300, sha: SHA, project_id: 42 },
+      ],
+      "GET /api/v4/projects/42/pipelines/301/jobs": [
+        { id: 11, name: "plan", status: "success", web_url: "https://gitlab.example.com/acme/estate/-/jobs/11" },
+        { id: 12, name: "network-plan", status: "running" },
+      ],
+      // A fork's merge request whose pipeline ran in the fork: its jobs are not this project's.
+      "GET /api/v4/projects/42/merge_requests/6/pipelines": [{ id: 400, sha: OLD, project_id: 77 }],
+      // A merge request with no pipeline yet.
+      "GET /api/v4/projects/42/merge_requests/9/pipelines": [],
+    });
+    const forge = gitlabForge({ ...opts, fetch });
+    expect(await forge.mergeRequestJobs!("main", "plan")).toEqual([{ pr: 5, head: SHA, id: 11, status: "success", url: "https://gitlab.example.com/acme/estate/-/jobs/11" }]);
+    expect(new URL(calls[0]!.url).searchParams.get("target_branch")).toBe("main");
+    expect(new URL(calls[0]!.url).searchParams.get("state")).toBe("opened");
+    expect(calls.some((c) => c.url.includes("/pipelines/400/"))).toBe(false);
+  });
+
+  test("one file of a job's artifacts, undefined when the job kept none there, and the newest status's link (#4328)", async () => {
+    const { fetch, calls } = fakeFetch({
+      "GET /api/v4/projects/42/jobs/11/artifacts/infra/network/.chant/pr/pr-plan.json": { stage: "plan" },
+      [`GET /api/v4/projects/42/repository/commits/${SHA}/statuses`]: [
+        { id: 1, name: "chant/plan", target_url: "https://gitlab.example.com/-/jobs/10" },
+        { id: 3, name: "chant/plan", target_url: "https://gitlab.example.com/-/jobs/11" },
+        { id: 4, name: "chant/plan/network", target_url: "https://gitlab.example.com/-/jobs/12" },
+      ],
+    });
+    const forge = gitlabForge({ ...opts, fetch });
+    expect(JSON.parse((await forge.jobArtifact!(11, "infra/network/.chant/pr/pr-plan.json"))!)).toEqual({ stage: "plan" });
+    expect(await forge.jobArtifact!(12, ".chant/pr/pr-plan.json")).toBeUndefined();
+    expect(calls[0]!.headers["PRIVATE-TOKEN"]).toBe("glpat");
+    expect(await forge.statusUrl!(SHA, "chant/plan")).toBe("https://gitlab.example.com/-/jobs/11");
+    expect(await forge.statusUrl!(SHA, "chant/plan/other")).toBeUndefined();
+  });
 });
 
 describe("naming reviewers", () => {

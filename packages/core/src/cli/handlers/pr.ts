@@ -65,8 +65,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { resolveCommit, resolveMergeBase } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
@@ -712,27 +712,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
  * `pr-post` asks instead, reading the Ops at the target branch's commit.
  */
 async function overdueOps(forge: PrForge | undefined, member: string | undefined): Promise<PrOverdue[]> {
-  if (!forge?.scheduledRuns) return [];
-  try {
-    const { discoverOps } = await import("../../op/discover");
-    const { scheduledWatches, checkOverdueOps } = await import("../../op/schedule-overdue");
-    const discovered = await discoverOps({ cwd: resolve(".") });
-    const watches = scheduledWatches([...discovered.ops.values()].map((d) => d.config));
-    if (watches.length === 0) return [];
-    const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
-    if (top.status !== 0) return [];
-    return await checkOverdueOps({
-      watches,
-      forge,
-      repoRoot: top.stdout.trim(),
-      ...(member ? { member } : {}),
-      now: new Date(),
-      log: (line) => console.error(formatWarning({ message: line })),
-    });
-  } catch (err) {
-    console.error(formatWarning({ message: `could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}` }));
-    return [];
-  }
+  const { overdueOpsAt } = await import("../../op/schedule-overdue");
+  return overdueOpsAt({ forge, cwd: resolve("."), ...(member ? { member } : {}), log: (line) => console.error(formatWarning({ message: line })) });
 }
 
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
@@ -2023,6 +2004,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
 
 /**
  * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] (#4295)
+ * chant components pr-post --open --env <env> --forge gitlab [--branch <branch>] [--member <name>] [--output <dir>] (#4328)
  *
  * Post the plan note and the `chant/plan` status from the report a plan job
  * wrote with `pr-plan --no-status`, in a job that runs none of the change's
@@ -2033,6 +2015,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
  */
 export async function runComponentsPrPost(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.open) return runComponentsPrPostOpen(ctx);
   if (args.pr === undefined) return fail("pr-post needs the pull or merge request: --pr <n>");
   if (!args.head || !/^[0-9a-f]{40}$/.test(args.head)) return fail("pr-post needs the full commit the plan job checked out: --head <sha>");
   if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
@@ -2060,5 +2043,65 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
   console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  return 0;
+}
+
+/**
+ * `pr-post --open` (#4328): in a pipeline of the target branch on GitLab,
+ * post the plan note and status of every open merge request into it whose
+ * plan job settled, reading each report from the plan job's artifacts
+ * (`postOpenPlanReports`, ../../pr-post.ts). The branch is `--branch`, else
+ * the pipeline's own (`CI_COMMIT_BRANCH`). The plan job is `plan`, or
+ * `<member>-plan` with `--member`, as the gitlab lexicon names it, and the
+ * artifact path is `--output` from the repository root. It exits 0 once it
+ * has posted, as `pr-post` does.
+ */
+async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  if (args.pr !== undefined || args.head) return fail("pr-post --open finds each merge request and its head itself, so it takes no --pr or --head");
+  if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
+  if (args.forge !== "gitlab") return fail("pr-post --open is for a GitLab pipeline of the target branch: --forge gitlab");
+  if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
+  const branch = args.branch ?? process.env.CI_COMMIT_BRANCH;
+  if (!branch) return fail("pr-post --open posts for the merge requests into a branch: run it in a branch pipeline, or pass --branch <branch>");
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv("gitlab");
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+  if (top.status !== 0) return fail("pr-post --open reads the plan report's path from the repository root, and this directory is not in a git repository");
+  const member = args.members?.[0];
+  const artifactDir = relative(realpathSync(top.stdout.trim()), resolve(args.output ?? PR_REPORT_DIR)).split(sep).join("/");
+  const { postOpenPlanReports } = await import("../../pr-post");
+  const { gitlabPlanJobName } = await import("../../components/pr-pipeline");
+  let done: Awaited<ReturnType<typeof postOpenPlanReports>>;
+  try {
+    done = await postOpenPlanReports({
+      forge,
+      branch,
+      job: gitlabPlanJobName(member),
+      artifactDir,
+      env: args.env,
+      ...(member ? { member } : {}),
+      // #4289: the Ops at the commit this pipeline checked out, the target branch's.
+      overdue: () => overdueOps(forge, member),
+    });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  for (const message of done.warnings) console.error(formatWarning({ message }));
+  for (const p of done.posts) {
+    if (p.skipped) {
+      console.error(formatInfo(`pr-post: !${p.pr}: ${p.skipped}`));
+      continue;
+    }
+    const posted = p.posted!;
+    for (const message of posted.warnings) console.error(formatWarning({ message: `!${p.pr}: ${message}` }));
+    if (posted.refused) console.error(formatWarning({ message: `!${p.pr}: the plan report was not used: ${posted.refused}` }));
+    console.error(formatInfo(`pr-post: !${p.pr} ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  }
+  if (done.posts.length === 0) console.error(formatInfo(`pr-post: no open merge request into ${branch} has a ${gitlabPlanJobName(member)} job`));
   return 0;
 }
