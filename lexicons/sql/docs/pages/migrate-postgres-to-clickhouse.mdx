@@ -1,0 +1,132 @@
+---
+title: "Migrating Postgres Tables to ClickHouse"
+description: "chant migrate --from sql/postgres --to sql/clickhouse writes the ClickHouse tables a CDC pipeline fills from Postgres declarations, with each judgment call a needs-review diagnostic and each mirrored column linked to the Postgres member's output"
+diataxis: how-to
+order: 5
+label: "Migrating Postgres to ClickHouse"
+group: "ClickHouse"
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/migrate-postgres-to-clickhouse/.
+  Run `npx chant migrate <postgres member or schema.sql> --from sql/postgres --to sql/clickhouse --use-composites --output <clickhouse member>/src/mirrors.ts --report review.sarif` for the tables I name, then `npx chant build` and `npx chant lint` in the ClickHouse member.
+  Go through review.sarif one diagnostic at a time: change the declaration where the suggestion fits the table, and leave a comment on the line where it does not. Then run `npx chant workspace check`.
+  Open a pull request with the declarations, the workspace links and the report. Use no real server; `--validate` starts a local emulator.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A change data capture pipeline copies Postgres tables into ClickHouse, and each copy needs a table to land in. ClickPipes, Debezium through Kafka and PeerDB are pipelines of this kind. `chant migrate` reads the Postgres declarations and writes those tables, either as `table` declarations or as [`CdcMirror`](../composites/#cdcmirror) calls. The type map is mechanical. Every other choice is a diagnostic with the facts it was read from, from the same [catalog the SQL Server import uses](../sqlserver-importing/#what-is-a-diagnostic).
+
+A build holds one dialect, so the Postgres tables and their mirror are two projects. In a [workspace](/chant/reference/workspace-declaration/), the mirror's member links each mirrored column to the Postgres member's [output](../workspace-outputs/), and dropping or renaming a Postgres column fails `chant workspace check` until the mirror follows.
+
+## Run it
+
+```bash
+chant migrate db --from sql/postgres --to sql/clickhouse --use-composites \
+  --output mirror/src/mirrors.ts --report review.sarif
+```
+
+`--from` and `--to` each name a lexicon, and the sql lexicon names a dialect after a slash. A project holds one dialect and nothing is declared in two at once, so `sql/postgres` and `sql/clickhouse` say which side is which without a second flag. The part before the slash picks the lexicon to load (`lexiconOfSide` in `packages/core/src/cli/commands/migrate.ts`, line 23), and both names reach the lexicon's `migrationSource`, which accepts this one pair (`lexicons/sql/src/plugin.ts`, line 190). A side with no slash is a lexicon alone, as in `--from github --to gitlab`. Another pair, such as `sql/clickhouse` to `sql/postgres`, would take the same two flags.
+
+The source is one of:
+
+- a `.sql` file of Postgres DDL, read as `chant import` reads it;
+- a member directory, or a TypeScript file in one. Either is built the way `chant sql types` builds a project, so `${shop}.customers` resolves. A file stands for its whole project, since its tables refer to the others.
+
+`--emit ts` is the default for this pair and writes declarations. `--emit sql` writes the DDL, each statement ended with a semicolon. `--output` creates its directory. Without it the output goes to stdout and no links are written.
+
+## What a mirror is
+
+Every table becomes a mirror: a `ReplacingMergeTree(_version, _is_deleted)` table keyed on the source table's key, with the two columns the pipeline writes. Those names are `CdcMirror`'s defaults (`MIRROR_COLUMNS` in `lexicons/sql/src/migrate/from-postgres/translate.ts`, line 48). A pipeline that names them otherwise, as PeerDB does, is a one-line edit to the emitted call (`version` and `deleted`).
+
+Without `--use-composites` the output is a `table` template per mirror with the engine and both columns written out. With it, a `CdcMirror` call per table, which also makes the `<name>_current` view of the rows not deleted:
+
+```ts
+export const customers = CdcMirror({
+  name: "customers",
+  columns: "id Int64, email String COMMENT 'PII, hashed downstream', country String, created_at DateTime64(6, 'UTC')",
+  primaryKey: "id",
+});
+```
+
+A table name that needs quoting is refused under `--use-composites` with an `error` diagnostic, since the composite writes the name bare (`translate.ts`, line 138). Emit without the flag to keep it.
+
+The Postgres schema is not part of a mirror's name, because the pipeline picks the database it writes to. Two tables of one name in different schemas keep their schema as a database qualifier (`a.items`). A schema that only tables name gets an `info` note.
+
+## The type map
+
+These types map with no diagnostic. The source types come from the Postgres [data types chapter](https://www.postgresql.org/docs/current/datatype.html). Each target type is a family of the catalog generated from the pinned ClickHouse server (`lexicons/sql/src/spec/pin.ts`), which `types.test.ts` checks, with the precision of each against its range.
+
+| Postgres | ClickHouse |
+|---|---|
+| `smallint`, `integer`, `bigint` | `Int16`, `Int32`, `Int64` |
+| `real`, `double precision`, `float(n)` | `Float32`, `Float64`; `float(n)` is `Float32` up to 24 |
+| `numeric(p,s)`, `decimal(p,s)` | `Decimal(p, s)` |
+| `text`, `varchar(n)`, `citext`, `name`, `bytea` | `String` |
+| `boolean` | `Bool` |
+| `uuid` | `UUID` |
+| `date` | `Date32` |
+| `time(p)` | `Time64(p)`, precision 6 by default |
+| `timestamp(p)` | `DateTime64(p)`, precision 6 by default |
+| `timestamptz(p)` | `DateTime64(p, 'UTC')` |
+| `json`, `jsonb` | `JSON` |
+| `oid` | `UInt32` |
+| `serial`, `bigserial`, `smallserial` | `Int32`, `Int64`, `Int16`, with an `info` note for the sequence |
+
+A `NOT NULL` column keeps its type. So does a column of the primary key, and an identity or serial column. `Date32` and `DateTime64` cover 1900 to 2299, so a Postgres date before 1900 does not fit.
+
+These map with a `warning`, because something is lost or chosen: `numeric` with no precision (`Decimal(38, 18)`), `numeric` above 76 digits, `money`, `char(n)`, `interval`, `timetz`, `inet` and `cidr` (`IPv6`), arrays, and any type that is not built in (an enum, a domain, an extension type), which becomes `String`. An array stays `Array(T)` and is never `Nullable`, since ClickHouse does not allow it.
+
+## What is a diagnostic
+
+The rule ids are the catalog's (`lexicons/sql/src/clickhouse/review-catalog.ts`).
+
+| Rule | Raised for |
+|---|---|
+| SQLRV001 | The sort key of every table. The primary key is the default, the first unique key the fallback, `tuple()` when there is neither. |
+| SQLRV002 | The engine of every table: `ReplacingMergeTree(_version, _is_deleted)`, with the reason a mirror needs the source key as its sort key. |
+| SQLRV003 | Each nullable column. It becomes `Nullable(T)`, and the finding says whether a default could replace it. |
+| SQLRV004 | A `String` column whose name ends in a word such as `status`, `type` or `country`. The type stays `String`. |
+| SQLRV005 | Each foreign key, check, unique and exclusion constraint, and each unique index. ClickHouse enforces none of them, so each is a `--` comment before the `CREATE` (a `//` comment above a `CdcMirror` call). |
+| SQLRV006 | An identity, serial or generated column. It is a plain column here, since the pipeline loads the value. An identity or serial column is an `info`, a generated column a `warning`. |
+| SQLRV007 | A type judgment or a column collation, as in the section above. |
+| SQLRV008 | A column default. A mirror carries no `DEFAULT`, because the pipeline writes every column, so this is an `info`. |
+| SQLRV009 | An index that is not carried, and the storage options of the source table: `PARTITION BY`, `WITH`, `TABLESPACE`, `UNLOGGED`, row-level security, and a column's `COMPRESSION` or `STORAGE`. |
+| SQLRV011 | What is not carried: a view, a sequence or another object that is not a table (`info`), a partition (`info`, its rows arrive through the parent), columns that come from `LIKE`, `INHERITS` or `OF` (`warning`), a table description under `--use-composites` (`info`), and a table the translation refuses (`error`). |
+| SQLRV012 | A statement the emulator rejects under `--validate` (`error`). |
+
+A `warning` is a decision to confirm and an `info` is a note that needs none. The source line is not kept once the tables are read, so a diagnostic points at line 1 of the source file, and the message names the table and column.
+
+## Report, strict and validate
+
+`--report <path>` writes the diagnostics as SARIF 2.1.0, the way [`chant migrate`](/chant/cli/migrate/) does for GitHub Actions. A summary goes to stderr either way. Under `--strict` every `warning` becomes an `error` (`severity: strict && ...` in `lexicons/sql/src/migrate/from-postgres/index.ts`, line 77), and the run exits 1 while one is open. The sort key and engine findings are `warning`s on every table, so a strict run fails until they are resolved, and `info` notes never fail a run.
+
+`--validate` creates the emitted DDL on a throwaway server of the pinned ClickHouse image, tables first and then the `_current` views, and removes the container. It never reads `CLICKHOUSE_URL`. A statement the server refuses is an `error` diagnostic naming the table, and any error exits 1 without `--strict`. If Docker is missing, the run fails with `--validate did not run`, since a check that did not run is not a pass (`packages/core/src/cli/commands/migrate.ts`, line 163).
+
+## Workspace links
+
+When the source and the `--output` file sit in two members of one workspace, `chant migrate` adds a link to the output's member for each mirrored column, naming the Postgres member and the column's output (`shop.customers.email`, as [workspace outputs](../workspace-outputs/) names them). It edits only that member's `links` and leaves the rest of the declaration as it was (`planMigrateLinks` in `packages/core/src/workspace/migrate-links.ts`, line 71). A second run adds only the links that are new.
+
+```json
+{
+  "name": "mirror",
+  "dir": "mirror",
+  "kind": "chant",
+  "links": [
+    { "member": "db", "output": "shop.customers.id" },
+    { "member": "db", "output": "shop.customers.email" }
+  ]
+}
+```
+
+Drop `email` from the Postgres declaration and `chant workspace check` fails with `WSP093`, naming the mirror:
+
+```
+WSP093 mirror's link to db output shop.customers.email does not resolve: db has no output shop.customers.email; its outputs: ...
+```
+
+A `-- previously: email` comment on the renamed Postgres column makes the message say where the column went. The mirror follows by dropping or renaming its column and removing the old link. `chant migrate` adds links and never removes one, since a link the author wrote by hand to another column is the author's. When it cannot link, it says why on stderr: the output went to stdout, the source or the output is in no member, or both are in one member.
+
+## The example pair
+
+`examples/postgres-cdc-source` is the Postgres side and `examples/cdc-mirror` the mirror. `example.test.ts` translates the first with `--use-composites` and compares the result with the second. Two edits take the translation to the committed example: `country` and `status` become `LowCardinality(String)` (SQLRV004), and `orders` takes PeerDB's column names and a monthly `PARTITION BY` (SQLRV002 and SQLRV009). The same test links the nine columns to the Postgres member, drops `email`, and checks that the link to it is the one that fails. It replaces the test that held the two projects' column names together.
+
+What the migration does not do: move data, translate views or functions, or infer the columns a pipeline adds beyond the version and the deleted flag.
