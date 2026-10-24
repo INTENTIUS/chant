@@ -296,8 +296,8 @@
             "resolvedBy": { "type": "string", "description": "Who approved it." },
             "resolvedAt": { "type": "string", "description": "When the approval was recorded, ISO-8601." },
             "via": {
-              "enum": ["quorum", "policy", "point", "alias", "empty", null],
-              "description": "How the approval passed when it was more than one person's approval of this gate: a quorum, a policy permit, a decision point's answer, or an approval recorded under one of the gate's aliases. empty (added within contract 1 by #4045, chant 0.124.28 and newer): a release gate passed over an empty change set with no approval, on the resolution the promote wrote, whose resolvedBy is the actor running it."
+              "enum": ["quorum", "policy", "point", "alias", "empty", "workspace", null],
+              "description": "How the approval passed when it was more than one person's approval of this gate: a quorum, a policy permit, a decision point's answer, or an approval recorded under one of the gate's aliases. empty (added within contract 1 by #4045, chant 0.124.28 and newer): a release gate passed over an empty change set with no approval, on the resolution the promote wrote, whose resolvedBy is the actor running it. workspace (added within contract 1 by #2554, chant 0.124.47 and newer): a workspace gate's approval stood in for this member gate, because the member opts in at base and the approval covers this plan."
             },
             "url": { "type": "string", "description": "Where the approval was made, when known." }
           }

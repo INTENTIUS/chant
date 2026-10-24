@@ -182,6 +182,14 @@ export interface GateResolutionRecord {
    */
   empty?: true;
   /**
+   * The workspace gate that stood in for this member gate (#2554, ws-039):
+   * its name and the digest of the member plans it covers. Set only on the
+   * resolution a run builds when a workspace approval passes the gate; it is
+   * never written to the member's ledger, where the approval stays the
+   * workspace's (`_members/_workspace/_gates/`).
+   */
+  workspaceGate?: { gate: string; digest: string };
+  /**
    * The channel this resolution was authored on (chant#2384) — set by the
    * writer, never by the caller. `chant approve` records `"cli"`, the
    * `op-approve` MCP tool records `"mcp"`, an ACP-driven approve records

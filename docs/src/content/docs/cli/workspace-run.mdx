@@ -1,0 +1,92 @@
+---
+title: "chant workspace run"
+description: Run Ops that span members, as <member>/<op> targets or in every dependent of one member, each under the member's own chant
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace run <member>/<op>... [--env <env>] [--gate <name>] [--on <lexicon>] [--dry-run] [--json]
+chant workspace run --dependents-of <member> --op <op> [--env <env>] [--gate <name>] [--on <lexicon>] [--dry-run] [--json]
+chant workspace run approve <gate> [--plan <digest>] [--approver <principal>] [--json]
+```
+
+## Description
+
+`chant workspace run` is the only way to run Ops that span members ([#2554](https://github.com/INTENTIUS/chant/issues/2554), ws-030). `chant run` at a workspace root still runs the root's own Ops; Op discovery leaves member directories out.
+
+A run goes through these steps:
+
+1. Every member's graph is read under the member's own toolchain, as [`chant workspace graph`](/chant/cli/workspace-graph/) reads it, and each composed member becomes one build root, with its Ops among its entities.
+2. [OPS019](/chant/lint-rules/correctness/#ops019-workspace-op-target) checks every target against those roots. A target whose member is not composed, or declares no such Op, stops the run before anything runs.
+3. The targets are ordered so a producer runs before the members that [link](/chant/reference/workspace-declaration/#member-links) to it, directly or not. Targets with no link between them keep the order given.
+4. Each target's `chant run <op>` runs in the member's directory under the member's chant, one at a time. The first step that fails stops the run, and the steps after it are `not-run`.
+5. The workspace run's record is written to `_members/_workspace/<env>/runs.jsonl` on `chant/lifecycle`, with `local` for `<env>` when no `--env` was given.
+
+Each member run gets the workspace run's id in `CHANT_WORKSPACE_RUN`, and its run record cites it as `workspaceRun: { id }`. The workspace record names each member run in turn, as `memberRun`, so the two can be joined from either side.
+
+```
+$ chant workspace run web/deploy api/deploy
+workspace run ws-0c6f…: ok
+  api/deploy                       ok  (run local-1729700000000)
+  web/deploy                       ok  (run local-1729700004211)
+```
+
+`api/deploy` ran first because `web` links to `api`.
+
+### Running a member's dependents
+
+`--dependents-of <member> --op <op>` runs `<op>` in every member that links to `<member>`, directly or through other members, nearest first, and not in `<member>` itself. A dependent that declares no such Op, or that is not a composed `chant` member, is listed as skipped. This is the step a producer's apply calls to bring its consumers up to date:
+
+```
+$ chant workspace run --dependents-of network --op plan --dry-run
+chant workspace run would run, in order:
+  api/plan
+  web/plan
+```
+
+### Workspace gates
+
+A member run that reaches a gate stops there and exits 3, and so does the workspace run. With `--gate <name>`, every target still runs to its own gate, and the gates that stopped are gathered into one pending fact of the workspace gate `<name>`, under `_members/_workspace/_gates/<name>.jsonl`. The fact lists each member gate with the plan digest it waits on, and the digest of that list:
+
+```
+Workspace gate "release" is pending over 2 member gate(s), digest sha256:5d1e….
+  Approve: chant workspace run approve release --plan sha256:5d1e…
+```
+
+`chant workspace run approve <gate>` records an approval of the newest pending fact, or of the one `--plan` names. The approver is `--approver`, else the CI or shell identity.
+
+A workspace gate never satisfies a member gate (ws-039) unless both of these hold:
+
+- the approval covers the member's plan: it lists that member, Op and gate with the plan digest the member's run reached it with, and the list still hashes to the approved digest;
+- the member opts in at base: its entry in `chant.workspace.json` at the base revision sets [`acceptWorkspaceGates: true`](/chant/reference/workspace-declaration/#members). A change in the working tree never opts a member in.
+
+When both hold, the next `chant workspace run --gate <name>` passes the member's gate, and the step record says `via: "workspace"` with the workspace gate and its digest. Nothing is written to the member's gate ledger. A member that has not opted in still needs its own [`chant approve`](/chant/cli/run/).
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--env <env>` | Passed to each member's `chant run`; the workspace record goes under `<env>/`. |
+| `--gate <name>` | Gather the member gates that stop into the workspace gate `<name>`, and let its approval stand in where the rule above allows. |
+| `--on <lexicon>` | Passed to each member's `chant run`, to pick the runtime. |
+| `--dependents-of <member>` | Run `--op` in every dependent of `<member>` instead of named targets. |
+| `--op <op>` | The Op `--dependents-of` runs. |
+| `--dry-run` | Read the graph, check the targets and print the order, and run nothing. |
+| `--json` | Print the workspace run record (or the plan, or the refusal) as JSON. |
+| `--plan <digest>` | With `approve`: the pending fact to approve. |
+| `--approver <principal>` | With `approve`: who approves. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Every step passed, or `--dry-run` printed the plan. |
+| 1 | A target was refused, a step failed, or the declaration could not be read. |
+| 3 | A step stopped at a gate. |
+
+## See also
+
+- [`chant workspace train`](/chant/cli/workspace-train/): pin a release of every member together.
+- [`chant workspace graph`](/chant/cli/workspace-graph/): the composed graph the targets are checked against.

@@ -667,6 +667,12 @@ export interface Member {
   because: string | null;
   /** Whether `chant workspace export` takes the member (#2552, D10). False when the entry does not say. */
   travel: boolean;
+  /**
+   * Whether a workspace gate's approval may stand in for this member's own
+   * gates (#2554, ws-039), when its digest covers the member's plan. Read
+   * from the declaration at base. Set only when the entry says true.
+   */
+  acceptWorkspaceGates?: true;
   /** The security groups this member adds to the declaration's top-level `security` (#4168 step 7), in file order; empty when it names none. */
   security: SecurityGroup[];
   /** The member's own `ci.workflow` (#4168 step 6), which wins over the top level's; null when it names none. */
@@ -991,6 +997,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       travel: e.travel === true,
+      ...(e.acceptWorkspaceGates === true ? { acceptWorkspaceGates: true as const } : {}),
       security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
       ciWorkflow: ((e.ci as { workflow?: CiWorkflow } | undefined)?.workflow) ?? null,
       ciHooks: ciHooksOf((e.ci as { hooks?: unknown } | undefined)?.hooks, `${pointer}/ci/hooks`, at),

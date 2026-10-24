@@ -263,6 +263,10 @@ export interface ParsedArgs {
   head?: string;
   /** `chant lifecycle affected --include-dependents` — add downstream consumers */
   includeDependents?: boolean;
+  /** `chant workspace run --dependents-of <member> --op <op>` (#2554): run the Op in every member that links to this one, directly or not. */
+  dependentsOf?: string;
+  /** `chant workspace train <env> --pin <member>=<label|digest>` (#2554), repeatable: the release a train pins for that member instead of its newest. */
+  pins?: string[];
   /**
    * `chant components fan-out --from-affected <file>` (#2420) — read the
    * stack-level change signal from the JSON `chant lifecycle affected --json`

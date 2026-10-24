@@ -93,6 +93,7 @@ A member is an object with `name`, `dir` and `kind`. A member of kind `repo` has
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
 | `travel` | no | `true` when the member goes with an export. [`chant workspace export`](/chant/cli/workspace-export/) takes only members that set it. It was added in chant 0.101.0. |
+| `acceptWorkspaceGates` | no | `true` lets an approval of a [workspace gate](/chant/cli/workspace-run/#workspace-gates) stand in for this member's own gates, when its digest covers the plan the member's run reached the gate with. Only the declaration at base counts. It was added in chant 0.124.47. |
 | `suppress` | no | Declaration checks turned off for this member, each `{ "check": "WSP009", "because": "..." }`. See [severity and suppression](/chant/cli/workspace-check/#severity-and-suppression). |
 
 These kinds are built in, besides `design` and the group kind `examples`.

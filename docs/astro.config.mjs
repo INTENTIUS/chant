@@ -372,6 +372,8 @@ export default defineConfig({
 								{ label: 'workspace records', slug: 'cli/workspace-records' },
 								{ label: 'workspace work', slug: 'cli/workspace-work' },
 								{ label: 'workspace runs', slug: 'cli/workspace-runs' },
+								{ label: 'workspace run', slug: 'cli/workspace-run' },
+								{ label: 'workspace train', slug: 'cli/workspace-train' },
 								{ label: 'workspace box', slug: 'cli/workspace-box' },
 								{ label: 'workspace member and host', slug: 'cli/workspace-member' },
 								{ label: 'workspace wip', slug: 'cli/workspace-wip' },

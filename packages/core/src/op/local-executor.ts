@@ -35,7 +35,8 @@ import { contentDigest } from "../content-digest";
 import { parseDuration } from "./duration";
 import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
-import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
+import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort, type WorkspaceGateStandIn } from "./gate";
+import { resolveWorkspaceRun, type WorkspaceRunCitation } from "./workspace-run-env";
 import { gateName } from "./gate-name";
 import { resolveGateAliases } from "./gate-alias";
 import { gatePointOf } from "./gate-point";
@@ -109,8 +110,11 @@ export interface StepRecord {
     /**
      * On a gate with an `approval` block (#2508): whether a quorum or a policy permit passed it. `"point"` on a gate that asks a decision point (#3170).
      * `"alias"` (#3949) when an approval recorded under one of the gate's aliases counted, on any gate.
+     * `"workspace"` (#2554) when a workspace gate's approval stood in for it.
      */
-    via?: "quorum" | "policy" | "point" | "alias" | "empty";
+    via?: "quorum" | "policy" | "point" | "alias" | "empty" | "workspace";
+    /** With `via: "workspace"` (#2554): the workspace gate and the digest of the member plans its approval covers. */
+    workspaceGate?: { gate: string; digest: string };
     /** On a gate with a quorum (#2508): every approver who counted toward it. */
     approvers?: string[];
     /** On a gate that asks a decision point (#3170): the answer record that passed it, which the gate ledger's resolution cites too. */
@@ -612,6 +616,8 @@ interface GateContext {
   onRecord?: (record: StepRecord) => void;
   /** Where the run's events go (#4041): a step's start, its settle and its gate's decision. */
   emit?: RunEventSink;
+  /** A workspace gate that may stand in for this run's gates (#2554). Absent outside a workspace run started with a gate. */
+  workspace?: WorkspaceGateStandIn;
   /** The run context's list of passed gates (#2522). A gate that passes is appended here. */
   passed?: PassedGate[];
   /** The run's hold on its work item's lease (#2748). Absent in compensation phases, which run whatever the lease did. */
@@ -817,6 +823,7 @@ async function runGateStep(
       ...(gates.now ? { now: gates.now } : {}),
       ...(checkpoint ? { checkpoint } : {}),
       ...(step.aliases?.length ? { aliases: resolveGateAliases(step, gates.op) } : {}),
+      ...(gates.workspace ? { workspace: gates.workspace } : {}),
     });
   } catch (err) {
     // Deciding a gate reads and writes the `chant/lifecycle` branch, so it
@@ -847,6 +854,7 @@ async function runGateStep(
       timestamp: resolution.timestamp,
       ...(resolution.url ? { url: resolution.url } : {}),
       ...(check.via ? { via: check.via } : {}),
+      ...(resolution.workspaceGate ? { workspaceGate: resolution.workspaceGate } : {}),
       ...(check.approvals ? { approvers: check.approvals.map((r) => r.resolvedBy) } : {}),
       ...(check.carried?.length
         ? { carriedFrom: check.carried.map((r) => ({ op: r.carriedFrom!.op, gate: r.carriedFrom!.gate, resolvedBy: r.resolvedBy, timestamp: r.carriedFrom!.timestamp })) }
@@ -1278,6 +1286,18 @@ export interface RunOpOptions {
   gates?: GateLedgerPort;
   /** Working directory for the default git-backed gate ledger. */
   cwd?: string;
+  /**
+   * The workspace run that started this run (#2554). Defaults to the one the
+   * environment names (`CHANT_WORKSPACE_RUN`, `./workspace-run-env.ts`). The
+   * run record cites it.
+   */
+  workspaceRun?: WorkspaceRunCitation;
+  /**
+   * The workspace gate that may stand in for this run's gates (#2554). Defaults
+   * to the gate the workspace run names, read from the workspace ledger with
+   * the member's opt-in at base; a test passes a stub.
+   */
+  workspaceGate?: WorkspaceGateStandIn;
   /** ISO-8601 "now", so a gate decision is deterministic under test. */
   now?: string;
   /** Identifies this run on any pending fact it records. */
@@ -1492,6 +1512,8 @@ async function runOpInTurn(
   const commit = options.commit ?? (await resolveCommitSha(options.cwd ? { cwd: options.cwd } : {}));
   // #4020: the CI run this one is in, in the shape a deploy record carries it.
   const ciRun = resolveCiRun();
+  // #2554: the workspace run that started this one, which its record cites.
+  const workspaceRun = options.workspaceRun ?? resolveWorkspaceRun();
   // #4041: the run's events name it the way its run record does: its own id,
   // the commit, and the CI run it is in.
   // #4042: a run that writes to the ledger also keeps its events on this host,
@@ -1535,6 +1557,11 @@ async function runOpInTurn(
     passed: run.passedGates,
     points: options.points ?? workspaceGatePointAsker(options.cwd ?? process.cwd()),
     ...(options.env !== undefined ? { env: options.env } : {}),
+    ...(options.workspaceGate
+      ? { workspace: options.workspaceGate }
+      : workspaceRun?.gate
+        ? { workspace: lazyWorkspaceGate(options.cwd ?? process.cwd(), workspaceRun.gate) }
+        : {}),
   };
 
   // Effect steps are ordered (read-compare-run-write): refuse them in a
@@ -1658,6 +1685,7 @@ async function runOpInTurn(
       ...(resumed ? { resumed } : {}),
       ...(commit ? { gitSha: commit } : {}),
       ...(options.runner ? { runOrigin: options.runner.runOrigin } : ciRun ? { runOrigin: ciRun.runOrigin } : {}),
+      ...(workspaceRun ? { workspaceRun: { id: workspaceRun.id, ...(workspaceRun.gate ? { gate: workspaceRun.gate } : {}) } } : {}),
       phaseDurations,
     });
     if (status === "fail" && options.describeFailure) {
@@ -1953,4 +1981,17 @@ function phaseVerdict(records: readonly StepRecord[]): "ok" | "fail" | "skipped"
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The workspace gate stand-in for a member run (#2554), loading the workspace
+ * code only when a gate is asked about it.
+ */
+function lazyWorkspaceGate(cwd: string, gate: string): WorkspaceGateStandIn {
+  return {
+    async standIn(q) {
+      const { memberGateStandIn } = await import("../workspace/workspace-gates");
+      return memberGateStandIn(cwd, gate, q);
+    },
+  };
 }

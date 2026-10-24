@@ -39,7 +39,7 @@ import { sortedJsonReplacer } from "../utils";
 import type { OpConfig } from "../op/types";
 import type { StepRecord } from "../op/local-executor";
 import { opRunFailureOf, type OpRunRecord, type OpRunRecordInput, type OpRunPhaseRecord, type OpRunStepRecord } from "../op/runtime";
-import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
+import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError, type LedgerLocation } from "./git";
 
 /** Prefix folding the per-op run ledgers into one flat name under `<env>/`. See the module doc. */
 const PREFIX = "runs__";
@@ -95,6 +95,8 @@ export function buildRunRecord(
     runOrigin?: OpRunRecord["runOrigin"];
     /** Each phase's wall-clock time, by name, as the executor measured it. */
     phaseDurations?: Record<string, number>;
+    /** The workspace run that started this one (#2554). */
+    workspaceRun?: OpRunRecord["workspaceRun"];
   },
 ): OpRunRecordInput {
   const phases: OpRunPhaseRecord[] = [];
@@ -145,6 +147,7 @@ export function buildRunRecord(
     ...(times.resumed ? { resumed: times.resumed } : {}),
     ...(times.gitSha ? { gitSha: times.gitSha } : {}),
     ...(times.runOrigin ? { runOrigin: times.runOrigin } : {}),
+    ...(times.workspaceRun ? { workspaceRun: times.workspaceRun } : {}),
   };
 }
 
@@ -193,7 +196,7 @@ export async function appendRunRecord(
 export async function readRunLedger(
   environment: string,
   op: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<{ records: OpRunRecord[]; malformed: number }> {
   const content = await readBlobFromPath(environment, fileFor(op), opts);
   if (!content) return { records: [], malformed: 0 };
