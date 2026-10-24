@@ -48,6 +48,7 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/op/gate-point.ts",
       "packages/core/src/op/gate-quorum.ts",
       "packages/core/src/op/op-waves.ts",
+      "packages/core/src/wave-blocked.ts",
       "packages/core/src/wave-layout.ts",
       "packages/core/src/workspace/class-data.ts",
       "packages/core/src/workspace/identity-gate-rule.ts",
