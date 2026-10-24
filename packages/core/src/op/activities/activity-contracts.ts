@@ -265,6 +265,7 @@ export const workEvidenceContract = activityContract(
     title: z.string(),
     url: z.string().optional(),
     path: z.string().optional(),
+    ops: z.record(z.string(), z.unknown()).optional(),
     kind: z.string().optional(),
     cwd: z.string().optional(),
   }),

@@ -403,6 +403,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lease-held` | refusal, `work`; error, `workEvidence` | Someone holds a live lease on the work item: another worker, or, for a claim, the same one. |
 | `lease-not-held` | refusal, `work`; error, `workEvidence` | Nobody holds a live lease on the work item: it expired, was released or was never claimed. |
 | `lease-token-mismatch` | refusal, `work`; error, `workEvidence` | The live lease on the work item carries another fencing token than the one given. |
+| `work-evidence-ops-missing` | error, `workEvidence` | The evidence cites a run, deploy, gate answer or release plan the local `chant/lifecycle` branch does not hold (#3171). |
+| `work-evidence-ops-mismatch` | error, `workEvidence` | The cited ops record does not hash to the `sha256` given, or a cited run's outcome disagrees with the evidence's result. |
+| `work-evidence-ops-unfinished` | error, `workEvidence` | The cited run is still gated or waiting, so it has no outcome to show. |
 | `lease-race` | refusal, `work` | Another writer changed the lease between this command's read and its write. |
 | `lease-push-rejected` | refusal, `work` | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
 | `run-exists` | error, `runs start` and `runs record` | The fields give a run id the ledger already has. |
