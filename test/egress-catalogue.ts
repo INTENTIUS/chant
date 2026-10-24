@@ -563,6 +563,20 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`chant lifecycle health` (#4239) reads a backend service's group health and whether an IAM member holds its role.",
   },
   {
+    file: "lexicons/gcp/src/components/wait-gcp.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Google Cloud REST APIs (long-running operations, Cloud Run services), or a declared endpoint override",
+    why: "The `wait-for-operation` and `wait-cloud-run-ready` steps (#3143) poll until an operation is done or a service serves its latest revision; the http is injectable, so tests need no network.",
+  },
+  {
+    file: "lexicons/gcp/src/describe-stack-status.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "Google Cloud REST APIs (the list endpoints of every kind the applier manages), or `GCP_ENDPOINT_URL`",
+    why: "Stack status for the gcp lexicon (#3142) lists chant-owned resources to decide whether a stack is present; the http is injectable.",
+  },
+  {
     file: "lexicons/cpln/src/api.ts",
     primitives: ["fetch"],
     phase: "apply",
