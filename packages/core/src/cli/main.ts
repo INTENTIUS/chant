@@ -1200,12 +1200,16 @@ Options:
                         JSON (lifecycle plan)
                         OR '--report markdown': emit a reviewer-facing markdown
                         render, holes and disruption included (lifecycle plan)
-  --from <name>         Source lexicon for migrate (default: github)
-  --to <name>           Target lexicon for migrate (default: gitlab)
-  --emit <fmt>          Migration output format: yaml (default) or ts
+  --from <name>         Source for migrate: a lexicon, or lexicon/dialect such
+                        as sql/postgres (default: github)
+  --to <name>           Target for migrate, same form, such as sql/clickhouse
+                        (default: gitlab)
+  --emit <fmt>          Migration output format: yaml (default), ts, or sql;
+                        sql/clickhouse defaults to ts
   --strict              Escalate needs-review/validation to errors (migrate);
                         exit nonzero on an unresolved identity (lifecycle whoami)
-  --validate            Run external validator (glci/glab) after migrate
+  --validate            Run external validator after migrate: glci/glab, or the
+                        ClickHouse emulator for sql/clickhouse
   --use-composites      Rewrite to composite calls when patterns match (migrate)
   --components          Target discovered Component declarations instead of
                         lexicon resources (list, describe, graph, build, run)

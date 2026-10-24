@@ -101,4 +101,4 @@ The view's body is copied as written, so a T-SQL function in it is the likeliest
 
 `lexicons/sql/test-fixtures/sqlserver/wwi-excerpt.sql` is an excerpt of Microsoft's WideWorldImporters sample, MIT licensed ([sql-server-samples](https://github.com/microsoft/sql-server-samples), `samples/databases/wide-world-importers/wwi-ssdt/wwi-ssdt/`), with its licence beside it. `fixture.test.ts` imports it, checks that each non-mechanical decision is a diagnostic, builds the output and lints it.
 
-For a Postgres source, see [Importing a Postgres Server](../postgres-importing/). A Postgres to ClickHouse translation through `chant migrate` is tracked in [#4399](https://github.com/INTENTIUS/chant/issues/4399) and shares the catalog above.
+For a Postgres source, see [Importing a Postgres Server](../postgres-importing/). To translate Postgres tables into the ClickHouse tables a CDC pipeline fills, see [Migrating Postgres Tables to ClickHouse](../migrate-postgres-to-clickhouse/), which shares the catalog above.

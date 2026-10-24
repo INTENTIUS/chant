@@ -83,7 +83,7 @@ export interface ParsedArgs {
   /** `chant run events <run> --follow` (#4042) — stream the run's events as they happen, until `run-settle`. */
   follow?: boolean;
   live: boolean;
-  /** `chant migrate --from <name>` (default "github") */
+  /** `chant migrate --from <name>` (default "github"); `lexicon/dialect` for the sql lexicon */
   migrateFrom?: string;
   /** `chant import --kustomize <dir>` — render the kustomization, then import (#1548) */
   kustomize?: string;
@@ -103,9 +103,9 @@ export interface ParsedArgs {
   write?: boolean;
   /** `chant carve apply --write-source` — stamp the ownership marker into the emitted source */
   writeSource?: boolean;
-  /** `chant migrate --to <name>` (default "gitlab") */
+  /** `chant migrate --to <name>` (default "gitlab"); `lexicon/dialect` for the sql lexicon */
   migrateTo?: string;
-  /** `chant migrate --emit yaml|ts` */
+  /** `chant migrate --emit yaml|ts|sql` */
   emit?: string;
   /** Escalate needs-review diagnostics to errors (migrate command) */
   strict?: boolean;

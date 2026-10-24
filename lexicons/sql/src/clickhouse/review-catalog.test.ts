@@ -67,6 +67,18 @@ describe("engineReview", () => {
     expect(r.extraColumns).toEqual([CDC_VERSION_COLUMN, CDC_DELETED_COLUMN]);
   });
 
+  test("a CDC mirror takes the caller's names for the two columns, in the engine, the columns and the advice (#4399)", () => {
+    const r = engineReview({ object: "t", mode: "cdc", cdcColumns: { version: "_peerdb_version", deleted: "_peerdb_is_deleted" } });
+    expect(r.engine).toBe("ReplacingMergeTree(_peerdb_version, _peerdb_is_deleted)");
+    expect(r.extraColumns).toEqual([
+      { name: "_peerdb_version", type: CDC_VERSION_COLUMN.type },
+      { name: "_peerdb_is_deleted", type: CDC_DELETED_COLUMN.type },
+    ]);
+    expect(r.finding.message).toContain("_peerdb_version and _peerdb_is_deleted");
+    expect(r.finding.suggestion).toContain("highest _peerdb_version");
+    expect(r.finding.suggestion).toContain("filter on _peerdb_is_deleted,");
+  });
+
   test("the engines it writes exist in the pinned catalog and take the arguments it gives", () => {
     expect(Object.keys(TABLE_ENGINES)).toContain("MergeTree");
     const replacing = TABLE_ENGINES.ReplacingMergeTree;
@@ -143,6 +155,16 @@ describe("constraintReview", () => {
     expect(r.findings[0]?.column).toBe("a");
     expect(r.findings[1]?.column).toBeUndefined();
     expect(r.comments.every((c) => !c.includes("\n"))).toBe(true);
+  });
+});
+
+describe("constraintReview: an exclusion constraint (#4399)", () => {
+  test("is a comment and a finding with no column", () => {
+    const r = constraintReview({ object: "t", constraints: [{ kind: "exclusion", name: "no_overlap", expression: "USING gist (during WITH &&)" }] });
+    expect(r.comments).toEqual(["-- EXCLUDE no_overlap USING gist (during WITH &&)"]);
+    expect(r.findings[0]).toMatchObject({ ruleId: "SQLRV005", severity: "warning" });
+    expect(r.findings[0]?.column).toBeUndefined();
+    expect(r.findings[0]?.message).toContain("Exclusion constraint no_overlap is not enforced");
   });
 });
 

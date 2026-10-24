@@ -337,7 +337,8 @@ export const test = new Job({
       async transform(content: string, opts) {
         const { transform } = await import("./migrate/from-github/index");
         const result = await transform(content, {
-          emit: opts.emit,
+          // "sql" is for sql targets (#4399); chant migrate refuses it for this pair.
+          emit: opts.emit === "sql" ? undefined : opts.emit,
           useComposites: opts.useComposites,
           sourceFile: opts.sourceFile,
           strict: opts.strict,

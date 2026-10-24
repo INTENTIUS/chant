@@ -12,7 +12,7 @@ chant migrate <file> [flags]
 
 ## Description
 
-`chant migrate` translates a workflow file from one lexicon's source format into another lexicon's output. v1 ships a single edge: GitHub Actions (`.github/workflows/*.yml`) -> GitLab CI (`.gitlab-ci.yml` or chant TypeScript).
+`chant migrate` translates a file from one lexicon's source format into another lexicon's output. It has two edges. One goes from GitHub Actions (`.github/workflows/*.yml`) to GitLab CI (`.gitlab-ci.yml` or chant TypeScript). The other goes from Postgres tables to the ClickHouse tables a CDC pipeline fills (`--from sql/postgres --to sql/clickhouse`).
 
 The translation is deterministic and typed. The same input produces the same output, every translation decision is recorded as per-key provenance, and an unknown pattern is reported as a machine-readable diagnostic instead of guessed.
 
@@ -22,14 +22,14 @@ For the full surface (supported translations, marketplace-action coverage, Needs
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--from` | `string` | `github` | Source lexicon name |
-| `--to` | `string` | `gitlab` | Target lexicon name |
-| `-o, --output` | `string` | stdout | Write rendered output to this file |
-| `--emit` | `string` | `yaml` | Output format: `yaml` (one-shot) or `ts` (own-it-going-forward chant source) |
+| `--from` | `string` | `github` | Source lexicon name, or `lexicon/dialect` for the sql lexicon (`sql/postgres`) |
+| `--to` | `string` | `gitlab` | Target lexicon name, or `lexicon/dialect` (`sql/clickhouse`) |
+| `-o, --output` | `string` | stdout | Write rendered output to this file, creating its directory |
+| `--emit` | `string` | `yaml`, or `ts` for `sql/clickhouse` | Output format: `yaml` (one-shot), `ts` (own-it-going-forward chant source), or `sql` (plain DDL, `sql/clickhouse` only) |
 | `--report` | `string` | — | Write SARIF v2.1.0 report to this path |
 | `--strict` | `bool` | `false` | Exit non-zero on any needs-review diagnostic (and on validator failure when `--validate` is set) |
-| `--validate` | `bool` | `false` | Run an external validator (`glci lint` preferred, `glab ci lint` fallback) against the emitted YAML |
-| `--use-composites` | `bool` | `false` | Rewrite recognised IR shapes (NodePipeline, NodeCI) into composite calls |
+| `--validate` | `bool` | `false` | Run an external validator (`glci lint` preferred, `glab ci lint` fallback) against the emitted YAML. For `sql/clickhouse`, create the emitted DDL on a throwaway ClickHouse server; a refused statement exits 1 |
+| `--use-composites` | `bool` | `false` | Rewrite recognised IR shapes (NodePipeline, NodeCI) into composite calls. For `sql/clickhouse`, emit a `CdcMirror` call per table |
 
 ## Usage
 
@@ -56,7 +56,17 @@ chant migrate .github/workflows/ci.yml \
   --emit ts \
   --use-composites \
   --output src/pipeline.ts
+
+# Postgres tables into the ClickHouse tables a CDC pipeline fills
+chant migrate db --from sql/postgres --to sql/clickhouse \
+  --use-composites \
+  --output mirror/src/mirrors.ts \
+  --report review.sarif
 ```
+
+## Naming the two sides
+
+A side is a lexicon name, or a lexicon and one of its dialects after a slash. The sql lexicon holds two dialects whose builds never mix, so `--from sql/postgres --to sql/clickhouse` says which is the source and which the target. The part before the slash picks the lexicon to load, and the lexicon decides which pairs it accepts (`LexiconPlugin.migrationSource(from, to)` in `packages/core/src/lexicon.ts`). The source may be a file or, for a lexicon that says so, a directory such as a workspace member. [Migrating Postgres Tables to ClickHouse](/chant/lexicons/sql/migrate-postgres-to-clickhouse/) covers that pair: its diagnostics, the links it writes between the two members of a workspace, and `--validate` on the emulator.
 
 ## Diagnostics
 
@@ -74,7 +84,7 @@ The full rule catalog with explanations lives at [GitLab -> Migration -> NeedsRe
 | Code | Meaning |
 |------|---------|
 | 0 | Success (or non-strict run with warnings) |
-| 1 | Cannot read source file, target lexicon missing, transform failed, or `--strict` and one or more error-severity diagnostics emitted |
+| 1 | Cannot read source file, target lexicon missing, transform failed, `--strict` and one or more error-severity diagnostics emitted, or `--validate` found a refused statement or could not run |
 
 ## See Also
 
