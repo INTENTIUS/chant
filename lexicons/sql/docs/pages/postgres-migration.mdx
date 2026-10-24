@@ -185,6 +185,10 @@ A backfill writes every row of the table once more, and every standby and logica
 
 A table a logical replication publication sends the column of is refused, naming each publication: a subscriber applies changes by column name and would fail at the first backfilled row. A publication with a column list (15 and later) that leaves the column out does not stop the migration.
 
+A table that is the target of a logical replication subscription is refused too, naming each subscription. The Plan phase reads `pg_subscription_rel` joined to `pg_subscription` (this database's rows; for a partitioned table, any of its partitions), `subscriptionsOf` in `migrate/replication.ts`. A subscription's apply worker runs with `session_replication_role = replica`, and a trigger made by `CREATE TRIGGER` fires only in `origin` and `local` ([session_replication_role](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-SESSION-REPLICATION-ROLE), [ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html)), so the dual write would never see a replicated row and the new column would go stale while the verification passed on the rows that were there.
+
+The Op refuses instead of creating the trigger `ENABLE ALWAYS`. `ENABLE ALWAYS` makes the trigger fire, but the Op's contract assumes that no writer of the old column is left once the retention has passed, and a subscription is such a writer that the Op cannot see: the publisher keeps sending the old column's name and the subscriber applies by name. A rename's contract would drop the column and stop the apply, and a type change's switch would swap the column under a running apply worker. Changing the publisher in step is a second server, which one Op with one connection does not hold ([#3332](https://github.com/INTENTIUS/chant/issues/3332)). To migrate such a table, drop it from the publication and run `ALTER SUBSCRIPTION ... REFRESH PUBLICATION`, or migrate both servers by hand.
+
 ## Options
 
 | Option | Default | |
@@ -222,6 +226,7 @@ The Plan phase refuses, naming each object and what to do, before anything is ad
 | a rename and a type change in one declaration, without `reverse` | a writer of the new name needs its value converted back to the old type |
 | a rename and a type change of a column that also has a default, a serial or an identity | the default is an expression of the old type, and its conversion would be a third one that nothing verifies; rename first, then change the type |
 | a column a logical replication publication sends | the subscriber's table must change at the same moment; a column list that leaves the column out does not stop the Op; [#3332](https://github.com/INTENTIUS/chant/issues/3332) |
+| a table that is the target of a logical replication subscription | the apply worker does not fire a default trigger, and `ENABLE ALWAYS` would leave the contract dropping a column the publisher still sends; the refusal names each subscription ([#4405](https://github.com/INTENTIUS/chant/issues/4405)) |
 | an old column from the last migration still kept | run its contract first |
 | a change the applier makes in place | use `ApplyOp` |
 

@@ -34,6 +34,32 @@
  * publication sends the migrated column of, naming each publication. A
  * publication with a column list (15 and later) that leaves the column out
  * sends neither it nor the new one, and does not stop the migration.
+ *
+ * ## Subscriptions (#4405)
+ *
+ * The other side: a table that is the target of a subscription. The
+ * subscription's apply worker runs with `session_replication_role = replica`
+ * ("Logical Replication", Architecture,
+ * https://www.postgresql.org/docs/18/logical-replication-architecture.html),
+ * and a trigger made by plain `CREATE TRIGGER` is `ENABLE ORIGIN`: it fires
+ * only while the setting is `origin` or `local`
+ * (https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-SESSION-REPLICATION-ROLE).
+ * Only `ENABLE REPLICA` and `ENABLE ALWAYS` triggers fire for the worker
+ * (https://www.postgresql.org/docs/18/sql-altertable.html, the TRIGGER
+ * clauses). The architecture page says "by default, triggers and rules will
+ * not fire on a subscriber" and points to `ENABLE TRIGGER` to change it. So the dual write
+ * never sees a replicated row, and the new column goes stale. The initial
+ * table copy is the exception: it is a `COPY` and fires plain triggers.
+ *
+ * `ENABLE ALWAYS` would make the trigger fire, and the Plan phase refuses
+ * the table instead, because the Op's later steps assume it controls every
+ * writer of the old column. The publisher keeps sending the old column's name
+ * and the subscriber applies by name, so a rename's contract (which drops the
+ * old column) would stop the apply at the next row, and the switch of a
+ * type change would change the column under a running apply worker. Neither
+ * order can be made inside this Op's one connection to one server; that is
+ * the same limit #3332 recorded for the publisher side. The refusal names
+ * each subscription.
  */
 
 import type { PostgresClient } from "../live/client";
@@ -148,4 +174,44 @@ function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
       { once: true },
     );
   });
+}
+
+/** One subscription that has the table, or a partition of it, as a target. */
+export interface SubscriptionHit {
+  name: string;
+  enabled: boolean;
+}
+
+/**
+ * The subscriptions of the current database with a row in `pg_subscription_rel`
+ * for `schema.table` (and, on a partitioned table, for any of its
+ * partitions, which is where a subscription to a partitioned table lists the
+ * tables it applies to). Read at plan time; `pg_subscription_rel` is
+ * per database and `pg_subscription` is shared, so the join keeps this
+ * database's rows (`subdbid`).
+ */
+export async function subscriptionsOf(client: Pick<PostgresClient, "query">, schema: string, table: string, major: number): Promise<SubscriptionHit[]> {
+  const rel = "pg_catalog.to_regclass(pg_catalog.quote_ident($1) || '.' || pg_catalog.quote_ident($2))";
+  const tables = major >= 12 ? `SELECT relid FROM pg_catalog.pg_partition_tree(${rel})` : `SELECT ${rel}::oid AS relid`;
+  const rows = await client.query<{ subname: string; subenabled: boolean }>(
+    `SELECT DISTINCT s.subname, s.subenabled
+     FROM pg_catalog.pg_subscription_rel sr
+     JOIN pg_catalog.pg_subscription s ON s.oid = sr.srsubid
+     WHERE s.subdbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+       AND sr.srrelid IN (${tables})
+     ORDER BY s.subname`,
+    [schema, table],
+  );
+  return rows.map((r) => ({ name: r.subname, enabled: r.subenabled }));
+}
+
+/** The Plan phase's refusal for a table that a subscription applies to. */
+export function subscriptionRefusal(where: string, column: string, hits: SubscriptionHit[]): string {
+  return (
+    `${where} is a target of logical replication subscription(s) ${hits.map((h) => `${h.name}${h.enabled ? "" : " (disabled)"}`).join(", ")}. ` +
+    `A subscription's apply worker runs with session_replication_role = replica, where a trigger made by CREATE TRIGGER does not fire, so the dual write would never see a replicated row and the new column of ${column} would go stale ` +
+    `(https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-SESSION-REPLICATION-ROLE). ` +
+    `ENABLE ALWAYS would fire it, but the publisher keeps sending the old column's name and the subscriber applies by name, so the contract (or the switch of a type change) would stop the apply, and one Op cannot change both servers. ` +
+    `Take the table out of the subscription (drop it from the publication and ALTER SUBSCRIPTION ... REFRESH PUBLICATION), or migrate the publisher and the subscriber by hand. A migration of both together is chant #3332.`
+  );
 }
