@@ -285,6 +285,18 @@ A component may also declare [`environments`](/chant/components/component-contra
 | `environments-ledger-unreadable` | The `chant/lifecycle` branch exists and the member's ledger directories couldn't be listed |
 | `environments-component-undeclared` | A component declares an environment the config doesn't cover, so it isn't listed |
 
+Each environment also carries `executor`, the forge workflow that deploys it ([#4402](https://github.com/INTENTIUS/chant/issues/4402)), as `{ forge, workflow, reason }`. It comes from the `executor` on the environment's entry in the member's `chant.config.ts`. A literal entry is used before a pattern such as `pr-*`:
+
+```ts
+environments: [
+  "staging",
+  { name: "prod", executor: { forge: "github", workflow: "deploy-prod.yml" } },
+  { name: "pr-*", executor: { forge: "github", workflow: "preview.yml" } },
+],
+```
+
+`forge` is `github`, `gitlab` or `forgejo`, and `workflow` is the committed file the forge runs, such as `deploy-prod.yml` under `.github/workflows/` or `.gitlab-ci.yml`. With none declared, both are `null` and `reason` says why: `executor-none-declared`, or `executor-config-unreadable` when the config couldn't be read. chant doesn't derive an executor from a generated workflow's name such as `chant-components-<env>`, and it never dispatches one. A reader such as behold uses it to tell which environments deploy through CI. `executor` was added in chant 0.124.47, so a document from an older chant has none.
+
 The reference workspace's `delivery` member declares the app with the docker lexicon's `DockerWebService` composite and deploys it with the `app` component, whose contract lists that kind in `composites`. Its document has one row, `delivery/app`, with that component matched `by: "composites"` and `via: "member"` and no reason. The component's only runtime is `local`. The delivery config declares no environments, so the only environment is `local` and `environmentReasons` holds `environments-none-declared`.
 
 ## The intent graph

@@ -335,6 +335,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `environments-ledger-undeclared` | member, `graph --composites` | The member's ledger has releases in an environment its config doesn't cover, so `chant run --env` would refuse it and it isn't listed. |
 | `environments-ledger-unreadable` | member, `graph --composites` | The `chant/lifecycle` branch exists and the member's ledger environments couldn't be listed. |
 | `environments-component-undeclared` | member, `graph --composites` | A component declares an environment the member's `chant.config.ts` environments don't cover, so `chant run --env` would refuse it and it is not listed ([#3153](https://github.com/INTENTIUS/chant/issues/3153)). |
+| `executor-none-declared` | environment `executor.reason`, `graph --composites` | The member's `chant.config.ts` declares no `executor` for the environment, so nothing names the forge workflow that deploys it ([#4402](https://github.com/INTENTIUS/chant/issues/4402)). |
+| `executor-config-unreadable` | environment `executor.reason`, `graph --composites` | The member's `chant.config.ts` couldn't be read, so whether a forge workflow deploys the environment is unknown. |
 | `box-credential-declared` | finding, `check` | `WSP121`: a file in a box member's directory carries a literal secret, a credential's shape or a literal where a credential goes. A `${VAR}`, `$VAR` or secret-manager reference isn't one. |
 | `box-capability-unbrokered` | finding, `check` | `WSP122`: a capability in a member's box block names no broker, so the box would hold its credential. |
 | `box-isolation-collision` | finding, `check` | `WSP123`: two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. |
@@ -998,6 +1000,7 @@ These fields are optional in their documents. Each schema description names the 
 
 | Document | Field | Floor | Meaning |
 |---|---|---|---|
+| `composites` | `components[].environments[].executor` | 0.124.47 | The forge and committed workflow that deploys the environment, `{ forge, workflow, reason }`, from the `executor` on the environment's entry in the member's `chant.config.ts`, a literal entry before a pattern. `forge` is `github`, `gitlab` or `forgejo`. Both are `null` when none is declared, and `reason` is then `executor-none-declared` or `executor-config-unreadable` ([#4402](https://github.com/INTENTIUS/chant/issues/4402)). Never derived from a generated workflow's name |
 | `status` | `releases[].approver` | 0.124.28 | Who approved the change at its gate, or `null` for an ungated release. The release ledger has recorded it since [#1035](https://github.com/INTENTIUS/chant/issues/1035), and `status` first lists it here |
 | `status` | `releases[].releaseDigest` | 0.124.29 | The release the deploy was made from, or `null` for a deploy that named none ([#4043](https://github.com/INTENTIUS/chant/issues/4043)) |
 | `status` | `releases[].releaseLabel` | 0.124.29 | The label that release was cut with, or `null` when there is none or the cut line can't be read |

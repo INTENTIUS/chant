@@ -19,7 +19,9 @@ import { PublishDeclarationSchema, type PublishDeclaration } from "./lifecycle/p
 // needs only them stays clear of the loader below (#4356 follow-up).
 export {
   environmentEndpoint,
+  environmentExecutor,
   environmentName,
+  EXECUTOR_FORGES,
   environmentNames,
   isEnvironmentPattern,
   isOwnershipParamRef,
@@ -27,9 +29,10 @@ export {
   matchesEnvironmentPattern,
   resolveOwnershipStack,
   type EnvironmentDeclaration,
+  type EnvironmentExecutor,
   type OwnershipEnv,
 } from "./config-environments";
-import { isOwnershipParamRef, resolveOwnershipStack, type EnvironmentDeclaration, type OwnershipEnv } from "./config-environments";
+import { EXECUTOR_FORGES, isOwnershipParamRef, resolveOwnershipStack, type EnvironmentDeclaration, type OwnershipEnv } from "./config-environments";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -40,6 +43,10 @@ const EnvironmentEntrySchema = z.union([
     name: z.string().min(1),
     endpoint: z.string().min(1).optional(),
     canary: z.boolean().optional(),
+    executor: z.object({
+      forge: z.enum(EXECUTOR_FORGES),
+      workflow: z.string().min(1),
+    }).strict().optional(),
   }),
 ]);
 

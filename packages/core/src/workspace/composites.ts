@@ -36,7 +36,8 @@
  * And each component lists the environments it may deploy to (#2695,
  * `environments.ts`): `local`, the environments its member's config declares,
  * and those with a release in the member's ledger on `chant/lifecycle`, with
- * the command line for each.
+ * the command line for each, and the forge workflow that deploys each one
+ * when the member's config names it (#4402).
  */
 
 import { formatError } from "../cli/format";
@@ -50,7 +51,7 @@ import { emitDocument, type UnitResult } from "./member-commands";
 import { readerVersion, WORKSPACE_ERROR_CODES, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import type { ComponentEnvironmentDeclaration } from "../components/component";
-import { componentEnvironments, ENVIRONMENT_REASON_CODES, memberEnvironments, readLedgerEnvironments, type ComponentEnvironment, type EnvironmentReason, type LedgerEnvironmentReader, type MemberEnvironments } from "./environments";
+import { componentEnvironments, ENVIRONMENT_REASON_CODES, EXECUTOR_REASON_CODES, memberEnvironments, readLedgerEnvironments, type ComponentEnvironment, type EnvironmentReason, type LedgerEnvironmentReader, type MemberEnvironments } from "./environments";
 import { componentRuntimes, readRuntimesIn, RUNTIME_REASON_CODES, type ComponentRuntime, type MemberRuntimes, type PluginLoader, type RuntimeReason } from "./runtimes";
 
 /** `$id` of the JSON Schema for the document, shipped beside this file. */
@@ -82,6 +83,9 @@ export const COMPOSITES_RUNTIME_REASON_CODES = RUNTIME_REASON_CODES;
 
 /** Why a member's environments are only `local`, or leave out one its ledger has (#2695). Closed. */
 export const COMPOSITES_ENVIRONMENT_REASON_CODES = ENVIRONMENT_REASON_CODES;
+
+/** Why an environment row's executor names no forge workflow (#4402). Closed. */
+export const COMPOSITES_EXECUTOR_REASON_CODES = EXECUTOR_REASON_CODES;
 
 export interface CompositesMember {
   name: string;
