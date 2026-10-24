@@ -384,10 +384,19 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     force: ctx.args.force,
     lexicon: ctx.args.lexicon,
     parserOptions: ctx.args.parserOption,
+    validate: ctx.args.validate,
   });
 
   printImportResult(result);
-  return result.success ? 0 : 1;
+  if (!result.success) return 1;
+  // The review report and `--strict` (#4398): the parser's diagnostics, as `chant migrate` reports its own.
+  if (ctx.args.reportFile) {
+    const { writeImportReport } = await import("../commands/import-report");
+    const failed = writeImportReport(ctx.args.reportFile, resolve(ctx.args.path), result.diagnostics ?? [], CHANT_VERSION);
+    if (failed) console.error(formatWarning({ message: failed }));
+  }
+  const { importExitCode } = await import("../commands/import-report");
+  return importExitCode(result.diagnostics, ctx.args.strict === true);
 }
 
 export async function runUpdate(ctx: CommandContext): Promise<number> {
