@@ -165,6 +165,8 @@ export interface ParsedArgs {
   remove?: boolean;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
+  /** `chant workspace exit --drill` (#3177): run the exit on a scratch copy and check it, changing nothing. */
+  drill?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
    * (#1222). Without it the command plans and stops. */
   yes?: boolean;

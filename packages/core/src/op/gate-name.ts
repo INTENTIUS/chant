@@ -38,6 +38,14 @@ export const FAN_OUT_GATE_OP = "fan-out";
 export const WORKSPACE_UPGRADE_GATE_OP = "workspace-upgrade";
 
 /**
+ * The op name a `chant workspace exit` gate is recorded under (#3177). The gate
+ * is the exit's scope (`workspace`, or the member names joined with `+`), and
+ * it binds the digest of the exit's patch. Like an upgrade it is a command
+ * with no `*.op.ts` behind it, and leaving is a person's decision.
+ */
+export const WORKSPACE_EXIT_GATE_OP = "workspace-exit";
+
+/**
  * The op name the override gate records denials and overrides under (#3760):
  * `_gates/policy-override.jsonl`, gate the subject a policy denied. Like a
  * fan-out it has no `*.op.ts`, and an override is a person's, never a model's.
@@ -69,7 +77,7 @@ const PR_GATE_OP = /^pr-\d+(?:-[a-z0-9][a-z0-9-]*)?$/;
  * no Op config to read `neverOverMcp` from, the pending record carries it.
  */
 export function isNeverOverMcpGateOp(op: string): boolean {
-  return op === FAN_OUT_GATE_OP || op === WORKSPACE_UPGRADE_GATE_OP || op === OVERRIDE_GATE_OP || op === RELEASE_GATE_OP || PR_GATE_OP.test(op);
+  return op === FAN_OUT_GATE_OP || op === WORKSPACE_UPGRADE_GATE_OP || op === WORKSPACE_EXIT_GATE_OP || op === OVERRIDE_GATE_OP || op === RELEASE_GATE_OP || PR_GATE_OP.test(op);
 }
 
 /** Either spelling of a gate step's name. `gate` since #2202; `signalName` through 0.59.0. */
