@@ -85,8 +85,8 @@ describe("coverageReportCheck", () => {
 describe("countRequiredNames (#3377)", () => {
   const read = (lex: string) => readFileSync(join(repoRoot, "lexicons", lex, "src/validate.ts"), "utf8");
 
-  test("counts names with digits: otel reports 37", () => {
-    expect(countRequiredNames(read("otel"))).toBe(37);
+  test("counts names with digits: otel reports 38", () => {
+    expect(countRequiredNames(read("otel"))).toBe(38);
   });
 
   test("counts only the REQUIRED_NAMES entries: prometheus reports the array length", () => {
