@@ -11,7 +11,7 @@
 import type { Capability } from "@intentius/chant/components/capability";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 
-import { ecrRegistryBackend, loadImageOnHostCapability, publishArtifactCapability } from "./publish";
+import { ecrRegistryBackend, s3StorageBackend, loadImageOnHostCapability } from "./publish";
 import { extractConfigBomCapability } from "./config-bom";
 import {
   cfnDeployCapability,
@@ -31,7 +31,8 @@ export const AWS_VERB_FAMILIES = {
   // `extract-config-bom` parses a synthesized CloudFormation template (#684).
   sbom: ["extract-config-bom"],
   // `publish-image` is core's verb (#3142, #3143); aws contributes its ECR login as a registry backend.
-  publish: ["load-image-on-host", "publish-artifact"],
+  // `publish-artifact` is core's verb (#4408); aws contributes S3 as a storage backend.
+  publish: ["load-image-on-host"],
   apply: ["cfn-deploy", "ecs-update-service", "lambda-deploy", "s3-sync", "cdn-invalidate", "run-migration"],
   jobSubmission: ["emr-start-job-run", "emr-submit-step"],
   hostDelivery: ["code-deploy", "copy-to-host", "remote-exec"],
@@ -44,7 +45,6 @@ function awsCapabilities(): Array<Capability<never, unknown>> {
   return [
     extractConfigBomCapability,
     loadImageOnHostCapability,
-    publishArtifactCapability,
     cfnDeployCapability,
     ecsUpdateServiceCapability,
     lambdaDeployCapability,
@@ -76,5 +76,6 @@ export const awsCapabilityPlugin: CapabilityPlugin = {
   },
   capabilities: awsCapabilities,
   registryBackends: () => [ecrRegistryBackend],
+  storageBackends: () => [s3StorageBackend],
   families: () => AWS_VERB_FAMILIES,
 };

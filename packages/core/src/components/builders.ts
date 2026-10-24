@@ -20,6 +20,7 @@ import type {
   JvmBuildInput,
   GenerateSbomInput,
   PublishImageInput,
+  PublishArtifactInput,
   SignInput,
   AttestProvenanceInput,
   VerifyInput,
@@ -67,6 +68,9 @@ export const vulnGate = step<VulnGateInput>("vuln-gate");
 export const waitClusterHealthy = step<WaitClusterHealthyInput>("wait-cluster-healthy");
 // ── publish (core owns the verb; each cloud lexicon contributes a registry login backend) ──
 export const publishImage = step<PublishImageInput>("publish-image");
+export const publishArtifact = step<PublishArtifactInput>("publish-artifact");
+/** Alias for {@link publishArtifact}. */
+export const publishAsset = publishArtifact;
 
 export const waitEndpoint = step<WaitEndpointInput>("wait-endpoint");
 export const healthGate = step<HealthGateInput>("health-gate");
