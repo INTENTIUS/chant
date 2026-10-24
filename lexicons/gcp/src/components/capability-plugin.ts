@@ -10,6 +10,7 @@ import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/compo
 import { gcpApplyCapability } from "./gcp-apply";
 import { waitForOperationCapability, waitCloudRunReadyCapability } from "./wait-gcp";
 import { artifactRegistryBackend } from "./artifact-registry-backend";
+import { gcsStorageBackend } from "./gcs-backend";
 
 /** The GCP verb families this plugin contributes. */
 export const GCP_VERB_FAMILIES = {
@@ -27,5 +28,6 @@ export const gcpCapabilityPlugin: CapabilityPlugin = {
   capabilities: () =>
     [gcpApplyCapability, waitForOperationCapability, waitCloudRunReadyCapability] as unknown as Array<Capability<never, unknown>>,
   registryBackends: () => [artifactRegistryBackend],
+  storageBackends: () => [gcsStorageBackend],
   families: () => GCP_VERB_FAMILIES,
 };

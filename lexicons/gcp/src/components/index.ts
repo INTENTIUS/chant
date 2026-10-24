@@ -8,3 +8,4 @@ export * from "./gcp-apply";
 export * from "./wait-gcp";
 export * from "./builders";
 export { createArtifactRegistryBackend, artifactRegistryBackend } from "./artifact-registry-backend";
+export { createGcsStorageBackend, gcsStorageBackend } from "./gcs-backend";

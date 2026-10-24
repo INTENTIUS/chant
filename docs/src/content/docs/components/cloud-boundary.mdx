@@ -20,6 +20,7 @@ Core ships only the agnostic verbs (`docker-build`, `sign`, `wait-endpoint`, …
 |---|---|---|---|---|---|
 | **build** | fully agnostic | docker / zip / jvm | same | same | same |
 | **publish-image** | agnostic (endpoint + auth is env config) | ECR | ACR (`az acr login` backend) | Artifact Registry (`gcloud auth configure-docker` backend) | any OCI |
+| **publish-artifact** | agnostic (destination URI + auth is env config) | S3 (`aws s3 cp` backend) | Blob Storage (`az storage blob upload` backend) | GCS (`gcloud storage cp` backend) | any object store |
 | **apply infra** | cloud-shaped | `cfn-deploy` | `arm-deploy` | `gcp-apply` (Config Connector objects over the REST API) | `kubectl` (leveler) / Terraform |
 | **job submission** | cloud-shaped | EMR / Glue / Batch | Synapse / Batch / ADF | Dataproc / Dataflow | Job / Argo / Spark operator |
 | **host / code delivery** | split | SSM + CodeDeploy | Run Command / Arc (no CodeDeploy peer) | OS Config / MIG rolling | SSH (agnostic) |

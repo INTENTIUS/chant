@@ -9,6 +9,7 @@ import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/compo
 import { armDeployCapability } from "./arm-deploy";
 import { waitForDeploymentCapability, waitContainerAppCapability } from "./wait-azure";
 import { acrRegistryBackend } from "./acr-backend";
+import { azureBlobStorageBackend } from "./blob-backend";
 
 export const AZURE_VERB_FAMILIES = {
   apply: ["arm-deploy"],
@@ -30,6 +31,9 @@ export const azureCapabilityPlugin: CapabilityPlugin = {
   },
   registryBackends() {
     return [acrRegistryBackend];
+  },
+  storageBackends() {
+    return [azureBlobStorageBackend];
   },
   families(): Record<string, readonly string[]> {
     return AZURE_VERB_FAMILIES;

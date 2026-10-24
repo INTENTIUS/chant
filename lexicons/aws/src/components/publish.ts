@@ -46,8 +46,6 @@
  */
 
 import type { Capability } from "@intentius/chant/components/capability";
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 import { archiveRelativePath } from "@intentius/chant/components/verbs/build-archive";
 import { defaultProcessRunner, type ProcessRunner } from "@intentius/chant/components/verbs/process-runner";
@@ -56,6 +54,13 @@ import {
   type PublishImageBackend,
   type RegistryLoginBackend,
 } from "@intentius/chant/components/verbs/publish-image";
+
+import {
+  createPublishArtifactCapability as createCorePublishArtifact,
+  type ArtifactStorageBackend,
+  type PublishArtifactInput,
+  type PublishArtifactOutput,
+} from "@intentius/chant/components/verbs/publish-artifact";
 
 // ── shared backend interface ─────────────────────────────────────────────────
 
@@ -179,48 +184,41 @@ export function selectPublishBackend(
   return backend;
 }
 
-// ── publish-asset / publish-artifact ────────────────────────────────────────
+// ── publish-asset / publish-artifact (the verb is core's, #4408) ───────────
 
-export interface PublishArtifactInput {
-  /** Path of the artifact inside the build archive (e.g. a jar or zip). */
-  from: string;
-  /** Destination (e.g. `$env.s3` resolved by the orchestrator). */
-  to: string;
-}
+export type { PublishArtifactInput, PublishArtifactOutput } from "@intentius/chant/components/verbs/publish-artifact";
 
-export interface PublishArtifactOutput {
-  /** Location the artifact was published to — referenced downstream as `@<component>.publish.uri`. */
-  uri: string;
-  /** Content hash of the published artifact. */
-  digest: string;
-}
-
-/** Promote a non-image artifact (jar, zip, arbitrary asset) from the archive to S3/CodeArtifact. */
 /**
- * Publish a single archive artifact (a jar, zip, or asset) to S3 via `aws s3 cp`
- * (endpoint-aware through the `CloudExecutor`). Returns the object's URI —
- * referenced downstream as `@<component>.publish.uri` — and a content digest of
- * the exact bytes uploaded.
+ * The aws lexicon's storage backend for core's `publish-artifact`: `aws s3 cp`
+ * (endpoint-aware through the `CloudExecutor`). Core owns the digest and the
+ * object URI; this only uploads.
+ */
+export function createS3StorageBackend(executor?: CloudExecutor): ArtifactStorageBackend {
+  return {
+    name: "s3",
+    matches: (uri) => uri.startsWith("s3://"),
+    // The real executor is built on first upload, so loading the plugin shells out to nothing.
+    upload: (args) => (executor ?? defaultCloudExecutor()).s3.cp(args),
+  };
+}
+
+/** The S3 backend the aws plugin contributes, over the real `CloudExecutor`. */
+export const s3StorageBackend: ArtifactStorageBackend = createS3StorageBackend();
+
+/**
+ * `publish-artifact` with S3 as its only storage backend: core's verb, bound
+ * to this executor. Kept so aws-only callers and tests build it the way they
+ * always did; behaviour is unchanged (upload, return uri + content digest).
  */
 export function createPublishArtifactCapability(
   executor: CloudExecutor = defaultCloudExecutor(),
 ): Capability<PublishArtifactInput, PublishArtifactOutput> {
-  return {
-    kind: "publish-artifact",
-    async run(_ctx, input) {
-      const localPath = archiveRelativePath(input.from);
-      const digest = `sha256:${createHash("sha256").update(readFileSync(localPath)).digest("hex")}`;
-      const basename = localPath.split("/").pop() ?? localPath;
-      const uri = input.to.endsWith("/") ? `${input.to}${basename}` : input.to;
-      await executor.s3.cp({ from: localPath, to: uri });
-      return { uri, digest };
-    },
-  };
+  return createCorePublishArtifact({ backends: [createS3StorageBackend(executor)] });
 }
 
-/** Default `publish-artifact` capability, backed by the real `CloudExecutor`. */
+/** Default `publish-artifact`, bound to the real executor; the registered verb is core's, with this lexicon's S3 backend injected. */
 export const publishArtifactCapability: Capability<PublishArtifactInput, PublishArtifactOutput> =
   createPublishArtifactCapability();
 
-/** Alias for `publish-artifact` — same capability, the docs/epic use both names for the same verb. */
+/** Alias for `publish-artifact`: same capability, the docs/epic use both names for the same verb. */
 export const publishAssetCapability = publishArtifactCapability;

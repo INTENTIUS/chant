@@ -33,6 +33,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Capability } from "./capability";
 import type { RegistryLoginBackend } from "./verbs/publish-image";
+import type { ArtifactStorageBackend } from "./verbs/publish-artifact";
 
 /**
  * Manifest for a packaged capability plugin — the capability-side analogue
@@ -95,6 +96,13 @@ export interface CapabilityPlugin {
    * several plugins may contribute without a duplicate-kind clash.
    */
   registryBackends?(): RegistryLoginBackend[];
+
+  /**
+   * Object-storage backends this plugin contributes to core's
+   * `publish-artifact` verb (aws: S3, azure: Blob, gcp: GCS). Like
+   * `registryBackends`, not capabilities, so several plugins may contribute.
+   */
+  storageBackends?(): ArtifactStorageBackend[];
 
   /** Optional initialization hook, called once after load (mirrors `LexiconPlugin.init`). */
   init?(): void | Promise<void>;

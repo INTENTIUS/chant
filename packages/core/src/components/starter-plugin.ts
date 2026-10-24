@@ -33,6 +33,7 @@ import {
   jvmBuildCapability,
   generateSbomCapability,
   publishImageCapability,
+  publishArtifactCapability,
   signCapability,
   attestProvenanceCapability,
   verifyCapability,
@@ -64,7 +65,7 @@ export const STARTER_VERB_FAMILIES = {
   // family keeps only the agnostic, artifact-type-keyed `generate-sbom`.
   sbom: ["generate-sbom"],
   // `publish-image` is one agnostic verb (#3142, #3143); each cloud lexicon contributes its registry login as a backend (`CapabilityPlugin.registryBackends`).
-  publish: ["publish-image"],
+  publish: ["publish-image", "publish-artifact"],
   supplyChainSecurity: ["sign", "attest-provenance", "verify"],
   supplyChainPolicy: ["scan-vulnerabilities", "vuln-gate"],
   // Only the *agnostic* wait/verify verbs are in the starter set; the
@@ -97,6 +98,7 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     jvmBuildCapability,
     generateSbomCapability,
     publishImageCapability,
+    publishArtifactCapability,
     signCapability,
     attestProvenanceCapability,
     verifyCapability,
