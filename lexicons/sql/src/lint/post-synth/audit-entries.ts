@@ -33,4 +33,5 @@ export const sqlPostSynthAuditEntries: Record<string, RuleMeta> = {
   SQLCH125: auditRule("SQLCH125", "merge-worthy", "guidance", "A codec parameter is outside what the codec takes", "Give the codec a parameter within its range or set, or drop the parameter for the default.", { category: "correctness" }),
   SQLCH126: auditRule("SQLCH126", "merge-worthy", "guidance", "A GRANT column list names a column the table does not declare", "Fix the column name, or declare the column on the table.", { category: "correctness" }),
   SQLCH127: auditRule("SQLCH127", "merge-worthy", "guidance", "An expression calls a function the pinned server does not have", "Fix the function name, use one from the pinned server's system.functions, or declare it with func.", { category: "correctness" }),
+  SQLCH128: auditRule("SQLCH128", "merge-worthy", "guidance", "An integration engine or table function argument holds a literal credential", "Create a named collection with the credentials on the server and name it in place of the arguments: ENGINE = S3(lake_creds, format = 'Parquet').", { category: "security" }),
 };

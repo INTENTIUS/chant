@@ -100,14 +100,15 @@ describe("ClickHouse live import", () => {
   afterAll(() => server.close());
   const run = (extra: Record<string, unknown> = {}) => exportClickHouse({ environment: "x", config: {}, env: { CLICKHOUSE_URL: server.url }, ...extra });
 
-  test("fails naming them", async () => {
-    await expect(run()).rejects.toThrow(/  - named collection nc1\n  - window view analytics\.wv\n  - workload all\n/);
+  test("fails naming them; a named collection is a prerequisite, not among them (#4395)", async () => {
+    await expect(run()).rejects.toThrow(/:\n  - window view analytics\.wv\n  - workload all\nWhy/);
   });
 
   test("with skipUndeclarable, warns, and the window view is not imported as a table", async () => {
     const ir = await run({ skipUndeclarable: true });
     expect(ir.resources.map((r) => r.properties.name)).toEqual(["analytics", "events"]);
-    expect((ir.warnings ?? []).filter((w) => w.includes("--skip-undeclarable"))).toHaveLength(3);
+    expect((ir.warnings ?? []).filter((w) => w.includes("--skip-undeclarable"))).toHaveLength(2);
+    expect((ir.warnings ?? []).filter((w) => w.startsWith("named collection nc1 is a prerequisite"))).toHaveLength(1);
   });
 });
 
@@ -134,8 +135,8 @@ CREATE COLLATION app.ci (provider = icu, locale = 'und');`;
     ]);
   });
 
-  test("ClickHouse: a named collection in a file is refused too; a quota is declared (#3911)", () => {
-    expect(() => new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE NAMED COLLECTION c AS url = 'x'")).toThrow(/named collection: chant cannot declare it/);
+  test("ClickHouse: a named collection in a file is a prerequisite (#4395); a quota is declared (#3911)", () => {
+    expect(new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE NAMED COLLECTION c AS url = 'x'").warnings).toEqual([expect.stringMatching(/^named collection c is a prerequisite/)]);
     expect(new SqlFileParser("clickhouse").parse("CREATE DATABASE a;\nCREATE QUOTA q1").resources.map((r) => r.type)).toEqual(["ClickHouse::Database", "ClickHouse::Quota"]);
   });
 });

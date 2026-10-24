@@ -1,7 +1,8 @@
 /**
  * Import against a real ClickHouse server never leaves an object out without
- * a word (#3911): a server holding a named collection and a workload made
- * with SQL, beside a table, fails the import, which names both; a quota and a
+ * a word (#3911): a server holding a workload made with SQL, beside a
+ * table, fails the import, which names it; a named collection is the
+ * environment's (#4395), listed as a prerequisite and not refused; a quota and a
  * settings profile are declared kinds, which an import reads only when a
  * build declares them, so they are not refused; with `skipUndeclarable` the table is imported and
  * they are warnings. What `users.xml` defines (the `default` quota and
@@ -43,7 +44,7 @@ afterAll(async () => {
 
 const run = (extra: Record<string, unknown> = {}) => exportResources({ environment: "x", config: {}, env: { CLICKHOUSE_URL: server!.endpoint.url }, ...extra });
 
-const NAMED = ["named collection nc_s3", "workload all"];
+const NAMED = ["workload all"];
 
 describe.skipIf(!enabled)("importing a server with objects chant cannot declare", () => {
   test("fails, naming every one of them", async () => {
@@ -61,5 +62,6 @@ describe.skipIf(!enabled)("importing a server with objects chant cannot declare"
     expect(ir.resources.map((r) => r.properties.name)).toEqual(["analytics", "events"]);
     const left = (ir.warnings ?? []).filter((w) => w.includes("is left out (--skip-undeclarable)"));
     expect(left.map((w) => w.split(" is left out")[0]).sort()).toEqual(NAMED);
+    expect(ir.metadata?.prerequisites).toEqual([{ kind: "named collection", name: "nc_s3", referencedBy: [] }]);
   }, 120_000);
 });

@@ -22,6 +22,7 @@ import { readPostgres } from "./files/postgres";
 import { SqlFileError } from "./files/common";
 import { objectsToIR as chObjectsToIR } from "./clickhouse/import/ir";
 import { objectsToIR as pgObjectsToIR } from "./postgres/import/ir";
+import { namedCollectionPrerequisites } from "./clickhouse/named-collections";
 
 const CLICKHOUSE_ONLY = [
   /\bENGINE\s*=/i,
@@ -63,10 +64,18 @@ export class SqlFileParser implements TemplateParser {
     const dialect = this.dialect ?? guessDialect(content);
     const problems: string[] = [];
     const skipped: string[] = [];
-    const read = { origin: "the DDL", ...(this.options.skipUndeclarable ? { undeclarable: skipped } : {}) };
+    const prerequisites: Array<{ kind: string; name: string }> = [];
+    const read = { origin: "the DDL", prerequisites, ...(this.options.skipUndeclarable ? { undeclarable: skipped } : {}) };
     const ir = dialect === "postgres" ? pgObjectsToIR(readPostgres(content, read, problems)) : chObjectsToIR(readClickHouse(content, read, problems));
     if (problems.length > 0) throw new SqlFileError(`the ${dialect === "postgres" ? "Postgres" : "ClickHouse"} DDL`, problems);
-    if (skipped.length === 0) return ir;
-    return { ...ir, warnings: [...(ir.warnings ?? []), ...skipped.map((s) => `left out (skipUndeclarable): ${s}`)] };
+    // A named collection is the environment's (#4395): its CREATE, or a declaration naming one, is a prerequisite, its values never imported.
+    const objects = ir.resources.map((r) => r.properties as { database?: string; name: string; ddl: string });
+    const prereq =
+      dialect === "clickhouse"
+        ? namedCollectionPrerequisites(prerequisites, objects, { found: "the DDL creates it", unseen: "the DDL does not create it" })
+        : { prerequisites: [], warnings: [] };
+    const warnings = [...(ir.warnings ?? []), ...prereq.warnings, ...skipped.map((s) => `left out (skipUndeclarable): ${s}`)];
+    const out = prereq.prerequisites.length > 0 ? { ...ir, metadata: { ...ir.metadata, prerequisites: prereq.prerequisites } } : ir;
+    return warnings.length > 0 ? { ...out, warnings } : out;
   }
 }

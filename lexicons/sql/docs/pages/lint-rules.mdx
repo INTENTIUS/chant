@@ -11,7 +11,7 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 |---|---|---|
 | SQL101, SQL102 | post-synth checks over the build output, both dialects | `chant build` and `chant lint` |
 | SQLCH001 to SQLCH004 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
-| SQLCH101 to SQLCH127 | post-synth checks over the build output | `chant build` and `chant lint` |
+| SQLCH101 to SQLCH128 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
 | SQLPG001 to SQLPG005 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLPG101 to SQLPG126 | Postgres post-synth checks over the build output | `chant build` and `chant lint` |
@@ -89,6 +89,7 @@ These read the pinned catalog too: the type families and their aliases (`system.
 | SQLCH109 | warning | A materialized view that selects `*`. Its output columns become whatever the source has today, so adding a column to the source changes what the view writes | List the columns |
 | SQLCH110 | warning | A materialized view writes an output column its `TO` target does not declare. ClickHouse matches the columns by name, so that column is not stored. Judged against a target the same build declares, and only when the select list names its columns | Alias the select item to a target column, or add the column to the target |
 | SQLCH116 | warning | A view declared `SQL SECURITY DEFINER` without a `DEFINER`. Its access then depends on whoever ran the `CREATE`, so the same declaration grants different access in each environment | Name the `DEFINER` |
+| SQLCH128 | error | A literal credential in an integration engine's or table function's arguments ([#4395](https://github.com/INTENTIUS/chant/issues/4395)). The secret arguments are found by name from each engine's syntax line in the pinned catalog: `password`, `secret_access_key`, `account_key`, `session_token`, `oauth_token`. So `ENGINE = S3('https://...', 'AKIA...', '<secret>')` and `mysql('db:3306', 'shop', 'orders', 'app', '<password>')` are both flagged. A `key = value` argument and an integration engine's setting by such a name (`kafka_sasl_password`, `nats_token`) count too, as do a URL with `user:password@` in it, an Azure connection string with `AccountKey=`, and a dictionary source's `PASSWORD`. When a format or compression method sits before the secret's position (`S3('https://...', 'CSV', 'gzip')`), the optional keys were left out, and nothing is flagged. The server's `'[HIDDEN]'` mask, which an import of `SHOW CREATE` writes in place of a secret, is named as such. An empty password is not flagged | Create a named collection with the credentials on the server and name it in place of the arguments: `ENGINE = S3(lake_creds, format = 'Parquet')`. See [Named collections](../clickhouse-ddl/#named-collections) |
 
 ### Both dialects
 

@@ -21,6 +21,11 @@
  * of each. Two databases of different dialects are two projects (two
  * workspace members, #3047 question 1).
  *
+ * A ClickHouse object that names a named collection (an engine's first
+ * argument, a table function's, a dictionary source's `NAME`) carries
+ * `namedCollections`, and the document lists every one the build names, so
+ * a plan can check each exists on the server (#4395).
+ *
  * A Postgres document also carries `postgresMajor`, the major the project
  * targets (`sql.postgresMajor`, else the newest pinned major). Post-synth
  * checks and the lock classifier read it; ClickHouse output has no such field.
@@ -43,6 +48,7 @@ import { sqlFileLineOf, sqlFileOf, sqlFileReferences } from "./sql-files";
 import { relative } from "node:path";
 import { getProvenance } from "@intentius/chant/provenance";
 import type { UnparsedClause } from "./core/interpolation";
+import { namedCollectionReferences, type CollectionReferrer } from "./clickhouse/named-collections";
 
 export { applyOrder } from "./core/references";
 
@@ -89,8 +95,9 @@ function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, 
     props.lineage = lineageJson(props.lineage as LineageEdge[], names);
   }
   const dependsOn = [...new Set([...obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined), ...extra])];
+  const collections = namedCollectionReferences(props as CollectionReferrer);
   return JSON.parse(
-    JSON.stringify({ export: name, type: obj.entityType, sqlName: obj.sqlName, ...props, dependsOn, ddl }),
+    JSON.stringify({ export: name, type: obj.entityType, sqlName: obj.sqlName, ...props, dependsOn, ...(collections.length > 0 ? { namedCollections: collections } : {}), ddl }),
   ) as Record<string, unknown>;
 }
 
@@ -170,10 +177,14 @@ export const sqlSerializer: Serializer = {
 
     const extra = sqlFileReferences("clickhouse", objects);
     const order = applyOrder(objects, names, extra);
+    const json = order.map((n) => objectJson(n, objects.get(n)!, names, extra.get(n)));
+    // The named collections the build references (#4395), each once, by name: a plan checks each exists.
+    const collections = [...new Set(json.flatMap((o) => (o.namedCollections as string[] | undefined) ?? []))].sort();
     const doc = {
       dialect: "clickhouse",
       applyOrder: order,
-      objects: order.map((n) => objectJson(n, objects.get(n)!, names, extra.get(n))),
+      ...(collections.length > 0 ? { namedCollections: collections } : {}),
+      objects: json,
     };
     const ddl = order
       .map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`)

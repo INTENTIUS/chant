@@ -29,10 +29,10 @@ describe("the object coverage table (#3911)", () => {
     ]);
   });
 
-  test("every refused kind has the live query that finds it, and every query a refused-or-declared row", () => {
+  test("every refused or referenced kind has the live query that finds it, and every query a row", () => {
     const probes = { postgres: POSTGRES_PROBES, clickhouse: CLICKHOUSE_PROBES };
     for (const dialect of SQL_DIALECTS) {
-      const refused = KIND_COVERAGE[dialect].filter((r) => r.status === "refused").map((r) => r.kind);
+      const refused = KIND_COVERAGE[dialect].filter((r) => r.status === "refused" || r.status === "referenced").map((r) => r.kind);
       for (const kind of refused) expect(Object.keys(probes[dialect]), `${dialect} ${kind}`).toContain(kind);
       const kinds = KIND_COVERAGE[dialect].map((r) => r.kind);
       for (const kind of Object.keys(probes[dialect])) expect(kinds, `${dialect} probe ${kind}`).toContain(kind);
@@ -68,6 +68,7 @@ describe("a statement's kind", () => {
     ["CREATE SETTINGS PROFILE p SETTINGS max_threads = 1", "settings profile"],
     ["CREATE OR REPLACE FUNCTION f AS (x) -> x + 1", "SQL function"],
     ["CREATE QUOTA q FOR INTERVAL 1 hour MAX queries = 10", "quota"],
+    ["CREATE NAMED COLLECTION IF NOT EXISTS c AS url = 'x'", "named collection"],
   ])("clickhouse: %s is a %s", (sql, kind) => {
     expect(statementKind("clickhouse", sql)?.kind).toBe(kind);
   });

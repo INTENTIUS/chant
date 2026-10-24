@@ -3,9 +3,11 @@
  * (#3911), found so import can refuse them by name instead of leaving them
  * out (`../../core/undeclarable.ts`).
  *
- * One `system.*` query per kind the coverage table marks refused
- * (`../../coverage/clickhouse.json`), keyed by the row's `kind`. A kind whose
- * row is flipped to declared is no longer asked about.
+ * One `system.*` query per kind the coverage table marks refused or
+ * referenced (`../../coverage/clickhouse.json`), keyed by the row's `kind`. A
+ * kind whose row is flipped to declared is no longer asked about. A
+ * referenced kind (a named collection, #4395) is read by name only, as a
+ * prerequisite the import lists, never as a refusal.
  *
  * What the server's configuration files define (`storage = 'users_xml'`, a
  * named collection whose source is the config, an executable function) is
@@ -47,12 +49,26 @@ export const CLICKHOUSE_PROBES: Readonly<Record<string, Probe>> = {
  * pass.
  */
 export async function readUndeclarable(target: ClickHouseTarget): Promise<{ objects: UndeclarableObject[]; unread: string[] }> {
+  return readKinds(target, "refused");
+}
+
+/**
+ * Every object of a kind the coverage table marks referenced (#4395): the
+ * server's SQL-defined named collections, by name. Their values are never
+ * read. A reader without `SHOW NAMED COLLECTIONS` sees none, and the server
+ * says nothing about that, so an empty list is not proof there are none.
+ */
+export async function readReferenced(target: ClickHouseTarget): Promise<{ objects: UndeclarableObject[]; unread: string[] }> {
+  return readKinds(target, "referenced");
+}
+
+async function readKinds(target: ClickHouseTarget, status: "refused" | "referenced"): Promise<{ objects: UndeclarableObject[]; unread: string[] }> {
   const scope = (column: string) =>
     target.databases ? `${column} IN (${target.databases.map(quote).join(", ")})` : `${column} NOT IN (${[...SYSTEM_DATABASES].map(quote).join(", ")})`;
   const objects: UndeclarableObject[] = [];
   const unread: string[] = [];
   for (const row of KIND_COVERAGE.clickhouse) {
-    if (row.status !== "refused") continue;
+    if (row.status !== status) continue;
     const probe = CLICKHOUSE_PROBES[row.kind];
     if (!probe) throw new Error(`no system table query finds a ClickHouse ${row.kind} (src/clickhouse/live/undeclarable.ts)`);
     try {
