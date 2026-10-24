@@ -67,7 +67,8 @@ import { diskFiles, findInstalledPackage, mergePinClasses, parseClassDataByHand,
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
 import type { MergedReview } from "./op/gate-review";
 import { quorumProblems as quorumProblemsOf, type GateQuorumSpec as QuorumSpec } from "./op/gate-quorum";
-import { gateBaseApprovalProblems, type GateApprovalMode, type GatePolicyRef } from "./op/gate-approval";
+import { gateBaseApprovalProblems } from "./op/gate-approval-base";
+import type { GateApprovalMode, GatePolicyRef } from "./op/gate-approval";
 import type { GateApprovalSource } from "./op/op-waves";
 
 export { GATE_APPROVAL_SOURCES, type GateApprovalSource } from "./op/op-waves";
