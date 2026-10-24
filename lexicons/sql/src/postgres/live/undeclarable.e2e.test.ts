@@ -1,10 +1,12 @@
 /**
  * Import against a real Postgres server never leaves an object out without a
  * word (#3911): a database holding a rewrite rule, an encoding conversion, an
- * access method and a shell type beside a table fails the import, which
- * names all four; with `skipUndeclarable` the rest is imported and the four
- * are warnings. A composite type, an aggregate, a collation, a cast and an
- * event trigger are declared kinds, so they are imported, not refused. What
+ * access method, a shell type, a user mapping and a subscription (the last
+ * two carry credentials) beside a table fails the import, which names all
+ * six; with `skipUndeclarable` the rest is imported and the six are warnings.
+ * A composite type, an aggregate, a collation, a cast, an event trigger, a
+ * foreign data wrapper, a foreign server and a publication are declared
+ * kinds, so they are imported, not refused. What
  * an extension brings (hstore's casts and operators) is the extension's, and
  * is not refused.
  *
@@ -36,6 +38,11 @@ CREATE RULE users_notify AS ON INSERT TO app.users DO ALSO NOTIFY users;
 CREATE CONVERSION app.latin1_utf8 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
 CREATE ACCESS METHOD heap2 TYPE TABLE HANDLER heap_tableam_handler;
 CREATE TYPE app.later;
+CREATE FOREIGN DATA WRAPPER app_fdw;
+CREATE SERVER app_remote FOREIGN DATA WRAPPER app_fdw OPTIONS (host 'db.internal');
+CREATE USER MAPPING FOR PUBLIC SERVER app_remote OPTIONS (user 'reader');
+CREATE PUBLICATION app_pub FOR TABLE app.users;
+CREATE SUBSCRIPTION app_sub CONNECTION 'host=127.0.0.1 dbname=elsewhere' PUBLICATION elsewhere WITH (connect = false);
 `;
 
 beforeAll(async () => {
@@ -58,7 +65,7 @@ const profile = () => ({
   env: { PG_UD_PASSWORD: server!.endpoint("source").password },
 });
 
-const NAMED = ["rule app.users_notify ON users", "conversion app.latin1_utf8", "access method heap2", "base type app.later"];
+const NAMED = ["rule app.users_notify ON users", "conversion app.latin1_utf8", "access method heap2", "base type app.later", "user mapping for public on server app_remote", "subscription app_sub"];
 
 describe.skipIf(!enabled)("importing a database with objects chant cannot declare", () => {
   test("fails, naming every one of them", async () => {
@@ -75,7 +82,7 @@ describe.skipIf(!enabled)("importing a database with objects chant cannot declar
   test("with skipUndeclarable, imports the rest and lists them as warnings", async () => {
     const ir = await exportResources({ environment: "src", skipUndeclarable: true, ...profile() });
     expect(ir.resources.map((r) => r.properties.name)).toEqual(
-      expect.arrayContaining(["users", "hstore", "add2", "pair_text", "on_ddl", "pair", "total", "ci", "(app.pair AS text)", "audit_ddl"]),
+      expect.arrayContaining(["users", "hstore", "add2", "pair_text", "on_ddl", "pair", "total", "ci", "(app.pair AS text)", "audit_ddl", "app_fdw", "app_remote", "app_pub"]),
     );
     const left = (ir.warnings ?? []).filter((w) => w.includes("is left out (--skip-undeclarable)"));
     expect(left.map((w) => w.split(" is left out")[0]).sort()).toEqual([...NAMED].sort());

@@ -59,6 +59,10 @@ import type {
   CompositeTypeProps,
   DomainProps,
   EventTriggerProps,
+  StatisticsProps,
+  ForeignDataWrapperProps,
+  ForeignServerProps,
+  PublicationProps,
   RangeTypeProps,
   EnumProps,
   ExclusionDef,
@@ -348,6 +352,10 @@ export type CanonicalKind =
   | "collation"
   | "cast"
   | "eventTrigger"
+  | "statistics"
+  | "foreignDataWrapper"
+  | "foreignServer"
+  | "publication"
   | "function"
   | "procedure"
   | "trigger"
@@ -393,6 +401,10 @@ const kindOf: Record<string, CanonicalKind> = {
   "Postgres::Collation": "collation",
   "Postgres::Cast": "cast",
   "Postgres::EventTrigger": "eventTrigger",
+  "Postgres::Statistics": "statistics",
+  "Postgres::ForeignDataWrapper": "foreignDataWrapper",
+  "Postgres::ForeignServer": "foreignServer",
+  "Postgres::Publication": "publication",
   "Postgres::Extension": "extension",
   "Postgres::Function": "function",
   "Postgres::Procedure": "procedure",
@@ -617,7 +629,7 @@ function triggerFields(p: TriggerProps, defaultSchema: string, fields: Record<st
 // ── Types, aggregates, collations, casts, event triggers (#3911) ──────
 
 /** The kinds that live in no schema. */
-const UNPLACED: ReadonlySet<CanonicalKind> = new Set(["schema", "extension", "role", "cast", "eventTrigger"]);
+const UNPLACED: ReadonlySet<CanonicalKind> = new Set(["schema", "extension", "role", "cast", "eventTrigger", "foreignDataWrapper", "foreignServer", "publication"]);
 
 /**
  * A function named where an object calls it (an aggregate's SFUNC, a cast's
@@ -700,6 +712,50 @@ function collationFields(p: CollationProps, fields: Record<string, unknown>): vo
   fields.rules = o.rules;
 }
 
+/** An `OPTIONS (...)` list as compared: by name, none as nothing. */
+function sortedOptions(options: Record<string, string> | undefined): Record<string, string> | undefined {
+  const entries = Object.entries(options ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+const STATISTICS_ALL = ["dependencies", "mcv", "ndistinct"];
+
+/**
+ * The kinds of statistics gathered, sorted. Left out, the server builds all
+ * three, except for a lone expression, which gets none of them (only the
+ * expression's own statistics); `pg_get_statisticsobjdef` prints the list only
+ * when it is not that default.
+ */
+export function statisticsKinds(kinds: readonly string[] | undefined, targets: readonly string[]): string[] | undefined {
+  if (kinds && kinds.length > 0) {
+    const sorted = [...new Set(kinds.map((k) => k.toLowerCase()))].sort();
+    return sorted.join() === STATISTICS_ALL.join() ? undefined : sorted;
+  }
+  const lone = targets.length === 1 && !/^"?[A-Za-z_][A-Za-z0-9_$]*"?$/.test(targets[0]!.trim());
+  return lone ? ["none"] : undefined;
+}
+
+/** Every action a publication publishes when `publish` is not given. */
+const PUBLISH_ALL = ["delete", "insert", "truncate", "update"];
+
+/** A publication as compared: its tables with their column lists and row filters, its schemas, and each option at its default left out. */
+function publicationFields(p: PublicationProps, defaultSchema: string, fields: Record<string, unknown>): void {
+  fields.allTables = p.allTables === true;
+  const tables = p.tables.map((t) => ({
+    table: canonicalName(t.tableName, defaultSchema),
+    ...(t.columns && t.columns.length > 0 ? { columns: [...t.columns].sort() } : {}),
+    ...(t.where ? { where: canonicalExpr(t.where) } : {}),
+  }));
+  fields.tables = tables.length > 0 ? tables.sort((a, b) => (a.table < b.table ? -1 : 1)) : undefined;
+  fields.schemas = p.schemas.length > 0 ? p.schemas.map((s) => quoteIdent(identValue(s))).sort() : undefined;
+  const o = p.options;
+  const publish = o.publish === undefined ? PUBLISH_ALL : [...new Set(defValue(o.publish).split(",").map((x) => x.trim().toLowerCase()).filter(Boolean))].sort();
+  fields.publish = publish.join() === PUBLISH_ALL.join() ? undefined : publish;
+  fields.viaRoot = isTrue(o.publish_via_partition_root);
+  const generated = o.publish_generated_columns === undefined ? "none" : defValue(o.publish_generated_columns);
+  fields.generatedColumns = generated === "none" ? undefined : generated;
+}
+
 /** A cast's name, `(source AS target)`, its types canonical. */
 export const castName = (p: Pick<CastProps, "sourceType" | "targetType">, defaultSchema: string): string =>
   `(${canonicalType(p.sourceType, defaultSchema)} AS ${canonicalType(p.targetType, defaultSchema)})`;
@@ -774,6 +830,32 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
       fields.function = canonicalFunctionName(p.functionName, defaultSchema);
       break;
     }
+    case "statistics": {
+      const p = props as unknown as StatisticsProps;
+      fields.table = canonicalName(p.tableName, defaultSchema);
+      const targets = p.targets.map((t) => canonicalExpr(t)!).sort();
+      fields.targets = targets;
+      fields.kinds = statisticsKinds(p.kinds, p.targets);
+      break;
+    }
+    case "foreignDataWrapper": {
+      const p = props as unknown as ForeignDataWrapperProps;
+      fields.handler = p.handlerName && !p.noHandler ? canonicalFunctionName(p.handlerName, defaultSchema) : undefined;
+      fields.validator = p.validatorName && !p.noValidator ? canonicalFunctionName(p.validatorName, defaultSchema) : undefined;
+      fields.options = sortedOptions(p.options);
+      break;
+    }
+    case "foreignServer": {
+      const p = props as unknown as ForeignServerProps;
+      fields.serverType = p.serverType;
+      fields.version = p.version;
+      fields.wrapper = quoteIdent(identValue(p.wrapperName));
+      fields.options = sortedOptions(p.options);
+      break;
+    }
+    case "publication":
+      publicationFields(props as unknown as PublicationProps, defaultSchema, fields);
+      break;
     case "function":
     case "procedure": {
       const p = props as unknown as RoutineProps;

@@ -138,7 +138,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
     };
     switch (node.statement) {
       case "comment":
-        if (!["SCHEMA", "EXTENSION", "ROLE", "TRIGGER", "POLICY", "CONSTRAINT", "COLUMN", "CAST", "EVENT TRIGGER"].includes(node.objectType)) mark(node.target);
+        if (!["SCHEMA", "EXTENSION", "ROLE", "TRIGGER", "POLICY", "CONSTRAINT", "COLUMN", "CAST", "EVENT TRIGGER", "FOREIGN DATA WRAPPER", "SERVER", "PUBLICATION"].includes(node.objectType)) mark(node.target);
         if (node.objectType === "COLUMN" && nameOf(tokens, node.target).length === 2 && options.schema) {
           const first = tokens.slice(node.target.span.from, node.target.span.to).find((t) => !isTrivia(t));
           if (first) inserts.add(tokens.indexOf(first));
@@ -177,7 +177,7 @@ export function readPostgres(ddl: string, options: ReadOptions, problems: string
       problems.push(`an index with no name (its declaration needs one): ${firstLine(tokensText(tokens))}`);
       continue;
     }
-    const ownName = !["schema", "extension", "index", "trigger", "policy", "role", "grant", "cast", "eventTrigger"].includes(node.statement);
+    const ownName = !["schema", "extension", "index", "trigger", "policy", "role", "grant", "cast", "eventTrigger", "foreignDataWrapper", "foreignServer", "publication"].includes(node.statement);
     if (ownName && "name" in node) mark(node.name);
     const object: PgFileObject = { node, statements: [rewrite(tokens, inserts, options.schema)], constraints: [], line, unparsed: fileUnparsed("unknown" in node ? node.unknown : undefined, tokens, tokensText(tokens), line) };
     objects.push(object);
@@ -279,6 +279,10 @@ function ownerKey(node: StatementNode, tokens: Token[], nameOf: NameOf, qualify:
       return `${node.statement} ${nameOf(tokens, node.name).at(-1) ?? ""} ON ${qkey(qualify(nameOf(tokens, node.table)))}`;
     case "eventTrigger":
       return `eventTrigger ${nameOf(tokens, node.name).at(-1) ?? ""}`;
+    case "foreignDataWrapper":
+    case "foreignServer":
+    case "publication":
+      return `${node.statement} ${nameOf(tokens, node.name).at(-1) ?? ""}`;
     case "cast":
       return `cast ${castKey(tokens, node.source, node.target)}`;
     case "grant":
@@ -311,6 +315,12 @@ function followOnOwner(node: StatementNode, tokens: Token[], nameOf: NameOf, qua
       return node.on ? `${node.objectType.toLowerCase()} ${target.at(-1) ?? ""} ON ${qkey(qualify(nameOf(tokens, node.on)))}` : undefined;
     case "EVENT TRIGGER":
       return `eventTrigger ${target.at(-1) ?? ""}`;
+    case "FOREIGN DATA WRAPPER":
+      return `foreignDataWrapper ${target.at(-1) ?? ""}`;
+    case "SERVER":
+      return `foreignServer ${target.at(-1) ?? ""}`;
+    case "PUBLICATION":
+      return `publication ${target.at(-1) ?? ""}`;
     case "CAST":
       return node.cast ? `cast ${castKey(tokens, node.cast.source, node.cast.target)}` : undefined;
     case "CONSTRAINT":

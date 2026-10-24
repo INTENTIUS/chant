@@ -1,7 +1,7 @@
 ---
 title: "Declaring Postgres Objects"
 label: "Declaring Objects"
-description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, policies, roles and grants as tagged templates: the eighteen tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, extended statistics, foreign data wrappers and servers, publications, policies, roles and grants as tagged templates: the twenty-two tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
 group: "Postgres"
 order: 11
@@ -55,6 +55,10 @@ export const ticketsTitle = index`
 | `aggregate` | `CREATE [OR REPLACE] AGGREGATE` | `Postgres::Aggregate` |
 | `trigger` | `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER` | `Postgres::Trigger` |
 | `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
+| `statistics` | `CREATE STATISTICS` | `Postgres::Statistics` |
+| `foreignDataWrapper` | `CREATE FOREIGN DATA WRAPPER` | `Postgres::ForeignDataWrapper` |
+| `foreignServer` | `CREATE SERVER` | `Postgres::ForeignServer` |
+| `publication` | `CREATE PUBLICATION` | `Postgres::Publication` |
 | `collation` | `CREATE COLLATION` | `Postgres::Collation` |
 | `cast` | `CREATE CAST` | `Postgres::Cast` |
 | `policy` | `CREATE POLICY` | `Postgres::Policy` |
@@ -211,6 +215,30 @@ A collation records its provider (`libc` unless written), its locales and whethe
 A cast lives in no schema and is named by its two types, `(app.money_amount AS text)`, which is also how `COMMENT ON CAST` names it; its function is compared by name. Creating a cast takes owning its source or target type. An event trigger belongs to the database, its name unqualified; its tags are compared as a set. Creating one takes a superuser, and it fires for DDL anywhere in the database, so keep its function cheap. Whether it is enabled (`ALTER EVENT TRIGGER ... DISABLE`) is not declared or compared.
 
 None of the three has an `ALTER` for its definition: a change is a drop and a create in one transaction (SQLPG300), refused while a column uses the collation (SQLPG301).
+
+## Statistics, foreign servers and publications
+
+```ts
+import { foreignDataWrapper, foreignServer, publication, statistics } from "@intentius/chant-lexicon-sql/postgres";
+
+export const ordersStats = statistics`
+  CREATE STATISTICS ${app}.orders_stats (dependencies, ndistinct) ON user_id, status FROM ${orders}`;
+
+export const remoteFdw = foreignDataWrapper`CREATE FOREIGN DATA WRAPPER remote_fdw HANDLER ${remoteHandler} OPTIONS (debug 'true')`;
+
+export const replica = foreignServer`
+  CREATE SERVER replica TYPE 'pg' FOREIGN DATA WRAPPER ${remoteFdw} OPTIONS (host 'db.internal', port '5432')`;
+
+export const orderEvents = publication`
+  CREATE PUBLICATION order_events FOR TABLE ${orders} (id, status) WHERE (status <> 'draft'), TABLES IN SCHEMA ${audit}
+  WITH (publish = 'insert, update')`;
+```
+
+Extended statistics are a schema's, named in the table's schema when you qualify them. Their kinds are compared as a set, and a list that names all three (`ndistinct`, `dependencies`, `mcv`) is the same as none, which is what the server prints. A column and an expression are compared in the order the server keeps them, so `ON b, a` and `ON a, b` are one declaration. A change is a drop and a create (SQLPG300), and the new statistics hold nothing until the next `ANALYZE`.
+
+A foreign data wrapper, a foreign server and a publication belong to the database, with unqualified names; creating a wrapper takes a superuser. A wrapper's handler and validator are compared by function name, a server's type and wrapper by name, and options by name. A wrapper's change is `ALTER FOREIGN DATA WRAPPER`, a server's version and options are `ALTER SERVER`, and a publication's options, tables and schemas are `ALTER PUBLICATION` (SQLPG303), so none of them is dropped for an edit. The exceptions are a server's type or wrapper and a publication's `FOR ALL TABLES`, which have no `ALTER`: they are dropped and created (SQLPG300), or refused while something depends on the object (SQLPG301). A publication that is dropped stops its subscribers until it exists again, so prefer the edit that keeps it.
+
+An option named like a credential (`password`, `sslpassword`, `secret`, `token`, `api_key`) is refused in a wrapper or a server. The user mapping that carries the remote user and password is the environment's: `CREATE USER MAPPING` is not declared, and neither is `CREATE SUBSCRIPTION`, whose connection string holds a credential. Import reads a server without such an option and says it left it out.
 
 ## Comments
 

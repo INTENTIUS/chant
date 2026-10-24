@@ -17,12 +17,12 @@ export const POSTGRES_TEMPLATE_SOURCES: readonly TemplateSource<PostgresTag>[] =
   {
     dialect: "postgres",
     modules: ["@intentius/chant-lexicon-sql/postgres"],
-    tags: ["schema", "table", "index", "view", "sequence", "type", "domain", "extension", "func", "procedure", "aggregate", "trigger", "eventTrigger", "collation", "cast", "policy", "role", "grant"],
+    tags: ["schema", "table", "index", "view", "sequence", "type", "domain", "extension", "func", "procedure", "aggregate", "trigger", "eventTrigger", "statistics", "foreignDataWrapper", "foreignServer", "publication", "collation", "cast", "policy", "role", "grant"],
   },
   {
     dialect: "postgres",
     modules: ["@intentius/chant-lexicon-sql"],
-    tags: ["schema", "index", "sequence", "type", "domain", "extension", "func", "procedure", "aggregate", "trigger", "eventTrigger", "collation", "cast", "policy", "role", "grant"],
+    tags: ["schema", "index", "sequence", "type", "domain", "extension", "func", "procedure", "aggregate", "trigger", "eventTrigger", "statistics", "foreignDataWrapper", "foreignServer", "publication", "collation", "cast", "policy", "role", "grant"],
   },
 ];
 

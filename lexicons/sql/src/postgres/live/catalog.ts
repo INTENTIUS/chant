@@ -53,7 +53,7 @@ import { MIGRATION_TRAILER_KEY } from "../migrate/names";
 import { isProviderOwned, providerData } from "../providers";
 import { FOREIGN_TABLES } from "../../core/foreign-tables";
 import type { PostgresProvider } from "../providers/types";
-import { readCollations, readRoutineKinds, readTypeKinds } from "./catalog-kinds";
+import { readCollations, readDatabaseKinds, readRoutineKinds, readTypeKinds } from "./catalog-kinds";
 
 /** The server's own schemas, never part of a declared schema. */
 export const SYSTEM_SCHEMAS = ["pg_catalog", "information_schema", "pg_toast"];
@@ -83,6 +83,8 @@ export interface LivePgObject {
   dependents?: string[];
   /** Why no declaration can hold this object; it is read so import can say it left it out. */
   unsupported?: string;
+  /** What was left out of an object that is otherwise read (an option that holds a credential), for import to say. */
+  warnings?: string[];
 }
 
 /** What {@link readLiveSchema} reads. */
@@ -628,6 +630,9 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
 
   // Aggregates, casts and event triggers, after the functions they call (#3911).
   out.push(...(await readRoutineKinds(client, scope)));
+
+  // Extended statistics, foreign data wrappers and servers, and publications (#3911).
+  out.push(...(await readDatabaseKinds(client, scope)));
 
   // Triggers: the ones written by hand, not a foreign key's or a partition's clone of its parent's.
   {

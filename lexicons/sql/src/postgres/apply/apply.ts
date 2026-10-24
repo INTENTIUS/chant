@@ -553,6 +553,9 @@ async function applyAccess(
   }
 }
 
+/** The kinds that belong to the database, not a schema. */
+const UNPLACED_KINDS: ReadonlySet<CanonicalKind> = new Set(["eventTrigger", "foreignDataWrapper", "foreignServer", "publication"]);
+
 /** The address a live object is keyed by in the diff. */
 function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: string; name: string; signature?: string } {
   const kind = (
@@ -571,6 +574,10 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
       "Postgres::Collation": "collation",
       "Postgres::Cast": "cast",
       "Postgres::EventTrigger": "eventTrigger",
+      "Postgres::Statistics": "statistics",
+      "Postgres::ForeignDataWrapper": "foreignDataWrapper",
+      "Postgres::ForeignServer": "foreignServer",
+      "Postgres::Publication": "publication",
       "Postgres::Extension": "extension",
       "Postgres::Function": "function",
       "Postgres::Procedure": "procedure",
@@ -583,7 +590,7 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
   )[o.type];
   return {
     kind,
-    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" && kind !== "role" && kind !== "cast" && kind !== "eventTrigger" ? { schema: o.schema } : {}),
+    ...(o.schema !== undefined && kind !== "schema" && kind !== "extension" && kind !== "role" && kind !== "cast" && !UNPLACED_KINDS.has(kind) ? { schema: o.schema } : {}),
     name: o.name,
     ...(o.signature !== undefined ? { signature: o.signature } : {}),
   };

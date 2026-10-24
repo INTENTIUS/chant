@@ -106,7 +106,7 @@ export function pgSchemaFromBuildFile(path: string, defaultSchema = "public"): P
  */
 export function pgNamespace(kind: string): string {
   if (kind === "schema" || kind === "extension" || kind === "trigger" || kind === "policy" || kind === "role") return kind;
-  if (kind === "collation" || kind === "cast" || kind === "eventTrigger") return kind;
+  if (kind === "collation" || kind === "cast" || kind === "eventTrigger" || kind === "statistics" || kind === "foreignDataWrapper" || kind === "foreignServer" || kind === "publication") return kind;
   if (kind === "grant" || kind === "defaultPrivileges") return "grant";
   if (kind === "enum" || kind === "domain" || kind === "composite" || kind === "range") return "type";
   if (kind === "function" || kind === "procedure" || kind === "aggregate") return "routine";

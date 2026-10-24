@@ -43,6 +43,10 @@ const TAG: Record<string, (s: TemplateStringsArray) => { props: object }> = {
   [POSTGRES_ENTITY_TYPES.collation]: tags.collation,
   [POSTGRES_ENTITY_TYPES.cast]: tags.cast,
   [POSTGRES_ENTITY_TYPES.eventTrigger]: tags.eventTrigger,
+  [POSTGRES_ENTITY_TYPES.statistics]: tags.statistics,
+  [POSTGRES_ENTITY_TYPES.foreignDataWrapper]: tags.foreignDataWrapper,
+  [POSTGRES_ENTITY_TYPES.foreignServer]: tags.foreignServer,
+  [POSTGRES_ENTITY_TYPES.publication]: tags.publication,
   [POSTGRES_ENTITY_TYPES.extension]: tags.extension,
   [POSTGRES_ENTITY_TYPES.function]: tags.func,
   [POSTGRES_ENTITY_TYPES.procedure]: tags.procedure,
@@ -137,6 +141,18 @@ const PROP_OF_FIELD: Record<string, string[]> = {
   context: ["context"],
   event: ["event"],
   tags: ["tags"],
+  targets: ["targets"],
+  kinds: ["kinds"],
+  handler: ["handler", "handlerName", "noHandler"],
+  validator: ["validator", "validatorName", "noValidator"],
+  serverType: ["serverType"],
+  wrapper: ["wrapper", "wrapperName"],
+  allTables: ["allTables"],
+  tables: ["tables"],
+  schemas: ["schemas"],
+  publish: [],
+  viaRoot: [],
+  generatedColumns: [],
 };
 
 /** Props keys that hold constraints, by constraint kind. */
@@ -193,7 +209,16 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
     ].map((c) => c.value);
   }
   // An aggregate's or a collation's `options` is the declaration's only when every field read from it is the same (a role's `options` shares the key).
-  const optionFields = d.kind === "aggregate" ? ["definition"] : d.kind === "collation" ? ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"] : undefined;
+  const optionFields =
+    d.kind === "aggregate"
+      ? ["definition"]
+      : d.kind === "collation"
+        ? ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"]
+        : d.kind === "foreignDataWrapper" || d.kind === "foreignServer"
+          ? ["options"]
+          : d.kind === "publication"
+            ? ["publish", "viaRoot", "generatedColumns"]
+            : undefined;
   if (optionFields) {
     if (optionFields.every((f) => JSON.stringify(d.fields[f]) === JSON.stringify(l.fields[f]))) adopt("options");
     else out.options = live.options;

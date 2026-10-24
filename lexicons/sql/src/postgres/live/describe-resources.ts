@@ -34,6 +34,14 @@ interface Bound {
   byKey: Map<string, LivePgObject>;
 }
 
+/** The entity types that belong to the database, not a schema. */
+const UNPLACED: ReadonlySet<string> = new Set([
+  POSTGRES_ENTITY_TYPES.eventTrigger,
+  POSTGRES_ENTITY_TYPES.foreignDataWrapper,
+  POSTGRES_ENTITY_TYPES.foreignServer,
+  POSTGRES_ENTITY_TYPES.publication,
+]);
+
 /**
  * The schema and name a declared entity is created as; a bare name is in the
  * default schema. A routine's parameter types and a trigger's table tell it
@@ -41,7 +49,7 @@ interface Bound {
  */
 export function declaredAddress(entity: { type: string; props: Record<string, unknown> }, defaultSchema: string): { schema?: string; name: string; signature?: string } {
   const name = String(entity.props.name ?? "");
-  if (entity.type === POSTGRES_ENTITY_TYPES.schema || entity.type === POSTGRES_ENTITY_TYPES.extension || entity.type === POSTGRES_ENTITY_TYPES.role || entity.type === POSTGRES_ENTITY_TYPES.eventTrigger) return { name };
+  if (entity.type === POSTGRES_ENTITY_TYPES.schema || entity.type === POSTGRES_ENTITY_TYPES.extension || entity.type === POSTGRES_ENTITY_TYPES.role || UNPLACED.has(entity.type)) return { name };
   // A cast is named by its two types, as the catalog prints them.
   if (entity.type === POSTGRES_ENTITY_TYPES.cast) return { name: canonicalPgObject(entity.type, entity.props, defaultSchema).name };
   const schema = typeof entity.props.schema === "string" ? entity.props.schema : identValue(defaultSchema);
@@ -79,7 +87,7 @@ export function scopeFor(target: PostgresTarget, entities: ReadonlyArray<{ type:
   if (entities.length === 0) return undefined;
   const out = new Set<string>([target.defaultSchema]);
   // The schema alone: the rest of an address (a routine's parameter types) needs props a caller may not have.
-  const unplaced = new Set<string>([POSTGRES_ENTITY_TYPES.extension, POSTGRES_ENTITY_TYPES.role, POSTGRES_ENTITY_TYPES.cast, POSTGRES_ENTITY_TYPES.eventTrigger]);
+  const unplaced = new Set<string>([POSTGRES_ENTITY_TYPES.extension, POSTGRES_ENTITY_TYPES.role, POSTGRES_ENTITY_TYPES.cast, ...UNPLACED]);
   for (const e of entities) {
     if (e.type === POSTGRES_ENTITY_TYPES.schema) out.add(String(e.props.name ?? ""));
     else if (!unplaced.has(e.type)) out.add(typeof e.props.schema === "string" ? e.props.schema : identValue(target.defaultSchema));

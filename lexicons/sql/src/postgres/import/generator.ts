@@ -60,6 +60,10 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.collation]: "collation",
   [POSTGRES_ENTITY_TYPES.cast]: "cast",
   [POSTGRES_ENTITY_TYPES.eventTrigger]: "eventTrigger",
+  [POSTGRES_ENTITY_TYPES.statistics]: "statistics",
+  [POSTGRES_ENTITY_TYPES.foreignDataWrapper]: "foreignDataWrapper",
+  [POSTGRES_ENTITY_TYPES.foreignServer]: "foreignServer",
+  [POSTGRES_ENTITY_TYPES.publication]: "publication",
   [POSTGRES_ENTITY_TYPES.extension]: "extension",
   [POSTGRES_ENTITY_TYPES.function]: "func",
   [POSTGRES_ENTITY_TYPES.procedure]: "procedure",
@@ -81,6 +85,9 @@ const UNREFERENCED: ReadonlySet<string> = new Set([
   POSTGRES_ENTITY_TYPES.extension,
   POSTGRES_ENTITY_TYPES.cast,
   POSTGRES_ENTITY_TYPES.eventTrigger,
+  POSTGRES_ENTITY_TYPES.statistics,
+  POSTGRES_ENTITY_TYPES.foreignServer,
+  POSTGRES_ENTITY_TYPES.publication,
 ]);
 
 /** The tag each entity type is declared with (`table`, `func`, ...). */
@@ -131,12 +138,37 @@ function bareSpots(tokens: Token[]): Set<number> {
       name(node.function);
     }
     if (node.statement === "eventTrigger") name(node.function);
+    if (node.statement === "foreignServer") name(node.wrapper);
+    if (node.statement === "foreignDataWrapper") {
+      name(node.handler ?? undefined);
+      name(node.validator ?? undefined);
+    }
+    if (node.statement === "statistics") name(node.table);
     if (node.statement === "index" || node.statement === "policy") name(node.table);
     if (node.statement === "trigger") {
       name(node.table);
       name(node.function);
     }
     if (node.statement === "grant") for (const o of node.objects) name(o.name);
+  }
+  return out;
+}
+
+/** The tokens that name a schema in a publication's `TABLES IN SCHEMA a, b`, past the first, which follows the word SCHEMA. */
+function schemaSpots(tokens: Token[]): Set<number> {
+  const out = new Set<number>();
+  let nodes: StatementNode[];
+  try {
+    nodes = parseStatements(tokens);
+  } catch {
+    return out;
+  }
+  for (const node of nodes) {
+    if (node.statement !== "publication") continue;
+    for (const i of node.items) {
+      if (i.kind !== "schema") continue;
+      for (let k = i.schema.span.from; k < i.schema.span.to; k++) if (!isTrivia(tokens[k]!)) { out.add(k); break; }
+    }
   }
   return out;
 }
@@ -148,6 +180,7 @@ function templateBody(item: Item, byQualified: Map<string, Item>, schemaExport: 
     if (!isTrivia(t)) sig.push(i);
   });
   const spots = bareSpots(tokens);
+  const schemaAt = item.type === POSTGRES_ENTITY_TYPES.publication ? schemaSpots(tokens) : new Set<number>();
   const replace = new Map<number, { to: number; ref: string }>();
   const isSelf = (target: Item) => target === item || (target.exportName === item.exportName && target.type === item.type);
   for (let k = 0; k < sig.length; k++) {
@@ -171,8 +204,8 @@ function templateBody(item: Item, byQualified: Map<string, Item>, schemaExport: 
     const b = tokens[sig[k + 2] ?? -1];
     if (!isName(a) || dot?.kind !== "punct" || dot.text !== "." || !isName(b)) {
       // An extension's `WITH SCHEMA app`, a grant's `ON SCHEMA app`, default privileges' `IN SCHEMA app`.
-      const bySchemaWord = item.type === POSTGRES_ENTITY_TYPES.extension || item.type === POSTGRES_ENTITY_TYPES.grant || item.type === POSTGRES_ENTITY_TYPES.defaultPrivileges;
-      if (bySchemaWord && isName(a) && prev?.kind === "ident" && prev.text.toUpperCase() === "SCHEMA") {
+      const bySchemaWord = item.type === POSTGRES_ENTITY_TYPES.extension || item.type === POSTGRES_ENTITY_TYPES.grant || item.type === POSTGRES_ENTITY_TYPES.defaultPrivileges || schemaAt.size > 0;
+      if (bySchemaWord && isName(a) && ((prev?.kind === "ident" && prev.text.toUpperCase() === "SCHEMA") || schemaAt.has(sig[k]!))) {
         const s = schemaExport.get(identValue(a));
         if (s) replace.set(sig[k]!, { to: sig[k]! + 1, ref: s });
         continue;
