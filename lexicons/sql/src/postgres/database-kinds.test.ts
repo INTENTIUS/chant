@@ -14,7 +14,7 @@ import { declaredObjects } from "./apply/apply";
 import { readLiveSchema, type LivePgObject } from "./live/catalog";
 import { readDatabaseKinds, readOperators } from "./live/catalog-kinds";
 import type { PostgresClient } from "./live/client";
-import { objectsToIR } from "./import/ir";
+import { objectsToIR, type ImportedPgObject } from "./import/ir";
 import { PostgresGenerator, postgresTemplates } from "./import/generator";
 import { canonicalPgObject } from "./plan/normalize";
 import { liveProps } from "./plan/deep";
@@ -313,7 +313,7 @@ describe("reading the catalog", () => {
 // ── The round trip ─────────────────────────────────────────────────────
 
 /** What the server prints for the objects below. */
-const SERVER_PRINTS: Array<{ type: string; schema?: string; name: string; statement: string }> = [
+const SERVER_PRINTS: Array<{ type: string; schema?: string; name: string; signature?: string; statement: string }> = [
   { type: "Postgres::Schema", name: "app", statement: "CREATE SCHEMA app" },
   { type: "Postgres::Schema", name: "audit", statement: "CREATE SCHEMA audit" },
   { type: "Postgres::Table", schema: "app", name: "orders", statement: "CREATE TABLE app.orders (\n    id integer,\n    status text\n)" },
@@ -351,7 +351,7 @@ describe("declare, build, import, plan with no change", () => {
   });
 
   test("import writes each as a declaration, which builds to the same objects", () => {
-    const ir = objectsToIR(SERVER_PRINTS.map((o) => ({ type: o.type, ...(o.schema ? { schema: o.schema } : {}), name: o.name, ddl: o.statement })));
+    const ir = objectsToIR(SERVER_PRINTS.map((o) => ({ type: o.type, ...(o.schema ? { schema: o.schema } : {}), name: o.name, ddl: o.statement }) as ImportedPgObject));
     const [file] = new PostgresGenerator().generate(ir);
     const content = file!.content;
     expect(content).toContain('import { foreignDataWrapper, foreignServer, func, operator, publication, schema, statistics, table } from "@intentius/chant-lexicon-sql/postgres";');
