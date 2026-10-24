@@ -199,6 +199,8 @@ describe.skipIf(!enabled)("a rename with a type change", () => {
     expect(bad).toBeInstanceOf(OpRunFailure);
     expect((bad as OpRunFailure).result.records.find((x) => x.fn === "postgresMigrationVerify")?.error).toMatch(/must give the old value back/);
     expect(await one("SELECT count(*)::int AS n FROM pg_attribute WHERE attrelid = 'rt.people'::regclass AND attname = 'age' AND NOT attisdropped")).toEqual({ n: 0 });
+    // The backfill wrote the new column only: the old one is as it was, not rewritten through the wrong reverse.
+    expect(await one("SELECT count(*)::int AS n FROM rt.people WHERE age_text IS DISTINCT FROM (id % 90)::text")).toEqual({ n: 0 });
 
     const runs = await runToEnd(config({ name: "migrate-people-age", table: "rt.people", column: "age", output: "rt-v2.json", using: "CAST(age_text AS integer)", reverse: "CAST(age AS text)" }), async () => {
       await admin!.query("INSERT INTO rt.people (id, age_text) VALUES (1001, '41')"); // the old name
@@ -214,5 +216,24 @@ describe.skipIf(!enabled)("a rename with a type change", () => {
     expect(await one("SELECT pg_catalog.format_type(atttypid, atttypmod) AS t FROM pg_attribute WHERE attrelid = 'rt.people'::regclass AND attname = 'age'")).toEqual({ t: "integer" });
     expect(await admin!.query("SELECT attname FROM pg_attribute WHERE attrelid = 'rt.people'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum")).toEqual([{ attname: "id" }, { attname: "age" }]);
     expect((await plan("rt-v2.json")).changes).toEqual([]);
+  }, 300_000);
+
+  test("a reverse that loses something ('007' -> 7 -> '7') fails the verification and leaves the old column as it was", async () => {
+    const LR = schemaObj("lr");
+    const codes = (column: string, previously?: string) => keyed("codes", "lr", column, previously);
+    await apply(writeBuild("lr-v1.json", [LR, codes("code_text text NOT NULL")]));
+    await admin!.query("INSERT INTO lr.codes VALUES (1, '007'), (2, '42')");
+    writeBuild("lr-v2.json", [LR, codes("code integer NOT NULL", "code_text")]);
+
+    const lossy = await runMigrationOp(config({ name: "migrate-codes-code", table: "lr.codes", column: "code", output: "lr-v2.json", using: "CAST(code_text AS integer)", reverse: "CAST(code AS text)" }), new ApprovingLedger().port, deps).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(lossy).toBeInstanceOf(OpRunFailure);
+    expect((lossy as OpRunFailure).result.records.find((x) => x.fn === "postgresMigrationVerify")?.error).toMatch(/1 of 2 row\(s\) have code_text different/);
+    expect(await admin!.query("SELECT id::int AS id, code_text FROM lr.codes ORDER BY id")).toEqual([
+      { id: 1, code_text: "007" },
+      { id: 2, code_text: "42" },
+    ]);
   }, 300_000);
 });

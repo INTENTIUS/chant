@@ -223,16 +223,18 @@ export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expressio
   const src = `NEW.${col(n.source)}`;
   if (n.change === "rename" && o.reverse !== undefined) {
     // A rename with a type change: a writer of the old name has `expression` applied, a writer of the new name `reverse`, each over the row as it is.
+    // An update that sets the new column to what `expression` already gives (the backfill's own UPDATE) leaves the old one alone, so a
+    // lossy `reverse` never rewrites a row nobody wrote by its new name, and the verification still sees the old values to check it against.
     const fwd = `(SELECT ${o.expression} FROM (SELECT NEW.*) AS ${col(n.table)})`;
     const back = `(SELECT ${o.reverse} FROM (SELECT NEW.*) AS ${col(n.table)})`;
     return [
       `BEGIN`,
       `  IF TG_OP = 'INSERT' THEN`,
       `    IF ${nw} IS NULL THEN ${nw} := ${fwd}; ELSE ${src} := ${back}; END IF;`,
-      `  ELSIF ${nw} IS DISTINCT FROM OLD.${col(n.newColumn)} THEN`,
-      `    ${src} := ${back};`,
-      `  ELSE`,
+      `  ELSIF ${nw} IS NOT DISTINCT FROM OLD.${col(n.newColumn)} THEN`,
       `    ${nw} := ${fwd};`,
+      `  ELSIF ${nw} IS DISTINCT FROM ${fwd} THEN`,
+      `    ${src} := ${back};`,
       `  END IF;`,
       `  RETURN NEW;`,
       `END`,

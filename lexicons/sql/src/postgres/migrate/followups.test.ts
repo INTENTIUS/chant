@@ -52,8 +52,17 @@ describe("a rename with a type change", () => {
   test("a writer of the old name has the expression applied, a writer of the new name the reverse", () => {
     const body = dualWriteBody(o);
     expect(body).toContain("IF NEW.age IS NULL THEN NEW.age := (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users); ELSE NEW.age_text := (SELECT CAST(age AS text) FROM (SELECT NEW.*) AS users); END IF;");
-    expect(body).toContain("ELSIF NEW.age IS DISTINCT FROM OLD.age THEN\n    NEW.age_text := (SELECT CAST(age AS text) FROM (SELECT NEW.*) AS users);");
-    expect(body).toContain("ELSE\n    NEW.age := (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users);");
+    expect(body).toContain("ELSIF NEW.age IS NOT DISTINCT FROM OLD.age THEN\n    NEW.age := (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users);");
+    expect(body).toContain(
+      "ELSIF NEW.age IS DISTINCT FROM (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users) THEN\n    NEW.age_text := (SELECT CAST(age AS text) FROM (SELECT NEW.*) AS users);\n  END IF;",
+    );
+  });
+
+  test("an update that sets the new column to what the expression gives (the backfill) leaves the old column alone", () => {
+    // Were the old column rewritten from reverse here, a lossy pair ('007' -> 7 -> '7') would change rows nobody wrote, and hide itself from the verification.
+    const body = dualWriteBody(o);
+    expect(body).not.toMatch(/ELSIF NEW\.age IS DISTINCT FROM OLD\.age THEN/);
+    expect(body.match(/NEW\.age_text :=/g)).toHaveLength(2);
   });
 
   test("a plain rename's body is unchanged", () => {
