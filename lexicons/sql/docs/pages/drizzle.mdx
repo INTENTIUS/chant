@@ -1,0 +1,114 @@
+---
+title: "Drizzle Schema Export"
+description: "chant sql drizzle writes a Drizzle schema module from a Postgres build, so an application queries with Drizzle's row types while chant owns the schema, the plan and the apply"
+diataxis: how-to
+order: 6
+prompt: |
+  Read https://intentius.io/chant/lexicons/sql/drizzle/.
+  In this Postgres project, run `npx chant sql drizzle --output <path>` with the path my application imports its Drizzle schema from, point the application's queries at that file, and list the file as a `generated` entry of the member in `chant.workspace.json` if the project is in a workspace.
+  Remove `drizzle-kit push` and `drizzle-kit migrate` from every script and CI job, run `npx chant sql drizzle --check --output <path>` in CI, and open a pull request with the generated file.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+An application that queries Postgres with [Drizzle](https://orm.drizzle.team) wants Drizzle's table objects and row types, while chant wants to own the schema and everything that changes it. `chant sql drizzle` builds the project as `chant build` does and writes a module of `drizzle-orm/pg-core` declarations from the result. The application imports the module for queries, and Drizzle never changes the database. Only Postgres is covered, since drizzle-orm 0.45.4 has no ClickHouse dialect, and a ClickHouse build exits 1 and says so.
+
+## Write the schema
+
+```bash
+npx chant sql drizzle --output src/db/schema.ts
+```
+
+Without `--output` the file is `drizzle-schema.ts` in the project directory. It is outside the source directory the build reads, and it starts with chant's generated-file marker, so the build skips it either way.
+
+The file for `examples/postgres-getting-started` holds these declarations, among others:
+
+```ts
+export const app = pgSchema("app");
+
+export const orderStatus = app.enum("order_status", ["placed", "paid", "shipped", "cancelled"]);
+
+export const invoiceSeq = app.sequence("invoice_seq", { startWith: 1000 });
+
+export const orders = app.table("orders", {
+  id: bigint({ mode: "number" }).generatedAlwaysAsIdentity().primaryKey(),
+  user_id: bigint({ mode: "number" }).notNull(),
+  status: orderStatus().notNull().default("placed"),
+  amount: numeric({ precision: 12, scale: 2 }).notNull(),
+  // ...
+}, (t): PgTableExtraConfigValue[] => [
+  foreignKey({ name: "orders_user_id_fkey", columns: [t.user_id], foreignColumns: [users.id] }).onDelete("cascade"),
+  check("orders_amount_check", sql`amount >= 0`),
+  index("orders_user_id_idx").on(t.user_id, t.placed_at.desc().nullsFirst()),
+]);
+```
+
+A select over `orders` has the row the declaration gives. `user_id` is a `number` that cannot be `null`, and `status` is the union of the enum's labels. `amount` is a `string`, since that is what Drizzle reads `numeric` as, and `placed_at` is a `Date`. The columns of a view are nullable, as Postgres says. The module was checked against the type definitions of drizzle-orm 0.45.4, and the chant repository keeps the output for the example and for a schema that uses every mapping under `lexicons/sql/test-fixtures/drizzle/`, with the row-type assertions.
+
+## What it writes
+
+| Declaration | Drizzle |
+|---|---|
+| table | `pgTable(...)`, or `pgSchema(name).table(...)` outside `public` |
+| column type | the builder of the same name; a type pg-core has no builder for (`bytea`, `tsvector`, a range, a domain, an extension's type) is a `customType` whose row type is the one `RowOf` gives |
+| `NOT NULL`, `DEFAULT`, identity, `GENERATED ... STORED`, arrays | `.notNull()`, `.default()`, `.generatedAlwaysAsIdentity()`, `.generatedAlwaysAs()`, `.array()` |
+| primary key, `UNIQUE`, `CHECK` | `.primaryKey()` or `primaryKey()`, `unique()`, `check()` |
+| foreign key | `foreignKey()` with `.onDelete()` and `.onUpdate()` |
+| index | `index()` or `uniqueIndex()` with `.on()` or `.using()`, `.where()`, `.desc()` and `.nullsFirst()` |
+| enum | `pgEnum()` or `pgSchema(name).enum()` |
+| sequence | `pgSequence()` or `pgSchema(name).sequence()` |
+| view, materialized view | `.existing()`, so `drizzle-kit` never creates it |
+
+Each column key is the column's name in the database, so a row has the keys `RowOf` has.
+
+Every constraint and index carries a name. When the declaration names none, the file spells the name Postgres would give it (`orders_user_id_fkey`, `users_email_key`, `orders_amount_check`; `src/postgres/constraint-names.ts` follows Postgres's `makeObjectName`). Foreign keys use `foreignKey()` and not a column's `.references()`, because `.references()` takes no name and Drizzle would derive `orders_user_id_users_id_fk`.
+
+A `bigint` column is a `number`, as `drizzle-kit pull` writes it. A `bigint` over 2^53 loses precision as a `number`; `--bigint bigint` reads every `bigint` column as a `bigint` instead. `RowOf` says `string` for these columns because it describes what node-postgres returns, and Drizzle converts the value itself.
+
+## What it leaves out
+
+The header of the file lists each object it did not write and each part of a written object it could not say, with the reason. The command prints the same lists. Drizzle has no declaration for:
+
+- routines, triggers and event triggers, aggregates, casts, collations, extensions;
+- operators, extended statistics, foreign data wrappers and foreign servers, publications;
+- composite, range and domain types as objects (a column of one is a `customType`);
+- grants and default privileges, and the roles and policies that `pgRole` and `pgPolicy` could say, which the queries of an application do not read;
+- exclusion constraints, partitions and tables of a composite type, and an integer or smallint sequence (`pgSequence` has no data type).
+
+Parts it drops from a table it writes: `INCLUDE`, `WITH` and `TABLESPACE` on an index or a unique constraint, `MATCH` and `DEFERRABLE` on a foreign key, `COLLATE` on a column, virtual generated columns, `UNLOGGED`. A view column that is an expression, such as `count(o.id)`, has the type `unknown`, as `RowOf` gives it.
+
+Drizzle's `customType` is not given a schema, and `drizzle-kit` quotes `shop.email` as one identifier. The row type is right and the type name in a generated migration would not be, which does not matter while `drizzle-kit` never generates one.
+
+## Stop running drizzle-kit push and migrate
+
+chant owns the schema now. The ORM is for queries only.
+
+- Remove `drizzle-kit push` and `drizzle-kit migrate` from scripts, CI and the deploy. The file's header says so too. Changes go through the plan, approval and apply of the project, as for any declaration.
+- Do not keep a `__drizzle_migrations` table in step with the declarations: the schema no longer moves through Drizzle's migrations.
+- `drizzle-kit generate` is still useful as a check. It compares the schema file with the last snapshot in its `out` directory and never reads a server, so it reports no change only when the file is the baseline's schema.
+
+## Keep the file current
+
+```bash
+npx chant sql drizzle --check --output src/db/schema.ts
+```
+
+`--check` renders the file in memory and compares it with the one on disk. It writes nothing, and exits 1 naming the file when it differs or does not exist.
+
+In a workspace, list the file as a `generated` entry of the member:
+
+```json
+{
+  "name": "shop",
+  "dir": "services/shop",
+  "kind": "chant",
+  "generated": [
+    {
+      "path": "src/db/schema.ts",
+      "generator": "chant sql drizzle --output src/db/schema.ts",
+      "sources": ["services/shop/src"]
+    }
+  ]
+}
+```
+
+`chant workspace check --generated` runs the generator with `--output` pointed at a temporary file, compares it with `path`, and reports WSP101 when they differ. Change a column in a declaration without running `chant sql drizzle`, and the check fails. A plain `chant workspace check` runs no generator, since a generator runs member code. See [Generated files](/chant/reference/workspace-declaration/#generated-files).
