@@ -53,7 +53,7 @@ import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, type GateApprover, type ResolvedGateApproval } from "./gate-approval";
 import {
   quorumNeed, quorumRuleProgress, quorumRules, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
-  type GateQuorumJudge, type GateQuorumRuleProgress,
+  type GateQuorumJudge, type GateQuorumRuleProgress, type GateQuorumSpec,
 } from "./gate-quorum";
 import { pushLifecycleReport, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
@@ -128,7 +128,12 @@ export interface GateLedgerPort {
 
 /** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
 export interface GateApprovalRule {
-  requirement: { gate: string; class: string | null };
+  /**
+   * `quorum` (#4324) is the entry's `identity.gates.<gate>.quorum` at base:
+   * the rules an Op gate of that name takes in place of its own. Absent or
+   * null when the entry sets none.
+   */
+  requirement: { gate: string; class: string | null; quorum?: GateQuorumSpec | null };
   /** Why `approval` doesn't count, or null when it does. */
   refuses(approval: GateResolutionRecord): string | null;
 }
@@ -318,6 +323,12 @@ export interface GateCheckInput {
    * and the merged pull request's review.
    */
   judge?: GateQuorumJudge;
+  /**
+   * The port's {@link GateLedgerPort.approvalRule} for this gate, when the
+   * caller already read it (#4324): the Op executor reads it first, for the
+   * quorum at base. Absent, it is read here; null means none applies.
+   */
+  rule?: GateApprovalRule | null;
   /** ISO-8601 "now" — supplied by the caller, so the decision is deterministic under test. */
   now?: string;
   /**
@@ -774,7 +785,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // newest one since the standing fact comes back as a mismatch instead.
   const forOtherRelease = (r: GateResolutionRecord) => r.gate === input.gate && r.releaseDigest !== input.releaseDigest;
   // #3163: a gate the workspace's identity.gates names counts only signed approvals from its class.
-  const rule = (await port.approvalRule?.(input.gate)) ?? null;
+  const rule = input.rule !== undefined ? input.rule : ((await port.approvalRule?.(input.gate)) ?? null);
   const standing = latestPendingGate(pending, input.gate);
   const since = standing?.timestamp ?? EPOCH;
 

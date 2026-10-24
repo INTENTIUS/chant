@@ -599,6 +599,21 @@ export async function recordGateApproval(
   // decision is written next to the approval, so a pass can be traced to the
   // rule that allowed it.
   const approval = standingForOrigin?.approval;
+  // #4290, #4324: roles come from .chant/trust.json at base, for an approver
+  // a seal proves. The quorum and the policy both read these, never --role.
+  const judge = trustQuorumJudge({ signers: scope.policy, roles: scope.policy.roles });
+  const trusted = judge({
+    version: 1,
+    op: opName,
+    gate,
+    ...(environment !== undefined ? { environment } : {}),
+    ...(planDigest !== undefined ? { planDigest } : {}),
+    resolvedBy,
+    ...(relayedBy ? { relayedBy } : {}),
+    timestamp,
+    ...(checkpointDigest !== undefined ? { checkpointDigest } : {}),
+    ...(seal ? { seal } : {}),
+  }).roles;
   let policyDecision: GatePolicyDecision | undefined;
   if (approval?.policy) {
     try {
@@ -610,6 +625,7 @@ export async function recordGateApproval(
           gate,
           resolvedBy,
           approver,
+          roles: trusted,
           ...(planDigest !== undefined ? { planDigest } : {}),
           ...(approval.context ? { context: approval.context } : {}),
         }),
@@ -680,9 +696,14 @@ export async function recordGateApproval(
         "after it plans again. A moved plan or another commit starts it at the first phase.",
     ));
   }
+  const untrusted = (approver.roles ?? []).filter((r) => !trusted.includes(r));
+  if (untrusted.length > 0) {
+    console.error(formatInfo(
+      `--role ${untrusted.join(", ")} is recorded on the approval and trusted by nothing: a gate's quorum and policy read ` +
+        `${record.resolvedBy}'s roles from .chant/trust.json at base, and only for an approval sealed by a signer listed at base (chant approve --sign).`,
+    ));
+  }
   if (approval) {
-    // #4290: the rules count roles from .chant/trust.json at base, for a proven approver.
-    const judge = trustQuorumJudge({ signers: scope.policy, roles: scope.policy.roles });
     for (const line of describeApprovalProgress(approval, record, ledger.resolutions, standingForOrigin, ledger.pending, judge)) {
       console.error(formatInfo(line));
     }

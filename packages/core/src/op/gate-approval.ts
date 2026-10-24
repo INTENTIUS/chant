@@ -33,10 +33,10 @@
  * permit counts only while the run resolves that same context (#3774).
  *
  * A resolution is a local fact, not a signed one (`../lifecycle/gate-ledger.ts`).
- * Roles on it are what the approver claimed, and since #4290 the quorum
- * never reads them: a role counts only when `.chant/trust.json` at base
- * grants it and a seal proves the approver (`./gate-quorum.ts`). A policy
- * still sees the claimed roles in its request.
+ * Roles on it are what the approver claimed, and nothing trusts them: since
+ * #4290 the quorum counts a role only when `.chant/trust.json` at base grants
+ * it and a seal proves the approver (`./gate-quorum.ts`), and since #4324 a
+ * policy's request carries those same roles, never the claimed ones.
  */
 
 import { createHash } from "node:crypto";
@@ -282,17 +282,23 @@ export async function loadGatePolicyEvaluator(lexicon: string): Promise<GatePoli
   return mod as GatePolicyEvaluator;
 }
 
-/** The request a policy is asked about one approval. */
+/**
+ * The request a policy is asked about one approval. `roles` are the ones
+ * `.chant/trust.json` at base gives a proven approver (#4324), as a quorum
+ * judge reads them (`trustQuorumJudge` in `./gate-quorum.ts`). The roles the
+ * approver claims on `approver` are never read. Absent, the principal has none.
+ */
 export function gatePolicyRequest(input: {
   op: string;
   gate: string;
   resolvedBy: string;
   approver: GateApprover;
+  roles?: readonly string[];
   planDigest?: string;
   context?: Record<string, unknown>;
 }): GatePolicyRequest {
   return {
-    principal: { kind: input.approver.kind, name: input.resolvedBy, roles: input.approver.roles ?? [] },
+    principal: { kind: input.approver.kind, name: input.resolvedBy, roles: [...(input.roles ?? [])] },
     action: "PassGate",
     resource: { op: input.op, gate: input.gate },
     context: {
