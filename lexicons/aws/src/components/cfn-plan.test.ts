@@ -15,7 +15,7 @@ import { applyPrSet, planPrSet, prReport } from "@intentius/chant/components/pr-
 import { composeChangeSet } from "@intentius/chant/change-set";
 import { groupChangeSet, planSummaryHeadline } from "@intentius/chant/plan-summary";
 import { memberCounts, prStatusDescription, renderPrNote } from "@intentius/chant/pr-loop";
-import { PlanShapeMovedError } from "@intentius/chant/lifecycle/plan-shape";
+import { PlanShapeMovedError } from "@intentius/chant/components/covered-round";
 import { CfnPlanMovedError, CfnReplacementBlockedError, cfnChangeEntry, createCfnDeployCapability, type CfnDeployInput } from "./apply";
 import { isPlanMovedError } from "@intentius/chant/components/capability";
 import { planMovedIn } from "@intentius/chant/components/driver";
@@ -489,6 +489,16 @@ describe("cfn-deploy previews a member whose inputs are unknown, and checks the 
     expect(planned.changeSet!.member.holes).toEqual([]);
     expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet"]);
     expect(planned.artifact).toMatchObject({ kind: "cfn-deploy-shape" });
+    // The preview reports its shape to core, unknown where a placeholder drives it (#4419).
+    expect(planned.shape).toMatchObject({ member: "net", unknownInputs: ["vpc"] });
+    expect(planned.shape!.entries.find((e) => e.logicalId === "Eni")).toMatchObject({ action: "update", replacement: "false", properties: ["Description", "SubnetId"], unknown: ["SubnetId"] });
+    expect(planned.shape!.entries.find((e) => e.logicalId === "Q")).toMatchObject({ action: "create", unknown: ["QueueName"] });
+  });
+
+  it("a conditional replacement in the real change set is read as conditional", async () => {
+    const mock = createMockCloudExecutor({ stacks: { net: { changes: [{ ...eni, replacementMode: "Conditional" as never }] } } });
+    const planned = await createCfnDeployCapability(mock.executor).plan!(ctx, { stack: "net", template, inputs: { SubnetId: "subnet-1" } });
+    expect(planned.shape!.entries[0]).toMatchObject({ logicalId: "Eni", replacement: "conditional" });
   });
 
   it("falls back to a hole when CloudFormation refuses the stand-in", async () => {
@@ -527,7 +537,7 @@ describe("cfn-deploy previews a member whose inputs are unknown, and checks the 
   it("refuses, executing nothing, when the real change adds a resource", async () => {
     const { mock, result } = await previewThenRun([withDriver("SubnetId")], [withDriver("SubnetId"), q]);
     expect(result).toBeInstanceOf(PlanShapeMovedError);
-    expect((result as Error).message).toContain("Q: the change set now proposes a Add of AWS::SQS::Queue");
+    expect((result as Error).message).toContain("net now plans to create Q, which the first plan did not");
     expect((result as { planMoved?: boolean }).planMoved).toBe(true);
     expect(methods(mock)).not.toContain("executeChangeSet");
     expect(methods(mock).at(-1)).toBe("deleteChangeSet");
@@ -536,13 +546,13 @@ describe("cfn-deploy previews a member whose inputs are unknown, and checks the 
   it("refuses when a property no unknown input drives stops changing", async () => {
     const { mock, result } = await previewThenRun([withDriver("SubnetId")], [{ ...eni, details: ["SubnetId"] }]);
     expect(result).toBeInstanceOf(PlanShapeMovedError);
-    expect((result as Error).message).toContain("no longer changes Description");
+    expect((result as Error).message).toContain("no longer changes Description on Eni");
     expect(methods(mock)).not.toContain("executeChangeSet");
   });
 
   it("refuses when the real change replaces and the preview did not", async () => {
     const { result } = await previewThenRun([withDriver("SubnetId")], [{ ...withDriver("SubnetId"), replacementMode: "Conditional" as never }]);
     expect(result).toBeInstanceOf(PlanShapeMovedError);
-    expect((result as Error).message).toContain("replacement was no, now maybe");
+    expect((result as Error).message).toContain("may now replace Eni, which the first plan did not show");
   });
 });

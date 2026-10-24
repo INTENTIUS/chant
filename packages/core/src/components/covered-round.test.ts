@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { coveredRound, planShapeCovers, type PlanShape } from "./covered-round";
+import {
+  coveredRound,
+  normalizePlanShape,
+  PlanShapeMovedError,
+  planShapeCovers,
+  planShapeDifferences,
+  planShapeDigest,
+  type PlanShape,
+  type PlanShapeEntry,
+} from "./covered-round";
 import type { ChangeSetDocument } from "../change-set";
 
 const shape = (over: Partial<PlanShape> = {}): PlanShape => ({
@@ -80,5 +89,71 @@ describe("coveredRound", () => {
       changedKnown: { svc: ["net.cidr", "vpc.id"] },
     });
     expect(r).toEqual({ covered: false, reason: "svc reads net.cidr, which the first plan read as another value" });
+  });
+});
+
+describe("property-level shapes (ported from plan-shape, #4419)", () => {
+  const entry = (over: Partial<PlanShapeEntry> = {}): PlanShapeEntry => ({
+    logicalId: "Eni",
+    action: "update",
+    replacement: "false",
+    type: "T",
+    properties: ["A", "B"],
+    unknown: ["B"],
+    ...over,
+  });
+  const sh = (...entries: PlanShapeEntry[]): PlanShape => ({ member: "m", unknownInputs: ["p"], entries });
+  const fresh = (...entries: PlanShapeEntry[]): PlanShape => ({ member: "m", unknownInputs: [], entries });
+
+  test("digests the same for the same shape in another order", () => {
+    const a = sh(entry({ logicalId: "a" }), entry({ logicalId: "b", properties: ["Z", "Y"] }));
+    const b = sh(entry({ logicalId: "b", properties: ["Y", "Z"] }), entry({ logicalId: "a" }));
+    expect(planShapeDigest(a)).toBe(planShapeDigest(b));
+    expect(normalizePlanShape(b).entries.map((e) => e.logicalId)).toEqual(["a", "b"]);
+    expect(planShapeDigest(a)).not.toBe(planShapeDigest(sh(entry({ logicalId: "a" }))));
+  });
+
+  test("accepts an identical change and one narrowed where an unknown input drives it", () => {
+    expect(planShapeDifferences(sh(entry()), fresh(entry()))).toEqual([]);
+    expect(planShapeDifferences(sh(entry()), fresh(entry({ properties: ["A"] })))).toEqual([]);
+    expect(planShapeDifferences(sh(entry({ replacement: "true" })), fresh(entry({ replacement: "false" })))).toEqual([]);
+    expect(planShapeDifferences(sh(entry({ properties: ["B"] })), fresh())).toEqual([]);
+  });
+
+  test("refuses an added resource, an added property, another action, more replacement", () => {
+    expect(planShapeDifferences(sh(entry()), fresh(entry(), entry({ logicalId: "n" })))).toHaveLength(1);
+    expect(planShapeCovers(sh(entry()), fresh(entry({ properties: ["A", "B", "C"] })))).toContain("also changes C");
+    expect(planShapeCovers(sh(entry()), fresh(entry({ action: "delete" })))).toContain("where the first plan showed update");
+    expect(planShapeCovers(sh(entry()), fresh(entry({ replacement: "true" })))).toContain("now replaces Eni");
+    expect(planShapeCovers(sh(entry()), fresh(entry({ type: "U" })))).toContain("as U, where the first plan showed T");
+  });
+
+  test("refuses a change that vanishes or weakens with no unknown input behind it", () => {
+    expect(planShapeDifferences(sh(entry({ unknown: [] })), fresh())).toHaveLength(1);
+    expect(planShapeDifferences(sh(entry({ unknown: [], replacement: "true" })), fresh(entry({ unknown: [], replacement: "false" })))).toHaveLength(1);
+    expect(planShapeCovers(sh(entry()), fresh(entry({ properties: ["B"] })))).toContain("no longer changes A");
+  });
+
+  test("a previewed entry without property detail may drop out, as before", () => {
+    expect(planShapeDifferences({ member: "m", unknownInputs: [], entries: [{ logicalId: "x", action: "create" }] }, fresh())).toEqual([]);
+  });
+
+  test("an entry with property detail is compared even when its action is no-op", () => {
+    const imp = entry({ logicalId: "I", action: "no-op" });
+    expect(planShapeCovers(sh(), fresh(imp))).toContain("now plans to no-op I");
+    expect(planShapeCovers(sh(imp), fresh(imp))).toBeUndefined();
+  });
+
+  test("the refusal names the differences and marks the plan as moved", () => {
+    const err = new PlanShapeMovedError("m", ["m now plans to create Eni, which the first plan did not"]);
+    expect(err.planMoved).toBe(true);
+    expect(err.message).toContain("Eni, which the first plan did not");
+  });
+
+  test("a round is not covered when a property level difference shows in the shapes a lexicon supplied", () => {
+    const doc = { members: [], entries: [] } as unknown as ChangeSetDocument;
+    const side = (shape: PlanShape, unknownInputs?: string[]) => ({ doc, members: [{ member: "m", component: "c", ...(unknownInputs ? { unknownInputs } : {}) }], shapes: { m: shape } });
+    const r = coveredRound({ approved: side(sh(entry()), ["up.id"]), approvedDigest: "d", fresh: side(fresh(entry({ properties: ["A", "C"] }))) });
+    expect(r).toEqual({ covered: false, reason: "m now also changes C on Eni" });
   });
 });

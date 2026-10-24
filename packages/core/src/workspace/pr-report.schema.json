@@ -218,7 +218,7 @@
           "unknownInputs": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "#3999: the upstream outputs its plan read that the change's plans could not say, as <component>.<output>, sorted. Known only after that upstream applies; the approval does not cover what this member does with them."
+            "description": "#3999: the upstream outputs its plan read that the change's plans could not say, as <component>.<output>, sorted. Known only after that upstream applies. The first approval covers the round that plans the member again when that plan does only what the preview showed, with only these inputs filled in; anything else waits for an approval of its own."
           },
           "buildInputs": {
             "type": "array",
