@@ -255,6 +255,12 @@ export const api = new Service({
     },
   ]),
 
+  // Live export (#4388): a compose project's services, read from the Engine API.
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
+  },
+
   async listArtifacts(options) {
     const { listArtifacts } = await import("./list-artifacts");
     return listArtifacts(options);

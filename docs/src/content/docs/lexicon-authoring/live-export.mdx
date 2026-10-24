@@ -58,13 +58,14 @@ Keep all I/O in the activity and the mapping pure, as the shipped lexicons do:
 3. Map to `TemplateIR` by reusing your import parser.
 4. Apply the `selector` and the `owned` filter, below.
 
-Split the two halves across two files so the mapping tests without a transport. Eight lexicons implement this today:
+Split the two halves across two files so the mapping tests without a transport. Nine lexicons implement this today:
 
 | Lexicon | I/O entry point (what the plugin calls) | Pure mapping |
 |---|---|---|
 | aws | `lexicons/aws/src/plugin.ts` (inline) | `lexicons/aws/src/import/live-export.ts` |
 | azure | `lexicons/azure/src/export-resources.ts` | `lexicons/azure/src/import/live-export.ts` |
 | cedar | `lexicons/cedar/src/avp/live-export.ts` | same file |
+| docker | `lexicons/docker/src/export-resources.ts` | `lexicons/docker/src/import/live-export.ts` |
 | fly | `lexicons/fly/src/export-resources.ts` | `lexicons/fly/src/import/live-export.ts` |
 | fountain | `lexicons/fountain/src/export-resources.ts` | same file |
 | gcp | `lexicons/gcp/src/export-resources.ts` | `lexicons/gcp/src/import/live-export.ts` |

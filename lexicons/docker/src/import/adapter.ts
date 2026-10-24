@@ -11,10 +11,10 @@
  * reverse the mapping in the generator so DockerGenerator can do the real work.
  */
 
-import type { TemplateIR, TemplateParser, ResourceIR } from "@intentius/chant/import/parser";
+import type { TemplateIR, TemplateParser, ResourceIR, ParseContext } from "@intentius/chant/import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import/generator";
 import { DockerParser, DockerfileParser, looksLikeDockerfile } from "./parser";
-import type { DockerIR, DockerfileStage } from "./parser";
+import type { DockerIR, DockerfileStage, ParseResult } from "./parser";
 import { DockerGenerator } from "./generator";
 
 /** Convert a DockerIR into the core ResourceIR shape. */
@@ -66,19 +66,24 @@ function resourceToDockerIr(resource: ResourceIR): DockerIR {
  * entities to a TemplateIR.
  */
 export class DockerTemplateParser implements TemplateParser {
-  parse(content: string): TemplateIR {
+  /** With `context.embedded`, a config's `content` another lexicon owns is handed to it (#3373). */
+  parse(content: string, context?: ParseContext): TemplateIR {
     // A Dockerfile has no name of its own; it imports as `app`
     // (Dockerfile.app). Rename the export to choose the file name.
     if (looksLikeDockerfile(content)) {
       return { resources: [dockerIrToResource(new DockerfileParser().parse("app", content))], parameters: [] };
     }
-    const { entities, warnings } = new DockerParser().parse(content);
-    return {
-      resources: entities.map(dockerIrToResource),
-      parameters: [],
-      ...(warnings.length > 0 ? { warnings } : {}),
-    };
+    return dockerResultToTemplate(new DockerParser().parse(content, context));
   }
+}
+
+/** A compose parse result as the core TemplateIR. */
+export function dockerResultToTemplate({ entities, warnings }: ParseResult): TemplateIR {
+  return {
+    resources: entities.map(dockerIrToResource),
+    parameters: [],
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
 /**
