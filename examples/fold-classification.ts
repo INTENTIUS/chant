@@ -288,6 +288,7 @@ export const EXPECTED_FOLD: readonly string[] = [
   "examples/cc-gcp-canonical",
   "examples/cockroachdb-multi-region-gke",
   "examples/components-aws-e2e",
+  "examples/demo-composed-stacks",
   "examples/fan-out-estate",
   "examples/fly-deploy-rollback",
   "examples/fly-durable-deploy",
