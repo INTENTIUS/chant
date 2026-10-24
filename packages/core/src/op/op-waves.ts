@@ -1017,18 +1017,18 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
 /**
  * The moments a pull-request job runs hooks at (#4288): `pr-plan` and
  * `pr-record` run the observe and plan moments, and `pr-apply` the apply
- * moments too. The pull request's gate has no `after-gate` moment.
+ * moments too. `after-gate` (#4323) runs in `pr-apply` once the pull
+ * request's gate has decided.
  */
-export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "before-apply", "after-apply"];
+export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
 
 /**
  * Refuse `ci.hooks` a pull-request job could not run (#4288): what
- * {@link assertOpWaveHooks} refuses, plus `after.gate` and `apply.runBy`,
- * since chant itself runs a pull request's apply.
+ * {@link assertOpWaveHooks} refuses, plus `apply.runBy`, since chant itself
+ * runs a pull request's apply.
  */
 export function assertPrLoopHooks(where: string, hooks: OpWaveHooks | undefined): void {
   assertOpWaveHooks(where, hooks);
-  if (hooks?.after?.gate !== undefined) throw new Error(`${where}: hooks.after.gate runs in an Op waves job only; a pull-request job runs hooks before the observe, before and after the plan, and before and after the apply.`);
   if (hooks?.apply !== undefined) throw new Error(`${where}: hooks.apply.runBy is for an Op waves spec; chant runs a pull request's apply, so it runs the apply-stage hooks itself.`);
 }
 
