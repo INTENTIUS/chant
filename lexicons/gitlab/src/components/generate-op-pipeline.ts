@@ -203,6 +203,24 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
 }
 
 /**
+ * Refuse `reviewAgent` (#4326). The split posts the review from a second job
+ * that holds the forge write token, and a GitLab merge request pipeline hands
+ * every job the project's unprotected CI/CD variables, the review job's
+ * included. A token protected enough to stay out of it is not available to a
+ * job of that pipeline either, so the post has to start from a pipeline of
+ * the default branch, which this generator does not build. The refusal names
+ * the Op and the way out rather than emitting a review job that holds the token.
+ */
+function assertNoReviewSplit(spec: ScheduledOpSpec): void {
+  if (!spec.reviewAgent) return;
+  throw new Error(
+    `Scheduled Op "${spec.name}" sets reviewAgent, which keeps the model's job free of the forge write token and posts the note from a second job. ` +
+      `A GitLab merge request pipeline hands every job the project's unprotected variables, so the gitlab generator does not build that split. ` +
+      `Drop reviewAgent and run the review with findingMode "comment" (the model command still runs with a cleared environment), or generate this Op for GitHub or Forgejo.`,
+  );
+}
+
+/**
  * The follow-up line an Op with an `environment` adds under its own header
  * line (#2257). The `environment:` key on the job binds it to the
  * environment; it cannot declare the approval rule, which is a project
@@ -293,6 +311,7 @@ export function generateGitlabOpPipeline(
     const findingMode = spec.findingMode ?? "report";
     const trigger = resolveOpTrigger(spec);
     assertTriggerSupportsMode(spec.name, findingMode, trigger);
+    assertNoReviewSplit(spec);
     if (trigger.kind === "cron") anyCron = true;
 
     const jobName = jobPrefix + ciJobName(spec.name);

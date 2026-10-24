@@ -34,6 +34,9 @@ import { checkoutScript, CHECKOUT_TOKEN_ENV, FORGE_TOKEN_VARS } from "@intentius
 import { resolveCloudIdentity } from "@intentius/chant/ci-identity";
 import type { ComponentPipelineOptions } from "@intentius/chant/lexicon";
 import { generateGithubPipeline } from "@intentius/chant-lexicon-github/components/generate-pipeline";
+import { generateGithubOpPipeline } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
+import { generateForgejoOpPipeline } from "@intentius/chant-lexicon-forgejo/components/generate-op-pipeline";
+import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
 import { generateForgejoPipeline } from "@intentius/chant-lexicon-forgejo/components/generate-pipeline";
 import { generateGitlabPipeline } from "@intentius/chant-lexicon-gitlab/components/generate-pipeline";
 
@@ -131,6 +134,41 @@ for (const [forge, generate] of Object.entries(generators)) {
     });
   });
 }
+
+/**
+ * #4326: the split review is a generated job shape of its own, the Op
+ * pipeline's `reviewAgent`. Its review job runs the pull request's code
+ * (`chant run` loads the change's Op files) beside a model, so it follows the
+ * rule above. Its note job is the one job that holds the token, and runs none
+ * of the change's code: it checks out nothing and runs no `chant run`.
+ */
+describe("the split review's jobs (#4326)", () => {
+  const SPEC: ScheduledOpSpec = { name: "pr-review", trigger: { kind: "pull_request" }, reviewAgent: true };
+  const reviewGenerators = {
+    github: () => generateGithubOpPipeline([SPEC]).files[0]!.yaml,
+    forgejo: () => generateForgejoOpPipeline([SPEC]).files[0]!.yaml,
+  };
+  for (const [forge, generate] of Object.entries(reviewGenerators)) {
+    test(`${forge}: the review job holds no forge token or runner key, and the note job runs no code of the change`, () => {
+      const doc = parseYAML(generate()) as { env?: Record<string, unknown>; jobs: Record<string, GithubJob> };
+      expect(secretsIn(doc.env)).toEqual([]);
+      const review = doc.jobs["pr-review"]!;
+      expect(secretsIn(review.env)).toEqual([]);
+      for (const [i, step] of review.steps.entries()) {
+        const where = `review: step ${i} (${step.run?.split("\n")[0] ?? step.uses})`;
+        const named = secretsIn(step.env);
+        if (step.run?.trimEnd() === checkoutScript(true).trimEnd()) expect(named, where).toEqual([CHECKOUT_TOKEN_ENV]);
+        else expect(named, where).toEqual([]);
+        expect(secretsIn(step.with), where).toEqual([]);
+        expect(step.uses ?? "", where).not.toMatch(/^actions\/checkout@/);
+      }
+      // The note job is the other side: no checkout, no run of the Op.
+      const note = doc.jobs["pr-review-note"]!;
+      expect(note.steps.some((s) => (s.uses ?? "").startsWith("actions/checkout"))).toBe(false);
+      expect(note.steps.map((s) => s.run ?? "").join("\n")).not.toMatch(/chant run|git (fetch|checkout|clone)/);
+    });
+  }
+});
 
 interface GitlabJob {
   rules?: Array<{ if?: string }>;

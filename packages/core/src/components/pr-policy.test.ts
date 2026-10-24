@@ -14,7 +14,9 @@ import { composeChangeSet } from "../change-set";
 import { memoryGateLedgerPort } from "../op/gate";
 import { overrideDigest } from "../override-gate";
 import type { GatePolicyExec } from "../gate-policy";
-import { decidePrPolicyOverride, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrPolicyInput } from "./pr-policy";
+import type { FoundComment, MarkerMatch, PrForge } from "../pr-forge";
+import { reviewMarker, reviewNoteBody } from "../op/activities/review-agent";
+import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, REVIEW_NOTE_AUTHORS, runPrPolicy, spendPrPolicyOverride, type PrPolicyInput } from "./pr-policy";
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -141,5 +143,66 @@ describe("a denial and its override (#4294)", () => {
   test("an applied record that does not reach the remote throws, so nothing applies", async () => {
     const port = { ...memoryGateLedgerPort(), appendApplied: async () => ({ pushed: false, pushWarning: 'the push of chant/lifecycle to "origin" failed' }) };
     await expect(spendPrPolicyOverride(port, "pr-7", { by: "github:carol", at: "2026-10-22T12:00:00Z", reason: "ok", digest: "sha256:1" })).rejects.toThrow(/did not reach the remote/);
+  });
+});
+
+describe("input.review: a policy reads the review's risk (#4326)", () => {
+  const HEAD = "a".repeat(40);
+  const noteBody = (risk: "low" | "high", head = HEAD) =>
+    `${reviewMarker("pr-review")}\n\n${reviewNoteBody({ review: `Replaces the bucket.\n\nrisk: ${risk}\n`, exitCode: 0, digest: "sha256:0123456789ab", instructions: "base", head })}`;
+
+  /** A forge whose comments are `notes`; findComment applies the marker and author rules the real clients do. */
+  function forgeWith(notes: Array<{ body: string; author: string }>): PrForge {
+    return {
+      async findComment(_pr: number, marker: string, opts: MarkerMatch = {}): Promise<FoundComment | undefined> {
+        const want = typeof opts.author === "string" ? [opts.author] : (opts.author ?? []);
+        const hit = notes.find((n) => n.body.startsWith(marker) && (!opts.author || want.map((w) => w.toLowerCase()).includes(n.author.toLowerCase())));
+        return hit ? { id: 1, body: hit.body } : undefined;
+      },
+    } as unknown as PrForge;
+  }
+
+  test("a note the run's token wrote gives the risk and the head it read", async () => {
+    const forge = forgeWith([{ body: noteBody("high"), author: "github-actions[bot]" }]);
+    expect(await policyReviewOf(forge, 7)).toEqual({ found: true, risk: "high", head: HEAD });
+  });
+
+  test("a note a person wrote, even with the marker and a low risk, is not the review", async () => {
+    const forge = forgeWith([{ body: noteBody("low"), author: "mallory" }]);
+    expect(await policyReviewOf(forge, 7)).toMatchObject({ found: false, risk: "unknown", head: null });
+    expect(REVIEW_NOTE_AUTHORS).not.toContain("mallory");
+  });
+
+  test("no pull request, no forge and a forge that fails all read as no review, with the reason", async () => {
+    expect(await policyReviewOf(forgeWith([]), 7)).toMatchObject({ found: false, reason: expect.stringContaining("no review note") });
+    expect(await policyReviewOf(undefined, 7)).toMatchObject({ found: false });
+    expect(await policyReviewOf(forgeWith([]), null)).toMatchObject({ found: false });
+    const broken = { findComment: async () => { throw new Error("503"); } } as unknown as PrForge;
+    expect(await policyReviewOf(broken, 7)).toMatchObject({ found: false, reason: expect.stringContaining("503") });
+  });
+
+  test("a note whose command failed names the risk unknown", async () => {
+    const failed = `${reviewMarker("pr-review")}\n\n${reviewNoteBody({ review: "risk: low", exitCode: 2, digest: "sha256:01", instructions: "base", head: HEAD })}`;
+    expect(await policyReviewOf(forgeWith([{ body: failed, author: "gitea-actions" }]), 7)).toEqual({ found: true, risk: "unknown", head: HEAD });
+  });
+
+  // A stand-in for `deny[msg] { input.review.risk == "high" }`: it reads the input file the engine was handed, as opa does.
+  const denyHighRisk: GatePolicyExec = (argv) => {
+    const fed = JSON.parse(readFileSync(argv[argv.indexOf("--input") + 1]!, "utf-8")) as PrPolicyInput;
+    const deny = fed.review?.risk === "high" ? ["the review rated this plan high risk"] : [];
+    return { status: 0, stdout: opaOut({ deny }), stderr: "" };
+  };
+
+  test("a policy that denies on high risk denies a plan the review rated high, and passes one rated low", async () => {
+    const { repo, base } = repoWithPolicy();
+    const read = prLoopPolicyAt(join(repo, "infra"), base);
+    const high = await policyReviewOf(forgeWith([{ body: noteBody("high"), author: "github-actions[bot]" }]), 7);
+    const low = await policyReviewOf(forgeWith([{ body: noteBody("low"), author: "github-actions[bot]" }]), 7);
+    const denied = runPrPolicy(read, { ...input(base), review: high }, denyHighRisk)!;
+    expect(denied.result).toBe("denied");
+    expect(denied.denials).toEqual([{ rule: "main.deny", message: "the review rated this plan high risk" }]);
+    expect(runPrPolicy(read, { ...input(base), review: low }, denyHighRisk)!.result).toBe("passed");
+    // A plan nobody reviewed is not high risk; a policy that wants a review denies on `found` itself.
+    expect(runPrPolicy(read, { ...input(base), review: await policyReviewOf(forgeWith([]), 7) }, denyHighRisk)!.result).toBe("passed");
   });
 });
