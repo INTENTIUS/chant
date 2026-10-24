@@ -40,12 +40,13 @@ function commentOn(what: string, comment: unknown): string[] {
 }
 
 const notInternal = (catalog: string, oid: string): string =>
-  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'i')`;
+  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dep_ WHERE dep_.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND dep_.objid = ${oid} AND dep_.deptype = 'i')`;
 
 /** What depends on an object of catalog `catalog` (a normal dependency), as the server describes each. */
 const dependentsOf = (catalog: string, oid: string): string =>
-  `ARRAY(SELECT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) FROM pg_catalog.pg_depend d
-         WHERE d.refclassid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.refobjid = ${oid} AND d.deptype = 'n' ORDER BY 1)`;
+  // `dep_`, not `d`: a caller's own alias (the text search dictionary query's `d`) would otherwise shadow it.
+  `ARRAY(SELECT pg_catalog.pg_describe_object(dep_.classid, dep_.objid, dep_.objsubid) FROM pg_catalog.pg_depend dep_
+         WHERE dep_.refclassid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND dep_.refobjid = ${oid} AND dep_.deptype = 'n' ORDER BY 1)`;
 
 /** A collation's name as a clause: a `pg_catalog` one bare. */
 const collationName = (oid: string): string =>
