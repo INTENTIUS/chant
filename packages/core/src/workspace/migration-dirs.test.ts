@@ -8,6 +8,8 @@
 import { describe, expect, test } from "vitest";
 import type { KindReaderInput } from "./kind-link-readers";
 import { LINK_READERS } from "./kind-link-readers";
+import { migrationDigest, REPLAY_FILE, replayFiles } from "./migration-dirs";
+import { withReaderOutputs } from "./links";
 import { classifyFlywayFile, compareVersions } from "./flyway-dir";
 import { parseToml, readFlywayConfig, substitute, FlywayPlaceholderError } from "./flyway-layout";
 import { builtinKindRegistry } from "./kinds";
@@ -43,6 +45,8 @@ function memoryTree(files: Record<string, string>): WorkspaceTree {
 
 const run = (reader: keyof typeof LINK_READERS, files: Record<string, string>, fields: Record<string, string> = {}, dir = "") =>
   LINK_READERS[reader]({ member: { name: "m" } as never, dir, fields: fields as KindReaderInput["fields"], tree: memoryTree(files) });
+/** The gaps about the files, without the one that asks for a first replay. */
+const gapsOf = (r: ReturnType<typeof run>) => r.gaps.filter((g) => !g.message.startsWith(`no ${REPLAY_FILE}`));
 const summary = (r: ReturnType<typeof run>) => (r.migrations ?? []).map((m) => `${String(m.position)} ${m.version} ${m.name} ${m.type}`);
 
 describe("the readers are registered", () => {
@@ -66,7 +70,7 @@ describe("goose", () => {
     expect(r.migrations!.map((m) => m.down)).toEqual([true, false, false]);
     expect(r.migrations!.every((m) => m.dialect === "clickhouse")).toBe(true);
     expect(r.migrations![0]).toMatchObject({ file: "00002_two.sql", line: 1 });
-    expect(r.gaps).toEqual([]);
+    expect(gapsOf(r)).toEqual([]);
   });
 
   test("annotations are case-insensitive and NO TRANSACTION is read", () => {
@@ -76,7 +80,7 @@ describe("goose", () => {
 
   test("a file without Up, a Go migration, a bad name and a duplicate version are gaps", () => {
     const r = run("goose-dir", { "1_a.sql": "select 1;\n", "2_b.go": "package m\n", "x_c.sql": up(), "3_d.sql": up(), "03_e.sql": up() });
-    expect(r.gaps.map((g) => `${g.file}: ${g.message.split(",")[0]}`)).toEqual([
+    expect(gapsOf(r).map((g) => `${g.file}: ${g.message.split(",")[0]}`)).toEqual([
       "1_a.sql: 1_a.sql has no -- +goose Up annotation",
       "2_b.go: 2_b.go is a Go migration; its code is not SQL",
       "x_c.sql: x_c.sql has no version goose can read: the name starts with a positive integer",
@@ -102,12 +106,12 @@ describe("golang-migrate", () => {
     });
     expect(summary(r)).toEqual(["1 2 two versioned", "2 10 ten versioned", "3 1700000000 stamp versioned"]);
     expect(r.migrations!.map((m) => m.down)).toEqual(["2_two.down.sql", false, false]);
-    expect(r.gaps).toEqual([]);
+    expect(gapsOf(r)).toEqual([]);
   });
 
   test("a down file with no up file, and a duplicate version, are gaps", () => {
     const r = run("golang-migrate-dir", { "1_a.up.sql": "", "01_b.up.sql": "", "5_c.down.sql": "" });
-    expect(r.gaps.map((g) => g.message)).toEqual([
+    expect(gapsOf(r).map((g) => g.message)).toEqual([
       "1_a.up.sql: another up file already has version 1; golang-migrate refuses a duplicate",
       "version 5 has a down file and no up file",
     ]);
@@ -124,7 +128,7 @@ describe("clickhouse-migrations", () => {
 
   test("a name with no version and a version written twice are gaps", () => {
     const r = run("clickhouse-migrations-dir", { "init.sql": "", "1_a.sql": "", "001_b.sql": "" });
-    expect(r.gaps.map((g) => g.message.split(",")[0])).toEqual([
+    expect(gapsOf(r).map((g) => g.message.split(",")[0])).toEqual([
       "init.sql has no version before its first _",
       "version 1 is also 001_b.sql; leading zeros are not significant",
     ]);
@@ -145,7 +149,7 @@ describe("flyway", () => {
     });
     expect(summary(r)).toEqual(["1 1.1 one one versioned", "2 2 two versioned", "3 10 ten versioned", "4  a first repeatable", "5  views repeatable"]);
     expect(r.migrations![1]!.down).toBe("U2__undo_two.sql");
-    expect(r.gaps).toEqual([]);
+    expect(gapsOf(r)).toEqual([]);
   });
 
   test("locations come from flyway.toml, read recursively", () => {
@@ -177,7 +181,7 @@ describe("flyway", () => {
       "sql/V1_0__b.sql": "",
       "sql/V2__Code.java": "",
     });
-    expect(r.gaps.map((g) => g.message.split(",")[0])).toEqual([
+    expect(gapsOf(r).map((g) => g.message.split(",")[0])).toEqual([
       "the location filesystem:../shared lies outside the workspace",
       "V2__Code.java is a code migration; its code is not SQL",
       "version 1 is also sql/V1_0__b.sql; Flyway refuses two migrations with one version",
@@ -205,5 +209,64 @@ describe("the shared Flyway layout", () => {
     expect(substitute("a ${env}\nb ${flyway:table}", "V1__a.sql", config)).toBe("a prod\nb hist");
     expect(() => substitute("ok\n${nope}", "V1__a.sql", config)).toThrow(FlywayPlaceholderError);
     expect(() => substitute("ok\n${nope}", "V1__a.sql", config)).toThrow(/V1__a\.sql:2: no value for the placeholder \$\{nope\}/);
+  });
+});
+
+describe("the recorded replay", () => {
+  const goose = { "1_a.sql": "-- +goose Up\nCREATE TABLE a (id int);\n", "2_b.sql": "-- +goose Up\nALTER TABLE a ADD c int;\n" };
+  const snapshot = (files: Record<string, string>, outputs: string[]) => {
+    const tree = memoryTree(files);
+    const r = run("goose-dir", files);
+    const digest = migrationDigest((f) => tree.read(f), replayFiles(tree, r.migrations!));
+    return JSON.stringify({ schema: 1, dialect: "postgres", digest, outputs }, null, 2);
+  };
+
+  test("without a snapshot the outputs are a gap that says to replay", () => {
+    const r = run("goose-dir", goose);
+    expect(r.outputs).toBeUndefined();
+    expect(r.gaps).toEqual([expect.objectContaining({ outputs: true, message: expect.stringContaining("chant sql replay") })]);
+  });
+
+  test("a snapshot whose digest matches gives its names as outputs, with the line that states each", () => {
+    const r = run("goose-dir", { ...goose, [REPLAY_FILE]: snapshot(goose, ["public.a", "public.a.id", "public.a.c"]) });
+    expect(r.gaps).toEqual([]);
+    expect(r.outputs).toEqual([
+      { name: "public.a", file: REPLAY_FILE, line: 5 },
+      { name: "public.a.id", file: REPLAY_FILE, line: 6 },
+      { name: "public.a.c", file: REPLAY_FILE, line: 7 },
+    ]);
+  });
+
+  test("an edited migration makes the snapshot stale: no outputs and a gap", () => {
+    const stale = { ...goose, "2_b.sql": "-- +goose Up\nALTER TABLE a DROP COLUMN id;\n" };
+    const r = run("goose-dir", { ...stale, [REPLAY_FILE]: snapshot(goose, ["public.a"]) });
+    expect(r.outputs).toBeUndefined();
+    expect(r.gaps[0]).toMatchObject({ file: REPLAY_FILE, outputs: true, message: expect.stringContaining("changed since") });
+  });
+
+  test("a new migration makes it stale too, and a snapshot that is not one is a gap", () => {
+    expect(run("goose-dir", { ...goose, "3_c.sql": "-- +goose Up\nselect 1;\n", [REPLAY_FILE]: snapshot(goose, []) }).gaps[0]!.message).toContain("changed since");
+    expect(run("goose-dir", { ...goose, [REPLAY_FILE]: "{}" }).gaps[0]!.message).toContain("not a replay snapshot");
+    expect(run("goose-dir", { ...goose, [REPLAY_FILE]: "{" }).gaps[0]!.message).toContain("could not be read");
+  });
+
+  test("a Flyway snapshot also depends on the configuration, which holds the placeholders", () => {
+    const files = { "flyway.conf": "flyway.placeholders.t=a\n", "V1__a.sql": "create table ${t} (id int);\n" };
+    const tree = memoryTree(files);
+    const r = run("flyway-dir", files);
+    const digest = migrationDigest((f) => tree.read(f), replayFiles(tree, r.migrations!, ["flyway.conf"]));
+    const snap = JSON.stringify({ schema: 1, dialect: "postgres", digest, outputs: ["public.a"] });
+    expect(run("flyway-dir", { ...files, [REPLAY_FILE]: snap }).outputs!.map((o) => o.name)).toEqual(["public.a"]);
+    expect(run("flyway-dir", { ...files, "flyway.conf": "flyway.placeholders.t=b\n", [REPLAY_FILE]: snap }).outputs).toBeUndefined();
+  });
+
+  test("the outputs reach a consumer's link through withReaderOutputs: a column the migrations drop is missing", () => {
+    const base = new Map([["db", { outputs: [], complete: true, why: null, exposesNone: false }]]) as never;
+    const read = run("goose-dir", { ...goose, [REPLAY_FILE]: snapshot(goose, ["public.a", "public.a.id"]) });
+    const handles = withReaderOutputs(base, new Map([["db", read]]));
+    expect(handles.get("db")!.outputs.map((o) => o.name)).toEqual(["public.a", "public.a.id"]);
+    expect(handles.get("db")!.complete).toBe(true);
+    const unreplayed = withReaderOutputs(base, new Map([["db", run("goose-dir", goose)]]));
+    expect(unreplayed.get("db")!.complete).toBe(false);
   });
 });

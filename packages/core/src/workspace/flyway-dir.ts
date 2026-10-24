@@ -23,7 +23,7 @@
 
 import type { KindLinkRead, KindReadGap, KindReadMigration, KindReaderInput } from "./kind-link-readers";
 import { codeMigrations, findFlywayConfig, isCallback, readFlywayConfig, walk, type FlywayConfig } from "./flyway-layout";
-import { fieldString } from "./migration-dirs";
+import { fieldString, withReplay } from "./migration-dirs";
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -70,7 +70,15 @@ export function classifyFlywayFile(file: string, config: FlywayConfig): FlywayFi
   return undefined;
 }
 
-export function readFlywayDir(input: KindReaderInput): KindLinkRead {
+/** The configuration file the replay depends on, besides the migrations: it holds the placeholders. */
+export function flywayReplayFiles(input: Pick<KindReaderInput, "tree" | "dir">): string[] {
+  const f = findFlywayConfig(input.tree, input.dir);
+  return f === undefined ? [] : [f];
+}
+
+export const readFlywayDir = (input: KindReaderInput): KindLinkRead => withReplay(listFlywayDir(input), input.tree, input.dir, flywayReplayFiles(input));
+
+function listFlywayDir(input: KindReaderInput): KindLinkRead {
   const { tree, dir } = input;
   const gaps: KindReadGap[] = [];
   const result: KindLinkRead = { reader: "flyway-dir", links: [], gaps, migrations: [] };

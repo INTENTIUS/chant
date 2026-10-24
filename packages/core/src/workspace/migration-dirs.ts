@@ -27,11 +27,18 @@
  *   optional `<version>_<name>.down.sql` rollback beside it. The dialect is
  *   always ClickHouse.
  *
+ * What the migrations produce comes from a replay (`chant sql replay`), which
+ * records the tables and columns in {@link REPLAY_FILE} beside the
+ * migrations. Each reader returns them as the member's outputs when the
+ * recorded digest still matches the files, and a gap that says to replay
+ * again when it does not (see {@link withReplay}).
+ *
  * The member's `migrationsDir` field names the directory under the member's
  * own, and `dialect` names the dialect for goose and golang-migrate, whose
  * tools take it from a driver or URL the directory does not hold.
  */
 
+import { createHash } from "node:crypto";
 import type { KindLinkRead, KindReadGap, KindReadMigration, KindReaderInput } from "./kind-link-readers";
 import type { FieldValue } from "./kinds";
 import { joinPath, type WorkspaceTree } from "./tree";
@@ -66,7 +73,7 @@ export function gooseAnnotation(line: string): string | undefined {
   return t.replace("+goose", "").replace(/^--\s*/, "").trim().toLowerCase();
 }
 
-export function readGooseDir(input: KindReaderInput): KindLinkRead {
+function listGooseDir(input: KindReaderInput): KindLinkRead {
   const { tree } = input;
   const dir = migrationsDirOf(input);
   const dialect = fieldString(input.fields, "dialect", "postgres");
@@ -126,7 +133,7 @@ export function readGooseDir(input: KindReaderInput): KindLinkRead {
 
 const MIGRATE_NAME = /^([0-9]+)_(.*)\.(down|up)\.(.*)$/;
 
-export function readGolangMigrateDir(input: KindReaderInput): KindLinkRead {
+function listGolangMigrateDir(input: KindReaderInput): KindLinkRead {
   const { tree } = input;
   const dir = migrationsDirOf(input);
   const dialect = fieldString(input.fields, "dialect", "postgres");
@@ -160,7 +167,7 @@ export function readGolangMigrateDir(input: KindReaderInput): KindLinkRead {
 
 const CLICKHOUSE_NAME = /^([0-9]+)_(.+)\.sql$/;
 
-export function readClickHouseMigrationsDir(input: KindReaderInput): KindLinkRead {
+function listClickHouseMigrationsDir(input: KindReaderInput): KindLinkRead {
   const { tree } = input;
   const dir = migrationsDirOf(input);
   const gaps: KindReadGap[] = [];
@@ -187,3 +194,74 @@ export function readClickHouseMigrationsDir(input: KindReaderInput): KindLinkRea
   ups.forEach((u, i) => result.migrations!.push({ position: i + 1, version: u.version, name: u.name, type: "versioned", file: u.file, line: 1, down: rollbacks.get(u.file.split("/").pop()!.slice(0, -".sql".length)) ?? false, dialect: "clickhouse" }));
   return result;
 }
+
+/** The file a replay writes in the member's directory: the tables and columns the migrations produced, and the digest of the files it ran (#4400). */
+export const REPLAY_FILE = "chant.replay.json";
+
+/** What {@link REPLAY_FILE} holds. */
+export interface ReplaySnapshot {
+  schema: 1;
+  dialect: string;
+  /** {@link migrationDigest} of the files the replay ran. */
+  digest: string;
+  /** Names as `<schema>.<table>` and `<schema>.<table>.<column>` (Postgres), or `<database>...` (ClickHouse), the contract of #3931. */
+  outputs: string[];
+}
+
+/** A digest of the migration files in order, so a snapshot can tell the files changed. `extra` are files beside them that change what runs, such as Flyway's configuration. */
+export function migrationDigest(read: (file: string) => string, files: readonly string[]): string {
+  const h = createHash("sha256");
+  for (const f of files) {
+    h.update(f);
+    h.update("\0");
+    h.update(read(f));
+    h.update("\0");
+  }
+  return `sha256:${h.digest("hex")}`;
+}
+
+/** The files a replay of `migrations` depends on, in order. */
+export function replayFiles(tree: WorkspaceTree, migrations: readonly KindReadMigration[], extra: readonly string[] = []): string[] {
+  return [...extra.filter((f) => tree.stat(f) === "file"), ...migrations.map((m) => m.file)];
+}
+
+/**
+ * Add the recorded replay to a reader's result: the snapshot's names as
+ * outputs when its digest matches the files, else a gap flagged `outputs`
+ * (a link into the member is then unresolved, not missing). A snapshot
+ * that does not parse is a gap too.
+ */
+export function withReplay(result: KindLinkRead, tree: WorkspaceTree, dir: string, extra: readonly string[] = []): KindLinkRead {
+  const file = joinPath(dir, REPLAY_FILE);
+  const migrations = result.migrations ?? [];
+  const gap = (message: string, line = 1) => result.gaps.push({ file: tree.stat(file) === "file" ? file : dir || ".", line, message, outputs: true });
+  if (tree.stat(file) !== "file") {
+    gap(`no ${REPLAY_FILE}: replay the migrations to record the tables and columns they produce (chant sql replay ${dir || "."})`);
+    return result;
+  }
+  let text: string;
+  let snap: Partial<ReplaySnapshot>;
+  try {
+    text = tree.read(file);
+    snap = JSON.parse(text) as Partial<ReplaySnapshot>;
+  } catch (err) {
+    gap(`${REPLAY_FILE} could not be read (${(err as Error).message}), so the tables the migrations produce are unknown`);
+    return result;
+  }
+  if (snap.schema !== 1 || typeof snap.digest !== "string" || !Array.isArray(snap.outputs) || snap.outputs.some((o) => typeof o !== "string")) {
+    gap(`${REPLAY_FILE} is not a replay snapshot (schema 1 with a digest and outputs), so the tables the migrations produce are unknown`);
+    return result;
+  }
+  const digest = migrationDigest((f) => tree.read(f), replayFiles(tree, migrations, extra));
+  if (digest !== snap.digest) {
+    gap(`the migrations changed since ${REPLAY_FILE} was recorded, so the tables they produce are unknown; replay again (chant sql replay ${dir || "."})`);
+    return result;
+  }
+  const lines = text.split("\n");
+  result.outputs = (snap.outputs as string[]).map((name) => ({ name, file, line: Math.max(1, lines.findIndex((l) => l.includes(JSON.stringify(name))) + 1) }));
+  return result;
+}
+
+export const readGooseDir = (input: KindReaderInput): KindLinkRead => withReplay(listGooseDir(input), input.tree, input.dir);
+export const readGolangMigrateDir = (input: KindReaderInput): KindLinkRead => withReplay(listGolangMigrateDir(input), input.tree, input.dir);
+export const readClickHouseMigrationsDir = (input: KindReaderInput): KindLinkRead => withReplay(listClickHouseMigrationsDir(input), input.tree, input.dir);
