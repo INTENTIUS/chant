@@ -51,6 +51,13 @@
  * in `.chant/trust.json` at base), one of them not the author with
  * `notAuthor`. See `./gate-quorum.ts`.
  *
+ * Two more settings feed those rules, read at base with them (#4333):
+ * `approvals.reviewLedger` names the op whose ledger holds the reviews a
+ * product records itself under `pr-review` (terragucci's `tf-apply`), and
+ * `approvals.involved` names the accounts an agent acts as and, with
+ * `exclude`, leaves an approval by anyone involved in the change out of
+ * every rule.
+ *
  * ## Wave-level commands and hooks (#3762)
  *
  * A product whose tool plans a whole wave in one call (Terragrunt's `run
@@ -505,6 +512,48 @@ export interface OpWavesApprovals {
    * author from that pull request. See `./gate-quorum.ts`.
    */
   quorum?: GateQuorumRule[];
+  /**
+   * The op whose ledger (`_gates/<op>.jsonl` on `chant/lifecycle`) holds the
+   * reviews a product records itself (#4333): lines with `via: "pr-review"`,
+   * the reviewed `head` and the approving `reviewers` by forge login, as
+   * terragucci writes them under `tf-apply`. Each reviewer counts toward
+   * `quorum` as one approver of the line's digest, and under `pr-review` is
+   * proven, as a review chant reads from the forge is. Read at the base
+   * commit, so a change cannot name a ledger its own wave is judged by.
+   */
+  reviewLedger?: string;
+  /** Who else was involved in a change, for `quorum` (#4333). Read at the base commit. */
+  involved?: OpWavesInvolved;
+}
+
+/**
+ * Who was involved in a change besides its pull request's author (#4333):
+ * each login a `Requested-by:` trailer names on the commits after base, and
+ * the accounts listed here. `notAuthor` is met only by a proven approver
+ * none of them is.
+ */
+export interface OpWavesInvolved {
+  /** The accounts an agent acts as, as principals (`github:tg-bot`) or logins: a change's author can post a review as the agent with its token. */
+  agents?: string[];
+  /** An approval by anyone involved counts toward no rule, not only toward `notAuthor`. Default false. */
+  exclude?: boolean;
+}
+
+/** An op name a ledger file is named by (`_gates/<op>.jsonl`). */
+export const OP_LEDGER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Everything wrong with `approvals.involved` (#4333), one line each. */
+export function opWavesInvolvedProblems(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return ["`approvals.involved` must be { \"agents\"?: [...], \"exclude\"?: true | false }"];
+  const problems: string[] = [];
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "agents") {
+      if (!Array.isArray(v) || v.length === 0 || v.some((a) => typeof a !== "string" || a.trim() === "")) problems.push("`approvals.involved.agents` must be a non-empty list of principals or logins");
+    } else if (key === "exclude") {
+      if (typeof v !== "boolean") problems.push("`approvals.involved.exclude` must be true or false");
+    } else problems.push(`\`approvals.involved.${key}\` is not a setting; use agents or exclude`);
+  }
+  return problems;
 }
 
 /** The scheduled resume job of an Op waves pipeline (#3683). */
@@ -592,7 +641,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   if (spec.approvals !== undefined) {
     const a = spec.approvals as unknown;
-    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false, "quorum"?: [...] }.`);
+    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false, "quorum"?: [...], "reviewLedger"?: "<op>", "involved"?: {...} }.`);
     for (const [key, value] of Object.entries(a as Record<string, unknown>)) {
       if (key === "quorum") {
         // #4290: approval rules, read at base like the policy.
@@ -601,7 +650,17 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
         if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
         continue;
       }
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend and approvals.quorum.`);
+      if (key === "reviewLedger") {
+        // #4333: the op a product records its reviews under, read at base.
+        if (typeof value !== "string" || !OP_LEDGER_NAME.test(value)) throw new Error(`${where}: approvals.reviewLedger must name an op, such as "tf-apply": letters, digits, dot, dash and underscore.`);
+        continue;
+      }
+      if (key === "involved") {
+        const problems = opWavesInvolvedProblems(value);
+        if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger and approvals.involved.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
     if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {

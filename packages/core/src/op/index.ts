@@ -69,7 +69,7 @@ export {
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
-export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesDigest, OpWavesOverride, OpWavesSpec } from "./op-waves";
+export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesApprovals, OpWavesDigest, OpWavesInvolved, OpWavesOverride, OpWavesSpec } from "./op-waves";
 export {
   OP_WAVE_APPLY_OUTCOMES,
   OP_WAVE_MAX_REPLANS,
@@ -142,9 +142,10 @@ export type {
 } from "./gate-approval";
 export {
   quorumRules, quorumRulesFor, quorumNeed, quorumProblems, quorumRuleProgress, quorumRuleLine, quorumWaiting, rolesOf, trustQuorumJudge, UNPROVEN_JUDGE,
+  changeInvolvement, involvedWhy, principalNames, recordedReviewApprovals, recordedReviewOf, requestedByTrailers,
 } from "./gate-quorum";
 export type {
-  GateQuorumRule, GateQuorumSpec, GateQuorumJudge, GateQuorumRuleProgress, QuorumJudgement, QuorumApprover, TrustQuorumInput,
+  GateQuorumRule, GateQuorumSpec, GateQuorumJudge, GateQuorumRuleProgress, QuorumJudgement, QuorumApprover, TrustQuorumInput, QuorumInvolvement, RecordedReview,
 } from "./gate-quorum";
 export {
   gatePlanSummary, gatePlanSummaryOfResult, changeSetOfResult, GATE_PLAN_CONTEXT_KEY, GATE_PLAN_ADDRESS_LIMIT,

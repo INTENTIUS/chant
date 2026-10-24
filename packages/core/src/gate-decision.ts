@@ -30,7 +30,10 @@
  * Approval rules (#4290), a quorum as a list of `{ targets, count, roles,
  * notAuthor }`, are judged with `./op/gate-quorum.ts`, re-exported here:
  * {@link trustRolesAt} and {@link gateSignersAt} read what
- * `trustQuorumJudge` judges by, at base.
+ * `trustQuorumJudge` judges by, at base. A product's own review lines
+ * (#4333) become one approval per reviewer with `recordedReviewApprovals`,
+ * and `changeInvolvement` names everyone involved in a change for the
+ * judge to leave out.
  *
  * The module reads the ledger lines and the review it is handed; reading
  * them is the caller's. It imports no TypeScript, esbuild, zod, ajv, lint,
@@ -125,6 +128,14 @@ export {
   targetGlobMatch,
   trustQuorumJudge,
   UNPROVEN_JUDGE,
+  changeInvolvement,
+  involvedWhy,
+  principalNames,
+  recordedReviewApprovals,
+  recordedReviewOf,
+  requestedByTrailers,
+  type QuorumInvolvement,
+  type RecordedReview,
   type GateQuorumJudge,
   type GateQuorumRule,
   type GateQuorumRuleProgress,

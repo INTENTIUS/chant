@@ -87,6 +87,22 @@ The rules are read from the spec file at the wave's base commit (`packages/core/
 
 A spec with both `approvals.quorum` and a decision `point` is refused (`packages/core/src/op/op-waves.ts:580`). A point takes its deciders and quorum from the point.
 
+## A product's own reviews, and everyone involved
+
+A product that records reviews itself can have chant count them. Under `pr-review`, set `approvals.reviewLedger` to the op the product writes them under (terragucci writes `tf-apply`):
+
+```json
+"approvals": {
+  "quorum": [{ "count": 2, "roles": ["platform"], "notAuthor": true }],
+  "reviewLedger": "tf-apply",
+  "involved": { "agents": ["tg-bot"], "exclude": true }
+}
+```
+
+A line on that ledger with `via: "pr-review"`, the reviewed `head`, a `planDigest` equal to the wave's and a list of `reviewers` counts each reviewer as one approver (`packages/core/src/op/gate-quorum.ts`, `recordedReviewApprovals`). A reviewer is proven by the line and gets the roles `.chant/trust.json` at base gives their forge principal, so a login `alice` on GitHub is `github:alice`. A line for another digest, or one a wave already applied under, counts for nothing. The ledger is the lifecycle branch's. The change being applied cannot write it, and the spec at base names it (`packages/core/src/op/op-waves-run.ts`, `quorumAtBase`).
+
+`notAuthor` is judged against everyone involved in the change: the pull request's author, each login a `Requested-by:` trailer names on the commits after base, and the accounts in `involved.agents`. With `involved.exclude`, an approval by any of them counts toward no rule, which is how terragucci's `Involved` treats them. Without it, they fail only `notAuthor`.
+
 ## On an Op gate
 
 An Op's `gate` step takes the same list in `approval.quorum`. A rule's `targets` match the run's environment (`packages/core/src/op/local-executor.ts:768`), so a rule with targets never covers a run without one. `notAuthor` is refused there, since an Op run has no pull request to read the author from (`packages/core/src/op/gate-quorum.ts:144`).
