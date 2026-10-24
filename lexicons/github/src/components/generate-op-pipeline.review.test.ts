@@ -35,7 +35,7 @@ interface Doc {
 const SPEC: ScheduledOpSpec = { name: "pr-review", trigger: { kind: "pull_request" }, reviewAgent: true };
 const gen = (spec: Partial<ScheduledOpSpec> = {}, options = {}) => {
   const out = generateGithubOpPipeline([{ ...SPEC, ...spec }], options);
-  return { doc: parseYAML(out.files[0]!.yaml) as Doc, yaml: out.files[0]!.yaml, name: out.files[0]!.name };
+  return { doc: parseYAML(out.files[0]!.yaml) as unknown as Doc, yaml: out.files[0]!.yaml, name: out.files[0]!.name };
 };
 
 describe("the review job", () => {
@@ -145,7 +145,7 @@ describe("what the shape refuses and carries", () => {
 
   test("an Op without reviewAgent keeps its one job and its token", () => {
     const out = generateGithubOpPipeline([{ name: "plain", trigger: { kind: "pull_request" } }]);
-    const doc = parseYAML(out.files[0]!.yaml) as Doc;
+    const doc = parseYAML(out.files[0]!.yaml) as unknown as Doc;
     expect(Object.keys(doc.jobs)).toEqual(["plain"]);
     expect(out.files[0]!.yaml).toContain("GITHUB_TOKEN");
   });
