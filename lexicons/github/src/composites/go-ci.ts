@@ -38,7 +38,7 @@ export const GoCI = Composite((props: GoCIProps) => {
       new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
       new Step({
         name: "Setup Go",
-        uses: "actions/setup-go@v5",
+        uses: actionRef("actions/setup-go"),
         with: { "go-version": goVersion },
       }),
       new Step({ name: "Build", run: buildCommand }),
@@ -52,7 +52,7 @@ export const GoCI = Composite((props: GoCIProps) => {
       new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
       new Step({
         name: "Setup Go",
-        uses: "actions/setup-go@v5",
+        uses: actionRef("actions/setup-go"),
         with: { "go-version": goVersion },
       }),
       new Step({ name: "Test", run: testCommand }),
@@ -68,12 +68,12 @@ export const GoCI = Composite((props: GoCIProps) => {
             new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
             new Step({
               name: "Setup Go",
-              uses: "actions/setup-go@v5",
+              uses: actionRef("actions/setup-go"),
               with: { "go-version": goVersion },
             }),
             new Step({
               name: "Lint",
-              uses: "golangci/golangci-lint-action@v6",
+              uses: actionRef("golangci/golangci-lint-action"),
               with: { args: lintCommand },
             }),
           ],

@@ -10,9 +10,9 @@ export interface CheckoutProps {
   submodules?: boolean | string;
   sshKey?: string;
   /**
-   * `"tag"` (default) emits the action's major tag. `"sha"` emits the commit
-   * SHA from the lexicon's pin table with the version as a YAML comment, which
-   * passes GHA021, GHA029 and GHA059.
+   * `"sha"` (default) emits the commit SHA from the pin table with the version as
+   * a YAML comment, which passes GHA021, GHA029 and GHA059. `"tag"` emits the
+   * action's major tag.
    */
   pin?: ActionPinMode;
   defaults?: {
@@ -32,7 +32,7 @@ export const Checkout = Composite((props: CheckoutProps) => {
 
   const step = new Step(mergeDefaults({
     name: "Checkout",
-    uses: actionRef("actions/checkout", props.pin),
+    uses: actionRef("actions/checkout", props.pin ?? "sha"),
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),
   }, defaults?.step));
 

@@ -1,4 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
+import { actionRef } from "../action-pins";
 import { Step } from "../generated/index";
 
 export interface SetupPythonProps {
@@ -19,7 +20,7 @@ export const SetupPython = Composite((props: SetupPythonProps) => {
 
   const step = new Step(mergeDefaults({
     name: "Setup Python",
-    uses: "actions/setup-python@v5",
+    uses: actionRef("actions/setup-python"),
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),
   }, defaults?.step));
 
