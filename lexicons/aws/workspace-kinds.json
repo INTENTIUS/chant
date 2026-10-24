@@ -1,5 +1,5 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. No graph blocks yet: nothing reads a hand-written CloudFormation template or a CDK app into the graph.",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The cloudformation graph block (#3179) reads the template as data (src/workspace-member.ts). The cdk graph block reads the cloud assembly the app already synthesized (cdk.out, or the output cdk.json names) with the same template reader; chant never runs the app, and with no assembly the member says synthesized: false on meta.awsMember.",
   "schema": 1,
   "kinds": [
     {
@@ -27,6 +27,15 @@
             }
           ]
         }
+      },
+      "graph": {
+        "lexicon": "aws",
+        "config": {
+          "member": {
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
       }
     },
     {
@@ -41,6 +50,16 @@
       "memberFile": {
         "path": "cdk.json",
         "schema": "schemas/cdk.schema.json"
+      },
+      "graph": {
+        "lexicon": "aws",
+        "config": {
+          "member": {
+            "kind": "cdk",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
       }
     }
   ]

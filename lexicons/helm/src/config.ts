@@ -107,6 +107,15 @@ export interface HelmChantConfig {
    * ```
    */
   charts?: Record<string, HelmProjectChart>;
+  /**
+   * One workspace member read into the graph (#3179). `chant workspace graph`
+   * writes this into the reader project it makes for a `helm-chart` member; it
+   * is not meant to be written by hand. `dir` is the chart directory, absolute;
+   * `label` names the entities, the member's name. The chart is rendered with
+   * `helm template`; with no `helm` binary the graph carries no objects for it
+   * and says why on `meta.helmMember`.
+   */
+  member?: { dir: string; label?: string };
 }
 
 /**
@@ -143,6 +152,7 @@ export const helmConfigSchema = z.strictObject({
   charts: z
     .record(z.string().regex(CHART_KEY_PATTERN, "must start with a letter and hold only letters, digits, - and _"), helmProjectChartSchema)
     .optional(),
+  member: z.strictObject({ dir: z.string().min(1), label: z.string().optional() }).optional(),
 });
 
 declare module "@intentius/chant/config" {

@@ -1,0 +1,20 @@
+{
+  "Resources": {
+    "QueueABC123": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": { "VisibilityTimeout": 30 }
+    },
+    "HandlerRoleDEF456": {
+      "Type": "AWS::IAM::Role",
+      "Properties": { "AssumeRolePolicyDocument": { "Statement": [] } }
+    },
+    "HandlerGHI789": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Role": { "Fn::GetAtt": ["HandlerRoleDEF456", "Arn"] },
+        "Environment": { "Variables": { "QUEUE_URL": { "Ref": "QueueABC123" } } }
+      },
+      "DependsOn": ["HandlerRoleDEF456"]
+    }
+  }
+}
