@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": { "time": "2026-10-20T12:00:00Z", "magic": "x", "version": "v3.100.0" },
+    "resources": [
+      { "urn": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev", "custom": false, "type": "pulumi:pulumi:Stack" },
+      { "urn": "urn:pulumi:dev::app::pulumi:providers:aws::default", "custom": true, "id": "p1", "type": "pulumi:providers:aws" },
+      {
+        "urn": "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "id": "assets-1",
+        "type": "aws:s3/bucket:Bucket",
+        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+        "provider": "urn:pulumi:dev::app::pulumi:providers:aws::default::p1",
+        "inputs": { "acl": "private" }
+      },
+      {
+        "urn": "urn:pulumi:dev::app::aws:iam/role:Role::web",
+        "custom": true,
+        "id": "web-1",
+        "type": "aws:iam/role:Role",
+        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::app::aws:iam/rolePolicy:RolePolicy::webReadsAssets",
+        "custom": true,
+        "id": "web-1:read",
+        "type": "aws:iam/rolePolicy:RolePolicy",
+        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+        "dependencies": [
+          "urn:pulumi:dev::app::aws:iam/role:Role::web",
+          "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets",
+          "urn:pulumi:dev::app::aws:s3/bucket:Bucket::elsewhere"
+        ],
+        "inputs": { "policy": { "4dabf18193072939515568f2c6568e55": "1b47061264138c4ac30d75fd1eb44270", "ciphertext": "secret" } }
+      },
+      {
+        "urn": "urn:pulumi:dev::app::my:mod:Web$aws:lambda/function:Function::handler",
+        "custom": true,
+        "id": "fn",
+        "type": "aws:lambda/function:Function",
+        "parent": "urn:pulumi:dev::app::my:mod:Web::web-app",
+        "dependencies": ["urn:pulumi:dev::app::aws:iam/role:Role::web"]
+      },
+      {
+        "urn": "urn:pulumi:dev::app::my:mod:Web::web-app",
+        "custom": false,
+        "type": "my:mod:Web",
+        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev"
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { lastMemberReport, readPulumiMember, setLastMemberReport } from "./workspace-member";
 import type { AuditEntitiesInput, LexiconPlugin } from "@intentius/chant/lexicon";
 import { terraformBehaviourKinds } from "./behaviour/kinds";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
@@ -180,7 +181,14 @@ export const terraformPlugin: LexiconPlugin = {
    * project root, which is what relative `dir` paths resolve against.
    */
   async buildRoots(ctx): Promise<{ entities: Map<string, Declarable>; warnings: string[] }> {
+    setLastMemberReport(undefined);
     const namespace = (ctx.config as { terraform?: TerraformConfig }).terraform;
+    // A pulumi workspace member (#3179): its checked-in stack export, never the program.
+    if (namespace?.pulumiMember) {
+      const read = readPulumiMember({ member: namespace.pulumiMember });
+      setLastMemberReport(read.report);
+      return { entities: read.entities, warnings: read.warnings };
+    }
     const roots = namespace?.roots ?? {};
     if (Object.keys(roots).length === 0) return { entities: new Map(), warnings: [] };
     return renderTerraformRoots({
@@ -190,6 +198,11 @@ export const terraformPlugin: LexiconPlugin = {
       callModuleType: namespace?.callModuleType,
       moduleRoot: namespace?.moduleRoot,
     });
+  },
+
+  graphMeta() {
+    const report = lastMemberReport();
+    return report ? { pulumiMember: report } : undefined;
   },
 
   /** `chant terraform pin-rollout` (#3189). */
