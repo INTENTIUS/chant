@@ -18,6 +18,12 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import type { CommandGroupContext } from "@intentius/chant/cli/command-group";
 import { renderSqlTypes, SQL_TYPES_FILE } from "./sql-types";
 
+export interface ProjectLocation {
+  config: Awaited<ReturnType<typeof import("@intentius/chant/config").loadChantConfigUpward>>["config"];
+  projectDir: string;
+  sourceDir: string;
+}
+
 const USAGE = "usage: chant sql types [--output <path>] [--check]";
 
 /** The `--output` value, or an error message. */
@@ -43,6 +49,36 @@ export function shadowingSource(path: string): string | undefined {
   return existsSync(source) ? source : undefined;
 }
 
+/** The project the working directory belongs to: its config, its root and its source directory. */
+export async function loadProject(cwd: string): Promise<ProjectLocation> {
+  const { loadChantConfigUpward } = await import("@intentius/chant/config");
+  const { config, configPath } = await loadChantConfigUpward(cwd);
+  const projectDir = configPath ? dirname(configPath) : cwd;
+  return { config, projectDir, sourceDir: resolve(projectDir, config.sourceDir ?? ".") };
+}
+
+/**
+ * The fold build's entities: what `chant build` declares, `.sql` files and
+ * composite members included. Prints the build's errors and returns
+ * undefined when it fails.
+ */
+export async function buildFolded(project: ProjectLocation, command: string, consequence: string) {
+  const { config, projectDir, sourceDir } = project;
+  const { build } = await import("@intentius/chant/build");
+  const { resolveBuildModes, resolveProjectBuildOptions } = await import("@intentius/chant/cli/build-options");
+  const { loadPlugins, resolveProjectLexicons } = await import("@intentius/chant/cli/plugins");
+  const { sqlSerializer } = await import("./serializer");
+  const plugins = await loadPlugins(await resolveProjectLexicons(projectDir, { lexicon: "sql" }));
+  const options = resolveProjectBuildOptions({ config, configDir: projectDir, plugins, modes: resolveBuildModes(config, { fold: true }) });
+  const result = await build(sourceDir, [sqlSerializer], undefined, options);
+  if (result.errors.length > 0) {
+    for (const e of result.errors) console.error(e instanceof Error ? e.message : String(e));
+    console.error(`${command}: the build failed, so ${consequence}`);
+    return undefined;
+  }
+  return result;
+}
+
 export async function runTypes(ctx: CommandGroupContext): Promise<number> {
   const args = parseArgs(ctx.rawArgs);
   if ("error" in args) {
@@ -50,10 +86,7 @@ export async function runTypes(ctx: CommandGroupContext): Promise<number> {
     return 1;
   }
   const cwd = process.cwd();
-  const { loadChantConfigUpward } = await import("@intentius/chant/config");
-  const { config, configPath } = await loadChantConfigUpward(cwd);
-  const projectDir = configPath ? dirname(configPath) : cwd;
-  const sourceDir = resolve(projectDir, config.sourceDir ?? ".");
+  const { config, projectDir, sourceDir } = await loadProject(cwd);
   const output = args.output !== undefined ? resolve(cwd, args.output) : join(sourceDir, SQL_TYPES_FILE);
   const shadow = shadowingSource(output);
   if (shadow) {
@@ -61,19 +94,8 @@ export async function runTypes(ctx: CommandGroupContext): Promise<number> {
     return 1;
   }
 
-  const { build } = await import("@intentius/chant/build");
-  const { resolveBuildModes, resolveProjectBuildOptions } = await import("@intentius/chant/cli/build-options");
-  const { loadPlugins, resolveProjectLexicons } = await import("@intentius/chant/cli/plugins");
-  const { sqlSerializer } = await import("./serializer");
-  const plugins = await loadPlugins(await resolveProjectLexicons(projectDir, { lexicon: "sql" }));
-  // The fold build's entities: what `chant build` declares, `.sql` files and composite members included.
-  const options = resolveProjectBuildOptions({ config, configDir: projectDir, plugins, modes: resolveBuildModes(config, { fold: true }) });
-  const result = await build(sourceDir, [sqlSerializer], undefined, options);
-  if (result.errors.length > 0) {
-    for (const e of result.errors) console.error(e instanceof Error ? e.message : String(e));
-    console.error("chant sql types: the build failed, so nothing was written");
-    return 1;
-  }
+  const result = await buildFolded({ config, projectDir, sourceDir }, "chant sql types", "nothing was written");
+  if (!result) return 1;
   const text = renderSqlTypes(result.entities, { projectDir, config: config as unknown as Record<string, unknown> });
   const shown = relative(cwd, output);
   const named = shown && !shown.startsWith("..") ? shown : output;

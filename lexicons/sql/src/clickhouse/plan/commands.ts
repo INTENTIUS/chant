@@ -180,5 +180,10 @@ export const sqlCommands: CommandGroup = {
       description: "Replay a goose, golang-migrate, clickhouse-migrations or Flyway directory into the empty server --env binds, and record the tables and columns it makes as chant.replay.json; --check compares instead of writing",
       handler: async (ctx) => (await import("../../migration-replay")).runReplay(ctx),
     },
+    {
+      name: "drizzle",
+      description: "Write a Drizzle schema module (drizzle-schema.ts) from a Postgres build: pgTable per table with columns, keys, indexes, enums, sequences and views, so an application queries with Drizzle's row types while chant owns the schema; --output <path> writes it elsewhere; --check compares instead of writing and exits 1 when the file differs; --bigint bigint reads bigint columns as bigint, not number",
+      handler: async (ctx) => (await import("../../drizzle-command")).runDrizzle(ctx),
+    },
   ],
 };
