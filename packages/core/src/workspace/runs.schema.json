@@ -111,6 +111,13 @@
             "followSquash": {
               "type": "boolean",
               "description": "Whether --follow-squash was given (#3035). Added within version 1."
+            },
+            "where": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Each --where clause, <field><op><value>, as given (#4363); every one held for each run listed, and the totals count only those runs. Absent without --where. Added within version 1."
             }
           }
         },

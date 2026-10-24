@@ -33,6 +33,7 @@ import { CI_WORKFLOW_FINDING_CODES } from "./ci-workflow";
 import { WORK_ERROR_CODES, WORK_HISTORY_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
 import { RUN_STATEMENT_ERROR_CODES, RUNS_ERROR_CODES, RUNS_REASON_CODES, RUNS_WRITE_ERROR_CODES } from "./runs-cli";
 import { RUN_STATEMENT_FAILURE_CODES } from "./trust/run-statement";
+import { LEDGER_READ_ERROR_CODES } from "../lifecycle/ledger-read";
 import { WORK_EVIDENCE_ERROR_CODES } from "./work-evidence";
 import { RECORD_FINDING_CODES } from "./checks/records";
 import { ANSWER_WARNING_CODES } from "./points";
@@ -108,6 +109,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RUNS_WRITE_ERROR_CODES,
   RUN_STATEMENT_ERROR_CODES,
   RUN_STATEMENT_FAILURE_CODES,
+  LEDGER_READ_ERROR_CODES,
   WORK_EVIDENCE_ERROR_CODES,
   RECORD_FINDING_CODES,
   FLAG_WARNING_CODES,

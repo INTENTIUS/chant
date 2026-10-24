@@ -347,6 +347,7 @@ export default defineConfig({
 								{ label: 'list', slug: 'cli/list' },
 								{ label: 'describe', slug: 'cli/describe' },
 								{ label: 'search', slug: 'cli/search' },
+								{ label: 'ledger', slug: 'cli/ledger' },
 								{ label: 'query', slug: 'cli/query' },
 								{ label: 'vendor', slug: 'cli/vendor' },
 								{ label: 'generate', slug: 'cli/codegen' },

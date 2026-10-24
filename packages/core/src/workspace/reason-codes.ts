@@ -66,6 +66,9 @@ export const REASONS = {
   // A ledger status can't fully read.
   "ledger-unreadable": "Reading the ledger failed, so nothing from it is listed.",
   "ledger-malformed": "Some lines of the ledger aren't release records; the rest are listed.",
+  // chant ledger (#4363): a read that can't start.
+  "filter-invalid": "A --where or --since names a field the read doesn't have, an operator its type doesn't take, or a value not of its type; nothing was read.",
+  "table-unknown": "chant ledger was given a table that is not one of resources, snapshots, runs, gates, deploys, releases or cuts.",
   // A member's gates status can't list (status, #2674).
   "gates-no-ledger": "The checkout has no chant/lifecycle branch, so there is no gate ledger to read.",
   "gates-no-gate-ledger": "The branch has no gate ledger for the member: no run of it has reached a gate.",

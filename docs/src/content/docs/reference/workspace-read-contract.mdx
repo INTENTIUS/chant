@@ -49,6 +49,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
 | [`chant ci run --report-url`](/chant/cli/ci/#the-run-index), the file it keeps, and [`chant ci runs`](/chant/cli/ci/#ci-runs) with `--json` | `<report-url>/runs/index.json`, floor chant 0.124.31 | `https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json` |
+| [`chant ledger`](/chant/cli/ledger/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json` |
 | [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
 | [`chant release candidates`](/chant/cli/release/#release-candidates) | `--json`, floor chant 0.124.33 | `https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json` |
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
@@ -185,8 +186,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `command-failed` | member, `graph` and `search` | The member's own `chant graph` or `chant search` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. A chant member whose source fails `chant lint` fails this way. A member read through its kind's `graph` block does not since 0.124.46: it is composed, and its lint findings are on its `meta.lint` ([behold#919](https://github.com/INTENTIUS/behold/issues/919)). |
 | `output-unreadable` | member, `graph` and `search` | The member's chant printed something that isn't a graph IR, or for `search` a search document. |
 | `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
-| `ledger-unreadable` | ledger, `status`; error, `releases` and `change-set-show` | Reading the ledger failed, so nothing from it is listed. |
+| `ledger-unreadable` | ledger, `status`; error, `releases`, `change-set-show` and `ledger` | Reading the ledger failed, so nothing from it is listed. |
 | `ledger-malformed` | ledger, `status`, `releases` and `change-set-show` | Some ledger lines aren't release records, or for `releases` some release files or cut lines can't be read, and the rest are listed. For `change-set-show`, the file stored under the digest is not the change set that digest names. |
+| `filter-invalid` | error, `ledger` | A `--where` or `--since` names a field the read doesn't have, an operator its type doesn't take, or a value not of its type; nothing was read. `records` and `runs` print the same refusal on stderr. |
+| `table-unknown` | error, `ledger` | `chant ledger` was given a table that is not one of resources, snapshots, runs, gates, deploys, releases or cuts. |
 | `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
 | `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
 | `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
@@ -1049,6 +1052,8 @@ These fields are optional in their documents. Each schema description names the 
 | `pr-report` | `overdue` | 0.124.41 | Plan stage: each scheduled watch or reconcile Op whose cron fired at least twice since its job last ran, or since its pipeline file was added when no run is on record, as `{ op, cron, since, neverRan?, message }`. Absent when none is overdue or the forge was not asked ([#4289](https://github.com/INTENTIUS/chant/issues/4289)) |
 
 The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and `statement` when a runner key signed it ([#4044](https://github.com/INTENTIUS/chant/issues/4044)), and `failure` on a failed `chant ci run` job from chant 0.124.30 ([#4094](https://github.com/INTENTIUS/chant/issues/4094)), and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.
+| `records` | `where` | 0.124.47 | The `--where` clauses the records were filtered with; `summary` then counts the records listed ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Absent without `--where` |
+| `runs` | `filter.where` | 0.124.47 | The `--where` clauses the runs were filtered with; the totals count only those runs ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Absent without `--where` |
 
 ## Reading older records
 

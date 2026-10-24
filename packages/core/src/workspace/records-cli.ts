@@ -56,6 +56,7 @@ import {
 } from "./records";
 import { readCheckoutHead, worktreeStates, type CheckoutView, type WorktreeState } from "./records-checkout";
 import { lastWriteReader, type LastWrite } from "./write-lock";
+import { FilterError, matchesWhere, parseWhere, type FilterFields, type WhereClause } from "../read-filter";
 
 function readTextOrNull(file: string): string | null {
   try {
@@ -78,7 +79,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
 const USAGE =
-  "chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> [--kind <kind file>] | chant workspace records new|amend|review|close (#2670, #2693)";
+  "chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--where <field><op><value>]... [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> [--kind <kind file>] | chant workspace records new|amend|review|close (#2670, #2693)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -196,6 +197,8 @@ export type RecordsDocument =
       summary: { total: number; valid: number; invalid: number; superseded: number };
       /** For a work kind (#2683): each decision its decision kind reads, with the work records implementing it. */
       decisions?: DecisionWork[];
+      /** The `--where` clauses the records were filtered with (#4363); absent without one. `summary` then counts the records listed. */
+      where?: string[];
     }
   | { $schema: string; contract: number; error: { code: ReadErrorCode; message: string } };
 
@@ -697,7 +700,12 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     console.error(formatError({ message: pairing, hint: USAGE }));
     return 1;
   }
-  if (!args.kind) return runDeclaredRecords(args);
+  const filter = recordsWhere(args);
+  if ("error" in filter) {
+    console.error(formatError({ message: filter.error, hint: USAGE }));
+    return 1;
+  }
+  if (!args.kind) return runDeclaredRecords(args, filter.clauses);
   if (args.require !== undefined && args.require !== "attested") {
     console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
     return 1;
@@ -715,7 +723,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     else console.log(formatSince(since));
     return "error" in since ? 1 : 0;
   }
-  const doc = await queryRecords({ kind: args.kind, current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd(), fetchLedger: true });
+  const doc = filterRecordsDocument(await queryRecords({ kind: args.kind, current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd(), fetchLedger: true }), filter.clauses, args.where ?? []);
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));
   } else if ("error" in doc) {
@@ -756,7 +764,7 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
  * declaration-level code the schema doesn't carry (`declaration-invalid` and
  * the rest of `WorkspaceErrorCode`) still prints text on stderr only.
  */
-async function runDeclaredRecords(args: CommandContext["args"]): Promise<number> {
+async function runDeclaredRecords(args: CommandContext["args"], clauses: readonly WhereClause[] = []): Promise<number> {
   if (args.require !== undefined && args.require !== "attested") {
     console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
     return 1;
@@ -779,7 +787,9 @@ async function runDeclaredRecords(args: CommandContext["args"]): Promise<number>
     return 1;
   }
   if (args.since !== undefined) return runDeclaredSince(declared, args);
-  const set = await queryDeclaredRecords(declared, { current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd(), fetchLedger: true });
+  const read = await queryDeclaredRecords(declared, { current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd(), fetchLedger: true });
+  // The spec stays the whole current spec; --where narrows only the records each kind lists.
+  const set = { ...read, kinds: read.kinds.map((k) => filterRecordsDocument(k, clauses, args.where ?? [])) };
   if (args.json) console.log(JSON.stringify(set, null, 2));
   for (const doc of args.json ? [] : set.kinds) {
     if ("error" in doc) {
@@ -854,6 +864,49 @@ export function belowRequired(records: RecordView[], required: ProvenanceLevel):
 }
 
 /** Why `--uncommitted` can't be given with the other flags given, or undefined when it can (#3160). */
+/**
+ * The fields `records --where` filters on (#4363). `data` is the record's
+ * own fields, so `data.<key>` names any of them.
+ */
+export const RECORD_FILTER_FIELDS: FilterFields = {
+  id: "text",
+  path: "text",
+  state: "text",
+  valid: "boolean",
+  supersededBy: "text",
+  digest: "text",
+  ready: "boolean",
+  attested: "boolean",
+  worktree: "text",
+  ledger: "text",
+  "provenance.level": "text",
+  data: "json",
+};
+
+/** Keep the records every clause matches, counting `summary` over the records listed. A failure is left as it is. */
+export function filterRecordsDocument<D extends RecordsDocument>(doc: D, clauses: readonly WhereClause[], where: readonly string[]): D {
+  if (where.length === 0 || "error" in doc) return doc;
+  const records = doc.records.filter((r) => matchesWhere(r, clauses));
+  return {
+    ...doc,
+    records,
+    summary: { ...doc.summary, total: records.length, valid: records.filter((r) => r.valid).length, invalid: records.filter((r) => !r.valid).length },
+    where: [...where],
+  };
+}
+
+/** The `--where` clauses, or a message for a person. */
+function recordsWhere(args: CommandContext["args"]): { clauses: WhereClause[] } | { error: string } {
+  const where = args.where ?? [];
+  if (where.length > 0 && args.since !== undefined) return { error: "--where filters a records read and takes no --since: --since compares two revisions" };
+  try {
+    return { clauses: parseWhere(where, RECORD_FILTER_FIELDS) };
+  } catch (err) {
+    if (err instanceof FilterError) return { error: err.message };
+    throw err;
+  }
+}
+
 function uncommittedPairing(args: CommandContext["args"]): string | undefined {
   if (!args.uncommitted) return undefined;
   if (args.at !== undefined) return "--uncommitted reads the working tree against HEAD, and takes no --at";
