@@ -24,7 +24,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/format";
@@ -143,7 +143,7 @@ export function setMemberKind(text: string, file: string, member: string, kind: 
 }
 
 export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResult> {
-  const root = resolve(opts.root);
+  const root = realpathSync(resolve(opts.root));
   const run = opts.runner ?? spawnRunner;
   const decl = readDeclaration(workingTree(root));
   const found = decl.members.find((m) => m.name === opts.member);

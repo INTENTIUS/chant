@@ -182,16 +182,29 @@ export function proposeFromTfc(input: TfcInput, options: { name?: string } = {})
   let vcs = 0;
   let notifications = 0;
 
+  const byDir = new Map<string, ImportedMember>();
+  let shared = 0;
   for (const w of input.workspaces) {
+    const dirKey = cleanDir(w.workingDirectory, `\0${w.name}`);
+    const first = byDir.get(dirKey);
+    if (first) {
+      // One member per directory: a workspace on the same configuration folds into the first.
+      byRef.set(w.id, first);
+      byRef.set(w.name, first);
+      for (const e of envOf(w.tags)) addEnv(envs, e, first.name);
+      shared++;
+      continue;
+    }
     const name = nameFor(w.name, taken);
     const project = w.project ? projects.get(w.project) : undefined;
     const m: ImportedMember = {
       name,
-      dir: cleanDir(w.workingDirectory, name),
+      dir: dirKey.startsWith("\0") ? name : dirKey,
       kind: "terraform",
       because: `Terraform Cloud workspace ${input.organization}/${w.name}${project ? ` in project ${project}` : ""}`,
     };
     members.push(m);
+    byDir.set(dirKey, m);
     byRef.set(w.id, m);
     byRef.set(w.name, m);
     for (const e of envOf(w.tags)) addEnv(envs, e, name);
@@ -230,6 +243,7 @@ export function proposeFromTfc(input: TfcInput, options: { name?: string } = {})
   if (variables > 0) leftOut.push({ what: "variables", count: variables, why: `${sensitive} are sensitive and their values are never read; the keys stay in Terraform Cloud` });
   if (vcs > 0) leftOut.push({ what: "VCS connections", count: vcs, why: "the repository link belongs to the CI that replaces Terraform Cloud's runs" });
   if (notifications > 0) leftOut.push({ what: "notification configurations", count: notifications, why: "a workspace has no notification record" });
+  if (shared > 0) leftOut.push({ what: "workspaces sharing a directory", count: shared, why: "a member is one directory; each folds into the first workspace on it, with its environments and run triggers" });
   if (dangling > 0) leftOut.push({ what: "run triggers", count: dangling, why: "their source workspace is not in the input, or is the workspace itself" });
   if ((input.projects ?? []).length > 0) leftOut.push({ what: "projects", count: input.projects!.length, why: "named in each member's because; a project is not a declared grouping" });
   leftOut.push({ what: "state and run history", count: input.workspaces.length, why: "state is adopted when a member is promoted, not copied by init" });
@@ -248,18 +262,30 @@ export function proposeFromSpacelift(input: SpaceliftInput, options: { name?: st
   let nonTerraform = 0;
   let contexts = 0;
 
+  const byDir = new Map<string, ImportedMember>();
+  let shared = 0;
   for (const s of input.stacks) {
+    const dirKey = cleanDir(s.projectRoot, `\0${s.name}`);
+    const first = byDir.get(dirKey);
+    if (first) {
+      byRef.set(s.id, first);
+      byRef.set(s.name, first);
+      for (const e of envOf(s.labels)) addEnv(envs, e, first.name);
+      shared++;
+      continue;
+    }
     const name = nameFor(s.name, taken);
     const vendor = (s.vendor ?? "terraform").toLowerCase();
     const tf = vendor === "terraform" || vendor === "opentofu";
     if (!tf) nonTerraform++;
     const m: ImportedMember = {
       name,
-      dir: cleanDir(s.projectRoot, name),
+      dir: dirKey.startsWith("\0") ? name : dirKey,
       kind: tf ? "terraform" : "other",
       because: `Spacelift stack ${s.id}${s.space ? ` in space ${s.space}` : ""}${tf ? "" : `, ${vendor}`}`,
     };
     members.push(m);
+    byDir.set(dirKey, m);
     byRef.set(s.id, m);
     byRef.set(s.name, m);
     for (const e of envOf(s.labels)) addEnv(envs, e, name);
@@ -293,6 +319,7 @@ export function proposeFromSpacelift(input: SpaceliftInput, options: { name?: st
 
   const leftOut: LeftOut[] = [];
   if (contexts > 0) leftOut.push({ what: "context attachments", count: contexts, why: "contexts hold variables and mounted files, which are never read" });
+  if (shared > 0) leftOut.push({ what: "stacks sharing a project root", count: shared, why: "a member is one directory; each folds into the first stack on it" });
   if (dangling > 0) leftOut.push({ what: "stack dependencies", count: dangling, why: "the dependency's stack is not in the input, or is the stack itself" });
   if (nonTerraform > 0) leftOut.push({ what: "non-Terraform stacks kept as other", count: nonTerraform, why: "only Terraform and OpenTofu stacks take the terraform kind" });
   leftOut.push({ what: "worker pools, cloud integrations and run history", count: input.stacks.length, why: "not structure of the workspace" });
