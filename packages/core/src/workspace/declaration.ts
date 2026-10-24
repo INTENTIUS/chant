@@ -30,6 +30,7 @@ import { joinPath, type WorkspaceTree } from "./tree";
 import { loadAjv2020 } from "./ajv2020";
 import { readChantPackageVersion } from "../package-version";
 import { assertPrLoopHooks, type OpWaveHooks } from "../op/op-waves";
+import { quorumProblems, type GateQuorumSpec } from "../op/gate-quorum";
 import { assertGatePolicySettings, type GatePolicySettings } from "../gate-policy";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
@@ -159,6 +160,13 @@ export interface SignedGate {
   gate: string;
   /** The class the signer must be in, or null for any signer the signers file at base lists. */
   class: PrincipalClass | null;
+  /**
+   * The approval rules an Op gate of this name takes (#4324): one rule or a
+   * list, as an Op's `approval.quorum`. Read here, at base, a change can't
+   * lower the quorum its own run needs. Null when the entry sets none, and
+   * the Op's own `approval.quorum` then applies.
+   */
+  quorum: GateQuorumSpec | null;
   pointer: string;
 }
 
@@ -1121,7 +1129,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     changes: changesOf(obj.changes as Record<string, unknown> | undefined),
     writeScope,
     agents,
-    identity: identityOf(obj.identity),
+    identity: identityOf(obj.identity, at),
     ci,
     retention: retentionOf(obj.retention),
     metrics: metricsOf(obj.metrics),
@@ -1181,13 +1189,22 @@ function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key
  * (#2548, ws-101): names are unique, every member a session names is a
  * declared member, and a principal is listed by one session at most.
  */
-/** The `identity` block, already validated by the schema (#3163). */
-function identityOf(raw: unknown): IdentityPolicy | null {
+/**
+ * The `identity` block, already validated by the schema (#3163), with the
+ * quorum rules the schema can't say (#4324): `notAuthor` is refused, since an
+ * Op gate has no pull request to read the author from.
+ */
+function identityOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): IdentityPolicy | null {
   if (raw === undefined) return null;
-  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string }> };
+  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string; quorum?: GateQuorumSpec }> };
   const gates: Record<string, SignedGate> = {};
   for (const [gate, entry] of Object.entries(block.gates ?? {})) {
-    gates[gate] = { gate, class: entry.class ?? null, pointer: `/identity/gates/${gate.replace(/~/g, "~0").replace(/\//g, "~1")}` };
+    const pointer = `/identity/gates/${gate.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+    if (entry.quorum !== undefined) {
+      const [problem] = quorumProblems(entry.quorum, `identity.gates.${gate}.quorum`, { notAuthor: false });
+      if (problem) throw new WorkspaceReadError("declaration-invalid", problem.replace(/`/g, ""), at(`${pointer}/quorum`));
+    }
+    gates[gate] = { gate, class: entry.class ?? null, quorum: entry.quorum !== undefined ? structuredClone(entry.quorum) : null, pointer };
   }
   return { attribution: block.attribution ?? "any", gates };
 }
