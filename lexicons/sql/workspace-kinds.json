@@ -1,10 +1,10 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3932). chant reads this file as data and never imports the lexicon. A dbt project reads the tables a sql member declares, so its kind ships beside them. Its reader, dbt-project, is chant's own code: it parses dbt_project.yml and the sources YAML under the model paths, never runs dbt, never renders Jinja and never reads profiles.yml, and turns each source table and column into a link to the sql member's <schema>.<table> and <schema>.<table>.<column> outputs (#3931).",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3932). chant reads this file as data and never imports the lexicon. A dbt project reads the tables a sql member declares, so its kind ships beside them. Its reader, dbt-project, is chant's own code: it parses dbt_project.yml and the sources YAML under the model paths, never runs dbt, never renders Jinja and never reads profiles.yml, and turns each source table and column into a link to the sql member's <schema>.<table> and <schema>.<table>.<column> outputs (#3931). The same pass exposes each model as an output, <schema>.<model> and <schema>.<model>.<column> where the model's YAML lists columns (#3935); the schema is the modelSchema field, or the custom schema dbt config names when the project's generate_schema_name makes that independent of the target.",
   "schema": 1,
   "kinds": [
     {
       "name": "dbt",
-      "description": "a dbt project, with a dbt_project.yml in its directory; its sources link to the tables and columns a sql member declares, and dbt is never run",
+      "description": "a dbt project, with a dbt_project.yml in its directory; its sources link to the tables and columns a sql member declares, its models are outputs other members link to, and dbt is never run",
       "precedence": 300,
       "probe": {
         "anyFile": [
@@ -23,6 +23,11 @@
           "description": "How source names are cased before they are matched: postgres folds an unquoted name to lowercase and keeps a quoted one as written, the way dbt-postgres quotes a source's schema and identifier unless quoting turns it off; clickhouse keeps every name as written.",
           "default": "postgres",
           "pattern": "^(postgres|clickhouse)$"
+        },
+        "modelSchema": {
+          "type": "string",
+          "description": "The schema the project's models land in. When set, each model is the output <modelSchema>.<model> and dbt's config is not read for the schema. Unset, chant reads +schema, the model YAML's config and the model's config(schema=...), and a model whose schema depends on the target (dbt's default generate_schema_name joins the target schema to a custom one) is reported as a gap (WSP099) that asks you to set this field.",
+          "pattern": "^.+$"
         }
       }
     }

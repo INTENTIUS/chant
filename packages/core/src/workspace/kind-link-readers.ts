@@ -19,6 +19,12 @@
  * `resolveLinks` (`./links.ts`) resolves the links beside the declared ones,
  * with origin `kind-reader`; WSP093 and WSP094 name the reader's file and line,
  * and WSP099 reports the gaps.
+ *
+ * A reader may also return outputs (#3935): names the member's files state,
+ * which other members link to. A dbt project's models are outputs, read the
+ * same way as its sources. `resolveLinks` adds them to the member's handles
+ * (`withReaderOutputs`), so a link to one resolves, and goes missing when the
+ * file that states it is gone.
  */
 
 import type { Declaration, Member } from "./declaration";
@@ -54,6 +60,21 @@ export interface KindReadGap {
   file: string;
   line: number;
   message: string;
+  /**
+   * True when the gap leaves an output out of {@link KindLinkRead.outputs}
+   * (#3935): a link to a name the member does not list is then unresolved,
+   * not missing.
+   */
+  outputs?: boolean;
+}
+
+/** One output a reader found in the member's files: a name other members may link to. */
+export interface KindReadOutput {
+  name: string;
+  /** The file that states it, relative to the workspace root. */
+  file: string;
+  /** Its line, from 1. */
+  line: number;
 }
 
 export interface KindLinkRead {
@@ -61,6 +82,13 @@ export interface KindLinkRead {
   reader: KindLinkReaderName | `lexicon${string}`;
   links: KindReadLink[];
   gaps: KindReadGap[];
+  /**
+   * The outputs the member exposes that its files state (#3935), beside the
+   * ones its kind lists. `resolveLinks` adds them to the member's handles, so
+   * another member can link to them. A gap flagged `outputs` makes the list
+   * incomplete.
+   */
+  outputs?: KindReadOutput[];
   /**
    * The member field that names the producer, for messages that ask the
    * author to set it when the files don't say (`sqlMember` for dbt).
@@ -102,7 +130,7 @@ export function readKindLinks(declaration: Declaration, tree: WorkspaceTree, kin
     try {
       out.set(m.name, LINK_READERS[kind.reader]({ member: m, dir, fields, tree }));
     } catch (err) {
-      out.set(m.name, { reader: kind.reader, links: [], gaps: [{ file: dir || ".", line: 1, message: `the ${kind.reader} reader failed: ${(err as Error).message}` }] });
+      out.set(m.name, { reader: kind.reader, links: [], gaps: [{ file: dir || ".", line: 1, message: `the ${kind.reader} reader failed: ${(err as Error).message}`, outputs: true }] });
     }
   }
   return out;
