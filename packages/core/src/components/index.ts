@@ -57,11 +57,16 @@ export {
 } from "./capability";
 export {
   coveredRound,
+  normalizePlanShape,
+  PlanShapeMovedError,
   planShapeCovers,
+  planShapeDifferences,
+  planShapeDigest,
   shapeFromChangeSet,
   type CoveredRoundInput,
   type CoverageSide,
   type PlanShape,
+  type PlanShapeArtifact,
   type PlanShapeEntry,
   type RoundCover,
   type RoundCoverage,

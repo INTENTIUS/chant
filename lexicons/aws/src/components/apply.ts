@@ -25,15 +25,15 @@ import type { Capability, CapabilityPlan, DeployContext, PlannedOutputs } from "
 import type { ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import {
-  comparePlanShape,
   normalizePlanShape,
   PlanShapeMovedError,
+  planShapeDifferences,
   planShapeDigest,
   type PlanShape,
   type PlanShapeArtifact,
   type PlanShapeEntry,
   type ShapeReplacement,
-} from "@intentius/chant/lifecycle/plan-shape";
+} from "@intentius/chant/components/covered-round";
 import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
 
 /** CloudFormation's wording when a change set has nothing to apply — the stack
@@ -263,11 +263,11 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     // Which parameters are unknown: the inputs that hold nothing yet. When the
     // upstream is unresolved but no input says which, nothing can be previewed.
     if (missing.length === 0) return hole(fallback);
-    const preview = await previewCfnDeploy(executor, stack, input, [...missing].sort());
+    const preview = await previewCfnDeploy(executor, stack, input, [...missing].sort(), unresolved.length > 0 ? unresolved : undefined);
     if (typeof preview === "string") return hole(`${fallback}; no preview: ${preview}`);
     const { entries, shape } = preview;
     const artifact: CfnShapeArtifact = { kind: "cfn-deploy-shape", member: stack, shape, digest: planShapeDigest(shape) };
-    return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries } };
+    return { member: stack, planDigest, artifact, shape, changeSet: { member: member([]), entries } };
   }
 
   const changeSet = await executor.cloudformation.createChangeSet({
@@ -293,7 +293,10 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     const entries = changeSet.changes.map((c) => cfnChangeEntry(stack, c));
     const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
     const outputs = changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes);
-    return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries }, ...(outputs ? { outputs } : {}) };
+    // The real change set's shape, with the replacement CloudFormation reports,
+    // for a round that checks it against a preview (#4419).
+    const shape = cfnPlanShape(stack, changeSet, []);
+    return { member: stack, planDigest, artifact, shape, changeSet: { member: member([]), entries }, ...(outputs ? { outputs } : {}) };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
   }
@@ -395,28 +398,33 @@ function drivenProperties(change: CfnChange, keys: string[], facts: TemplateFact
 }
 
 function shapeReplacement(change: CfnChange): ShapeReplacement {
-  if (change.replacementMode === "True" || change.replacement) return "yes";
-  return change.replacementMode === "Conditional" ? "maybe" : "no";
+  if (change.replacementMode === "True" || change.replacement) return "true";
+  return change.replacementMode === "Conditional" ? "conditional" : "false";
 }
 
 /**
  * A change set's shape: each change's resource, action, replacement and
  * properties, with the ones the `unknown` parameters drive marked. `unknown`
- * is empty for the change set made against real values.
+ * is empty for the change set made against real values. `refs` are the
+ * inputs the shape names as unknown (`<component>.<output>`), the parameters
+ * themselves when nothing says better.
  */
-export function cfnPlanShape(stack: string, changeSet: CfnChangeSet, unknown: string[], templatePath?: string): PlanShape {
+export function cfnPlanShape(stack: string, changeSet: CfnChangeSet, unknown: string[], templatePath?: string, refs: string[] = unknown): PlanShape {
   const facts = unknown.length > 0 && templatePath ? templateFacts(templatePath, unknown) : { parameterTypes: {}, driven: new Map() };
   const entries: PlanShapeEntry[] = isNoopChangeSet(changeSet)
     ? []
-    : changeSet.changes.map((c) => ({
-        address: cfnChangeEntry(stack, c).address,
-        type: c.resourceType,
-        action: c.action,
-        replacement: shapeReplacement(c),
-        properties: [...new Set(c.details ?? [])],
-        unknown: drivenProperties(c, unknown, facts),
-      }));
-  return normalizePlanShape({ member: stack, lexicon: "aws", unknownInputs: unknown, entries });
+    : changeSet.changes.map((c) => {
+        const e = cfnChangeEntry(stack, c);
+        return {
+          logicalId: e.address,
+          action: e.action,
+          replacement: shapeReplacement(c),
+          type: c.resourceType,
+          properties: [...new Set(c.details ?? [])],
+          unknown: drivenProperties(c, unknown, facts),
+        };
+      });
+  return normalizePlanShape({ member: stack, unknownInputs: refs, entries });
 }
 
 /**
@@ -439,6 +447,7 @@ async function previewCfnDeploy(
   stack: string,
   input: CfnDeployInput,
   unknown: string[],
+  refs: string[] = unknown,
 ): Promise<{ entries: ChangeSetEntry[]; shape: PlanShape } | string> {
   const facts = templateFacts(input.template, unknown);
   const parameters: Record<string, string> = { ...(flattenCfnInputs(input) ?? {}) };
@@ -455,7 +464,7 @@ async function previewCfnDeploy(
     }
     const noop = isNoopChangeSet(changeSet);
     const entries = noop ? [] : changeSet.changes.map((c) => cfnChangeEntry(stack, c, drivenProperties(c, unknown, facts)));
-    return { entries, shape: cfnPlanShape(stack, changeSet, unknown, input.template) };
+    return { entries, shape: cfnPlanShape(stack, changeSet, unknown, input.template, refs) };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
   }
@@ -717,7 +726,7 @@ export function createCfnDeployCapability(
         // A member planned before its inputs were known (#4419): the change
         // set made now is against the real values. It must have the shape the
         // preview had, differing only in what the unknown inputs drive.
-        const differences = comparePlanShape(planned.shape, cfnPlanShape(stack, changeSet, []));
+        const differences = planShapeDifferences(planned.shape, cfnPlanShape(stack, changeSet, []));
         if (differences.length > 0) {
           await cleanUpPlanChangeSet(executor, changeSet);
           throw new PlanShapeMovedError(stack, differences);

@@ -175,8 +175,10 @@ export interface PrMember {
   /**
    * The upstream outputs its plan read that the change's plans could not
    * say (#3999), as `<component>.<output>`, sorted: known only after that
-   * upstream applies. The approval does not cover what this member does
-   * with them; the apply plans it again once they are known.
+   * upstream applies. The apply plans the member again once they are known;
+   * the first approval covers that round when it does only what the preview
+   * showed with only these inputs filled in, and anything else waits for an
+   * approval of its own (`PrRound.covered`, `PrRound.notCovered`).
    */
   unknownInputs?: string[];
   /**

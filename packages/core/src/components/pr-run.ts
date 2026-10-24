@@ -23,8 +23,9 @@
  *   component in the project and not the selection.
  * - the upstream is in the change and its plan cannot say, or says the value
  *   is known only after apply: no value. The dependent's members list the
- *   reference under `unknownInputs`, and the approval does not cover what
- *   it will do with it.
+ *   reference under `unknownInputs`. The apply plans it again once the
+ *   upstream applied, and the approval covers that round when it matches the
+ *   preview (see `coveredRound`).
  *
  * `--seed-outputs` wins over both. The apply stage's plan reads the same
  * values, so on the same estate it gets the digest the plan stage showed.

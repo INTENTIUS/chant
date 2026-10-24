@@ -18,12 +18,18 @@
  * set afterwards) supplies a {@link PlanShape} on its `CapabilityPlan`.
  * Core decides coverage; the lexicon only reports what it planned.
  *
+ * A shape may go below the entry, to the properties a change touches and the
+ * ones an unknown input drives. Where it does, a property may drop out when
+ * an unknown input drives it (the real value turned out equal to the current
+ * one), and never otherwise, and a property may never be added.
+ *
  * Coverage binds to the digest of the first approval. {@link coveredRound}
  * takes that digest and records it, so a round planned for a different
  * composition never counts as covered by an approval of another one.
  */
 
 import type { ChangeSetAction, ChangeSetDocument } from "../change-set";
+import { computePlanDigest } from "../lifecycle/plan-digest";
 
 /** CloudFormation's `Replacement`, in lower case. */
 export type ShapeReplacement = "true" | "false" | "conditional";
@@ -39,6 +45,20 @@ export interface PlanShapeEntry {
    * depends on was a placeholder. Absent means the lexicon does not say.
    */
   replacement?: ShapeReplacement;
+  /** The resource's type, when the lexicon says. Compared for equality when both sides carry it. */
+  type?: string;
+  /**
+   * The properties the change touches, when the lexicon lists them. Present
+   * on both sides, the fresh plan may touch fewer where an unknown input
+   * drives them, and never more.
+   */
+  properties?: string[];
+  /**
+   * The properties an unknown input drives. On an update a subset of
+   * `properties`; on a create, where a planner cannot list properties, they
+   * stand alone. Present (even empty) on an entry that carries detail.
+   */
+  unknown?: string[];
 }
 
 /** What one member's plan does, without the values: what a lexicon supplies and core compares. */
@@ -64,37 +84,132 @@ export interface PlanShape {
 
 const SKIPPED: ReadonlySet<ChangeSetAction> = new Set(["no-op", "read"]);
 
+const REPLACEMENT_RANK: Record<ShapeReplacement, number> = { false: 0, conditional: 1, true: 2 };
+
+/** An entry with property detail is compared whatever its action: a lexicon that lists properties means it. */
+const skipped = (e: PlanShapeEntry): boolean => SKIPPED.has(e.action) && e.properties === undefined;
+
 /**
- * Why `fresh` is not covered by `previewed`, or `undefined` when it is.
+ * Every way `fresh` goes beyond `previewed`, as reasons; none means covered.
  * Both are shapes of the same member.
+ *
+ * The fresh plan may match the preview exactly, or be narrower where an
+ * unknown input drives it: a property whose real value equals the current one
+ * drops out, a replacement that depended on a stand-in may not happen. It
+ * may never add a resource, add a property, change an action or a type,
+ * replace more than previewed, read an input that is still unknown, or read a
+ * known input as another value.
  */
-export function planShapeCovers(previewed: PlanShape, fresh: PlanShape): string | undefined {
+export function planShapeDifferences(previewed: PlanShape, fresh: PlanShape): string[] {
   const member = fresh.member;
+  const out: string[] = [];
   const was = new Map(previewed.entries.map((e) => [e.logicalId, e]));
+  const now = new Set<string>();
   for (const e of fresh.entries) {
-    if (SKIPPED.has(e.action)) continue;
+    if (skipped(e)) continue;
+    now.add(e.logicalId);
     const p = was.get(e.logicalId);
-    if (!p) return `${member} now plans to ${e.action} ${e.logicalId}, which the first plan did not`;
-    if (p.action !== e.action) return `${member} now plans to ${e.action} ${e.logicalId}, where the first plan showed ${p.action}`;
-    if (e.replacement === "true" && p.replacement !== "true" && p.replacement !== "conditional") {
-      return `${member} now replaces ${e.logicalId}, which the first plan did not show`;
+    if (!p) {
+      out.push(`${member} now plans to ${e.action} ${e.logicalId}, which the first plan did not`);
+      continue;
     }
-    if (e.replacement === "conditional" && p.replacement !== "conditional") {
-      return `${member} may now replace ${e.logicalId}, which the first plan did not show`;
+    if (p.action !== e.action) out.push(`${member} now plans to ${e.action} ${e.logicalId}, where the first plan showed ${p.action}`);
+    if (p.type !== undefined && e.type !== undefined && p.type !== e.type) out.push(`${member} now has ${e.logicalId} as ${e.type}, where the first plan showed ${p.type}`);
+    if (p.properties && e.properties) {
+      const extra = e.properties.filter((x) => !p.properties!.includes(x));
+      if (extra.length > 0) out.push(`${member} now also changes ${extra.join(", ")} on ${e.logicalId}`);
+      const driven = p.unknown ?? [];
+      const lost = p.properties.filter((x) => !driven.includes(x) && !e.properties!.includes(x));
+      if (lost.length > 0) out.push(`${member} no longer changes ${lost.join(", ")} on ${e.logicalId}, which no unknown input drives`);
+    }
+    if (e.replacement === "true" && p.replacement !== "true" && p.replacement !== "conditional") {
+      out.push(`${member} now replaces ${e.logicalId}, which the first plan did not show`);
+    } else if (e.replacement === "conditional" && p.replacement !== "conditional" && p.replacement !== "true") {
+      out.push(`${member} may now replace ${e.logicalId}, which the first plan did not show`);
+    } else if (e.replacement && p.replacement && p.unknown?.length === 0 && REPLACEMENT_RANK[e.replacement] < REPLACEMENT_RANK[p.replacement]) {
+      out.push(`${member} replacement of ${e.logicalId} was ${p.replacement}, now ${e.replacement}, and no unknown input drives it`);
+    }
+  }
+  // A previewed change that is gone: allowed only where unknown inputs drive all of it.
+  for (const p of previewed.entries) {
+    if (now.has(p.logicalId) || skipped(p) || !p.properties) continue;
+    const driven = p.unknown ?? [];
+    if (!(p.properties.length > 0 && p.properties.every((x) => driven.includes(x)))) {
+      out.push(`${member} no longer plans to ${p.action} ${p.logicalId}, which the first plan did and no unknown input drives`);
     }
   }
   const unknown = new Set(previewed.unknownInputs);
   const stillUnknown = fresh.unknownInputs[0];
-  if (stillUnknown) return `${member} still reads ${stillUnknown}, which is not known yet`;
+  if (stillUnknown) out.push(`${member} still reads ${stillUnknown}, which is not known yet`);
   for (const [ref, value] of Object.entries(fresh.knownInputs ?? {})) {
     if (unknown.has(ref)) continue;
     if (!previewed.knownInputs) continue;
-    if (!(ref in previewed.knownInputs)) return `${member} now reads ${ref}, which the first plan did not`;
-    if (JSON.stringify(previewed.knownInputs[ref] ?? null) !== JSON.stringify(value ?? null)) {
-      return `${member} now reads ${ref} as a different value than the first plan`;
+    if (!(ref in previewed.knownInputs)) out.push(`${member} now reads ${ref}, which the first plan did not`);
+    else if (JSON.stringify(previewed.knownInputs[ref] ?? null) !== JSON.stringify(value ?? null)) {
+      out.push(`${member} now reads ${ref} as a different value than the first plan`);
     }
   }
-  return undefined;
+  return out;
+}
+
+/**
+ * Why `fresh` is not covered by `previewed`, or `undefined` when it is: the
+ * first of {@link planShapeDifferences}.
+ */
+export function planShapeCovers(previewed: PlanShape, fresh: PlanShape): string | undefined {
+  return planShapeDifferences(previewed, fresh)[0];
+}
+
+/** A shape in the order that makes equal shapes digest equal. */
+export function normalizePlanShape(shape: PlanShape): PlanShape {
+  const sorted = (xs: string[]): string[] => [...new Set(xs)].sort();
+  return {
+    member: shape.member,
+    entries: shape.entries
+      .map((e) => ({
+        logicalId: e.logicalId,
+        action: e.action,
+        ...(e.replacement ? { replacement: e.replacement } : {}),
+        ...(e.type !== undefined ? { type: e.type } : {}),
+        ...(e.properties ? { properties: sorted(e.properties) } : {}),
+        ...(e.unknown ? { unknown: sorted(e.unknown) } : {}),
+      }))
+      .sort((a, b) => a.logicalId.localeCompare(b.logicalId) || a.action.localeCompare(b.action)),
+    unknownInputs: sorted(shape.unknownInputs),
+    ...(shape.knownInputs ? { knownInputs: shape.knownInputs } : {}),
+  };
+}
+
+export function planShapeDigest(shape: PlanShape): string {
+  return computePlanDigest("plan-shape", normalizePlanShape(shape));
+}
+
+/**
+ * What a lexicon hands the run for a previewed member, through
+ * `DeployContext.plans[member]`. `kind` is the lexicon's own so its `run`
+ * can tell a shape from its other artifacts.
+ */
+export interface PlanShapeArtifact {
+  kind: string;
+  member: string;
+  shape: PlanShape;
+  digest: string;
+}
+
+/**
+ * Thrown by a member's `run` when the change it created is not covered by the
+ * shape previewed. The change set is deleted unexecuted. `planMoved` is
+ * core's mark for a moved plan, so the command that applied it exits 3.
+ */
+export class PlanShapeMovedError extends Error {
+  readonly planMoved = true;
+  constructor(
+    public readonly member: string,
+    public readonly differences: string[],
+  ) {
+    super(`"${member}": refusing to apply. The change differs from the preview that was approved: ${differences.join("; ")}. Plan it again.`);
+    this.name = "PlanShapeMovedError";
+  }
 }
 
 /** The shape a change-set document gives for `member`, when its lexicon supplies none. */
