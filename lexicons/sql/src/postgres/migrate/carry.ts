@@ -10,6 +10,7 @@
  * | On the old column | Before the switch | In the switch's transaction |
  * |---|---|---|
  * | an index | `CREATE INDEX CONCURRENTLY` on the new column | the old one dropped (a type change) or kept as `<name>__chant_old` (a rename), the new one renamed to the name |
+ * | an index on a partitioned table | `CREATE INDEX ... ON ONLY` the table, `CONCURRENTLY` on each partition, `ALTER INDEX ... ATTACH PARTITION` | as an index; the partitions' indexes go with the old one |
  * | a primary key or unique constraint | its unique index built `CONCURRENTLY` | the old constraint dropped (or a rename's unique one kept as `__chant_old`), `ADD CONSTRAINT ... USING INDEX` |
  * | a check or foreign key, this table's or another's that references the column | added `NOT VALID`, then `VALIDATE` | the old one dropped, the new one renamed to the name |
  * | a view (and the views that read it) | nothing | dropped, then created again from its declaration once the columns are swapped, with its grants and owner |
@@ -33,7 +34,8 @@
  * key or index the build declares on the new column takes the declared name.
  *
  * Refused, each named with what to do: exclusion constraints and constraint
- * triggers (no `USING INDEX` form), materialized views (made again only by
+ * triggers (no `USING INDEX` form), a key or foreign key on a partitioned table,
+ * a partitioned index over a foreign-table partition, materialized views (made again only by
  * a full scan in the switch), rules, triggers, policies and statistics on the
  * column, a generated column computed from it, an INVALID index on it, a view
  * the build does not declare, a view something other than a view depends on.
@@ -84,6 +86,12 @@ export interface CarriedObject {
   indexComment?: string;
   replicaIdentity?: boolean;
   clustered?: boolean;
+  /**
+   * An index on a partitioned table (#3333): `definition` is the `CREATE INDEX ... ON ONLY` that makes the
+   * partitioned index without building anything. Each partition's index is built `CONCURRENTLY` on its own and
+   * attached (`partitionIndexStatement`, `carryPartitionedIndex` in `./steps.ts`).
+   */
+  partitioned?: boolean;
 }
 
 /** A view on the old column (or on such a view), made again at the switch from its declaration. */
@@ -185,6 +193,73 @@ export function carriedIndexStatement(def: string, working: string, from: string
   const m = /^CREATE (UNIQUE )?INDEX (?:"(?:[^"]|"")+"|\S+) ON (.*)$/s.exec(def);
   if (!m) throw new Error(`unexpected index definition: ${def}`);
   return `CREATE ${m[1] ?? ""}INDEX CONCURRENTLY ${quoteIdent(working)} ON ${replaceColumn(m[2]!, from, to)}`;
+}
+
+/**
+ * A partitioned index (`pg_get_indexdef` prints it `ON ONLY`) as the
+ * `CREATE INDEX ... ON ONLY` of `working` on the new column: it builds nothing
+ * and stays INVALID until every partition's index is attached.
+ */
+export function carriedPartitionedIndexStatement(def: string, working: string, from: string, to: string): string {
+  const m = /^CREATE (UNIQUE )?INDEX (?:"(?:[^"]|"")+"|\S+) ON (?:ONLY )?(.*)$/s.exec(def);
+  if (!m) throw new Error(`unexpected index definition: ${def}`);
+  return `CREATE ${m[1] ?? ""}INDEX ${quoteIdent(working)} ON ONLY ${replaceColumn(m[2]!, from, to)}`;
+}
+
+/** One table of a partition tree. */
+export interface PartitionNode {
+  oid: string;
+  schema: string;
+  name: string;
+  /** Quoted and qualified. */
+  ident: string;
+  /** The partitioned table (or partition) it is a partition of; absent for the root. */
+  parent?: string;
+  /** Not partitioned further: the tables that hold rows. */
+  leaf: boolean;
+  /** `r` (ordinary), `p` (partitioned) or `f` (foreign). */
+  kind: string;
+  level: number;
+}
+
+/** The partition tree under a partitioned table, the table itself first (level 0). */
+export async function partitionTree(client: Pick<PostgresClient, "query">, tableOid: string): Promise<PartitionNode[]> {
+  const rows = await client.query<{ oid: string; schema: string; name: string; parent: string | null; leaf: boolean; kind: string; level: number }>(
+    `SELECT t.relid::oid::text AS oid, n.nspname AS schema, c.relname AS name, t.parentrelid::oid::text AS parent, t.isleaf AS leaf, c.relkind::text AS kind, t.level
+     FROM pg_catalog.pg_partition_tree($1::oid::pg_catalog.regclass) t JOIN pg_catalog.pg_class c ON c.oid = t.relid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     ORDER BY t.level, n.nspname, c.relname`,
+    [tableOid],
+  );
+  return rows.map((r) => ({
+    oid: String(r.oid),
+    schema: r.schema,
+    name: r.name,
+    ident: `${quoteIdent(r.schema)}.${quoteIdent(r.name)}`,
+    ...(r.parent !== null ? { parent: String(r.parent) } : {}),
+    leaf: r.leaf === true,
+    kind: r.kind,
+    level: Number(r.level),
+  }));
+}
+
+/** The name of the index a partitioned index's working copy has on one partition. */
+export const partitionIndexName = (partition: Pick<PartitionNode, "name">, working: string): string => pgName(`${partition.name}_${working}`);
+
+/**
+ * The statement that makes a partitioned index's working copy on one
+ * partition. A partition that is partitioned further gets `ON ONLY` (it is
+ * valid once its own partitions are attached); one that holds rows gets the
+ * `CONCURRENTLY` build, so writes go on.
+ */
+export function partitionIndexStatement(c: Pick<CarriedObject, "definition">, node: Pick<PartitionNode, "ident" | "leaf">, indexName: string): string {
+  const m = /^CREATE (UNIQUE )?INDEX (?:"(?:[^"]|"")+"|\S+) ON ONLY (.*)$/s.exec(c.definition);
+  if (!m) throw new Error(`unexpected partitioned index definition: ${c.definition}`);
+  const using = m[2]!.indexOf(" USING ");
+  if (using < 0) throw new Error(`unexpected partitioned index definition: ${c.definition}`);
+  const tail = m[2]!.slice(using);
+  return node.leaf
+    ? `CREATE ${m[1] ?? ""}INDEX CONCURRENTLY ${quoteIdent(indexName)} ON ${node.ident}${tail}`
+    : `CREATE ${m[1] ?? ""}INDEX ${quoteIdent(indexName)} ON ONLY ${node.ident}${tail}`;
 }
 
 /**
@@ -357,10 +432,6 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
       const kind = String(r.kind);
       if (kind === "i" || kind === "I") {
         if (keyIndexes.has(String(r.oid))) continue;
-        if (kind === "I") {
-          refused.push(`index ${r.schema}.${name} is a partitioned index, which cannot be built CONCURRENTLY; drop it, migrate, then declare it again (chant #3333)`);
-          continue;
-        }
         if (r.valid !== true) {
           refused.push(`index ${r.schema}.${name} is INVALID (a failed CONCURRENTLY build); drop it, or REINDEX it, first`);
           continue;
@@ -389,6 +460,14 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
                 });
           target = declaredIndex?.canonical.name ?? (r.has_exprs === true ? undefined : renamedDefault(name, table, oldCols, cols, "idx")) ?? name;
         }
+        if (kind === "I") {
+          // A partition the index cannot be built on (a foreign table) stops the carry before anything is made.
+          const foreign = (await partitionTree(client, oid)).filter((p) => p.kind === "f");
+          if (foreign.length > 0) {
+            refused.push(`partitioned index ${r.schema}.${name}: ${foreign.map((p) => `${p.schema}.${p.name}`).join(", ")} is a foreign table, which holds no index to attach; drop the index, migrate, then declare it again`);
+            continue;
+          }
+        }
         carried.push({
           kind: "index",
           name,
@@ -398,7 +477,8 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
           schema: String(r.schema),
           working,
           target,
-          definition: carriedIndexStatement(String(r.def), working, from, to),
+          definition: kind === "I" ? carriedPartitionedIndexStatement(String(r.def), working, from, to) : carriedIndexStatement(String(r.def), working, from, to),
+          ...(kind === "I" ? { partitioned: true } : {}),
           validated: true,
           ...(r.comment !== null ? { comment: String(r.comment) } : {}),
           ...(r.replident === true ? { replicaIdentity: true } : {}),

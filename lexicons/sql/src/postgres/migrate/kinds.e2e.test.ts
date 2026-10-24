@@ -10,7 +10,7 @@
  * - A column of a partitioned table: every partition follows the
  *   partitioned table.
  * - Refused, each naming why: a partition, an inheritance tree, a column in
- *   the partition key, an index on a partitioned table, a generated column,
+ *   the partition key, a key on a partitioned table, a generated column,
  *   a rename of an identity column.
  *
  * Needs Docker; skips cleanly without it.
@@ -177,7 +177,7 @@ describe.skipIf(!enabled)("what the Op refuses among the rest", () => {
       (e: unknown) => String((e as Error).message),
     );
 
-  test("a partition, an inheritance tree, the partition key, an index on a partitioned table, a generated column, a renamed identity", async () => {
+  test("a partition, an inheritance tree, the partition key, a key on a partitioned table, a generated column, a renamed identity", async () => {
     const parted = (v: string, key = "at") => table("parted", "rf", `CREATE TABLE rf.parted (id bigint, at date, v ${v}, PRIMARY KEY (id, at)) PARTITION BY RANGE (${key})`);
     const p1 = table("parted1", "rf", "CREATE TABLE rf.parted1 PARTITION OF rf.parted FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')", ["parted"]);
     const parent = (v: string) => table("parent", "rf", `CREATE TABLE rf.parent (id bigint PRIMARY KEY, v ${v})`);
@@ -185,16 +185,16 @@ describe.skipIf(!enabled)("what the Op refuses among the rest", () => {
     const ident = (c: string, hint = "") => table("ident", "rf", `CREATE TABLE rf.ident (\n  ${c} integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,${hint}\n  v text\n)`);
     await apply(writeBuild("rf-v1.json", [RF, parted("integer"), p1, parent("integer"), gen("integer"), ident("id")]));
     await admin!.query("CREATE TABLE rf.child (extra text) INHERITS (rf.parent)");
-    await admin!.query("CREATE INDEX parted_v_idx ON rf.parted (v)");
+    await admin!.query("ALTER TABLE rf.parted ADD CONSTRAINT parted_v_key UNIQUE (id, at, v)");
     writeBuild("rf-v2.json", [RF, parted("bigint"), p1, parent("bigint"), gen("bigint"), ident("key", " -- previously: id")]);
 
     expect(await refusal("rf.parted1", "v", "rf-v2.json")).toMatch(/^rf\.parted1 is a partition of rf\.parted\. A partition's columns are its partitioned table's: run the Op on rf\.parted/);
     expect(await refusal("rf.parent", "v", "rf-v2.json")).toMatch(/^rf\.parent has inheritance children \(rf\.child\)\. The Op does not migrate inheritance trees: a write to a child table does not fire the parent's dual-write trigger/);
-    expect(await refusal("rf.parted", "v", "rf-v2.json")).toMatch(/index rf\.parted_v_idx is a partitioned index, which cannot be built CONCURRENTLY/);
+    expect(await refusal("rf.parted", "v", "rf-v2.json")).toMatch(/unique constraint parted_v_key on rf\.parted: on a partitioned table a key cannot be attached from an index built CONCURRENTLY/);
     expect(await refusal("rf.gen", "g", "rf-v2.json")).toMatch(/^rf\.gen\.g is a generated column\. There is no expand and contract for one/);
     expect(await refusal("rf.ident", "key", "rf-v2.json")).toMatch(/sequence rf\.ident_id_seq gives the column its values \(an identity column\); during a rename/);
 
-    await admin!.query("DROP INDEX rf.parted_v_idx");
+    await admin!.query("ALTER TABLE rf.parted DROP CONSTRAINT parted_v_key");
     writeBuild("rf-v3.json", [RF, parted("integer", "v"), p1]);
     await admin!.query("DROP TABLE rf.parted");
     await apply(writeBuild("rf-v3.json", [RF, table("parted", "rf", "CREATE TABLE rf.parted (id bigint, at date, v integer, PRIMARY KEY (id, v)) PARTITION BY RANGE (v)")]));

@@ -20,7 +20,7 @@
  * | Expand | add the new column, nullable, no default (a catalog change) |
  * | Dual write | a trigger that keeps the new column written: computed from the old one for a type change, both ways for a rename |
  * | Backfill | `UPDATE` per key range, each batch with its receipt in its own transaction, under `lock_timeout`, pausing while a replica is behind |
- * | Carry over | each index on the old column built again on the new one `CONCURRENTLY`, each check and foreign key (another table's too) added `NOT VALID` and validated (`./carry.ts`) |
+ * | Carry over | each index on the old column built again on the new one `CONCURRENTLY` (on a partitioned table: `ON ONLY` the table, `CONCURRENTLY` per partition, then attached), each check and foreign key (another table's too) added `NOT VALID` and validated (`./carry.ts`) |
  * | Verify | rows, mismatches and checksums of the new column against the old |
  * | Approve | a gate bound to the plan and the verified new column |
  * | Switch | NOT NULL proven by a validated check; then one short transaction: a type change swaps the columns by name, a rename finishes the new column; the carried indexes and constraints take their names (keys `USING INDEX`), and the views that read the column are made again from their declarations |

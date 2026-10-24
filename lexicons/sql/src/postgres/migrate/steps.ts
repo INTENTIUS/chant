@@ -25,7 +25,7 @@ import { col, migrationNames, MIGRATION_TRAILER_KEY, type MigrationNames } from 
 import { MigrationRefusal, observeMigration, type MigrationObservation } from "./observe";
 import { postgresReceiptStore, receiptAddress } from "./receipts";
 import type { ReplicationLagBound } from "./replication";
-import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, requiresNotNull, SERIAL_TYPES, storedType, type CarriedObject } from "./carry";
+import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, partitionIndexName, partitionIndexStatement, partitionTree, requiresNotNull, SERIAL_TYPES, storedType, type CarriedObject, type CarriedState } from "./carry";
 
 /** What every step is given. */
 export interface MigrationRun {
@@ -327,6 +327,11 @@ export async function carryOver(run: MigrationRun): Promise<CarryResult> {
     result.carried.push(`${c.kind} ${c.tableName}.${c.name} -> ${c.target}`);
     const state = o.carriedStates.get(c.working);
     const comment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column`, { of: c.name });
+    if (c.kind === "index" && c.partitioned) {
+      if (await carryPartitionedIndex(run, n, c, comment, state)) result.built++;
+      else result.ready++;
+      continue;
+    }
     if (c.kind === "index" || c.kind === "key") {
       const ident = qualifiedIndex(c, c.working);
       if (state?.ready) {
@@ -361,6 +366,85 @@ export async function carryOver(run: MigrationRun): Promise<CarryResult> {
     run.log(`-- ${n.key}: ${o.carried.length} index(es) and constraint(s) on the new column (${result.built} made, ${result.ready} already there); ${o.views.length} view(s) made again at the switch`);
   }
   return result;
+}
+
+/**
+ * Carry over one index of a partitioned table (#3333). A partitioned index
+ * cannot be built `CONCURRENTLY`, so it is made the way the Postgres docs
+ * give for adding one without blocking writes: the partitioned index
+ * `ON ONLY` the table (nothing is built, and it is INVALID), each leaf
+ * partition's index built `CONCURRENTLY` on its own, then
+ * `ALTER INDEX ... ATTACH PARTITION` for each, deepest first. The partitioned
+ * index becomes valid when its last partition is attached. A partition
+ * attached to the table meanwhile gets its index from Postgres, and one that
+ * already has an index attached to this one is left alone, so a run after a
+ * crash goes on from where the last stopped. Returns whether anything was
+ * made.
+ */
+export async function carryPartitionedIndex(run: MigrationRun, n: MigrationNames, c: CarriedObject, comment: string, state: CarriedState | undefined): Promise<boolean> {
+  if (state?.ready && state.marked) return false;
+  const root = qualifiedIndex(c, c.working);
+  const one = async <T>(sql: string, params: unknown[]): Promise<T | undefined> => (await run.client.query<T>(sql, params))[0];
+  const oidOf = async (ident: string): Promise<string | undefined> => (await one<{ oid: string | null }>("SELECT pg_catalog.to_regclass($1)::oid::text AS oid", [ident]))?.oid ?? undefined;
+  /** The index on `partitionOid` that is attached to `parentIndexOid`, whoever made it. */
+  const attachedIndex = async (parentIndexOid: string, partitionOid: string): Promise<{ oid: string; ident: string } | undefined> => {
+    const row = await one<{ oid: string; schema: string; name: string }>(
+      `SELECT x.oid::text AS oid, s.nspname AS schema, x.relname AS name FROM pg_catalog.pg_inherits h JOIN pg_catalog.pg_index i ON i.indexrelid = h.inhrelid
+       JOIN pg_catalog.pg_class x ON x.oid = i.indexrelid JOIN pg_catalog.pg_namespace s ON s.oid = x.relnamespace WHERE h.inhparent = $1::oid AND i.indrelid = $2::oid`,
+      [parentIndexOid, partitionOid],
+    );
+    return row ? { oid: String(row.oid), ident: `${quoteIdent(row.schema)}.${quoteIdent(row.name)}` } : undefined;
+  };
+  if (!state?.present) {
+    await inTransaction(run, async (exec) => {
+      await exec(c.definition);
+      await exec(`COMMENT ON INDEX ${root} IS ${pgString(comment)}`);
+    });
+  } else if (!state.marked) {
+    await inTransaction(run, (exec) => exec(`COMMENT ON INDEX ${root} IS ${pgString(comment)}`));
+  }
+  const tree = (await partitionTree(run.client, c.tableOid)).filter((p) => p.oid !== c.tableOid);
+  const byOid = new Map(tree.map((p) => [p.oid, p]));
+  const ours = (p: { schema: string; name: string }) => `${quoteIdent(p.schema)}.${quoteIdent(partitionIndexName(p, c.working))}`;
+  const rootIndex = { oid: (await oidOf(root))!, ident: root };
+  /** The index a partition's index attaches to: the partitioned index above it, as it is now. */
+  const above = async (p: { parent?: string }): Promise<{ oid: string; ident: string }> => {
+    if (p.parent === c.tableOid || p.parent === undefined) return rootIndex;
+    const parent = byOid.get(p.parent)!;
+    const up = await above(parent);
+    return (await attachedIndex(up.oid, parent.oid)) ?? { oid: (await oidOf(ours(parent)))!, ident: ours(parent) };
+  };
+  // Top down: each partition without an index attached to its parent's gets a standalone one.
+  const pending: Array<{ p: (typeof tree)[number]; parent: { oid: string; ident: string } }> = [];
+  for (const p of tree) {
+    const parent = await above(p);
+    if (await attachedIndex(parent.oid, p.oid)) continue;
+    const ident = ours(p);
+    const cur = await one<{ valid: boolean; comment: string | null }>(
+      "SELECT i.indisvalid AS valid, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment FROM pg_catalog.pg_index i WHERE i.indexrelid = pg_catalog.to_regclass($1)",
+      [ident],
+    );
+    if (cur && !cur.valid) await outsideTransaction(run, `DROP INDEX CONCURRENTLY IF EXISTS ${ident}`);
+    if (!cur || !cur.valid) {
+      const statement = partitionIndexStatement(c, p, partitionIndexName(p, c.working));
+      const dropInvalid = async () => {
+        const row = await one<{ invalid: boolean }>("SELECT NOT i.indisvalid AS invalid FROM pg_catalog.pg_index i WHERE i.indexrelid = pg_catalog.to_regclass($1)", [ident]);
+        if (row?.invalid) await run.client.query(`DROP INDEX CONCURRENTLY IF EXISTS ${ident}`);
+      };
+      if (p.leaf) await outsideTransaction(run, statement, { scan: true, cleanup: dropInvalid });
+      else await inTransaction(run, (exec) => exec(statement));
+    }
+    if (!cur || !cur.valid || cur.comment == null) {
+      const partitionComment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column, for partition ${p.name}`, { of: c.name });
+      await inTransaction(run, (exec) => exec(`COMMENT ON INDEX ${ident} IS ${pgString(partitionComment)}`));
+    }
+    pending.push({ p, parent });
+  }
+  // Bottom up: a partition's index is valid once its own partitions are attached.
+  for (const { p, parent } of [...pending].sort((a, b) => b.p.level - a.p.level)) {
+    await inTransaction(run, (exec) => exec(`ALTER INDEX ${parent.ident} ATTACH PARTITION ${ours(p)}`));
+  }
+  return true;
 }
 
 // ── switch ─────────────────────────────────────────────────────────────
@@ -676,7 +760,11 @@ export async function compensate(run: Pick<MigrationRun, "client" | "target" | "
   ).filter((c) => ours(c.comment, "carry"));
   const carriedIndexes = (
     await run.client.query<{ name: string; comment: string | null }>(
-      "SELECT i.indexrelid::pg_catalog.regclass::text AS name, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment FROM pg_catalog.pg_index i WHERE i.indrelid = $1::oid ORDER BY 1",
+      // The table's own indexes, and those on its partitions that no partitioned index has taken yet (an attached one goes with the partitioned index).
+      `SELECT i.indexrelid::pg_catalog.regclass::text AS name, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment
+       FROM pg_catalog.pg_index i
+       WHERE (i.indrelid = $1::oid OR (i.indrelid IN (SELECT t.relid FROM pg_catalog.pg_partition_tree($1::oid::pg_catalog.regclass) t) AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h WHERE h.inhrelid = i.indexrelid)))
+       ORDER BY i.indrelid <> $1::oid, 1`,
       [rel.oid],
     )
   ).filter((c) => ours(c.comment, "carry"));
@@ -700,7 +788,7 @@ export async function compensate(run: Pick<MigrationRun, "client" | "target" | "
       dropped.push(`constraint ${c.name} on ${c.rel}`);
     }
     for (const c of carriedIndexes) {
-      await exec(`DROP INDEX ${c.name}`);
+      await exec(`DROP INDEX IF EXISTS ${c.name}`);
       dropped.push(`index ${c.name}`);
     }
     for (const c of newColumns) {

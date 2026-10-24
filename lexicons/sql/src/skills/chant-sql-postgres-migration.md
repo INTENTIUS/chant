@@ -114,7 +114,7 @@ or set `replicationLag: false` to run without the check.
 The Plan phase refuses, naming each object and what to do, a table or column with:
 
 - something on the column it does not carry over: an exclusion constraint, a constraint trigger, a materialized view, a rule, a trigger, a policy, a statistics object, a generated column computed from it, an INVALID index, or a view the build does not declare;
-- on a partitioned table, an index, key or foreign key on the column, or the column in the partition key (chant #3333);
+- on a partitioned table, a key or foreign key on the column, or the column in the partition key;
 - a partition (run the Op on its partitioned table) or an inheritance tree (chant #3333);
 - a generated column itself, which the applier changes in place;
 - no primary key;

@@ -24,6 +24,7 @@
  * - `done`: the server holds the declared column and nothing of the
  *   migration is left.
  *
+ * A partitioned table's indexes are carried over per partition (`./steps.ts`).
  * Anything else is refused with a {@link MigrationRefusal}, naming what to
  * do: a table that is not there, a partition (run it on the partitioned
  * table) or an inheritance tree; no primary key to batch by; a column in the
