@@ -156,6 +156,15 @@ export function postgresDeclarations(content: string, fileName = "file.ts"): Pos
           sqlName = text(node.name.span);
           kind = "operator";
           break;
+        case "operatorClass":
+        case "operatorFamily":
+        case "foreignTable":
+        case "textSearchConfiguration":
+        case "textSearchDictionary":
+          sqlName = text(node.name.span);
+          kind = { operatorClass: "operator class", operatorFamily: "operator family", foreignTable: "foreign table", textSearchConfiguration: "text search configuration", textSearchDictionary: "text search dictionary" }[node.statement];
+          if (node.statement === "foreignTable") columns = node.columns.map((c) => ({ name: c.name || text(c.nameSpan) || "", ...(text(c.type) ? { type: text(c.type)! } : {}) }));
+          break;
         case "statistics":
         case "foreignDataWrapper":
         case "foreignServer":

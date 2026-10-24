@@ -459,6 +459,7 @@ export async function readDatabaseKinds(client: PostgresClient, scope: SchemaSco
   }
 
   out.push(...(await readPublications(client)));
+  out.push(...(await readOperatorClasses(client, scope)), ...(await readTextSearch(client, scope)), ...(await readForeignTables(client, scope)));
   return out;
 }
 
@@ -532,4 +533,274 @@ async function readPublications(client: PostgresClient): Promise<LivePgObject[]>
     });
   }
   return out;
+}
+
+// ── Operator classes and families, text search, foreign tables (#4406) ──
+
+/** An object named by `schema`.`name` columns, as a clause: a `pg_catalog` one bare. */
+const refName = (schema: string, name: string): string =>
+  `CASE WHEN ${schema} = 'pg_catalog' THEN pg_catalog.quote_ident(${name}) ELSE pg_catalog.quote_ident(${schema}) || '.' || pg_catalog.quote_ident(${name}) END`;
+
+/** An operand type, `NONE` for the missing side of a prefix operator. */
+const operand = (column: string): string => `CASE WHEN ${column} = 0 THEN 'NONE' ELSE pg_catalog.format_type(${column}, NULL) END`;
+
+/**
+ * Operator classes and families. A class carries its members: the operators
+ * and support functions that depend on it (`pg_depend`, a member made by
+ * CREATE OPERATOR CLASS depends on the class; one added by ALTER OPERATOR
+ * FAMILY ... ADD depends on the family and is "loose"). A family named as its
+ * class, in the same schema, is the one CREATE OPERATOR CLASS made for it and
+ * is the class's; every other family is read, with a warning when it holds
+ * loose members, which a declaration cannot carry.
+ */
+async function readOperatorClasses(client: PostgresClient, scope: SchemaScope): Promise<LivePgObject[]> {
+  const out: LivePgObject[] = [];
+  const s = scopeSql("n.nspname", scope);
+  const member = (catalog: string, alias: string) =>
+    `JOIN pg_catalog.pg_depend dep ON dep.classid = '${catalog}'::pg_catalog.regclass AND dep.objid = ${alias}.oid AND dep.refclassid = 'pg_catalog.pg_opclass'::pg_catalog.regclass AND dep.refobjid = c.oid`;
+  const classes = await client.query<Row>(
+    `SELECT c.oid::text AS oid, n.nspname AS schema, c.opcname AS name, am.amname AS method, c.opcdefault AS isdefault,
+            pg_catalog.format_type(c.opcintype, NULL) AS type,
+            CASE WHEN c.opckeytype <> 0 THEN pg_catalog.format_type(c.opckeytype, NULL) END AS storage,
+            CASE WHEN f.opfname = c.opcname AND f.opfnamespace = c.opcnamespace THEN NULL ELSE ${refName("fn.nspname", "f.opfname")} END AS family,
+            ARRAY(SELECT 'OPERATOR ' || o.amopstrategy || ' ' || pg_catalog.quote_ident(opn.nspname) || '.' || op.oprname ||
+                         ' (' || ${operand("o.amoplefttype")} || ', ' || ${operand("o.amoprighttype")} || ')' ||
+                         CASE WHEN o.amoppurpose = 'o' THEN ' FOR ORDER BY ' || (SELECT pg_catalog.quote_ident(sn.nspname) || '.' || pg_catalog.quote_ident(sf.opfname)
+                              FROM pg_catalog.pg_opfamily sf JOIN pg_catalog.pg_namespace sn ON sn.oid = sf.opfnamespace WHERE sf.oid = o.amopsortfamily) ELSE '' END
+                  FROM pg_catalog.pg_amop o ${member("pg_catalog.pg_amop", "o")}
+                  JOIN pg_catalog.pg_operator op ON op.oid = o.amopopr JOIN pg_catalog.pg_namespace opn ON opn.oid = op.oprnamespace
+                  ORDER BY o.amopstrategy, o.amoplefttype, o.amoprighttype) AS operators,
+            ARRAY(SELECT 'FUNCTION ' || p.amprocnum || ' (' || ${operand("p.amproclefttype")} || ', ' || ${operand("p.amprocrighttype")} || ') ' || p.amproc::pg_catalog.regprocedure::pg_catalog.text
+                  FROM pg_catalog.pg_amproc p ${member("pg_catalog.pg_amproc", "p")}
+                  ORDER BY p.amprocnum, p.amproclefttype, p.amprocrighttype) AS functions,
+            pg_catalog.obj_description(c.oid, 'pg_opclass') AS comment, ${dependentsOf("pg_opclass", "c.oid")} AS dependents
+     FROM pg_catalog.pg_opclass c JOIN pg_catalog.pg_namespace n ON n.oid = c.opcnamespace JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
+     JOIN pg_catalog.pg_opfamily f ON f.oid = c.opcfamily JOIN pg_catalog.pg_namespace fn ON fn.oid = f.opfnamespace
+     WHERE ${s.sql} AND c.oid >= 16384 AND ${notExtensionOwned("pg_opclass", "c.oid")}
+     ORDER BY n.nspname ${C}, c.opcname ${C}, am.amname ${C}`,
+    s.params,
+  );
+  for (const r of classes) {
+    const q = qname(String(r.schema), String(r.name));
+    const method = String(r.method);
+    const items = [...((r.operators as string[] | null) ?? []), ...((r.functions as string[] | null) ?? []), ...(str(r.storage) ? [`STORAGE ${r.storage}`] : [])];
+    out.push({
+      type: POSTGRES_ENTITY_TYPES.operatorClass,
+      schema: String(r.schema),
+      name: String(r.name),
+      oid: String(r.oid),
+      signature: ` USING ${method}`,
+      ...withComment(r),
+      ...dependents(r),
+      ...(items.length === 0 ? { unsupported: "no operator, support function or storage type of it could be read; a CREATE OPERATOR CLASS needs at least one" } : {}),
+      statement: [
+        `CREATE OPERATOR CLASS ${q}${r.isdefault === true ? " DEFAULT" : ""} FOR TYPE ${r.type} USING ${method}${str(r.family) ? ` FAMILY ${r.family}` : ""} AS\n    ${items.join(",\n    ")}`,
+        ...commentOn(`OPERATOR CLASS ${q} USING ${method}`, r.comment),
+      ].join(";\n"),
+    });
+  }
+
+  const families = await client.query<Row>(
+    `SELECT f.oid::text AS oid, n.nspname AS schema, f.opfname AS name, am.amname AS method,
+            (SELECT count(*) FROM (SELECT o.oid FROM pg_catalog.pg_amop o WHERE o.amopfamily = f.oid UNION ALL SELECT p.oid FROM pg_catalog.pg_amproc p WHERE p.amprocfamily = f.oid) m
+              WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dep WHERE dep.classid IN ('pg_catalog.pg_amop'::pg_catalog.regclass, 'pg_catalog.pg_amproc'::pg_catalog.regclass)
+                                AND dep.objid = m.oid AND dep.refclassid = 'pg_catalog.pg_opclass'::pg_catalog.regclass)) AS loose,
+            pg_catalog.obj_description(f.oid, 'pg_opfamily') AS comment, ${dependentsOf("pg_opfamily", "f.oid")} AS dependents
+     FROM pg_catalog.pg_opfamily f JOIN pg_catalog.pg_namespace n ON n.oid = f.opfnamespace JOIN pg_catalog.pg_am am ON am.oid = f.opfmethod
+     WHERE ${s.sql} AND f.oid >= 16384 AND ${notExtensionOwned("pg_opfamily", "f.oid")}
+       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_opclass c WHERE c.opcfamily = f.oid AND c.opcname = f.opfname AND c.opcnamespace = f.opfnamespace)
+     ORDER BY n.nspname ${C}, f.opfname ${C}, am.amname ${C}`,
+    s.params,
+  );
+  for (const r of families) {
+    const q = qname(String(r.schema), String(r.name));
+    const method = String(r.method);
+    const loose = Number(r.loose ?? 0);
+    out.push({
+      type: POSTGRES_ENTITY_TYPES.operatorFamily,
+      schema: String(r.schema),
+      name: String(r.name),
+      oid: String(r.oid),
+      signature: ` USING ${method}`,
+      ...withComment(r),
+      ...dependents(r),
+      ...(loose > 0 ? { warnings: [`${loose} loose member${loose === 1 ? "" : "s"} added with ALTER OPERATOR FAMILY ... ADD ${loose === 1 ? "is" : "are"} left out; a declaration holds the family and its classes' members`] } : {}),
+      statement: [`CREATE OPERATOR FAMILY ${q} USING ${method}`, ...commentOn(`OPERATOR FAMILY ${q} USING ${method}`, r.comment)].join(";\n"),
+    });
+  }
+  return out;
+}
+
+/**
+ * A dictionary's `dictinitoption`, which the server prints as
+ * `name = 'value', ...` (a quote and a backslash doubled in the value), as a
+ * list of name and value; undefined when the text is not that form.
+ */
+export function parseDictionaryOptions(init: string | undefined): Array<[string, string]> | undefined {
+  if (init === undefined || init.trim() === "") return [];
+  const out: Array<[string, string]> = [];
+  const item = /\s*("(?:[^"]|"")+"|[^\s=,]+)\s*=\s*'((?:[^']|'')*)'\s*(?:,|$)/y;
+  let at = 0;
+  while (at < init.length) {
+    item.lastIndex = at;
+    const m = item.exec(init);
+    if (!m) return undefined;
+    const name = m[1]!.startsWith('"') ? m[1]!.slice(1, -1).replace(/""/g, '"') : m[1]!;
+    out.push([name, m[2]!.replace(/''/g, "'").replace(/\\\\/g, "\\")]);
+    at = item.lastIndex;
+  }
+  return out;
+}
+
+/** Text search dictionaries and configurations; a configuration's mappings are the ALTER ... ADD MAPPING statements after its CREATE. */
+async function readTextSearch(client: PostgresClient, scope: SchemaScope): Promise<LivePgObject[]> {
+  const out: LivePgObject[] = [];
+  const s = scopeSql("n.nspname", scope);
+  const dictionaries = await client.query<Row>(
+    `SELECT d.oid::text AS oid, n.nspname AS schema, d.dictname AS name, d.dictinitoption AS init,
+            (SELECT ${refName("tn.nspname", "t.tmplname")} FROM pg_catalog.pg_ts_template t JOIN pg_catalog.pg_namespace tn ON tn.oid = t.tmplnamespace WHERE t.oid = d.dicttemplate) AS template,
+            pg_catalog.obj_description(d.oid, 'pg_ts_dict') AS comment, ${dependentsOf("pg_ts_dict", "d.oid")} AS dependents
+     FROM pg_catalog.pg_ts_dict d JOIN pg_catalog.pg_namespace n ON n.oid = d.dictnamespace
+     WHERE ${s.sql} AND d.oid >= 16384 AND ${notExtensionOwned("pg_ts_dict", "d.oid")}
+     ORDER BY n.nspname ${C}, d.dictname ${C}`,
+    s.params,
+  );
+  for (const r of dictionaries) {
+    const q = qname(String(r.schema), String(r.name));
+    const options = parseDictionaryOptions(str(r.init));
+    out.push({
+      type: POSTGRES_ENTITY_TYPES.textSearchDictionary,
+      schema: String(r.schema),
+      name: String(r.name),
+      oid: String(r.oid),
+      ...withComment(r),
+      ...dependents(r),
+      ...(options === undefined ? { unsupported: `its options (${str(r.init)}) are not in the form the server writes them` } : {}),
+      statement: [
+        `CREATE TEXT SEARCH DICTIONARY ${q} (${["TEMPLATE = " + r.template, ...(options ?? []).map(([k, v]) => `${quoteIdent(k)} = ${literal(v)}`)].join(", ")})`,
+        ...commentOn(`TEXT SEARCH DICTIONARY ${q}`, r.comment),
+      ].join(";\n"),
+    });
+  }
+
+  const configurations = await client.query<Row>(
+    `SELECT c.oid::text AS oid, n.nspname AS schema, c.cfgname AS name,
+            (SELECT ${refName("pn.nspname", "p.prsname")} FROM pg_catalog.pg_ts_parser p JOIN pg_catalog.pg_namespace pn ON pn.oid = p.prsnamespace WHERE p.oid = c.cfgparser) AS parser,
+            ARRAY(SELECT tt.alias || E'\\t' || pg_catalog.string_agg((SELECT ${refName("dn.nspname", "d.dictname")} FROM pg_catalog.pg_ts_dict d JOIN pg_catalog.pg_namespace dn ON dn.oid = d.dictnamespace WHERE d.oid = m.mapdict), ', ' ORDER BY m.mapseqno)
+                  FROM pg_catalog.pg_ts_config_map m, pg_catalog.ts_token_type(c.cfgparser) tt WHERE m.mapcfg = c.oid AND tt.tokid = m.maptokentype
+                  GROUP BY tt.tokid, tt.alias ORDER BY tt.tokid) AS mappings,
+            pg_catalog.obj_description(c.oid, 'pg_ts_config') AS comment, ${dependentsOf("pg_ts_config", "c.oid")} AS dependents
+     FROM pg_catalog.pg_ts_config c JOIN pg_catalog.pg_namespace n ON n.oid = c.cfgnamespace
+     WHERE ${s.sql} AND c.oid >= 16384 AND ${notExtensionOwned("pg_ts_config", "c.oid")}
+     ORDER BY n.nspname ${C}, c.cfgname ${C}`,
+    s.params,
+  );
+  for (const r of configurations) {
+    const q = qname(String(r.schema), String(r.name));
+    // Token types that share their dictionaries share an ADD MAPPING, in the parser's token order.
+    const groups = new Map<string, string[]>();
+    for (const line of (r.mappings as string[] | null) ?? []) {
+      const [token, dictionaries] = line.split("\t") as [string, string];
+      groups.set(dictionaries, [...(groups.get(dictionaries) ?? []), quoteIdent(token)]);
+    }
+    out.push({
+      type: POSTGRES_ENTITY_TYPES.textSearchConfiguration,
+      schema: String(r.schema),
+      name: String(r.name),
+      oid: String(r.oid),
+      ...withComment(r),
+      ...dependents(r),
+      statement: [
+        `CREATE TEXT SEARCH CONFIGURATION ${q} (PARSER = ${r.parser})`,
+        ...[...groups].map(([dicts, tokens]) => `ALTER TEXT SEARCH CONFIGURATION ${q} ADD MAPPING FOR ${tokens.join(", ")} WITH ${dicts}`),
+        ...commentOn(`TEXT SEARCH CONFIGURATION ${q}`, r.comment),
+      ].join(";\n"),
+    });
+  }
+  return out;
+}
+
+/**
+ * Foreign tables: their columns (type, collation, default, NOT NULL and
+ * OPTIONS), CHECK constraints, server and OPTIONS. One that is a partition,
+ * inherits or has a generated column is read as unsupported, since a
+ * declaration does not hold those. An option that holds a credential is left
+ * out and said so.
+ */
+async function readForeignTables(client: PostgresClient, scope: SchemaScope): Promise<LivePgObject[]> {
+  const s = scopeSql("n.nspname", scope);
+  const tables = await client.query<Row>(
+    `SELECT c.oid::text AS oid, n.nspname AS schema, c.relname AS name, c.relispartition AS ispartition,
+            EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid) AS inherits,
+            fs.srvname AS server, ft.ftoptions AS options,
+            pg_catalog.obj_description(c.oid, 'pg_class') AS comment, ${dependentsOf("pg_class", "c.oid")} AS dependents
+     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     JOIN pg_catalog.pg_foreign_table ft ON ft.ftrelid = c.oid JOIN pg_catalog.pg_foreign_server fs ON fs.oid = ft.ftserver
+     WHERE c.relkind = 'f' AND ${s.sql} AND ${notExtensionOwned("pg_class", "c.oid")}
+     ORDER BY n.nspname ${C}, c.relname ${C}`,
+    s.params,
+  );
+  if (tables.length === 0) return [];
+  const oids = tables.map((t) => String(t.oid));
+  const columns = await client.query<Row>(
+    `SELECT a.attrelid::text AS rel, a.attname AS name, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS notnull,
+            a.attgenerated::text AS generated, pg_catalog.pg_get_expr(d.adbin, d.adrelid, true) AS dflt,
+            CASE WHEN a.attcollation <> 0 AND a.attcollation <> t.typcollation THEN ${collationName("a.attcollation")} END AS collation,
+            a.attfdwoptions AS options, pg_catalog.col_description(a.attrelid, a.attnum) AS comment
+     FROM pg_catalog.pg_attribute AS a JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+     LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+     WHERE a.attrelid = ANY($1::oid[]) AND a.attnum > 0 AND NOT a.attisdropped
+     ORDER BY a.attrelid, a.attnum`,
+    [oids],
+  );
+  const checks = await client.query<Row>(
+    `SELECT k.conrelid::text AS rel, k.conname AS name, pg_catalog.pg_get_constraintdef(k.oid, true) AS def, pg_catalog.obj_description(k.oid, 'pg_constraint') AS comment
+     FROM pg_catalog.pg_constraint k
+     WHERE k.conrelid = ANY($1::oid[]) AND k.contype = 'c' AND k.conislocal
+     ORDER BY k.conrelid, k.conname ${C}`,
+    [oids],
+  );
+  return tables.map((t): LivePgObject => {
+    const rel = String(t.oid);
+    const q = qname(String(t.schema), String(t.name));
+    const omitted: string[] = [];
+    const lines: string[] = [];
+    const commentLines: string[] = [];
+    let generated = false;
+    for (const c of columns.filter((x) => String(x.rel) === rel)) {
+      const parts = [quoteIdent(String(c.name)), String(c.type)];
+      const opts = optionsOf(c.options);
+      omitted.push(...opts.omitted);
+      if (opts.clause) parts.push(opts.clause.trim());
+      if (str(c.collation)) parts.push(`COLLATE ${c.collation}`);
+      if (str(c.generated)) generated = true;
+      else if (str(c.dflt)) parts.push(`DEFAULT ${c.dflt}`);
+      if (c.notnull === true) parts.push("NOT NULL");
+      lines.push(parts.join(" "));
+      commentLines.push(...commentOn(`COLUMN ${q}.${quoteIdent(String(c.name))}`, c.comment));
+    }
+    for (const k of checks.filter((x) => String(x.rel) === rel)) {
+      lines.push(`CONSTRAINT ${quoteIdent(String(k.name))} ${k.def}`);
+      commentLines.push(...commentOn(`CONSTRAINT ${quoteIdent(String(k.name))} ON ${q}`, k.comment));
+    }
+    const { clause, omitted: tableOmitted } = optionsOf(t.options);
+    omitted.push(...tableOmitted);
+    const unsupported =
+      t.ispartition === true ? "it is a partition of another table (CREATE FOREIGN TABLE ... PARTITION OF is not declared)" : t.inherits === true ? "it inherits from another table (INHERITS is not declared on a foreign table)" : generated ? "it has a generated column (not declared on a foreign table)" : undefined;
+    return {
+      type: POSTGRES_ENTITY_TYPES.foreignTable,
+      schema: String(t.schema),
+      name: String(t.name),
+      oid: rel,
+      ...withComment(t),
+      ...dependents(t),
+      ...omittedWarning(omitted),
+      ...(unsupported ? { unsupported } : {}),
+      statement: [
+        `CREATE FOREIGN TABLE ${q} (${lines.length > 0 ? `\n    ${lines.join(",\n    ")}\n` : ""}) SERVER ${quoteIdent(String(t.server))}${clause}`,
+        ...commentOn(`FOREIGN TABLE ${q}`, t.comment),
+        ...commentLines,
+      ].join(";\n"),
+    };
+  });
 }

@@ -474,6 +474,8 @@ export type OpClassResolution = { ok: true } | { ok: false; miss: Miss; otherMet
 /** An operator class for `method` at the target major. */
 export function resolveOpClass(p: PgProject, method: string, opclass: { schema?: string; name: string }): OpClassResolution {
   if (opclass.schema !== undefined && outsideProject(p, opclass.schema)) return { ok: true };
+  // A class the project declares (an `operatorClass` tag), for this method.
+  if (p.objects.some((o) => o.type === "Postgres::OperatorClass" && o.name === opclass.name && o.method === method && (opclass.schema === undefined || o.schema === opclass.schema))) return { ok: true };
   const classes = OPERATOR_CLASSES as Readonly<Record<string, Readonly<Record<string, Presence>>>>;
   if (presentAt(classes[method]?.[opclass.name], p.major)) return { ok: true };
   const ext = extensionFor(p, (e) => e.opclasses?.[method]?.includes(opclass.name) ?? false);

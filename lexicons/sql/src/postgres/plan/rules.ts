@@ -360,15 +360,15 @@ export const PG_CLASSIFIER_RULES = {
   SQLPG300: rule(
     "SQLPG300",
     "metadata",
-    "Drop and create a type, aggregate, collation, cast, event trigger, operator, statistics object, foreign server or publication",
-    "A composite or range type's definition, a collation's, a cast's, an event trigger's, an operator's function and operands and extended statistics' have no ALTER, an aggregate's argument types, state type and final function cannot be replaced, and neither can a foreign server's type or wrapper or a publication's FOR ALL TABLES: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, a function or a cast would make the DROP fail); the locks are on its catalog rows only. Dropped statistics are empty until the next ANALYZE, and a publication that is dropped stops its subscribers until it is created again.",
+    "Drop and create a type, aggregate, collation, cast, event trigger, operator, operator class or family, foreign table's server, text search object, statistics object, foreign server or publication",
+    "A composite or range type's definition, a collation's, a cast's, an event trigger's, an operator's function and operands, and any attribute of it that SQLPG304 does not alter, an operator class's members, type, family and default flag, an operator family's index method, and extended statistics' have no ALTER (ALTER OPERATOR CLASS and ALTER OPERATOR FAMILY change a name, an owner or a schema only), an aggregate's argument types, state type and final function cannot be replaced, and neither can a foreign server's type or wrapper, a foreign table's server, a text search configuration's parser, a text search dictionary's template or a publication's FOR ALL TABLES: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, an index, a function or a cast would make the DROP fail); the locks are on its catalog rows only. Dropped statistics are empty until the next ANALYZE, and a publication that is dropped stops its subscribers until it is created again.",
     `${DOCS}/sql-createtype.html`,
   ),
   SQLPG301: rule(
     "SQLPG301",
     "expand",
-    "Change a type, aggregate, collation, cast, foreign server or publication that other objects depend on",
-    "No ALTER makes the change, and DROP refuses while a column, a view, a function or another object depends on the object. Create the new definition under another name, move what depends on it, then drop the old.",
+    "Change a type, aggregate, collation, cast, operator, operator class, text search object, foreign table's server, foreign server or publication that other objects depend on",
+    "No ALTER makes the change, and DROP refuses while a column, a view, an index, a function or another object depends on the object. Create the new definition under another name, move what depends on it, then drop the old.",
     `${DOCS}/sql-droptype.html`,
   ),
   SQLPG302: rule(
@@ -384,6 +384,27 @@ export const PG_CLASSIFIER_RULES = {
     "Alter a foreign data wrapper, foreign server or publication in place",
     "ALTER FOREIGN DATA WRAPPER (handler, validator, options), ALTER SERVER (version, options) and ALTER PUBLICATION (SET options, ADD and DROP TABLE and TABLES IN SCHEMA) change the object's catalog rows under a brief lock; no table is rewritten. A publication's change reaches its subscribers as the walsender next reads it: a table added is not copied to a subscription until the subscriber runs REFRESH PUBLICATION.",
     `${DOCS}/sql-alterpublication.html`,
+  ),
+  SQLPG304: rule(
+    "SQLPG304",
+    "metadata",
+    "Alter an operator in place",
+    "ALTER OPERATOR ... SET changes the operator's catalog row under a brief lock; no index or table is read. RESTRICT and JOIN can be set or removed (NONE) on every supported major. From 17, COMMUTATOR and NEGATOR can be set when the operator has none, and HASHES and MERGES turned on, never off (the Postgres 18 page: \"Can only be changed if the operator does not have an existing commutator\", \"Can only be enabled and not disabled\"); setting a commutator or negator also sets the other operator's. On 14 to 16 only RESTRICT and JOIN are alterable, so any other change drops and creates the operator (SQLPG300), as does a change of function or operands on any major.",
+    `${DOCS}/sql-alteroperator.html`,
+  ),
+  SQLPG305: rule(
+    "SQLPG305",
+    "metadata",
+    "Alter a text search configuration's mappings or a dictionary's options in place",
+    "ALTER TEXT SEARCH CONFIGURATION ADD MAPPING, ALTER MAPPING and DROP MAPPING change the token types mapped to dictionaries; ALTER TEXT SEARCH DICTIONARY sets a template's options, and an option named with no value is removed. Both change catalog rows under a brief lock and leave the parser or template as it is, so a parser or template change is dropped and created (SQLPG300). A tsvector already stored keeps the tokens it was built with: rebuild the columns and indexes that hold one when the mappings or options change what a word becomes. The same applies on 14 to 18.",
+    `${DOCS}/sql-altertsconfig.html`,
+  ),
+  SQLPG306: rule(
+    "SQLPG306",
+    "metadata",
+    "Alter a foreign table in place",
+    "ALTER FOREIGN TABLE adds and drops columns, changes a column's type, default, NOT NULL and OPTIONS, adds and drops CHECK and NOT NULL constraints, and sets the table's OPTIONS, all in the catalog. Nothing is checked against the remote side and no row is rewritten or scanned (\"It is the user's responsibility to ensure that the table definition matches the remote side\"), so a CHECK is added with no validation pass. A foreign table's server cannot be altered, so a change of server is dropped and created (SQLPG300).",
+    `${DOCS}/sql-alterforeigntable.html`,
   ),
   SQLPG270: rule("SQLPG270", "drop", "Drop an object", "The object and, for a table, a materialized view or a sequence, its data are gone.", `${DOCS}/sql-droptable.html`),
 } as const satisfies Record<string, PgClassifierRule>;

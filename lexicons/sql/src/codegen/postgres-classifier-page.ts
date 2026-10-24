@@ -65,14 +65,14 @@ A column rename or a type change across kinds is never DDL: it is a step naming 
 
 ## Which major
 
-Two rules change class across the supported majors: a STORED generated column's expression (SQLPG212) is a rewrite from 17 and expand and contract before it, and a table's access method (SQLPG226) is a rewrite from 15 and expand and contract before it.
+Three rules change class across the supported majors: a STORED generated column's expression (SQLPG212) is a rewrite from 17 and expand and contract before it, a table's access method (SQLPG226) is a rewrite from 15 and expand and contract before it, and an operator's commutator, negator, HASHES and MERGES (SQLPG304) are altered in place from 17 and dropped and created before it.
 
 - \`chant sql diff\` classifies for the major the builds recorded (\`postgresMajor\` in the build output): the newer build's, else the older build's, else \`sql.postgresMajor\`, else 18. A diff between two revisions does not depend on today's config.
 - \`chant sql plan\` classifies for the major the server runs (\`server_version_num\`), since the server is what takes the locks. When the build targets another major, the plan says so in a hint.
 
 ## Identity and renames
 
-An object is identified by its export name between two builds, and by its schema-qualified name against a server, which has no export names. Tables, views, materialized views, sequences and indexes share one namespace per schema, types and domains another, and schemas and extensions are matched by name. Functions, procedures and aggregates share a namespace of their own and are told apart by their input parameter types, so an overload is another object; composite and range types share the types' namespace, collations have one of their own, extended statistics another, an operator by its symbol and operand types, a cast by its two types and an event trigger, a foreign data wrapper, a foreign server and a publication by their names in the database; a trigger is matched by its name on its table.
+An object is identified by its export name between two builds, and by its schema-qualified name against a server, which has no export names. Tables, foreign tables, views, materialized views, sequences and indexes share one namespace per schema, types and domains another, and schemas and extensions are matched by name. Functions, procedures and aggregates share a namespace of their own and are told apart by their input parameter types, so an overload is another object; composite and range types share the types' namespace, collations have one of their own, extended statistics another, an operator by its symbol and operand types, an operator class and an operator family each by its name and index method, text search configurations one namespace and dictionaries another, a cast by its two types and an event trigger, a foreign data wrapper, a foreign server and a publication by their names in the database; a trigger is matched by its name on its table.
 
 A rename is declared where it happens. Before a CREATE, \`-- previously: <old name>\` says the object had another name; on a column's line, it says the column did:
 

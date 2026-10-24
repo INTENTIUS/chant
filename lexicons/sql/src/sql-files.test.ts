@@ -42,6 +42,39 @@ describe("reading a file of Postgres DDL", () => {
     );
   });
 
+  test("a foreign table, an operator class and a text search configuration with its mappings and comments are each one object (#4406)", () => {
+    const ddl = [
+      "CREATE FOREIGN TABLE app.remote_orders (id int NOT NULL) SERVER replica OPTIONS (table_name 'orders');",
+      "COMMENT ON FOREIGN TABLE app.remote_orders IS 'Orders';",
+      "CREATE OPERATOR CLASS app.int_hash_ops FOR TYPE int USING hash AS OPERATOR 1 =, FUNCTION 1 hashint4(int);",
+      "CREATE OPERATOR FAMILY app.int_hash_ops USING btree;",
+      "COMMENT ON OPERATOR CLASS app.int_hash_ops USING hash IS 'Hash';",
+      "CREATE TEXT SEARCH DICTIONARY app.shop_stop (TEMPLATE = simple, StopWords = english);",
+      "CREATE TEXT SEARCH CONFIGURATION app.shop (PARSER = pg_catalog.default);",
+      "CREATE TEXT SEARCH CONFIGURATION app.shop2 (PARSER = pg_catalog.default);",
+      "ALTER TEXT SEARCH CONFIGURATION app.shop ADD MAPPING FOR word WITH app.shop_stop;",
+      "COMMENT ON TEXT SEARCH CONFIGURATION app.shop2 IS 'Second';",
+    ].join("\n");
+    const objects = readSqlFile("postgres", ddl, { origin: "schema.sql" });
+    expect(objects.map((o) => [o.export, o.type, o.name])).toEqual([
+      ["remoteOrders", "Postgres::ForeignTable", "app.remote_orders"],
+      ["appIntHashOps", "Postgres::OperatorClass", "app.int_hash_ops"],
+      ["appIntHashOps2", "Postgres::OperatorFamily", "app.int_hash_ops"],
+      ["shopStop", "Postgres::TextSearchDictionary", "app.shop_stop"],
+      ["shop", "Postgres::TextSearchConfiguration", "app.shop"],
+      ["shop2", "Postgres::TextSearchConfiguration", "app.shop2"],
+    ]);
+    expect(objects[0]!.ddl).toContain("COMMENT ON FOREIGN TABLE app.remote_orders IS 'Orders'");
+    // A class and a family of one name and two methods are two objects, and each takes only its own comment.
+    expect(objects[1]!.ddl).toContain("COMMENT ON OPERATOR CLASS app.int_hash_ops USING hash IS 'Hash'");
+    expect(objects[2]!.ddl).not.toContain("COMMENT");
+    expect(objects[4]!.ddl).toContain("ADD MAPPING FOR word WITH app.shop_stop");
+    expect(objects[5]!.ddl).toContain("COMMENT ON TEXT SEARCH CONFIGURATION app.shop2 IS 'Second'");
+    expect(objects[5]!.ddl).not.toContain("ADD MAPPING");
+    // A mapping for a configuration the file does not create is named.
+    expect(() => readSqlFile("postgres", "ALTER TEXT SEARCH CONFIGURATION app.x ADD MAPPING FOR word WITH simple;", { origin: "x.sql" })).toThrow(/ALTER TEXT SEARCH CONFIGURATION \.\.\. ADD MAPPING for an object the file does not create/);
+  });
+
   test("a statement that declares nothing or does not parse is an error naming it, and every one is named", () => {
     const read = () => readSqlFile("postgres", "CREATE TABLE a (id int);\nINSERT INTO a VALUES (1);\nCREATE TABLE b (id int,);\nCOMMENT ON TABLE c IS 'x';", { origin: "db/schema.sql" });
     expect(read).toThrow(SqlFileError);

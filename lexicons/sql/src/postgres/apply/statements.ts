@@ -34,7 +34,7 @@ import { ACCESS_KINDS, canonicalOptions, sameConstraint, type CanonicalConstrain
 import type { PgDiffObject, PgSchemaObject } from "../plan/schema";
 import { migrationTarget } from "../migrate/handoff";
 import { pgName } from "../migrate/names";
-import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, IndexProps, KeyDef, PolicyProps, SequenceProps, TableProps } from "../entities";
+import type { CheckDef, ColumnDef, DomainProps, ForeignTableProps, TextSearchConfigurationProps, ExclusionDef, ForeignKeyDef, IndexProps, KeyDef, PolicyProps, SequenceProps, TableProps } from "../entities";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -136,6 +136,11 @@ export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
   cast: "CAST",
   eventTrigger: "EVENT TRIGGER",
   operator: "OPERATOR",
+  operatorClass: "OPERATOR CLASS",
+  operatorFamily: "OPERATOR FAMILY",
+  foreignTable: "FOREIGN TABLE",
+  textSearchConfiguration: "TEXT SEARCH CONFIGURATION",
+  textSearchDictionary: "TEXT SEARCH DICTIONARY",
   statistics: "STATISTICS",
   foreignDataWrapper: "FOREIGN DATA WRAPPER",
   foreignServer: "SERVER",
@@ -322,7 +327,7 @@ function identitySetClauses(options: string | undefined): string[] {
   return out;
 }
 
-const COLUMN_FIELD = /^columns\.(.+?)(?:\.(type|default|notNull|generated|identity|collate|storage|comment))?$/;
+const COLUMN_FIELD = /^columns\.(.+?)(?:\.(type|default|notNull|generated|identity|collate|storage|options|comment))?$/;
 
 // ── Constraints ────────────────────────────────────────────────────────
 
@@ -632,6 +637,125 @@ function alteredSteps(d: PgDiffObject, live: PgDiffObject, target: string): PgSt
   return out.map((sql) => step(sql, "metadata", "SQLPG303"));
 }
 
+
+// ── Operators, text search and foreign tables (#4406) ──────────────────
+
+/**
+ * The clauses of `ALTER OPERATOR ... SET (...)` for the attributes the diff
+ * found changeable in place (SQLPG304): RESTRICT and JOIN to the declared
+ * estimator or NONE, COMMUTATOR and NEGATOR to the declared operator, and
+ * HASHES and MERGES as bare words, since they can only be turned on.
+ */
+function operatorSetClauses(d: PgDiffObject, changes: readonly PgChange[]): string[] {
+  const definition = (d.fields.definition ?? {}) as Record<string, string>;
+  return changes.map((c) => {
+    const key = c.field.replace(/^definition\./, "");
+    const value = definition[key];
+    if (key === "hashes" || key === "merges") return key.toUpperCase();
+    if (key === "commutator" || key === "negator") return `${key.toUpperCase()} = OPERATOR(${value})`;
+    return `${key.toUpperCase()} = ${value ?? "NONE"}`;
+  });
+}
+
+/**
+ * A text search configuration's mappings, or a dictionary's options, taken to
+ * the declaration in place (SQLPG305). For a configuration: DROP MAPPING for
+ * the token types no longer mapped, ALTER MAPPING for those whose dictionaries
+ * changed, ADD MAPPING for the new ones, one statement for the token types
+ * that share their dictionaries; the dictionaries are named as the
+ * declaration wrote them. For a dictionary: one ALTER with each option that
+ * differs set, and each option the declaration dropped named with no value,
+ * which removes it.
+ */
+function textSearchSteps(obj: DeclaredPgObject, live: PgDiffObject, target: string): PgStep[] {
+  const d = obj.canonical;
+  if (d.kind === "textSearchDictionary") {
+    const want = (d.fields.options ?? {}) as Record<string, string>;
+    const have = (live.fields.options ?? {}) as Record<string, string>;
+    const parts = [
+      ...Object.keys(want).filter((k) => have[k] !== want[k]).map((k) => `${quoteIdent(k)} = ${pgString(want[k]!)}`),
+      ...Object.keys(have).filter((k) => !(k in want)).map((k) => quoteIdent(k)),
+    ];
+    return parts.length > 0 ? [step(`ALTER TEXT SEARCH DICTIONARY ${target} (${parts.join(", ")})`, "metadata", "SQLPG305")] : [];
+  }
+  const want = (d.fields.mappings ?? {}) as Record<string, string[]>;
+  const have = (live.fields.mappings ?? {}) as Record<string, string[]>;
+  const written = new Map<string, string[]>();
+  for (const m of (obj.props as unknown as TextSearchConfigurationProps).mappings) for (const t of m.tokens) written.set(t.toLowerCase(), m.dictionaries);
+  const group = (tokens: string[]): Map<string, string[]> => {
+    const out = new Map<string, string[]>();
+    for (const t of tokens) {
+      const key = JSON.stringify(want[t]);
+      out.set(key, [...(out.get(key) ?? []), t]);
+    }
+    return out;
+  };
+  const dropped = Object.keys(have).filter((t) => !(t in want));
+  const added = Object.keys(want).filter((t) => !(t in have));
+  const changed = Object.keys(want).filter((t) => t in have && JSON.stringify(have[t]) !== JSON.stringify(want[t]));
+  const names = (tokens: string[]) => tokens.map(quoteIdent).join(", ");
+  const out: PgStep[] = [];
+  if (dropped.length > 0) out.push(step(`ALTER TEXT SEARCH CONFIGURATION ${target} DROP MAPPING FOR ${names(dropped)}`, "metadata", "SQLPG305"));
+  for (const [verb, tokens] of [["ALTER", changed], ["ADD", added]] as const) {
+    for (const members of group(tokens).values()) out.push(step(`ALTER TEXT SEARCH CONFIGURATION ${target} ${verb} MAPPING FOR ${names(members)} WITH ${written.get(members[0]!)!.join(", ")}`, "metadata", "SQLPG305"));
+  }
+  return out;
+}
+
+/**
+ * A foreign table's changes in place (SQLPG306), as ALTER FOREIGN TABLE
+ * makes them: ADD and DROP COLUMN, a column's type, default, NOT NULL and
+ * OPTIONS, CHECK constraints added and dropped, and the table's OPTIONS.
+ * A column added with options gets them in an ALTER of its own, since ADD
+ * COLUMN has no OPTIONS clause.
+ */
+function foreignTableSteps(c: PgChange, obj: DeclaredPgObject, live: PgDiffObject, alterKind: string): PgStep[] {
+  const d = obj.canonical;
+  const props = obj.props as unknown as ForeignTableProps;
+  const make = (sql: string) => step(sql, "metadata", "SQLPG306");
+  if (c.field === "options") {
+    const clause = optionsClause(d.fields.options, live.fields.options);
+    return clause ? [make(`${alterKind} ${clause}`)] : [];
+  }
+  if (c.field.startsWith("constraints.")) {
+    const key = c.field.slice("constraints.".length);
+    // A declared CHECK the server lacks is added; one it has and the declaration dropped is dropped by the server's name.
+    if (c.before === undefined) {
+      const i = d.constraints.findIndex((a) => (a.name ?? a.kind.toLowerCase()) === key && !live.constraints.some((b) => sameConstraint(a, b)));
+      return i >= 0 && props.checks[i] ? [make(`${alterKind} ADD ${constraintSql("CHECK", props.checks[i]!)}`)] : [];
+    }
+    return [make(`${alterKind} DROP CONSTRAINT ${quoteIdent(key)}`)];
+  }
+  const m = COLUMN_FIELD.exec(c.field);
+  if (!m) return [];
+  const name = m[1]!;
+  const prop = m[2];
+  const def = props.columns.find((x) => x.name === name);
+  const column = `${alterKind} ALTER COLUMN ${quoteIdent(name)}`;
+  const liveColumn = live.columns.find((x) => x.name === name);
+  if (prop === undefined) {
+    if (!def) return [make(`${alterKind} DROP COLUMN ${quoteIdent(name)}`)];
+    const options = optionsClause(def.options, undefined);
+    return [make(`${alterKind} ADD COLUMN ${columnDefinition(def)}`), ...(options ? [make(`${column} ${options}`)] : [])];
+  }
+  if (!def) return [];
+  switch (prop) {
+    case "type":
+    case "collate":
+      return def.type ? [make(`${column} TYPE ${def.type}${def.collate ? ` COLLATE ${def.collate}` : prop === "collate" ? ' COLLATE "default"' : ""}`)] : [];
+    case "default":
+      return [make(def.default !== undefined ? `${column} SET DEFAULT ${def.default}` : `${column} DROP DEFAULT`)];
+    case "notNull":
+      return [make(`${column} ${def.notNull ? "SET" : "DROP"} NOT NULL`)];
+    case "options": {
+      const clause = optionsClause(def.options, liveColumn?.options);
+      return clause ? [make(`${column} ${clause}`)] : [];
+    }
+    default:
+      return [];
+  }
+}
+
 /**
  * The statements for an object that exists on the server, change by change.
  * `live` is the server's definition, matched to the declaration (a renamed
@@ -667,13 +791,23 @@ export function alterSteps(
       steps.push(...createSteps(obj, opts.marker, { cls: c.class, rule: c.rule }));
       continue;
     }
+    if (c.rule === "SQLPG306") {
+      steps.push(...foreignTableSteps(c, obj, live, alterKind));
+      continue;
+    }
+    if (d.kind === "foreignTable" && c.rule === "SQLPG216" && /^constraints\.[^.]+\.comment$/.test(c.field)) {
+      const name = c.field.split(".")[1]!;
+      const declared = d.constraints.find((a) => (a.name ?? a.kind.toLowerCase()) === name);
+      steps.push(step(`COMMENT ON CONSTRAINT ${quoteIdent(name)} ON ${target} IS ${declared?.comment === undefined ? "NULL" : pgString(declared.comment)}`, c.class, c.rule));
+      continue;
+    }
     if (c.field.startsWith("constraints.")) {
       if (!constraintsDone) steps.push(...constraintSteps(obj, live, notNullChecks));
       constraintsDone = true;
       continue;
     }
     const col = COLUMN_FIELD.exec(c.field);
-    if (col && (d.kind === "table")) {
+    if (col && (d.kind === "table" || d.kind === "foreignTable")) {
       const name = col[1]!;
       const prop = col[2];
       const def = columns.get(name);
@@ -769,6 +903,12 @@ export function alterSteps(
         break;
       case "SQLPG303":
         if (!steps.some((s) => s.rule === "SQLPG303")) steps.push(...alteredSteps(d, live, target));
+        break;
+      case "SQLPG304":
+        if (!steps.some((s) => s.rule === "SQLPG304")) steps.push(step(`ALTER OPERATOR ${target} SET (${operatorSetClauses(d, changes.filter((x) => x.rule === "SQLPG304")).join(", ")})`, c.class, c.rule));
+        break;
+      case "SQLPG305":
+        if (!steps.some((s) => s.rule === "SQLPG305")) steps.push(...textSearchSteps(obj, live, target));
         break;
       case "SQLPG250":
       case "SQLPG280":
@@ -955,12 +1095,20 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   view: 2,
   index: 3,
   table: 4,
+  // A foreign table reads a foreign server (below) and a type; a view on it goes before.
+  foreignTable: 4,
   sequence: 5,
   // An event trigger and a cast before the function they call; an aggregate before its functions.
   eventTrigger: 5.5,
   cast: 5.5,
   aggregate: 5.5,
   operator: 5.5,
+  // A class names operators and functions; a family goes after its classes.
+  operatorClass: 5.2,
+  operatorFamily: 5.3,
+  // A configuration maps token types to dictionaries, so it goes first.
+  textSearchConfiguration: 5.7,
+  textSearchDictionary: 5.8,
   // A server before its wrapper, a wrapper before the handler function it calls.
   foreignServer: 5.5,
   foreignDataWrapper: 5.6,
