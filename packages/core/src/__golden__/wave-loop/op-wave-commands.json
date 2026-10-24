@@ -1503,6 +1503,22 @@
     "wave 2 (apps): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:528ae61c94cd24622aade0c3b2acbebe58dfa1789f13f71de15b9d5d7519f0d3: not-required"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "dns": {
+          "status": "waiting"
+        },
+        "nat": {
+          "status": "waiting"
+        },
+        "vpc": {
+          "status": "waiting"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "empty": true
@@ -1810,6 +1826,45 @@
           "outcome": "passed"
         }
       ]
+    },
+    "wide-outcomes/outcome-wave-2-share-1.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a1": {
+          "status": "applied"
+        },
+        "a2": {
+          "status": "applied"
+        }
+      }
+    },
+    "wide-outcomes/outcome-wave-2-share-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a3": {
+          "status": "applied"
+        }
+      }
+    },
+    "wide-outcomes/outcome-wave-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a1": {
+          "status": "decided"
+        },
+        "a2": {
+          "status": "decided"
+        },
+        "a3": {
+          "status": "decided"
+        }
+      }
     }
   }
 }

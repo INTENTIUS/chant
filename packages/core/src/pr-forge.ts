@@ -223,6 +223,20 @@ export interface PullRequest {
 }
 
 /** An open pull request as `chant ci serve` polls it (#4095). */
+/** A merge request's job in its newest pipeline at its head (#4328), as {@link PrForge.mergeRequestJobs} finds it. */
+export interface MergeRequestJob {
+  /** The merge request's iid. */
+  pr: number;
+  /** The merge request's head commit, as GitLab says it. */
+  head: string;
+  /** The job's id, which {@link PrForge.jobArtifact} reads its artifacts by. */
+  id: number;
+  /** GitLab's word for the job: `success`, `failed` and `canceled` are settled, any other is not. */
+  status: string;
+  /** The job's page. */
+  url?: string;
+}
+
 export interface OpenPullRequest {
   number: number;
   /** Its head branch. */
@@ -440,6 +454,17 @@ export interface PrForge {
    * Pending while one still runs or none has reported.
    */
   prChecksPassed?(pr: number, head: string, ignore?: readonly string[]): Promise<PrRequireResult>;
+  /**
+   * GitLab (#4328): each open merge request into `branch` whose newest
+   * pipeline at its head commit, in this project, ran a job named `job`,
+   * with that job. A merge request whose pipeline runs in a fork's project
+   * is left out, since its jobs and artifacts are the fork's. Oldest first.
+   */
+  mergeRequestJobs?(branch: string, job: string): Promise<MergeRequestJob[]>;
+  /** GitLab (#4328): the text of the file at `path` in job `id`'s artifacts, or undefined when it has none there. */
+  jobArtifact?(id: number, path: string): Promise<string | undefined>;
+  /** GitLab (#4328): the target URL of the newest commit status named `context` on `sha`, or undefined when there is none or it has no URL. */
+  statusUrl?(sha: string, context: string): Promise<string | undefined>;
 }
 
 /**
@@ -596,6 +621,8 @@ export function forgePrincipalOf(kind: ForgeKind, host: string, login: string): 
 
 interface Transport {
   call(method: string, path: string, body?: unknown): Promise<unknown>;
+  /** A GET whose body is returned as text, not parsed; undefined on a 404. */
+  text(path: string): Promise<string | undefined>;
   /** Every page of a list, `pageParams(page)` appended to `path`. */
   list(path: string, pageParams: (page: number) => string, pageSize: number): Promise<unknown[]>;
 }
@@ -615,6 +642,14 @@ function transport(base: string, headers: Record<string, string>, fetchImpl: For
   };
   return {
     call,
+    async text(path) {
+      const url = `${root}${path}`;
+      const res = await fetchImpl(url, { method: "GET", headers });
+      const body = await res.text();
+      if (res.status === 404) return undefined;
+      if (!res.ok) throw new ForgeApiError("GET", url, res.status, body);
+      return body;
+    },
     async list(path, pageParams, pageSize) {
       const out: unknown[] = [];
       for (let page = 1; page <= 50; page++) {
@@ -1413,6 +1448,39 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       const pipelines = await Promise.all(ids.map((id) => api.call("GET", `${project}/pipelines/${id}`)));
       const last = newestTime(pipelines.map((p) => (isObject(p) ? str(p.created_at) : undefined)));
       return { ...(last ? { last } : {}), ...(ours.length === 0 ? { noSchedule: true } : {}) };
+    },
+    async mergeRequestJobs(branch, job) {
+      const out: MergeRequestJob[] = [];
+      const open = await api.list(`${notes}?state=opened&target_branch=${encodeURIComponent(branch)}`, pageParams, 100);
+      for (const m of open) {
+        if (!isObject(m)) continue;
+        const iid = num(m.iid);
+        const head = str(m.sha);
+        const own = num(m.project_id);
+        if (iid === undefined || !head) continue;
+        // Newest first; only this project's pipelines at the head count.
+        const pipelines = (await api.list(`${notes}/${iid}/pipelines`, pageParams, 100))
+          .filter((p): p is Record<string, unknown> => isObject(p) && p.sha === head && (own === undefined || num(p.project_id) === undefined || num(p.project_id) === own))
+          .sort((a, b) => (num(b.id) ?? 0) - (num(a.id) ?? 0));
+        const newest = pipelines[0];
+        const pid = newest ? num(newest.id) : undefined;
+        if (pid === undefined) continue;
+        const jobs = await api.list(`${project}/pipelines/${pid}/jobs`, pageParams, 100);
+        const found = jobs.filter((j): j is Record<string, unknown> => isObject(j) && j.name === job).sort((a, b) => (num(b.id) ?? 0) - (num(a.id) ?? 0))[0];
+        const id = found ? num(found.id) : undefined;
+        if (!found || id === undefined) continue;
+        const url = str(found.web_url);
+        out.push({ pr: iid, head, id, status: str(found.status) ?? "unknown", ...(url ? { url } : {}) });
+      }
+      return out.sort((a, b) => a.pr - b.pr);
+    },
+    async jobArtifact(id, path) {
+      return api.text(`${project}/jobs/${id}/artifacts/${path.split("/").map(encodeURIComponent).join("/")}`);
+    },
+    async statusUrl(sha, context) {
+      const statuses = await api.list(`${project}/repository/commits/${sha}/statuses?all=true&name=${encodeURIComponent(context)}`, pageParams, 100);
+      const newest = statuses.filter((st): st is Record<string, unknown> => isObject(st) && st.name === context).sort((a, b) => (num(b.id) ?? 0) - (num(a.id) ?? 0))[0];
+      return newest ? (str(newest.target_url) ?? undefined) : undefined;
     },
     async editPullRequest(mr, change) {
       return mergeRequest(await api.call("PUT", `${notes}/${mr}`, { ...(change.title !== undefined ? { title: change.title } : {}), ...(change.body !== undefined ? { description: change.body } : {}) }));

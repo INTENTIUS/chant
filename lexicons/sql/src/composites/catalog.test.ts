@@ -24,11 +24,13 @@ describe("the sql composite catalog", () => {
       "CdcMirror",
       "EventsTable",
       "JoinTable",
+      "OtelTables",
       "RefreshedView",
       "ReplacingTable",
       "RollupView",
       "ShardedTable",
       "SoftDeleteTable",
+      "StreamIngest",
       "TenantTable",
     ]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- sql`").toEqual(exported);
@@ -47,11 +49,14 @@ describe("the sql composite catalog", () => {
       ReplacingTable: ["ClickHouseTable"],
       RollupView: ["ClickHouseTable", "ClickHouseView"],
       ShardedTable: ["ClickHouseTable"],
+      OtelTables: ["ClickHouseTable", "ClickHouseView"],
+      StreamIngest: ["ClickHouseTable", "ClickHouseView"],
     });
     for (const entry of compositeCatalog) {
       expect(entry.lexicon, entry.name).toBe("sql");
       expect(entry.description.length, entry.name).toBeGreaterThan(0);
-      expect(entry.params.find((p) => p.name === "name")?.required, entry.name).toBe(true);
+      // OtelTables declares a fixed set of tables, so it takes no name.
+      if (entry.name !== "OtelTables") expect(entry.params.find((p) => p.name === "name")?.required, entry.name).toBe(true);
     }
   });
 

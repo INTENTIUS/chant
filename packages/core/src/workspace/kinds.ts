@@ -35,7 +35,9 @@ export const KINDS_SUBPATH = "./workspace-kinds";
 /**
  * The probe a package's kind carries (#2535, #2545). It passes when any of
  * its clauses does. A name in either clause may use `*`, which matches any
- * run of characters in one file name, so `*.tf` is every Terraform file.
+ * run of characters in one file name, so `*.tf` is every Terraform file, and
+ * `[0-9]` matches one digit (#4400), so `[0-9]*_*.sql` is a file that opens
+ * with a version number.
  */
 export interface FileProbe {
   /** A file matching one of these names sits directly in the directory. */
@@ -54,6 +56,13 @@ export interface FileProbe {
    * without claiming every Node package (#3151).
    */
   anyJsonKey?: { in: string[]; pointers: string[] };
+  /**
+   * A file directly in the directory whose name matches one of `in` has a
+   * line that starts, after leading space and ignoring case, with one of
+   * `starts` (#4400). This is how a goose directory is told from any other
+   * directory of `.sql` files: its files carry `-- +goose Up`.
+   */
+  anyLine?: { in: string[]; starts: string[] };
 }
 
 /** A string, integer or boolean field a kind declares for its members (#3151). */
@@ -169,7 +178,7 @@ export type MemberFileValidate = ((data: unknown) => boolean) & { errors?: { ins
  * stays data, and chant never imports the package that supplies it. Closed:
  * a kind naming another reader is kept without one, and the load reports it.
  */
-export const KIND_LINK_READERS = ["dbt-project"] as const;
+export const KIND_LINK_READERS = ["dbt-project", "goose-dir", "golang-migrate-dir", "clickhouse-migrations-dir", "flyway-dir"] as const;
 export type KindLinkReaderName = (typeof KIND_LINK_READERS)[number];
 
 export interface KindRegistry {
@@ -271,7 +280,7 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
   if ("directory" in kind.probe) return true;
   if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
   if ("repo" in kind.probe) return true;
-  const { anyFile, anyBlock, anyJsonKey } = kind.probe;
+  const { anyFile, anyBlock, anyJsonKey, anyLine } = kind.probe;
   if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
   if (anyJsonKey) {
     for (const file of filesMatching(tree, dir, anyJsonKey.in)) {
@@ -280,6 +289,16 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
         if (anyJsonKey.pointers.some((p) => atPointer(json, p) !== undefined)) return true;
       } catch {
         // A file that isn't JSON is no evidence either way.
+      }
+    }
+  }
+  if (anyLine) {
+    const starts = anyLine.starts.map((t) => t.toLowerCase());
+    for (const file of filesMatching(tree, dir, anyLine.in)) {
+      try {
+        if (tree.read(file).split(/\r?\n/).some((l) => starts.some((t) => l.trimStart().toLowerCase().startsWith(t)))) return true;
+      } catch {
+        // An unreadable file is no evidence either way.
       }
     }
   }
@@ -313,7 +332,7 @@ function filesMatching(tree: WorkspaceTree, dir: string, names: readonly string[
     if (!name.includes("*") && tree.stat(joinPath(dir, name)) === "file") out.push(joinPath(dir, name));
   }
   if (globs.length > 0) {
-    const patterns = globs.map((g) => new RegExp(`^${g.split("*").map(escapeRegExp).join("[^/]*")}$`));
+    const patterns = globs.map((g) => new RegExp(`^${g.split("*").map((part) => escapeRegExp(part).replace(/\\\[0-9\\\]/g, "[0-9]")).join("[^/]*")}$`));
     for (const e of tree.list(dir) ?? []) {
       if (e.type === "file" && patterns.some((p) => p.test(e.name))) out.push(joinPath(dir, e.name));
     }
@@ -456,6 +475,7 @@ export function parseKindData(text: string, source: string): KindData {
         ...(k.probe.anyFile ? { anyFile: [...k.probe.anyFile] } : {}),
         ...(k.probe.anyBlock ? { anyBlock: { in: [...k.probe.anyBlock.in], blocks: [...k.probe.anyBlock.blocks] } } : {}),
         ...(k.probe.anyJsonKey ? { anyJsonKey: { in: [...k.probe.anyJsonKey.in], pointers: [...k.probe.anyJsonKey.pointers] } } : {}),
+        ...(k.probe.anyLine ? { anyLine: { in: [...k.probe.anyLine.in], starts: [...k.probe.anyLine.starts] } } : {}),
       },
       precedence: k.precedence,
       shape: "member",

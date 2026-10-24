@@ -14,7 +14,7 @@ prompt: |
 ---
 
 `clickhouseApply` makes the ClickHouse server an environment is bound to hold what a `chant build` declares. `ApplyOp` runs it for `target: "clickhouse"`, and a hand-written Op can call it as a step.
-=== It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
+=== It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only, background-rewrite and replace classes, and nothing for a rebuild.
 
 ## Apply with ApplyOp
 
@@ -54,6 +54,10 @@ Every declared object comes back with one verdict.
 A statement the server refuses fails the step. The objects after it are still applied, and the error lists what failed, what was applied and what was not attempted.
 
 The SQL is the declaration's own text: an added column is sent as it is written, at its declared place (`ADD COLUMN ... AFTER`), and appending new columns to the sorting key goes in one `ALTER` with their `ADD COLUMN`, which is the only way ClickHouse allows it.
+
+## Stream tables
+
+A change to a Kafka, S3Queue, AzureQueue, RabbitMQ, NATS or FileLog table is SQLCH225. The applier sends `DETACH TABLE` for each materialized view that reads the table, `DROP TABLE ... SYNC`, the declared `CREATE TABLE`, and `ATTACH TABLE` for the same views, as one object's steps (`replaceStreamSteps` in `src/clickhouse/apply/statements.ts`). The details, and the two changes that lose the table's position, are under [Stream tables](../change-classifier/#stream-tables).
 
 ## Background rewrites
 

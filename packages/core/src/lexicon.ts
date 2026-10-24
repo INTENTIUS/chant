@@ -4,7 +4,7 @@ import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { CrossRootCheck, PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec } from "./import/parser";
+import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec, ImportDiagnostic } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
@@ -24,7 +24,7 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
-import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceOutputs } from "./graph-ir";
+import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
@@ -382,8 +382,11 @@ export function intrinsicCallFoldsEagerly(def: { isTag?: boolean; foldsEagerly?:
  * Options passed to a MigrationSource by `chant migrate`.
  */
 export interface MigrateOptions {
-  /** Output format. */
-  emit?: "yaml" | "ts";
+  /**
+   * Output format. `yaml` and `ts` are the gitlab pair's; `sql` writes plain
+   * DDL for a pair whose target is a database (#4399).
+   */
+  emit?: "yaml" | "ts" | "sql";
   /** Recognise composite patterns when emitting. */
   useComposites?: boolean;
   /** Source file path (for provenance display only). */
@@ -411,6 +414,20 @@ export interface MigrationResult {
   diagnostics: Array<Record<string, unknown>>;
   /** Markdown "Security posture" section, when security analysis ran (#306). */
   securityPosture?: string;
+  /**
+   * Outputs of the source member that the rendered output reads, by the names
+   * a workspace link takes (#4399). In a workspace, `chant migrate` writes
+   * them as `links` of the member the output lands in, so a source that drops
+   * or renames one fails `chant workspace check`.
+   */
+  links?: string[];
+  /**
+   * The checks that need the target's own server, run for `--validate`
+   * instead of the external linter (#4399). Returns the diagnostics found,
+   * `error` severity for a refusal. Throws when the server cannot start, which
+   * `chant migrate` reports as a validation that did not run.
+   */
+  validate?(): Promise<Array<Record<string, unknown>>>;
 }
 
 /**
@@ -420,6 +437,12 @@ export interface MigrationResult {
 export interface MigrationSource {
   /** Lightweight detector: does this content look like the expected source? */
   detect(content: string): boolean;
+  /**
+   * The source may be a directory, which `transform` reads itself from
+   * `opts.sourceFile` (a workspace member, #4399). `chant migrate` then skips
+   * `detect` and passes empty content.
+   */
+  directory?: boolean;
   /** Run the translation. */
   transform(content: string, opts: MigrateOptions): Promise<MigrationResult>;
 }
@@ -870,6 +893,19 @@ export interface ScheduledOpSpec {
    * per-job environment mapping to put a value in.
    */
   variables?: Record<string, string>;
+  /**
+   * The Op runs a `reviewAgent` step in `handoff` mode (#4326): generate the
+   * review as two jobs. The first runs `chant run <name>` with no forge write
+   * token (the checkout's fetches get the job's token and nothing after
+   * them does) and hands the review on as job outputs. The second checks
+   * nothing out, takes the review as data and posts it as one note with the
+   * write token (`postReviewNote`). GitHub and Forgejo only: a GitLab merge
+   * request pipeline hands every job the project's unprotected variables, so
+   * the gitlab generator refuses this by name. The trigger must be
+   * `pull_request` and the finding-mode `report`, since the first job posts
+   * nothing.
+   */
+  reviewAgent?: boolean;
 }
 
 /**
@@ -1313,6 +1349,15 @@ export interface LexiconPlugin {
    */
   parserOptions?(): ParserOptionSpec[];
 
+  /**
+   * `chant import --validate` (#4398): check what the import would write
+   * against the lexicon's own emulator, and return one diagnostic per
+   * failure (severity `error`). Called with the parsed IR and the checked
+   * parser options. A lexicon without an emulator leaves this out, and
+   * `--validate` then fails the import with a message saying so.
+   */
+  validateImport?(ir: TemplateIR, options: ParserOptions): Promise<ImportDiagnostic[]>;
+
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;
 
@@ -1507,6 +1552,17 @@ export interface LexiconPlugin {
    */
   workspaceOutputs?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceOutputs | undefined;
 
+  /**
+   * The outputs of other workspace members this lexicon's declarations read
+   * or write (#4397), such as the ClickHouse tables an otel `clickhouse`
+   * exporter writes. `chant workspace check` calls it offline on the member's
+   * folded source, as it calls `workspaceOutputs`, and checks each link like
+   * one a kind's reader found (WSP093 to WSP095, WSP099 for `gaps`), naming
+   * the file and line of the declaring entity. Pure: no I/O. Return
+   * `undefined` when the project declares nothing that links.
+   */
+  workspaceLinks?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceLinks | undefined;
+
   // LSP
   /** Provide completions for LSP */
   completionProvider?(ctx: CompletionContext): CompletionItem[];
@@ -1552,10 +1608,14 @@ export interface LexiconPlugin {
    * Return a migration source for translating from another lexicon's
    * format into this lexicon. Returns undefined if `from` is not supported.
    *
+   * `to` is the target as `--to` names it. A side may add a dialect after the
+   * lexicon, `sql/clickhouse` (#4399); `from` is passed as written, and a
+   * lexicon with one target ignores `to`.
+   *
    * Example: the gitlab lexicon implements `migrationSource("github")` to
    * translate `.github/workflows/*.yml` into `.gitlab-ci.yml`.
    */
-  migrationSource?(from: string): MigrationSource | undefined;
+  migrationSource?(from: string, to?: string): MigrationSource | undefined;
 
   // State
   /**

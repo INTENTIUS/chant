@@ -21,7 +21,8 @@ import { isAccessStatement, parseAccess, type AccessNode } from "../clickhouse/a
 import type { Token } from "../clickhouse/tokens";
 import { CLICKHOUSE_TAG_OF } from "../clickhouse/import/generator";
 import { describeStatement, type ImportedObject } from "../clickhouse/import/ir";
-import { fileUnparsed, firstLine, lineAt, quoteBare, splitTokens, tokensText, undeclarableStatement, type FileLine, type ReadOptions } from "./common";
+import { fileUnparsed, firstLine, lineAt, quoteBare, referencedStatement, splitTokens, tokensText, undeclarableStatement, type FileLine, type ReadOptions } from "./common";
+import { createdCollectionName } from "../clickhouse/named-collections";
 import { templateSafe, templateStrings } from "./postgres";
 
 type Tag = (strings: TemplateStringsArray, ...values: unknown[]) => Declarable;
@@ -95,6 +96,12 @@ export function readClickHouse(ddl: string, options: ReadOptions, problems: stri
   for (const stmt of splitTokens(tokenizeText(ddl, 0), isTrivia)) {
     let sql = tokensText(stmt);
     const line = lineAt(ddl, stmt[0]!.start);
+    const referenced = options.prerequisites ? referencedStatement("clickhouse", sql) : undefined;
+    const collection = referenced ? createdCollectionName(sql) : undefined;
+    if (referenced && collection !== undefined) {
+      options.prerequisites!.push({ kind: referenced.kind, name: collection });
+      continue;
+    }
     const undeclarable = undeclarableStatement("clickhouse", sql);
     if (undeclarable) {
       (options.undeclarable ?? problems).push(undeclarable);

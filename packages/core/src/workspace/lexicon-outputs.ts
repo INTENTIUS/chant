@@ -24,17 +24,24 @@
  *
  * Under `--at` the revision's files are not on disk to fold, so a member
  * whose lexicons report outputs gets a gap instead.
+ *
+ * The consumer side works the same way (#4397): a lexicon's `workspaceLinks`
+ * hook names the outputs of other members its declarations read, such as
+ * the tables an otel `clickhouse` exporter writes. {@link gatherLexiconLinks}
+ * folds every member whose lexicons have the hook and hands back what they
+ * report, in the shape a kind's link reader returns (`./kind-link-readers.ts`),
+ * so `resolveLinks` checks those links like a dbt project's sources.
  */
 
 import { join, posix } from "node:path";
 import type { StaticFieldsRead } from "../config-static";
 import { isDeclarable, type Declarable } from "../declarable";
-import type { LexiconUnreadSource, LexiconWorkspaceOutput } from "../graph-ir";
+import type { LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutput } from "../graph-ir";
 import type { BuildRootContext, BuildRootContribution, IntrinsicDef } from "../lexicon";
 import type { Declaration, ResolvedGroup } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { kindHandles } from "./links";
-import { readKindLinks } from "./kind-link-readers";
+import { readKindLinks, type KindLinkRead } from "./kind-link-readers";
 import { memberExcludes, sourceFiles } from "./member-handles";
 import { memberDirOnDisk } from "./lexicon-symbols";
 import type { WorkspaceTree } from "./tree";
@@ -51,6 +58,7 @@ export interface OutputsPlugin {
   intrinsics?: () => IntrinsicDef[];
   buildRoots?: (ctx: BuildRootContext) => Promise<BuildRootContribution>;
   workspaceOutputs?: (entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]) => { outputs: LexiconWorkspaceOutput[]; gaps?: string[] } | undefined;
+  workspaceLinks?: (entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]) => LexiconWorkspaceLinks | undefined;
 }
 
 /** Loads a lexicon plugin by name; `loadPlugin` from the CLI unless a test swaps it. */
@@ -60,6 +68,8 @@ export interface GatherLexiconOutputsOptions {
   /** Read under `--at`: the member's files are a revision's, not on disk, so nothing is folded. */
   atRevision?: boolean;
   load?: OutputsPluginLoader;
+  /** Links the members' lexicons read (#4397), from {@link gatherLexiconLinks}: the members they target are read too. */
+  lexiconLinks?: ReadonlyMap<string, KindLinkRead>;
 }
 
 const firstLine = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split("\n")[0];
@@ -134,7 +144,7 @@ export async function gatherLexiconOutputs(
   const targets = new Set(declaration.members.flatMap((m) => m.links.filter((l) => l.member !== m.name).map((l) => l.member)));
   // Links a kind's reader finds in a member's files target members too (#3932). One that names no
   // producer may be any other member's, so every other member is read.
-  for (const [consumer, read] of readKindLinks(declaration, tree, kinds)) {
+  for (const [consumer, read] of [...readKindLinks(declaration, tree, kinds), ...(options.lexiconLinks ?? new Map<string, KindLinkRead>())]) {
     for (const link of read.links) {
       if (link.member !== null) targets.add(link.member);
       else for (const m of declaration.members) if (m.name !== consumer) targets.add(m.name);
@@ -165,14 +175,36 @@ function importedLexicons(tree: WorkspaceTree, files: readonly string[]): string
   return [...names].sort();
 }
 
-async function readMemberLexiconOutputs(
+type Hook = "workspaceOutputs" | "workspaceLinks";
+
+/** A member's source folded for the lexicons that have `hook`, or why it wasn't. */
+type FoldedMember =
+  | { status: "none" }
+  | { status: "gaps"; gaps: string[] }
+  | {
+      status: "folded";
+      reporting: { name: string; plugin: OutputsPlugin }[];
+      entities: Map<string, Declarable>;
+      unread: LexiconUnreadSource[];
+      gaps: string[];
+      /** The tree-relative file that exports each entity, and that file's text. */
+      sourceOf: (entity: Declarable) => { file: string; text: string } | undefined;
+    };
+
+/**
+ * Fold one member's source for the lexicons that implement `hook`, never
+ * running it. "none" when no lexicon of the member's has the hook.
+ */
+async function foldMember(
   root: string,
   declaration: Declaration,
   tree: WorkspaceTree,
   groups: readonly ResolvedGroup[],
   m: Declaration["members"][number],
   options: GatherLexiconOutputsOptions,
-): Promise<MemberLexiconOutputs | undefined> {
+  hook: Hook,
+): Promise<FoldedMember> {
+  const what = hook === "workspaceOutputs" ? "outputs" : "links";
   const dir = memberDirOnDisk(root, m.dir);
   const { readConfigFieldsStatically } = await import("../config-static");
   const files = withinSourceDir(
@@ -188,7 +220,7 @@ async function readMemberLexiconOutputs(
     // source imports stand in for the ones it names.
     names = importedLexicons(tree, files);
   }
-  if (names.length === 0) return undefined;
+  if (names.length === 0) return { status: "none" };
   const load = options.load ?? ((await import("../cli/plugins")).loadPlugin as unknown as OutputsPluginLoader);
   const plugins: { name: string; plugin: OutputsPlugin }[] = [];
   const gaps: string[] = [];
@@ -196,13 +228,13 @@ async function readMemberLexiconOutputs(
     try {
       plugins.push({ name, plugin: await load(name) });
     } catch (err) {
-      gaps.push(`lexicon "${name}" could not be loaded, so the outputs it reads were not (${firstLine(err)})`);
+      gaps.push(`lexicon "${name}" could not be loaded, so the ${what} it reads were not (${firstLine(err)})`);
     }
   }
-  const reporting = plugins.filter((p) => typeof p.plugin.workspaceOutputs === "function");
-  if (reporting.length === 0) return gaps.length ? { outputs: [], gaps } : undefined;
+  const reporting = plugins.filter((p) => typeof p.plugin[hook] === "function");
+  if (reporting.length === 0) return gaps.length && hook === "workspaceOutputs" ? { status: "gaps", gaps } : { status: "none" };
   if (options.atRevision) {
-    return { outputs: [], gaps: [`the outputs of lexicon ${reporting.map((p) => p.name).join(", ")} are read from the working tree's files, not a revision's`] };
+    return { status: "gaps", gaps: [`the ${what} of lexicon ${reporting.map((p) => p.name).join(", ")} are read from the working tree's files, not a revision's`] };
   }
 
   // Fold the member's source, never run it.
@@ -216,15 +248,15 @@ async function readMemberLexiconOutputs(
   });
   let entities: Map<string, Declarable> = new Map();
   const unread: LexiconUnreadSource[] = [];
+  const folded: { file: string; rel: string; exports: Record<string, unknown> }[] = [];
   try {
     const { foldProject } = await import("../discovery/fold-import");
     const { collectEntities } = await import("../discovery/collect");
     const verdicts = await foldProject(files.map(abs), intrinsics, { lexicons: names, sandbox: true });
-    const folded: { file: string; exports: Record<string, unknown> }[] = [];
     for (const file of files) {
       const v = verdicts.get(abs(file));
       if (v?.verdict === "fold" && v.exports) {
-        folded.push({ file: abs(file), exports: ownExports(v.exports, names) });
+        folded.push({ file: abs(file), rel: file, exports: ownExports(v.exports, names) });
         continue;
       }
       let text = "";
@@ -238,7 +270,7 @@ async function readMemberLexiconOutputs(
     }
     entities = collectEntities(folded, dir);
   } catch (err) {
-    return { outputs: [], gaps: [...gaps, `${m.dir}: its source could not be folded, so its lexicons' outputs were not read (${firstLine(err)})`] };
+    return { status: "gaps", gaps: [...gaps, `${m.dir}: its source could not be folded, so its lexicons' ${what} were not read (${firstLine(err)})`] };
   }
 
   // A reporting lexicon's own build roots (the sql lexicon's `.sql` files) join
@@ -257,6 +289,32 @@ async function readMemberLexiconOutputs(
     }
   }
 
+  const sourceOf = (entity: Declarable) => {
+    const f = folded.find((x) => Object.values(x.exports).includes(entity));
+    if (!f) return undefined;
+    let text = "";
+    try {
+      text = tree.read(f.rel);
+    } catch {
+      // The line falls back to 1.
+    }
+    return { file: f.rel, text };
+  };
+  return { status: "folded", reporting, entities, unread, gaps, sourceOf };
+}
+
+async function readMemberLexiconOutputs(
+  root: string,
+  declaration: Declaration,
+  tree: WorkspaceTree,
+  groups: readonly ResolvedGroup[],
+  m: Declaration["members"][number],
+  options: GatherLexiconOutputsOptions,
+): Promise<MemberLexiconOutputs | undefined> {
+  const member = await foldMember(root, declaration, tree, groups, m, options, "workspaceOutputs");
+  if (member.status === "none") return undefined;
+  if (member.status === "gaps") return { outputs: [], gaps: member.gaps };
+  const { reporting, entities, unread, gaps } = member;
   const outputs: MemberLexiconOutputs["outputs"] = [];
   for (const { name, plugin } of reporting) {
     try {
@@ -269,4 +327,65 @@ async function readMemberLexiconOutputs(
     }
   }
   return { outputs, gaps };
+}
+
+/** The line of `export const <name>` (or any declaration of it) in `text`, from 1; 1 when not found. */
+function declarationLine(text: string, name: string): number {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const at = text.search(new RegExp(`\\b(?:const|let|var|function|class)\\s+${escaped}\\b`));
+  return at < 0 ? 1 : text.slice(0, at).split("\n").length;
+}
+
+/**
+ * The links each `chant` member's lexicons read from its declarations
+ * (#4397), keyed by member name, in the shape a kind's link reader returns.
+ * Only members with a lexicon that has a `workspaceLinks` hook are folded. A
+ * link carries the file and line of the declaration that states it, and the
+ * reader is named `lexicon <name>`.
+ */
+export async function gatherLexiconLinks(
+  root: string,
+  declaration: Declaration,
+  tree: WorkspaceTree,
+  groups: readonly ResolvedGroup[],
+  kinds: KindRegistry,
+  options: GatherLexiconOutputsOptions = {},
+): Promise<Map<string, KindLinkRead>> {
+  const out = new Map<string, KindLinkRead>();
+  for (const m of declaration.members) {
+    const kind = kinds.get(m.kind);
+    if (!kind || kindHandles(m, kind) || tree.stat(memberDir(m.dir)) !== "dir") continue;
+    const member = await foldMember(root, declaration, tree, groups, m, options, "workspaceLinks");
+    if (member.status === "none") continue;
+    const where = memberDir(m.dir) || ".";
+    if (member.status === "gaps") {
+      out.set(m.name, { reader: "lexicon", links: [], gaps: member.gaps.map((message) => ({ file: where, line: 1, message })) });
+      continue;
+    }
+    for (const { name, plugin } of member.reporting) {
+      const read: KindLinkRead = { reader: `lexicon ${name}`, links: [], gaps: member.gaps.map((message) => ({ file: where, line: 1, message })) };
+      try {
+        const report = plugin.workspaceLinks!(member.entities, member.unread);
+        if (!report) continue;
+        for (const l of report.links) {
+          const entity = member.entities.get(l.entity);
+          const src = entity ? member.sourceOf(entity) : undefined;
+          read.links.push({
+            member: l.member ?? null,
+            output: l.output,
+            ...(l.anchor ? { anchor: l.anchor } : {}),
+            file: src?.file ?? where,
+            line: src ? declarationLine(src.text, l.entity.split(".").pop() ?? l.entity) : 1,
+          });
+        }
+        for (const g of report.gaps ?? []) read.gaps.push({ file: where, line: 1, message: g });
+      } catch (err) {
+        read.gaps.push({ file: where, line: 1, message: `lexicon "${name}" workspaceLinks threw, so its links were not read (${firstLine(err)})` });
+      }
+      if (read.links.length === 0 && read.gaps.length === 0) continue;
+      const prev = out.get(m.name);
+      out.set(m.name, prev ? { reader: prev.reader, links: [...prev.links, ...read.links], gaps: [...prev.gaps, ...read.gaps] } : read);
+    }
+  }
+  return out;
 }

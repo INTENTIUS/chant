@@ -241,10 +241,10 @@ function componentsPrEnvAdapter(p: Prepared, run: { planAll: typeof import("./pr
     },
     async apply(target) {
       const planned = set!;
-      const hookStop = run.runStageHook(p, "before-apply", p.plan.order, planned);
+      const hookStop = await run.runStageHook(p, "before-apply", p.plan.order, planned);
       if (hookStop) return { status: "stopped", rows: rows(target, () => "planned"), message: hookStop };
       const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: target.env, set: planned, gate: PR_ENV_GATE });
-      const afterHook = run.runStageHook(p, "after-apply", p.plan.order, planned, "the environment stands as applied");
+      const afterHook = await run.runStageHook(p, "after-apply", p.plan.order, planned, "the environment stands as applied");
       const status = (component: string) => applied.members.find((m) => m.component === component)?.status ?? "planned";
       return {
         status: applied.status === "applied" ? "applied" : applied.status === "waiting" ? "waiting" : "failed",

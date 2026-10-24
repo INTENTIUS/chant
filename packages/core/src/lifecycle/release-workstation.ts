@@ -71,6 +71,30 @@ export function resolveTrunk(cwd: string, greenBranch: string | null): Trunk {
 }
 
 /**
+ * {@link checkOnTrunk} across the branches `ci.green` judges (#4325): the
+ * trunk `commit` is on, `trunk` itself or one of `others` (the declaration's
+ * further green branches, which `ci.branches` routes members to). A commit on
+ * none of them is refused with the first trunk's error.
+ */
+export function checkOnGreenBranches(cwd: string, commit: string, trunk: Trunk, others: readonly string[]): Trunk {
+  try {
+    checkOnTrunk(cwd, commit, trunk);
+    return trunk;
+  } catch (err) {
+    for (const branch of others) {
+      const routed: Trunk = { ...trunk, branch };
+      try {
+        checkOnTrunk(cwd, commit, routed);
+        return routed;
+      } catch {
+        // Not on this one either; the next, then the first branch's error.
+      }
+    }
+    throw err;
+  }
+}
+
+/**
  * Refuse `commit` unless it is reachable from `<remote>/<branch>` as this
  * clone knows it. A commit on the local branch only is `release-commit-not-pushed`;
  * any other is `release-commit-not-on-trunk`.

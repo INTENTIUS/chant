@@ -65,8 +65,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { resolveCommit, resolveMergeBase } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
@@ -90,7 +90,8 @@ import { blockedMembers, blockedWords, settleEarlierWaves, type WaveMemberOutcom
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
 import { componentInputDigests, progressThatCarries } from "../../components/fan-out-inputs";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
-import { gateIsSealed, gitGateLedgerPort, type GateCheck } from "../../op/gate";
+import { evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "../../op/gate";
+import type { OtherGateHold } from "../../op/stage-hooks";
 import { emitGateStep, gateEventsOf, GATE_PHASE, type RunEventSink, type RunEventStream } from "../../run-event-stream";
 import type { RunEventBody, RunEventComponentSettle, RunEventSettleStatus } from "../../run-event";
 import { openCliRunEvents, refusesEventsWithJson } from "../run-events";
@@ -130,8 +131,8 @@ import type { ComponentChangeSignal, FanOutPlan } from "../../components/fan-out
 import { failedRunExitCode, type DriverComponent } from "../../components/driver";
 import type { CapabilityRegistry } from "../../components/capability";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
-import { prLoopHooksAt, runPrHooks, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
-import { decidePrPolicyOverride, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
+import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
+import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
 
@@ -320,14 +321,64 @@ export function placeHooks(ctx: CommandContext, p: Prepared, stage: PrHookPlace[
  * when no hook failed. A hold is logged: the pull request's gate already
  * waits for a person's approval of the digest.
  */
-export function runStageHook(p: Prepared, moment: OpWaveHookMoment, components: readonly string[], planned?: PrPlanSet, what = "nothing was applied"): string | undefined {
+export async function runStageHook(
+  p: Prepared,
+  moment: OpWaveHookMoment,
+  components: readonly string[],
+  planned?: PrPlanSet,
+  what = "nothing was applied",
+  env?: Record<string, string>,
+): Promise<string | undefined> {
   if (!p.hookPlace || components.length === 0) return undefined;
-  const ran = runPrHooks(p.hooks, moment, p.hookPlace, components, planned ? { members: planned.members, plans: planned.plans } : undefined);
+  const ran = await runPrHooks(p.hooks, moment, p.hookPlace, components, planned ? { members: planned.members, plans: planned.plans } : undefined, {
+    ...(env ? { env } : {}),
+    settle: (hold) => settleHeldGate(p, hold),
+  });
   p.hookOutcomes.push(...ran.outcomes);
   for (const hold of ran.holds) console.error(formatInfo(`${hold} held, and the pull request's gate asks for an approval of the digest either way`));
   if (!ran.failed) return undefined;
   p.hookFailed = `The ${ran.failed}, so ${what}.`;
   return p.hookFailed;
+}
+
+/**
+ * Settle a hook's hold on another gate (#4323), the way an Op waves job does:
+ * an approval of that gate and digest under its `identity.gates` rule read at
+ * base, else a pending fact for it. The plan stage writes nothing, so there
+ * it only reads.
+ */
+async function settleHeldGate(p: Prepared, hold: OtherGateHold): Promise<PrHoldSettled> {
+  const real = gitGateLedgerPort();
+  const ledger = p.hookPlace?.stage === "plan" ? readOnlyLedger(real) : real;
+  const port: GateLedgerPort = ledger.approvalRule ? { ...ledger, approvalRule: (g: string) => ledger.approvalRule!(g, { base: p.base }) } : ledger;
+  const op = hold.request.op ?? p.hookPlace?.op ?? "";
+  const check = await evaluateGate(port, {
+    op,
+    gate: hold.request.gate,
+    planDigest: hold.request.digest,
+    description: hold.request.description ?? `${hold.label} holds the pull request on it`,
+    fields: { ...hold.request.pending, approvalMode: "ledger", heldBy: { hook: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}) } },
+  });
+  if (check.satisfied) return { status: "approved", approvedBy: check.resolution.resolvedBy, approvedAt: check.resolution.timestamp };
+  for (const { resolution: r, reason } of check.refused ?? []) console.error(formatInfo(`${op} / ${hold.request.gate}: the approval by ${r.resolvedBy} at ${r.timestamp} does not count: ${reason}`));
+  return { status: "waiting" };
+}
+
+/**
+ * Run the `after-gate` hooks once the pull request's gate decided (#4323),
+ * whatever it decided. `CHANT_GATE_STATUS` is `approved`, or `waiting` when no
+ * approval of the digest stands; `CHANT_GATE_OP`, `CHANT_GATE` and
+ * `CHANT_GATE_DIGEST` name the gate. Returns the failure message, as
+ * {@link runStageHook} does; the caller ignores it when the gate did not let
+ * the apply through, since the stage ends there anyway.
+ */
+export function runGateHook(p: Prepared, at: { op: string; digest: string; satisfied: boolean }, components: readonly string[]): Promise<string | undefined> {
+  return runStageHook(p, "after-gate", components, undefined, "nothing was applied", {
+    CHANT_GATE_STATUS: at.satisfied ? "approved" : "waiting",
+    CHANT_GATE_OP: at.op,
+    CHANT_GATE: p.gate,
+    CHANT_GATE_DIGEST: at.digest,
+  });
 }
 
 const EMPTY_SET = (): PrPlanSet => ({ doc: composeChangeSet([]), members: [], plans: {}, outputs: {}, failed: true });
@@ -338,11 +389,11 @@ const EMPTY_SET = (): PrPlanSet => ({ doc: composeChangeSet([]), members: [], pl
  * set, so the stage reports `plan-failed` and nothing applies.
  */
 async function hookedPlan(p: Prepared, components: readonly string[], plan: () => Promise<PrPlanSet>): Promise<PrPlanSet> {
-  if (runStageHook(p, "before-observe", components, undefined, "nothing was planned or applied")) return EMPTY_SET();
-  if (runStageHook(p, "before-plan", components, undefined, "nothing was planned or applied")) return EMPTY_SET();
+  if (await runStageHook(p, "before-observe", components, undefined, "nothing was planned or applied")) return EMPTY_SET();
+  if (await runStageHook(p, "before-plan", components, undefined, "nothing was planned or applied")) return EMPTY_SET();
   const set = await plan();
   if (set.failed) return set;
-  if (runStageHook(p, "after-plan", components, set)) return { ...set, failed: true };
+  if (await runStageHook(p, "after-plan", components, set)) return { ...set, failed: true };
   return set;
 }
 
@@ -570,7 +621,9 @@ interface PolicyJudged {
  * read only at the plan stage, and recorded for an override at the apply.
  */
 async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
-  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc });
+  // The review is read only when a policy will run: a workspace with no policy makes no forge call for it.
+  const review = p.policy.settings ? await policyReviewOf(p.forge, at.pr) : undefined;
+  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc, ...(review ? { review } : {}) });
   if (!verdict) return { held: false };
   const report = prPolicyReport(verdict, p.policy.base);
   p.policyReport = report;
@@ -712,27 +765,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
  * `pr-post` asks instead, reading the Ops at the target branch's commit.
  */
 async function overdueOps(forge: PrForge | undefined, member: string | undefined): Promise<PrOverdue[]> {
-  if (!forge?.scheduledRuns) return [];
-  try {
-    const { discoverOps } = await import("../../op/discover");
-    const { scheduledWatches, checkOverdueOps } = await import("../../op/schedule-overdue");
-    const discovered = await discoverOps({ cwd: resolve(".") });
-    const watches = scheduledWatches([...discovered.ops.values()].map((d) => d.config));
-    if (watches.length === 0) return [];
-    const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
-    if (top.status !== 0) return [];
-    return await checkOverdueOps({
-      watches,
-      forge,
-      repoRoot: top.stdout.trim(),
-      ...(member ? { member } : {}),
-      now: new Date(),
-      log: (line) => console.error(formatWarning({ message: line })),
-    });
-  } catch (err) {
-    console.error(formatWarning({ message: `could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}` }));
-    return [];
-  }
+  const { overdueOpsAt } = await import("../../op/schedule-overdue");
+  return overdueOpsAt({ forge, cwd: resolve("."), ...(member ? { member } : {}), log: (line) => console.error(formatWarning({ message: line })) });
 }
 
 /** chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>] [--forge <kind>] [--require-review] [--output <dir>] [--json] [--events-json] [--report-url <url>] */
@@ -881,6 +915,9 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     if (judged.stop) return stop(prReport({ ...base, approval: { status: "pending" }, status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);
     const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(green ? { green } : {}) });
     approval = decided.approval;
+    // #4323: the after-gate hooks hear the decision, a refusal too; only a failure that would have applied changes the outcome.
+    const afterGate = await runGateHook(p, { op, digest: set.doc.digest, satisfied: decided.satisfied }, p.plan.order);
+    if (afterGate && decided.satisfied) return stop(prReport({ ...base, approval, status: "failed", message: afterGate }), 1);
     if (!decided.satisfied) return stop(prReport({ ...base, approval, status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
     via = decided.via;
   }
@@ -935,7 +972,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
 
   // #4288: the before-apply hooks, once the gate and the review let the apply through.
   const toApply = (resumed?.plan ?? p.plan).order.filter((name) => !completedSoFar.has(name));
-  const beforeFailed = runStageHook(p, "before-apply", toApply);
+  const beforeFailed = await runStageHook(p, "before-apply", toApply);
   if (beforeFailed) return stop(prReport({ ...base, approval, status: "failed", message: beforeFailed }), 1);
 
   // #3999: a round planned after an upstream applied waits on a gate of its
@@ -994,7 +1031,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   });
   recordAttempt();
   // #4288: the after-apply hooks, for the components that applied.
-  const afterFailed = runStageHook(p, "after-apply", toApply.filter((name) => applied.run.completed.includes(name)), undefined, "the apply counts as failed though its components applied");
+  const afterFailed = await runStageHook(p, "after-apply", toApply.filter((name) => applied.run.completed.includes(name)), undefined, "the apply counts as failed though its components applied");
   await recordAutoReleasesForRun(applied.run.results, p.env, release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
   const report = prReport({
     ...base,
@@ -1787,6 +1824,9 @@ async function prApplyWaves(
     if (judged.stop) return stop(report({ status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);
     const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(green ? { green } : {}) });
     approval = decided.approval;
+    // #4323: the after-gate hooks hear the decision, a refusal too.
+    const afterGate = await runGateHook(p, { op, digest: set.doc.digest, satisfied: decided.satisfied }, p.plan.order);
+    if (afterGate && decided.satisfied) return stop(report({ status: "failed", message: afterGate }), 1);
     if (!decided.satisfied) return stop(report({ status: "refused", refusal: decided.refusal, message: decided.message }), GATED_EXIT_CODE);
     via = decided.via;
     planned = set;
@@ -1944,7 +1984,7 @@ async function prApplyWaves(
     }
 
     // #4288: the wave's apply-side hooks, around its apply.
-    const waveBefore = runStageHook(p, "before-apply", wavePlan.order, undefined, `nothing in wave ${k} was applied`);
+    const waveBefore = await runStageHook(p, "before-apply", wavePlan.order, undefined, `nothing in wave ${k} was applied`);
     if (waveBefore) {
       setWave({ ...entry, status: "failed" });
       return stop(report({ status: "failed", message: waveBefore }), 1);
@@ -1979,7 +2019,7 @@ async function prApplyWaves(
       const outputs = applied.run.componentOutputs[name];
       if (outputs) outputsSoFar[name] = outputs;
     }
-    const waveAfter = runStageHook(p, "after-apply", wavePlan.order.filter((name) => applied.run.completed.includes(name)), undefined, `wave ${k} counts as failed though its components applied`);
+    const waveAfter = await runStageHook(p, "after-apply", wavePlan.order.filter((name) => applied.run.completed.includes(name)), undefined, `wave ${k} counts as failed though its components applied`);
     setWave({ ...entry, status: applied.status === "applied" && !waveAfter ? "applied" : "failed" });
     await recordAutoReleasesForRun(applied.run.results, p.env, at.release.runId, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord), at.release.runOrigin, undefined, undefined, prAppliedDigests(p, applied.members));
     if (applied.status !== "applied") {
@@ -2023,6 +2063,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
 
 /**
  * chant components pr-post --pr <n> --head <sha> --env <env> --forge <kind> [--member <name>] [--output <dir>] [--result <result>] (#4295)
+ * chant components pr-post --open --env <env> --forge gitlab [--branch <branch>] [--member <name>] [--output <dir>] (#4328)
  *
  * Post the plan note and the `chant/plan` status from the report a plan job
  * wrote with `pr-plan --no-status`, in a job that runs none of the change's
@@ -2033,6 +2074,7 @@ function writeWaveChangeSet(ctx: CommandContext, wave: number, doc: PrPlanSet["d
  */
 export async function runComponentsPrPost(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.open) return runComponentsPrPostOpen(ctx);
   if (args.pr === undefined) return fail("pr-post needs the pull or merge request: --pr <n>");
   if (!args.head || !/^[0-9a-f]{40}$/.test(args.head)) return fail("pr-post needs the full commit the plan job checked out: --head <sha>");
   if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
@@ -2060,5 +2102,65 @@ export async function runComponentsPrPost(ctx: CommandContext): Promise<number> 
   for (const message of posted.warnings) console.error(formatWarning({ message }));
   if (posted.refused) console.error(formatWarning({ message: `the plan report was not used: ${posted.refused}` }));
   console.error(formatInfo(`pr-post: ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  return 0;
+}
+
+/**
+ * `pr-post --open` (#4328): in a pipeline of the target branch on GitLab,
+ * post the plan note and status of every open merge request into it whose
+ * plan job settled, reading each report from the plan job's artifacts
+ * (`postOpenPlanReports`, ../../pr-post.ts). The branch is `--branch`, else
+ * the pipeline's own (`CI_COMMIT_BRANCH`). The plan job is `plan`, or
+ * `<member>-plan` with `--member`, as the gitlab lexicon names it, and the
+ * artifact path is `--output` from the repository root. It exits 0 once it
+ * has posted, as `pr-post` does.
+ */
+async function runComponentsPrPostOpen(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  if (args.pr !== undefined || args.head) return fail("pr-post --open finds each merge request and its head itself, so it takes no --pr or --head");
+  if (!args.env) return fail("pr-post needs the environment the plan was for: --env <env>");
+  if (args.forge !== "gitlab") return fail("pr-post --open is for a GitLab pipeline of the target branch: --forge gitlab");
+  if (args.members && args.members.length > 1) return fail(`pr-post takes one --member, not ${args.members.join(", ")}`);
+  const branch = args.branch ?? process.env.CI_COMMIT_BRANCH;
+  if (!branch) return fail("pr-post --open posts for the merge requests into a branch: run it in a branch pipeline, or pass --branch <branch>");
+  let forge: PrForge;
+  try {
+    forge = forgeFromEnv("gitlab");
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+  if (top.status !== 0) return fail("pr-post --open reads the plan report's path from the repository root, and this directory is not in a git repository");
+  const member = args.members?.[0];
+  const artifactDir = relative(realpathSync(top.stdout.trim()), resolve(args.output ?? PR_REPORT_DIR)).split(sep).join("/");
+  const { postOpenPlanReports } = await import("../../pr-post");
+  const { gitlabPlanJobName } = await import("../../components/pr-pipeline");
+  let done: Awaited<ReturnType<typeof postOpenPlanReports>>;
+  try {
+    done = await postOpenPlanReports({
+      forge,
+      branch,
+      job: gitlabPlanJobName(member),
+      artifactDir,
+      env: args.env,
+      ...(member ? { member } : {}),
+      // #4289: the Ops at the commit this pipeline checked out, the target branch's.
+      overdue: () => overdueOps(forge, member),
+    });
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  for (const message of done.warnings) console.error(formatWarning({ message }));
+  for (const p of done.posts) {
+    if (p.skipped) {
+      console.error(formatInfo(`pr-post: !${p.pr}: ${p.skipped}`));
+      continue;
+    }
+    const posted = p.posted!;
+    for (const message of posted.warnings) console.error(formatWarning({ message: `!${p.pr}: ${message}` }));
+    if (posted.refused) console.error(formatWarning({ message: `!${p.pr}: the plan report was not used: ${posted.refused}` }));
+    console.error(formatInfo(`pr-post: !${p.pr} ${prStatusContext("plan", member)} ${posted.state}: ${posted.description}${posted.noted ? "; note posted" : ""}`));
+  }
+  if (done.posts.length === 0) console.error(formatInfo(`pr-post: no open merge request into ${branch} has a ${gitlabPlanJobName(member)} job`));
   return 0;
 }

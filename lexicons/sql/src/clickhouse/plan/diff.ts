@@ -20,6 +20,7 @@ import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "./rul
 import type { CanonicalColumn, CanonicalObject } from "./normalize";
 import type { RebuildOpSuggestion } from "./rebuild-handoff";
 import { MERGE_TREE_SETTINGS } from "../../generated/clickhouse";
+import { isStreamEngine, isStreamTable, positionWarnings, readsTable } from "./stream";
 import { classifiedChange, type ChangeSet, type ClassifiedChange } from "../../core/classifier";
 import { changedEntries, matchByIdentity, type Keyed } from "../../core/diff";
 
@@ -38,6 +39,22 @@ export interface SchemaDiff extends ChangeSet<Change> {
    * it out.
    */
   unreadable?: UnreadableEntry[];
+  /**
+   * The named collections the build references, checked against the server
+   * by name (#4395). A plan with one `missing`, or whose check could not run
+   * (`unread`), fails naming it. Their values are never read.
+   */
+  namedCollections?: NamedCollectionCheck;
+}
+
+/** What a plan found of the named collections a build references: each by name, never its values. */
+export interface NamedCollectionCheck {
+  /** Every collection the build names, sorted. */
+  referenced: string[];
+  /** Those the server has no collection of, or that the plan's user may not see. */
+  missing: string[];
+  /** Why the server's collections could not be read, when they could not. */
+  unread?: string;
 }
 
 /** An object a plan could not read: `database.name`, its type and why. */
@@ -228,8 +245,14 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
     return;
   }
 
+  // A stream table (#4396): replaced, not altered, and not rebuilt, since it holds no rows.
+  if (isStreamTable(before) && isStreamTable(after)) {
+    diffStreamTable(key, before, after, out);
+    return;
+  }
+
   // A table.
-  if (before.engine !== after.engine) out.push(change(key, "engine", "SQLCH223", before.engine, after.engine));
+  if (before.engine !== after.engine) out.push(change(key, "engine", "SQLCH223", before.engine, after.engine, isStreamEngine(before.engineName) || isStreamEngine(after.engineName) ? { note: "one side is a stream engine and the other is not, which is a different kind of table: neither the replace nor the rebuild applies" } : {}));
   const added = diffColumns(key, before, after, out, hints);
 
   const beforePk = before.primaryKey ?? before.orderBy;
@@ -258,6 +281,28 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
   diffMap(key, "indexes", before.indexes, after.indexes, "SQLCH204", out);
   diffMap(key, "projections", before.projections, after.projections, "SQLCH214", out);
   diffMap(key, "constraints", before.constraints, after.constraints, "SQLCH215", out);
+}
+
+/**
+ * A table on a stream engine, on both sides (#4396). Its engine, its settings
+ * and its columns are all replaced the same way (SQLCH225); the comment is
+ * compared before this. A change that loses the table's position says so in
+ * its note.
+ */
+function diffStreamTable(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[]): void {
+  const start = out.length;
+  if (before.engine !== after.engine) out.push(change(key, "engine", "SQLCH225", before.engine, after.engine));
+  for (const name of changedEntries(before.settings, after.settings)) out.push(change(key, `settings.${name}`, "SQLCH225", before.settings[name], after.settings[name]));
+  const column = (c: CanonicalColumn) => [c.type, c.nullable ? "NULL" : "", c.defaultKind ?? "", c.defaultExpr ?? "", c.codec ? `CODEC(${c.codec})` : ""].filter(Boolean).join(" ");
+  const b = new Map(before.columns.map((c) => [c.name, column(c)]));
+  const a = new Map(after.columns.map((c) => [c.name, column(c)]));
+  for (const name of new Set([...b.keys(), ...a.keys()])) {
+    if (b.get(name) !== a.get(name)) out.push(change(key, `columns.${name}`, "SQLCH225", b.get(name), a.get(name)));
+  }
+  const order = (o: CanonicalObject) => o.columns.map((c) => c.name).join(", ");
+  if (order(before) !== order(after) && a.size === b.size && [...a.keys()].every((n) => b.has(n))) out.push(change(key, "columns.order", "SQLCH225", order(before), order(after)));
+  const warnings = positionWarnings(before, after);
+  if (warnings.length > 0 && out.length > start) out[start] = { ...out[start]!, note: `loses its position: ${warnings.join("; ")}` };
 }
 
 /**
@@ -325,6 +370,17 @@ export function diffSchemas(before: readonly SchemaObject[], after: readonly Sch
       const b = m.before;
       changes.push(change(b.key, "object", "SQLCH250", qualified(b.canonical), undefined, { destructive: b.canonical.kind === "table" || b.canonical.kind === "materializedView" }));
     }
+  }
+  // A replaced stream table is replaced around the views that read it (#4396): say which.
+  const replaced = new Set(changes.filter((c) => c.rule === "SQLCH225").map((c) => c.object));
+  for (const m of matches) {
+    if (m.kind !== "matched" || !replaced.has(m.after.key)) continue;
+    const readers = before.filter((o) => readsTable(o.canonical, m.before.canonical)).map((o) => qualified(o.canonical));
+    hints.push(
+      readers.length > 0
+        ? `${qualified(m.before.canonical)} is replaced: ${readers.join(", ")} ${readers.length === 1 ? "reads it and is" : "read it and are"} detached first and attached after`
+        : `${qualified(m.before.canonical)} is replaced; no materialized view reads it`,
+    );
   }
   return { changes, rebuilds: changes.filter((c) => c.class === "rebuild"), hints };
 }

@@ -360,14 +360,14 @@ export const PG_CLASSIFIER_RULES = {
   SQLPG300: rule(
     "SQLPG300",
     "metadata",
-    "Drop and create a type, aggregate, collation, cast or event trigger",
-    "A composite or range type's definition, a collation's, a cast's and an event trigger's have no ALTER, and an aggregate's argument types, state type and final function cannot be replaced: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, a function or a cast would make the DROP fail); the locks are on its catalog rows only.",
+    "Drop and create a type, aggregate, collation, cast, event trigger, operator, statistics object, foreign server or publication",
+    "A composite or range type's definition, a collation's, a cast's, an event trigger's, an operator's function and operands and extended statistics' have no ALTER, an aggregate's argument types, state type and final function cannot be replaced, and neither can a foreign server's type or wrapper or a publication's FOR ALL TABLES: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, a function or a cast would make the DROP fail); the locks are on its catalog rows only. Dropped statistics are empty until the next ANALYZE, and a publication that is dropped stops its subscribers until it is created again.",
     `${DOCS}/sql-createtype.html`,
   ),
   SQLPG301: rule(
     "SQLPG301",
     "expand",
-    "Change a type, aggregate, collation or cast that other objects depend on",
+    "Change a type, aggregate, collation, cast, foreign server or publication that other objects depend on",
     "No ALTER makes the change, and DROP refuses while a column, a view, a function or another object depends on the object. Create the new definition under another name, move what depends on it, then drop the old.",
     `${DOCS}/sql-droptype.html`,
   ),
@@ -377,6 +377,13 @@ export const PG_CLASSIFIER_RULES = {
     "Replace an aggregate's definition",
     "CREATE OR REPLACE AGGREGATE (14 and later) replaces the aggregate's functions and options in the catalog; no table is locked. Its argument types, its result and its kind (plain, ordered-set, hypothetical-set) have to stay the same, so a change of the state type or the final function is dropped and created instead (SQLPG300).",
     `${DOCS}/sql-createaggregate.html`,
+  ),
+  SQLPG303: rule(
+    "SQLPG303",
+    "metadata",
+    "Alter a foreign data wrapper, foreign server or publication in place",
+    "ALTER FOREIGN DATA WRAPPER (handler, validator, options), ALTER SERVER (version, options) and ALTER PUBLICATION (SET options, ADD and DROP TABLE and TABLES IN SCHEMA) change the object's catalog rows under a brief lock; no table is rewritten. A publication's change reaches its subscribers as the walsender next reads it: a table added is not copied to a subscription until the subscriber runs REFRESH PUBLICATION.",
+    `${DOCS}/sql-alterpublication.html`,
   ),
   SQLPG270: rule("SQLPG270", "drop", "Drop an object", "The object and, for a table, a materialized view or a sequence, its data are gone.", `${DOCS}/sql-droptable.html`),
 } as const satisfies Record<string, PgClassifierRule>;

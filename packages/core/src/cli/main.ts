@@ -1080,7 +1080,9 @@ Component release ledger + status:
                             from the report pr-plan --no-status wrote
                             (--pr <n> --head <sha> --env <env> --forge
                             <kind>), in a job that runs none of the
-                            change's code (#4295)
+                            change's code (#4295); --open posts every
+                            open merge request's from a GitLab pipeline
+                            of the target branch (#4328)
   components pr-record     On merge (#4168): plan the same members again,
                             store the change set and write the merge record
                             _merges/<commit>.json; applies and refuses
@@ -1238,12 +1240,16 @@ Options:
                         JSON (lifecycle plan)
                         OR '--report markdown': emit a reviewer-facing markdown
                         render, holes and disruption included (lifecycle plan)
-  --from <name>         Source lexicon for migrate (default: github)
-  --to <name>           Target lexicon for migrate (default: gitlab)
-  --emit <fmt>          Migration output format: yaml (default) or ts
+  --from <name>         Source for migrate: a lexicon, or lexicon/dialect such
+                        as sql/postgres (default: github)
+  --to <name>           Target for migrate, same form, such as sql/clickhouse
+                        (default: gitlab)
+  --emit <fmt>          Migration output format: yaml (default), ts, or sql;
+                        sql/clickhouse defaults to ts
   --strict              Escalate needs-review/validation to errors (migrate);
                         exit nonzero on an unresolved identity (lifecycle whoami)
-  --validate            Run external validator (glci/glab) after migrate
+  --validate            Run external validator after migrate: glci/glab, or the
+                        ClickHouse emulator for sql/clickhouse
   --use-composites      Rewrite to composite calls when patterns match (migrate)
   --components          Target discovered Component declarations instead of
                         lexicon resources (list, describe, graph, build, run)

@@ -27,27 +27,33 @@
  * - The producer is the member the `sqlMember` field names. Unset, each link
  *   leaves the producer to `resolveLinks`, which picks the one member that
  *   exposes the table.
+ *
+ * The same pass reads the project's models as outputs (#3935); see
+ * `./dbt-models-reader.ts`.
  */
 
 import { posix } from "node:path";
 import { parseYAMLDocument, YAMLParseError } from "../yaml";
 import type { KindLinkRead, KindReadGap, KindReadLink, KindReaderInput } from "./kind-link-readers";
-import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
+import { joinPath } from "./tree";
+import { readDbtModels } from "./dbt-models-reader";
+import {
+  DBT_PROJECT_FILE,
+  DEFAULT_MODEL_PATHS,
+  isObject,
+  isTemplated,
+  keyLine,
+  lines,
+  nameLine,
+  readEnabled,
+  readQuoting,
+  scalar,
+  valueLine,
+  yamlFiles,
+  type Dialect,
+} from "./dbt-project-common";
 
-export const DBT_PROJECT_FILE = "dbt_project.yml";
-const DEFAULT_MODEL_PATHS = ["models"];
-
-/** The dialects whose naming the reader follows; the member's `dialect` field picks one. */
-export const DBT_DIALECTS = ["postgres", "clickhouse"] as const;
-type Dialect = (typeof DBT_DIALECTS)[number];
-
-interface Quoting {
-  schema: boolean;
-  identifier: boolean;
-}
-
-const isTemplated = (v: string) => /\{\{|\{%/.test(v);
-const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+export { DBT_DIALECTS, DBT_PROJECT_FILE } from "./dbt-project-common";
 
 export function readDbtProject(input: KindReaderInput): KindLinkRead {
   const { dir, tree, fields } = input;
@@ -63,11 +69,11 @@ export function readDbtProject(input: KindReaderInput): KindLinkRead {
   try {
     project = parseYAMLDocument(tree.read(projectFile));
   } catch (err) {
-    gaps.push({ file: projectFile, line: err instanceof YAMLParseError ? err.line : 1, message: `${DBT_PROJECT_FILE} could not be read (${(err as Error).message}), so no source was read` });
+    gaps.push({ file: projectFile, line: err instanceof YAMLParseError ? err.line : 1, message: `${DBT_PROJECT_FILE} could not be read (${(err as Error).message}), so no source was read`, outputs: true });
     return result;
   }
   if (!isObject(project)) {
-    gaps.push({ file: projectFile, line: 1, message: `${DBT_PROJECT_FILE} is not a mapping, so no source was read` });
+    gaps.push({ file: projectFile, line: 1, message: `${DBT_PROJECT_FILE} is not a mapping, so no source was read`, outputs: true });
     return result;
   }
   const projectLines = lines(tree.read(projectFile));
@@ -77,17 +83,17 @@ export function readDbtProject(input: KindReaderInput): KindLinkRead {
   const rawPaths = key ? project[key] : DEFAULT_MODEL_PATHS;
   const paths: string[] = [];
   if (!Array.isArray(rawPaths)) {
-    gaps.push({ file: projectFile, line: keyLine(projectLines, key ?? ""), message: `${key} is not a list, so no source was read` });
+    gaps.push({ file: projectFile, line: keyLine(projectLines, key ?? ""), message: `${key} is not a list, so no source was read`, outputs: true });
     return result;
   }
   for (const p of rawPaths) {
     if (typeof p !== "string" || isTemplated(p)) {
-      gaps.push({ file: projectFile, line: keyLine(projectLines, key ?? ""), message: `${key} entry ${JSON.stringify(p)} is not a plain path; its sources were not read` });
+      gaps.push({ file: projectFile, line: keyLine(projectLines, key ?? ""), message: `${key} entry ${JSON.stringify(p)} is not a plain path; its sources were not read`, outputs: true });
       continue;
     }
     const at = posix.normalize(joinPath(dir, p));
     if (at.startsWith("../") || at === ".." || posix.isAbsolute(p)) {
-      gaps.push({ file: projectFile, line: keyLine(projectLines, key ?? ""), message: `${key} entry ${p} lies outside the workspace; its sources were not read` });
+      gaps.push({ file: projectFile, line: keyLine(projectLines, key ?? ""), message: `${key} entry ${p} lies outside the workspace; its sources were not read`, outputs: true });
       continue;
     }
     paths.push(at === "." ? "" : at);
@@ -106,7 +112,7 @@ export function readDbtProject(input: KindReaderInput): KindLinkRead {
       text = tree.read(file);
       doc = parseYAMLDocument(text);
     } catch (err) {
-      gaps.push({ file, line: err instanceof YAMLParseError ? err.line : 1, message: `the file could not be read as YAML (${(err as Error).message}); any sources in it were not read` });
+      gaps.push({ file, line: err instanceof YAMLParseError ? err.line : 1, message: `the file could not be read as YAML (${(err as Error).message}); any sources or models in it were not read`, outputs: true });
       continue;
     }
     if (!isObject(doc) || doc.sources === undefined || doc.sources === null) continue;
@@ -197,95 +203,6 @@ export function readDbtProject(input: KindReaderInput): KindLinkRead {
       }
     }
   }
+  readDbtModels({ input, project, projectFile, paths, quoting, dialect, result });
   return result;
-}
-
-/** A name as text: a string, or a number or boolean YAML read as one. */
-function scalar(v: unknown): string | undefined {
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  return undefined;
-}
-
-/** Whether an entry is enabled: `enabled`, or `config.enabled`. A templated value is a gap, and the entry is left out. */
-function readEnabled(entry: Record<string, unknown>, file: string, line: number, where: string, gaps: KindReadGap[]): boolean {
-  const config = isObject(entry.config) ? entry.config : {};
-  const raw = entry.enabled ?? config.enabled;
-  if (raw === undefined || raw === null || raw === true) return true;
-  if (raw === false) return false;
-  gaps.push({ file, line, message: `${where}: enabled is ${JSON.stringify(raw)}, which chant does not render; it was not read` });
-  return false;
-}
-
-/** `base` with a `quoting:` block's schema and identifier applied. A value that isn't a boolean is a gap and keeps the base. */
-function readQuoting(base: Quoting, raw: unknown, file: string, line: number, where: string, gaps: KindReadGap[]): Quoting {
-  if (raw === undefined || raw === null) return base;
-  if (!isObject(raw)) {
-    gaps.push({ file, line, message: `${where} is not a mapping; the quoting above it applies` });
-    return base;
-  }
-  const out = { ...base };
-  for (const key of ["schema", "identifier"] as const) {
-    const v = raw[key];
-    if (v === undefined) continue;
-    if (typeof v === "boolean") out[key] = v;
-    else gaps.push({ file, line, message: `${where}.${key} is ${JSON.stringify(v)}, not true or false; the quoting above it applies` });
-  }
-  return out;
-}
-
-/** Every `.yml` and `.yaml` file under tree-relative directory `dir`, skipping dot directories and node_modules. */
-function yamlFiles(tree: WorkspaceTree, dir: string): string[] {
-  if (dir !== "" && tree.stat(dir) !== "dir") return [];
-  const out: string[] = [];
-  const walk = (at: string) => {
-    for (const e of tree.list(at) ?? []) {
-      const path = joinPath(at, e.name);
-      if (e.type === "dir") {
-        if (!skippedDir(e.name)) walk(path);
-      } else if (/\.ya?ml$/.test(e.name)) {
-        out.push(path);
-      }
-    }
-  };
-  walk(dir);
-  return out;
-}
-
-function lines(text: string): string[] {
-  return text.replace(/\r\n/g, "\n").split("\n");
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** The line (from 1) of top-level key `key`, or 1. */
-function keyLine(fileLines: string[], key: string): number {
-  const re = new RegExp(`^${escapeRegExp(key)}\\s*:`);
-  const i = fileLines.findIndex((l) => re.test(l));
-  return i < 0 ? 1 : i + 1;
-}
-
-/**
- * The line of the first `name: <value>` entry after line `from`, or `from`
- * itself. Sources, tables and columns are listed in file order, so
- * searching on from the parent's line finds each one's own line. A file in
- * flow style has no such lines, and its entries are reported at the parent.
- */
-function nameLine(fileLines: string[], value: string | undefined, from: number): number {
-  return value === undefined ? from : valueLineOf(fileLines, "name", value, from);
-}
-
-/** The line of the first `<key>:` after line `from`, or `from`. */
-function valueLine(fileLines: string[], key: string, from: number): number {
-  const re = new RegExp(`^\\s*(?:-\\s+)?${escapeRegExp(key)}\\s*:`);
-  for (let i = Math.max(from, 0); i < fileLines.length; i++) if (re.test(fileLines[i])) return i + 1;
-  return from;
-}
-
-function valueLineOf(fileLines: string[], key: string, value: string, from: number): number {
-  const re = new RegExp(`^\\s*(?:-\\s+)?${escapeRegExp(key)}\\s*:\\s*(["']?)${escapeRegExp(value)}\\1\\s*(?:#.*)?$`);
-  for (let i = Math.max(from, 0); i < fileLines.length; i++) if (re.test(fileLines[i])) return i + 1;
-  return from;
 }

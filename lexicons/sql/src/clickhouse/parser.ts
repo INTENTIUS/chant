@@ -227,7 +227,8 @@ export const REFUSED_CREATE_KINDS: ReadonlyArray<{ words: readonly string[]; kin
   {
     words: ["NAMED", "COLLECTION"],
     kind: "NAMED COLLECTION",
-    reason: "a named collection holds credentials (a password, a secret key), which are the environment's and never in a build; the server hides its values, so a plan could not compare them either. Create it from the server's configuration or by hand",
+    reason:
+      "a named collection holds credentials (a password, a secret key), which are the environment's and never in a build. Create it on the server, and name it where it is used: ENGINE = S3(lake_creds, format = 'Parquet'), s3(lake_creds), SOURCE(MYSQL(NAME mysql_creds)). A plan checks that it exists",
   },
   { words: ["MASKING", "POLICY"], kind: "MASKING POLICY", reason: "masking policies are available only in ClickHouse Cloud, not on the pinned server" },
   { words: ["WORKLOAD"], kind: "WORKLOAD", reason: "a workload is server-level scheduling, configured with the server, not a schema object" },

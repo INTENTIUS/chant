@@ -30,9 +30,12 @@ const maintainers = new Policy({
   action: { eq: PASS_GATE },
 });
 
+// `roles` are the ones .chant/trust.json at base gives a proven approver
+// (#4324). Roles an approver claims with `chant approve --role` never reach
+// the request.
 function ask(kind: "human" | "agent", name: string, context: Record<string, unknown>, roles: string[] = []) {
   return gatePolicyRequest({
-    op: "release", gate: "ship", resolvedBy: name, approver: { kind, roles }, planDigest: PLAN, context,
+    op: "release", gate: "ship", resolvedBy: name, approver: { kind }, roles, planDigest: PLAN, context,
   });
 }
 
@@ -71,9 +74,16 @@ describe("evaluateGatePolicy (chant#2508)", () => {
     expect(evaluateGatePolicy(ref, ask("agent", "release-bot", { risk: "high" })).decision).toBe("deny");
   });
 
-  test("reads a claimed role as a parent entity", () => {
+  test("reads a proven role as a parent entity (#4324)", () => {
     expect(evaluateGatePolicy(ref, ask("human", "alex", {}, ["maintainer"])).determining).toEqual(["maintainers"]);
     expect(evaluateGatePolicy(ref, ask("human", "pat", {}, ["viewer"])).decision).toBe("deny");
+  });
+
+  test("a role the approver only claims is not read (#4324)", () => {
+    const request = gatePolicyRequest({
+      op: "release", gate: "ship", resolvedBy: "alex", approver: { kind: "human", roles: ["maintainer"] }, planDigest: PLAN, context: {},
+    });
+    expect(evaluateGatePolicy(ref, request).decision).toBe("deny");
   });
 
   test("a policy that errors on a request does not apply, and the error is reported", () => {

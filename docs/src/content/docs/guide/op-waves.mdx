@@ -81,7 +81,21 @@ chant run --generate forgejo --spec waves.json
 
 Run it from the repository root. GitHub and Forgejo get `<name>.yml` in their workflow directory, and GitLab gets `<name>.gitlab-ci.yml` at the root for `.gitlab-ci.yml` to include. The file can also hold `{ "waves": <spec>, "options": { ... } }`, where `options` sets the image, `beforeScript`, `extraScript` and `variables` for every job. The default image is `node:22`, which has git; install chant in it with `beforeScript`. From code, `generateOpWavesPipeline(spec, lexicon, { specFile })` in `@intentius/chant/op` does the same thing.
 
-Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push to the branch runs wave 1. If a wave waits or fails, the waves after it do not run.
+Each wave is one job, `wave-<k>-<name>`, and it needs the job before it. A push to the branch runs wave 1. If a wave waits at its gate, the waves after it do not run. If a run in it fails, the next wave's job still runs and blocks only the runs that depend on the failed one (below).
+
+## Keep going past a failed run
+
+A run can list the runs it needs applied first:
+
+```json
+{ "target": "app", "dependsOn": ["net"] }
+```
+
+Each entry is a target of an earlier wave, or of a run listed before it in the same wave (`assertOpWaveDependsOn`, `packages/core/src/op/op-waves.ts:745`). Inside one wave this needs a single job to apply it, so a wave with `shares` or `jobs` takes only dependencies on earlier waves.
+
+Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1273`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
+
+A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:136`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
 
 ## Run waves in a slim image
 
@@ -744,7 +758,7 @@ A tool that runs its own waves can decide a gate by these rules without running 
 | `baseCommit(repo)` | the first parent of HEAD, fetched when the checkout is shallow |
 | `gateSignersAt(repo, base)` | the signers file at base, at the path `.chant/trust.json` names there. An invalid trust.json turns attestation off, as it does in chant |
 | `gateSealRefusal(signers, approval)` | why a seal does not count for its approver, or null when it does |
-| `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates` |
+| `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates`, each with its `quorum` when the entry sets one ([#4324](https://github.com/INTENTIUS/chant/issues/4324)) |
 | `identityGateAdmissionAt(repo, base, gate, { packages, classes })` | the `identity.gates` rule for one gate at base, or null when the declaration names none. Its `refuses(approval)` is what chant's own `gateAdmission` answers: the seal against the signers at base, then the class against the role grants in `.chant/trust.json` at base. Pass it to `decideGateApproval` as `refuses` |
 | `admitApprover(rule, approval)` | the same judgement over a rule you build yourself: the gate, its class, the signers, the role grants and the known classes |
 | `reviewApproval(merged, headDigest, digest)` | whether the merged pull request's review approves the digest, under `pr-review` |

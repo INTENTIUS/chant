@@ -317,7 +317,7 @@ The role grants in `.chant/trust.json` and the signers file name people by the s
 "identity": {
   "attribution": "identified",
   "gates": {
-    "ship": { "class": "operator" },
+    "ship": { "class": "operator", "quorum": { "count": 2 } },
     "rollback": {}
   }
 }
@@ -327,8 +327,9 @@ The role grants in `.chant/trust.json` and the signers file name people by the s
 |---|---|
 | `attribution` | `any`, the default, takes any name. `identified` refuses a name: [`records new`, `amend` and `review`](/chant/cli/workspace-records/#writing-records), [`points answer`](/chant/cli/workspace-points/) and `chant approve` refuse a `--by`, author field, answerer or `--actor` that is not a forge identity, a signer or a role holder, with `principal-unidentified`. |
 | `gates` | Gates by name. A gate of that name, in any member, Op or component, counts only an approval sealed with `chant approve --sign` by a key the signers file at base lists for its approver. With `class`, the approver must also be in that class, read from the role grants at base. A class no pinned package supplies lets nothing through. Without a signers file at base, nothing passes. The gate named `release` also says who may cut a release: [`chant release cut`](/chant/cli/release/#who-may-cut) then needs `--sign`, by an actor in its class. |
+| `gates.<gate>.quorum` | The approval rules an Op gate of that name takes, in place of the Op's own `approval.quorum` ([#4324](https://github.com/INTENTIUS/chant/issues/4324)). One rule or a list, each `{ targets?, count, roles? }` as in [Approval Rules](/chant/guide/approval-rules/): `count` distinct people, `roles` read from `.chant/trust.json` at base, `targets` globs over the run's environment. `notAuthor` is refused with `declaration-invalid`, since an Op gate has no author to judge by. Absent, the Op's own quorum applies. A chant older than 0.124.47 refuses the field, so set `minReader` to at least that version when you use it. |
 
-Both are read from the declaration at base, so a change can't loosen its own rule. A run, `chant workspace status` and `chant approve` all apply `gates`. `chant approve` refuses an approval the rule would not count before writing it, and a run or status leaves out any such approval already on the ledger, so a hud invite link alone can't clear the gate. `status --json` marks such a gate with `signed`.
+Both are read from the declaration at base, so a change can't loosen its own rule. A run reads a gate's `quorum` at base too (`packages/core/src/op/local-executor.ts:803`). A pull request that lowers the quorum in its Op or in this file still needs the quorum on the base branch. A run, `chant workspace status` and `chant approve` all apply `gates`. `chant approve` refuses an approval the rule would not count before writing it, and a run or status leaves out any such approval already on the ledger, so a hud invite link alone can't clear the gate. `status --json` marks such a gate with `signed`.
 
 An approval for a gate under `gates` is made like this, in the member's directory, with a key the signers file lists for `github:alice`:
 
@@ -364,7 +365,7 @@ A gate that lists an old name as an alias ([Renaming a gate](/chant/guide/ops/#r
 
 | Field | Required | Value |
 |---|---|---|
-| `branch` | yes | The branch whose first-parent commits are tagged. |
+| `branch` | yes | The branch whose first-parent commits are tagged, or a list of branches ([#4325](https://github.com/INTENTIUS/chant/issues/4325)). With a list, the tick judges each one, and the first is the trunk that readers and `release cut` use when they are not told a branch. List a branch that [`ci.branches`](/chant/guide/branch-routing/) routes members to, so it gets a green verdict and can release. A string reads as it always did. Older chant refuse a list, so set `minReader` with it. |
 | `window` | no | How far back a tick looks, by committer time, as minutes, hours or days such as `90m` or `7d`. The default is `24h`. |
 | `phases` | yes | Phases by name. Each is a list of check-run name patterns, or `{ "runs": [...], "skipped": "pass", "build": "newest" }`. In a pattern, `*` stands for any run of characters, and the pattern must match the whole name. `build` is `every` or `newest`, described below; read by chant 0.124.33 and newer, so set `minReader` with it. |
 | `require` | yes | The phases a commit must pass to be tagged green. Each must be declared under `phases`. |
@@ -419,7 +420,7 @@ The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` o
 
 ### Stage hooks
 
-`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `after.gate` and `apply.runBy` are refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it.
+`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `after.gate`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `apply.runBy` is refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it.
 
 ### Branches and labels
 

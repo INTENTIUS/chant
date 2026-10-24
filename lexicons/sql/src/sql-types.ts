@@ -133,7 +133,7 @@ function originOf(entity: Declarable, exportName: string, projectDir: string): s
 }
 
 /** The names a relation's `.columns` record holds at run time, in order. */
-const runtimeColumns = (entity: Declarable | undefined): string[] => Object.keys((entity as { columns?: object } | undefined)?.columns ?? {});
+export const runtimeColumns = (entity: Declarable | undefined): string[] => Object.keys((entity as { columns?: object } | undefined)?.columns ?? {});
 
 /** Whether `expr` is the column `column` alone, bare or qualified (`o.user_id`). */
 function isBareColumn(expr: string, quoted: string): boolean {
@@ -148,7 +148,7 @@ interface LineageJson {
 }
 
 /** A view's column that passes one column through: that column's export and name. */
-function passthrough(o: OutputObject, name: string, quote: (c: string) => string): { export: string; column: string } | undefined {
+export function passthrough(o: OutputObject, name: string, quote: (c: string) => string): { export: string; column: string } | undefined {
   const edge = ((o.lineage as LineageJson[] | undefined) ?? []).find((e) => e.output === name);
   const ref = edge?.from.length === 1 ? edge.from[0] : undefined;
   if (!edge || !ref) return undefined;
@@ -177,7 +177,7 @@ function spell(canonical: string, t: ParsedType): string {
 const arrayOf = (ts: string): string => `${/[|&]/.test(ts) && !/^\{.*\}$/s.test(ts) ? `(${ts})` : ts}[]`;
 
 /** A Postgres type's spelling, row type, and whether the type itself forbids NULL (a serial, a NOT NULL domain). */
-function pgType(p: PgProject, text: string | undefined, depth = 0): { sqlType: string; ts: string; notNull: boolean } {
+export function pgType(p: PgProject, text: string | undefined, depth = 0): { sqlType: string; ts: string; notNull: boolean } {
   const t = parseType(text);
   if (!t || depth > 5) return { sqlType: text?.trim() || "unknown", ts: "unknown", notNull: false };
   const r = resolveType(p, t, { serial: true });
@@ -320,12 +320,18 @@ function renderEntry(e: RelationEntry, lines: string[]): void {
 }
 
 /** The dialect a build's entities declare, else the config's, else ClickHouse. */
-function dialectOf(entities: ReadonlyMap<string, Declarable>, config: Record<string, unknown>): SqlDialect {
+export function dialectOf(entities: ReadonlyMap<string, Declarable>, config: Record<string, unknown>): SqlDialect {
   try {
     return filesDialect(entities, config);
   } catch {
     return "clickhouse";
   }
+}
+
+/** The build's sql output as `chant build` writes it: the objects, and the Postgres major they were built for. */
+export function serializedObjects(entities: ReadonlyMap<string, Declarable>, config: Record<string, unknown>): { objects: OutputObject[]; postgresMajor?: number } {
+  const out = sqlSerializer.serialize(new Map(entities), undefined, { config }) as SerializerResult | string;
+  return JSON.parse(typeof out === "string" ? out : out.primary) as { objects: OutputObject[]; postgresMajor?: number };
 }
 
 /**
@@ -340,8 +346,7 @@ export function renderSqlTypes(entities: ReadonlyMap<string, Declarable>, opts: 
   const sqlEntities = new Map([...entities].filter(([, e]) => isPostgresObject(e) || isClickHouseObject(e)));
   let entries: RelationEntry[] = [];
   if (sqlEntities.size > 0) {
-    const out = sqlSerializer.serialize(new Map(entities), undefined, { config }) as SerializerResult | string;
-    const doc = JSON.parse(typeof out === "string" ? out : out.primary) as { objects: OutputObject[]; postgresMajor?: number };
+    const doc = serializedObjects(entities, config);
     entries = dialect === "postgres" ? postgresEntries(doc.objects, doc.postgresMajor ?? PINNED_MAJOR, entities, projectDir) : clickhouseEntries(doc.objects, entities, projectDir);
   }
   const byKey = new Map<string, RelationEntry>();

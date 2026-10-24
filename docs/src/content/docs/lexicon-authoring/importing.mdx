@@ -19,6 +19,7 @@ The `chant import` command reads existing infrastructure files (YAML, JSON, Dock
 | `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks the project's lexicons and then the installed ones, and takes the first `true` (`detectTemplateLexicon` in `packages/core/src/cli/commands/import.ts`). |
 | `templateParser(options?)` | `TemplateParser` | Source format to `TemplateIR`. `options` holds the `--parser-option` values, checked and typed. |
 | `parserOptions()` | `ParserOptionSpec[]` | Optional. The options `templateParser` takes (`name`, `type`, `description`). `chant import --parser-option` refuses any name not listed. |
+| `validateImport(ir, options)` | `Promise<ImportDiagnostic[]>` | Optional. Called by `chant import --validate` with the parsed IR; returns one `error` diagnostic for each statement the lexicon's emulator rejects. Without it `--validate` fails the import. |
 | `templateGenerator()` | `TypeScriptGenerator` | `TemplateIR` to `GeneratedFile[]`. |
 | `embeddedImporters()` | `EmbeddedContentImporter[]` | This lexicon's content when it sits inside another lexicon's resources, such as a collector config in a k8s ConfigMap. See [Embedded content](#embedded-content). |
 | `migrationSource(from)` | `MigrationSource \| undefined` | `chant migrate`: another provider's format into this lexicon's. |
@@ -44,6 +45,7 @@ interface TemplateIR {
   readonly outputs?: OutputIR[];         // template outputs (#2069)
   readonly metadata?: Record<string, unknown>;
   readonly warnings?: string[];          // what you read but cannot carry
+  readonly diagnostics?: ImportDiagnostic[]; // judgment calls, for --report and --strict
 }
 
 interface ResourceIR {
@@ -55,10 +57,11 @@ interface ResourceIR {
 }
 ```
 
-Three rules follow from that shape:
+Four rules follow from that shape:
 
 - Capture all properties. `properties` is a lossless intermediate, so every property from the source file should appear there for the generator to emit. A silently dropped property breaks the roundtrip.
 - Name what you cannot carry. A section you read and deliberately drop goes in `warnings`, which `chant import` prints (`parseAndWrite` pushes `ir.warnings` straight into the result). Silence is the failure mode #2069 closed.
+- Report a judgment call as a diagnostic. A choice the author should confirm goes in `diagnostics` with a rule id, a severity and a line in the template. `chant import --report <path>` writes the list as SARIF and `--strict` fails while a `warning` or `error` is open (`importExitCode`, `packages/core/src/cli/commands/import-report.ts`). The sql lexicon's SQL Server source is the first user; see [Importing a SQL Server Schema](/chant/lexicons/sql/sqlserver-importing/).
 - `logicalId` becomes an export name. Core lowercases its first character when it writes the barrel re-exports, so emit a valid JavaScript identifier.
 
 ### How core drives the two halves

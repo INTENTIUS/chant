@@ -108,10 +108,12 @@ export const pgQualified = (schema: string | undefined, name: string): string =>
 export const objectIdent = (o: { kind: CanonicalKind; schema?: string; name: string; signature?: string }): string =>
   o.kind === "cast"
     ? o.name
-    : o.kind === "schema" || o.kind === "extension" || o.kind === "role" || o.kind === "eventTrigger"
+    : o.kind === "schema" || o.kind === "extension" || o.kind === "role" || o.kind === "eventTrigger" || o.kind === "foreignDataWrapper" || o.kind === "foreignServer" || o.kind === "publication"
     ? quoteIdent(o.name)
     : o.kind === "trigger" || o.kind === "policy"
       ? `${quoteIdent(o.name)}${o.signature ?? ""}`
+      : o.kind === "operator"
+        ? `${o.schema ? `${quoteIdent(o.schema)}.` : ""}${o.name}${o.signature ?? ""}`
       : `${pgQualified(o.schema, o.name)}${o.signature ?? ""}`;
 
 /** The words a statement names the object's kind with. */
@@ -133,6 +135,11 @@ export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
   collation: "COLLATION",
   cast: "CAST",
   eventTrigger: "EVENT TRIGGER",
+  operator: "OPERATOR",
+  statistics: "STATISTICS",
+  foreignDataWrapper: "FOREIGN DATA WRAPPER",
+  foreignServer: "SERVER",
+  publication: "PUBLICATION",
   trigger: "TRIGGER",
   policy: "POLICY",
   role: "ROLE",
@@ -569,6 +576,62 @@ export function setNotNullSteps(table: string, column: string, live?: Pick<PgDif
   return steps;
 }
 
+/** An `OPTIONS (...)` clause that takes the options `have` to `want`: ADD, SET and DROP per option; empty when they agree. */
+function optionsClause(want: unknown, have: unknown): string {
+  const w = (want ?? {}) as Record<string, string>;
+  const h = (have ?? {}) as Record<string, string>;
+  const parts = [
+    ...Object.keys(w).filter((k) => !(k in h)).map((k) => `ADD ${quoteIdent(k)} ${pgString(w[k]!)}`),
+    ...Object.keys(w).filter((k) => k in h && h[k] !== w[k]).map((k) => `SET ${quoteIdent(k)} ${pgString(w[k]!)}`),
+    ...Object.keys(h).filter((k) => !(k in w)).map((k) => `DROP ${quoteIdent(k)}`),
+  ];
+  return parts.length > 0 ? `OPTIONS (${parts.join(", ")})` : "";
+}
+
+/** A publication's table as `ADD TABLE` writes it: its name, column list and row filter. */
+const publicationTable = (t: { table: string; columns?: string[]; where?: string }): string =>
+  `${t.table}${t.columns && t.columns.length > 0 ? ` (${t.columns.map(quoteIdent).join(", ")})` : ""}${t.where ? ` WHERE (${t.where})` : ""}`;
+
+/**
+ * The ALTER statements that take a foreign data wrapper, a foreign server or
+ * a publication to the declaration, in place (SQLPG303): one ALTER for a
+ * wrapper or server; for a publication one SET (...) for its options, and a
+ * DROP and ADD per table or schema that changed.
+ */
+function alteredSteps(d: PgDiffObject, live: PgDiffObject, target: string): PgStep[] {
+  const out: string[] = [];
+  const f = d.fields;
+  const l = live.fields;
+  if (d.kind === "foreignDataWrapper") {
+    const clauses = [
+      !same(f.handler, l.handler) ? (f.handler ? `HANDLER ${String(f.handler)}` : "NO HANDLER") : "",
+      !same(f.validator, l.validator) ? (f.validator ? `VALIDATOR ${String(f.validator)}` : "NO VALIDATOR") : "",
+      optionsClause(f.options, l.options),
+    ].filter(Boolean);
+    if (clauses.length > 0) out.push(`ALTER FOREIGN DATA WRAPPER ${target} ${clauses.join(" ")}`);
+  } else if (d.kind === "foreignServer") {
+    const clauses = [!same(f.version, l.version) ? `VERSION ${f.version === undefined ? "NULL" : pgString(String(f.version))}` : "", optionsClause(f.options, l.options)].filter(Boolean);
+    if (clauses.length > 0) out.push(`ALTER SERVER ${target} ${clauses.join(" ")}`);
+  } else if (d.kind === "publication") {
+    const sets: string[] = [];
+    if (!same(f.publish, l.publish)) sets.push(`publish = ${pgString(((f.publish as string[] | undefined) ?? ["insert", "update", "delete", "truncate"]).join(", "))}`);
+    if (!same(f.viaRoot, l.viaRoot)) sets.push(`publish_via_partition_root = ${f.viaRoot === true}`);
+    if (!same(f.generatedColumns, l.generatedColumns)) sets.push(`publish_generated_columns = ${String(f.generatedColumns ?? "none")}`);
+    if (sets.length > 0) out.push(`ALTER PUBLICATION ${target} SET (${sets.join(", ")})`);
+    type Member = { table: string; columns?: string[]; where?: string };
+    const want = (f.tables as Member[] | undefined) ?? [];
+    const have = (l.tables as Member[] | undefined) ?? [];
+    const kept = (m: Member) => want.some((w) => w.table === m.table && same(w, m));
+    for (const m of have) if (!kept(m)) out.push(`ALTER PUBLICATION ${target} DROP TABLE ${m.table}`);
+    for (const m of want) if (!have.some((h) => h.table === m.table && same(h, m))) out.push(`ALTER PUBLICATION ${target} ADD TABLE ${publicationTable(m)}`);
+    const wantSchemas = (f.schemas as string[] | undefined) ?? [];
+    const haveSchemas = (l.schemas as string[] | undefined) ?? [];
+    for (const s of haveSchemas) if (!wantSchemas.includes(s)) out.push(`ALTER PUBLICATION ${target} DROP TABLES IN SCHEMA ${s}`);
+    for (const s of wantSchemas) if (!haveSchemas.includes(s)) out.push(`ALTER PUBLICATION ${target} ADD TABLES IN SCHEMA ${s}`);
+  }
+  return out.map((sql) => step(sql, "metadata", "SQLPG303"));
+}
+
 /**
  * The statements for an object that exists on the server, change by change.
  * `live` is the server's definition, matched to the declaration (a renamed
@@ -703,6 +766,9 @@ export function alterSteps(
         break;
       case "SQLPG229":
         steps.push(step(`ALTER INDEX ${objectIdent(live)} RENAME TO ${quoteIdent(d.name)}`, c.class, c.rule));
+        break;
+      case "SQLPG303":
+        if (!steps.some((s) => s.rule === "SQLPG303")) steps.push(...alteredSteps(d, live, target));
         break;
       case "SQLPG250":
       case "SQLPG280":
@@ -882,6 +948,9 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   defaultPrivileges: 0,
   policy: 0,
   trigger: 0,
+  // A publication reads tables, extended statistics are on one: both go before it.
+  publication: 0,
+  statistics: 0,
   materializedView: 1,
   view: 2,
   index: 3,
@@ -891,6 +960,10 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   eventTrigger: 5.5,
   cast: 5.5,
   aggregate: 5.5,
+  operator: 5.5,
+  // A server before its wrapper, a wrapper before the handler function it calls.
+  foreignServer: 5.5,
+  foreignDataWrapper: 5.6,
   // A routine after what calls it (a view, a trigger, a default), before the types its parameters use.
   function: 6,
   procedure: 6,

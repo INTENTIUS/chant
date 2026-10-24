@@ -30,7 +30,10 @@
  * Approval rules (#4290), a quorum as a list of `{ targets, count, roles,
  * notAuthor }`, are judged with `./op/gate-quorum.ts`, re-exported here:
  * {@link trustRolesAt} and {@link gateSignersAt} read what
- * `trustQuorumJudge` judges by, at base.
+ * `trustQuorumJudge` judges by, at base. A product's own review lines
+ * (#4333) become one approval per reviewer with `recordedReviewApprovals`,
+ * and `changeInvolvement` names everyone involved in a change for the
+ * judge to leave out.
  *
  * The module reads the ledger lines and the review it is handed; reading
  * them is the caller's. It imports no TypeScript, esbuild, zod, ajv, lint,
@@ -63,6 +66,7 @@ import { CORE_CLASSES, admitApprover, type ClassGrant, type GateAdmissionRule, t
 import { diskFiles, findInstalledPackage, mergePinClasses, parseClassDataByHand, readClassFiles, type PinClassRead } from "./workspace/class-data";
 import type { GateResolutionRecord, PendingGateRecord } from "./lifecycle/gate-ledger";
 import type { MergedReview } from "./op/gate-review";
+import { quorumProblems as quorumProblemsOf, type GateQuorumSpec as QuorumSpec } from "./op/gate-quorum";
 import type { GateApprovalSource } from "./op/op-waves";
 
 export { GATE_APPROVAL_SOURCES, type GateApprovalSource } from "./op/op-waves";
@@ -124,6 +128,14 @@ export {
   targetGlobMatch,
   trustQuorumJudge,
   UNPROVEN_JUDGE,
+  changeInvolvement,
+  involvedWhy,
+  principalNames,
+  recordedReviewApprovals,
+  recordedReviewOf,
+  requestedByTrailers,
+  type QuorumInvolvement,
+  type RecordedReview,
   type GateQuorumJudge,
   type GateQuorumRule,
   type GateQuorumRuleProgress,
@@ -213,6 +225,11 @@ export function trustRolesAt(repo: string, base: string): Record<string, string[
 export interface IdentityGate {
   gate: string;
   class: string | null;
+  /**
+   * `identity.gates.<gate>.quorum` (#4324): the approval rules an Op gate of
+   * this name takes in place of its own. Absent when the entry sets none.
+   */
+  quorum?: QuorumSpec;
 }
 
 /** The declaration at `base`, parsed, or null when there is none. Throws when it cannot be parsed. */
@@ -228,8 +245,14 @@ function declarationAt(repo: string, base: string): { file: string; value: unkno
 }
 
 function identityGatesOf(declaration: unknown): IdentityGate[] {
-  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown } | null> } } | null)?.identity?.gates ?? {};
-  return Object.entries(gates).map(([gate, entry]) => ({ gate, class: typeof entry?.class === "string" ? entry.class : null }));
+  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown; quorum?: unknown } | null> } } | null)?.identity?.gates ?? {};
+  return Object.entries(gates).map(([gate, entry]) => {
+    if (entry?.quorum === undefined) return { gate, class: typeof entry?.class === "string" ? entry.class : null };
+    // #4324: a quorum chant would refuse leaves the gate undecidable, as chant's own read does.
+    const [problem] = quorumProblemsOf(entry.quorum, `identity.gates.${gate}.quorum`, { notAuthor: false });
+    if (problem) throw new Error(`chant.workspace.json at base: ${problem.replace(/`/g, "")}, so the gate cannot be decided`);
+    return { gate, class: typeof entry.class === "string" ? entry.class : null, quorum: structuredClone(entry.quorum) as QuorumSpec };
+  });
 }
 
 /**

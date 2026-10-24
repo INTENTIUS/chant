@@ -35,14 +35,14 @@ import { contentDigest } from "../content-digest";
 import { parseDuration } from "./duration";
 import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
-import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort, type WorkspaceGateStandIn } from "./gate";
+import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateApprovalRule, type GateCheck, type GateLedgerPort, type WorkspaceGateStandIn } from "./gate";
 import { resolveWorkspaceRun, type WorkspaceRunCitation } from "./workspace-run-env";
 import { gateName } from "./gate-name";
 import { resolveGateAliases } from "./gate-alias";
 import { gatePointOf } from "./gate-point";
 import { evaluatePointGate, workspaceGatePointAsker, type GatePointAsker } from "./gate-point-run";
 import type { ResolvedGateApproval } from "./gate-approval";
-import { quorumRules, quorumRulesFor } from "./gate-quorum";
+import { quorumRules, quorumRulesFor, type GateQuorumSpec } from "./gate-quorum";
 import { GATE_PLAN_CONTEXT_KEY, gatePlanSummaryOfResult } from "./gate-plan-context";
 import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
@@ -735,14 +735,23 @@ function gateFn(step: GateStep): string {
  * returned, the same walk `plan` goes through. A reference that resolves to
  * nothing is dropped rather than failing the run, so a policy reading it sees
  * the attribute as absent.
+ *
+ * #4324: the quorum is `identity.gates.<gate>.quorum` in the workspace
+ * declaration at base (`atBase`) whenever that sets one, and the Op's own
+ * `approval.quorum` is not read then, so a change can't lower the quorum its
+ * own run needs. The base quorum applies to a gate whose Op declares no
+ * `approval` block too. With none at base, the Op's quorum applies as before.
  */
-function resolveGateApproval(
+export function resolveGateApproval(
   step: GateStep,
   resultsById: ReadonlyMap<string, unknown>,
   env?: string,
+  atBase?: GateQuorumSpec | null,
 ): ResolvedGateApproval | undefined {
-  const authored = step.approval;
+  const baseQuorum = atBase ?? undefined;
+  const authored = step.approval ?? (baseQuorum !== undefined ? {} : undefined);
   if (!authored) return undefined;
+  const quorum = baseQuorum ?? authored.quorum;
   let context: Record<string, unknown> | undefined;
   if (authored.context) {
     context = {};
@@ -761,10 +770,10 @@ function resolveGateApproval(
   // #4290: the rules this run's gate takes, by its environment. A rule with
   // `targets` never covers a run with no environment. One rule with no
   // `targets` keeps its own shape, so a standing pending fact still matches.
-  const single = authored.quorum !== undefined && !Array.isArray(authored.quorum) && (authored.quorum as { targets?: unknown }).targets === undefined;
-  const rules = authored.quorum ? quorumRulesFor(quorumRules(authored.quorum), env !== undefined ? [env] : []) : [];
+  const single = quorum !== undefined && !Array.isArray(quorum) && (quorum as { targets?: unknown }).targets === undefined;
+  const rules = quorum ? quorumRulesFor(quorumRules(quorum), env !== undefined ? [env] : []) : [];
   return {
-    ...(single ? { quorum: authored.quorum } : rules.length > 0 ? { quorum: rules } : {}),
+    ...(single ? { quorum } : rules.length > 0 ? { quorum: rules } : {}),
     ...(authored.policy ? { policy: authored.policy } : {}),
     mode: authored.mode ?? "log-only",
     ...(context ? { context } : {}),
@@ -792,7 +801,16 @@ async function runGateStep(
   // a run over a missing digest.
   const resolvedPlan = resolveStepOutputRefs(step.plan, resultsById);
   const planDigest = typeof resolvedPlan === "string" && resolvedPlan !== "" ? resolvedPlan : undefined;
-  const approval = resolveGateApproval(step, resultsById, gates.env);
+  // #4324: the workspace's rule for this gate at base, read once: its quorum
+  // replaces the Op's, and evaluateGate judges approvals by it. A read that
+  // fails ends the step as a failing record, as a ledger read does below.
+  let rule: GateApprovalRule | null;
+  try {
+    rule = (await gates.port.approvalRule?.(gateName(step))) ?? null;
+  } catch (err) {
+    return { record: { phase: phaseName, fn: gateFn(step), args: {}, status: "fail", durationMs: Date.now() - start, error: errMessage(err) } };
+  }
+  const approval = resolveGateApproval(step, resultsById, gates.env, rule?.requirement.quorum);
   // #3947: a gate that resumes stores the outputs the steps after it read.
   const resumeAt = gates.resume?.gates.get(step);
   let checkpoint: GateCheckpoint | undefined;
@@ -820,6 +838,7 @@ async function runGateStep(
       ...(gates.gitSha ? { gitSha: gates.gitSha } : {}),
       ...(planDigest !== undefined ? { planDigest } : {}),
       ...(approval ? { approval } : {}),
+      rule,
       ...(gates.now ? { now: gates.now } : {}),
       ...(checkpoint ? { checkpoint } : {}),
       ...(step.aliases?.length ? { aliases: resolveGateAliases(step, gates.op) } : {}),

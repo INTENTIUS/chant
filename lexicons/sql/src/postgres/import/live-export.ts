@@ -84,6 +84,7 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
       warnings.push(`${o.schema ? `${o.schema}.` : ""}${o.name} is kept by ${o.foreign}; left out, since declaring it would have chant change what that tool owns`);
       continue;
     }
+    for (const w of o.warnings ?? []) warnings.push(`${o.schema ? `${o.schema}.` : ""}${o.name}: ${w}`);
     objects.push({ type: o.type, ...(o.schema ? { schema: o.schema } : {}), name: o.name, ddl: o.statement });
   }
   return objectsToIR([...objects, ...access], warnings) as ExportedTemplate;

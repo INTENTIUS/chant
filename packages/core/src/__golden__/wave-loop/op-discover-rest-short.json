@@ -61,6 +61,12 @@
     "wave 2 (rest): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:1fa77cc2ae4f64b25382f00ebcf74210c66068d22785dbd5192eac122050ab1e: not-required"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {}
+    },
     ".chant/op-waves/tf-apply/wave-2/plans.json": {
       "runs": [],
       "waves": 1

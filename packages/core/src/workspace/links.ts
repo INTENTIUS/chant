@@ -195,10 +195,11 @@ function nearNames(name: string, outputs: JoinHandle[]): string[] {
  */
 export function resolveLinks(
   declaration: Declaration,
-  handles: ReadonlyMap<string, MemberHandles>,
+  sourceHandles: ReadonlyMap<string, MemberHandles>,
   telemetry?: TelemetryTargets,
   readLinks?: ReadonlyMap<string, KindLinkRead>,
 ): LinkTableRow[] {
+  const handles = withReaderOutputs(sourceHandles, readLinks);
   const rows: LinkTableRow[] = [];
   const declaredTargets = new Map<string, Set<string>>();
 
@@ -309,6 +310,28 @@ export function resolveLinks(
   }
   inferred.sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.input ?? "", b.input ?? ""));
   return [...rows, ...inferred];
+}
+
+/**
+ * `handles` with the outputs each member's kind reader found in its files
+ * (#3935) added to the member's own. The member stays complete unless a gap
+ * the reader flagged `outputs` left a name out. A member with no handles
+ * (its directory is missing, or its kind unknown) gets none.
+ */
+export function withReaderOutputs(handles: ReadonlyMap<string, MemberHandles>, reads: ReadonlyMap<string, KindLinkRead> | undefined): ReadonlyMap<string, MemberHandles> {
+  if (!reads) return handles;
+  let out: Map<string, MemberHandles> | undefined;
+  for (const [member, read] of reads) {
+    const base = handles.get(member);
+    const gaps = read.gaps.filter((g) => g.outputs);
+    if (!base || (!read.outputs?.length && gaps.length === 0)) continue;
+    const have = new Set(base.outputs.map((o) => o.name));
+    const added = (read.outputs ?? []).filter((o) => !have.has(o.name) && have.add(o.name)).map((o) => ({ name: o.name }));
+    const complete = base.complete && gaps.length === 0;
+    const why = base.why ?? (gaps.length === 0 ? null : gaps.length === 1 ? gaps[0].message : `${gaps[0].message}, and ${gaps.length - 1} more`);
+    (out ??= new Map(handles)).set(member, { ...base, outputs: [...base.outputs, ...added], complete, why: complete ? base.why : why, exposesNone: false });
+  }
+  return out ?? handles;
 }
 
 /** Match a declared or reader's output row against its producer's handles, setting its status and reason. */

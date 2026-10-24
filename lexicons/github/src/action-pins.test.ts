@@ -61,7 +61,7 @@ describe("action pins (#2510)", () => {
   });
 
   test("composites default to the pinned SHA with the release comment (#4410)", () => {
-    const uses = (c: { step: { props: unknown } }) => (c.step.props as { uses?: string }).uses;
+    const uses = (c: { step: unknown }) => ((c.step as { props: unknown }).props as { uses?: string }).uses;
     expect(uses(Checkout({}))).toBe(actionRef("actions/checkout", "sha"));
     expect(uses(SetupNode({}))).toBe(actionRef("actions/setup-node", "sha"));
     expect(uses(CacheAction({ path: "p", key: "k" }))).toBe(actionRef("actions/cache", "sha"));

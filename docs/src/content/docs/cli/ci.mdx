@@ -7,8 +7,8 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant ci last-green [--json] [--from <rev>]
-chant ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
+chant ci last-green [--json] [--from <rev>] [--branch <branch>]
+chant ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs]
 chant ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>]
 chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo]
                   [--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>]
@@ -43,7 +43,7 @@ git fetch origin --tags
 git checkout "$(chant ci last-green)"
 ```
 
-When no commit qualifies, a message goes to stderr and the exit code is 1. `--from <rev>` walks the first-parent commits of `rev` instead of the branch, so `chant ci last-green --from <sha>` prints `<sha>` exactly when that commit counts as green. With [signed tags](#signed-tags), each tag the walk ignores is printed on stderr as a warning.
+When no commit qualifies, a message goes to stderr and the exit code is 1. With a [list in `ci.green.branch`](/chant/guide/branch-routing/#give-a-routed-target-a-green-verdict), `--branch <branch>` reads one of the listed branches instead of the first, and a branch not in the list is `ci-branch-unknown`. `--from <rev>` walks the first-parent commits of `rev` instead of the branch, so `chant ci last-green --from <sha>` prints `<sha>` exactly when that commit counts as green. With [signed tags](#signed-tags), each tag the walk ignores is printed on stderr as a warning.
 
 `--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `ci-last-green.schema.json`, whose `commit` is `{ sha, tag, tagged, committed }` or `null`, and exits 0 in both cases. `ignored` lists the tags the walk passed over for want of a valid statement, newest first, each with `tag`, `status` and `reason`. `newer` ([#4169](https://github.com/INTENTIUS/chant/issues/4169)) lists up to 50 commits above the one found. Each has the commit's [record](#records), or `null` when it has none. A failure has an `error` and exits 1. Its code is `ci-green-undeclared` for a declaration with no `ci.green`, `ci-branch-unknown` when the branch has no ref in this checkout, or the code of a declaration that can't be read.
 
@@ -71,7 +71,7 @@ Each entry also has `record`, what the commit's [record](#records) on the local 
 
 ## ci tick
 
-One pass over the branch. It fetches the branch and the `ci/*` tags from `origin`, and the fetch prunes a `ci/*` tag deleted there by hand. It reads the check runs of each first-parent commit within `window`, then makes the tags that are due and pushes them, never forced:
+One pass over the branch. With a list in `ci.green.branch`, it makes the pass for each listed branch in turn, and prints a section for each ([#4325](https://github.com/INTENTIUS/chant/issues/4325)). It fetches the branch and the `ci/*` tags from `origin`, and the fetch prunes a `ci/*` tag deleted there by hand. It reads the check runs of each first-parent commit within `window`, then makes the tags that are due and pushes them, never forced:
 
 | A commit with | that now | gets |
 |---|---|---|
@@ -400,6 +400,8 @@ The statement proves that a provisioner holding a listed key said it started thi
 Watches a forge and runs the pull-request jobs on this host with [`ci run`](#ci-run) ([#4095](https://github.com/INTENTIUS/chant/issues/4095)). Each poll reads the open pull requests into the target branch (`--branch`, default `main`) and the branch's head through the forge's API. It runs the plan for each pull request head it has not planned, with `--base` the pull request's base commit and `--pr` its number. It runs the record for each new commit on the target branch ([#4168](https://github.com/INTENTIUS/chant/issues/4168)), with `--base` the head the previous job on that branch was measured to, which is the push's `before` on a forge. The record applies nothing. With `--apply-on-merge` it also runs the apply at the newest green commit of the branch, once per commit, as `pr-apply --green` ([#4168](https://github.com/INTENTIUS/chant/issues/4168) step 9), and `--wave-gate` needs that flag. The pull request whose merge commit a recorded commit is comes from the same `pullRequestFor` call `pr-record` uses, and the job gets it as `--pr`, so its commit status link and run index use the `<pr>/<commit>` key. When the forge finds none, or the lookup fails, the job runs without `--pr` as before. The first poll only notes the head: a commit the branch held before the runner watched it is not run.
 
 After each job settles, `ci serve` runs [`ci tick`](#ci-tick) from the runs its jobs recorded (`--source runs`), signed with the same runner key, so a merged commit can go green with no other workflow. A workspace with no `ci.green` gets no tick. A tick that fails is an error on stderr and does not fail the job. `--forge` is `forgejo` or `github`. The token and, on Forgejo, `GITHUB_SERVER_URL` and `GITHUB_API_URL` come from the environment as for `pr-plan`, and `--repo` sets `GITHUB_REPOSITORY` for the poll and for every job. Each job it starts gets the job flags `ci serve` was given, which are `ci run`'s, such as `--gate`, `--chant`, `--secrets` and `--key`. It reads the [secrets file](#secrets) once when it starts, so a loose or broken file stops it before the first poll, and a changed file is read on the next start.
+
+Where `ci serve` runs decides the branches it polls ([#4325](https://github.com/INTENTIUS/chant/issues/4325)). In a member that [`ci.branches`](/chant/guide/branch-routing/#serve-the-routed-targets-and-check-their-pipelines) routes, it polls the route alone and gives the member's record and apply jobs `--branch <route>`. In any other member it polls `--branch`, `main` by default. At the workspace root it polls `main` and each routed branch. The state file keeps a head for each branch it polls. `--branch` naming a branch other than a routed member's route is refused.
 
 It runs in host mode. Each job runs in a fresh worktree on this host as the user running `ci serve`, with the clean environment `ci run` gives it, and the plan runs the pull request's code. A pull request from a fork is never planned. `--author <login>` (repeatable) plans only the pull requests those people opened. Run it only for a repository whose authors you trust with the host's credentials; a container per job is [#4015](https://github.com/INTENTIUS/chant/issues/4015).
 

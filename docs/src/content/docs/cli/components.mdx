@@ -24,6 +24,8 @@ chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
                                 [--output <dir>] [--json] [--events-json] [--report-url <url>]
 chant components pr-post --pr <n> --head <sha> --env <env> --forge github|gitlab|forgejo
                                 [--member <name>] [--output <dir>] [--result <result>]
+chant components pr-post --open --env <env> --forge gitlab [--branch <branch>]
+                                [--member <name>] [--output <dir>]
 chant components pr-apply (--base <ref> [--pr <n>] | --green [--base <ref>] | --before-merge --base <ref> --pr <n>) [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
                                 [--member <name>] [--resume <file>] [--output <dir>] [--json]
@@ -410,6 +412,14 @@ It exits 0 once it has posted, and a forge that refuses a call is a warning. The
 | `--member <name>` | The workspace member whose plan it was. |
 | `--output <dir>` | The report directory. Defaults to `.chant/pr`. |
 | `--result <result>` | The plan job's result, `needs.plan.result` on GitHub and Forgejo. |
+
+With `--open` ([#4328](https://github.com/INTENTIUS/chant/issues/4328)), `pr-post` posts for every open merge request into a branch, from a GitLab pipeline of that branch. The generated `plan-note` job runs it there, since a merge request pipeline runs the merge request's own `.gitlab-ci.yml` and so holds no token ([Keep the Forge Token From the Plan](/chant/guide/security-forge-token-handover/#what-the-plan-job-does-on-gitlab)). GitLab names each merge request, its head and its newest pipeline's plan job, `plan` or `<member>-plan`. `pr-post` reads `pr-plan.json` from that job's artifacts, under `--output` from the repository root, and posts as above with the job's result as `--result` (`postOpenPlanReports` in `packages/core/src/pr-post.ts:202`). A plan job that has not settled waits for the next run. A plan job whose `chant/plan` status already links to it is not posted again.
+
+```bash
+chant components pr-post --open --env prod --forge gitlab
+```
+
+`--open` takes no `--pr`, `--head` or `--result`. `--branch` defaults to the pipeline's `CI_COMMIT_BRANCH`.
 
 #### Finishing an apply that failed partway
 

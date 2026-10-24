@@ -183,6 +183,20 @@ export function everyBuiltin(): Declarable[] {
     trace: { attribute_mappings: [{ key: "http.route", replacement: "/http/route" }] },
     log: { default_log_name: "otel" },
   });
+  const clickhouse = new c.ClickHouseExporter({
+    endpoint: "tcp://clickhouse:9000",
+    database: "otel",
+    username: "${env:CLICKHOUSE_USER}",
+    password: "${env:CLICKHOUSE_PASSWORD}",
+    create_schema: false,
+    ttl: "72h",
+    logs_table_name: "app_logs",
+    metrics_tables: { gauge: { name: "app_gauge" }, exponential_histogram: { name: "app_exp_histogram" } },
+    async_insert: true,
+    compress: "zstd",
+    timeout: "10s",
+    sending_queue: { queue_size: 1000 },
+  });
   const loadbalancing = new c.LoadBalancingExporter({
     routing_key: "service",
     protocol: { otlp: { timeout: "1s", tls: { insecure: true } } },
@@ -266,6 +280,7 @@ export function everyBuiltin(): Declarable[] {
     debug,
     prometheusOut,
     googlecloud,
+    clickhouse,
     loadbalancing,
     spanmetrics,
     servicegraph,
@@ -290,13 +305,13 @@ export function everyBuiltin(): Declarable[] {
       signal: "metrics",
       receivers: [otlp, prometheusIn, hostmetrics, cluster, kubelet, spanmetrics, servicegraph, count, sum, signalToMetrics],
       processors: [memoryLimiter, filter, deltaToCumulative, batch],
-      exporters: [prometheusOut, otlphttp],
+      exporters: [prometheusOut, otlphttp, clickhouse],
     }),
     new Pipeline({
       signal: "logs",
       receivers: [otlp, filelog],
       processors: [memoryLimiter, redaction, batch],
-      exporters: [otlphttp, debug, signalToMetrics],
+      exporters: [otlphttp, debug, signalToMetrics, clickhouse],
     }),
     new Service({
       extensions: [health, zpages, pprof, leaderElector],

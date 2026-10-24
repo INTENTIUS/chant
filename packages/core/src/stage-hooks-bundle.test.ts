@@ -31,6 +31,7 @@ describe("the stage-hooks bundle", () => {
       "packages/core/src/op/gate-quorum.ts",
       "packages/core/src/op/op-waves.ts",
       "packages/core/src/op/stage-hooks.ts",
+      "packages/core/src/wave-blocked.ts",
       "packages/core/src/wave-layout.ts",
     ]);
     expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(48 * 1024);

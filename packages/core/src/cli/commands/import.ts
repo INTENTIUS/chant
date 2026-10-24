@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
-import type { TemplateIR, ResourceIR, ParameterIR, ParseContext } from "../../import/parser";
+import type { TemplateIR, ResourceIR, ParameterIR, ParseContext, ImportDiagnostic } from "../../import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
 import { listInstalledLexicons, loadPlugin, loadPlugins, resolveProjectLexicons } from "../plugins";
 import type { ExportedTemplate, LexiconPlugin, ResourceSelector } from "../../lexicon";
 import { parseYAMLDocument, splitYAMLDocuments } from "../../yaml";
 import { importLexiconPackage } from "../../lexicon-module";
 import { resolveParserOptions } from "../../import/parser-options";
+import { summarizeImportDiagnostics } from "./import-report";
 import { EmbeddedImports, type EmbeddedContent, type RegisteredEmbeddedImporter } from "../../import/embedded";
 
 /**
@@ -31,6 +32,8 @@ export interface ImportOptions {
    * fails the import before anything is parsed.
    */
   parserOptions?: string[];
+  /** `--validate` (#4398): check the parsed template on the lexicon's emulator before writing. */
+  validate?: boolean;
 }
 
 /**
@@ -52,6 +55,12 @@ export interface ImportResult {
    * it was named (`--lexicon`, `--kustomize`) (#2965).
    */
   detected?: boolean;
+  /**
+   * What the parser flagged for review (#4398), then what `--validate`
+   * rejected. `--report` writes them as SARIF and `--strict` fails while a
+   * `warning` or `error` is open; see `./import-report.ts`.
+   */
+  diagnostics?: ImportDiagnostic[];
 }
 
 /**
@@ -353,6 +362,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
       output: options.output,
       force: options.force,
       parserOptions: options.parserOptions,
+      validate: options.validate,
     });
   }
 
@@ -391,7 +401,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     );
   }
 
-  const result = await parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name, projectDir, options.parserOptions);
+  const result = await parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name, projectDir, options.parserOptions, options.validate);
   return { ...result, detected: true };
 }
 
@@ -412,6 +422,8 @@ export interface ContentImportOptions {
   force?: boolean;
   /** `--parser-option` entries for the lexicon's parser (#2994); see {@link ImportOptions.parserOptions}. */
   parserOptions?: string[];
+  /** `--validate`; see {@link ImportOptions.validate}. */
+  validate?: boolean;
 }
 
 export async function importFromContent(options: ContentImportOptions): Promise<ImportResult> {
@@ -432,7 +444,7 @@ export async function importFromContent(options: ContentImportOptions): Promise<
     return { success: false, generatedFiles: [], warnings: [], error: `Lexicon "${options.lexicon}" not available.` };
   }
   const projectDir = resolve(options.output ? dirname(options.output) : ".");
-  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name, projectDir, options.parserOptions);
+  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name, projectDir, options.parserOptions, options.validate);
 }
 
 /**
@@ -568,6 +580,7 @@ async function parseAndWrite(
   lexicon: string,
   projectDir: string,
   parserOptionEntries?: readonly string[],
+  validate?: boolean,
 ): Promise<ImportResult> {
   // A lexicon can recognize a template (detectTemplate) without being able to
   // import it (grafana had no parser until #2945). Every path funnels through here, so
@@ -608,6 +621,18 @@ async function parseAndWrite(
   // rather than dropped silently (#2069).
   if (ir.warnings) {
     warnings.push(...ir.warnings);
+  }
+  // Findings for review (#4398), and what the lexicon's emulator rejects.
+  const diagnostics: ImportDiagnostic[] = [...(ir.diagnostics ?? [])];
+  if (validate) {
+    if (!plugin.validateImport) {
+      return { success: false, generatedFiles: [], warnings: [], error: `lexicon "${plugin.name}" has no emulator to validate an import against`, lexicon: plugin.name };
+    }
+    try {
+      diagnostics.push(...(await plugin.validateImport(ir, resolved.options)));
+    } catch (err) {
+      return { success: false, generatedFiles: [], warnings: [], error: `--validate failed to run: ${err instanceof Error ? err.message : String(err)}`, lexicon: plugin.name };
+    }
   }
   // Embedded content the owner could not carry, or that no installed lexicon imports.
   if (embedded) warnings.push(...embedded.warnings);
@@ -660,6 +685,7 @@ async function parseAndWrite(
     generatedFiles,
     warnings,
     lexicon,
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
   };
 }
 
@@ -892,6 +918,10 @@ export function printImportResult(result: ImportResult): void {
 
   if (result.lexicon) {
     console.log(`${result.detected ? "Detected lexicon" : "Lexicon"}: ${result.lexicon}`);
+  }
+
+  if (result.diagnostics && result.diagnostics.length > 0) {
+    console.error(summarizeImportDiagnostics(result.diagnostics));
   }
 
   if (result.generatedFiles.length > 0) {

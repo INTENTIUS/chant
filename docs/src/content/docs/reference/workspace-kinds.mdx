@@ -65,16 +65,17 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `repo`, `design`, `other` or `examples`, and a package lists each name once |
 | `kinds[].description` | One line saying what the directory holds, shown in listings and messages |
 | `kinds[].precedence` | An integer from 1 to 999 |
-| `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |
+| `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file, and `[0-9]` matches one digit |
 | `kinds[].probe.anyBlock` | `in`, file names as in `anyFile`, and `blocks`, block names. The probe passes when a file directly in the directory whose name matches `in` has a line that opens one of those blocks with no label, such as `live {`. Leading space is allowed, and no file is parsed |
 | `kinds[].probe.anyJsonKey` | `in`, file names as in `anyFile`, and `pointers`, JSON Pointers such as `/scripts/start`. The probe passes when a file directly in the directory whose name matches `in` parses as JSON and has a value at one of the pointers. A file that isn't JSON is no evidence either way. Added in chant 0.103.0 ([#3151](https://github.com/INTENTIUS/chant/issues/3151)) |
+| `kinds[].probe.anyLine` | `in`, file names as in `anyFile`, and `starts`, line openings. The probe passes when a file directly in the directory whose name matches `in` has a line that starts with one of them, after leading space and ignoring case. A goose directory is found by `-- +goose up` ([#4400](https://github.com/INTENTIUS/chant/issues/4400)) |
 | `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
 | `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
 | `kinds[].reader` | Optional. The link reader chant runs over a member's own files. See [Links read from a member's files](#links-read-from-a-members-files) |
 | `kinds[].memberFile` | Optional. A file every member has and the JSON Schema it must pass. See [A member's own file](#a-members-own-file) |
 
-A probe needs at least one of `anyFile`, `anyBlock` and `anyJsonKey`, and it passes when any one does. All three only look at files directly in the directory, never below it.
+A probe needs at least one of `anyFile`, `anyBlock`, `anyJsonKey` and `anyLine`, and it passes when any one does. All four only look at files directly in the directory, never below it.
 
 Fields whose names start with `x-` are allowed on the file and on each kind. Anything else is refused. The JSON Schema ships in `@intentius/chant` at `src/workspace/workspace-kinds.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json`.
 
@@ -135,9 +136,9 @@ For each member, `chant workspace graph` writes a reader project in a temporary 
 
 Some members already say what they read, in files of their own. A dbt project names the tables it reads in its `sources:` YAML. A kind can name a link reader with `reader`, and chant runs it over each member's directory to derive the member's links ([#3932](https://github.com/INTENTIUS/chant/issues/3932)).
 
-The readers are chant's code, and the kinds file only names one. The file stays data, and chant still never imports the package that supplies it. A reader runs offline. It parses files as data and never runs the tool that owns them, so `chant workspace check` still starts no process and reaches no network. chant has one reader, `dbt-project`. A kind that names a reader this chant doesn't have is kept without one, with a `WSP002` problem, and its members' links are only those their entries state.
+The readers are chant's code, and the kinds file only names one. The file stays data, and chant still never imports the package that supplies it. A reader runs offline. It parses files as data and never runs the tool that owns them, so `chant workspace check` still starts no process and reaches no network. chant has five readers. One is `dbt-project`; the other four read [migration directories](#migration-directories). A kind that names a reader this chant doesn't have is kept without one, with a `WSP002` problem, and its members' links are only those their entries state.
 
-A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
+A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. It can also return outputs, names its member's files state, which other members link to ([#3935](https://github.com/INTENTIUS/chant/issues/3935)). `resolveLinks` adds them to the member's own outputs (`withReaderOutputs` in `packages/core/src/workspace/links.ts`). A gap flagged as leaving an output out makes the member's output list incomplete. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
 
 A link names its producer when the member's fields say which member that is. When they don't, chant picks the one other member that exposes the output the link is anchored on (for a dbt column, its table). If none does and exactly one other member exposes outputs at all, the link goes to that member, so a dropped table is reported as missing from the only place it could be. Any other case is ambiguous (`WSP095`), and the message names the field that settles it.
 
@@ -267,9 +268,10 @@ The sql lexicon ships a `dbt` kind, since a dbt project reads the tables a sql m
 | Probe | `anyFile: ["dbt_project.yml"]` |
 | Reader | `dbt-project` |
 | `fields.sqlMember` | The member whose tables the project's sources read. Unset, each source table links to the one member that exposes it |
-| `fields.dialect` | `postgres` (the default) or `clickhouse`: how source names are cased before they are matched |
+| `fields.dialect` | `postgres` (the default) or `clickhouse`: how source and model names are cased |
+| `fields.modelSchema` | The schema the project's models land in. Set, each model is the output `<modelSchema>.<model>` ([#3935](https://github.com/INTENTIUS/chant/issues/3935)) |
 
-The kind exposes no outputs of its own yet. dbt models as outputs, so a downstream member can link to a model, are [#3935](https://github.com/INTENTIUS/chant/issues/3935).
+The kind lists no outputs of its own. The reader finds the project's models and exposes them as outputs, so a downstream member can link to a model ([How models become outputs](#how-models-become-outputs)).
 
 ### How sources map to sql outputs
 
@@ -290,6 +292,20 @@ A source, table or column whose value is a Jinja template, such as `schema: "{{ 
 When the sql member marks a column with a `-- previously:` comment, a source that still names the old column fails with a message that names the new one.
 
 dbt sources often point at views. A sql member exposes a view and its columns as outputs, and when a view's columns can't be read statically its outputs are incomplete. A link to such a column is then unresolved (`WSP094`), not missing.
+
+### How models become outputs
+
+The same reader exposes each model as an output ([#3935](https://github.com/INTENTIUS/chant/issues/3935)): `<schema>.<model>`, and `<schema>.<model>.<column>` for each column the model's YAML lists. Names follow the same case and quoting rules as sources. A model is a `.sql` file under the project's `model-paths`, and its name is the file's name or its `alias`. Python models, seeds and snapshots are not read. A model with `enabled: false` is skipped. `alias`, `schema` and `enabled` come from the first of the model's own `{{ config(...) }}`, the `config:` of its entry in a model YAML, and the `+` keys of `dbt_project.yml` that match its directory (the deepest wins). The code is `packages/core/src/workspace/dbt-models-reader.ts`.
+
+Which schema a model lands in is the hard part, because dbt's default `generate_schema_name` joins the target's schema to a custom one (`<target_schema>_<custom>`), and a model with no custom schema lands in the target's schema. Both depend on a target that chant never reads. So the schema is declared first:
+
+| Case | Result |
+|---|---|
+| `fields.modelSchema` is set | Every model is `<modelSchema>.<model>`. dbt's config is not read for the schema, so a templated `+schema` is not a gap |
+| Not set, the project overrides `generate_schema_name` the usual way (the custom schema as it stands, the target's schema when there is none), and the model sets a custom schema | `<custom>.<model>` |
+| Not set, any other case: the default macro, a model with no custom schema, a macro override chant does not evaluate, or a templated schema | A `WSP099` gap at the model's file, with a hint to set `modelSchema`. The model is not an output |
+
+A templated `alias` or `enabled` is a gap in every case. A gap on a model leaves the member's outputs incomplete, so a link to a model the reader could not name is unresolved (`WSP094`), not missing. A model that is simply not in the project is missing (`WSP093`), and the finding lists the outputs the member does have.
 
 ### A sql member and a dbt project
 
@@ -320,6 +336,75 @@ sources:
 ```
 
 `chant workspace check` resolves three links from `analytics` to `db`: `public.orders`, `public.orders.id` and `public.orders.customer_id`. Drop `customer_id` from the table in `db` and the check fails with `WSP093` at `analytics/models/staging/sources.yml:10`, the line that names the column.
+
+### A member that links to a dbt model
+
+Set `modelSchema` on the dbt member, and any other member can link to a model:
+
+```json
+{
+  "members": [
+    { "name": "analytics", "dir": "analytics", "kind": "dbt", "fields": { "modelSchema": "analytics" } },
+    { "name": "dashboard", "dir": "dashboard", "kind": "other", "because": "reads the orders model", "links": [{ "member": "analytics", "output": "analytics.orders" }] }
+  ]
+}
+```
+
+With `analytics/models/orders.sql` in the project, the link resolves. Delete the file and `chant workspace check` fails with `WSP093` on `dashboard`'s link.
+
+## Migration directories
+
+The sql lexicon ships four kinds for migration directories a team already has ([#4400](https://github.com/INTENTIUS/chant/issues/4400)): `goose`, `golang-migrate`, `clickhouse-migrations` and `flyway`. Each has a probe and a reader that lists the directory's migrations in the order its tool applies them, with their dialect. A reader parses file names and a few annotations. It never runs the tool or a server, so `chant workspace check` still starts no process.
+
+| Kind | Precedence | Probe | Reader |
+|---|---|---|---|
+| `goose` | 300 | `anyLine`: a `.sql` file with a line starting `-- +goose up` | `goose-dir` |
+| `golang-migrate` | 300 | `anyFile: ["*.up.sql"]` | `golang-migrate-dir` |
+| `clickhouse-migrations` | 100 | `anyFile: ["[0-9]*_*.sql"]` | `clickhouse-migrations-dir` |
+| `flyway` | 300 | `anyFile: ["flyway.toml", "flyway.conf", "V*__*.sql", "R__*.sql"]` | `flyway-dir` |
+
+The `clickhouse-migrations` probe is the weakest, because a ClickHouse migration is plain SQL with a numbered name. Its precedence is 100, so a directory that another migration kind also claims goes to that kind. A directory of `1_name.sql` files that nothing else claims is `clickhouse-migrations`, and a member entry can name the kind outright.
+
+The `goose`, `golang-migrate` and `clickhouse-migrations` kinds take a `migrationsDir` field, the directory under the member's own that holds the files (default `.`). Only the member's own directory is probed, so a member whose files sit in a subdirectory names its kind in its entry.
+
+The `dialect` field is `postgres` or `clickhouse`. goose and golang-migrate get their dialect from a driver or a URL that the directory does not hold, so those members set it. Flyway's is read from the JDBC URL in `flyway.toml` or `flyway.conf` when the field is unset, and is `postgres` without one. `clickhouse-migrations` is always ClickHouse and has no field.
+
+### The layout each reader reads
+
+Each layout was checked against the tool's own source or documentation.
+
+| Kind | Files | Order |
+|---|---|---|
+| `goose` | `<version>_<name>.sql` directly in the directory. The version is a positive integer before the first `_` (`NumericComponent`, `migration.go:363` in pressly/goose). A file needs `-- +goose Up`, may have a later `-- +goose Down`, and `-- +goose NO TRANSACTION` runs it outside a transaction (`internal/sqlparser/parser.go`, [annotations](https://pressly.github.io/goose/documentation/annotations/)). A `.go` migration is code, so it is a gap | By version number, so `00002` comes before `00010` and a timestamp version sorts with a sequential one |
+| `golang-migrate` | `<version>_<name>.up.<ext>` and `.down.<ext>`, matched by `^([0-9]+)_(.*)\.(down\|up)\.(.*)$` (`source/parse.go:22` in golang-migrate/migrate; [MIGRATIONS.md](https://github.com/golang-migrate/migrate/blob/master/MIGRATIONS.md)). The up files are the migrations, each paired with its down file | By version, a 64-bit unsigned integer |
+| `clickhouse-migrations` | `<version>_<name>.sql`, with an optional `<version>_<name>.down.sql` rollback. The Python tool ([zifter/clickhouse-migrations](https://github.com/zifter/clickhouse-migrations)) and the Node tool ([clickhouse-migrations on npm](https://www.npmjs.com/package/clickhouse-migrations)) both read a numbered file and run it, and both are in [ClickHouse's list of schema migration tools](https://clickhouse.com/docs/knowledgebase/schema_migration_tools). The Python tool treats `001_a.sql` and `1_b.sql` as one version | Ascending by version as a number |
+| `flyway` | `V<version>__<description>.sql`, `R__<description>.sql`, `B<version>__...` and `U<version>__...`, with the prefixes, separator and suffixes from the configuration ([Flyway migrations](https://documentation.red-gate.com/fd/migrations-271585107.html)). Locations come from `flyway.toml` or `flyway.conf` and are read recursively. A Java or Kotlin migration is a gap. Callbacks are not migrations | Versioned and baseline files by version, compared part by part as numbers, then repeatable files by description. An undo file is the `down` of the versioned file with its version |
+
+The Flyway layout code (configuration, locations, placeholders) is `packages/core/src/workspace/flyway-layout.ts`. It was moved from SQL Yodeler's `src/check/flyway.ts` and works on a workspace tree instead of the file system, so the kind and `yodel check` can share one reader.
+
+A reader returns the list in `migrations`. Each entry carries its position, version, name, type, file, line, down file and dialect, as `KindReadMigration` in `packages/core/src/workspace/kind-link-readers.ts` defines.
+
+### Where the tables come from
+
+What the migrations produce is not in their files. A kind reader is static, so the schema comes from a replay:
+
+```sh
+chant sql replay db --kind goose --env dev
+```
+
+`--env` names the sql profile of the empty server to replay into. Statements run in the reader's order. From a goose file only the `Up` section runs. A Flyway project runs its versioned files and then its repeatable ones, with placeholders substituted; baseline and undo files do not run. Afterwards the command reads the server's tables, views and columns and writes them to `chant.replay.json` beside the migrations, under the output names of [#3931](https://github.com/INTENTIUS/chant/issues/3931), the same ones a sql member exposes. Run it against a throwaway server or an emulator. It refuses a server that already has tables, and it runs the migrations' SQL.
+
+The file also holds a SHA-256 digest of the migration files it ran, and for Flyway of the configuration file too (`migrationDigest` in `packages/core/src/workspace/migration-dirs.ts`). The reader returns the recorded names as the member's outputs only when the digest still matches the files. A directory with no `chant.replay.json`, or a changed digest, is a gap flagged as leaving outputs out (`withReplay`), so a link into the member is unresolved (`WSP094`), not missing. Replay again to refresh it. In CI, `chant sql replay --check` replays and exits 1 when the committed file differs. A migration that drops a column then shows up as a missing output (`WSP093`) on every member that links to it.
+
+```json
+{
+  "pins": [{ "package": "@intentius/chant-lexicon-sql", "version": "<installed version>" }],
+  "members": [
+    { "name": "db", "dir": "db", "kind": "goose", "fields": { "dialect": "postgres" } },
+    { "name": "analytics", "dir": "analytics", "kind": "dbt", "fields": { "sqlMember": "db" } }
+  ]
+}
+```
 
 ## Overlapping probes
 

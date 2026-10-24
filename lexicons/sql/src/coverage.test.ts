@@ -3,6 +3,8 @@ import { KIND_COVERAGE, PINNED_COMMANDS, kindCoverageProblems, pinnedCommandsCur
 import { POSTGRES_PROBES } from "./postgres/live/undeclarable";
 import { CLICKHOUSE_PROBES } from "./clickhouse/live/undeclarable";
 import { SQL_DIALECTS } from "./dialects";
+import { POSTGRES_ENTITY_TYPES } from "./postgres/entity-types";
+import { CLICKHOUSE_ENTITY_TYPES } from "./clickhouse/entities";
 
 describe("the object coverage table (#3911)", () => {
   test.each(SQL_DIALECTS)("%s: every CREATE command a pinned server has is marked, and nothing else", (dialect) => {
@@ -29,10 +31,32 @@ describe("the object coverage table (#3911)", () => {
     ]);
   });
 
-  test("every refused kind has the live query that finds it, and every query a refused-or-declared row", () => {
+  test("a declared row names an entity type the dialect has, and every entity type but a grant has a declared row", () => {
+    // A grant is a GRANT statement, not a CREATE command, so no row is about it.
+    const types = {
+      postgres: { all: Object.values(POSTGRES_ENTITY_TYPES) as string[], notCreate: ["Postgres::Grant", "Postgres::DefaultPrivileges"] },
+      clickhouse: { all: Object.values(CLICKHOUSE_ENTITY_TYPES) as string[], notCreate: ["ClickHouse::Grant"] },
+    };
+    for (const dialect of SQL_DIALECTS) {
+      const entities = KIND_COVERAGE[dialect].filter((r) => r.status === "declared").map((r) => r.entity!);
+      for (const e of entities) expect(types[dialect].all, `${dialect} row entity ${e}`).toContain(e);
+      for (const e of types[dialect].all.filter((t) => !types[dialect].notCreate.includes(t))) expect(entities, `${dialect} entity type ${e} has no declared row`).toContain(e);
+    }
+  });
+
+  test("a kind that is declared, referenced, refused or out of scope is told apart: only a declared row names an entity", () => {
+    for (const dialect of SQL_DIALECTS) {
+      for (const r of KIND_COVERAGE[dialect]) {
+        if (r.status === "declared") expect(r.reason, `${dialect} ${r.kind}`).toBeUndefined();
+        else expect(r.entity, `${dialect} ${r.kind}`).toBeUndefined();
+      }
+    }
+  });
+
+  test("every refused or referenced kind has the live query that finds it, and every query a row", () => {
     const probes = { postgres: POSTGRES_PROBES, clickhouse: CLICKHOUSE_PROBES };
     for (const dialect of SQL_DIALECTS) {
-      const refused = KIND_COVERAGE[dialect].filter((r) => r.status === "refused").map((r) => r.kind);
+      const refused = KIND_COVERAGE[dialect].filter((r) => r.status === "refused" || r.status === "referenced").map((r) => r.kind);
       for (const kind of refused) expect(Object.keys(probes[dialect]), `${dialect} ${kind}`).toContain(kind);
       const kinds = KIND_COVERAGE[dialect].map((r) => r.kind);
       for (const kind of Object.keys(probes[dialect])) expect(kinds, `${dialect} probe ${kind}`).toContain(kind);
@@ -68,6 +92,7 @@ describe("a statement's kind", () => {
     ["CREATE SETTINGS PROFILE p SETTINGS max_threads = 1", "settings profile"],
     ["CREATE OR REPLACE FUNCTION f AS (x) -> x + 1", "SQL function"],
     ["CREATE QUOTA q FOR INTERVAL 1 hour MAX queries = 10", "quota"],
+    ["CREATE NAMED COLLECTION IF NOT EXISTS c AS url = 'x'", "named collection"],
   ])("clickhouse: %s is a %s", (sql, kind) => {
     expect(statementKind("clickhouse", sql)?.kind).toBe(kind);
   });

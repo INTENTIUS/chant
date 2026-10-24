@@ -65,7 +65,7 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
     expect(doc.stages).toEqual(["plan", "plan-note", "record", "apply-wave-1", "apply-wave-2", "apply-wave-3"]);
     expect(result.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["plan", []],
-      ["plan-note", ["plan"]],
+      ["plan-note", []],
       ["record", []],
       ["apply-wave-1", []],
       ["apply-wave-2", ["apply-wave-1"]],
@@ -90,7 +90,7 @@ describe("the GitLab merge-request pipeline with a gate per wave (#4003)", () =>
     const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true }, gatedWaves: { gate: "release" }, member });
     expect(scoped.jobs.map((j) => [j.jobName, j.needs])).toEqual([
       ["network-plan", []],
-      ["network-plan-note", ["network-plan"]],
+      ["network-plan-note", []],
       ["network-record", []],
       ["network-apply-wave-1", []],
       ["network-apply-wave-2", ["network-apply-wave-1"]],

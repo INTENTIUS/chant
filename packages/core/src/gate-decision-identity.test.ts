@@ -218,6 +218,15 @@ describe.skipIf(!hasSshKeygen)("identity.gates read at base, as chant reads it",
       expect(decided.status === "approved" && decided.via === "ledger" ? decided.resolution : null).toEqual(check.satisfied ? check.resolution : null);
     }
   });
+
+  test("a gate's quorum at base, as chant reads it (#4324)", () => {
+    const rules = [{ targets: ["prod"], count: 2, roles: ["platform"] }, { count: 1 }];
+    const { r, base } = setup(() => ({}), { identity: { gates: { ship: { quorum: rules }, deploy: { class: "human" } } } });
+    const here = identityGateAdmissionAt(r.dir, base, "ship")!;
+    expect(here.requirement.quorum).toEqual(rules);
+    expect(here.requirement.quorum).toEqual(gateAdmission(r.dir, "ship", base)!.requirement.quorum);
+    expect(identityGateAdmissionAt(r.dir, base, "deploy")!.requirement).toEqual({ gate: "deploy", class: "human" });
+  });
 });
 
 describe("admitApprover", () => {

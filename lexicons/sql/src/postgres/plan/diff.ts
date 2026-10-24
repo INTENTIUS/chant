@@ -215,7 +215,7 @@ function diffUnparsed(key: string, before: PgDiffObject, after: PgDiffObject, ou
 }
 
 /** The kinds (#3911) whose definition has no ALTER: a change is a drop and a create, or (an aggregate's) CREATE OR REPLACE. */
-const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger"]);
+const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger", "operator", "statistics"]);
 
 /** What each of {@link REPLACED_KINDS} compares besides its name and comment. */
 const DEFINITION: Readonly<Record<string, readonly string[]>> = {
@@ -225,7 +225,38 @@ const DEFINITION: Readonly<Record<string, readonly string[]>> = {
   collation: ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"],
   cast: ["castMethod", "function", "context"],
   eventTrigger: ["event", "tags", "function"],
+  operator: ["definition"],
+  statistics: ["table", "kinds", "targets"],
 };
+
+/** The kinds (#3911) the server alters in place, with the fields that cannot be altered (the object is dropped and created) and those that can. */
+const ALTERED_KINDS: Readonly<Record<string, { recreate: readonly string[]; inPlace: readonly string[] }>> = {
+  foreignDataWrapper: { recreate: [], inPlace: ["handler", "validator", "options"] },
+  foreignServer: { recreate: ["serverType", "wrapper"], inPlace: ["version", "options"] },
+  publication: { recreate: ["allTables"], inPlace: ["tables", "schemas", "publish", "viaRoot", "generatedColumns"] },
+};
+
+/**
+ * A foreign data wrapper's, foreign server's or publication's change: the
+ * comment and each field ALTER reaches in place (SQLPG303); a field it does
+ * not reach (a server's type and wrapper, a publication's FOR ALL TABLES) by
+ * dropping and creating the object (SQLPG300), refused while something
+ * depends on it (SQLPG301).
+ */
+function diffAltered(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[]): void {
+  if (!same(before.fields.comment, after.fields.comment)) out.push(change(key, "comment", "SQLPG216", show(before.fields.comment), show(after.fields.comment)));
+  const { recreate, inPlace } = ALTERED_KINDS[after.kind]!;
+  const replaced = recreate.filter((k) => !same(before.fields[k], after.fields[k]));
+  if (replaced.length > 0) {
+    const was = replaced.map((k) => `${k} ${show(before.fields[k]) ?? "-"}`).join("; ");
+    const now = replaced.map((k) => `${k} ${show(after.fields[k]) ?? "-"}`).join("; ");
+    if (before.dependents && before.dependents.length > 0) {
+      out.push(change(key, replaced.join(", "), "SQLPG301", was, now, { note: `${before.dependents.join(", ")} depend${before.dependents.length === 1 ? "s" : ""} on it` }));
+    } else out.push(change(key, replaced.join(", "), "SQLPG300", was, now));
+    return;
+  }
+  for (const k of inPlace) if (!same(before.fields[k], after.fields[k])) out.push(change(key, k, "SQLPG303", show(before.fields[k]), show(after.fields[k])));
+}
 
 /**
  * A type's, aggregate's, collation's, cast's or event trigger's change: its
@@ -268,6 +299,10 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
       return;
     }
     diffReplaced(key, before, after, out);
+    return;
+  }
+  if (after.kind in ALTERED_KINDS) {
+    diffAltered(key, before, after, out);
     return;
   }
   if (before.schema !== after.schema || before.name !== after.name) {

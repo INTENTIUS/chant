@@ -504,7 +504,7 @@ describe("gate approval — a permit counts only under the context it was given 
 describe("gate approval — the request a policy is asked (#2508)", () => {
   test("carries the approver, the gate and the context, with the plan digest", () => {
     expect(gatePolicyRequest({
-      op: "release", gate: "ship", resolvedBy: "release-bot", approver: { kind: "agent", roles: ["deployer"] },
+      op: "release", gate: "ship", resolvedBy: "release-bot", approver: { kind: "agent" }, roles: ["deployer"],
       planDigest: PLAN_A, context: { risk: "low" },
     })).toEqual({
       principal: { kind: "agent", name: "release-bot", roles: ["deployer"] },
@@ -512,6 +512,11 @@ describe("gate approval — the request a policy is asked (#2508)", () => {
       resource: { op: "release", gate: "ship" },
       context: { risk: "low", planDigest: PLAN_A },
     });
+  });
+
+  test("never carries the roles the approver claims (#4324)", () => {
+    const request = gatePolicyRequest({ op: "release", gate: "ship", resolvedBy: "github:sam", approver: { kind: "human", roles: ["maintainer"] } });
+    expect(request.principal.roles).toEqual([]);
   });
 });
 

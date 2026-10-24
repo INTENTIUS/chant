@@ -39,6 +39,7 @@
  * | WSP141, WSP142 | member links resolved against a live read, with `--live` (#2549) |
  * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
  * | WSP151 | what a member under `ci.workflow` still lacks (#4168 step 6) |
+ * | WSP152 | a member's generated pipeline targets the branch `ci.branches` routes it to (#4325) |
  * | WSP161 to WSP165 | the security groups the declaration opts into: what each still lacks (#4168 step 7) |
  */
 
@@ -63,10 +64,12 @@ import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { SECURITY_CHECKS } from "./checks/security";
 import { CI_WORKFLOW_CHECKS } from "./checks/ci-workflow";
+import { CI_BRANCH_CHECKS } from "./checks/ci-branch";
 import { ORG_CHECKS, type ForgeRepoList } from "./checks/org";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
-import { gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
+import { gatherLexiconLinks, gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
+import type { KindLinkRead } from "./kind-link-readers";
 
 /**
  * What the checks beyond the declaration read, gathered from the checkout
@@ -90,6 +93,8 @@ export interface WorkspaceFacts {
   boxIntents?: readonly ResolvedBoxIntent[];
   /** The outputs linked members' lexicons report about their declarations, read by folding their source (#3931). */
   lexiconOutputs?: ReadonlyMap<string, MemberLexiconOutputs>;
+  /** The links members' lexicons read from their declarations, such as an otel clickhouse exporter's tables (#4397). */
+  lexiconLinks?: ReadonlyMap<string, KindLinkRead>;
   /** The forge's repository list, from `--forge-repos` (#3168). */
   forgeRepos?: ForgeRepoList;
 }
@@ -418,6 +423,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...LIVE_CHECKS,
   // What a member under ci.workflow still lacks (#4168 step 6), WSP151.
   ...CI_WORKFLOW_CHECKS,
+  // A member's pipeline targets the branch ci.branches routes it to (#4325), WSP152.
+  ...CI_BRANCH_CHECKS,
   // The security groups the declaration opts into (#4168 step 7), WSP161 to WSP165.
   ...SECURITY_CHECKS,
 ];
@@ -577,10 +584,16 @@ export async function runDeclarationChecks(
   // A box's intent is read from the working tree's records, so not under --at (#2850).
   const boxIntents = declaredKinds && !options.tree ? await resolveBoxIntents(declaration, root, declaredKinds) : undefined;
   // A linked member's lexicons name its tables and columns as outputs (#3931); reading them folds its source, never runs it.
+  // A member's lexicons may also read other members' outputs from its declarations (#4397); their targets are read too.
+  const outputsTree = options.tree ? workingTree(root) : tree;
+  const lexiconLinks = options.gather === false ? undefined : await gatherLexiconLinks(root, declaration, outputsTree, groups, registry, { atRevision: options.tree !== undefined });
   const lexiconOutputs =
-    options.gather === false ? undefined : await gatherLexiconOutputs(root, declaration, options.tree ? workingTree(root) : tree, groups, registry, { atRevision: options.tree !== undefined });
+    options.gather === false
+      ? undefined
+      : await gatherLexiconOutputs(root, declaration, outputsTree, groups, registry, { atRevision: options.tree !== undefined, ...(lexiconLinks ? { lexiconLinks } : {}) });
   const facts: WorkspaceFacts = {
     ...(lexiconOutputs && lexiconOutputs.size > 0 ? { lexiconOutputs } : {}),
+    ...(lexiconLinks && lexiconLinks.size > 0 ? { lexiconLinks } : {}),
     ...gathered,
     ...(options.records ? { records: options.records } : {}),
     ...(options.forgeRepos ? { forgeRepos: options.forgeRepos } : {}),

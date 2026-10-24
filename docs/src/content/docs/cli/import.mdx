@@ -49,7 +49,13 @@ A lexicon's template parser can take options. The lexicon declares them with `pa
 chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1
 ```
 
-`--parser-option` does not apply to `--from` (live import) or `--agents`. Grafana's options are listed in [Importing](/chant/lexicons/grafana/importing/).
+`--parser-option` does not apply to `--from` (live import) or `--agents`. Grafana's options are listed in [Importing](/chant/lexicons/grafana/importing/). The sql lexicon's are in [Importing a SQL Server Schema](/chant/lexicons/sql/sqlserver-importing/), which also covers `from=sqlserver`.
+
+## Review report
+
+A parser can report what it decided for the author to confirm, as diagnostics with a rule id, a severity and a line in the template. The sql lexicon's SQL Server source does ([`TemplateIR.diagnostics`](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/import/parser.ts), set in `lexicons/sql/src/import-parser.ts`). `chant import` prints a count by rule on stderr. `--report <path>` writes them as SARIF 2.1.0, the format `chant migrate --report` uses. `--strict` exits 1 while a `warning` or `error` is open, and `--validate` adds an `error` for each statement the emulator rejects. An `error` exits 1 with or without `--strict`. A lexicon whose parser reports nothing writes an empty report and exits as before.
+
+The exit rule is `importExitCode` in `packages/core/src/cli/commands/import-report.ts`.
 
 ## Flags
 
@@ -58,6 +64,9 @@ chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1
 | `--from <env>` | Import from a live environment instead of a template file |
 | `--kustomize <dir>` | Render the kustomization at `dir` and import the output as Kubernetes manifests. Needs `kustomize` or `kubectl` on the path |
 | `--parser-option <key[=value]>` | Pass an option to the lexicon's template parser. Repeatable. Each lexicon lists the options it takes; any other name is refused. A boolean option can be given bare (`--parser-option acceptLossyV1`) or as `=true` / `=false` |
+| `--report <path>` | Write the parser's needs-review diagnostics to this path as SARIF 2.1.0 (see [Review report](#review-report)) |
+| `--strict` | Exit non-zero while any diagnostic of severity `warning` or `error` is open (see [Review report](#review-report)) |
+| `--validate` | Check what the import would write against the lexicon's emulator before finishing. The sql lexicon creates the DDL on the pinned ClickHouse server and needs Docker |
 | `-d, --lexicon <name>` | With a template file, import with this lexicon instead of detecting one. With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
 | `--type <ResourceType>` | With `--from`, export only resources of this type |
 | `--name <name>` | With `--from`, export only the resource with this name |

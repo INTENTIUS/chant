@@ -73,6 +73,10 @@
  * forge's run as its `runOrigin`. `ci run` runs `command` in the job's own
  * checkout with the job's environment, less the key. The plan passes
  * `--no-push`, so it still writes nothing to the remote `chant/lifecycle`.
+ * The plan job gets no `CHANT_RUNNER_KEY` (#4328): it runs the pull request's
+ * code, and a key in the job's environment is one that code could read and
+ * sign with, whatever `ci run` leaves out of its steps. Its record is
+ * unsigned.
  *
  * In a workspace member (#3465) both commands run in the member's directory
  * and pass `--member <name>`, so the member's gate (`pr-<number>-<member>`),
@@ -212,6 +216,14 @@ export interface PrLoopPipelineOptions {
    */
   prEnvironment?: boolean;
   /**
+   * `ci.locks: plan` (#4293, #4327): a `lock` job after the plan that runs
+   * `chant lock --from-report`, and an `unlock` job when the pull request
+   * closes that runs `chant unlock`. Both check out the target branch's
+   * commit, so neither runs the change's code. Set from the declaration at
+   * base; GitHub and Forgejo only. Absent: neither job.
+   */
+  locks?: "plan";
+  /**
    * The cloud identity a pull request environment's jobs take (#4330), from
    * `ci.identity.cloud` (`resolvePrEnvCloudIdentity` in ../ci-identity.ts):
    * the apply identity of a rule that names the pull request environments.
@@ -221,6 +233,18 @@ export interface PrLoopPipelineOptions {
    */
   prEnvIdentity?: CloudTradeSpec;
 }
+
+/** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
+export const PR_LOCK_JOB = "lock";
+export const PR_UNLOCK_JOB = "unlock";
+
+/** `chant lock --from-report` for the plan's report in {@link PR_LOOP_REPORT_DIR}; reads `PR_NUMBER` and `HEAD_SHA`. */
+export function prLockCommand(forge: ForgeKind): string {
+  return ["chant", "lock", "--from-report", `${PR_LOOP_REPORT_DIR}/pr-plan.json`, "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--stage", "plan", "--forge", forge].join(" ");
+}
+
+/** `chant unlock` for the pull request that closed; reads `PR_NUMBER`. */
+export const PR_UNLOCK_COMMAND = 'chant unlock --pr "$PR_NUMBER"';
 
 /** One job's command and the forge values it reads, as environment variables for its step. */
 export interface PrLoopJob {
@@ -258,8 +282,10 @@ export interface PrLoopJob {
    * <job> --in-place` with the same environment, gate, forge, events and
    * report URL, which runs `command` and records the run. `env` is the
    * job's `env` and, on GitHub and Forgejo, `CHANT_RUNNER_KEY` from the
-   * repository secret of that name. GitLab hands its CI/CD variables to a
-   * job itself.
+   * repository secret of that name, except for the plan, which runs the
+   * pull request's code (#4328). GitLab hands its CI/CD variables to a job
+   * itself, so there the key is a protected variable, which a merge request
+   * pipeline never gets.
    */
   run: { command: string; env: Record<string, string> };
 }
@@ -354,7 +380,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common, ...(options.waveGate ? ["--wave-gate", options.waveGate] : []), "--no-status"].join(" "),
       env: planEnv,
       ...build,
-      run: { command: ciRun("plan").join(" "), env: runEnv(planEnv) },
+      // #4328: no runner key either. The step drops it, but the job's environment is the pull request's code's too.
+      run: { command: ciRun("plan").join(" "), env: planEnv },
     },
     early ? earlyApply : greenApply,
     {
@@ -372,30 +399,51 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
 export const PR_PLAN_NOTE_JOB = "plan-note";
 
 /**
- * The plan-note job's command and the values it reads (#4295). It runs in a
- * fresh job after the plan, at the target branch's commit, and posts the
- * note and the `chant/plan` status from the report the plan job handed on,
- * with the forge token the plan job never held. `HEAD_SHA` is the commit
- * the plan job checked out, `PR_NUMBER` the pull request, and on GitHub and
- * Forgejo `PLAN_RESULT` the plan job's result, which fails the status when
- * the plan job failed. `BASE_SHA` is the commit the note job checks out on
- * GitLab, whose runner checks out the pipeline's own commit.
+ * The plan-note job's command and the values it reads (#4295). On GitHub
+ * and Forgejo it runs in a fresh job after the plan, at the target branch's
+ * commit, and posts the note and the `chant/plan` status from the report
+ * the plan job handed on, with the forge token the plan job never held.
+ * `HEAD_SHA` is the commit the plan job checked out, `PR_NUMBER` the pull
+ * request, and `PLAN_RESULT` the plan job's result, which fails the status
+ * when the plan job failed.
+ *
+ * On GitLab (#4328) it runs `pr-post --open` in a pipeline of the target
+ * branch, which GitLab builds from that branch's files and gives the
+ * protected `CHANT_FORGE_TOKEN`. A merge request pipeline is built from the
+ * merge request's files, so no job in it holds the token. `pr-post --open`
+ * asks GitLab for each open merge request's plan job and reads its report
+ * from the job's artifacts.
  */
 export function prLoopPostJob(forge: ForgeKind, env: string, member?: string): { command: string; env: Record<string, string> } {
-  const github = forge !== "gitlab";
+  if (forge === "gitlab") {
+    return {
+      command: ["chant", "components", "pr-post", "--open", "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge, ...(member ? ["--member", member] : [])].join(" "),
+      env: {},
+    };
+  }
   const command = [
     "chant", "components", "pr-post", "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"',
     "--env", env, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
     ...(member ? ["--member", member] : []),
-    ...(github ? ["--result", '"$PLAN_RESULT"'] : []),
+    "--result", '"$PLAN_RESULT"',
   ].join(" ");
   return {
     command,
-    env: github
-      ? { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN }
-      : { PR_NUMBER: "$CI_MERGE_REQUEST_IID", HEAD_SHA: "$CI_COMMIT_SHA", BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA" },
+    env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.sha }}", PLAN_RESULT: "${{ needs.plan.result }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
   };
 }
+
+/** The plan job's name in a GitLab merge request pipeline (#3465, #4328): `plan`, or `<member>-plan` in a workspace member's included file. */
+export function gitlabPlanJobName(member?: string): string {
+  return member ? `${member}-plan` : "plan";
+}
+
+/**
+ * The GitLab variable a pipeline schedule (or a person starting a pipeline
+ * of the target branch) sets to `1` to post the open merge requests' plan
+ * notes (#4328).
+ */
+export const GITLAB_PLAN_NOTES_VAR = "CHANT_PLAN_NOTES";
 
 /**
  * What starts the apply under apply on merge (#4168 step 9): on GitHub the

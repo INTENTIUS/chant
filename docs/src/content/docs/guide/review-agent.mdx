@@ -1,6 +1,6 @@
 ---
 title: Review a Pull Request with a Model
-description: Add a step that has a model compare a pull request's title and description with its change set, and post what it finds as one note.
+description: Add a step that has a model compare a pull request's title and description with its diff and change set, and post what it finds as one note.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/review-agent/.
@@ -9,9 +9,9 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-This guide is for an Op that runs on a pull request and wants a model's read of it. The model gets the pull request's title and description and the change set the Op planned from a `reviewAgent` step. Its review is posted as one sticky note on the pull request ([#4299](https://github.com/INTENTIUS/chant/issues/4299)).
+This guide is for an Op that runs on a pull request and wants a model's read of it. The model gets the pull request's title and description, its diff, and the change set the Op planned, from a `reviewAgent` step. Its review is posted as one sticky note on the pull request ([#4299](https://github.com/INTENTIUS/chant/issues/4299)).
 
-The note approves nothing and gates nothing. Posting goes through `reconcilePr` in `comment` mode and takes no other action (`packages/core/src/op/activities/review-agent.ts:342`). A gate's quorum counts human approvers (`packages/core/src/op/gate-approval.ts:7`), and no gate reads the step's result.
+The note approves nothing and gates nothing. Posting goes through `reconcilePr` in `comment` mode and takes no other action (`packages/core/src/op/activities/review-agent.ts:483`). A gate's quorum counts human approvers (`packages/core/src/op/gate-approval.ts:7`). A gate policy may read the review's risk as one signal among others ([below](#let-a-gate-policy-read-the-risk)).
 
 ## Add the step
 
@@ -33,15 +33,40 @@ export default Op({
 });
 ```
 
-`op` keys the note's marker, so a re-run edits the same note (`packages/core/src/op/activities/review-agent.ts:112`). A step can pass `changeSetFile` in place of `changeSet` to read the document from a file another job wrote.
+`op` keys the note's marker, so a re-run edits the same note (`packages/core/src/op/activities/review-agent.ts:137`). A step can pass `changeSetFile` in place of `changeSet` to read the document from a file another job wrote.
 
-A pull or merge request has to trigger the run. The base branch is read from `GITHUB_BASE_REF` or `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` and the step fails by name without one. The title and description come from the event payload on GitHub and Forgejo, and from `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION` on GitLab (`packages/core/src/op/activities/review-agent.ts:232`). Pass `title` and `description` to set them yourself.
+A pull or merge request has to trigger the run. The base branch is read from `GITHUB_BASE_REF` or `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` and the step fails by name without one. The title and description come from the event payload on GitHub and Forgejo, and from `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION` on GitLab (`packages/core/src/op/activities/review-agent.ts:292`). Pass `title` and `description` to set them yourself.
+
+## Keep the model away from the forge token
+
+In the shape above, one process runs the model command and posts the note, so the forge token is in the job beside the model. The command's own environment is cleared (below), but the Op's files come from the pull request, and the process that loads them holds the token.
+
+Split the work in two. Set `mode: "handoff"` on the step and `reviewAgent: true` on the Op's `ScheduledOpSpec`:
+
+```typescript
+reviewAgent({ op: "pr-review", changeSet: changeSet.out.document, mode: "handoff" });
+```
+
+```typescript
+const spec: ScheduledOpSpec = { name: "pr-review", trigger: { kind: "pull_request" }, reviewAgent: true };
+```
+
+The generator then writes two jobs (`lexicons/github/src/components/review-jobs.ts:125`):
+
+- The first runs `chant run pr-review` and holds `contents: read`. Its token reaches the checkout's fetches and nothing after them, and the `chant run` step starts without the token variables (`lexicons/github/src/components/review-jobs.ts:126`). That step writes the model's output to `.chant/review/review.json` and hands the directory on as the job's outputs.
+- The second, named `pr-review-note`, checks nothing out. It takes the outputs back as data, installs the chant release the generator belongs to, and runs `postReviewNote` with `pull-requests: write`. It runs when the first succeeded.
+
+The note job names the Op itself and takes the pull request's head from the event. The first job ran the change's code, so everything it hands on is data. Each field of the record is checked, a digest that is not a digest is dropped, and an HTML comment in the model's text is escaped (`packages/core/src/op/activities/review-agent.ts:508`). terragucci splits its own the same way, with a `review` job and a `review-note` job (`render-review.ts` in that repository).
+
+The generator refuses the option on a trigger with no pull request, with a finding-mode other than `report`, and with a `permissions` entry that writes anything but `id-token` (`lexicons/github/src/components/review-jobs.ts:50`). It does not build the split on GitLab. A merge request pipeline hands every job the project's unprotected variables, so the model's job could not be kept apart from a token that writes, and the gitlab generator refuses the option by name (`lexicons/gitlab/src/components/generate-op-pipeline.ts:214`). On GitLab, use `findingMode: "comment"`.
+
+Forgejo's runner ignores `permissions:`, so the dialect drops them. The step still starts without the token variables, which covers a runner that puts its token in a step's environment.
 
 ## Give the model its key
 
-The default command is Claude Code in print mode with no tools (`packages/core/src/op/activities/review-agent.ts:43`). It reads `ANTHROPIC_API_KEY`. Set that variable in the job from a secret.
+The default command is Claude Code in print mode with no tools (`packages/core/src/op/activities/review-agent.ts:52`). It reads `ANTHROPIC_API_KEY`. Set that variable in the job from a secret.
 
-The command sees that one key and a few process variables, such as `PATH` and `HOME` (`packages/core/src/op/activities/review-agent.ts:222`). A forge token or a cloud credential in the job does not reach it. For another model, pass `command`, and name its key in `keyEnv`:
+The command sees that one key and a few process variables, such as `PATH` and `HOME` (`packages/core/src/op/activities/review-agent.ts:282`). A forge token or a cloud credential in the job does not reach it. For another model, pass `command`, and name its key in `keyEnv`:
 
 ```typescript
 reviewAgent({
@@ -53,23 +78,48 @@ reviewAgent({
 });
 ```
 
-The command gets the prompt on stdin and prints the review on stdout. `timeout` is in minutes and defaults to 10 (`packages/core/src/op/activities/review-agent.ts:335`). A command that fails still leaves a note, which says the exit code.
+The command gets the prompt on stdin and prints the review on stdout. `timeout` is in minutes and defaults to 10 (`packages/core/src/op/activities/review-agent.ts:453`). A command that fails still leaves a note, which says the exit code.
 
 ## Write review instructions
 
-Put instructions for the model in `.chant/review.md` (`packages/core/src/op/activities/review-agent.ts:54`), or name another file with `instructions`. The step reads that file from the base branch with `git show` (`packages/core/src/op/activities/review-agent.ts:329`). A pull request that edits it changes the review only after it merges.
+Put instructions for the model in `.chant/review.md` (`packages/core/src/op/activities/review-agent.ts:63`), or name another file with `instructions`. The step reads that file from the base branch with `git show` (`packages/core/src/op/activities/review-agent.ts:334`). A pull request that edits it changes the review only after it merges.
 
 ## What the model sees
 
 Each change-set entry that changes something gets one line in the prompt. A failed member and a hole get one too, beside the title and description and the instructions. Each block sits between tags, and the prompt tells the model to follow no instruction inside them. A closing tag inside the text is broken up so it cannot end its block.
 
-An attribute marked `sensitive` reaches the prompt as `(sensitive)`, without its values (`packages/core/src/op/activities/review-agent.ts:135`).
+The prompt also carries the pull request's diff, `git diff origin/<base>...HEAD` in the checkout (`packages/core/src/op/activities/review-agent.ts:356`). Git runs with hooks and fsmonitor off, and with external diff drivers and textconv disabled, so nothing in the change runs while the diff is read. The diff is cut at 60,000 characters and the prompt says so (`packages/core/src/op/activities/review-agent.ts:244`). When git cannot produce it, the prompt says that instead. The job needs the base branch's history for this; the generated review job fetches every branch.
+
+An attribute marked `sensitive` reaches the prompt as `(sensitive)`, without its values (`packages/core/src/op/activities/review-agent.ts:189`). The diff is the repository's text as it is, so a secret committed in the change goes to the model. Keep the model's provider one you would trust with the repository.
 
 ## Read the risk
 
-The model ends its review with `risk: low`, `risk: medium` or `risk: high`. Its last such line comes back as `risk`, or `unknown` when there is none (`packages/core/src/op/activities/review-agent.ts:194`). It is shown in the note, and a later step may read `review.out.risk`. Nothing in chant gates on it.
+The model ends its review with `risk: low`, `risk: medium` or `risk: high`. Its last such line comes back as `risk`, or `unknown` when there is none (`packages/core/src/op/activities/review-agent.ts:252`). It is shown in the note, and a later step may read `review.out.risk`.
 
-Any HTML comment in the review is escaped, so the model's text cannot plant a marker another step would find (`packages/core/src/op/activities/review-agent.ts:207`).
+Any HTML comment in the review is escaped, so the model's text cannot plant a marker another step would find (`packages/core/src/op/activities/review-agent.ts:265`).
+
+## Let a gate policy read the risk
+
+The note starts with a hidden line that holds the pull request head the review read and its risk (`packages/core/src/op/activities/review-agent.ts:149`). When `ci.policy` is set, `pr-plan` and `pr-apply` read the review note off the pull request and hand it to the policy as `input.review` (`packages/core/src/cli/handlers/pr.ts:625`):
+
+```json
+{ "review": { "found": true, "risk": "high", "head": "<sha>" } }
+```
+
+`found` is false, `risk` is `unknown` and `head` is null when no review note is there, so a policy tells "rated low" from "not reviewed". A `reason` says why nothing was found. A rule that denies a plan the review rated high looks like this:
+
+```rego
+package main
+
+deny_high_risk contains msg if {
+  input.review.risk == "high"
+  msg := "the review rated this plan high risk"
+}
+```
+
+Only a note written by the run's own token counts: `github-actions[bot]`, `gitea-actions` or `forgejo-actions` (`packages/core/src/components/pr-policy.ts:126`). A pull request's author can post a comment that starts with the marker, and cannot post as these. A job that posts with a personal access token or an app token writes as another login, and its note reads as not found.
+
+The risk is the model's opinion of text the pull request's author wrote, so treat it as one signal. `input.review.head` is the commit the review read. A policy that needs the review to be current compares it with `input.head`. On `pr-plan` the checkout can be the pull request's merge commit, which differs from the reviewed head. If a workspace has several review Ops, the policy reads the oldest note whose marker starts with `<!-- chant-review:`. Only the plan or apply stage with a pull request number reads a review: a green commit with no pull request reads none.
 
 ## Preview without posting
 

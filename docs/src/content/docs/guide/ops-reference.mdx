@@ -24,7 +24,7 @@ Pre-built step builders:
 | `teardown(path, opts?)` | Build + destroy via the project's own `npm run teardown` script |
 | `envTeardown(env, opts?)` | [`chant lifecycle teardown <env> --yes`](/chant/cli/lifecycle/#lifecycle-teardown-env) in-process: delete the environment's marker-owned resources. A prod-like name needs `confirmProd: true` in `opts`; precede with a `gate(...)` step for a human approval |
 | `effect(receipt, steps, opts?)` | Read-compare-run-write over an effect receipt: read the live receipt, skip the wrapped steps when it matches the expectation ("effect already applied"), otherwise run them and write the receipt only on their success, last. `receipt` is the typed `EffectReceipt` declaration; there is no string form. See [Effects](#effects) |
-| `reviewAgent(args)` | A model reviews the pull request against a change set and posts one sticky note; never approves or gates ([Review a Pull Request with a Model](/chant/guide/review-agent/)) |
+| `reviewAgent(args)` | A model reviews the pull request against its diff and a change set and posts one sticky note; never approves or gates ([Review a Pull Request with a Model](/chant/guide/review-agent/)) |
 
 ## Retry profiles
 

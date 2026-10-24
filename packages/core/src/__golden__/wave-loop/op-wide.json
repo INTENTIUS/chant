@@ -351,6 +351,45 @@
     "t2: its plan moved since wave 3 was decided, so it was not applied. decided: sha256:2222222222222222222222222222222222222222222222222222222222222222; planned now: sha256:9999999999999999999999999999999999999999999999999999999999999999"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-3-share-1.json": {
+      "version": 1,
+      "wave": 3,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "applied"
+        },
+        "t2": {
+          "status": "not-applied"
+        }
+      }
+    },
+    ".chant/op-waves/migrations/outcomes/outcome-wave-3-share-2.json": {
+      "version": 1,
+      "wave": 3,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t3": {
+          "status": "applied"
+        }
+      }
+    },
+    ".chant/op-waves/migrations/outcomes/outcome-wave-3.json": {
+      "version": 1,
+      "wave": 3,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "decided"
+        },
+        "t2": {
+          "status": "decided"
+        },
+        "t3": {
+          "status": "decided"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-3/t1.hooks.json": {
       "version": 1,
       "opWaves": "migrations",

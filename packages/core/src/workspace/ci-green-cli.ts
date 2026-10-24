@@ -32,12 +32,12 @@ import { findWorkspaceRoot } from "../project-root";
 import { ciList, ciTick, CiGreenError, formatList, formatTick, lastGreen, RUNNER_KEY_ENV } from "./ci-green";
 import { ciForgeFromEnv } from "./ci-green-forge";
 import { ACTIONS_NAME, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, ciGreenHeader, type PushToken, readWorkflowSources, renderCiGreenWorkflow, workflowsHolding, writeWorkflowFile } from "./ci-green-workflow";
-import { readDeclaration, readerVersion, WorkspaceReadError, type CiSource } from "./declaration";
+import { greenBranches, readDeclaration, readerVersion, WorkspaceReadError, type CiSource } from "./declaration";
 import { recordGeneratedFiles, resolveMemberContext, shellArg } from "./member-pipeline";
 import { gitTop, workingTree } from "./tree";
 
 const USAGE =
-  "chant ci last-green [--json] [--from <rev>] | ci list [--json] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
+  "chant ci last-green [--json] [--from <rev>] [--branch <branch>] | ci list [--json] [--branch <branch>] [--limit <n>] [--since <rev>] [--forge github] [--source checks|runs] | ci tick [--dry-run] [--forge github] [--source checks|runs] [--key <runner key.pem>] | " +
   "ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>] [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>] [--runner-key-secret <NAME>]";
 
 export { RUNNER_KEY_ENV };
@@ -56,7 +56,7 @@ function warnIgnored(ignored: readonly { tag: string; status: string; reason: st
 }
 
 export async function runCiLastGreen(ctx: CommandContext): Promise<number> {
-  const doc = lastGreen({ cwd: process.cwd(), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
+  const doc = lastGreen({ cwd: process.cwd(), ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}), ...(ctx.args.migrateFrom !== undefined ? { from: ctx.args.migrateFrom } : {}) });
   if (ctx.args.json) {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
@@ -81,7 +81,7 @@ export async function runCiList(ctx: CommandContext): Promise<number> {
     // Only an explicit --forge reaches the network; without it the list reads local refs and tags.
     const forge = ctx.args.forge !== undefined ? ciForgeFromEnv(ctx.args.forge) : undefined;
     const source = sourceOf(ctx.args);
-    const doc = await ciList({ cwd: process.cwd(), limit, since: ctx.args.since, forge, ...(source ? { source } : {}) });
+    const doc = await ciList({ cwd: process.cwd(), ...(ctx.args.branch !== undefined ? { branch: ctx.args.branch } : {}), limit, since: ctx.args.since, forge, ...(source ? { source } : {}) });
     if (ctx.args.json) {
       console.log(JSON.stringify(doc, null, 2));
       return "error" in doc ? 1 : 0;
@@ -185,14 +185,14 @@ export async function runCiWorkflow(ctx: CommandContext): Promise<number> {
     const yaml = renderCiGreenWorkflow({ green, workflows, chantVersion: readerVersion(), workspaceRoot, chant: ctx.args.ciChant, install: ctx.args.ciInstall, npmLock, push, ...(runnerKeySecret ? { runnerKeySecret } : {}), ...(compose ? { compose } : {}) });
     const written = writeWorkflowFile(target, ciGreenHeader(command, member ? "member" : "root") + yaml);
     if (member) recordGeneratedFiles(member.memberRoot, [{ path: fromRepo, command }]);
-    console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${green.branch}${compose ? " or a chant/compose/ branch" : ""}, and every 15 minutes.`);
+    console.log(`Wrote ${written}: ticks when ${workflows.join(", ")} complete${workflows.length === 1 ? "s" : ""} on ${greenBranches(green).join(", ")}${compose ? " or a chant/compose/ branch" : ""}, and every 15 minutes.`);
     for (const e of edits) {
       if (!e.changed) continue;
       const path = writeWorkflowFile(join(repoRoot, e.path), e.text);
       console.log(
         e.build === "newest"
-          ? `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} the newest commit on ${green.branch} when a run ends, and a ci/build/<sha> tag by hand.`
-          : `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} every commit on ${green.branch}, none cancelled, and a ci/build/<sha> tag by hand when the forge ran nothing.`,
+          ? `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} the newest commit on ${greenBranches(green).join(", ")} when a run ends, and a ci/build/<sha> tag by hand.`
+          : `Wrote ${path}'s triggers and concurrency: ${e.phases.join(", ")} build${e.phases.length === 1 ? "s" : ""} every commit on ${greenBranches(green).join(", ")}, none cancelled, and a ci/build/<sha> tag by hand when the forge ran nothing.`,
       );
     }
     return 0;

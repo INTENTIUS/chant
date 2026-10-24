@@ -159,3 +159,36 @@ export async function checkOverdueOps(input: {
   }
   return out;
 }
+
+/**
+ * The overdue check over the Ops declared at `cwd` (#4289), as the plan note
+ * reports it: the Ops `discoverOps` finds there, and the repository root
+ * `cwd` is in. `pr-post` runs it in its own checkout, the target branch's
+ * commit, and `chant ci run plan` in a checkout of `--base` (#4328), so the
+ * Ops are never read from the change's code. Without a forge that can say
+ * when a job ran, nothing is checked. A failure is a line in `log` and no
+ * verdict, and the plan goes on.
+ */
+export async function overdueOpsAt(input: { forge: PrForge | undefined; cwd: string; member?: string; now?: Date; log: (line: string) => void }): Promise<OverdueOp[]> {
+  const { forge } = input;
+  if (!forge?.scheduledRuns) return [];
+  try {
+    const { discoverOps } = await import("./discover");
+    const discovered = await discoverOps({ cwd: input.cwd });
+    const watches = scheduledWatches([...discovered.ops.values()].map((d) => d.config));
+    if (watches.length === 0) return [];
+    const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: input.cwd, encoding: "utf-8" });
+    if (top.status !== 0) return [];
+    return await checkOverdueOps({
+      watches,
+      forge,
+      repoRoot: top.stdout.trim(),
+      ...(input.member ? { member: input.member } : {}),
+      now: input.now ?? new Date(),
+      log: input.log,
+    });
+  } catch (err) {
+    input.log(`could not check the scheduled Ops, so none is reported overdue: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}

@@ -17,8 +17,16 @@
  * (`shares` > 1) is a deciding job that plans every run and decides the gate,
  * plus `shares` jobs that each apply a slice of the runs and refuse a run
  * whose plan moved since the decision. Each wave's jobs need the previous
- * wave's last jobs, so a wave that waits (exit 3) or fails stops every later
- * wave.
+ * wave's last jobs, so a wave that waits (exit 3) stops every later wave.
+ *
+ * ## A failed run blocks its dependents (#4322)
+ *
+ * A run's `dependsOn` names the runs it needs applied first. Each job writes
+ * an outcome file ({@link OpWaveJob.outcome}, `../wave-blocked.ts`) and the
+ * next wave's jobs read every earlier one, so a run that failed blocks only
+ * the runs that depend on it, in its own wave and later ones, and the rest
+ * apply. The generated pipelines run a wave's jobs after a failure in the
+ * wave before; a job exits 1 only for its own failed or blocked runs.
  *
  * ## The gate
  *
@@ -51,6 +59,13 @@
  * in `.chant/trust.json` at base), one of them not the author with
  * `notAuthor`. See `./gate-quorum.ts`.
  *
+ * Two more settings feed those rules, read at base with them (#4333):
+ * `approvals.reviewLedger` names the op whose ledger holds the reviews a
+ * product records itself under `pr-review` (terragucci's `tf-apply`), and
+ * `approvals.involved` names the accounts an agent acts as and, with
+ * `exclude`, leaves an approval by anyone involved in the change out of
+ * every rule.
+ *
  * ## Wave-level commands and hooks (#3762)
  *
  * A product whose tool plans a whole wave in one call (Terragrunt's `run
@@ -81,6 +96,7 @@ import { gatePointProblems, type GatePoint } from "./gate-point";
 import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
+import { waveOutcomeFileName } from "../wave-blocked";
 
 /**
  * The variables a wave job reads its notify secrets from, for the lexicons
@@ -217,6 +233,15 @@ export interface OpWaveRun {
   target: string;
   /** The Op to run. Default: the spec's `op`. */
   op?: string;
+  /**
+   * The runs this one needs applied first (#4322), by target: a run of an
+   * earlier wave (the latest earlier wave that has the target), or one listed
+   * before it in its own wave. A run that failed, or was blocked, blocks this
+   * one, which then is neither planned nor applied; a run with no failed
+   * dependency applies whatever else failed. Within its own wave only when
+   * one job applies the wave (no `shares`, no `jobs`).
+   */
+  dependsOn?: string[];
 }
 
 /**
@@ -505,6 +530,48 @@ export interface OpWavesApprovals {
    * author from that pull request. See `./gate-quorum.ts`.
    */
   quorum?: GateQuorumRule[];
+  /**
+   * The op whose ledger (`_gates/<op>.jsonl` on `chant/lifecycle`) holds the
+   * reviews a product records itself (#4333): lines with `via: "pr-review"`,
+   * the reviewed `head` and the approving `reviewers` by forge login, as
+   * terragucci writes them under `tf-apply`. Each reviewer counts toward
+   * `quorum` as one approver of the line's digest, and under `pr-review` is
+   * proven, as a review chant reads from the forge is. Read at the base
+   * commit, so a change cannot name a ledger its own wave is judged by.
+   */
+  reviewLedger?: string;
+  /** Who else was involved in a change, for `quorum` (#4333). Read at the base commit. */
+  involved?: OpWavesInvolved;
+}
+
+/**
+ * Who was involved in a change besides its pull request's author (#4333):
+ * each login a `Requested-by:` trailer names on the commits after base, and
+ * the accounts listed here. `notAuthor` is met only by a proven approver
+ * none of them is.
+ */
+export interface OpWavesInvolved {
+  /** The accounts an agent acts as, as principals (`github:tg-bot`) or logins: a change's author can post a review as the agent with its token. */
+  agents?: string[];
+  /** An approval by anyone involved counts toward no rule, not only toward `notAuthor`. Default false. */
+  exclude?: boolean;
+}
+
+/** An op name a ledger file is named by (`_gates/<op>.jsonl`). */
+export const OP_LEDGER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Everything wrong with `approvals.involved` (#4333), one line each. */
+export function opWavesInvolvedProblems(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return ["`approvals.involved` must be { \"agents\"?: [...], \"exclude\"?: true | false }"];
+  const problems: string[] = [];
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "agents") {
+      if (!Array.isArray(v) || v.length === 0 || v.some((a) => typeof a !== "string" || a.trim() === "")) problems.push("`approvals.involved.agents` must be a non-empty list of principals or logins");
+    } else if (key === "exclude") {
+      if (typeof v !== "boolean") problems.push("`approvals.involved.exclude` must be true or false");
+    } else problems.push(`\`approvals.involved.${key}\` is not a setting; use agents or exclude`);
+  }
+  return problems;
 }
 
 /** The scheduled resume job of an Op waves pipeline (#3683). */
@@ -549,6 +616,23 @@ export interface OpWaveJob {
   command: string[];
   /** On a share job: the decision record to download. On a deciding job: the one to upload. */
   record?: string;
+  /**
+   * The outcome file the job writes (#4322), which the forge keeps whatever
+   * the job's exit code: each of its runs' outcome, as `../wave-blocked.ts`
+   * writes them. A job with `needs` reads the earlier ones from
+   * {@link opWaveOutcomeDir} first.
+   */
+  outcome: string;
+}
+
+/** Where a wave job writes its outcome file and finds the earlier ones (#4322), at any depth. */
+export function opWaveOutcomeDir(spec: Pick<OpWavesSpec, "name">): string {
+  return `.chant/op-waves/${spec.name}/outcomes`;
+}
+
+/** The outcome file of wave `wave`'s job, or of one group or share of it (#4322). */
+export function opWaveOutcomePath(spec: Pick<OpWavesSpec, "name">, wave: number, part: { group?: string; share?: number } = {}): string {
+  return `${opWaveOutcomeDir(spec)}/${waveOutcomeFileName(wave, part)}`;
 }
 
 const NAME = /^[a-z0-9][a-z0-9_-]*$/;
@@ -592,7 +676,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
   }
   if (spec.approvals !== undefined) {
     const a = spec.approvals as unknown;
-    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false, "quorum"?: [...] }.`);
+    if (a === null || typeof a !== "object" || Array.isArray(a)) throw new Error(`${where}: \`approvals\` must be { "spend"?: true | false, "quorum"?: [...], "reviewLedger"?: "<op>", "involved"?: {...} }.`);
     for (const [key, value] of Object.entries(a as Record<string, unknown>)) {
       if (key === "quorum") {
         // #4290: approval rules, read at base like the policy.
@@ -601,7 +685,17 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
         if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
         continue;
       }
-      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend and approvals.quorum.`);
+      if (key === "reviewLedger") {
+        // #4333: the op a product records its reviews under, read at base.
+        if (typeof value !== "string" || !OP_LEDGER_NAME.test(value)) throw new Error(`${where}: approvals.reviewLedger must name an op, such as "tf-apply": letters, digits, dot, dash and underscore.`);
+        continue;
+      }
+      if (key === "involved") {
+        const problems = opWavesInvolvedProblems(value);
+        if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+        continue;
+      }
+      if (key !== "spend") throw new Error(`${where}: approvals.${key} is not a setting; the ones there are approvals.spend, approvals.quorum, approvals.reviewLedger and approvals.involved.`);
       if (typeof value !== "boolean") throw new Error(`${where}: approvals.spend must be true or false.`);
     }
     if ((a as OpWavesApprovals).quorum?.length && (spec.point !== undefined || spec.waves.some((w) => w.point !== undefined))) {
@@ -697,6 +791,41 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       const problem = opWaveGroupsProblem(wave, wave.runs.map((r) => r.target));
       if (problem) throw new Error(`${where}: ${problem}.`);
     }
+  }
+  assertOpWaveDependsOn(where, spec);
+}
+
+/**
+ * Refuse a `dependsOn` (#4322) that names no run this one could follow: each
+ * entry is a target of an earlier wave, or of a run listed before it in its
+ * own wave when one job applies that wave. A discovering wave's runs are not
+ * in the spec, so after one any target is taken.
+ */
+function assertOpWaveDependsOn(where: string, spec: OpWavesSpec): void {
+  const earlier = new Set<string>();
+  let discovered = false;
+  for (const wave of spec.waves) {
+    const own = new Set<string>();
+    for (const run of wave.runs ?? []) {
+      const deps = run.dependsOn as unknown;
+      if (deps !== undefined) {
+        const at = `wave "${wave.name}" run "${run.target}"`;
+        if (!Array.isArray(deps) || !deps.every((d) => typeof d === "string" && d !== "")) throw new Error(`${where}: ${at} dependsOn must be a list of targets.`);
+        for (const dep of deps as string[]) {
+          if (dep === run.target && !earlier.has(dep)) throw new Error(`${where}: ${at} depends on itself.`);
+          if (own.has(dep)) {
+            if ((wave.shares ?? 1) > 1 || wave.jobs !== undefined) {
+              throw new Error(`${where}: ${at} depends on "${dep}" in its own wave, which ${wave.jobs ? "job groups" : "shares"} apply in separate jobs; move one of them to another wave.`);
+            }
+            continue;
+          }
+          if (!earlier.has(dep) && !discovered) throw new Error(`${where}: ${at} depends on "${dep}", which is no run of an earlier wave or listed before it in its own.`);
+        }
+      }
+      own.add(run.target);
+    }
+    for (const t of own) earlier.add(t);
+    if (wave.discover) discovered = true;
   }
 }
 
@@ -888,18 +1017,18 @@ export function assertOpWaveHooks(where: string, hooks: OpWaveHooks | undefined)
 /**
  * The moments a pull-request job runs hooks at (#4288): `pr-plan` and
  * `pr-record` run the observe and plan moments, and `pr-apply` the apply
- * moments too. The pull request's gate has no `after-gate` moment.
+ * moments too. `after-gate` (#4323) runs in `pr-apply` once the pull
+ * request's gate has decided.
  */
-export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "before-apply", "after-apply"];
+export const PR_LOOP_HOOK_MOMENTS: readonly OpWaveHookMoment[] = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"];
 
 /**
  * Refuse `ci.hooks` a pull-request job could not run (#4288): what
- * {@link assertOpWaveHooks} refuses, plus `after.gate` and `apply.runBy`,
- * since chant itself runs a pull request's apply.
+ * {@link assertOpWaveHooks} refuses, plus `apply.runBy`, since chant itself
+ * runs a pull request's apply.
  */
 export function assertPrLoopHooks(where: string, hooks: OpWaveHooks | undefined): void {
   assertOpWaveHooks(where, hooks);
-  if (hooks?.after?.gate !== undefined) throw new Error(`${where}: hooks.after.gate runs in an Op waves job only; a pull-request job runs hooks before the observe, before and after the plan, and before and after the apply.`);
   if (hooks?.apply !== undefined) throw new Error(`${where}: hooks.apply.runBy is for an Op waves spec; chant runs a pull request's apply, so it runs the apply-stage hooks itself.`);
 }
 
@@ -941,13 +1070,13 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     const prefix = `wave-${k}-${wave.name}`;
     const shares = wave.shares ?? 1;
     if (shares === 1 && wave.jobs === undefined) {
-      jobs.push({ jobName: prefix, wave: k, waveName: wave.name, kind: "wave", needs: previous, command });
+      jobs.push({ jobName: prefix, wave: k, waveName: wave.name, kind: "wave", needs: previous, command, outcome: opWaveOutcomePath(spec, k) });
       previous = [prefix];
       return;
     }
     const record = opWaveRecordPath(spec, k);
     const decide = `${prefix}-decide`;
-    jobs.push({ jobName: decide, wave: k, waveName: wave.name, kind: "decide", needs: previous, command: [...command, "--decide"], record });
+    jobs.push({ jobName: decide, wave: k, waveName: wave.name, kind: "decide", needs: previous, command: [...command, "--decide"], record, outcome: opWaveOutcomePath(spec, k) });
     const shareJobs: string[] = [];
     if (wave.jobs !== undefined) {
       // #3914: a job per group, or per share of a group, each applying its runs under the deciding job's decision.
@@ -957,13 +1086,13 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
         if (groupShares === 1) {
           const jobName = `${prefix}-${group.name}`;
           shareJobs.push(jobName);
-          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, needs: [decide], command: groupCommand, record });
+          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, needs: [decide], command: groupCommand, record, outcome: opWaveOutcomePath(spec, k, { group: group.name }) });
           continue;
         }
         for (let share = 1; share <= groupShares; share++) {
           const jobName = `${prefix}-${group.name}-share-${share}`;
           shareJobs.push(jobName);
-          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, share, needs: [decide], command: [...groupCommand, "--share", String(share)], record });
+          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, share, needs: [decide], command: [...groupCommand, "--share", String(share)], record, outcome: opWaveOutcomePath(spec, k, { group: group.name, share }) });
         }
       }
       previous = shareJobs;
@@ -972,7 +1101,7 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     for (let share = 1; share <= shares; share++) {
       const jobName = `${prefix}-share-${share}`;
       shareJobs.push(jobName);
-      jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", share, needs: [decide], command: [...command, "--share", String(share)], record });
+      jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", share, needs: [decide], command: [...command, "--share", String(share)], record, outcome: opWaveOutcomePath(spec, k, { share }) });
     }
     previous = shareJobs;
   });

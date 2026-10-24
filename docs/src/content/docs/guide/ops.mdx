@@ -346,7 +346,7 @@ gate("ship", {
 });
 ```
 
-The quorum counts distinct human approvers of the current plan. With `roles`, an approver counts only when `.chant/trust.json` at base grants them one of the roles and the approval is sealed by a signer listed at base ([#4290](https://github.com/INTENTIUS/chant/issues/4290)). A role the approver claims with `--role` reaches the policy and never the quorum:
+The quorum counts distinct human approvers of the current plan. With `roles`, an approver counts only when `.chant/trust.json` at base grants them one of the roles and the approval is sealed by a signer listed at base ([#4290](https://github.com/INTENTIUS/chant/issues/4290)). A role the approver claims with `--role` is recorded, and neither the quorum nor the policy counts it ([#4324](https://github.com/INTENTIUS/chant/issues/4324)):
 
 ```bash
 chant approve release ship --approver github:alex --sign
@@ -355,13 +355,15 @@ chant approve release ship --approver github:sam --sign
 
 `quorum` may also be a list of rules, each scoped to the run's environment by `targets` globs. [Approval Rules](/chant/guide/approval-rules/) has the list form and the migration from claimed roles.
 
+The `approval` block is part of the Op's build, so a change can edit the quorum its own run is judged by. A quorum declared as `identity.gates.<gate>.quorum` in `chant.workspace.json` is read at base instead and replaces the Op's ([#4324](https://github.com/INTENTIUS/chant/issues/4324), [Approval Rules](/chant/guide/approval-rules/#on-an-op-gate)).
+
 Each `chant approve` is its own line on the gate ledger. An approval counts only for the plan it names, so a new plan starts the count again. `chant approve` prints how far the quorum has got.
 
 The policy is a Cedar policy set that `gatePolicy()` renders when the Op is built. `chant approve` evaluates it once for each approval and records the decision, the determining policy ids and the policy's version on that approval. The request looks like this:
 
 | Position | Value |
 |---|---|
-| principal | `Chant::Human::"<approver>"` or `Chant::Agent::"<approver>"`, with one `Chant::Role` parent per `--role` |
+| principal | `Chant::Human::"<approver>"` or `Chant::Agent::"<approver>"`, with one `Chant::Role` parent per role `.chant/trust.json` at base gives the approver. Only a sealed approval (`--sign`) gets roles, and `--role` adds none ([#4324](https://github.com/INTENTIUS/chant/issues/4324)) |
 | action | `Chant::Action::"PassGate"` |
 | resource | `Chant::Gate::"<op>/<gate>"` |
 | context | `planDigest`, `plan` (the plan summary below), plus the gate's `approval.context` as this run resolved it |
@@ -802,6 +804,8 @@ Three per-Op options sit beside the finding mode, two of them widening what the 
 Those two land differently per provider. GitHub emits both. Forgejo emits the steps, since its runner runs `uses:` steps, and drops `permissions:` along with the mode's own scopes, because the Forgejo runner ignores the section and issues no OIDC token off a workflow permission. GitLab takes the `{ run }` steps and one permission. A `{ run }` entry is emitted as a `script:` line ahead of the `beforeScript` lines. A `uses:` step is refused by name at build time, since GitLab jobs run `script` lines and there is no marketplace action to translate it into. In `permissions`, `id-token: write` becomes an `id_tokens:` declaration on the job, `CHANT_ID_TOKEN` with `aud: $CI_SERVER_URL`, which is GitLab's OIDC surface; the job's own setup line reads the JWT from that variable, and a project whose identity provider was registered with another audience edits the declaration. `id-token: read` is refused, because GitLab either mints the token into the job or does not. Every other scope is refused by name as well: GitLab has no per-job token-scope mapping, and a scope dropped without a word would emit a job that reads as granted and runs with nothing.
 
 The third option points the other way. `environment`, a `{ name, url? }`, emits `environment:` on that Op's job, which is how a GitHub environment's protection rules (required reviewers, a wait timer, a branch restriction) come to hold a generated apply. It costs no token scope, since environment protection is repository configuration rather than something `GITHUB_TOKEN` carries. Nothing about the environment itself is validated, because GitHub creates an unprotected one on first use rather than failing, so whether reviewers exist cannot be answered from workflow content. What the generator refuses is only the shape that could never bind, meaning a blank name or a `url` that is neither absolute nor an expression the run resolves. GitLab has the same key with the same two fields and a protected environment's approval rule behind it, so it maps across, and the generated header names the environment to protect since the rule is a project setting this file cannot declare. Forgejo Actions has no environments at all, so the key is dropped **and** the generated file gains a header comment naming the environment that was asked for and stating that nothing on the forge enforces it. A silent drop would be worst for this option, because its purpose is a human holding an apply.
+
+A fourth option, `reviewAgent: true`, splits an Op that runs a model review into two jobs, so the job that runs the pull request's code holds no forge write token and a second job posts the note ([Review a Pull Request with a Model](/chant/guide/review-agent/#keep-the-model-away-from-the-forge-token)). GitHub and Forgejo build it; GitLab refuses it by name.
 
 A `ScheduledOpSpec` isn't limited to cron. Its `trigger` also takes `{ kind: "pull_request", branches? }` and `{ kind: "push", branches? }`, for an Op whose CI trigger is a PR or a push rather than a clock (a Terraform `plan` on `pull_request`, posted as a PR comment, paired with `apply` on `push` to the default branch, is the motivating case). All three generators support all three trigger kinds ([#2256](https://github.com/INTENTIUS/chant/issues/2256) for GitLab). On GitLab each kind becomes a `rules:` entry on the Op's job:
 

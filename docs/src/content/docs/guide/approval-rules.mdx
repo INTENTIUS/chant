@@ -40,7 +40,7 @@ Add `approvals.quorum` to the [Op waves](/chant/guide/op-waves/) spec. Each rule
 | `roles` | Only a person `.chant/trust.json` at base gives one of these roles counts. |
 | `notAuthor` | One of the counted people is not the merged pull request's author. |
 
-A wave takes every rule with a glob that matches one of its targets (`packages/core/src/op/gate-quorum.ts:110`). It applies once each of those rules is met by distinct people who approved its set digest (`packages/core/src/op/gate.ts:855`). A wave that takes no rule needs one approval. A person counts once, however many times they approve. An agent never counts (`packages/core/src/op/gate.ts:574`).
+A wave takes every rule with a glob that matches one of its targets (`packages/core/src/op/gate-quorum.ts:110`). It applies once each of those rules is met by distinct people who approved its set digest (`packages/core/src/op/gate.ts:866`). A wave that takes no rule needs one approval. A person counts once, however many times they approve. An agent never counts (`packages/core/src/op/gate.ts:585`).
 
 The rules only hold a wave that needs an approval. A wave whose `gate` is `never`, or `on-destructive` with nothing destructive, applies without asking.
 
@@ -87,9 +87,25 @@ The rules are read from the spec file at the wave's base commit (`packages/core/
 
 A spec with both `approvals.quorum` and a decision `point` is refused (`packages/core/src/op/op-waves.ts:580`). A point takes its deciders and quorum from the point.
 
+## A product's own reviews, and everyone involved
+
+A product that records reviews itself can have chant count them. Under `pr-review`, set `approvals.reviewLedger` to the op the product writes them under (terragucci writes `tf-apply`):
+
+```json
+"approvals": {
+  "quorum": [{ "count": 2, "roles": ["platform"], "notAuthor": true }],
+  "reviewLedger": "tf-apply",
+  "involved": { "agents": ["tg-bot"], "exclude": true }
+}
+```
+
+A line on that ledger with `via: "pr-review"`, the reviewed `head`, a `planDigest` equal to the wave's and a list of `reviewers` counts each reviewer as one approver (`packages/core/src/op/gate-quorum.ts`, `recordedReviewApprovals`). A reviewer is proven by the line and gets the roles `.chant/trust.json` at base gives their forge principal, so a login `alice` on GitHub is `github:alice`. A line for another digest, or one a wave already applied under, counts for nothing. The ledger is the lifecycle branch's. The change being applied cannot write it, and the spec at base names it (`packages/core/src/op/op-waves-run.ts`, `quorumAtBase`).
+
+`notAuthor` is judged against everyone involved in the change: the pull request's author, each login a `Requested-by:` trailer names on the commits after base, and the accounts in `involved.agents`. With `involved.exclude`, an approval by any of them counts toward no rule, which is how terragucci's `Involved` treats them. Without it, they fail only `notAuthor`.
+
 ## On an Op gate
 
-An Op's `gate` step takes the same list in `approval.quorum`. A rule's `targets` match the run's environment (`packages/core/src/op/local-executor.ts:759`), so a rule with targets never covers a run without one. `notAuthor` is refused there, since an Op run has no pull request to read the author from (`packages/core/src/op/gate-quorum.ts:144`).
+An Op's `gate` step takes the same list in `approval.quorum`. A rule's `targets` match the run's environment (`packages/core/src/op/local-executor.ts:768`), so a rule with targets never covers a run without one. `notAuthor` is refused there, since an Op run has no pull request to read the author from (`packages/core/src/op/gate-quorum.ts:144`).
 
 ```typescript
 gate("ship", {
@@ -103,7 +119,26 @@ gate("ship", {
 });
 ```
 
-The roles come from `.chant/trust.json` at base here too (`packages/core/src/op/gate.ts:167`). The Op gate's block itself is part of the Op's build, so it is read from the change being run.
+The roles come from `.chant/trust.json` at base here too (`packages/core/src/op/gate.ts:172`).
+
+The Op's `approval` block is part of the Op's build, so it is read from the change being run, and a change could lower its own quorum there. To hold a gate to its quorum, declare the rules in `chant.workspace.json` as `identity.gates.<gate>.quorum` ([#4324](https://github.com/INTENTIUS/chant/issues/4324)):
+
+```json
+"identity": {
+  "gates": {
+    "ship": {
+      "quorum": [
+        { "targets": ["prod"], "count": 2, "roles": ["maintainer"] },
+        { "count": 1 }
+      ]
+    }
+  }
+}
+```
+
+A run reads the entry from the declaration at base (`packages/core/src/op/local-executor.ts:803`). Its `quorum` replaces the Op's `approval.quorum`, and it also applies to a gate whose Op has no `approval` block (`packages/core/src/op/local-executor.ts:748`). A pull request that edits the Op or the declaration is still judged by the rules on the base branch. Without a `quorum` at base the Op's own quorum applies as before. The change being run can edit that one.
+
+An `identity.gates` entry also makes the gate count only sealed approvals, so approve with `chant approve ... --sign`. `notAuthor` is refused in the entry, as it is in the Op (`packages/core/src/workspace/declaration.ts:1204`). The rules take effect once the declaration change is merged, since they are read at base.
 
 ## In your own tool
 
@@ -117,9 +152,21 @@ If a gate of yours names `roles`:
 
 1. Add a `roles` block to `.chant/trust.json` that grants each role to the principals who hold it, and merge it.
 2. List each approver's key in `.chant/allowed_signers`, the signers file `chant approve --sign` seals against.
-3. Approve with `chant approve ... --sign`. `--role` is still recorded, and a gate policy still sees it. The quorum never counts it.
+3. Approve with `chant approve ... --sign`. `--role` is still recorded on the approval. Nothing counts it.
 
 A gate whose quorum has no `roles` sees no change. An approval with a claimed role that does not count says why: `chant approve` prints that its roles are read from `.chant/trust.json` at base, and only for a sealed approval.
+
+## Migrating a gate policy from claimed roles
+
+Before chant#4324, a gate policy's request carried the roles passed with `chant approve --role` as `principal.roles`, and the Cedar request gave the principal one `Chant::Role` parent for each. Since chant#4324 the request carries the roles `.chant/trust.json` at base gives the approver, and only when a seal proves who approved (`packages/core/src/cli/handlers/approve.ts:605`). The roles the approver claims are never read (`packages/core/src/op/gate-approval.ts:301`).
+
+A policy that permits by role, such as `principal in Chant::Role::"maintainer"`, now denies an approval whose only claim to the role is `--role`. In `enforce` mode that approval no longer passes the gate on its own. To keep such a policy working:
+
+1. Grant each role in the `roles` block of `.chant/trust.json` and merge it. A grant the change itself adds does not count, since it is read at base.
+2. List each approver's key in `.chant/allowed_signers`.
+3. Approve with `chant approve ... --sign`. An unsealed approval reaches the policy with no roles.
+
+A policy that reads no roles sees no change. `chant approve` prints a note when `--role` names a role the approver does not hold at base.
 
 ## See also
 

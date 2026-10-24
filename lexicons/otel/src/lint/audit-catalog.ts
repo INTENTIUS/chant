@@ -6,6 +6,8 @@
  * `yamlBased`. OTEL118 reads it too, but only in a build that stamps
  * telemetry attribution, so it is not.
  * OTEL128 reads both: the emitted config and the declared `Distribution`.
+ * OTEL129 reads both too: the emitted config and the sql lexicon's declared
+ * ClickHouse tables.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
  * constructed with `yamlBased: false`. The two source-level lint rules are
@@ -239,5 +241,11 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Collector config uses a component the declared Distribution does not build",
     "Add the component to the Distribution's list for its kind, or remove it from the collector config.",
+  ),
+  OTEL129: entityRule(
+    "OTEL129",
+    "correctness",
+    "A clickhouse exporter writes a table or column the sql build in the same root does not declare",
+    "Declare the exporter's tables with OtelTables from the sql lexicon, or point the exporter's table names at declared tables, and set create_schema: false.",
   ),
 };

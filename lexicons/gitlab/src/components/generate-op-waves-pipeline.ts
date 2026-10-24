@@ -3,8 +3,16 @@
  *
  * One file, one stage per wave, on a push to the spec's branches. Each job is
  * one of core's `opWaveJobs`, and `needs:` chains them so a wave that waits at
- * its gate (exit 3) or fails stops every later wave; retrying the failed job
- * after `chant approve` carries on. `GIT_DEPTH: "0"` gives the runner the base
+ * its gate (exit 3) stops every later wave; retrying the failed job after
+ * `chant approve` carries on, and the jobs it skipped run after it.
+ *
+ * A job that exits 1 (a run failed, or was blocked) is an allowed failure
+ * (`allow_failure: exit_codes: [1]`, #4322), so the next wave's jobs run
+ * after it and block only the runs that depend on a failed one. Every job
+ * keeps the outcome directory as an artifact, holding the outcome files it
+ * received through `needs:` and its own, so each later job reads every
+ * earlier one. Any other non-zero exit still stops the waves after it.
+ * `GIT_DEPTH: "0"` gives the runner the base
  * commit it reads the gate policy at. A wide wave's deciding job keeps its
  * decision as an artifact, which GitLab hands each share job through `needs:`.
  * A wave's `environment` is the job's own `environment:`; protect it in the
@@ -47,7 +55,7 @@ import {
   nonEmpty,
   pushBranches,
 } from "@intentius/chant/ci-jobs";
-import { opWaveGroupOf, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 import { emitGitlabFile } from "./ci-jobs";
@@ -119,7 +127,9 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
         rules,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         script: [...(cloud ? gitlabTradeLines() : []), ...setup, ...(options.beforeScript ?? []), job.command.join(" "), ...(options.extraScript ?? [])],
-        ...(job.kind === "decide" ? { artifacts: { when: "always", paths: [job.record!], expire_in: "30 days" } } : {}),
+        // #4322: a run that failed, or was blocked, lets the next wave run; any other failure stops it.
+        allow_failure: { exit_codes: [1] },
+        artifacts: { when: "always", paths: [...(job.kind === "decide" ? [job.record!] : []), `${opWaveOutcomeDir(spec)}/`], expire_in: "30 days" },
       },
     ]);
   }
@@ -138,7 +148,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   const header = [
     `# chant Op waves "${spec.name}": one stage per wave, each needing the one before.`,
     "# A wave that waits at its gate exits 3 and stops the waves after it; approve the",
-    "# digest it prints, then retry the job.",
+    "# digest it prints, then retry the job. A job whose runs failed exits 1, an allowed",
+    "# failure, and the waves after it run what does not depend on those runs.",
     ...(spec.resume
       ? [`# The ${spec.name}-resume job retries it for you in a pipeline schedule; give the schedule the cron "${spec.resume.schedule}".`]
       : []),

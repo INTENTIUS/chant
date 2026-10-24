@@ -18,7 +18,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
-import { SqlFileParser, dialectOption } from "./import-parser";
+import { SqlFileParser, dialectOption, sourceOption } from "./import-parser";
 import { sqlTemplateGenerator } from "./import-generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
@@ -29,6 +29,7 @@ import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { POSTGRES_EMULATOR } from "./op/activities/postgres-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
+import { looksLikePostgres } from "./migrate/from-postgres/detect";
 import { sqlWorkspaceOutputs } from "./workspace-outputs";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
 import { compositeCatalog } from "./composites/catalog";
@@ -113,6 +114,11 @@ export const sqlPlugin: LexiconPlugin = {
       { name: "aggregate", isTag: true, description: "A Postgres CREATE AGGREGATE, parsed into an aggregate entity identified by its argument types" },
       { name: "trigger", isTag: true, description: "A Postgres CREATE TRIGGER, parsed into a trigger entity on its table" },
       { name: "eventTrigger", isTag: true, description: "A Postgres CREATE EVENT TRIGGER, parsed into the database's event trigger entity" },
+      { name: "operator", isTag: true, description: "A Postgres CREATE OPERATOR, parsed into an operator entity identified by its name and operand types" },
+      { name: "statistics", isTag: true, description: "A Postgres CREATE STATISTICS, parsed into an extended statistics entity on its table" },
+      { name: "foreignDataWrapper", isTag: true, description: "A Postgres CREATE FOREIGN DATA WRAPPER, parsed into the database's wrapper entity" },
+      { name: "foreignServer", isTag: true, description: "A Postgres CREATE SERVER, parsed into the database's foreign server entity (user mappings are not declared)" },
+      { name: "publication", isTag: true, description: "A Postgres CREATE PUBLICATION, parsed into the database's publication entity" },
       { name: "collation", isTag: true, description: "A Postgres CREATE COLLATION, parsed into a collation entity" },
       { name: "cast", isTag: true, description: "A Postgres CREATE CAST, parsed into a cast entity named by its two types" },
       { name: "policy", isTag: true, description: "A Postgres CREATE POLICY, parsed into a row-level security policy on its table, or a ClickHouse CREATE ROW POLICY" },
@@ -166,7 +172,31 @@ export const sqlPlugin: LexiconPlugin = {
 
   /** `chant import schema.sql`: a file of Postgres or ClickHouse DDL (`./import-parser.ts`). */
   templateParser(options) {
-    return new SqlFileParser(dialectOption(options), { skipUndeclarable: options?.skipUndeclarable === true });
+    const from = sourceOption(options);
+    return new SqlFileParser(dialectOption(options), { skipUndeclarable: options?.skipUndeclarable === true, ...(from ? { from } : {}) });
+  },
+
+  /** `chant import --validate` (#4398): create the imported DDL on the pinned ClickHouse emulator. */
+  async validateImport(ir) {
+    const { validateOnEmulator } = await import("./sqlserver/validate");
+    return validateOnEmulator(ir);
+  },
+
+  /**
+   * `chant migrate --from sql/postgres --to sql/clickhouse` (#4399): the
+   * Postgres tables a CDC pipeline mirrors, as ClickHouse tables or
+   * `CdcMirror` calls (`./migrate/from-postgres/index.ts`).
+   */
+  migrationSource(from, to) {
+    if (from !== "sql/postgres" || (to !== undefined && to !== "sql/clickhouse")) return undefined;
+    return {
+      detect: looksLikePostgres,
+      directory: true,
+      async transform(content, opts) {
+        const { transform } = await import("./migrate/from-postgres/index");
+        return transform(content, opts);
+      },
+    };
   },
 
   parserOptions() {
@@ -175,6 +205,11 @@ export const sqlPlugin: LexiconPlugin = {
         name: "dialect",
         type: "string" as const,
         description: "the DDL's dialect, clickhouse or postgres; read off its statements when omitted",
+      },
+      {
+        name: "from",
+        type: "string" as const,
+        description: "read the file as a SQL Server schema (sqlserver) and translate it to ClickHouse; each judgment call is a needs-review diagnostic for --report and --strict",
       },
       {
         name: "skipUndeclarable",

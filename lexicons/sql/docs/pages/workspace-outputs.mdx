@@ -89,6 +89,8 @@ db has no output public.orders.customer_id; it was renamed to public.orders.buye
 
 The same workspace with a ClickHouse member links to `analytics.events.user_id` for a table declared as `${analytics}.events`.
 
+A ClickHouse mirror of Postgres tables gets these links written for it: [`chant migrate --from sql/postgres --to sql/clickhouse`](../migrate-postgres-to-clickhouse/#workspace-links) adds one per mirrored column.
+
 ## How they are read
 
 `chant workspace check` never runs a member's code. It folds the member's TypeScript the way `chant build` does under its sandbox: a file whose `table` and `view` templates are plain text and interpolations of other declarations folds to the same tables a build makes. The member's plain `.sql` files are read too.

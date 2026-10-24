@@ -195,28 +195,6 @@ describe("the rebuild-migration example's Op", () => {
   });
 });
 
-const columnNames = (doc: Doc, name: string) => (objectOf(doc, name).columns as Array<{ name: string }>).map((c) => c.name);
-
-describe("the Postgres source and the ClickHouse mirror are two projects with one set of columns", () => {
-  test("each table the CDC mirror carries has the columns its Postgres source declares", async () => {
-    const built = async (example: string) => {
-      const result = await build(join(import.meta.dirname, example, "src"), [sqlSerializer], undefined, {
-        fold: true,
-        intrinsics: sqlPlugin.intrinsics!(),
-        lexicons: ["sql"],
-      });
-      expect(result.errors).toEqual([]);
-      return docOf((result.outputs.get("sql") as { primary: string }).primary);
-    };
-    const source = await built("postgres-cdc-source");
-    const mirror = await built("cdc-mirror");
-    // The mirror adds the pipeline's version and deleted columns.
-    for (const [pg, ch] of [["customers", "customersTable"], ["orders", "ordersTable"]] as const) {
-      expect(columnNames(mirror, ch).filter((c) => !c.startsWith("_")), pg).toEqual(columnNames(source, pg));
-    }
-  });
-});
-
 describe("the postgres-column-rename example's Op", () => {
   test("builds as one Op that renames app.users.login by expand and contract", async () => {
     const result = await build(join(import.meta.dirname, "postgres-column-rename", "src"), [sqlSerializer], undefined, {

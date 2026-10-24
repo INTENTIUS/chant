@@ -18,6 +18,7 @@ import { compositeCatalog } from "./composites/catalog";
 import { DEFAULT_TEMPLATE, GENAI_TEMPLATE, K8S_AGENT_TEMPLATE } from "./init-templates";
 import { COLLECTOR_PIN } from "./define";
 import { collectorTopologyOf } from "./topology";
+import { otelWorkspaceLinks } from "./workspace-links";
 
 /** opentelemetry-collector-releases also tags its tools (`cmd/builder/v0.163.2`); only the plain release tags are distributions. */
 function releaseTag(tag: string): string | null {
@@ -130,6 +131,12 @@ export const otelPlugin: LexiconPlugin = {
     const topology = collectorTopologyOf(entities.values());
     if (topology.pipelines.length === 0 && topology.components.length === 0) return undefined;
     return { collector: topology };
+  },
+
+  // The tables and columns a clickhouse exporter writes, as links to the sql
+  // member that declares them (#4397), for `chant workspace check`.
+  workspaceLinks(entities) {
+    return otelWorkspaceLinks(entities);
   },
 
   postSynthChecks() {

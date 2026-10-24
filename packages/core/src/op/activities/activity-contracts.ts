@@ -152,7 +152,8 @@ export const reviewAgentContract = activityContract(
     op: z.string(),
     changeSet: z.object({ digest: z.string(), entries: z.array(z.unknown()) }).passthrough().optional(),
     changeSetFile: z.string().optional(),
-    mode: z.enum(["comment", "report"]).optional(),
+    mode: z.enum(["comment", "report", "handoff"]).optional(),
+    dir: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
     base: z.string().optional(),
@@ -162,13 +163,14 @@ export const reviewAgentContract = activityContract(
     timeout: z.number().positive().optional(),
   }),
   z.object({
-    mode: z.enum(["comment", "report"]),
+    mode: z.enum(["comment", "report", "handoff"]),
     risk: z.enum(["low", "medium", "high", "unknown"]),
     exitCode: z.number().nullable(),
     summary: z.string(),
     commentUrl: z.string().optional(),
     pullRequest: z.string().optional(),
     mergeRequest: z.string().optional(),
+    recordFile: z.string().optional(),
   }),
 );
 

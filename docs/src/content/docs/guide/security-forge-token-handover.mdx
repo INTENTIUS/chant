@@ -5,7 +5,7 @@ diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/security-forge-token-handover/.
   Regenerate this repository's pull-request pipeline with the same `chant build --components --generate <forge> --pr-loop` flags it was generated with, and open a pull request with the pipeline.
-  Check that its plan job has a `plan-note` job after it, and list any `--before-script` line the note job needs that only works in the pull request's checkout.
+  On GitHub and Forgejo, check that its plan job has a `plan-note` job after it. On GitLab, list the protected variables and the pipeline schedule the page asks for, for a person to set. List any `--before-script` line the note job needs that only works in the pull request's checkout.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -25,7 +25,9 @@ chant build --components --generate github --pr-loop --env prod --output .github
 
 The plan job's report now reaches the forge through a second job, `plan-note`. The note job runs the chant of the target branch's commit, and that commit's `chant` has to have `components pr-post`. So on the pull request that brings the regenerated pipeline, the note job can fail where the target branch's chant is older. The next pull request posts.
 
-A pipeline generated before #4295 still works. Its plan job holds the token, so `chant ci run plan --in-place` leaves every token out of the plan's steps. Once they settle it posts the note itself and warns to regenerate (`planPoster` in `packages/core/src/workspace/ci-run.ts:735`).
+A pipeline generated before #4295 still works. Its plan job holds the token, so `chant ci run plan --in-place` leaves every token out of the plan's steps. Once they settle it posts the note itself and warns to regenerate (`planPoster` in `packages/core/src/workspace/ci-run.ts:819`).
+
+Since [#4328](https://github.com/INTENTIUS/chant/issues/4328) the plan job on GitHub and Forgejo no longer gets the `CHANT_RUNNER_KEY` secret (`packages/core/src/components/pr-pipeline.ts:364`), and on GitLab the plan note moves out of the merge request pipeline. Regenerate for both.
 
 ## What the plan job does on GitHub and Forgejo
 
@@ -38,20 +40,37 @@ The `plan-note` job (`generate-pipeline.ts:350`) needs the plan job and runs whe
 
 ## What the plan job does on GitLab
 
-GitLab runs a job's script in one shell, so the plan's script starts by unsetting the token variables (`lexicons/gitlab/src/components/generate-pipeline.ts:372`). GitLab hands the plan's artifact to the `plan-note` job, which checks out `CI_MERGE_REQUEST_DIFF_BASE_SHA` before it runs anything (`generate-pipeline.ts:382`) and posts with `chant components pr-post`.
+GitLab builds a merge request pipeline from the merge request's own `.gitlab-ci.yml`, so whatever the merge request wrote runs there, and nothing there may hold the token. Make `CHANT_FORGE_TOKEN` and `CHANT_RUNNER_KEY` protected CI/CD variables. GitLab then gives them only to pipelines of protected branches and tags, and never to a merge request pipeline.
+
+In the merge request pipeline, the plan's script still starts by unsetting the token variables (`lexicons/gitlab/src/components/generate-pipeline.ts:426`), which drops `CI_JOB_TOKEN` and any token you left unprotected. The plan keeps `.chant/pr` as its artifact.
+
+A pipeline of the target branch, which GitLab builds from that branch's files, runs the `plan-note` job (`generate-pipeline.ts:430`). Its rule is a pipeline that a schedule, a person or a trigger started with `CHANT_PLAN_NOTES` set to `1` (`gitlabPlanNotesRule`, `generate-pipeline.ts:357`). A merge request pipeline's own trigger job starts a pipeline whose source is `pipeline`, which the rule leaves out. The note job's command is `chant components pr-post --open`, which does this for each open merge request into the branch (`postOpenPlanReports` in `packages/core/src/pr-post.ts:202`):
+
+1. GitLab names the merge request's head and the newest pipeline at that head in this project, and `pr-post` takes that pipeline's plan job (`mergeRequestJobs` in `packages/core/src/pr-forge.ts:1452`). A merge request whose pipeline ran in a fork's project is left out.
+2. A plan job that has not settled waits for the next run. So does one whose result is already posted: the `chant/plan` status links to the plan job, and a status that links to it is that job's result (`pr-post.ts:219`).
+3. For the rest, `pr-post` reads `pr-plan.json` from the plan job's artifacts (`pr-post.ts:225`) and posts the note and the status, as the note job does on GitHub.
+
+Add a pipeline schedule to post the notes:
+
+1. Under **Settings > CI/CD > Variables**, set `CHANT_FORGE_TOKEN` (and `CHANT_RUNNER_KEY` if the pipeline signs its runs) as protected and masked.
+2. Under **Build > Pipeline schedules**, add a schedule of the target branch with the variable `CHANT_PLAN_NOTES` set to `1`. A merge request's note comes on the first run after its plan job settles, so pick a cron as often as you want notes, such as `*/5 * * * *`.
+
+The pull request environment's `env-sweep` job runs on every schedule but this one (`generate-pipeline.ts:560`).
 
 <Aside type="caution" title="What GitLab still gives the plan job">
-A CI/CD variable reaches every job of a merge request pipeline, so the plan job starts with `CHANT_FORGE_TOKEN` and unsets it. Unsetting leaves the value in the shell's starting environment on Linux. To keep it from the merge request's pipeline altogether, make the variable protected; then no merge request pipeline gets it, and the note is not posted from one either. GitLab's own checkout keeps `CI_JOB_TOKEN` in the remote's URL, and that token cannot write notes.
+GitLab's own checkout keeps `CI_JOB_TOKEN` in the remote's URL, and that token cannot write notes. An unprotected CI/CD variable still reaches the merge request pipeline. The plan's unset keeps it from the plan's later lines, but the value stays in the shell's starting environment on Linux.
 </Aside>
 
 ## What the note job trusts
 
 The pull request's code wrote the report, so the note job reads it as data (`packages/core/src/pr-post.ts`). The pull request, the head, the environment and the member come from the event, never the report. A report that names another fails the status and posts no note (`readPlanReport`, `pr-post.ts:66`). The note is rendered again from the report, and every `<!--` after its marker line becomes `&lt;!--`, so the note carries no hidden marker but its own (`planNoteFor`, `pr-post.ts:92`). A plan job that failed fails the status whatever the report says (`pr-post.ts:140`).
 
-`chant ci run plan` on your own host keeps the same rule. No step of the plan gets a forge token from the host, `--pass-env`, a secret or the job (`packages/core/src/workspace/ci-run.ts:710`). The plan's `pr-plan` runs with `--no-status` (`packages/core/src/components/pr-pipeline.ts:282`), and `ci run` posts from the report once the steps settle. The steps run as the same user as `ci run`, which started with the token, so give a host runner only repositories whose authors you trust, as [`ci serve`](/chant/cli/ci/#ci-serve) says.
+`chant ci run plan` on your own host keeps the same rule. No step of the plan gets a forge token from the host, `--pass-env`, a secret or the job (`packages/core/src/workspace/ci-run.ts:758`). The plan's `pr-plan` runs with `--no-status` (`packages/core/src/components/pr-pipeline.ts:360`), and `ci run` posts from the report once the steps settle. Like `pr-post`, it adds the scheduled Ops that stopped running to the note. It reads them from a fresh checkout of `--base`, not from the checkout the change ran in, in place or not (`overdueAtBase`, `ci-run.ts:869`). The steps run as the same user as `ci run`, which started with the token, so give a host runner only repositories whose authors you trust, as [`ci serve`](/chant/cli/ci/#ci-serve) says.
 
 ## What it does not cover
 
-- The plan job still holds `CHANT_RUNNER_KEY` when the pipeline signs its runs. Its cloud credentials are its own unless `ci.identity.cloud` splits them, as [Plan and Apply as Separate Cloud Identities](/chant/guide/security-cloud-identities/) describes.
+- The plan job holds no `CHANT_RUNNER_KEY`, so the plan's run record is unsigned. The record and apply jobs still sign theirs. The plan job's cloud credentials are its own unless `ci.identity.cloud` splits them, as [Plan and Apply as Separate Cloud Identities](/chant/guide/security-cloud-identities/) describes.
 - The `chant` the plan job runs is whatever the image or your `--before-script` puts on the path. When that is the pull request's own `node_modules`, the pull request chooses it, as it chooses the rest of its code.
 - On every forge a pull request from the repository can change the workflow file itself. A reviewer sees that change; the handover covers the code a reviewer is less likely to read.
+
+The apply before merge (`--apply-before-merge`) runs the pull request's head with the job token and `CHANT_RUNNER_KEY`. A comment or a target branch pipeline starts it, and `pr-apply` checks the approval before any of the head's code loads. On GitLab the `env-post` job of a pull request environment still runs in the merge request pipeline and posts with `CHANT_FORGE_TOKEN`, so with the token protected it posts nothing.

@@ -15,6 +15,9 @@ import { MERGE_TREE_SETTINGS } from "../../generated/clickhouse";
 import { classifyDisruptionWith } from "../../core/classifier";
 import { CHANGE_CLASSES, CLASSIFIER_RULES, type ClassifierRuleId } from "./rules";
 
+/** Settings only a stream engine takes; the path alone cannot name the engine. */
+const STREAM_SETTING = /^(?:kafka_|rabbitmq_|nats_|s3queue_|azure_queue_|keeper_path$)/;
+
 function ruleFor(path: string): ClassifierRuleId | "ambiguous" | undefined {
   const root = path.split(/[.[]/)[0]!;
   if (root === "name" || root === "database") return "SQLCH230";
@@ -32,6 +35,8 @@ function ruleFor(path: string): ClassifierRuleId | "ambiguous" | undefined {
   if (root === "refresh") return "SQLCH244";
   if (root === "settings") {
     const key = path.split(".")[1];
+    // A stream engine's own settings (Kafka, RabbitMQ, NATS, S3Queue's keeper_path) have no MODIFY SETTING: the table is replaced (#4396).
+    if (key !== undefined && STREAM_SETTING.test(key)) return "SQLCH225";
     const spec = key ? (MERGE_TREE_SETTINGS as Record<string, { readonly: boolean } | undefined>)[key] : undefined;
     return spec?.readonly ? "SQLCH218" : "SQLCH206";
   }

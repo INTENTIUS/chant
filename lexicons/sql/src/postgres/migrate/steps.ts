@@ -25,7 +25,7 @@ import { col, migrationNames, MIGRATION_TRAILER_KEY, type MigrationNames } from 
 import { MigrationRefusal, observeMigration, type MigrationObservation } from "./observe";
 import { postgresReceiptStore, receiptAddress } from "./receipts";
 import type { ReplicationLagBound } from "./replication";
-import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, requiresNotNull, SERIAL_TYPES, storedType, type CarriedObject } from "./carry";
+import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, partitionIndexName, partitionIndexStatement, partitionTree, requiresNotNull, SERIAL_TYPES, storedType, type CarriedObject, type CarriedState } from "./carry";
 
 /** What every step is given. */
 export interface MigrationRun {
@@ -39,6 +39,10 @@ export interface MigrationRun {
   column: string;
   /** The type change's expression over the old row's columns. */
   using?: string;
+  /** A rename with a type change: the expression that gives the old column's value from the new column's. */
+  reverse?: string;
+  /** A rename of a column with a default, serial or identity: the declared default lands on the new column at the contract. */
+  defaultAtContract?: boolean;
   /** This project's ownership marker, stamped on every working object. */
   marker?: OwnershipMarker;
   /** The major the build targets. */
@@ -70,6 +74,8 @@ export const observe = (run: MigrationRun): Promise<MigrationObservation> =>
     ...(run.objects ? { objects: run.objects } : {}),
     ...(run.marker ? { marker: run.marker } : {}),
     ...(run.using !== undefined ? { using: run.using } : {}),
+    ...(run.reverse !== undefined ? { reverse: run.reverse } : {}),
+    ...(run.defaultAtContract ? { defaultAtContract: true } : {}),
     ...(run.major !== undefined ? { major: run.major } : {}),
   });
 
@@ -174,7 +180,7 @@ export interface ExpandResult {
 }
 
 /** The new column's type: the declared one, with its collation when it declares one. */
-const newColumnType = (o: MigrationObservation): string => `${o.names.change === "rename" ? o.source!.type : storedType(o.column.type)}${o.column.collate ? ` COLLATE ${o.column.collate}` : ""}`;
+const newColumnType = (o: MigrationObservation): string => `${o.names.change === "rename" && o.reverse === undefined ? o.source!.type : storedType(o.column.type)}${o.column.collate ? ` COLLATE ${o.column.collate}` : ""}`;
 
 /**
  * Expand: add the new column, nullable and with no default, which changes
@@ -211,10 +217,27 @@ export async function expand(run: MigrationRun): Promise<ExpandResult> {
  * An insert takes the new column's value when it is given and the old one's
  * otherwise; an update takes whichever of the two it changed.
  */
-export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expression">): string {
+export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expression"> & { reverse?: string }): string {
   const n = o.names;
   const nw = `NEW.${col(n.newColumn)}`;
   const src = `NEW.${col(n.source)}`;
+  if (n.change === "rename" && o.reverse !== undefined) {
+    // A rename with a type change: a writer of the old name has `expression` applied, a writer of the new name `reverse`, each over the row as it is.
+    const fwd = `(SELECT ${o.expression} FROM (SELECT NEW.*) AS ${col(n.table)})`;
+    const back = `(SELECT ${o.reverse} FROM (SELECT NEW.*) AS ${col(n.table)})`;
+    return [
+      `BEGIN`,
+      `  IF TG_OP = 'INSERT' THEN`,
+      `    IF ${nw} IS NULL THEN ${nw} := ${fwd}; ELSE ${src} := ${back}; END IF;`,
+      `  ELSIF ${nw} IS DISTINCT FROM OLD.${col(n.newColumn)} THEN`,
+      `    ${src} := ${back};`,
+      `  ELSE`,
+      `    ${nw} := ${fwd};`,
+      `  END IF;`,
+      `  RETURN NEW;`,
+      `END`,
+    ].join("\n");
+  }
   if (n.change === "type") {
     return [`BEGIN`, `  ${nw} := (SELECT ${o.expression} FROM (SELECT NEW.*) AS ${col(n.table)});`, `  RETURN NEW;`, `END`].join("\n");
   }
@@ -233,7 +256,7 @@ export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expressio
 }
 
 /** The statements that start the dual write: the function, the trigger, their comments. */
-export function dualWriteStatements(o: Pick<MigrationObservation, "names" | "expression">, marker: OwnershipMarker | undefined, defaultSchema: string): string[] {
+export function dualWriteStatements(o: Pick<MigrationObservation, "names" | "expression"> & { reverse?: string }, marker: OwnershipMarker | undefined, defaultSchema: string): string[] {
   const n = o.names;
   return [
     `CREATE OR REPLACE FUNCTION ${n.qualifiedFn}() RETURNS trigger LANGUAGE plpgsql SET search_path = ${quoteIdent(defaultSchema)} AS $chant$\n${dualWriteBody(o)}\n$chant$`,
@@ -304,6 +327,11 @@ export async function carryOver(run: MigrationRun): Promise<CarryResult> {
     result.carried.push(`${c.kind} ${c.tableName}.${c.name} -> ${c.target}`);
     const state = o.carriedStates.get(c.working);
     const comment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column`, { of: c.name });
+    if (c.kind === "index" && c.partitioned) {
+      if (await carryPartitionedIndex(run, n, c, comment, state)) result.built++;
+      else result.ready++;
+      continue;
+    }
     if (c.kind === "index" || c.kind === "key") {
       const ident = qualifiedIndex(c, c.working);
       if (state?.ready) {
@@ -340,6 +368,85 @@ export async function carryOver(run: MigrationRun): Promise<CarryResult> {
   return result;
 }
 
+/**
+ * Carry over one index of a partitioned table (#3333). A partitioned index
+ * cannot be built `CONCURRENTLY`, so it is made the way the Postgres docs
+ * give for adding one without blocking writes: the partitioned index
+ * `ON ONLY` the table (nothing is built, and it is INVALID), each leaf
+ * partition's index built `CONCURRENTLY` on its own, then
+ * `ALTER INDEX ... ATTACH PARTITION` for each, deepest first. The partitioned
+ * index becomes valid when its last partition is attached. A partition
+ * attached to the table meanwhile gets its index from Postgres, and one that
+ * already has an index attached to this one is left alone, so a run after a
+ * crash goes on from where the last stopped. Returns whether anything was
+ * made.
+ */
+export async function carryPartitionedIndex(run: MigrationRun, n: MigrationNames, c: CarriedObject, comment: string, state: CarriedState | undefined): Promise<boolean> {
+  if (state?.ready && state.marked) return false;
+  const root = qualifiedIndex(c, c.working);
+  const one = async <T>(sql: string, params: unknown[]): Promise<T | undefined> => (await run.client.query<T>(sql, params))[0];
+  const oidOf = async (ident: string): Promise<string | undefined> => (await one<{ oid: string | null }>("SELECT pg_catalog.to_regclass($1)::oid::text AS oid", [ident]))?.oid ?? undefined;
+  /** The index on `partitionOid` that is attached to `parentIndexOid`, whoever made it. */
+  const attachedIndex = async (parentIndexOid: string, partitionOid: string): Promise<{ oid: string; ident: string } | undefined> => {
+    const row = await one<{ oid: string; schema: string; name: string }>(
+      `SELECT x.oid::text AS oid, s.nspname AS schema, x.relname AS name FROM pg_catalog.pg_inherits h JOIN pg_catalog.pg_index i ON i.indexrelid = h.inhrelid
+       JOIN pg_catalog.pg_class x ON x.oid = i.indexrelid JOIN pg_catalog.pg_namespace s ON s.oid = x.relnamespace WHERE h.inhparent = $1::oid AND i.indrelid = $2::oid`,
+      [parentIndexOid, partitionOid],
+    );
+    return row ? { oid: String(row.oid), ident: `${quoteIdent(row.schema)}.${quoteIdent(row.name)}` } : undefined;
+  };
+  if (!state?.present) {
+    await inTransaction(run, async (exec) => {
+      await exec(c.definition);
+      await exec(`COMMENT ON INDEX ${root} IS ${pgString(comment)}`);
+    });
+  } else if (!state.marked) {
+    await inTransaction(run, (exec) => exec(`COMMENT ON INDEX ${root} IS ${pgString(comment)}`));
+  }
+  const tree = (await partitionTree(run.client, c.tableOid)).filter((p) => p.oid !== c.tableOid);
+  const byOid = new Map(tree.map((p) => [p.oid, p]));
+  const ours = (p: { schema: string; name: string }) => `${quoteIdent(p.schema)}.${quoteIdent(partitionIndexName(p, c.working))}`;
+  const rootIndex = { oid: (await oidOf(root))!, ident: root };
+  /** The index a partition's index attaches to: the partitioned index above it, as it is now. */
+  const above = async (p: { parent?: string }): Promise<{ oid: string; ident: string }> => {
+    if (p.parent === c.tableOid || p.parent === undefined) return rootIndex;
+    const parent = byOid.get(p.parent)!;
+    const up = await above(parent);
+    return (await attachedIndex(up.oid, parent.oid)) ?? { oid: (await oidOf(ours(parent)))!, ident: ours(parent) };
+  };
+  // Top down: each partition without an index attached to its parent's gets a standalone one.
+  const pending: Array<{ p: (typeof tree)[number]; parent: { oid: string; ident: string } }> = [];
+  for (const p of tree) {
+    const parent = await above(p);
+    if (await attachedIndex(parent.oid, p.oid)) continue;
+    const ident = ours(p);
+    const cur = await one<{ valid: boolean; comment: string | null }>(
+      "SELECT i.indisvalid AS valid, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment FROM pg_catalog.pg_index i WHERE i.indexrelid = pg_catalog.to_regclass($1)",
+      [ident],
+    );
+    if (cur && !cur.valid) await outsideTransaction(run, `DROP INDEX CONCURRENTLY IF EXISTS ${ident}`);
+    if (!cur || !cur.valid) {
+      const statement = partitionIndexStatement(c, p, partitionIndexName(p, c.working));
+      const dropInvalid = async () => {
+        const row = await one<{ invalid: boolean }>("SELECT NOT i.indisvalid AS invalid FROM pg_catalog.pg_index i WHERE i.indexrelid = pg_catalog.to_regclass($1)", [ident]);
+        if (row?.invalid) await run.client.query(`DROP INDEX CONCURRENTLY IF EXISTS ${ident}`);
+      };
+      if (p.leaf) await outsideTransaction(run, statement, { scan: true, cleanup: dropInvalid });
+      else await inTransaction(run, (exec) => exec(statement));
+    }
+    if (!cur || !cur.valid || cur.comment == null) {
+      const partitionComment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column, for partition ${p.name}`, { of: c.name });
+      await inTransaction(run, (exec) => exec(`COMMENT ON INDEX ${ident} IS ${pgString(partitionComment)}`));
+    }
+    pending.push({ p, parent });
+  }
+  // Bottom up: a partition's index is valid once its own partitions are attached.
+  for (const { p, parent } of [...pending].sort((a, b) => b.p.level - a.p.level)) {
+    await inTransaction(run, (exec) => exec(`ALTER INDEX ${parent.ident} ATTACH PARTITION ${ours(p)}`));
+  }
+  return true;
+}
+
 // ── switch ─────────────────────────────────────────────────────────────
 
 export interface SwitchResult {
@@ -373,13 +480,17 @@ export interface SequenceState {
  * `serial` column's sequence is handed over with `OWNED BY`, takes the
  * declared integer type, and becomes the new column's default.
  */
-function sequenceStatements(o: MigrationObservation, state: SequenceState | undefined): { before: string[]; after: string[] } {
+function sequenceStatements(o: MigrationObservation, state: SequenceState | undefined, at: "switch" | "contract" = "switch"): { before: string[]; after: string[] } {
   const seq = o.sequence;
   const n = o.names;
   const t = n.qualifiedTable;
-  if (!seq || n.change !== "type") return { before: [], after: [] };
+  if (!seq || n.change !== (at === "switch" ? "type" : "rename")) return { before: [], after: [] };
+  if (at === "contract" && seq.kind === "serial") {
+    // The sequence goes to the new column before the old one is dropped, which would drop it; the default is set after.
+    return { before: [`ALTER SEQUENCE ${seq.ident} OWNED BY ${t}.${col(n.column)}`], after: [] };
+  }
   if (seq.kind === "identity") {
-    if (!state) throw new Error(`${n.key}: the switch moves the identity of ${n.source} and needs its sequence's state, read under the switch's lock`);
+    if (!state) throw new Error(`${n.key}: the ${at} moves the identity of ${n.source} and needs its sequence's state, read under the switch's lock`);
     const g = o.column.generated;
     const options = [`SEQUENCE NAME ${seq.ident}`, ...(g?.options ? [g.options.trim().replace(/^\(|\)$/g, "")] : [])].join(" ");
     return {
@@ -540,6 +651,31 @@ export const identityOf = (marker: OwnershipMarker | undefined): { stack?: strin
  * catalog change under ACCESS EXCLUSIVE). The migration's receipts go with
  * them. Before the date, say until when and drop nothing.
  */
+/**
+ * The contract's statements. Always: the trigger and its function, then the
+ * old column. A rename of a column with a default, serial or identity
+ * (`defaultAtContract`) also gives the declared default to the new column
+ * here, in the same transaction, so no writer sees both columns defaulted:
+ * a serial's sequence is handed over before the old column is dropped (which
+ * would drop it), an identity is dropped from the old column and added to
+ * the new one under the same sequence name, set to where the old one stood.
+ */
+export function contractStatements(o: MigrationObservation, sequenceState?: SequenceState): string[] {
+  const n = o.names;
+  const t = n.qualifiedTable;
+  const old = o.old!;
+  const sequence = sequenceStatements(o, sequenceState, "contract");
+  const dflt = o.column.default ?? (o.sequence?.kind === "serial" ? old.default : undefined);
+  const out: string[] = [];
+  if (o.trigger) out.push(`DROP TRIGGER ${col(n.trigger)} ON ${t}`);
+  if (o.fn) out.push(`DROP FUNCTION ${n.qualifiedFn}()`);
+  out.push(...sequence.before);
+  out.push(`ALTER TABLE ${t} DROP COLUMN ${col(old.name)}`);
+  if (dflt !== undefined && n.change === "rename" && o.sequence?.kind !== "identity") out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.column)} SET DEFAULT ${dflt}`);
+  out.push(...sequence.after);
+  return out;
+}
+
 export async function contract(run: MigrationRun): Promise<ContractResult> {
   const plan = await retainPlan(run);
   if (!plan.oldColumn) return { state: plan.state, dropped: false };
@@ -550,9 +686,14 @@ export async function contract(run: MigrationRun): Promise<ContractResult> {
   const o = await observe(run);
   const n = o.names;
   await inTransaction(run, async (exec) => {
-    if (o.trigger) await exec(`DROP TRIGGER ${col(n.trigger)} ON ${n.qualifiedTable}`);
-    if (o.fn) await exec(`DROP FUNCTION ${n.qualifiedFn}()`);
-    await exec(`ALTER TABLE ${n.qualifiedTable} DROP COLUMN ${col(o.old!.name)}`);
+    let state: SequenceState | undefined;
+    if (o.sequence?.kind === "identity" && n.change === "rename") {
+      // Writers wait from here, so the sequence's position read next is where the moved identity carries on.
+      await exec(`LOCK TABLE ${n.qualifiedTable} IN ACCESS EXCLUSIVE MODE`);
+      const [row] = await exec(`SELECT last_value::text AS last, is_called AS called FROM ${o.sequence.ident}`);
+      state = { lastValue: String(row?.last), isCalled: row?.called === true };
+    }
+    for (const sql of contractStatements(o, state)) await exec(sql);
   });
   await postgresReceiptStore(run.client, n.schema, identityOf(run.marker)).forget(batchPrefix(identityOf(run.marker), n.key));
   return { state: "done", dropped: true, oldColumn: plan.oldColumn };
@@ -619,7 +760,11 @@ export async function compensate(run: Pick<MigrationRun, "client" | "target" | "
   ).filter((c) => ours(c.comment, "carry"));
   const carriedIndexes = (
     await run.client.query<{ name: string; comment: string | null }>(
-      "SELECT i.indexrelid::pg_catalog.regclass::text AS name, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment FROM pg_catalog.pg_index i WHERE i.indrelid = $1::oid ORDER BY 1",
+      // The table's own indexes, and those on its partitions that no partitioned index has taken yet (an attached one goes with the partitioned index).
+      `SELECT i.indexrelid::pg_catalog.regclass::text AS name, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment
+       FROM pg_catalog.pg_index i
+       WHERE (i.indrelid = $1::oid OR (i.indrelid IN (SELECT t.relid FROM pg_catalog.pg_partition_tree($1::oid::pg_catalog.regclass) t) AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h WHERE h.inhrelid = i.indexrelid)))
+       ORDER BY i.indrelid <> $1::oid, 1`,
       [rel.oid],
     )
   ).filter((c) => ours(c.comment, "carry"));
@@ -643,7 +788,7 @@ export async function compensate(run: Pick<MigrationRun, "client" | "target" | "
       dropped.push(`constraint ${c.name} on ${c.rel}`);
     }
     for (const c of carriedIndexes) {
-      await exec(`DROP INDEX ${c.name}`);
+      await exec(`DROP INDEX IF EXISTS ${c.name}`);
       dropped.push(`index ${c.name}`);
     }
     for (const c of newColumns) {

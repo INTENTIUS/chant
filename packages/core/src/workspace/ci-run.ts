@@ -53,7 +53,9 @@
  * report with its own token (`postPlanReport`, ../pr-post.ts). In place, a
  * generated job holds no token and its `plan-note` job posts; a job that
  * still holds one was generated before #4295, and the runner posts for it
- * with a warning to regenerate.
+ * with a warning to regenerate. Either way the note's overdue check (#4289)
+ * reads the scheduled Ops from a fresh checkout of `--base`, as the
+ * plan-note job reads them at the target branch's commit (#4328).
  *
  * Signing is opt-in (#4156). With no runner key the record is unsigned, and
  * a reader counts it with no signer. A key `.chant/trust.json` does not list
@@ -81,14 +83,16 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PR_APPLY_RECORD, PR_ENV_POST_JOB, PR_ENV_REPORT_DIR, PR_LOOP_REPORT_DIR, prEnvJobs, prLoopJobs, prLoopSetup, PR_LOOP_IMAGE, type PrEnvJob, type PrLoopJob, type PrLoopPipelineOptions } from "../components/pr-pipeline";
 import { detectForge, ForgeEnvironmentError, forgeFromEnv, FORGE_KINDS, type CommitStatus, type ForgeKind, type PrForge } from "../pr-forge";
 import { holdsForgeToken, withoutForgeTokens } from "../ci-handover";
 import { postPlanReport } from "../pr-post";
-import { PR_APPLY_GATE } from "../pr-loop";
+import { overdueOpsAt } from "../op/schedule-overdue";
+import { PR_APPLY_GATE, type PrOverdue } from "../pr-loop";
 import type { CommandContext } from "../cli/registry";
 import { formatError, formatWarning } from "../cli/format";
 import { CHANT_CI_RUN_FORGE_ENV, CHANT_CI_RUN_ID_ENV, FORGE_RUN_ENV, resolveCiJob, type RunOrigin } from "../lifecycle/release-ledger";
@@ -738,7 +742,9 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
   const forgeCommand = req.noForge ? found.command.replace(` --forge ${req.forge}`, "") : found.command;
   const noStatus = req.local && !/ --no-status(?: |$)/.test(forgeCommand);
-  const command = `${forgeCommand}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${noStatus ? " --no-status" : ""}`;
+  // #4325: a record or apply on a routed branch is told the branch, as the forge's ref would tell it in a pipeline. `ci serve` has no such ref.
+  const branch = req.job !== "plan" && req.loop?.branch !== undefined && !/ --branch(?: |=)/.test(forgeCommand) ? ` --branch ${/^[A-Za-z0-9._\/=:@%+,-]+$/.test(req.loop.branch) ? req.loop.branch : `'${req.loop.branch.replace(/'/g, `'\\''`)}'`}` : "";
+  const command = `${forgeCommand}${branch}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${noStatus ? " --no-status" : ""}`;
   const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
   const own = ciJobEnv(job, {
     forge: req.forge,
@@ -759,7 +765,7 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const redact = ciRedactor(req.inPlace ? { ...longValues(jobEnv), ...own } : jobEnv, req.secrets);
   try {
     const ran = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
-    const posted = poster ? await postFromReport(req, poster, ran, { commit, ...(place.member ? { member: place.member } : {}) }) : [];
+    const posted = poster ? await postFromReport(req, poster, ran, { top, dir: place.dir, commit, ...(place.member ? { member: place.member } : {}) }) : [];
     const envPost = req.job === "env-up" ? await envPostAfterUp(req, { cwd, top, head: commit, place, jobs, hostEnv, ran }) : undefined;
     const withPost = envPost ? ("result" in envPost ? { ...ran, post: envPost.result } : { ...ran, warnings: [...ran.warnings, envPost.warning] }) : ran;
     const withPosts = posted.length > 0 ? { ...withPost, warnings: [...withPost.warnings, ...posted] } : withPost;
@@ -831,10 +837,11 @@ async function postFromReport(
   req: CiRunRequest,
   poster: NonNullable<ReturnType<typeof planPoster>>,
   ran: CiRunResult,
-  at: { commit: string; member?: string },
+  at: { top: string; dir: string; commit: string; member?: string },
 ): Promise<string[]> {
   if ("error" in poster) return [poster.error];
   const warnings = poster.warning ? [poster.warning] : [];
+  const checked: string[] = [];
   const dir = ran.report ?? resolve(req.cwd, req.output ?? PR_LOOP_REPORT_DIR);
   const posted = await postPlanReport({
     forge: poster.forge,
@@ -844,9 +851,62 @@ async function postFromReport(
     env: req.env,
     ...(at.member ? { member: at.member } : {}),
     result: ran.status === "ok" ? "success" : "failure",
+    // #4328: as pr-post does (#4289), with the Ops read at --base, never from the change's checkout.
+    overdue: () => overdueAtBase(req, { forge: poster.forge, top: at.top, dir: at.dir, ...(at.member ? { member: at.member } : {}), log: (line) => checked.push(line) }),
   });
   if (posted.refused) warnings.push(`the plan report was not posted: ${posted.refused}`);
-  return [...warnings, ...posted.warnings];
+  return [...warnings, ...checked, ...posted.warnings];
+}
+
+/**
+ * The overdue check for the plan's note (#4289, #4328), at `--base`, as the
+ * plan-note job's `pr-post` runs it at the target branch's commit. The Ops
+ * are read from a fresh checkout of the base outside the repository, never
+ * from the checkout the change's code ran in, in place or not. That checkout
+ * resolves packages from the `node_modules` the running chant is installed
+ * in ({@link chantNodeModules}), so an Op file's `@intentius/chant` is the
+ * chant running the job, not one the change installed. Without `--base`
+ * nothing is checked, and `log` says so.
+ */
+async function overdueAtBase(
+  req: CiRunRequest,
+  at: { forge: PrForge; top: string; dir: string; member?: string; log: (line: string) => void },
+): Promise<PrOverdue[]> {
+  if (!at.forge.scheduledRuns) return [];
+  if (!req.base) {
+    at.log("the scheduled Ops were not checked: the check reads them at the target branch's commit, so pass --base <sha>");
+    return [];
+  }
+  let checkout: { dir: string; remove(): void };
+  try {
+    checkout = freshCheckout(at.top, resolveJobCommit(at.top, req.base));
+  } catch (err) {
+    at.log(`the scheduled Ops were not checked: ${message(err)}`);
+    return [];
+  }
+  try {
+    const modules = chantNodeModules();
+    const link = join(checkout.dir, "node_modules");
+    if (modules && !existsSync(link)) symlinkSync(modules, link, "dir");
+    return await overdueOpsAt({ forge: at.forge, cwd: at.dir === "." ? checkout.dir : join(checkout.dir, at.dir), ...(at.member ? { member: at.member } : {}), log: at.log });
+  } finally {
+    checkout.remove();
+  }
+}
+
+/**
+ * The `node_modules` directory the running chant is installed in, or
+ * undefined when it runs from a source checkout, where chant's own packages
+ * resolve without one (../ts-loader.ts).
+ */
+export function chantNodeModules(from: string = fileURLToPath(import.meta.url)): string | undefined {
+  let dir = dirname(from);
+  for (;;) {
+    if (basename(dir) === "node_modules") return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
 }
 
 /**

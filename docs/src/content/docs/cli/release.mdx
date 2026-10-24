@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--json]
-chant release candidates [--env <env>] [--json]
+chant release candidates [--env <env>] [--branch <branch>] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
@@ -40,7 +40,7 @@ The cut refuses before it writes anything when:
 | Code | When |
 |---|---|
 | `release-worktree-dirty` | A tracked file has uncommitted changes, or a file git does not ignore is untracked, so the compile would not be the commit's. A new `*.component.ts` left untracked would otherwise be compiled into the release. |
-| `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>`, and is not a first-parent commit of a pushed `chant/compose/<name>` branch (see [Cutting a composed commit](#cutting-a-composed-commit)). Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
+| `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>` or from any further branch listed in `ci.green.branch` ([#4325](https://github.com/INTENTIUS/chant/issues/4325)), and is not a first-parent commit of a pushed `chant/compose/<name>` branch (see [Cutting a composed commit](#cutting-a-composed-commit)). Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
 | `release-commit-not-pushed` | `HEAD` is on the local trunk branch but not on `origin/<trunk>`, or this clone has no `origin/<trunk>`. The check reads the remote-tracking branch as this clone last fetched it and fetches nothing, so a commit pushed from elsewhere needs a `git fetch origin <trunk>` first. |
 | `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag. [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag. |
@@ -377,6 +377,8 @@ This is how a project with no components deploys what it cut. [`chant components
 ## release candidates
 
 Lists the green commits of trunk a release can be cut from, newest first ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). Trunk is the branch `release cut` checks, and the walk follows its first-parent line from the tip back to the oldest commit an environment of the member runs. When some environment runs no release yet, it reads the newest 50 commits. `--env <env>` gives one environment's view, so the walk stops at what that environment runs.
+
+With several branches in [`ci.green.branch`](/chant/guide/branch-routing/#give-a-routed-target-a-green-verdict), `--branch <branch>` walks that one instead of the first ([#4325](https://github.com/INTENTIUS/chant/issues/4325)).
 
 ```bash
 git fetch origin --tags

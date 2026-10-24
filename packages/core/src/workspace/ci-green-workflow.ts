@@ -50,7 +50,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { GENERATED_MARKER } from "../discovery/files";
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { emitYAMLEntry, parseYAMLDocument } from "../yaml";
-import type { CiBuild, CiGreen } from "./declaration";
+import { greenBranches, type CiBuild, type CiGreen } from "./declaration";
 import { matchesCheckRun } from "./ci-green";
 import { githubSecretOrJobToken } from "../ci-jobs";
 import { COMPOSE_BRANCH_PREFIX } from "../lifecycle/compose-refs";
@@ -248,7 +248,7 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "    types:",
     "      - completed",
     "    branches:",
-    `      - ${q(green.branch)}`,
+    ...greenBranches(green).map((b) => `      - ${q(b)}`),
     // #4169: a build the tick asked for runs at a ci/build/<sha> tag, and its completion ticks too.
     ...(newestPhases(green) ? [`      - ${q("ci/build/**")}`] : []),
     // #4220: a composed commit's phases run on its chant/compose/<name> branch, and their completion ticks too.
@@ -371,7 +371,7 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       delete on.schedule;
       const push = isObject(on.push) ? { ...on.push } : {};
       const branches = Array.isArray(push.branches) ? push.branches.filter((b): b is string => typeof b === "string") : [];
-      const withBranch = branches.includes(green.branch) ? branches : [...branches, green.branch];
+      const withBranch = [...branches, ...greenBranches(green).filter((b) => !branches.includes(b))];
       push.branches = compose && !withBranch.includes(COMPOSE_BRANCHES) ? [...withBranch, COMPOSE_BRANCHES] : withBranch;
       const { push: _push, workflow_dispatch: dispatch, ...rest } = on;
       text = writeTopLevel(text, "on", { push, workflow_dispatch: dispatch ?? {}, ...rest });
@@ -389,8 +389,11 @@ export function buildTriggerEdits(green: CiGreen, sources: readonly WorkflowSour
       if (!("workflow_dispatch" in next)) next = { ...next, workflow_dispatch: {} };
       if (next !== on) text = writeTopLevel(text, "on", next);
       // #4220: a compose branch's commits each get a verdict, so its runs are keyed by commit, as the trunk branch's are.
-      const keyed = compose ? `(github.ref == '${main}' || startsWith(github.ref, 'refs/heads/${COMPOSE_BRANCH_PREFIX}'))` : `github.ref == '${main}'`;
-      const unkeyed = compose ? `!${keyed}` : `github.ref != '${main}'`;
+      // #4325: each branch ci.green judges is keyed by commit.
+      const heads = greenBranches(green).map((b) => `github.ref == 'refs/heads/${b}'`);
+      const several = heads.length > 1;
+      const keyed = compose ? `(${[...heads, `startsWith(github.ref, 'refs/heads/${COMPOSE_BRANCH_PREFIX}')`].join(" || ")})` : several ? `(${heads.join(" || ")})` : `github.ref == '${main}'`;
+      const unkeyed = compose || several ? `!${keyed}` : `github.ref != '${main}'`;
       // Written as lines: the emitter would quote the expression, and GitHub reads it the same either way.
       text = writeTopLevel(text, "concurrency", [
         "concurrency:",

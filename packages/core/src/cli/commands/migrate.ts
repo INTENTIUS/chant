@@ -6,19 +6,30 @@
  * stdout/stderr surfaces, and exit codes.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { formatError, formatInfo } from "../format";
 import { formatSarif } from "../reporters/stylish";
 import type { LexiconPlugin } from "../../lexicon";
 import type { LintRule, LintDiagnostic } from "../../lint/rule";
 import { ensureTypeScriptLoader } from "../../ts-loader";
+import { planMigrateLinks } from "../../workspace/migrate-links";
+
+/**
+ * A side of `--from` or `--to`: a lexicon, or a lexicon and one of its
+ * dialects, `sql/clickhouse` (#4399). The plugin is the part before the slash.
+ */
+export function lexiconOfSide(side: string): string {
+  const slash = side.indexOf("/");
+  return slash === -1 ? side : side.slice(0, slash);
+}
 
 export interface MigrateCliOpts {
   sourceFile: string;
   from: string;
   to: string;
-  emit: "yaml" | "ts";
+  emit: "yaml" | "ts" | "sql";
   strict: boolean;
   validate: boolean;
   useComposites: boolean;
@@ -39,10 +50,13 @@ export interface MigrateCliResult {
   error?: string;
   /** Markdown summary lines printed to stderr */
   markdownSummary?: string;
+  /** What was done about workspace links, or why nothing was (#4399) */
+  linkNote?: string;
 }
 
 export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliResult> {
-  const targetPlugin = opts.plugins.find((p) => p.name === opts.to);
+  const targetLexicon = lexiconOfSide(opts.to);
+  const targetPlugin = opts.plugins.find((p) => p.name === targetLexicon);
   if (!targetPlugin) {
     return {
       exitCode: 1,
@@ -59,7 +73,7 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
       error: `Lexicon "${opts.to}" does not support migration`,
     };
   }
-  const source = targetPlugin.migrationSource(opts.from);
+  const source = targetPlugin.migrationSource(opts.from, opts.to);
   if (!source) {
     return {
       exitCode: 1,
@@ -70,8 +84,23 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
   }
 
   let content: string;
+  // A directory is a workspace member: the source reads it itself (#4399).
+  let isDirectory = false;
   try {
-    content = readFileSync(opts.sourceFile, "utf-8");
+    isDirectory = statSync(opts.sourceFile).isDirectory();
+  } catch {
+    // The read below names the problem.
+  }
+  if (isDirectory && !source.directory) {
+    return {
+      exitCode: 1,
+      diagnostics: [],
+      provenance: [],
+      error: `${opts.sourceFile} is a directory, and migrating from "${opts.from}" reads a file`,
+    };
+  }
+  try {
+    content = isDirectory ? "" : readFileSync(opts.sourceFile, "utf-8");
   } catch (err) {
     return {
       exitCode: 1,
@@ -81,7 +110,7 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     };
   }
 
-  if (!source.detect(content)) {
+  if (!isDirectory && !source.detect(content)) {
     return {
       exitCode: 1,
       diagnostics: [],
@@ -113,6 +142,7 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
   // Write output (--output file or stdout)
   if (opts.output && opts.output !== "-") {
     try {
+      mkdirSync(dirname(opts.output), { recursive: true });
       writeFileSync(opts.output, result.output);
     } catch (err) {
       return {
@@ -126,9 +156,34 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     process.stdout.write(result.output);
   }
 
+  // The target's own server (--validate), when the source has one (#4399).
+  // A refusal always fails the run; so does a server that could not start,
+  // since a validation that did not run is not a pass.
+  let validationFailed = false;
+  if (opts.validate && result.validate) {
+    try {
+      const found = await result.validate();
+      result.diagnostics.push(...found);
+      if (found.some((d) => d.severity === "error")) {
+        validationFailed = true;
+        console.error(`Validator found ${found.filter((d) => d.severity === "error").length} refused statement(s):\n${found.map((d) => `  ${String(d.message)}`).join("\n")}`);
+      } else {
+        console.error("Validator (target server) OK");
+      }
+    } catch (err) {
+      return {
+        exitCode: 1,
+        output: result.output,
+        diagnostics: result.diagnostics,
+        provenance: result.provenance,
+        error: `--validate did not run: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   // External validator (--validate) — glci preferred, glab fallback.
   let validatorWarning: string | undefined;
-  if (opts.validate && opts.emit === "yaml") {
+  if (opts.validate && !result.validate && opts.emit === "yaml") {
     const v = tryValidateExternal(result.output);
     if (!v.ran) {
       validatorWarning = "neither glci nor glab is on PATH; skipping --validate";
@@ -157,11 +212,35 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     }
   }
 
+  // Links from the output's workspace member to the outputs it reads (#4399).
+  let linkNote: string | undefined;
+  if (result.links && result.links.length > 0) {
+    const outcome = planMigrateLinks({
+      sourcePath: opts.sourceFile,
+      outputPath: opts.output && opts.output !== "-" ? opts.output : undefined,
+      outputs: result.links,
+    });
+    if (outcome && "skipped" in outcome) linkNote = outcome.skipped;
+    else if (outcome) {
+      const { plan } = outcome;
+      if (plan.added.length === 0) {
+        linkNote = `member ${plan.consumer} already links every output it reads from ${plan.producer}`;
+      } else {
+        try {
+          writeFileSync(plan.file, plan.text);
+          linkNote = `added ${plan.added.length} link${plan.added.length === 1 ? "" : "s"} from member ${plan.consumer} to ${plan.producer} in ${plan.file}`;
+        } catch (err) {
+          linkNote = `could not write the links to ${plan.file}: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+    }
+  }
+
   // SARIF report (--report <path>) — reuse the lint-side formatSarif so any
   // CI SARIF ingest path treats migration findings uniformly.
   if (opts.reportFile) {
     try {
-      const rules = await loadMigrationRules(opts.to);
+      const rules = await loadMigrationRules(targetLexicon);
       const lintShape = result.diagnostics as unknown as LintDiagnostic[];
       const sarif = formatSarif(lintShape, rules);
       writeFileSync(opts.reportFile, sarif);
@@ -172,7 +251,8 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
   }
 
   // Markdown summary (always to stderr — leaves stdout clean for piping)
-  let markdownSummary = formatMarkdownSummary(result.provenance, result.diagnostics, content);
+  let markdownSummary =
+    targetLexicon === "gitlab" ? formatMarkdownSummary(result.provenance, result.diagnostics, content) : formatDiagnosticSummary(result.provenance, result.diagnostics);
   // Append the security posture section when security analysis ran (#306).
   if (result.securityPosture) {
     markdownSummary += `\n\n${result.securityPosture}`;
@@ -182,7 +262,7 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
   // The transformer already escalates needs-review → error when opts.strict
   // is passed via MigrationSource.transform(); we double-check here.
   const errorDiagnostics = result.diagnostics.filter((d) => d.severity === "error");
-  const exitCode = opts.strict && errorDiagnostics.length > 0 ? 1 : 0;
+  const exitCode = validationFailed || (opts.strict && errorDiagnostics.length > 0) ? 1 : 0;
 
   return {
     exitCode,
@@ -190,6 +270,7 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     diagnostics: result.diagnostics,
     provenance: result.provenance,
     markdownSummary,
+    ...(linkNote ? { linkNote } : {}),
   };
 }
 
@@ -231,7 +312,7 @@ export function tryValidateExternal(yamlText: string): ValidatorResult {
  * Returns an empty array if the lexicon doesn't expose them.
  */
 async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
-  // For now only gitlab exposes migration rules. Hard-coded import keeps
+  // gitlab and sql expose migration rules. Hard-coded imports keep
   // the dependency direction explicit; widen the switch when more
   // lexicons ship their own migrate paths.
   if (targetLexicon === "gitlab") {
@@ -243,7 +324,44 @@ async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
       return [];
     }
   }
+  // The sql lexicon's needs-review catalog (#4399), one rule per finding id.
+  if (targetLexicon === "sql") {
+    try {
+      ensureTypeScriptLoader();
+      const mod = await import("@intentius/chant-lexicon-sql/clickhouse/review-catalog");
+      const rules = (mod as { REVIEW_RULES: Record<string, { id: string; name: string; summary: string; docs: readonly string[] }> }).REVIEW_RULES;
+      return Object.values(rules).map((r): LintRule => ({
+        id: r.id,
+        severity: "warning",
+        category: "correctness",
+        description: `${r.name}: ${r.summary}`,
+        helpUri: r.docs[0] ?? "https://intentius.io/chant/lexicons/sql/migrate-postgres-to-clickhouse/",
+        check: () => [],
+      }));
+    } catch {
+      return [];
+    }
+  }
   return [];
+}
+
+/**
+ * The report for a pair that is not GitHub to GitLab: the counts and the
+ * diagnostics, with none of that pair's workflow advice (#4399).
+ */
+export function formatDiagnosticSummary(provenance: Array<Record<string, unknown>>, diagnostics: Array<Record<string, unknown>>): string {
+  const totals = { error: 0, warning: 0, info: 0 };
+  for (const d of diagnostics) {
+    const sev = d.severity as string;
+    if (sev === "error" || sev === "warning" || sev === "info") totals[sev]++;
+  }
+  const lines = ["", "## Migration report", "", `- Translated: ${provenance.length}`, `- Diagnostics: ${totals.error} error, ${totals.warning} warning, ${totals.info} info`];
+  if (diagnostics.length > 0) {
+    lines.push("", "### Diagnostics", "", "| Severity | Rule | Message |", "|---|---|---|");
+    for (const d of diagnostics.slice(0, 50)) lines.push(`| ${String(d.severity)} | ${String(d.ruleId)} | ${String(d.message).replace(/\|/g, "\\|").slice(0, 160)} |`);
+    if (diagnostics.length > 50) lines.push(`| ... | ... | ${diagnostics.length - 50} more diagnostics omitted |`);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -470,6 +588,9 @@ export function printMigrateResult(result: MigrateCliResult): void {
   }
   if (result.markdownSummary) {
     console.error(result.markdownSummary);
+  }
+  if (result.linkNote) {
+    console.error(`\nWorkspace links: ${result.linkNote}`);
   }
   if (result.exitCode === 0) {
     console.error(formatInfo("\nMigration complete."));

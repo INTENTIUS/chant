@@ -47,11 +47,12 @@ The input file holds one JSON document:
   "pr": 12,
   "base": "<sha>",
   "head": "<sha>",
-  "changeSet": { "digest": "jcs1-sha256:...", "members": [], "entries": [] }
+  "changeSet": { "digest": "jcs1-sha256:...", "members": [], "entries": [] },
+  "review": { "found": true, "risk": "high", "head": "<sha>" }
 }
 ```
 
-`changeSet` is the document whose digest the gate binds. Each of its `entries` is one change a plan proposes, with its `member`, `address`, `type` and `action`. A rule over it looks like this:
+`changeSet` is the document whose digest the gate binds. Each of its `entries` is one change a plan proposes, with its `member`, `address`, `type` and `action`. `review` is the risk the pull request's review note names, when the [review agent](/chant/guide/review-agent/#let-a-gate-policy-read-the-risk) posted one (`packages/core/src/components/pr-policy.ts:110`). It is there whenever a policy runs, with `found: false` and `risk: "unknown"` when there is no note. A rule over the change set looks like this:
 
 ```rego
 package main

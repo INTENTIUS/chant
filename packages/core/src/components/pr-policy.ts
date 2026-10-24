@@ -20,6 +20,9 @@
  *   no longer applies under the approvals of the merges it carries.
  * - error: the policy did not run or gave no readable answer. pr-apply
  *   applies nothing.
+ *
+ * A policy also reads `input.review` (#4326): the risk the pull request's
+ * review note names, when the review agent posted one ({@link policyReviewOf}).
  */
 
 import { readDeclaration, WorkspaceReadError } from "../workspace/declaration";
@@ -36,6 +39,8 @@ import {
 import type { ChangeSetDocument } from "../change-set";
 import type { GateLedgerPort } from "../op/gate";
 import type { PrPolicyReport } from "../pr-loop";
+import type { PrForge } from "../pr-forge";
+import { parseReviewResult, REVIEW_MARKER_PREFIX, type ReviewRisk } from "../op/activities/review-agent";
 
 /** `ci.policy` as read at base. */
 export interface PrLoopPolicy {
@@ -92,6 +97,54 @@ export interface PrPolicyInput {
   head: string;
   /** The change-set document the gate binds. Its `entries` are every change the plan proposes. */
   changeSet: ChangeSetDocument;
+  /** What the pull request's review note says (#4326). Absent only when the caller did not look. */
+  review?: PolicyReview;
+}
+
+/**
+ * The review agent's finding as a policy reads it, `input.review`. The risk is
+ * the model's, so a policy treats it as one signal beside the change set, never
+ * as a verdict. `head` is the commit the review read; a policy that cares
+ * whether the review is current compares it with `input.head`.
+ */
+export interface PolicyReview {
+  /** Whether a review note written by the run's own token was found on the pull request. */
+  found: boolean;
+  /** The risk the review named, or `unknown` when none was found, the command failed or the review gave none. */
+  risk: ReviewRisk | "unknown";
+  /** The commit the review read, or null when none was found. */
+  head: string | null;
+  /** Why nothing was found, for the log. Absent when a review was. */
+  reason?: string;
+}
+
+/**
+ * The users the run's own token acts as on GitHub and Forgejo. Only a note one
+ * of them wrote counts as the review: a pull request's author can post a
+ * comment that starts with the marker, and cannot post as these.
+ */
+export const REVIEW_NOTE_AUTHORS: readonly string[] = ["github-actions[bot]", "gitea-actions", "forgejo-actions"];
+
+/**
+ * The review of pull request `pr`, read from the sticky note the review job
+ * posted (`postReviewNote`, ../op/activities/review-agent.ts). A forge that
+ * cannot be read, a pull request that is not known and a note nobody trusted
+ * all give `found: false`, which a policy sees as `risk: "unknown"`.
+ */
+export async function policyReviewOf(forge: PrForge | undefined, pr: number | null): Promise<PolicyReview> {
+  const none = (reason: string): PolicyReview => ({ found: false, risk: "unknown", head: null, reason });
+  if (!forge) return none("no forge client, so no pull request note was read");
+  if (pr === null) return none("no pull request to read a review from");
+  let note;
+  try {
+    note = await forge.findComment(pr, REVIEW_MARKER_PREFIX, { author: REVIEW_NOTE_AUTHORS });
+  } catch (err) {
+    return none(`could not read the notes of #${pr}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!note) return none(`#${pr} has no review note written by the run's token`);
+  const result = parseReviewResult(note.body);
+  if (!result) return none(`the review note on #${pr} names no head and risk`);
+  return { found: true, risk: result.risk, head: result.head };
 }
 
 /** Run the policy over `input`. Undefined when the base sets no policy. */

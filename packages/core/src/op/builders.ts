@@ -451,9 +451,11 @@ export const composeChangeSet = (args: WithStepRefs<ComposeChangeSetArgs> & Step
 };
 
 /**
- * A model reviews the pull request's title and description against a change
- * set and posts one sticky note (#4299): `reviewAgent({ op: "pr-review",
- * changeSet: changeSet.out.document })`. It never approves and never gates.
+ * A model reviews the pull request's title and description against its diff
+ * and a change set and posts one sticky note (#4299): `reviewAgent({ op:
+ * "pr-review", changeSet: changeSet.out.document })`. It never approves and
+ * never gates. `mode: "handoff"` (#4326) writes the review for a separate job
+ * to post, so the model's job holds no forge write token.
  * Defaults to the `longInfra` profile, since the model command may take
  * minutes.
  */

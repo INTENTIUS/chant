@@ -81,7 +81,8 @@ describe("the GitHub pull-request workflow", () => {
     expect(lastLine(plan.run)).toBe('chant ci run plan --in-place --no-push --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --forge github');
     expect(plan.env).toMatchObject({ BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}" });
     // The runner key is an optional secret: unset, the expression is empty and the record is unsigned.
-    expect(plan.env?.CHANT_RUNNER_KEY).toBe("${{ secrets.CHANT_RUNNER_KEY }}");
+    // #4328: the plan runs the pull request's code, so its job never gets the runner key.
+    expect(plan.env?.CHANT_RUNNER_KEY).toBeUndefined();
     // #4295: the plan job only reads; the plan-note job writes the note and the status.
     expect(doc.jobs.plan.permissions).toEqual({ contents: "read" });
     expect(doc.jobs["plan-note"].permissions).toEqual({ actions: "read", contents: "read", "pull-requests": "write", statuses: "write" });

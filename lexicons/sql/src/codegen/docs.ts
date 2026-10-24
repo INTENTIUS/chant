@@ -122,7 +122,7 @@ Postgres:
 - [Getting Started with Postgres](./postgres-getting-started/): declare a
   schema, apply it to a local server, add a column and an index, and see a
   rename refused.
-- [Declaring Postgres Objects](./postgres-ddl/): the eight tags,
+- [Declaring Postgres Objects](./postgres-ddl/): the tags for every schema-level kind,
   constraints, \`nextval(\${seq})\`, \`COMMENT ON\` and \`literal()\`.
 - [Importing a Postgres Server](./postgres-importing/): canonical text from
   the catalog's printers, and the objects that belong to someone else.

@@ -66,6 +66,7 @@ import { isGeneratedPath } from "./generated-files";
 import { entityDecisions, hasTrailer, readCommitJoins, runCommitJoins, type CommitJoins, type IntentCommit, type JoinedEntity, type PluginFinding } from "./intent-joins";
 import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
+import { readKindLinks } from "./kind-link-readers";
 import { sourceMemberHandles } from "./member-handles";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
 import type { DecidedIn } from "./record-decided";
@@ -1854,7 +1855,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         atRevision: located.at !== null,
         ...(query.loadLexicon ? { load: query.loadLexicon as unknown as import("./lexicon-outputs").OutputsPluginLoader } : {}),
       });
-      rows = resolveLinks(declaration, sourceMemberHandles(declaration, located.tree, groups, kindsRegistry, lexiconOutputs)).filter((r) => r.origin === "declared");
+      rows = resolveLinks(declaration, sourceMemberHandles(declaration, located.tree, groups, kindsRegistry, lexiconOutputs), undefined, readKindLinks(declaration, located.tree, kindsRegistry)).filter((r) => r.origin === "declared");
     } catch (err) {
       if (!(err instanceof WorkspaceReadError)) throw err;
     }

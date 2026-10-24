@@ -4,8 +4,10 @@
  * Which kinds of object each dialect declares (#3911): every `CREATE` command
  * a pinned server has (`./coverage/<dialect>-commands.json`, written by
  * `scripts/sql-create-commands.ts` from the server's own sources) has a row
- * in `./coverage/<dialect>.json` marking it declared, refused with a reason,
- * or out of scope. A command with several forms that differ in what chant can
+ * in `./coverage/<dialect>.json` marking it declared, referenced, refused
+ * with a reason, or out of scope. A referenced kind (a ClickHouse named
+ * collection, #4395) is never declared: a declaration names one, a plan
+ * checks it exists, and import lists the server's as prerequisites. A command with several forms that differ in what chant can
  * hold (`CREATE TYPE ... AS ENUM` and `CREATE TYPE ... AS RANGE`) has a row
  * per form. Import refuses an object of a refused kind by that row's `kind`
  * (`./core/undeclarable.ts`), and the docs page is rendered from the rows
@@ -31,8 +33,16 @@ import clickhouseCommands from "./coverage/clickhouse-commands.json" with { type
 
 // ── Object kinds ───────────────────────────────────────────────────────
 
-/** `declared`: a tag holds it. `refused`: import names it and stops. `out-of-scope`: the environment's, never imported. */
-export type KindStatus = "declared" | "refused" | "out-of-scope";
+/**
+ * `declared`: a tag holds it. `referenced`: the environment's, never declared
+ * and its values never read; a declaration names it, a plan checks it exists,
+ * and import lists the server's as prerequisites (#4395). `refused`: import
+ * names it and stops. `out-of-scope`: the environment's, never imported.
+ */
+export type KindStatus = "declared" | "referenced" | "refused" | "out-of-scope";
+
+/** Every status a coverage row may have. */
+export const KIND_STATUSES: readonly KindStatus[] = ["declared", "referenced", "refused", "out-of-scope"];
 
 /** One row of a dialect's coverage table: a `CREATE` command, or one form of it. */
 export interface KindRow {
@@ -51,7 +61,7 @@ export interface KindRow {
   status: KindStatus;
   /** The entity type that declares it, when declared. */
   entity?: string;
-  /** Why it is refused or out of scope. */
+  /** Why it is referenced, refused or out of scope. */
   reason?: string;
   /** Anything else a reader should know. */
   note?: string;
@@ -80,7 +90,8 @@ export function kindRow(dialect: SqlDialect, kind: string): KindRow {
  * What is wrong with a dialect's coverage table, against its pinned servers'
  * commands: a command a pinned server has and no row covers, a row for a
  * command no pinned server has, a kind named twice, a declared row with no
- * entity, a refused or out-of-scope row with no reason. Empty when complete.
+ * entity, a referenced, refused or out-of-scope row with no reason. Empty
+ * when complete.
  */
 export function kindCoverageProblems(dialect: SqlDialect, opts: { pins?: ReadonlyArray<{ version: string; commands: readonly string[] }>; rows?: readonly KindRow[] } = {}): string[] {
   const rows = opts.rows ?? KIND_COVERAGE[dialect];
@@ -96,7 +107,7 @@ export function kindCoverageProblems(dialect: SqlDialect, opts: { pins?: Readonl
   for (const r of rows) {
     if (seen.has(r.kind)) problems.push(`the kind "${r.kind}" has two rows`);
     seen.add(r.kind);
-    if (!["declared", "refused", "out-of-scope"].includes(r.status)) problems.push(`${r.kind}: status "${r.status}" is not declared, refused or out-of-scope`);
+    if (!KIND_STATUSES.includes(r.status)) problems.push(`${r.kind}: status "${r.status}" is not ${KIND_STATUSES.slice(0, -1).join(", ")} or ${KIND_STATUSES.at(-1)}`);
     if (r.status === "declared" && !r.entity) problems.push(`${r.kind} is declared, and names no entity type`);
     if (r.status !== "declared" && !r.reason) problems.push(`${r.kind} is ${r.status}, and gives no reason`);
   }

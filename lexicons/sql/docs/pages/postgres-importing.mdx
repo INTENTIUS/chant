@@ -94,7 +94,7 @@ The import builds and plans as no change against the server it came from, becaus
 
 ### Objects chant cannot declare
 
-An object of a kind no tag declares yet, such as an aggregate, a cast, a collation, a composite or range type, an event trigger, an operator, extended statistics or a foreign table, stops the import. The error names every such object at once, by kind, schema and name, with why for each kind:
+An object of a kind no tag declares, such as an operator class, a rule, a foreign table, a user mapping or a subscription, stops the import. The error names every such object at once, by kind, schema and name, with why for each kind:
 
 ```
 the Postgres server has 2 objects of a kind chant cannot declare, so the import would leave them out:

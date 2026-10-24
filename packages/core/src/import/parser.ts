@@ -58,6 +58,24 @@ export interface OutputIR {
 }
 
 /**
+ * A finding a parser reports about the translation it made (#4398): a
+ * judgment call the author must confirm, or something it could not carry.
+ * `chant import --report <path>` writes these as SARIF and `--strict` fails
+ * while any `warning` or `error` is open, as `chant migrate` does.
+ */
+export interface ImportDiagnostic {
+  readonly ruleId: string;
+  readonly severity: "error" | "warning" | "info";
+  readonly message: string;
+  /** 1-based line in the template, when the parser knows it. */
+  readonly line?: number;
+  /** 1-based column in the template. */
+  readonly column?: number;
+  /** The object the finding is about, as the source names it. */
+  readonly entity?: string;
+}
+
+/**
  * Intermediate representation of a parsed template
  */
 export interface TemplateIR {
@@ -71,6 +89,8 @@ export interface TemplateIR {
   /** Sections or keys the parser read but import cannot carry, named so the
    * import surfaces them instead of dropping them silently (#2069). */
   readonly warnings?: string[];
+  /** Findings for `--report` and `--strict` (#4398); a parser that has none leaves it out. */
+  readonly diagnostics?: ImportDiagnostic[];
 }
 
 /**

@@ -9,7 +9,7 @@ describe("coverageReport against the distribution manifests", () => {
   test("every built-in is in otelcol-contrib, and every one with a schema is generated", async () => {
     expect(report.unaccountedKinds).toEqual([]);
     expect(await otelPlugin.coverageReport!()).toMatchObject({ unaccountedKinds: [] });
-    expect(report.generated).toHaveLength(34);
+    expect(report.generated).toHaveLength(35);
     expect(report.handWritten).toEqual(["ForwardConnector"]);
   });
 

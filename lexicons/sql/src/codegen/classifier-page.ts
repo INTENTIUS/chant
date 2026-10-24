@@ -10,6 +10,7 @@ const LABEL: Record<string, string> = {
   drop: "drop",
   metadata: "metadata only",
   rewrite: "background rewrite",
+  replace: "replace table",
   rebuild: "rebuild",
 };
 
@@ -22,7 +23,7 @@ export function renderClassifierPage(): string {
   return `---
 title: "Planning ClickHouse Changes"
 label: "Planning and the Change Classifier"
-description: "How a ClickHouse schema change is classified as metadata only, a background rewrite or a rebuild, each with the ALTER restriction behind it"
+description: "How a ClickHouse schema change is classified as metadata only, a background rewrite, a replacement or a rebuild, each with the ALTER restriction behind it"
 diataxis: reference
 group: "ClickHouse"
 order: 1
@@ -36,9 +37,10 @@ Every change between two ClickHouse schemas is classified before anything runs:
 |---|---|
 | metadata only | the server records the change and touches no existing data |
 | background rewrite | a mutation rewrites existing parts in the background, with no rollback |
+| replace table | ClickHouse cannot alter a stream-engine table, and it stores no rows, so the applier drops and creates it around the views that read it |
 | rebuild | ClickHouse cannot make the change to the existing table, and the data has to be copied into a new one; a plan refuses to make it in place |
 
-Two commands report the classification, and \`chant lifecycle plan\` reports it as each update's disruption (metadata only is \`in-place\`, a rewrite \`rolling\`, a rebuild \`replace\`):
+Two commands report the classification, and \`chant lifecycle plan\` reports it as each update's disruption (metadata only is \`in-place\`, a rewrite \`rolling\`, a replacement or a rebuild \`replace\`):
 
 \`\`\`bash
 chant sql diff base.json head.json     # two chant build outputs, offline
@@ -47,13 +49,28 @@ chant sql plan prod schema.json        # a build output against the prod server
 
 Both exit 2 when a change needs a rebuild. \`chant sql diff\` compares a pull request's base and head builds with no server. \`chant sql plan\` reads the server \`sql.profiles.<env>\` binds, and asks that server's formatter about any expression the normalization rules leave different, so the server's own rewriting (\`INTERVAL 1 DAY\` as \`toIntervalDay(1)\`, \`a+b*2\` as \`a + (b * 2)\`) is not reported as a change.
 
-\`chant sql plan\` also exits 2 when a declared database holds an object whose definition it cannot read. It names each one under \`Refused\` (\`unreadable\` in \`--json\`) instead of leaving it out. Dictionaries are read and planned like the other objects: any change but a comment replaces one (SQLCH245).
+\`chant sql plan\` also exits 2 when a declared database holds an object whose definition it cannot read. It names each one under \`Refused\` (\`unreadable\` in \`--json\`) instead of leaving it out. It exits 2 as well when the build names a named collection the server doesn't have, naming each under \`Refused\` (\`namedCollections.missing\` in \`--json\`); see [Named collections](../clickhouse-ddl/#named-collections). Dictionaries are read and planned like the other objects: any change but a comment replaces one (SQLCH245).
 
 A clause chant's parser does not know ([Plain .sql Files](../sql-files/#clauses-chant-does-not-read)) is compared as text, and the rest of its object is planned as usual. A change to one is SQLCH290, refused for review with no rebuild Op suggested, since chant cannot tell what the change takes. A clause only the server prints is a hint, not a change: a newer server printing a clause with its default looks the same as a clause removed from the declaration.
 
+## Stream tables
+
+A table on Kafka, S3Queue, AzureQueue, RabbitMQ, NATS or FileLog stores no rows. It is the consumer that a materialized view reads through, and the position it has reached lives in the broker's committed offsets or in Keeper. There is no \`ALTER\` for its engine arguments, settings or columns, and there is nothing to copy, so a change to one is neither metadata nor a rebuild. It is SQLCH225, in the replace class (\`diffStreamTable\` in \`src/clickhouse/plan/diff.ts\`). The plan refuses nothing for it.
+
+The applier makes the change in place, in this order (\`replaceStreamSteps\` in \`src/clickhouse/apply/statements.ts\`): \`DETACH TABLE\` for each materialized view on the server that reads the table, \`DROP TABLE ... SYNC\`, the declared \`CREATE TABLE\`, then \`ATTACH TABLE\` for the same views. The plan names the views in a hint. Messages wait in the broker, and files wait in the bucket, while the views are detached. A change that moves a table to or from a stream engine is still SQLCH223, a rebuild, and \`ClickHouseRebuildOp\` refuses a stream-engine table by name (\`streamRefusal\` in \`src/clickhouse/rebuild/observe.ts\`).
+
+Two replacements lose the table's position, and the change carries a note saying so (\`positionWarnings\` in \`src/clickhouse/plan/stream.ts\`):
+
+- A different \`kafka_group_name\`, as a setting or as the third engine argument, is a different consumer group. It starts from its own committed offsets, or from the start of the topic when it has none.
+- A different S3Queue \`keeper_path\` is a different record of processed files. Every file already seen is processed again.
+
+An apply killed between the detach and the attach leaves the views detached, and a detached view is not in \`system.tables\`. Nothing re-attaches it: run \`ATTACH TABLE\` for each view by hand, then plan again. This has not been run against a server.
+
+The \`StreamIngest\` composite declares the stream table, the view and the MergeTree target together: see [Composites](../composites/#streamingest).
+
 ## After the plan
 
-The plan only reports. [\`clickhouseApply\`](../applying/) makes the metadata-only and background-rewrite changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as \`ClickHouseRebuildOp\`, a gated migration Op that creates the new table, backfills it, verifies it and swaps it in: see [Rebuilding a Table](../rebuild/). Both commands print the Op declaration to start from for each refused table.
+The plan only reports. [\`clickhouseApply\`](../applying/) makes the metadata-only, background-rewrite and stream-table changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as \`ClickHouseRebuildOp\`, a gated migration Op that creates the new table, backfills it, verifies it and swaps it in: see [Rebuilding a Table](../rebuild/). Both commands print the Op declaration to start from for each refused table.
 
 \`chant migrate\` plays no part in any of this. It translates a file from one lexicon's format into another's, such as a GitHub Actions workflow into GitLab CI, and does not run schema migrations.
 

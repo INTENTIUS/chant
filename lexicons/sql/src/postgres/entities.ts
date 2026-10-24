@@ -57,7 +57,7 @@
 import type { AttrRef } from "@intentius/chant/attrref";
 import { setInterpolationFields } from "@intentius/chant/provenance";
 import { isTrivia, POSTGRES_LEXICAL, SqlSyntaxError, untokenize, type Token } from "./tokens";
-import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type DefElem, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode } from "./parser";
+import { identValue, parseStatements, type ColumnNode, type CommentNode, type ConstraintNode, type DefElem, type GenericOption, type GrantNode, type NameNode, type RowSecurityNode, type Span, type StatementNode } from "./parser";
 import { keywordCategory, quoteIdent } from "./keywords";
 import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, unparsedClauses, type TemplateCtx, type TemplateDialect, type UnparsedClause } from "../core/interpolation";
 import { SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
@@ -74,6 +74,7 @@ export type { AnyColumn, Column, ColumnTraits, KeyColumn, Named, NotNullColumn, 
 
 export { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "./entity-types";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "./entity-types";
+import { isSecretOption } from "./secret-options";
 
 // ── Values ─────────────────────────────────────────────────────────────
 
@@ -339,6 +340,74 @@ export interface EventTriggerProps extends Omit<CommonProps, "schema"> {
   /** The function it executes: the entity when interpolated, else its name. */
   function: PostgresObject | string;
   functionName: string;
+}
+
+export interface OperatorProps extends CommonProps {
+  /** `LEFTARG`, as written; absent for a prefix operator. */
+  leftArg?: string;
+  /** `RIGHTARG`, as written; absent for a postfix operator (removed in 14, so for none the server still holds). */
+  rightArg?: string;
+  /**
+   * The rest of the definition by option name, folded (`function`,
+   * `commutator`, `restrict`), to its value as written; `hashes` and `merges`
+   * to `true`. `procedure`, the old spelling, is `function`.
+   */
+  options: Record<string, string>;
+}
+
+/** `CREATE STATISTICS`: extended statistics on columns or expressions of one table. */
+export interface StatisticsProps extends CommonProps {
+  ifNotExists?: boolean;
+  /** `ndistinct`, `dependencies`, `mcv`, folded; absent when the server computes all three. */
+  kinds?: string[];
+  /** Each column or expression, as written. */
+  targets: string[];
+  /** The table: the entity when interpolated, else its name. */
+  table: PostgresObject | string;
+  /** The table's SQL name. */
+  tableName: string;
+}
+
+export interface ForeignDataWrapperProps extends Omit<CommonProps, "schema"> {
+  /** The handler function: the entity when interpolated, else its name. */
+  handler?: PostgresObject | string;
+  handlerName?: string;
+  /** `NO HANDLER`, written out. */
+  noHandler?: boolean;
+  validator?: PostgresObject | string;
+  validatorName?: string;
+  noValidator?: boolean;
+  /** `OPTIONS (...)`: each option by its name to its string value. */
+  options: Record<string, string>;
+}
+
+export interface ForeignServerProps extends Omit<CommonProps, "schema"> {
+  ifNotExists?: boolean;
+  serverType?: string;
+  version?: string;
+  /** The wrapper: the entity when interpolated, else its name. */
+  wrapper: PostgresObject | string;
+  wrapperName: string;
+  options: Record<string, string>;
+}
+
+/** A table of a publication, with the column list and row filter it is published with. */
+export interface PublicationTableDef {
+  /** The table: the entity when interpolated, else its name. */
+  table: PostgresObject | string;
+  tableName: string;
+  columns?: string[];
+  /** The row filter, as written with its parentheses. */
+  where?: string;
+}
+
+export interface PublicationProps extends Omit<CommonProps, "schema"> {
+  allTables?: boolean;
+  tables: PublicationTableDef[];
+  /** `TABLES IN SCHEMA`: the schema's SQL name, an interpolated schema by its name. */
+  schemas: string[];
+  /** `WITH (...)`: each option by its name to its value as written. */
+  options: Record<string, string>;
 }
 
 export interface DomainProps extends CommonProps {
@@ -607,6 +676,31 @@ export interface PostgresEventTrigger extends PostgresObject {
   readonly props: EventTriggerProps;
 }
 
+export interface PostgresOperator extends PostgresObject {
+  readonly entityType: "Postgres::Operator";
+  readonly props: OperatorProps;
+}
+
+export interface PostgresStatistics extends PostgresObject {
+  readonly entityType: "Postgres::Statistics";
+  readonly props: StatisticsProps;
+}
+
+export interface PostgresForeignDataWrapper extends PostgresObject {
+  readonly entityType: "Postgres::ForeignDataWrapper";
+  readonly props: ForeignDataWrapperProps;
+}
+
+export interface PostgresForeignServer extends PostgresObject {
+  readonly entityType: "Postgres::ForeignServer";
+  readonly props: ForeignServerProps;
+}
+
+export interface PostgresPublication extends PostgresObject {
+  readonly entityType: "Postgres::Publication";
+  readonly props: PublicationProps;
+}
+
 export interface PostgresExtension extends PostgresObject {
   readonly entityType: "Postgres::Extension";
   readonly props: ExtensionProps;
@@ -765,6 +859,11 @@ export type PostgresTag =
   | "aggregate"
   | "trigger"
   | "eventTrigger"
+  | "operator"
+  | "statistics"
+  | "foreignDataWrapper"
+  | "foreignServer"
+  | "publication"
   | "collation"
   | "cast"
   | "policy"
@@ -786,6 +885,11 @@ export const STATEMENTS_OF: Record<PostgresTag, readonly StatementNode["statemen
   aggregate: ["aggregate"],
   trigger: ["trigger"],
   eventTrigger: ["eventTrigger"],
+  operator: ["operator"],
+  statistics: ["statistics"],
+  foreignDataWrapper: ["foreignDataWrapper"],
+  foreignServer: ["foreignServer"],
+  publication: ["publication"],
   collation: ["collation"],
   cast: ["cast"],
   policy: ["policy"],
@@ -809,6 +913,11 @@ const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
   aggregate: "aggregate",
   trigger: "trigger",
   eventTrigger: "eventTrigger",
+  operator: "operator",
+  statistics: "statistics",
+  foreignDataWrapper: "foreignDataWrapper",
+  foreignServer: "foreignServer",
+  publication: "publication",
   collation: "collation",
   cast: "cast",
   policy: "policy",
@@ -835,6 +944,11 @@ export const STATEMENT_NAMES: Record<StatementNode["statement"], string> = {
   aggregate: "CREATE AGGREGATE",
   trigger: "CREATE TRIGGER",
   eventTrigger: "CREATE EVENT TRIGGER",
+  operator: "CREATE OPERATOR",
+  statistics: "CREATE STATISTICS",
+  foreignDataWrapper: "CREATE FOREIGN DATA WRAPPER",
+  foreignServer: "CREATE SERVER",
+  publication: "CREATE PUBLICATION",
   collation: "CREATE COLLATION",
   cast: "CREATE CAST",
   policy: "CREATE POLICY",
@@ -868,6 +982,24 @@ export function stringValue(s: string | undefined): string | undefined {
 function definitionValues(ctx: Ctx, elems: readonly DefElem[], path: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const e of elems) out[e.name] = e.value ? req(text(ctx, e.value, path)) : "true";
+  return out;
+}
+
+/** A database-wide object's name (a wrapper, a server, a publication): one piece, or an interpolated object's name. */
+function databaseObjectName(ctx: Ctx, n: NameNode): string {
+  feed(ctx, n.span, "name");
+  return n.pieces[0] || identValue(req(text(ctx, n.span)));
+}
+
+/** An `OPTIONS (...)` list's values by option name, each a string constant's value. */
+function genericOptionValues(tag: PostgresTag, ctx: Ctx, options: readonly GenericOption[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const o of options) {
+    if (isSecretOption(o.name)) {
+      throw new SqlTemplateError(tag, `the option ${o.name} holds a credential, which the environment supplies (a user mapping, or its secret store); a declaration never carries one`, 0, 0);
+    }
+    out[o.name] = req(stringValue(text(ctx, o.value, "options")));
+  }
   return out;
 }
 
@@ -1493,6 +1625,97 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       );
       return make(POSTGRES_ENTITY_TYPES.eventTrigger, { name }, props);
     }
+    case "operator": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["OPERATOR"]);
+      const opt = definitionValues(ctx, node.options, "options");
+      const { leftarg, rightarg, procedure, ...rest } = opt;
+      const props: OperatorProps = stripUnset({ ...q, leftArg: leftarg, rightArg: rightarg, options: { ...rest, function: opt.function ?? procedure }, comment, ddl, source });
+      // The symbol is unquoted wherever the operator is named: `app.===`.
+      return make(POSTGRES_ENTITY_TYPES.operator, q, props, undefined, q.schema ? `${quoteIdent(q.schema)}.${q.name}` : q.name);
+    }
+    case "statistics": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["STATISTICS"]);
+      const props: StatisticsProps = strip(
+        {
+          ...q,
+          ifNotExists: node.ifNotExists || undefined,
+          kinds: node.kinds.length > 0 ? node.kinds : undefined,
+          targets: node.targets.map((t) => req(text(ctx, t, "targets"))),
+          table: target(ctx, node.table),
+          tableName: sqlNameOf(qualified(ctx, node.table)),
+          comment,
+          ddl,
+          source,
+        },
+        ["targets"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.statistics, q, props);
+    }
+    case "foreignDataWrapper": {
+      const name = databaseObjectName(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, { name }, ["FOREIGN DATA WRAPPER"]);
+      const props: ForeignDataWrapperProps = strip(
+        {
+          name,
+          handler: node.handler ? target(ctx, node.handler) : undefined,
+          handlerName: node.handler ? targetName(ctx, node.handler) : undefined,
+          noHandler: node.handler === null ? true : undefined,
+          validator: node.validator ? target(ctx, node.validator) : undefined,
+          validatorName: node.validator ? targetName(ctx, node.validator) : undefined,
+          noValidator: node.validator === null ? true : undefined,
+          options: genericOptionValues(tag, ctx, node.options),
+          comment,
+          ddl,
+          source,
+        },
+        ["options"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.foreignDataWrapper, { name }, props);
+    }
+    case "foreignServer": {
+      const name = databaseObjectName(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, { name }, ["SERVER"]);
+      const props: ForeignServerProps = strip(
+        {
+          name,
+          ifNotExists: node.ifNotExists || undefined,
+          serverType: node.type ? stringValue(text(ctx, node.type, "serverType")) : undefined,
+          version: node.version ? stringValue(text(ctx, node.version, "version")) : undefined,
+          wrapper: target(ctx, node.wrapper),
+          wrapperName: targetName(ctx, node.wrapper),
+          options: genericOptionValues(tag, ctx, node.options),
+          comment,
+          ddl,
+          source,
+        },
+        ["options"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.foreignServer, { name }, props);
+    }
+    case "publication": {
+      const name = databaseObjectName(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, { name }, ["PUBLICATION"]);
+      const tables = node.items.flatMap((i) =>
+        i.kind !== "table"
+          ? []
+          : [
+              stripUnset({
+                table: target(ctx, i.table),
+                tableName: sqlNameOf(qualified(ctx, i.table)),
+                columns: i.columns?.map((c) => columnName(ctx, { name: c.name, span: c.span })),
+                where: text(ctx, i.where, "tables"),
+              }) as PublicationTableDef,
+            ],
+      );
+      const schemas = node.items.flatMap((i) => (i.kind === "schema" ? [qualified(ctx, i.schema).name] : []));
+      const props: PublicationProps = strip(
+        { name, allTables: node.allTables || undefined, tables, schemas, options: definitionValues(ctx, node.options, "options"), comment, ddl, source },
+        ["tables", "schemas", "options"],
+      );
+      return make(POSTGRES_ENTITY_TYPES.publication, { name }, props);
+    }
     case "domain": {
       const q = qualified(ctx, node.name);
       const checks = node.checks.map((c) => stripUnset({ name: c.name, expr: req(text(ctx, c.expr, "checks")), notValid: c.notValid }) as CheckDef);
@@ -1959,6 +2182,48 @@ export function cast(strings: TemplateStringsArray, ...values: unknown[]): Postg
  */
 export function eventTrigger(strings: TemplateStringsArray, ...values: unknown[]): PostgresEventTrigger {
   return build("eventTrigger", strings, values) as PostgresEventTrigger;
+}
+
+/**
+ * `` operator`CREATE OPERATOR app.=== (FUNCTION = ${fn}, LEFTARG = int, RIGHTARG = int)` ``:
+ * one operator, identified by its name and operand types, as a function is by
+ * its name and parameter types.
+ */
+export function operator(strings: TemplateStringsArray, ...values: unknown[]): PostgresOperator {
+  return build("operator", strings, values) as PostgresOperator;
+}
+
+/**
+ * `` statistics`CREATE STATISTICS name (ndistinct, dependencies) ON a, b FROM ${table}` ``:
+ * extended statistics on columns or expressions of one table.
+ */
+export function statistics(strings: TemplateStringsArray, ...values: unknown[]): PostgresStatistics {
+  return build("statistics", strings, values) as PostgresStatistics;
+}
+
+/**
+ * `` foreignDataWrapper`CREATE FOREIGN DATA WRAPPER name HANDLER ${fn} OPTIONS (...)` ``:
+ * one foreign data wrapper, the database's (no schema). Creating one takes a superuser.
+ */
+export function foreignDataWrapper(strings: TemplateStringsArray, ...values: unknown[]): PostgresForeignDataWrapper {
+  return build("foreignDataWrapper", strings, values) as PostgresForeignDataWrapper;
+}
+
+/**
+ * `` foreignServer`CREATE SERVER name FOREIGN DATA WRAPPER ${fdw} OPTIONS (host 'db.internal')` ``:
+ * one foreign server, the database's. Its user mappings carry credentials and are
+ * not declared; an option that holds a secret is the environment's to supply.
+ */
+export function foreignServer(strings: TemplateStringsArray, ...values: unknown[]): PostgresForeignServer {
+  return build("foreignServer", strings, values) as PostgresForeignServer;
+}
+
+/**
+ * `` publication`CREATE PUBLICATION name FOR TABLE ${t} WITH (publish = 'insert')` ``:
+ * one logical-replication publication, the database's.
+ */
+export function publication(strings: TemplateStringsArray, ...values: unknown[]): PostgresPublication {
+  return build("publication", strings, values) as PostgresPublication;
 }
 
 /** `` trigger`CREATE [OR REPLACE] [CONSTRAINT] TRIGGER name ... ON ${table} ... EXECUTE FUNCTION ${fn}()` ``: one trigger on its table. */

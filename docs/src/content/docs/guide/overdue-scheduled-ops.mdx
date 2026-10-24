@@ -44,6 +44,8 @@ The warning never fails the plan, and when the forge refuses the call the job lo
 - Forgejo: the job token reads the repository's runs.
 - GitLab: listing pipeline schedules needs an access token with the `read_api` scope, which the job token lacks. Set `CHANT_GITLAB_TOKEN` or `GITLAB_TOKEN`, which `--forge gitlab` reads before `CI_JOB_TOKEN` (`packages/core/src/pr-forge.ts:1232`).
 
+`chant ci run plan`, on a host or in place, runs the check before it posts the note from the report, as `pr-post` does. It reads the Ops from a fresh checkout of `--base`, never from the change's ([#4328](https://github.com/INTENTIUS/chant/issues/4328), `overdueAtBase` in `packages/core/src/workspace/ci-run.ts:869`). That checkout imports packages from the `node_modules` the running chant is installed in.
+
 ## Fix an overdue Op
 
 - GitHub: turn the workflow on again under Actions, or run it once by hand.

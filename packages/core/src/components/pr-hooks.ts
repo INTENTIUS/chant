@@ -16,11 +16,13 @@
  * component's members and the plans its steps hand the apply.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { OpWaveHook, OpWaveHookMoment, OpWaveHooks } from "../op/op-waves";
 import { PR_LOOP_HOOK_MOMENTS } from "../op/op-waves";
-import { runStageHooks, type OpWaveExec, type OpWaveHookRun, type StageHooksRun } from "../op/op-waves-run";
+import { OP_WAVE_MAX_CHAINED_HOLDS, runStageHooks, type OpWaveExec, type OpWaveHookRun, type StageHooksRun } from "../op/op-waves-run";
+import { readHoldRequest, spawnExec, type OpWaveHookOutcome, type OtherGateHold } from "../op/stage-hooks";
+import { approveCommand } from "../op/gate";
 import { readDeclaration, WorkspaceReadError, type Declaration } from "../workspace/declaration";
 import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
@@ -101,6 +103,20 @@ export interface PrHookPlace {
   log?: (line: string) => void;
 }
 
+/** How a gate a hook holds the job on stands (#4323). */
+export interface PrHoldSettled {
+  status: "approved" | "waiting";
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
+/**
+ * Settle a hold on another gate (#4323): an approval of `hold.request.gate`
+ * at `hold.request.digest`, else a pending fact for it. The pull-request
+ * jobs give this the ledger they decide their own gate by.
+ */
+export type PrHoldSettler = (hold: OtherGateHold) => Promise<PrHoldSettled>;
+
 /** What one moment's hooks came to on the pull-request path. */
 export interface PrHooksRun {
   outcomes: PrHookOutcome[];
@@ -108,18 +124,27 @@ export interface PrHooksRun {
   holds: string[];
 }
 
+/** The run's options: the gate's decision for `after-gate`, and who settles a hold on another gate. */
+export interface PrHooksRunOptions {
+  /** Added to every hook's environment: `after-gate` carries `CHANT_GATE_STATUS`, `CHANT_GATE_OP`, `CHANT_GATE` and `CHANT_GATE_DIGEST`. */
+  env?: Record<string, string>;
+  /** Without it a hold on another gate is a plain hold. */
+  settle?: PrHoldSettler;
+}
+
 /**
  * Run the hooks of `moment` for `components` (#4288). `plans`, after the
  * plan, gives each component's members and step plans, written where a
  * `perRun` hook's `{plan}` points.
  */
-export function runPrHooks(
+export async function runPrHooks(
   read: PrLoopHooks,
   moment: OpWaveHookMoment,
   place: PrHookPlace,
   components: readonly string[],
   planned?: { members: readonly PrMember[]; plans: Record<string, Record<string, unknown>> },
-): PrHooksRun {
+  options: PrHooksRunOptions = {},
+): Promise<PrHooksRun> {
   const hooks = read.hooks[moment];
   if (!hooks || hooks.length === 0) return { outcomes: [], holds: [] };
   // Relative to cwd, as an Op waves job's paths are, whether --output was given relative or absolute.
@@ -141,11 +166,18 @@ export function runPrHooks(
     runs,
     runsFile,
     holdFile: join(dir, "hold.json"),
-    env: { CHANT_ENV: place.env, CHANT_PR_STAGE: place.stage, CHANT_HOOKS_BASE: read.base },
+    env: { CHANT_ENV: place.env, CHANT_PR_STAGE: place.stage, CHANT_HOOKS_BASE: read.base, ...options.env },
+    keepOtherGates: options.settle !== undefined,
     cwd: place.cwd,
     ...(place.exec ? { exec: place.exec } : {}),
     ...(place.log ? { log: place.log } : {}),
   });
+  const log = place.log ?? ((line: string) => console.error(line));
+  const settled = ran.failed || !options.settle ? undefined : await settleHolds(ran.otherGates ?? [], options.settle, place, log);
+  if (settled) {
+    ran.outcomes.push(...settled.outcomes);
+    if (settled.failed) ran.failed = settled.failed;
+  }
   const outcomes = ran.outcomes.map((o): PrHookOutcome => ({
     moment: o.moment,
     name: o.name,
@@ -154,4 +186,62 @@ export function runPrHooks(
     outcome: o.outcome === "failed" ? "failed" : o.outcome === "held" ? "held" : "passed",
   }));
   return { outcomes, ...(ran.failed ? { failed: ran.failed } : {}), holds: ran.holds };
+}
+
+/**
+ * Settle each hook call that held the job on another gate (#4323), as an Op
+ * waves job does (`runHooks` in op-waves-run.ts): once the gate is approved
+ * the hook runs again with `CHANT_HOLD_APPROVED` (and `CHANT_HOLDS_APPROVED`,
+ * the gates approved so far), and it may hold on a further gate, settled in
+ * turn, up to {@link OP_WAVE_MAX_CHAINED_HOLDS}. A gate nobody approved fails
+ * the stage, with the command that approves it.
+ */
+async function settleHolds(holds: readonly OtherGateHold[], settle: PrHoldSettler, place: PrHookPlace, log: (line: string) => void): Promise<{ outcomes: OpWaveHookOutcome[]; failed?: string }> {
+  const outcomes: OpWaveHookOutcome[] = [];
+  const exec = place.exec ?? spawnExec;
+  for (const first of holds) {
+    let hold = first;
+    const approved: Array<{ op: string; gate: string; digest: string; approvedBy: string; approvedAt: string }> = [];
+    for (;;) {
+      const op = hold.request.op ?? place.op;
+      const held = await settle(hold);
+      if (held.status === "waiting") {
+        return { outcomes, failed: `${hold.label} waits on ${op} / ${hold.request.gate}, which nobody approved at ${hold.request.digest}. Approve: ${approveCommand(op, hold.request.gate, undefined, hold.request.digest)}` };
+      }
+      const now = { op, gate: hold.request.gate, digest: hold.request.digest, approvedBy: held.approvedBy ?? "", approvedAt: held.approvedAt ?? "" };
+      approved.push(now);
+      const holdFile = join(place.cwd, hold.env.CHANT_HOLD!);
+      rmSync(holdFile, { force: true });
+      let code: number;
+      try {
+        code = exec(hold.argv, place.cwd, { ...hold.env, CHANT_HOLD_APPROVED: JSON.stringify(now), CHANT_HOLDS_APPROVED: JSON.stringify(approved) });
+      } catch (err) {
+        log(`${hold.label} did not run: ${err instanceof Error ? err.message : String(err)}`);
+        code = 127;
+      }
+      const target = hold.target ? { target: hold.target } : {};
+      if (code === 0) {
+        outcomes.push({ moment: hold.moment, name: hold.name, ...target, exit: code, outcome: "passed" });
+        log(`${hold.label}: ${now.approvedBy} approved ${op} / ${now.gate} at ${now.digest}, and the hook ran again and passed`);
+        break;
+      }
+      const next = readHoldRequest(holdFile, log, hold.label);
+      const nextOp = next ? (next.op ?? place.op) : "";
+      const problem = !next
+        ? `${hold.label} exited ${code} after ${now.approvedBy} approved ${now.gate}`
+        : approved.some((a) => a.op === nextOp && a.gate === next.gate && a.digest === next.digest)
+          ? `${hold.label} exited ${code} after ${now.approvedBy} approved ${now.gate}, and holds again on ${nextOp} / ${next.gate} at ${next.digest}, which is already approved`
+          : approved.length >= OP_WAVE_MAX_CHAINED_HOLDS
+            ? `${hold.label} held the job on ${approved.length} gates in turn and asks for one more; a hook call holds on at most ${OP_WAVE_MAX_CHAINED_HOLDS}`
+            : undefined;
+      if (problem) {
+        outcomes.push({ moment: hold.moment, name: hold.name, ...target, exit: code, outcome: "failed" });
+        log(problem);
+        return { outcomes, failed: problem };
+      }
+      outcomes.push({ moment: hold.moment, name: hold.name, ...target, exit: code, outcome: "held" });
+      hold = { ...hold, request: next! };
+    }
+  }
+  return { outcomes };
 }

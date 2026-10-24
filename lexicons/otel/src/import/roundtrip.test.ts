@@ -217,6 +217,22 @@ describe("YAML -> TypeScript -> YAML", () => {
     expect(out.warnings).toEqual([]);
   });
 
+  test("a clickhouse exporter imports to the typed class (#4397)", async () => {
+    const out = await expectRoundTrip(read("clickhouse.yaml"));
+    expect(out.source).toContain("new ClickHouseExporter(");
+    expect(out.source).not.toContain("defineComponent");
+    expect(out.source).toContain("create_schema: false");
+    expect(out.warnings).toEqual([]);
+  });
+
+  test("collector-contrib v0.130.0: the clickhouse exporter's own example (#4397)", async () => {
+    // fluentforward is not a built-in, so it alone goes through defineComponent; the example's literal password is reported.
+    const out = await expectRoundTrip(read("upstream", "clickhouse-exporter.yaml"), { lintRules: ["OTEL002"] });
+    expect(out.source).toContain("new ClickHouseExporter(");
+    expect(out.source).toMatch(/type: "fluentforward"/);
+    expect(out.source).not.toMatch(/type: "clickhouse"/);
+  });
+
   test("the collector configs of examples/agent-observability", async () => {
     for (const file of ["agent-observability-agent.yaml", "agent-observability-gateway.yaml"]) {
       await expectRoundTrip(read(file));

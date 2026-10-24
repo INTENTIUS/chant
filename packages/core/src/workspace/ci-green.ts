@@ -55,7 +55,7 @@
 
 import { judgeCommits, mergeCommits, readWorkIndex, type CommitLink } from "./commit-links";
 import { execFileSync } from "node:child_process";
-import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
+import { greenBranches, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
 import type { CheckRun, CiForge, OpRunRef } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
@@ -514,8 +514,25 @@ export function readGreen(cwd: string): { green: CiGreen; top: string; workspace
   return { green, top, workspace: { name: declaration.name, root: located.root, file: declaration.file } };
 }
 
+/**
+ * `green` judging `branch` (#4325): `ci.green` names several branches when
+ * `ci.branches` routes members to branches of their own, and each is judged
+ * as the single branch always was. Without `branch` the first is judged.
+ * Refuses a branch `ci.green` does not name.
+ */
+export function greenOn(green: CiGreen, branch: string | undefined): CiGreen {
+  const { branches: _all, ...rest } = green;
+  if (branch === undefined || branch === green.branch) return rest;
+  if (!greenBranches(green).includes(branch)) {
+    throw new CiGreenError("ci-branch-unknown", `ci.green judges ${greenBranches(green).join(", ")}, not ${branch}; add it to ci.green.branch to give it a green verdict`);
+  }
+  return { ...rest, branch };
+}
+
 export interface TickRequest {
   cwd: string;
+  /** Judge this one branch of `ci.green.branch` (#4325). Without it a tick judges every branch the declaration names. */
+  branch?: string;
   /**
    * Where check runs come from. A function is called only when the source
    * is `checks`, so a tick from runs needs no forge token. Required for
@@ -547,6 +564,8 @@ export interface ComposedBranchTick {
 
 export interface TickResult {
   branch: string;
+  /** The other branches `ci.green` names (#4325), each judged as this one is. Their tags are in `made`. Absent for a one-branch declaration. */
+  routed?: TickResult[];
   window: string;
   /** The ref the commits were read from. */
   ref: string;
@@ -601,7 +620,16 @@ export function ciTagSigner(top: string, base: string, pem: string, what = "the 
 export async function ciTick(req: TickRequest): Promise<TickResult> {
   const read = readGreen(req.cwd);
   const top = read.top;
-  const green: CiGreen = { ...read.green, source: req.source ?? read.green.source };
+  const names = greenBranches(read.green);
+  if (req.branch === undefined && names.length > 1) {
+    const first = await ciTick({ ...req, branch: names[0]! });
+    const routed: TickResult[] = [];
+    for (const b of names.slice(1)) routed.push(await ciTick({ ...req, branch: b }));
+    return { ...first, routed, made: [...first.made, ...routed.flatMap((r) => r.made)] };
+  }
+  const green: CiGreen = { ...greenOn(read.green, req.branch), source: req.source ?? read.green.source };
+  // Compose branches are walked from trunk, so only the first branch's tick walks them.
+  const walksCompose = green.branch === read.green.branch;
   const forge = green.source === "checks" ? (typeof req.forge === "function" ? req.forge() : req.forge) : undefined;
   if (green.source === "checks" && !forge) throw new Error("ci.green.source is checks, so the tick reads check runs and needs a forge");
   const remote = req.remote ?? "origin";
@@ -671,7 +699,7 @@ export async function ciTick(req: TickRequest): Promise<TickResult> {
   if (links) for (const c of planned) c.work = links.get(c.sha);
   // Compose branches (#4168 4.3): each composed commit within the window is judged as trunk's are, and its tags name its branch.
   const composed: ComposedBranchTick[] = [];
-  for (const b of remoteComposeBranches(top, remote)) {
+  for (const b of walksCompose ? remoteComposeBranches(top, remote) : []) {
     const own = git(top, ["log", "--first-parent", `--max-age=${cutoff}`, "--format=%H %ct", b.ref, `^${tracking}`])
       .split("\n")
       .filter(Boolean)
@@ -904,18 +932,20 @@ export interface RequestBuildResult {
  */
 export async function requestBuild(req: { cwd: string; at: string; remote?: string; forge?: CiForge; now?: Date }): Promise<RequestBuildResult> {
   const read = readGreen(req.cwd);
-  const { green, top } = read;
+  const { top } = read;
+  const green = greenOn(read.green, undefined);
+  const names = greenBranches(read.green);
   const remote = req.remote ?? "origin";
-  const tracking = `refs/remotes/${remote}/${green.branch}`;
+  const trackingOf = (b: string): string => `refs/remotes/${remote}/${b}`;
   try {
-    git(top, ["fetch", "--quiet", "--no-tags", remote, `+refs/heads/${green.branch}:${tracking}`, `+refs/tags/${CI_BUILD_TAG_PREFIX}*:refs/tags/${CI_BUILD_TAG_PREFIX}*`]);
+    git(top, ["fetch", "--quiet", "--no-tags", remote, ...names.map((b) => `+refs/heads/${b}:${trackingOf(b)}`), `+refs/tags/${CI_BUILD_TAG_PREFIX}*:refs/tags/${CI_BUILD_TAG_PREFIX}*`]);
   } catch (err) {
-    throw new Error(`could not fetch ${green.branch} and the build requests from ${remote}: ${stderrOf(err)}`);
+    throw new Error(`could not fetch ${names.join(", ")} and the build requests from ${remote}: ${stderrOf(err)}`);
   }
   if (req.at.startsWith("-") || tryGit(top, ["rev-parse", "--verify", "--quiet", `${req.at}^{commit}`]) === null) throw new WorkspaceReadError("revision-unknown", `--at ${req.at} names no commit in this repository`);
   const sha = git(top, ["rev-parse", `${req.at}^{commit}`]);
-  const onBranch = git(top, ["rev-list", "--first-parent", tracking]).split("\n").includes(sha);
-  if (!onBranch) throw new Error(`${sha.slice(0, 12)} is not a first-parent commit of ${remote}/${green.branch}, and only those are judged green`);
+  const onBranch = names.some((b) => tryGit(top, ["rev-list", "--first-parent", trackingOf(b)])?.split("\n").includes(sha));
+  if (!onBranch) throw new Error(`${sha.slice(0, 12)} is not a first-parent commit of ${names.map((b) => `${remote}/${b}`).join(" or ")}, and only those are judged green`);
   const existing = readBuildRequests(top).get(sha);
   const request = existing ?? requestedBuild(green, sha, green.require, req.now ?? new Date());
   const warnings: string[] = [];
@@ -1101,6 +1131,7 @@ export function whyWorkUnknown(work: CommitLink | null | undefined): string | un
 
 /** The text `chant ci tick` prints. */
 export function formatTick(r: TickResult, dryRun = false): string {
+  if (r.routed) return [formatTick({ ...r, routed: undefined }, dryRun), ...r.routed.map((b) => formatTick(b, dryRun))].join("\n");
   const lines = [`${r.branch}, commits within ${r.window}${r.source === "runs" ? ", judged from chant runs" : ""}: ${r.commits.length}`];
   for (const c of r.commits) {
     const short = c.sha.slice(0, 12);
@@ -1187,10 +1218,12 @@ export const LAST_GREEN_NEWER = 50;
  * green tag and no revoked tag. It reads local refs and tags and never
  * fetches, so a reader fetches first (`git fetch origin --tags`).
  */
-export function lastGreen(req: { cwd: string; remote?: string; from?: string }): LastGreenDocument {
+export function lastGreen(req: { cwd: string; remote?: string; from?: string; branch?: string }): LastGreenDocument {
   const head = { $schema: CI_LAST_GREEN_SCHEMA_ID, contract: CI_LAST_GREEN_CONTRACT_VERSION, chant: readerVersion() };
   try {
-    const { green, top, workspace } = readGreen(req.cwd);
+    const read = readGreen(req.cwd);
+    const { top, workspace } = read;
+    const green = greenOn(read.green, req.branch);
     const branchRef = branchRefOf(top, green, req.remote);
     let ref = branchRef;
     if (req.from !== undefined) {
@@ -1355,6 +1388,8 @@ function recordedPhase(green: CountedCiTag | undefined, phase: string): CiListPh
 
 export interface ListRequest {
   cwd: string;
+  /** List this branch of `ci.green.branch` (#4325). The first when absent. */
+  branch?: string;
   remote?: string;
   /** Keep only the newest n commits. */
   limit?: number;
@@ -1380,7 +1415,9 @@ export interface ListRequest {
 export async function ciList(req: ListRequest): Promise<CiListDocument> {
   const head = { $schema: CI_LIST_SCHEMA_ID, contract: CI_LIST_CONTRACT_VERSION, chant: readerVersion() };
   try {
-    const { green, top, workspace } = readGreen(req.cwd);
+    const read = readGreen(req.cwd);
+    const { top, workspace } = read;
+    const green = greenOn(read.green, req.branch);
     const ref = branchRefOf(top, green, req.remote);
 
     const logArgs = ["log", "--first-parent", "--format=%H %ct"];
