@@ -55,6 +55,18 @@ export {
   CapabilityRegistry,
   CapabilityNotImplementedError,
 } from "./capability";
+export {
+  coveredRound,
+  planShapeCovers,
+  shapeFromChangeSet,
+  type CoveredRoundInput,
+  type CoverageSide,
+  type PlanShape,
+  type PlanShapeEntry,
+  type RoundCover,
+  type RoundCoverage,
+  type ShapeReplacement,
+} from "./covered-round";
 export { createCapabilityRegistry, STARTER_VERB_FAMILIES } from "./registry";
 export {
   type CapabilityPlugin,

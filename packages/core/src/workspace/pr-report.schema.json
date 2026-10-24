@@ -153,6 +153,16 @@
           },
           "status": { "enum": ["applied", "failed", "waiting", "plan-failed"] },
           "message": { "type": "string", "description": "With waiting: why an approval that stands does not count under --require-review." },
+          "covered": {
+            "type": "object",
+            "required": ["digest", "filledInputs"],
+            "description": "Added within contract version 1 by #4419. The first approval covered this round's plan, so no gate of its own was decided and approval is the first one. The plan touched only components and logical ids the first plan previewed, with the same actions, and only inputs the first plan marked unknown differed.",
+            "properties": {
+              "digest": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "The digest of the first approval, which the coverage is bound to: the report's digest." },
+              "filledInputs": { "type": "array", "items": { "type": "string" }, "description": "The inputs the first plan marked unknown that this plan had a value for, as <component>.<output>, sorted." }
+            }
+          },
+          "notCovered": { "type": "string", "description": "Added within contract version 1 by #4419. Why an approval that stands for the first plan did not cover this round, so the round asked for its own." },
           "changeSet": { "type": "object", "description": "The change-set document the round planned. Its digest equals digest." }
         }
       }

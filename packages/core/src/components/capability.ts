@@ -12,6 +12,7 @@
  * Cloud implementations are a later phase (see epic #551, issue #554).
  */
 
+import type { PlanShape } from "./covered-round";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { ChangeSetPart } from "../change-set";
 
@@ -117,6 +118,14 @@ export interface CapabilityPlan {
    * targeted plan covers that plan and no other.
    */
   targets?: string[];
+  /**
+   * What the plan does, without values (#4419): the resources it touches,
+   * their actions and replacement, and the inputs it was made without. A
+   * pull request's apply compares the shape of a plan made after an upstream
+   * applied with this one (`coveredRound`) to decide whether the first
+   * approval covers it. Absent, core derives the shape from `changeSet`.
+   */
+  shape?: PlanShape;
 }
 
 /**

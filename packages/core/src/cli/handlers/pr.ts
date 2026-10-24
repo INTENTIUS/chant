@@ -1043,6 +1043,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
     env: p.env,
     set,
     gate: p.gate,
+    approval,
     decideRound,
     ...(resumed ? { resumed: prior } : {}),
     // The apply is this run's waves, so the fan-out's own run framing is
