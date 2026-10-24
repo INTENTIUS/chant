@@ -42,12 +42,15 @@ A member can set its own `ci.hooks`. They run after the top level's (`packages/c
 | `before.observe` | pr-plan, pr-record, pr-apply | before anything reads live state |
 | `before.plan` | pr-plan, pr-record, pr-apply | after `before.observe`, before the plan |
 | `after.plan` | pr-plan, pr-record, pr-apply | once every component planned |
+| `after.gate` | pr-apply | once the pull request's gate decided, whatever it decided |
 | `before.apply` | pr-apply | once the gate and the review let the apply through |
 | `after.apply` | pr-apply | after the apply, for the components that applied |
 
 The plan-side moments wrap the plan in `hookedPlan` (`packages/core/src/cli/handlers/pr.ts:307`). The apply-side moments wrap `applyPrSet` (`packages/core/src/cli/handlers/pr.ts:715`, `:774`). With `--wave-gate`, each wave runs its own plan-side and apply-side hooks for its components.
 
-`after.gate` and `hooks.apply.runBy` are refused, since a pull request's gate and apply belong to chant (`packages/core/src/op/op-waves.ts:832`).
+`hooks.apply.runBy` is refused, since chant runs a pull request's apply (`packages/core/src/op/op-waves.ts`, `assertPrLoopHooks`). `onFailure: "approve"` on `after.gate` is refused as in an Op waves job, since the gate has already decided.
+
+An `after.gate` hook runs in pr-apply right after the gate is decided (`runGateHook` in `packages/core/src/cli/handlers/pr.ts`). Its environment adds `CHANT_GATE_STATUS` (`approved`, or `waiting` when no approval of the digest stands), `CHANT_GATE_OP`, `CHANT_GATE` and `CHANT_GATE_DIGEST`. When the gate waits, the hooks still run, and the stage then ends as a refusal whatever they came to. pr-plan and pr-record decide no gate to act on, so they run no `after.gate` hook. A gate decided again for a later wave under `--wave-gate` runs none either.
 
 ## What a hook sees
 
@@ -76,4 +79,4 @@ With `onFailure: "fail"`, the default, a failure ends the stage as follows.
 
 The report's `message` names the hook and its exit code. Every hook outcome goes in the report's `hooks` list, and the note counts those that passed and names the rest.
 
-With `onFailure: "approve"`, a failure is recorded as `held` and the job goes on. The pull request's gate already waits for a person to approve the digest, so a hold asks for nothing more. A hook that writes `CHANT_HOLD` to name another gate counts as a plain hold here. Only an Op waves job settles another gate.
+With `onFailure: "approve"`, a failure is recorded as `held` and the job goes on. The pull request's gate already waits for a person to approve the digest, so a hold asks for nothing more. A hook that writes `CHANT_HOLD` to name another gate is not a plain hold ([#4323](https://github.com/INTENTIUS/chant/issues/4323)). The job settles that gate as an Op waves job does (`settleHolds` in `packages/core/src/components/pr-hooks.ts`). If someone approved it at that digest under its `identity.gates` rule read at base, the hook runs again with `CHANT_HOLD_APPROVED` (JSON: `op`, `gate`, `digest`, `approvedBy`, `approvedAt`) and `CHANT_HOLDS_APPROVED`, the gates approved so far. The re-run passes, or holds on a further gate, settled the same way, up to ten gates per hook call. If nobody approved it, pr-apply records a pending fact for the gate and the stage ends as failed, with the command that approves it in the message. pr-plan only reads the ledger and records nothing. Approvals of the other gate are not spent.

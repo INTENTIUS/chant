@@ -27,8 +27,10 @@ describe("hook targets and before.observe in the spec (#4288)", () => {
     expect(() => assertOpWaveHooks("w", { before: { observe: [{ command: ["x"], targets: ["prod/**"], onFailure: "approve" }] } })).not.toThrow();
   });
 
-  test("a pull-request job refuses after.gate and apply.runBy", () => {
-    expect(() => assertPrLoopHooks("ci.hooks", { after: { gate: [{ command: ["x"] }] } })).toThrow(/after.gate runs in an Op waves job only/);
+  test("a pull-request job accepts after.gate (#4323) and refuses apply.runBy", () => {
+    expect(() => assertPrLoopHooks("ci.hooks", { after: { gate: [{ command: ["x"] }] } })).not.toThrow();
+    // onFailure "approve" stays refused at after.gate, as in an Op waves job.
+    expect(() => assertPrLoopHooks("ci.hooks", { after: { gate: [{ command: ["x"], onFailure: "approve" }] } })).toThrow(/after.gate/);
     expect(() => assertPrLoopHooks("ci.hooks", { apply: { runBy: "apply" } })).toThrow(/runBy is for an Op waves spec/);
     expect(() => assertPrLoopHooks("ci.hooks", { before: { observe: [{ command: ["x"] }], apply: [{ command: ["y"] }] } })).not.toThrow();
   });

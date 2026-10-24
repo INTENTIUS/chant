@@ -290,6 +290,11 @@ export interface RunStageHooksOptions {
   runsFile: string;
   /** `CHANT_HOLD`, relative to `cwd`. */
   holdFile: string;
+  /**
+   * Give the hooks that held on another gate in {@link StageHooksRun.otherGates}
+   * and leave them out of `holds` (#4323), for a caller that settles them.
+   */
+  keepOtherGates?: boolean;
   /** Added to every hook's environment. */
   env?: Record<string, string>;
   cwd?: string;
@@ -304,6 +309,8 @@ export interface StageHooksRun {
   failed?: string;
   /** The `onFailure: approve` hooks that failed. A hold on another gate counts as one here. */
   holds: string[];
+  /** The hook calls that held on another gate, with `keepOtherGates` (#4323); absent otherwise. */
+  otherGates?: OtherGateHold[];
 }
 
 /** {@link RunStageHooksOptions} for {@link runStageHooksAsync} (#4334). */
@@ -318,7 +325,8 @@ function stagePlace(options: Omit<RunStageHooksOptions, "exec">): Omit<HookPlace
 }
 
 /** A stage run's result: a hold on another gate counts as a plain hold. */
-function stageRun(out: HookListOutcome, name: string): StageHooksRun {
+function stageRun(out: HookListOutcome, name: string, keep = false): StageHooksRun {
+  if (keep) return { outcomes: out.outcomes, ...(out.failed ? { failed: out.failed } : {}), holds: out.holds, otherGates: out.otherGates };
   return { outcomes: out.outcomes, ...(out.failed ? { failed: out.failed } : {}), holds: [...out.holds, ...out.otherGates.map((g) => `${g.label} (on ${g.request.op ?? name} / ${g.request.gate})`)] };
 }
 
@@ -326,12 +334,12 @@ function stageRun(out: HookListOutcome, name: string): StageHooksRun {
  * Run one moment's hooks outside an Op waves job (#4288): the pull-request
  * jobs, or a product's own stage, with the same `targets`, `perRun`,
  * `onFailure` and argv filling a wave job uses. A hook that holds on another
- * gate (`CHANT_HOLD`) is counted as a plain hold; settling that gate is the
- * caller's.
+ * gate (`CHANT_HOLD`) is counted as a plain hold, unless `keepOtherGates` is
+ * set (#4323): then it comes back in `otherGates` for the caller to settle.
  */
 export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
   const place = { ...stagePlace(options), exec: options.exec ?? spawnExec };
-  return stageRun(runHookList(place, moment, hooks, options.runs, options.runsFile, options.env), options.name);
+  return stageRun(runHookList(place, moment, hooks, options.runs, options.runsFile, options.env), options.name, options.keepOtherGates);
 }
 
 /**
@@ -342,5 +350,5 @@ export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHo
  */
 export async function runStageHooksAsync(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksAsyncOptions): Promise<StageHooksRun> {
   const place = { ...stagePlace(options), exec: options.exec ?? spawnExecAsync };
-  return stageRun(await runHookListAsync(place, moment, hooks, options.runs, options.runsFile, options.env), options.name);
+  return stageRun(await runHookListAsync(place, moment, hooks, options.runs, options.runsFile, options.env), options.name, options.keepOtherGates);
 }
