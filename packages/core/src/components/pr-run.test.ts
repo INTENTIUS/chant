@@ -519,6 +519,41 @@ describe("a dependent planned on its upstream's planned outputs (#3999)", () => 
     expect(applied.rounds![0]!.covered).toBeUndefined();
   });
 
+  test("a third member that reads a previewed member's known output is covered when the round plans that output as the same value (#4419)", async () => {
+    const chain: DriverComponent[] = [
+      root("x"),
+      root("y", ["x"], { id: { stackOutput: { stack: "x", name: "id" } } }),
+      root("z", ["y"], { port: { stackOutput: { stack: "y", name: "port" } } }),
+    ];
+    const w = world();
+    w.state = { x: { id: "x-v1" }, y: { port: "8080" }, z: {} };
+    w.versions.x = "v2";
+    w.versions.y = "v2";
+    w.versions.z = "v2";
+    w.predict.x = () => ({ known: {}, unknown: ["id"] });
+    w.predict.y = () => ({ known: { port: "8080" }, unknown: [] });
+    w.predict.z = () => undefined;
+    const chainPlan = planFanOut({ components: chain, changed: ["x"] });
+    const set = await planPrSet({ components: chain, plan: chainPlan, registry: w.registry, env: "prod" });
+    const seen: Array<string | undefined> = [];
+    const applied = await applyPrSet({
+      components: chain,
+      plan: chainPlan,
+      registry: w.registry,
+      env: "prod",
+      set,
+      approval: approvedFirst,
+      decideRound: async ({ notCovered }) => {
+        seen.push(notCovered);
+        return { satisfied: false, approval: { status: "pending" } };
+      },
+    });
+    expect(seen).toEqual([]);
+    expect(applied.status).toBe("applied");
+    expect(w.applied).toEqual(["x", "y", "z"]);
+    expect(applied.rounds![0]).toMatchObject({ round: 2, components: ["y", "z"], covered: { digest: set.doc.digest, filledInputs: ["x.id"] } });
+  });
+
   test("an input the first plan read with a value that moved is not covered (#4419)", async () => {
     const w = world();
     w.versions.a = "v2";
