@@ -967,6 +967,29 @@ Workspace (level 1, #2524):
                         One decision's intent walk over every path: and member:
                         entry it constrains: the commits in its window, each
                         own, worked, within-other or unexplained, with counts
+  workspace run <member>/<op>... [--env <env>] [--gate <name>] [--on <lexicon>] [--dry-run] [--json]
+                        Run Ops that span members (#2554): each target's chant
+                        run <op> in the member's directory, under its own
+                        chant, producers before the members that link to them.
+                        OPS019 checks every target against the composed graph
+                        first. Member run records cite the workspace run,
+                        whose record goes under _members/_workspace/<env>/.
+                        Exits 3 when a step stops at a gate
+  workspace run --dependents-of <member> --op <op> [--env <env>] [--gate <name>] [--dry-run] [--json]
+                        Run <op> in every member that links to <member>,
+                        directly or not, nearest first; members without the
+                        Op are listed as skipped
+  workspace run approve <gate> [--plan <digest>] [--approver <principal>]
+                        Approve a workspace gate's pending fact. It stands in
+                        for a member gate only when it covers that member's
+                        plan and the member sets acceptWorkspaceGates at base
+  workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
+                        Record a release train: one cut release of every
+                        chant member (the newest, unless --pin picks one),
+                        under _members/_workspace/<env>/trains.jsonl. Refuses
+                        when a member has no release
+  workspace train list <env> [--json]
+                        The release trains recorded for <env>, oldest first
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1629,6 +1652,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace audit", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
   // #4374 — chant search in every member, under its own chant, composed with workspace graph's ids: the search document.
+  // #2554 — Ops that span members, as <member>/<op> targets, each run under its member's own chant.
+  { name: "workspace run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/workspace-run")).runWorkspaceRun(ctx) },
+  // #2554 — a release train: one release of every chant member, pinned in the workspace ledger.
+  { name: "workspace train", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-train")).runWorkspaceTrain(ctx) },
   { name: "workspace search", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/search-cli")).runWorkspaceSearch(ctx) },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },

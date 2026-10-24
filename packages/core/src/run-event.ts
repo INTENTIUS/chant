@@ -58,7 +58,7 @@ export type RunEventStepStatus = "ok" | "failed" | "skipped" | "cached" | "gated
 export type RunEventSkipReason = "receipt" | "resumed" | "refused" | "not-run";
 
 /** How a gate's approval passed, when it was more than one person's approval of that gate. */
-export type RunEventGateVia = "quorum" | "policy" | "point" | "alias" | "empty";
+export type RunEventGateVia = "quorum" | "policy" | "point" | "alias" | "empty" | "workspace";
 
 /** The run every event of a stream names: the same on every line. */
 export interface RunEventRun {

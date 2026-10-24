@@ -1,0 +1,38 @@
+---
+title: "chant workspace train"
+description: Record a release train that pins one release of every chant member, and list the trains recorded for an environment
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
+chant workspace train list <env> [--json]
+```
+
+## Description
+
+Releases stay per member: each is a digest over its artifacts and a git commit, cut with [`chant release cut`](/chant/cli/release/) in the member's directory and kept in its own ledger (ws-043). A release train is one record that pins a release of every `chant` member, so several members can move together ([#2554](https://github.com/INTENTIUS/chant/issues/2554)).
+
+`chant workspace train <env>` picks each `chant` member's newest cut release, or the one `--pin <member>=<label|digest>` names, and appends the train to `_members/_workspace/<env>/trains.jsonl` on `chant/lifecycle`. It refuses, and writes nothing, when any `chant` member has no release or a pin names no release, so a train never leaves a member out.
+
+```
+$ chant workspace train prod --pin api=v1.4.0
+Recorded release train train-8a2c… for prod:
+  api                      v1.4.0  sha256:3f…  9b1c0d2e4f6a
+  web                      v2.0.1  sha256:c7…  9b1c0d2e4f6a
+```
+
+Each pinned member carries `member`, `releaseDigest`, `commit` and `label`. The train also records its `env`, `timestamp` and `actor`.
+
+`chant workspace train list <env>` prints the trains recorded for `<env>`, oldest first.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--pin <member>=<label\|digest>` | The release to pin for that member instead of its newest. Repeatable. |
+| `--dry-run` | Pick the releases and print the train without writing it. |
+| `--json` | Print the train, or the list, as JSON. |
+| `--actor <principal>` | Who records the train; else the CI or shell identity. |

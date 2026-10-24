@@ -148,7 +148,7 @@ export async function writeBlobToPath(
   filename: string,
   content: string,
   commitMessage: string,
-  opts?: { cwd?: string; expectPriorPathSha?: string | null },
+  opts?: LedgerLocation & { expectPriorPathSha?: string | null },
 ): Promise<string> {
   const dir = await ledgerDir(environment, opts);
   return writeLedgerFiles(
@@ -447,7 +447,7 @@ export async function readBlobFromPath(
 export async function readPathSha(
   environment: string,
   filename: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<string | null> {
   const rt = getRuntime();
   const dir = await ledgerDir(environment, opts);

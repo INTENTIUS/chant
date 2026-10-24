@@ -685,6 +685,10 @@
           "type": "boolean",
           "description": "Whether the member goes with an export (#2524 D10, #2552). chant workspace export writes only members that set travel to true into the export member, and refuses to name one that does not. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer."
         },
+        "acceptWorkspaceGates": {
+          "type": "boolean",
+          "description": "Whether an approval of a workspace gate may stand in for this member's own gates (#2554, ws-039). It does only when the approval's digest covers the plan the member's run reached its gate with, and only when the declaration at base sets this to true; a working-tree change never opts a member in. Absent or false, a workspace gate never satisfies this member's gates. Added in schema 1 by chant 0.124.47, so a declaration that uses it sets minReader to 0.124.47 or newer."
+        },
         "security": {
           "type": "array",
           "uniqueItems": true,

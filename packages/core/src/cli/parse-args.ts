@@ -380,6 +380,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.head = args[++i];
     } else if (arg === "--include-dependents") {
       result.includeDependents = true;
+    } else if (arg === "--dependents-of") {
+      // `chant workspace run --dependents-of <member> --op <op>` (#2554).
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--dependents-of needs a member name: --dependents-of <member>");
+      result.dependentsOf = value;
+    } else if (arg === "--pin") {
+      // `chant workspace train <env> --pin <member>=<label|digest>` (#2554), repeatable.
+      const value = args[++i];
+      if (!value || value.startsWith("-") || !value.includes("=")) throw new Error("--pin needs a member and a release: --pin <member>=<label|digest>");
+      (result.pins ??= []).push(value);
     } else if (arg === "--from-affected") {
       result.fromAffected = args[++i];
     } else if (arg === "--gate") {
