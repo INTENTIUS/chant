@@ -155,6 +155,29 @@ describe("a kind's graph block (#2874)", () => {
     expect(bad.registry.get("other-tf")).toBeDefined();
   });
 
+  test("a graph reader module is accepted from a package that is not a lexicon, and only inside the package (#4413)", () => {
+    const reader = { reader: "dist/graph.mjs", config: { dir: "{dir}" } };
+    const root = dir({
+      ...pkg("@acme/warden", "1.0.0", [{ ...tf, name: "gov", graph: reader }]),
+      "node_modules/@acme/warden/dist/graph.mjs": "export default () => ({ nodes: [], edges: [] });\n",
+      ...pkg("@acme/gone", "1.0.0", [{ ...tf, name: "gone", graph: reader }]),
+      ...pkg("@acme/up", "1.0.0", [{ ...tf, name: "up", graph: { reader: "../x.mjs" } }]),
+    });
+    const good = loadKindRegistry([{ package: "@acme/warden", version: "1.0.0", path: null }], root);
+    expect(good.problems).toEqual([]);
+    expect(good.registry.get("gov")?.graph).toEqual({ ...reader, readerFile: join(root, "node_modules/@acme/warden/dist/graph.mjs") });
+    const gone = loadKindRegistry([{ package: "@acme/gone", version: "1.0.0", path: null }], root);
+    expect(gone.problems.map((p) => p.message)).toEqual([expect.stringMatching(/graph reader dist\/graph.mjs, which does not exist/)]);
+    expect(gone.registry.get("gone")?.graph).toBeUndefined();
+    const up = loadKindRegistry([{ package: "@acme/up", version: "1.0.0", path: null }], root);
+    expect(up.problems.length).toBe(1);
+    expect(up.registry.get("up")?.graph).toBeUndefined();
+    // Not both, and an absolute path is refused.
+    expect(parseKindData(kindsFile([{ ...tf, graph: { reader: "a.mjs", lexicon: "tf", config: {} } }]), "p").problems.length).toBeGreaterThan(0);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { reader: "/etc/x.mjs" } }]), "p").problems.length).toBeGreaterThan(0);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { reader: "a.mjs" } }]), "p").problems).toEqual([]);
+  });
+
   test("the terraform lexicon's kinds read their members with it, named for the member at the workspace root", () => {
     const lexicon = join(import.meta.dirname, "..", "..", "..", "..", "lexicons", "terraform");
     const read = readPackageKinds(lexicon);

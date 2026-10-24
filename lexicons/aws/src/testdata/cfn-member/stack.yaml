@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  Env:
+    Type: String
+Resources:
+  Assets:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "assets-${Env}-${AWS::Region}"
+  WebRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: []
+  WebPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: web
+      Roles:
+        - !Ref WebRole
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub "${Assets.Arn}/*"
+  Db:
+    Type: AWS::RDS::DBInstance
+    DependsOn: WebRole
+    Properties:
+      DBInstanceClass: db.t3.micro
+      Tags:
+        - Key: bucket
+          Value: !GetAtt Assets.DomainName
+Outputs:
+  Bucket:
+    Value: !Ref Assets

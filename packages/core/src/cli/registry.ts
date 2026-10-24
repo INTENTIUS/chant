@@ -165,6 +165,8 @@ export interface ParsedArgs {
   remove?: boolean;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
+  /** `chant workspace exit --drill` (#3177): run the exit on a scratch copy and check it, changing nothing. */
+  drill?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
    * (#1222). Without it the command plans and stops. */
   yes?: boolean;
@@ -628,6 +630,12 @@ export interface ParsedArgs {
   claim?: string;
   /** `chant workspace evidence sign --environment <file>` (#2553): the runner environment, hashed into the evidence. */
   environment?: string;
+  /** `chant workspace init --from tfc|spacelift --input <file>` (#3178): an exported file read instead of the API. */
+  input?: string;
+  /** `chant workspace init --from tfc --org <name>` (#3178): the Terraform Cloud organization. */
+  org?: string;
+  /** `chant workspace init --from spacelift --endpoint <url>` (#3178): the account's GraphQL endpoint. */
+  endpoint?: string;
   /** `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign. */
   signer?: string;
   /** `chant workspace evidence verify --envelope <file>` (#2553). */

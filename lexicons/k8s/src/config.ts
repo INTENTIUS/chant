@@ -122,6 +122,25 @@ export interface K8sChantConfig {
   };
 
   /**
+   * One workspace member read into the graph (#3179). `chant workspace graph`
+   * writes this into the reader project it makes for a member of kind
+   * `kustomize`, `argo-app` or `flux-kustomization`; it is not meant to be
+   * written by hand. `dir` is the member's directory, absolute; `label` names
+   * the entities (`<label>/deploymentWeb`), the member's name.
+   *
+   * A kustomize member is rendered, so it needs `kustomize` or `kubectl`. With
+   * neither installed the graph carries no objects for it and says why on
+   * `meta.k8sMember` (`rendered: false`, `reason`); a render the binary ran
+   * and refused still fails. An Argo or Flux member is read from its manifests
+   * and needs no binary.
+   */
+  member?: {
+    kind: "kustomize" | "argo-app" | "flux-kustomization";
+    dir: string;
+    label?: string;
+  };
+
+  /**
    * Effect receipt settings (#2074, epic #1703).
    *
    * `namespace` is where this project's receipt ConfigMaps live. The name is

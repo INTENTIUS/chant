@@ -204,14 +204,24 @@ export function toolchainStamp(toolchain: Toolchain): string {
 }
 
 /** What a kind's reader adds to the key: its graph block, and the installed version of the package supplying it. */
-export function readerStamp(reader: { lexicon: string; config: unknown; packageDir: string }): string {
+export function readerStamp(reader: { lexicon?: string; reader?: string; readerFile?: string; config: unknown; packageDir: string }): string {
   let version = "";
   try {
     version = String((JSON.parse(readFileSync(join(reader.packageDir, "package.json"), "utf-8")) as { version?: unknown }).version ?? "");
   } catch {
     // An unreadable manifest keys on the directory alone.
   }
-  return JSON.stringify([reader.lexicon, reader.config, reader.packageDir, version]);
+  // A reader module is code: its size and mtime key too, so an edit under the same version is a new read (#4413).
+  let module = "";
+  if (reader.readerFile) {
+    try {
+      const st = statSync(reader.readerFile);
+      module = `${reader.reader}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      module = `${reader.reader}:unreadable`;
+    }
+  }
+  return JSON.stringify([reader.lexicon, reader.config, reader.packageDir, version, ...(module ? [module] : [])]);
 }
 
 /** The ambient environment, less {@link VOLATILE_ENV}, as one digest. */

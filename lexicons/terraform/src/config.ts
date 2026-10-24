@@ -146,7 +146,15 @@ export const terraformConfigSchema = z.strictObject({
   /** The default {@link TerraformRootConfig.observe} for every root that sets none (#4358). */
   observe: terraformObserveDepthSchema.optional(),
   /** Named root modules. The name is the entity-key prefix, so keep it stable. */
-  roots: z.record(z.string(), terraformRootSchema),
+  roots: z.record(z.string(), terraformRootSchema).default({}),
+  /**
+   * One pulumi workspace member read into the graph (#3179). `chant workspace
+   * graph` writes this into the reader project it makes for a `pulumi` member;
+   * it is not meant to be written by hand. `dir` is the member's directory,
+   * absolute; `label` names the entities. The graph is the checked-in
+   * `stack-export.json` there; the program is never run.
+   */
+  pulumiMember: z.strictObject({ dir: z.string().min(1), label: z.string().optional() }).optional(),
 });
 
 export type TerraformRootConfig = z.infer<typeof terraformRootSchema>;

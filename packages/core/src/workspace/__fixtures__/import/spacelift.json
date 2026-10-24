@@ -1,0 +1,9 @@
+{
+  "account": "acme",
+  "stacks": [
+    { "id": "vpc", "name": "VPC", "space": "root", "projectRoot": "terraform/vpc", "vendor": "terraform", "labels": ["env:prod"] },
+    { "id": "db", "name": "Database", "projectRoot": "terraform/db", "labels": ["env:prod"], "policies": ["p1"], "dependsOn": [{ "stack": "vpc", "references": [{ "outputName": "subnet_ids", "inputName": "TF_VAR_subnets" }] }] },
+    { "id": "cfg", "name": "ansible-config", "vendor": "ansible", "projectRoot": "ansible", "dependsOn": [{ "stack": "db" }, { "stack": "nope" }], "contexts": ["c1"] }
+  ],
+  "policies": [{ "id": "p1", "name": "approval", "type": "APPROVAL" }]
+}

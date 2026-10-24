@@ -1,0 +1,29 @@
+{
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. A Helm chart is a directory with a Chart.yaml, and Chart.yaml is the member's own file, checked against schemas/chart.schema.json. The graph block (#3179) reads a chart through helm template (src/workspace-member.ts); with no helm binary the member says rendered: false on meta.helmMember.",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "helm-chart",
+      "description": "a Helm chart, with a Chart.yaml in its directory",
+      "precedence": 330,
+      "probe": {
+        "anyFile": [
+          "Chart.yaml"
+        ]
+      },
+      "memberFile": {
+        "path": "Chart.yaml",
+        "schema": "schemas/chart.schema.json"
+      },
+      "graph": {
+        "lexicon": "helm",
+        "config": {
+          "member": {
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
+      }
+    }
+  ]
+}

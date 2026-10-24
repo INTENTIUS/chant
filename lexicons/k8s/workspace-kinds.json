@@ -1,0 +1,94 @@
+{
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The Argo and Flux probes read the manifest's apiVersion and kind, so a Flux Kustomization is told apart from the kustomize one that shares its kind name. Each kind's graph block (#3179) reads the member through the k8s lexicon's member reader (src/workspace-member.ts): a kustomize member is rendered, and says rendered: false on meta.k8sMember when neither kustomize nor kubectl is installed; an Argo or Flux member is read from its manifests.",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "argo-app",
+      "description": "an Argo CD Application, a manifest with apiVersion argoproj.io/* and kind Application",
+      "precedence": 360,
+      "probe": {
+        "anyDocument": {
+          "in": [
+            "*.yaml",
+            "*.yml"
+          ],
+          "match": [
+            {
+              "/apiVersion": [
+                "argoproj.io/*"
+              ],
+              "/kind": [
+                "Application"
+              ]
+            }
+          ]
+        }
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "argo-app",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
+      }
+    },
+    {
+      "name": "flux-kustomization",
+      "description": "a Flux Kustomization, a manifest with apiVersion kustomize.toolkit.fluxcd.io/* and kind Kustomization",
+      "precedence": 350,
+      "probe": {
+        "anyDocument": {
+          "in": [
+            "*.yaml",
+            "*.yml"
+          ],
+          "match": [
+            {
+              "/apiVersion": [
+                "kustomize.toolkit.fluxcd.io/*"
+              ],
+              "/kind": [
+                "Kustomization"
+              ]
+            }
+          ]
+        }
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "flux-kustomization",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
+      }
+    },
+    {
+      "name": "kustomize",
+      "description": "a kustomize base or overlay, with a kustomization.yaml in its directory",
+      "precedence": 340,
+      "probe": {
+        "anyFile": [
+          "kustomization.yaml",
+          "kustomization.yml",
+          "Kustomization"
+        ]
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "kustomize",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
+      }
+    }
+  ]
+}

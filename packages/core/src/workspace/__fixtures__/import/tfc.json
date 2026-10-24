@@ -1,0 +1,13 @@
+{
+  "organization": "acme",
+  "projects": [{ "id": "prj-1", "name": "platform" }],
+  "workspaces": [
+    { "id": "ws-net", "name": "network-prod", "project": "prj-1", "workingDirectory": "infra/network", "tags": ["env:prod"], "variables": [{ "key": "region" }, { "key": "token", "sensitive": true }], "vcsRepo": "acme/infra" },
+    { "id": "ws-app", "name": "app-prod", "project": "prj-1", "workingDirectory": "infra/app", "tags": ["env:prod"], "runTriggers": ["ws-net", "ws-gone"] },
+    { "id": "ws-app-dev", "name": "app-dev", "workingDirectory": "infra/app", "tags": ["environment:dev"], "runTriggers": ["network-prod"] }
+  ],
+  "policySets": [
+    { "name": "no-public-s3", "kind": "sentinel", "enforcement": "hard-mandatory", "workspaces": ["ws-app"] },
+    { "name": "tags-required", "global": true }
+  ]
+}

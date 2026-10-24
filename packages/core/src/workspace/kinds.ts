@@ -17,7 +17,7 @@
  * fails ({@link resolveKind}).
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import schema from "./workspace-kinds.schema.json" with { type: "json" };
 import type { WorkspaceTree } from "./tree";
@@ -63,6 +63,18 @@ export interface FileProbe {
    * directory of `.sql` files: its files carry `-- +goose Up`.
    */
   anyLine?: { in: string[]; starts: string[] };
+  /**
+   * A file directly in the directory whose name matches one of `in` parses
+   * as YAML or JSON (every document of a multi-document file is read), and
+   * one document satisfies one of the `match` entries. An entry maps JSON
+   * Pointers to the values allowed there, and a document satisfies it when
+   * every pointer holds a value that matches one of its patterns. A `*` in
+   * a pattern matches any run of characters, so `["*"]` means "has a
+   * value". This is how an Argo Application, a Flux Kustomization and a
+   * CloudFormation template are found by what they say, not by their file
+   * names (#3179). A file that doesn't parse is no evidence either way.
+   */
+  anyDocument?: { in: string[]; match: Record<string, string[]>[] };
 }
 
 /** A string, integer or boolean field a kind declares for its members (#3151). */
@@ -113,7 +125,15 @@ export type KindOutputs =
  * chant writes itself. See {@link substituteGraphConfig} for the placeholders.
  */
 export interface KindGraph {
-  lexicon: string;
+  /** The lexicon that reads the member; unset when `reader` is. */
+  lexicon?: string;
+  /**
+   * A graph reader module (#4413), as the kinds file names it: a path inside
+   * the supplying package, which may be any package. Unset when `lexicon` is.
+   */
+  reader?: string;
+  /** The reader module, absolute; set once the package directory is known. */
+  readerFile?: string;
   config: Record<string, unknown>;
 }
 
@@ -280,7 +300,7 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
   if ("directory" in kind.probe) return true;
   if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
   if ("repo" in kind.probe) return true;
-  const { anyFile, anyBlock, anyJsonKey, anyLine } = kind.probe;
+  const { anyFile, anyBlock, anyJsonKey, anyLine, anyDocument } = kind.probe;
   if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
   if (anyJsonKey) {
     for (const file of filesMatching(tree, dir, anyJsonKey.in)) {
@@ -297,6 +317,15 @@ export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): b
     for (const file of filesMatching(tree, dir, anyLine.in)) {
       try {
         if (tree.read(file).split(/\r?\n/).some((l) => starts.some((t) => l.trimStart().toLowerCase().startsWith(t)))) return true;
+      } catch {
+        // An unreadable file is no evidence either way.
+      }
+    }
+  }
+  if (anyDocument) {
+    for (const file of filesMatching(tree, dir, anyDocument.in)) {
+      try {
+        if (documentsOf(tree.read(file)).some((doc) => anyDocument.match.some((m) => documentMatches(doc, m)))) return true;
       } catch {
         // An unreadable file is no evidence either way.
       }
@@ -338,6 +367,37 @@ function filesMatching(tree: WorkspaceTree, dir: string, names: readonly string[
     }
   }
   return out.sort();
+}
+
+/**
+ * The documents in `text`, read as YAML (which holds JSON). A CloudFormation
+ * short-form tag such as `!Ref` or `!Sub` is not YAML js-yaml knows, so a
+ * file that fails to parse is read again with those tags dropped. Text that
+ * still doesn't parse has no documents.
+ */
+function documentsOf(text: string): unknown[] {
+  try {
+    return yaml.loadAll(text);
+  } catch {
+    try {
+      return yaml.loadAll(text.replace(/(^|[\s:\-[,{])!(?:[A-Za-z][\w]*:?)+/gm, "$1"));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/** Whether every pointer in `match` holds a value matching one of its patterns. */
+function documentMatches(doc: unknown, match: Record<string, string[]>): boolean {
+  const pointers = Object.entries(match);
+  return (
+    pointers.length > 0 &&
+    pointers.every(([pointer, patterns]) => {
+      const value = atPointer(doc, pointer);
+      if (value === undefined) return false;
+      return patterns.some((pattern) => new RegExp(`^${pattern.split("*").map(escapeRegExp).join(".*")}$`).test(String(value)));
+    })
+  );
 }
 
 /** The value at JSON Pointer `pointer` in `json`, or undefined when there is none. */
@@ -476,12 +536,15 @@ export function parseKindData(text: string, source: string): KindData {
         ...(k.probe.anyBlock ? { anyBlock: { in: [...k.probe.anyBlock.in], blocks: [...k.probe.anyBlock.blocks] } } : {}),
         ...(k.probe.anyJsonKey ? { anyJsonKey: { in: [...k.probe.anyJsonKey.in], pointers: [...k.probe.anyJsonKey.pointers] } } : {}),
         ...(k.probe.anyLine ? { anyLine: { in: [...k.probe.anyLine.in], starts: [...k.probe.anyLine.starts] } } : {}),
+        ...(k.probe.anyDocument ? { anyDocument: { in: [...k.probe.anyDocument.in], match: k.probe.anyDocument.match.map((m) => structuredClone(m)) } } : {}),
       },
       precedence: k.precedence,
       shape: "member",
       outputs: { from: "declared", names: [...(k.outputs ?? [])] },
       source,
-      ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
+      ...(k.graph
+        ? { graph: { ...(k.graph.lexicon ? { lexicon: k.graph.lexicon } : {}), ...(k.graph.reader ? { reader: k.graph.reader } : {}), config: structuredClone(k.graph.config ?? {}) } }
+        : {}),
       ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
       ...(k.reader && (KIND_LINK_READERS as readonly string[]).includes(k.reader) ? { reader: k.reader as KindLinkReaderName } : {}),
       ...(k.memberFile ? { memberFile: { path: k.memberFile.path, schema: k.memberFile.schema } } : {}),
@@ -541,7 +604,20 @@ export function readPackageKinds(packageDir: string, source?: string): PackageKi
       const problem = loadMemberFileSchema(k.memberFile, packageDir);
       if (problem) data.problems.push(`${name}: kind ${k.name} ${problem}; members of the kind fail WSP012 until it is fixed`);
     }
-    if (k.graph && packageName !== lexiconPackageName(k.graph.lexicon)) {
+    if (k.graph?.reader) {
+      // A reader module is any package's own file (#4413): it must sit inside the package and exist. Nothing is imported here.
+      const file = resolve(packageDir, ...k.graph.reader.split("/"));
+      const inside = relative(packageDir, file);
+      if (inside.startsWith("..") || isAbsolute(inside)) {
+        data.problems.push(`${name}: kind ${k.name} names graph reader ${k.graph.reader}, which is outside the package; the kind is kept, and workspace graph lists its members with kind-not-run`);
+        delete k.graph;
+      } else if (!existsSync(file)) {
+        data.problems.push(`${name}: kind ${k.name} names graph reader ${k.graph.reader}, which does not exist in the package; the kind is kept, and workspace graph lists its members with kind-not-run`);
+        delete k.graph;
+      } else {
+        k.graph.readerFile = file;
+      }
+    } else if (k.graph?.lexicon && packageName !== lexiconPackageName(k.graph.lexicon)) {
       data.problems.push(
         `${name}: kind ${k.name} reads its members with lexicon ${k.graph.lexicon}, which is ${lexiconPackageName(k.graph.lexicon)}, ` +
           `and this package is ${packageName ?? "unnamed"}; the kind is kept, and workspace graph lists its members with kind-not-run`,

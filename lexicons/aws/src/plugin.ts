@@ -36,6 +36,7 @@ import { canDescribe, describeOwnProperties, stampRegion } from "./properties";
 import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
+import { lastMemberReport, readCloudFormationMember, setLastMemberReport } from "./workspace-member";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
@@ -65,6 +66,21 @@ const OWNERSHIP_UNRESOLVED_NOTE =
 export const awsPlugin: LexiconPlugin = {
   behaviourKinds: awsBehaviourKinds,
   name: "aws",
+  // A cloudformation workspace member's reader project (#3179): the template's
+  // resources as nodes, its Ref, GetAtt, Sub and DependsOn as edges. See
+  // ./workspace-member.ts.
+  async buildRoots(ctx) {
+    setLastMemberReport(undefined);
+    const member = (ctx.config as { aws?: { member?: { kind?: "cloudformation" | "cdk"; dir: string; label?: string } } }).aws?.member;
+    if (!member) return { entities: new Map() };
+    const read = readCloudFormationMember({ member });
+    setLastMemberReport(read.report);
+    return { entities: read.entities, warnings: read.warnings };
+  },
+  graphMeta() {
+    const report = lastMemberReport();
+    return report ? { awsMember: report } : undefined;
+  },
   // The thin read's marker channel is the STACK's own tags (#1998), read off
   // the DescribeStacks call it already makes for the outputs.
   // describe-stack-resources carries no per-resource tags, so the stack is the

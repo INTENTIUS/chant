@@ -76,6 +76,10 @@ export const ChantConfigSchema = z.object({
   // Strict like `run`: a misspelt `lint` would leave the gate on with nothing said.
   graph: z.object({
     lint: z.enum(["gate", "report"]).optional(),
+    reader: z.object({
+      module: z.string().min(1),
+      config: z.record(z.string(), z.unknown()).optional(),
+    }).strict().optional(),
   }).strict().optional(),
   buildParams: z.record(
     z.string(),
@@ -234,6 +238,18 @@ export interface ChantConfig {
    */
   graph?: {
     lint?: "gate" | "report";
+    /**
+     * A graph reader module (#4413): when set, `chant graph --format ir` loads
+     * `module` (an absolute path to an ES module whose default export is
+     * `(input: { dir, config }) => GraphIR`) and prints what it returns,
+     * instead of discovering lexicon entities. The reader project
+     * `chant workspace graph` writes for a kind whose `graph.reader` names a
+     * module sets it. A chant older than the key ignores it.
+     */
+    reader?: {
+      module: string;
+      config?: Record<string, unknown>;
+    };
   };
 
   /**

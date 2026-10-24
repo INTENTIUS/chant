@@ -20,6 +20,7 @@ import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
 import { helmConfigSchema } from "./config";
+import { lastMemberReport, readHelmMember, setLastMemberReport } from "./workspace-member";
 import { helmProjectCodegen } from "./project-codegen";
 import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
@@ -42,6 +43,21 @@ export const helmPlugin: LexiconPlugin = {
   ownershipChannel: { keys: LABEL_OWNERSHIP_KEYS, reads: ["describeResources", "observeResourcesDeep"] },
   auditCatalog: () => helmAuditCatalog,
   serializer: helmSerializer,
+
+  // A helm-chart workspace member's reader project (#3179): `helm template`
+  // over the chart, the rendered objects as nodes. See ./workspace-member.ts.
+  async buildRoots(ctx) {
+    setLastMemberReport(undefined);
+    const member = (ctx.config as { helm?: { member?: { dir: string; label?: string } } }).helm?.member;
+    if (!member) return { entities: new Map() };
+    const read = await readHelmMember({ member });
+    setLastMemberReport(read.report);
+    return { entities: read.entities, warnings: read.warnings };
+  },
+  graphMeta() {
+    const report = lastMemberReport();
+    return report ? { helmMember: report } : undefined;
+  },
 
   // #1248 (epic #1228 Phase 6, via the #1078 seam) — `chant helm` mounts the
   // pinned-render surface: the pinnability gate (#1234), the double-render

@@ -190,6 +190,45 @@
             }
           },
           "additionalProperties": false
+        },
+        "anyDocument": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, parses as YAML or JSON and one of its documents satisfies an entry of match (#3179). An entry maps JSON Pointers to the values allowed there, all of which must hold; a * in a value matches any run of characters, so [\"*\"] means the pointer has a value. A file that does not parse is no evidence either way.",
+          "required": [
+            "in",
+            "match"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "match": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {
+                  "pattern": "^(/[^/]+)+$"
+                },
+                "additionalProperties": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -201,22 +240,26 @@
     },
     "graph": {
       "type": "object",
-      "description": "How chant workspace graph reads a member of this kind (#2874). chant writes a reader project of its own outside the workspace, with a chant.config.json that declares lexicon and puts config under that lexicon's key, and runs the member's chant graph there. In every string key and value of config, {member} becomes the member's name, {dir} its absolute directory and {workspace} the absolute workspace root. Without this field a member of the kind is listed with kind-not-run.",
-      "required": [
-        "lexicon",
-        "config"
-      ],
+      "description": "How chant workspace graph reads a member of this kind (#2874, #4413). chant writes a reader project of its own outside the workspace and runs the member's chant graph there. The project either declares a lexicon and puts config under that lexicon's key (lexicon), or names a graph reader module the supplying package ships (reader). In every string key and value of config, {member} becomes the member's name, {dir} its absolute directory and {workspace} the absolute workspace root. Without this field a member of the kind is listed with kind-not-run.",
       "properties": {
         "lexicon": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "description": "The lexicon that reads the member, by name. The package that supplies the kind must be @intentius/chant-lexicon-<lexicon>, so the lexicon chant loads is the one the declaration pins."
+          "description": "The lexicon that reads the member, by name. The package that supplies the kind must be @intentius/chant-lexicon-<lexicon>, so the lexicon chant loads is the one the declaration pins. Not with reader."
+        },
+        "reader": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[^\\u0000-\\u001f]+$",
+          "description": "A graph reader module, as a path inside the supplying package (#4413): an ES module whose default export is (input: { dir, config }) => GraphIR. The member's own chant graph loads it in the reader project, so it runs under the member's toolchain, and it must only read files. Any package may supply it, not only a lexicon. Not with lexicon. A chant older than this field can't read a kinds file that uses it."
         },
         "config": {
           "type": "object",
-          "description": "The lexicon's config namespace for the reader project, such as terraform's roots. Placeholders are substituted; nothing else is interpreted."
+          "description": "With lexicon, the lexicon's config namespace for the reader project, such as terraform's roots. With reader, the config object the module is called with (optional). Placeholders are substituted; nothing else is interpreted."
         }
       },
+      "if": { "properties": { "reader": true }, "required": ["reader"] },
+      "then": { "not": { "properties": { "lexicon": true }, "required": ["lexicon"] } },
+      "else": { "properties": { "lexicon": true, "config": true }, "required": ["lexicon", "config"] },
       "patternProperties": {
         "^x-": true
       },

@@ -284,6 +284,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.emit = args[++i];
     } else if (arg === "--dry-run") {
       result.dryRun = true;
+    } else if (arg === "--drill") {
+      // #3177 — `chant workspace exit --drill` runs the exit on a scratch copy.
+      result.drill = true;
     } else if (arg === "--yes") {
       result.yes = true;
     } else if (arg === "--push") {
@@ -922,6 +925,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
       result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
+    } else if (arg === "--input" || arg === "--org" || arg === "--endpoint") {
+      // `chant workspace init --from tfc|spacelift` (#3178): an exported file instead of the API, the Terraform Cloud organization, the Spacelift GraphQL endpoint.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg === "--input" ? "file" : arg.slice(2)}>`);
+      result[arg.slice(2) as "input" | "org" | "endpoint"] = value;
     } else if (arg === "--signer") {
       // `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign.
       const value = args[++i];

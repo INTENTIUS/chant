@@ -614,6 +614,16 @@ Workspace (level 1, #2524):
                         write it only on confirmation (--yes writes without
                         asking; --name <name> names the workspace; --verbose
                         lists every file leaving the root project)
+                        --from tfc|spacelift|backstage proposes from a
+                        Terraform Cloud organization (--org, or --input <export>),
+                        a Spacelift account (--endpoint, or --input <export>) or
+                        the catalog-info.yaml files under dir, and shows what
+                        it left out (#3178)
+  workspace promote <member> [--state <tfstate>] [--lexicon <name>] [--dry-run] [--output <patch>] [--json]
+                        Move a member one rung up the kind ladder (terraform to
+                        choudoufu runs live-check and the adoption report;
+                        choudoufu or other to chant runs chant import), staged
+                        in a worktree and gated on the patch digest like upgrade
   workspace ls [dir]    List the declaration's members and example groups.
                         A member that can't be read is listed with a reason
                         code and still exits 0. --at <rev> reads a commit's
@@ -861,6 +871,15 @@ Workspace (level 1, #2524):
                         manual steps. Needs no workspace file
   workspace lineage resolve <path>
                         Close a manual step once the file is merged by hand
+  workspace exit [<member>...] [--dry-run] [--drill] [--output <file>] [--json]
+                        Leave chant: build each chant member once, commit the
+                        native output (CloudFormation, ARM, Kubernetes YAML,
+                        Compose, CI files), point its CI at the platform's own
+                        CLI, drop the chant dependencies and set the member to
+                        other. Staged in a worktree and gated on the patch
+                        digest (chant approve workspace-exit <scope>). op.json
+                        files stay. --drill runs it on a scratch copy and
+                        checks each member, changing nothing.
   workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <file>]
                         Bring a lineage scope to a newer template version: fetch
                         it, migrate and merge per file in a worktree, run build,
@@ -1655,6 +1674,9 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace metrics", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/delivery-metrics")).runWorkspaceMetrics(ctx) },
   { name: "workspace status", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
+  { name: "workspace exit", handler: async (ctx) => (await import("../workspace/exit-cli")).runWorkspaceExit(ctx) },
+  // #3178 — move a member one rung up the kind ladder, staged in a worktree and gated on the patch digest.
+  { name: "workspace promote", handler: async (ctx) => (await import("../workspace/promote")).runWorkspacePromote(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   // #2551 — adopt a lineage, the hash index it matches against, and the versions of a family of workspaces.
   { name: "workspace adopt-lineage", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceAdoptLineage(ctx) },

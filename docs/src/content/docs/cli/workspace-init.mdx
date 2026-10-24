@@ -26,6 +26,7 @@ It runs no project code. It reads file names, `package.json` files, and the text
 | a `chant.config.ts` or `chant.config.json` at the root | a `chant` member with directory `"."`, named `root` |
 | any other outermost chant project | a `chant` member |
 | a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at |
+| a directory that a [kind from an installed package](/chant/reference/workspace-kinds/#platform-kinds) claims, outside any other member (a chart, a kustomize overlay, an Argo app) | a member of that kind, with the package added to `pins`. It replaces the `other` member the same directory would get |
 | an npm workspace package, or any other `package.json` outside those, with no chant project | an `other` member, with a `because` |
 | chant projects under an `examples`, `example`, `samples`, `test`, `tests` or `fixtures` directory | an [example group](/chant/reference/workspace-declaration/#example-groups) |
 
@@ -63,6 +64,40 @@ Once the file is written, root-level `chant build`, `lint`, `run` and `audit` st
 | `infra` | The same records, and an estate member, `network`, a chant project on the terraform lexicon. Its box block declares only the factory, checked by a lint and a build, with no app member and no box services, so the factory runs on a fountain steward |
 
 [`chant init --from`](/chant/cli/init/) copies the profile from `reference-workspace/profiles/<profile>` in the chant repository at the tag of the chant you run (`chant-v<version>`). The copy has a lineage lock, so [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) takes later versions of it. `--from` reads the profiles from another `<repo>@<ref>`, or from a chant checkout on disk. `--param name=<display name>` sets the name the stub app shows, and `--name` sets the declaration's `name`. Each profile passes [`chant workspace check`](/chant/cli/workspace-check/) as it is copied.
+
+## Importing from Terraform Cloud, Spacelift or Backstage
+
+```
+chant workspace init --from tfc --org <organization> [--input <export.json>] [--token <token>] [dir] [--yes]
+chant workspace init --from spacelift --endpoint <https://acme.app.spacelift.io/graphql> [--input <export.json>] [--token <token>] [dir] [--yes]
+chant workspace init --from backstage [dir] [--name <name>] [--yes]
+```
+
+`--from tfc|spacelift|backstage` ([#3178](https://github.com/INTENTIUS/chant/issues/3178)) proposes members, links, environments and constraint records from structure a repository does not hold. Like plain `init`, it prints the proposal and what it left out, and writes only on confirmation. Confirming writes `chant.workspace.json` and `chant-import.<source>.json`, which holds the environments, the constraint records and the left-out list.
+
+| Source | Read from | Becomes |
+|---|---|---|
+| Terraform Cloud | the API (token in `--token`, `TFE_TOKEN` or `TF_TOKEN_app_terraform_io`) or an exported file with `--input` | a workspace is a `terraform` member at its working directory; a run trigger is a link to the source's `applied` output; an `env:` tag is an environment; a policy set is a constraint record |
+| Spacelift | the GraphQL API (`--endpoint`, token in `--token` or `SPACELIFT_API_TOKEN`) or `--input` | a Terraform or OpenTofu stack is a `terraform` member, any other vendor an `other` member; a dependency is a link on the output it references, else `applied`; an `env:` label is an environment; a policy is a constraint record |
+| Backstage | the `catalog-info.yaml` files under `dir` | a Component or Resource is an `other` member; `dependsOn` and `consumesApis` are links to a `catalog` output; `spec.lifecycle` is an environment |
+
+A member is one directory, so workspaces or stacks that share a working directory fold into the first, and the output says so. Variable values, VCS connections, contexts, state and Backstage groups, users and systems are left out, each listed with a count and a reason. The `terraform` kind comes from `@intentius/chant-lexicon-terraform`, so pin that package before `chant workspace check` reads the members. The API readers only read, and are listed under "Importing structure from another tool" in the [network egress](/chant/reference/network-egress/) page.
+
+## Promoting a member
+
+```
+chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexicon>] [--dry-run] [--output <patch>] [--json]
+```
+
+`promote` moves one member one rung up the kind ladder. It stages the change in a git worktree at HEAD and gates it on the patch digest, as [`workspace upgrade`](/chant/cli/workspace-upgrade/) does: the first run records a pending gate and exits 3, `chant approve workspace-promote <member>` approves that digest, and the same command run again applies the patch.
+
+| From | To | Staging runs |
+|---|---|---|
+| `terraform` | `choudoufu` | `choudoufu live-check`, then the read-only `choudoufu live-import` report (needs `--state`). After the approved patch is applied, `live-import -approve` stamps the ownership markers |
+| `choudoufu` | `chant` | `chant import` of the member's directory (`--lexicon` defaults to `terraform`) |
+| `other` | `chant` | `chant import` (needs `--lexicon`) |
+
+A failing check stops before any gate is recorded, and the tree is unchanged. A member of kind `chant` has no rung above it.
 
 ## Ownership stacks
 

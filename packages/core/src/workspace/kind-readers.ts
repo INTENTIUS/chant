@@ -20,6 +20,12 @@
  *   package, found from the workspace root as the kind's pin was. The lexicon
  *   chant loads is then the one the declaration pins.
  *
+ * A kind whose `graph` names a `reader` module instead (#4413) gets a
+ * project with `lexicons: []` and `graph.reader` set to the module, which the
+ * supplying package ships, so any package can supply one. The member's own
+ * `chant graph` loads it there, under the member's toolchain, and prints the
+ * IR it returns. There is no lexicon to link.
+ *
  * Nothing is written under the workspace, and the projects are removed when
  * the read ends. A lexicon that can't be found where its pin says fails the
  * member with `command-failed` and says what to install; the other members
@@ -57,6 +63,7 @@ function real(path: string): string {
 /** Why a unit's lexicon can't be loaded from `root`, or the `node_modules` to link. */
 function lexiconModules(unit: RunUnit, root: string): { modules: string } | { message: string } {
   const reader = unit.reader!;
+  if (!reader.lexicon) return { message: `kind ${unit.kind} names no lexicon` };
   const name = lexiconPackageName(reader.lexicon);
   const installed = findInstalledPackage(name, root);
   if (!installed) {
@@ -89,6 +96,16 @@ export function prepareKindReaders(plan: MemberPlan, root: string): PreparedRead
     for (const group of plan.groups) {
       group.units = group.units.filter((unit) => {
         if (!unit.reader) return true;
+        if (unit.reader.readerFile) {
+          // A graph reader module (#4413): no lexicon and no node_modules link. The module sits in the pinned package and resolves its own imports from there.
+          scratch ??= mkdtempSync(join(tmpdir(), "chant-ws-reader-"));
+          const project = join(scratch, unit.id);
+          mkdirSync(project, { recursive: true });
+          const config = substituteGraphConfig(unit.reader.config, { member: unit.member, dir: unit.abs, workspace: root });
+          writeFileSync(join(project, "chant.config.json"), `${JSON.stringify({ lexicons: [], graph: { lint: "report", reader: { module: unit.reader.readerFile, config } } }, null, 2)}\n`);
+          unit.abs = project;
+          return true;
+        }
         const found = lexiconModules(unit, root);
         if ("message" in found) {
           failed.push({ name: unit.member, dir: unit.dir, kind: unit.kind, reason: { code: "command-failed", message: found.message } });
@@ -101,7 +118,7 @@ export function prepareKindReaders(plan: MemberPlan, root: string): PreparedRead
         // `graph.lint: "report"` (behold#919): chant did not author a reader
         // member's source, so a lint error there is a finding about it, carried
         // on the member's `meta.lint`, not a reason to leave it out of the graph.
-        writeFileSync(join(project, "chant.config.json"), `${JSON.stringify({ lexicons: [unit.reader.lexicon], [unit.reader.lexicon]: config, graph: { lint: "report" } }, null, 2)}\n`);
+        writeFileSync(join(project, "chant.config.json"), `${JSON.stringify({ lexicons: [unit.reader.lexicon!], [unit.reader.lexicon!]: config, graph: { lint: "report" } }, null, 2)}\n`);
         symlinkSync(found.modules, join(project, "node_modules"), "dir");
         unit.abs = project;
         return true;

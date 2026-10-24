@@ -69,6 +69,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].probe.anyBlock` | `in`, file names as in `anyFile`, and `blocks`, block names. The probe passes when a file directly in the directory whose name matches `in` has a line that opens one of those blocks with no label, such as `live {`. Leading space is allowed, and no file is parsed |
 | `kinds[].probe.anyJsonKey` | `in`, file names as in `anyFile`, and `pointers`, JSON Pointers such as `/scripts/start`. The probe passes when a file directly in the directory whose name matches `in` parses as JSON and has a value at one of the pointers. A file that isn't JSON is no evidence either way. Added in chant 0.103.0 ([#3151](https://github.com/INTENTIUS/chant/issues/3151)) |
 | `kinds[].probe.anyLine` | `in`, file names as in `anyFile`, and `starts`, line openings. The probe passes when a file directly in the directory whose name matches `in` has a line that starts with one of them, after leading space and ignoring case. A goose directory is found by `-- +goose up` ([#4400](https://github.com/INTENTIUS/chant/issues/4400)) |
+| `kinds[].probe.anyDocument` | `in`, file names as in `anyFile`, and `match`, a list of entries that each map JSON Pointers to the values allowed there. The probe passes when a file directly in the directory whose name matches `in` parses as YAML or JSON, and one of its documents (a YAML file may hold several) has every pointer of one entry at a value matching one of that pointer's patterns. A `*` in a pattern matches any run of characters, so `["*"]` means the pointer has a value. A file that doesn't parse is no evidence either way. Added for [#3179](https://github.com/INTENTIUS/chant/issues/3179) |
 | `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
 | `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
@@ -127,10 +128,28 @@ A kind's members are directories chant can probe, but a directory of `.tf` files
 
 | Field | Value |
 |---|---|
-| `graph.lexicon` | The lexicon that reads the member, by name. The package that supplies the kind must be `@intentius/chant-lexicon-<lexicon>`, so the lexicon chant loads is the one the declaration pins. A kind whose package has another name keeps its probe and loses its `graph` block, with a `WSP002` problem |
-| `graph.config` | The lexicon's config namespace for the reader project. In every string key and value, `{member}` becomes the member's name, `{dir}` its absolute directory and `{workspace}` the absolute workspace root. Nothing else is interpreted |
+| `graph.lexicon` | The lexicon that reads the member, by name. The package that supplies the kind must be `@intentius/chant-lexicon-<lexicon>`, so the lexicon chant loads is the one the declaration pins. A kind whose package has another name keeps its probe and loses its `graph` block, with a `WSP002` problem. Not with `graph.reader` |
+| `graph.reader` | A [graph reader module](#a-graph-reader-from-any-package), as a path inside the supplying package. Any package may supply it. Not with `graph.lexicon` |
+| `graph.config` | The lexicon's config namespace for the reader project (required with `lexicon`), or the config the reader module is called with (optional with `reader`). In every string key and value, `{member}` becomes the member's name, `{dir}` its absolute directory and `{workspace}` the absolute workspace root. Nothing else is interpreted |
 
 For each member, `chant workspace graph` writes a reader project in a temporary directory: a `chant.config.json` with `lexicons: [<lexicon>]` and `config` under the lexicon's key, and a `node_modules` link to the directory that holds the pinned package. The member's `chant graph --format ir` runs there, and the project is removed afterwards. Nothing is written under the workspace. The block is data like the rest of the file: listing a workspace still imports nothing, and only `graph` loads the lexicon.
+
+### A graph reader from any package
+
+A lexicon is not the only package with something to draw. A package that is not a lexicon, such as a forge warden, can supply a graph reader instead ([#4413](https://github.com/INTENTIUS/chant/issues/4413)). The kind's `graph` block names a module in the package, in place of a lexicon:
+
+```json
+{
+  "name": "forge-governance",
+  "graph": { "reader": "dist/graph-reader.mjs", "config": { "dir": "{dir}" } }
+}
+```
+
+The module is an ES module inside the package, so a path that leaves it, or a file that is missing, is a `WSP002` problem and the kind keeps its probe without a `graph` block. Its default export takes `{ dir, config }`, with `config` as the block gives it (placeholders substituted) and `dir` taken from `config.dir`, and returns graph IR, `{ nodes, edges }` with optional `groups` and `meta`. It may be async.
+
+For each member, `chant workspace graph` writes a reader project in a temporary directory, as for a lexicon, with a `chant.config.json` that declares no lexicon and sets `graph.reader` to the module and its config. The member's own `chant graph --format ir` loads the module there, so it runs under the member's toolchain, and the project is removed afterwards. A chant from before the field can't read a kinds file that uses it, and a member's own chant from before it ignores `graph.reader` and has nothing to print, so the member fails.
+
+The reader is code from the package the declaration pins, and the contract is that it reads files and returns data: it takes no forge or network call, and writes nothing. chant enforces the part it can. The module must sit inside the package, it is imported only by `chant graph` and never when the kinds are read or the workspace is listed or checked, and its output is validated as graph IR like any member's. The graph cache keys a reader member on the module's size and modification time, so an edit shows without a new package version.
 
 ### Links read from a member's files
 
@@ -256,6 +275,27 @@ Both kinds carry a `graph` block, so `chant workspace graph` reads their members
 ```
 
 The chant repo pins both by path and declares `examples/terraform-carve-out/terraform` as a `terraform` member.
+
+## Forge governance from the wardens
+
+The three wardens, [github-warden](https://github.com/INTENTIUS/github-warden), [gitlab-warden](https://github.com/INTENTIUS/gitlab-warden) and [forgejo-warden](https://github.com/INTENTIUS/forgejo-warden), each ship a `forge-governance` kind as a data-only kinds file ([#3180](https://github.com/INTENTIUS/chant/issues/3180)). A repo that holds a warden policy declares the policy's directory as a member of that kind, so the forge state the warden keeps appears in `chant workspace ls` and `chant workspace graph` with the rest of the estate. It needs no new field: the kind uses a probe, `outputs` and a [`memberFile`](#a-members-own-file), and a workspace pins the one warden whose forge it governs.
+
+| Warden | Probe and member file | Outputs |
+|---|---|---|
+| `@intentius/github-warden` | `governance.yml`, by convention in `.github/` | `repos`, `teams` |
+| `@intentius/gitlab-warden` | `governance.yaml` | `repos`, `teams` |
+| `@intentius/forgejo-warden` | `governance.yml` | `repos`, `teams` |
+
+```json
+{
+  "pins": [{ "package": "@intentius/github-warden", "version": "<release with the kind>" }],
+  "members": [{ "name": "forge", "dir": ".github", "kind": "forge-governance" }]
+}
+```
+
+Each package checks its file against a JSON Schema it ships, so `chant workspace check` fails a policy with a misspelled or misplaced field as `WSP012` before the warden reconciles it. `repos` and `teams` are the names a [member link](/chant/reference/workspace-declaration/#member-links) can point at. For gitlab-warden, `repos` stands for projects and `teams` for groups.
+
+Each kind carries a `graph.reader` block ([above](#a-graph-reader-from-any-package)), since a warden is not a lexicon. The reader turns the governance YAML into graph IR with no forge call: nodes for the org, its repos, teams, rulesets (branch protection on gitlab-warden and forgejo-warden) and apps, and edges for a team's access to a repo and a ruleset's reach over a repo. It draws the policy as declared. Coloring a node by drift needs the warden's live read and is not part of it. Binding a reconcile to a gate, and a warden generating or checking the org-level workspace that [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) describe, are separate work.
 
 ## dbt
 
@@ -405,6 +445,36 @@ The file also holds a SHA-256 digest of the migration files it ran, and for Flyw
   ]
 }
 ```
+
+## Platform kinds
+
+Seven kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate. All seven have a `graph` block, so [`chant workspace graph`](/chant/cli/workspace-graph/) draws their members (see [below](#how-the-platform-kinds-are-read)).
+
+| Kind | Package | Precedence | Probe |
+|---|---|---|---|
+| `argo-app` | `@intentius/chant-lexicon-k8s` | 360 | a YAML file with `apiVersion: argoproj.io/*` and `kind: Application` |
+| `flux-kustomization` | `@intentius/chant-lexicon-k8s` | 350 | a YAML file with `apiVersion: kustomize.toolkit.fluxcd.io/*` and `kind: Kustomization`. kustomize's own `kustomization.yaml` uses another apiVersion and isn't claimed |
+| `kustomize` | `@intentius/chant-lexicon-k8s` | 340 | `kustomization.yaml`, `kustomization.yml` or `Kustomization` |
+| `helm-chart` | `@intentius/chant-lexicon-helm` | 330 | `Chart.yaml`, which the kind also checks (`apiVersion`, `name`, `version`) |
+| `cloudformation` | `@intentius/chant-lexicon-aws` | 320 | a `.yaml`, `.yml`, `.json` or `.template` file with `AWSTemplateFormatVersion` or `Resources` at its top. YAML short-form tags such as `!Ref` are allowed |
+| `cdk` | `@intentius/chant-lexicon-aws` | 315 | `cdk.json`, which the kind also checks (`app`) |
+| `pulumi` | `@intentius/chant-lexicon-terraform` | 310 | `Pulumi.yaml`, which the kind also checks (`name`, `runtime`). No lexicon knows Pulumi, so the kind rides with the one that supplies the other infrastructure engines' kinds |
+
+[`chant workspace init`](/chant/cli/workspace-init/) proposes these kinds, and pins the packages, when the packages are installed at the root.
+
+### How the platform kinds are read
+
+| Kind | What the graph holds | Needs |
+|---|---|---|
+| `argo-app` | an `Application` per document, as a node | nothing; the manifests are read as data |
+| `flux-kustomization` | a Flux `Kustomization` per document, as a node | nothing |
+| `cloudformation` | a node per resource; an edge per `Ref`, `Fn::GetAtt`, `Fn::Sub` reference and `DependsOn` between resources of the template | nothing |
+| `kustomize` | the objects `kustomize build` renders, as nodes | `kustomize`, or `kubectl` |
+| `helm-chart` | the objects `helm template` renders, as nodes | `helm` |
+| `cdk` | the same as `cloudformation`, over the templates in the app's cloud assembly (`cdk.out`, or the `output` of `cdk.json`) | an assembly the app already synthesized. chant does not run the app |
+| `pulumi` | the resources of the `pulumi stack export` JSON checked in beside `Pulumi.yaml` as `stack-export.json`, as nodes; an edge per `dependencies` entry and `parent` between them. Provider resources are left out, and inputs are not copied | an export the member has checked in. chant does not run the program |
+
+A node's id is `<member>/<kind><name>`, such as `web/deploymentWeb`. A member whose render or assembly is missing is still listed, with no nodes, and its graph says why under `meta`: `k8sMember` for kustomize (`rendered: false`), `helmMember` for helm (`rendered: false`), `awsMember` for cdk (`synthesized: false`), `pulumiMember` for pulumi (`exported: false`), each with a `reason`. A render the tool ran and refused, such as a broken overlay, fails the member with `command-failed`.
 
 ## Overlapping probes
 

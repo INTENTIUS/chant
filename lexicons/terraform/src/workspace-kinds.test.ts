@@ -6,7 +6,9 @@
  * sidecar or a live block, which this lexicon's choudoufu mode reads.
  */
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { describeWorkspaceKindConformance } from "@intentius/chant-test-utils";
+import { checkMemberFile, loadMemberFileSchema, readPackageKinds } from "../../../packages/core/src/workspace/kinds";
 
 const main = `terraform {\n  required_version = ">= 1.5.0"\n}\n\nresource "null_resource" "x" {}\n`;
 
@@ -24,5 +26,24 @@ describeWorkspaceKindConformance({
     { name: "a root with the estate.chdf.hcl sidecar", kind: "choudoufu", files: { "main.tf": main, "estate.chdf.hcl": "" }, claims: true },
     { name: "a root with a live block", kind: "choudoufu", files: { "main.tf": main + '\nlive {\n  name = "prod"\n}\n' }, claims: true },
     { name: "a stock root", kind: "choudoufu", files: { "main.tf": main }, claims: false },
+    // The pulumi kind (#3179) is a probe and a check of Pulumi.yaml.
+    { name: "a Pulumi program", kind: "pulumi", files: { "Pulumi.yaml": "name: app\nruntime: nodejs\n", "index.ts": "" }, claims: true },
+    { name: "a Pulumi program one level down", kind: "pulumi", files: { "infra/Pulumi.yaml": "name: app\nruntime: nodejs\n" }, claims: false },
+    { name: "a stack file alone", kind: "pulumi", files: { "Pulumi.dev.yaml": "config: {}\n" }, claims: false },
   ],
+});
+
+describe("pulumi member file", () => {
+  const packageDir = join(import.meta.dirname, "..");
+  const memberFile = readPackageKinds(packageDir).kinds.find((k) => k.name === "pulumi")!.memberFile!;
+  it("names a schema that loads", () => {
+    expect(loadMemberFileSchema(memberFile, packageDir)).toBeUndefined();
+  });
+  it("passes a program with a runtime, named or in an object", () => {
+    expect(checkMemberFile(memberFile, "Pulumi.yaml", "name: app\nruntime: nodejs\n")).toEqual([]);
+    expect(checkMemberFile(memberFile, "Pulumi.yaml", "name: app\nruntime:\n  name: python\n")).toEqual([]);
+  });
+  it("fails one with no runtime", () => {
+    expect(checkMemberFile(memberFile, "Pulumi.yaml", "name: app\n").length).toBeGreaterThan(0);
+  });
 });
