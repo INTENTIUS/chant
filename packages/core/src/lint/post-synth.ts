@@ -192,6 +192,11 @@ export interface PostSynthDiagnostic {
     /** Where it is missing from (e.g. a root module name). */
     scope: string;
   };
+  /**
+   * The build root the finding is about, set by a {@link CrossRootCheck}
+   * (chant #1939). Absent from a per-build finding.
+   */
+  root?: string;
 }
 
 /**
@@ -214,16 +219,26 @@ export interface PostSynthCheck {
    * new check would otherwise change the audit output of every project.
    */
   auditOptIn?: boolean;
+  /**
+   * `"build"`, the default: the check sees one build. A check that reads
+   * across build roots is a {@link CrossRootCheck} instead (chant #1939).
+   */
+  scope?: "build";
 }
 
-/** Structural type guard — used to collect project-authored policy checks. */
+/**
+ * Structural type guard — used to collect project-authored policy checks.
+ * A {@link CrossRootCheck} is not a `PostSynthCheck`, so a policy module or a
+ * lexicon's check directory that exports one never puts it in a per-build run.
+ */
 export function isPostSynthCheck(value: unknown): value is PostSynthCheck {
   return (
     typeof value === "object" &&
     value !== null &&
     typeof (value as PostSynthCheck).id === "string" &&
     typeof (value as PostSynthCheck).description === "string" &&
-    typeof (value as PostSynthCheck).check === "function"
+    typeof (value as PostSynthCheck).check === "function" &&
+    (value as { scope?: unknown }).scope !== "cross-root"
   );
 }
 
@@ -259,8 +274,174 @@ export function runPostSynthChecks(
 
   const diagnostics: PostSynthDiagnostic[] = [];
   for (const check of checks) {
+    // chant #1939: a cross-root check never runs in a per-build pass, even
+    // when a caller hands one over untyped. runCrossRootChecks runs it.
+    if ((check as { scope?: unknown }).scope === "cross-root") continue;
     diagnostics.push(...check.check(ctx));
   }
+  return diagnostics;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-build-root mode (chant #1939)
+// ---------------------------------------------------------------------------
+
+/**
+ * One build root handed to {@link runCrossRootChecks}: a name, and the build
+ * result the caller already has for it. The caller decides what a root is
+ * (a workspace member, a project directory, an environment's build) and
+ * builds it; this module never builds or reads the disk.
+ */
+export interface CrossRootInput {
+  /**
+   * The root's name, unique within one run. A workspace member's name, or a
+   * project-relative path. Findings name it in {@link PostSynthDiagnostic.root}.
+   */
+  root: string;
+  /** The root's directory, when it has one. */
+  dir?: string;
+  /** The environment this root was built for, when known. */
+  env?: string;
+  buildResult: PostSynthContext["buildResult"];
+  projectConfig?: Record<string, unknown>;
+}
+
+/**
+ * One build root as a cross-root check sees it: an ordinary
+ * {@link PostSynthContext} over that root's build, so a per-build helper
+ * (k8s's `allManifests(ctx)`) works on it unchanged, plus its name.
+ */
+export interface BuildRootView extends PostSynthContext {
+  readonly root: string;
+  readonly dir?: string;
+  readonly docs: OutputDoc[];
+}
+
+/** An {@link OutputDoc} tagged with the build root it came from. */
+export interface RootedOutputDoc extends OutputDoc {
+  root: string;
+}
+
+/** An entity tagged with the build root that declared it. */
+export interface RootedEntity {
+  root: string;
+  name: string;
+  entity: Declarable;
+}
+
+/**
+ * Context provided to a {@link CrossRootCheck}. `roots` keeps every root's
+ * build apart; `docs` and `entities` are the union across roots, each entry
+ * tagged with its root, built lazily on first access.
+ */
+export interface CrossRootContext {
+  /** Every root in the run, in the order the caller gave them. */
+  readonly roots: readonly BuildRootView[];
+  /** Look a root up by name. */
+  root(name: string): BuildRootView | undefined;
+  /** Every root's parsed output documents, tagged by root. Lazy. */
+  readonly docs: readonly RootedOutputDoc[];
+  /** Every root's entities, tagged by root. Lazy. */
+  readonly entities: readonly RootedEntity[];
+  /** The run's environment, when the caller set one for the whole run. */
+  readonly env?: string;
+  readonly activityContracts?: ReadonlyMap<string, ActivityContract>;
+}
+
+/**
+ * A check that reads across build roots (chant #1939). It declares
+ * `scope: "cross-root"`, and only {@link runCrossRootChecks} runs it:
+ * `chant build`, `chant lint` and every other per-build pass skip it, so a
+ * project that never asks for a cross-root run pays nothing for it.
+ */
+export interface CrossRootCheck {
+  id: string;
+  description: string;
+  scope: "cross-root";
+  check(ctx: CrossRootContext): PostSynthDiagnostic[];
+  /** As {@link PostSynthCheck.auditOptIn}. */
+  auditOptIn?: boolean;
+}
+
+/** Structural type guard for {@link CrossRootCheck}. */
+export function isCrossRootCheck(value: unknown): value is CrossRootCheck {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as CrossRootCheck).id === "string" &&
+    typeof (value as CrossRootCheck).description === "string" &&
+    typeof (value as CrossRootCheck).check === "function" &&
+    (value as CrossRootCheck).scope === "cross-root"
+  );
+}
+
+/**
+ * Build the {@link CrossRootContext} for a set of roots. Exported for tests
+ * and for a caller that runs checks itself; most callers want
+ * {@link runCrossRootChecks}. Throws on an empty or duplicate root name.
+ */
+export function createCrossRootContext(
+  inputs: readonly CrossRootInput[],
+  opts?: { env?: string; activityContracts?: ReadonlyMap<string, ActivityContract> },
+): CrossRootContext {
+  const seen = new Set<string>();
+  const roots: BuildRootView[] = inputs.map((input) => {
+    if (input.root.length === 0) throw new Error("cross-root run: a build root needs a name");
+    if (seen.has(input.root)) throw new Error(`cross-root run: build root "${input.root}" appears twice`);
+    seen.add(input.root);
+    const getDocs = createDocsAccessor(input.buildResult.outputs);
+    const env = input.env ?? opts?.env;
+    return {
+      root: input.root,
+      ...(input.dir ? { dir: input.dir, projectDir: input.dir } : {}),
+      outputs: input.buildResult.outputs,
+      entities: input.buildResult.entities,
+      env,
+      buildResult: input.buildResult,
+      ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
+      ...(input.projectConfig ? { projectConfig: input.projectConfig } : {}),
+      get docs(): OutputDoc[] {
+        return getDocs();
+      },
+    };
+  });
+  const byName = new Map(roots.map((r) => [r.root, r]));
+  let docs: RootedOutputDoc[] | undefined;
+  let entities: RootedEntity[] | undefined;
+  return {
+    roots,
+    root: (name) => byName.get(name),
+    get docs(): readonly RootedOutputDoc[] {
+      docs ??= roots.flatMap((r) => r.docs.map((d) => ({ ...d, root: r.root })));
+      return docs;
+    },
+    get entities(): readonly RootedEntity[] {
+      entities ??= roots.flatMap((r) =>
+        [...r.entities].map(([name, entity]) => ({ root: r.root, name, entity })),
+      );
+      return entities;
+    },
+    ...(opts?.env ? { env: opts.env } : {}),
+    ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
+  };
+}
+
+/**
+ * Run the cross-root checks in `checks` over `roots` (chant #1939). Anything
+ * in `checks` that is not a {@link CrossRootCheck} is skipped, so a caller can
+ * pass a lexicon's whole check list. With no cross-root check to run it
+ * returns at once, without building a context.
+ */
+export function runCrossRootChecks(
+  checks: ReadonlyArray<CrossRootCheck | PostSynthCheck>,
+  roots: readonly CrossRootInput[],
+  opts?: { env?: string; activityContracts?: ReadonlyMap<string, ActivityContract> },
+): PostSynthDiagnostic[] {
+  const selected = checks.filter(isCrossRootCheck);
+  if (selected.length === 0) return [];
+  const ctx = createCrossRootContext(roots, opts);
+  const diagnostics: PostSynthDiagnostic[] = [];
+  for (const check of selected) diagnostics.push(...check.check(ctx));
   return diagnostics;
 }
 
