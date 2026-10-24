@@ -991,6 +991,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.url = args[++i];
     } else if (arg === "--op") {
       result.op = args[++i];
+    } else if (arg === "--where") {
+      // #4363 — a typed filter on a contract read; repeatable, every clause has to hold.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("--")) throw new Error("--where needs a clause: --where <field><op><value>");
+      result.where = [...(result.where ?? []), value];
     } else if (arg === "--since") {
       result.since = args[++i];
     } else if (arg === "--limit") {

@@ -183,7 +183,14 @@ Commands:
                         the resources and snapshots each lexicon observed, Op
                         runs, gates, deploys, releases and cuts, loaded into
                         node:sqlite (schema v1, listed in chant_schema).
-                        --member <name> keeps members; --json prints rows
+                        --member <name> keeps members; --json prints rows.
+                        For a read contract, use chant ledger
+  ledger <table> [dir]  One ledger's rows from chant/lifecycle as a read
+                        contract (resources, snapshots, runs, gates, deploys,
+                        releases, cuts; the columns chant query loads).
+                        --where <field><op><value> (= != < <= > >= ~,
+                        repeatable), --since <time|7d>, --at <rev> of
+                        chant/lifecycle, --member <name>, --json
   generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
@@ -626,7 +633,7 @@ Workspace (level 1, #2524):
                         restore, from the deploy records, releases and ci
                         revoked tags. Eight weeks back by default. Read only;
                         never fetches. --json prints the read-contract document
-  workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
+  workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--where <field><op><value>]... [--json]
                         Without --kind, every record kind the declaration
                         names. Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
@@ -639,7 +646,9 @@ Workspace (level 1, #2524):
                         asset-drift or asset-missing. In the working tree,
                         each record says whether it is committed, modified
                         or new against HEAD, with the branch and base;
-                        --uncommitted lists only the modified and new ones
+                        --uncommitted lists only the modified and new ones;
+                        --where keeps the records a typed filter matches
+                        (id, path, state, valid, data.<key>, ...)
   workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
                         What changed in the records between <rev> and --at
                         (default: the working tree): new and removed records,
@@ -709,14 +718,16 @@ Workspace (level 1, #2524):
                         a url or a path pinned by hash) is appended to the
                         item's pins through records amend. Prints the
                         work-evidence document and never commits
-  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
+  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--where <field><op><value>]... [--follow-squash] [--json]
                         The agent runs in the run ledger on chant/lifecycle, each
                         with its model, tokens, cost and the commits it made,
                         and totals per work item, decision and principal; a run
                         that reports no cost is listed as unpriced, never zero.
                         Read-only, never fetches; --follow-squash joins each
                         squash merge to its pull request's runs, fetching a
-                        missing refs/pull/<n>/head from origin
+                        missing refs/pull/<n>/head from origin; --where keeps
+                        the runs a typed filter matches (state, model,
+                        startedAt, cost.amount, ...) before the totals
   workspace runs start --from <file|->
                         Record that an agent run started: who it worked for,
                         its harness, model, work item and lease. Prints the run
@@ -1498,6 +1509,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "search", handler: runSearch },
   // #4297 — SQL over the snapshots, runs, gates, deploys and releases on chant/lifecycle. Imported on first use.
   { name: "query", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/query")).runQueryCommand(ctx) },
+  { name: "ledger", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ledger")).runLedgerCommand(ctx) },
   // chant#2591 — `import --agents` and `audit` read chant.config statically
   // and never evaluate it (chant#2589 for audit, which audits code it must not run).
   { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },

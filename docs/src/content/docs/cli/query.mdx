@@ -27,6 +27,8 @@ Only a statement that begins with `SELECT`, `WITH` or `VALUES` runs, and the dat
 
 Inside a workspace the command reads every member's ledger and each row names its member, as `packages/core/src/cli/handlers/query.ts:44` sets it. Outside a workspace it reads the project's own ledger and leaves `member` NULL. The engine is the SQLite built into Node from version `22.13`, `node:sqlite`.
 
+For a reader that needs a contract, such as an agent or another product, use [`chant ledger`](/chant/cli/ledger/) instead: the same tables and rows as a JSON read contract, filtered with typed `--where`, `--since` and `--at` filters and no SQL engine ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). `chant query` stays as it is for now, since terragucci reads through it.
+
 ## Tables
 
 Every table starts with `member`. A column marked JSON holds JSON text for `json_extract`, and a column is TEXT unless it is marked INTEGER.

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json",
+  "title": "chant ledger output",
+  "description": "What `chant ledger <table> --json` prints (#4363): the rows of one ledger on the local chant/lifecycle branch, filtered with typed filters instead of SQL. The tables and columns are the ones `chant query` loads (schema version 1 of its tables); a column chant query keeps as JSON text is an object or array here, and `signed` and `empty` are booleans. It reads the local branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "The rows that every filter matched. Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "table",
+        "columns",
+        "at",
+        "filter",
+        "total",
+        "rows",
+        "malformed"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "table": {
+          "enum": [
+            "resources",
+            "snapshots",
+            "runs",
+            "gates",
+            "deploys",
+            "releases",
+            "cuts"
+          ],
+          "description": "The table read: resources and snapshots from each lexicon's snapshots, runs from the Op run ledgers, gates from _gates/, deploys from <env>/releases.jsonl, releases and cuts from _releases/."
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The table's columns, in order. Every row has each of them."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The revision of chant/lifecycle read (--at), as given, or null for the branch tip."
+        },
+        "filter": {
+          "type": "object",
+          "required": [
+            "where",
+            "since"
+          ],
+          "properties": {
+            "where": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Each --where clause, <field><op><value>, as given. Every one held for each row listed."
+            },
+            "since": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "--since as the ISO instant it was read as, or null. The rows whose time column (observed_at, started or timestamp) is at or after it are listed."
+            }
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rows in the table before the filter."
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/row"
+          }
+        },
+        "malformed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Lines and files of this table that could not be read as their kind, left out of total and rows."
+        }
+      }
+    },
+    "row": {
+      "type": "object",
+      "description": "One row, keyed by column. Every row starts with member: the workspace member whose ledger it came from, or null outside a workspace. A value is a string, a number, a boolean, an object or array (a JSON column), or null.",
+      "required": [
+        "member"
+      ],
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "object",
+          "array",
+          "null"
+        ]
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "filter-invalid",
+                "table-unknown",
+                "revision-unknown",
+                "ledger-unreadable"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
