@@ -20,7 +20,7 @@ jobs:
       CLICKHOUSE_READER_USER: chant_reader
       CLICKHOUSE_READER_PASSWORD: '\${{ secrets.CLICKHOUSE_READER_PASSWORD }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v7
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: npm ci
       - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
       - run: chant run schema-watch
@@ -52,7 +52,7 @@ jobs:
       CLICKHOUSE_READER_USER: chant_reader
       CLICKHOUSE_READER_PASSWORD: '\${{ secrets.CLICKHOUSE_READER_PASSWORD }}'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: npm ci
       - run: echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
       - run: chant run schema-watch
