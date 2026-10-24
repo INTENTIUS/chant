@@ -3,9 +3,17 @@
  *
  * One workflow for the whole spec, on a push to its branches (and by hand),
  * one run at a time. Each job is one of core's `opWaveJobs`: a wave, or a wide
- * wave's deciding job and share jobs, chained by `needs:` so a wave that waits
- * at its gate (exit 3) or fails stops every later wave. Re-running the failed
- * jobs after `chant approve` carries on from that wave.
+ * wave's deciding job and share jobs, chained by `needs:`. Re-running the
+ * failed jobs after `chant approve` carries on from that wave.
+ *
+ * Each job keeps its outcome file as an artifact whatever its exit code
+ * (#4322), and a job with `needs:` downloads every artifact of the run into
+ * the outcome directory first. A wave or deciding job after the first runs
+ * unless the run was cancelled (`if: !cancelled()`), so it runs after a
+ * failure in the wave before: it blocks the runs that depend on a failed one
+ * and applies the rest, and it stops by itself when an earlier wave waits at
+ * its gate (exit 3) or applied nothing for another reason. A share job still
+ * needs its deciding job to succeed.
  *
  * Every job checks out the full history, because the runner reads the gate
  * policy from the spec file at the base commit and records pending gates on
@@ -43,7 +51,7 @@
  * and cannot request one for another group's identity.
  */
 
-import { notifyVariables, opWaveGroupOf, opWaveJobs, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
+import { notifyVariables, opWaveGroupOf, opWaveJobs, opWaveOutcomeDir, opWavesResumeCommand, type OpWavesSpec } from "@intentius/chant/op/op-waves";
 import type { OpWavesPipelineOptions, OpWavesPipelineResult } from "@intentius/chant/lexicon";
 import {
   assertEnvironment,
@@ -60,7 +68,7 @@ import {
   setupStepDoc,
 } from "@intentius/chant/ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } from "@intentius/chant/ci-identity";
-import { checkoutStep, concurrency, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
+import { checkoutStep, concurrency, DOWNLOAD_ARTIFACT, downloadArtifactStep, keepRecordStep, runSteps } from "./ci-jobs";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
 /** The default image: it carries git, which the runner needs to read the base commit. */
@@ -69,6 +77,11 @@ export const OP_WAVES_IMAGE = CI_IMAGE;
 /** The artifact a wide wave's deciding job hands its share jobs. */
 export function opWaveRecordArtifact(spec: Pick<OpWavesSpec, "name">, wave: number): string {
   return `${spec.name}-wave-${wave}-decision`;
+}
+
+/** The artifact a job keeps its outcome file in (#4322). */
+export function opWaveOutcomeArtifact(spec: Pick<OpWavesSpec, "name">, jobName: string): string {
+  return `${spec.name}-${jobName}-outcome`;
 }
 
 /** The workflow document, before emission, and the jobs it holds. */
@@ -100,6 +113,10 @@ export function buildGithubOpWavesDoc(
     if (job.kind === "share") {
       steps.push(downloadArtifactStep(`Download wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), dirnameOf(job.record!)));
     }
+    if (job.needs.length > 0) {
+      // #4322: every artifact of the run, so the job reads each earlier job's outcome file.
+      steps.push({ name: "Download the earlier jobs' outcomes", uses: DOWNLOAD_ARTIFACT, with: { path: opWaveOutcomeDir(spec) } });
+    }
     const later: Array<Record<string, unknown>> = [];
     later.push(...[...(wave.setup ?? []), ...(group?.setup ?? [])].map(setupStepDoc), ...runSteps(options.beforeScript ?? []));
     later.push({ name: describeJob(job.kind, job.wave, wave.name, job.share, job.group), run: job.command.join(" ") });
@@ -108,12 +125,15 @@ export function buildGithubOpWavesDoc(
     if (job.kind === "decide") {
       steps.push(keepRecordStep(`Keep wave ${job.wave}'s decision`, opWaveRecordArtifact(spec, job.wave), job.record!));
     }
+    steps.push(keepRecordStep(`Keep the job's outcome`, opWaveOutcomeArtifact(spec, job.jobName), job.outcome));
     const environment = group?.environment ?? wave.environment;
     const idTokens = group?.idTokens ?? wave.idTokens;
     const idToken = idTokens !== undefined || cloud !== undefined;
     jobsDoc[job.jobName] = {
       "runs-on": githubRunsOn(group?.runner ?? wave.runner ?? spec.runner),
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+      // #4322: a wave's jobs run after a failure in the wave before; a share job runs only on its deciding job's success.
+      ...(job.needs.length > 0 && job.kind !== "share" ? { if: "!cancelled()" } : {}),
       container: image,
       ...(environment ? { environment: environmentDoc(environment) } : {}),
       // #3914: a job's own permissions replace the workflow's, so they repeat them.
