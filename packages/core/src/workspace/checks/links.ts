@@ -22,6 +22,9 @@
  * Links a kind's reader finds in a member's own files (#3932), such as a dbt
  * project's sources, are checked by WSP093 to WSP095 like declared ones, and
  * their findings name the member's file and line instead of the declaration.
+ * Links a member's lexicon reads from its declarations (#4397), such as the
+ * tables an otel `clickhouse` exporter writes, are checked the same way, with
+ * the reader named `lexicon <name>`.
  */
 
 import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
@@ -33,11 +36,19 @@ import { DEFAULT_LINK_KIND, LINK_KINDS, TELEMETRY_LINK_KIND, linkTargetProblem, 
 const tables = new WeakMap<WorkspaceCheckContext, LinkTableRow[]>();
 const reads = new WeakMap<WorkspaceCheckContext, Map<string, KindLinkRead>>();
 
-/** What each member's kind reader found (#3932), read once per check run. */
+/**
+ * What each member's kind reader found (#3932), and the links its lexicons
+ * read from its declarations (#4397), read once per check run.
+ */
 function kindReads(ctx: WorkspaceCheckContext): Map<string, KindLinkRead> {
   let read = reads.get(ctx);
   if (!read) {
     read = readKindLinks(ctx.declaration, ctx.tree, ctx.kinds);
+    for (const [member, lexicon] of ctx.facts?.lexiconLinks ?? []) {
+      const prev = read.get(member);
+      // resolveLinks names one reader per member; the lexicon's links keep their file and line.
+      read.set(member, prev ? { ...prev, links: [...prev.links, ...lexicon.links], gaps: [...prev.gaps, ...lexicon.gaps] } : lexicon);
+    }
     reads.set(ctx, read);
   }
   return read;

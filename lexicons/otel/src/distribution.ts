@@ -138,6 +138,7 @@ export const BUILTIN_MODULES: Readonly<Record<string, string>> = Object.freeze({
   "exporter:googlecloud": `${CONTRIB}/exporter/googlecloudexporter`,
   "exporter:prometheus": `${CONTRIB}/exporter/prometheusexporter`,
   "exporter:loadbalancing": `${CONTRIB}/exporter/loadbalancingexporter`,
+  "exporter:clickhouse": `${CONTRIB}/exporter/clickhouseexporter`,
   "connector:forward": `${CORE}/connector/forwardconnector`,
   "connector:count": `${CONTRIB}/connector/countconnector`,
   "connector:routing": `${CONTRIB}/connector/routingconnector`,

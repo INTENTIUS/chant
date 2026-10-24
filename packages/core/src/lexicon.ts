@@ -24,7 +24,7 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
-import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceOutputs } from "./graph-ir";
+import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
@@ -1498,6 +1498,17 @@ export interface LexiconPlugin {
    * declarations.
    */
   workspaceOutputs?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceOutputs | undefined;
+
+  /**
+   * The outputs of other workspace members this lexicon's declarations read
+   * or write (#4397), such as the ClickHouse tables an otel `clickhouse`
+   * exporter writes. `chant workspace check` calls it offline on the member's
+   * folded source, as it calls `workspaceOutputs`, and checks each link like
+   * one a kind's reader found (WSP093 to WSP095, WSP099 for `gaps`), naming
+   * the file and line of the declaring entity. Pure: no I/O. Return
+   * `undefined` when the project declares nothing that links.
+   */
+  workspaceLinks?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceLinks | undefined;
 
   // LSP
   /** Provide completions for LSP */

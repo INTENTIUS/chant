@@ -64,7 +64,8 @@ import { SECURITY_CHECKS } from "./checks/security";
 import { CI_WORKFLOW_CHECKS } from "./checks/ci-workflow";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
-import { gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
+import { gatherLexiconLinks, gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
+import type { KindLinkRead } from "./kind-link-readers";
 
 /**
  * What the checks beyond the declaration read, gathered from the checkout
@@ -88,6 +89,8 @@ export interface WorkspaceFacts {
   boxIntents?: readonly ResolvedBoxIntent[];
   /** The outputs linked members' lexicons report about their declarations, read by folding their source (#3931). */
   lexiconOutputs?: ReadonlyMap<string, MemberLexiconOutputs>;
+  /** The links members' lexicons read from their declarations, such as an otel clickhouse exporter's tables (#4397). */
+  lexiconLinks?: ReadonlyMap<string, KindLinkRead>;
 }
 
 /** What every declaration check reads. */
@@ -534,10 +537,16 @@ export async function runDeclarationChecks(
   // A box's intent is read from the working tree's records, so not under --at (#2850).
   const boxIntents = declaredKinds && !options.tree ? await resolveBoxIntents(declaration, root, declaredKinds) : undefined;
   // A linked member's lexicons name its tables and columns as outputs (#3931); reading them folds its source, never runs it.
+  // A member's lexicons may also read other members' outputs from its declarations (#4397); their targets are read too.
+  const outputsTree = options.tree ? workingTree(root) : tree;
+  const lexiconLinks = options.gather === false ? undefined : await gatherLexiconLinks(root, declaration, outputsTree, groups, registry, { atRevision: options.tree !== undefined });
   const lexiconOutputs =
-    options.gather === false ? undefined : await gatherLexiconOutputs(root, declaration, options.tree ? workingTree(root) : tree, groups, registry, { atRevision: options.tree !== undefined });
+    options.gather === false
+      ? undefined
+      : await gatherLexiconOutputs(root, declaration, outputsTree, groups, registry, { atRevision: options.tree !== undefined, ...(lexiconLinks ? { lexiconLinks } : {}) });
   const facts: WorkspaceFacts = {
     ...(lexiconOutputs && lexiconOutputs.size > 0 ? { lexiconOutputs } : {}),
+    ...(lexiconLinks && lexiconLinks.size > 0 ? { lexiconLinks } : {}),
     ...gathered,
     ...(options.records ? { records: options.records } : {}),
     ...(declaredKinds ? { declaredKinds } : {}),
