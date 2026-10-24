@@ -256,6 +256,27 @@ Both kinds carry a `graph` block, so `chant workspace graph` reads their members
 
 The chant repo pins both by path and declares `examples/terraform-carve-out/terraform` as a `terraform` member.
 
+## Forge governance from the wardens
+
+The three wardens, [github-warden](https://github.com/INTENTIUS/github-warden), [gitlab-warden](https://github.com/INTENTIUS/gitlab-warden) and [forgejo-warden](https://github.com/INTENTIUS/forgejo-warden), each ship a `forge-governance` kind as a data-only kinds file ([#3180](https://github.com/INTENTIUS/chant/issues/3180)). A repo that holds a warden policy declares the policy's directory as a member of that kind, so the forge state the warden keeps appears in `chant workspace ls` and `chant workspace graph` with the rest of the estate. It needs no new field: the kind uses a probe, `outputs` and a [`memberFile`](#a-members-own-file), and a workspace pins the one warden whose forge it governs.
+
+| Warden | Probe and member file | Outputs |
+|---|---|---|
+| `@intentius/github-warden` | `governance.yml`, by convention in `.github/` | `repos`, `teams` |
+| `@intentius/gitlab-warden` | `governance.yaml` | `repos`, `teams` |
+| `@intentius/forgejo-warden` | `governance.yml` | `repos`, `teams` |
+
+```json
+{
+  "pins": [{ "package": "@intentius/github-warden", "version": "<release with the kind>" }],
+  "members": [{ "name": "forge", "dir": ".github", "kind": "forge-governance" }]
+}
+```
+
+Each package checks its file against a JSON Schema it ships, so `chant workspace check` fails a policy with a misspelled or misplaced field as `WSP012` before the warden reconciles it. `repos` and `teams` are the names a [member link](/chant/reference/workspace-declaration/#member-links) can point at. For gitlab-warden, `repos` stands for projects and `teams` for groups.
+
+The kinds have no `graph` block yet. A `graph` block names a lexicon, and chant only accepts it from the package `@intentius/chant-lexicon-<lexicon>`, which a warden is not. Until a warden emits graph IR and chant has a way to read it, `chant workspace graph` lists a `forge-governance` member with `kind-not-run`, and coloring it by drift waits on that. The org-level workspace that [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) describe is the other half: a warden generating or checking it is separate work.
+
 ## dbt
 
 The sql lexicon ships a `dbt` kind, since a dbt project reads the tables a sql member declares ([#3932](https://github.com/INTENTIUS/chant/issues/3932)). A workspace that uses it pins `@intentius/chant-lexicon-sql`.
