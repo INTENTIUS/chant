@@ -72,7 +72,7 @@ receivers:
   });
 
   test("an unknown distribution is reported", () => {
-    // @ts-expect-error: not a distribution
+    // The schema types `distribution` as a string; the check names the two values.
     expect(problems(new K8sClusterReceiver({ distribution: "eks" }))).toEqual([
       'distribution "eks" is not kubernetes or openshift',
     ]);

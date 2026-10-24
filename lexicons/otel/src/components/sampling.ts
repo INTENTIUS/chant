@@ -9,6 +9,8 @@
  */
 
 import { defineBuiltin } from "../define";
+import type { Overlay } from "./overlay";
+import type { LoadBalancingExporterSchemaConfig, ProbabilisticSamplerProcessorSchemaConfig, TailSamplingProcessorSchemaConfig } from "../generated/index";
 import type { Duration, ExporterHelperSettings, GRPCClientSettings } from "./common";
 
 // ── tail_sampling ────────────────────────────────────────────────────
@@ -167,19 +169,21 @@ export type TailSamplingPolicy = TailSamplingLeafPolicy | AndPolicy | DropPolicy
 
 export type TailSamplingPolicyType = TailSamplingPolicy["type"];
 
-export interface TailSamplingProcessorConfig {
-  /** How long after a trace's first span the decision is made. The collector's default is 30s; chant asks for it explicitly. */
-  decision_wait: Duration;
-  /** Policies, evaluated for every trace. A trace is sampled when any policy samples it and no `drop` policy drops it. */
-  policies: TailSamplingPolicy[];
-  num_traces?: number;
-  expected_new_traces_per_sec?: number;
-  decision_cache?: {
-    sampled_cache_size?: number;
-    non_sampled_cache_size?: number;
-  };
-  sample_on_first_match?: boolean;
-}
+/**
+ * Upstream writes a policy as one struct with every policy kind's settings as
+ * optional members beside `type`. Here a policy is a union tagged by `type`,
+ * so the settings the type needs are required and the checks below narrow on
+ * it. chant also asks for `decision_wait` explicitly.
+ */
+export type TailSamplingProcessorConfig = Overlay<
+  TailSamplingProcessorSchemaConfig,
+  {
+    /** How long after a trace's first span the decision is made. The collector's default is 30s; chant asks for it explicitly. */
+    decision_wait: Duration;
+    /** Policies, evaluated for every trace. A trace is sampled when any policy samples it and no `drop` policy drops it. */
+    policies: TailSamplingPolicy[];
+  }
+>;
 
 /**
  * Holds each trace for `decision_wait`, then samples it when a policy says so.
@@ -327,23 +331,7 @@ function subPolicyProblems(subs: ReadonlyArray<TailSamplingPolicy> | undefined, 
 
 // ── probabilistic_sampler ────────────────────────────────────────────
 
-export interface ProbabilisticSamplerProcessorConfig {
-  /** Percent of traces or logs kept, 0 to 100. The collector's default is 0, which keeps nothing, so chant asks for it. */
-  sampling_percentage: number;
-  /** Salt for `hash_seed` mode. Collectors that sample the same data must share it. */
-  hash_seed?: number;
-  /** `hash_seed` (the default for logs), `proportional` (the default for traces) or `equalizing`. */
-  mode?: "hash_seed" | "proportional" | "equalizing";
-  /** Default true: an item without usable randomness is dropped. */
-  fail_closed?: boolean;
-  /** Hex digits of threshold precision, 1 to 14; default 4. */
-  sampling_precision?: number;
-  /** Logs only: sample on the trace id (default) or on `from_attribute` of the record. */
-  attribute_source?: "traceID" | "record";
-  from_attribute?: string;
-  /** Logs only: an attribute whose value overrides the sampling percentage for its record. */
-  sampling_priority?: string;
-}
+export type ProbabilisticSamplerProcessorConfig = ProbabilisticSamplerProcessorSchemaConfig;
 
 /** Head sampling: keeps a fixed percentage of traces or logs, decided per item without waiting for the rest of the trace. */
 export const ProbabilisticSamplerProcessor = defineBuiltin<
@@ -449,13 +437,12 @@ export type LoadBalancingRoutingKey = "traceID" | "service" | "attributes" | "re
 /** The otlp exporter settings used for every backend. The endpoint comes from the resolver, so it is not set here. */
 export type LoadBalancingOtlpConfig = Omit<GRPCClientSettings, "endpoint"> & ExporterHelperSettings;
 
-export type LoadBalancingExporterConfig = ExporterHelperSettings & {
-  protocol?: { otlp: LoadBalancingOtlpConfig };
-  resolver: LoadBalancingResolver;
-  routing_key?: LoadBalancingRoutingKey;
-  /** With `routing_key: attributes`, the span attributes to route on. */
-  routing_attributes?: string[];
-};
+/**
+ * Upstream writes the resolver as one struct with each resolver optional. The
+ * collector takes exactly one, so here the resolver is a union of the four,
+ * and it is required.
+ */
+export type LoadBalancingExporterConfig = Overlay<LoadBalancingExporterSchemaConfig, { resolver: LoadBalancingResolver }>;
 
 const RESOLVER_KEYS = ["static", "dns", "k8s", "aws_cloud_map"] as const;
 

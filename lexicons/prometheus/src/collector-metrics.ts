@@ -8,7 +8,8 @@
  * Grafana's GRAF118 runs `collectorMetricIssues` over panel queries; the
  * prometheus lexicon runs it over rule files. Names follow the otel lexicon's
  * `metric-names.ts`, with each config's `prometheus` and
- * `prometheusremotewrite` exporters' `namespace` and `add_metric_suffixes`.
+ * `prometheusremotewrite` exporters' `namespace` and `translation_strategy`
+ * (and `add_metric_suffixes` for `prometheusremotewrite`).
  * A component under a renamed type (`span_metrics`, `service_graph`,
  * `signal_to_metrics`) is read as the built-in it names, through the otel
  * lexicon's `canonicalTypeOf`.
@@ -104,11 +105,25 @@ export function collectorMetrics(configs: CollectorConfig[]): CollectorMetrics |
     const exporters = Object.entries(asObj(config.exporters)).filter(([id]) => typeOf("exporter", id) === "prometheus" || typeOf("exporter", id) === "prometheusremotewrite");
     const namings: Array<{ naming: PrometheusNaming; openLabels: boolean }> =
       exporters.length > 0
-        ? exporters.map(([, c]) => {
+        ? exporters.map(([id, c]) => {
             const e = asObj(c);
+            // The `prometheus` exporter ignores the deprecated `add_metric_suffixes`
+            // at the pinned release (#3361); `prometheusremotewrite` still reads it
+            // when no `translation_strategy` is set.
+            const readsSuffixFlag = typeOf("exporter", id) === "prometheusremotewrite";
+            const constant = asObj(e.resource_constant_labels);
             return {
-              naming: { ...(typeof e.namespace === "string" ? { namespace: e.namespace } : {}), ...(e.add_metric_suffixes === false ? { add_metric_suffixes: false } : {}) },
-              openLabels: asObj(e.resource_to_telemetry_conversion).enabled === true,
+              naming: {
+                ...(typeof e.namespace === "string" ? { namespace: e.namespace } : {}),
+                ...(typeof e.translation_strategy === "string" ? { translation_strategy: e.translation_strategy } : {}),
+                ...(readsSuffixFlag && e.add_metric_suffixes === false ? { add_metric_suffixes: false } : {}),
+              },
+              // Resource attributes become labels through the deprecated
+              // `resource_to_telemetry_conversion` or its replacement.
+              openLabels:
+                asObj(e.resource_to_telemetry_conversion).enabled === true ||
+                constant.enabled === true ||
+                (Array.isArray(constant.included) && constant.included.length > 0),
             };
           })
         : [{ naming: {}, openLabels: false }];
@@ -121,7 +136,7 @@ export function collectorMetrics(configs: CollectorConfig[]): CollectorMetrics |
 
       const add = (connector: string, m: CollectorMetric, extra: string[] = []) => {
         const labels = openLabels ? undefined : new Set([...m.dimensions.map(prometheusLabel), ...extra.map(prometheusLabel), ...ADDED_LABELS]);
-        // A classic histogram is served as three series whatever add_metric_suffixes says.
+        // A classic histogram is served as three series whatever the translation strategy.
         const series: Array<[string, Set<string> | undefined]> =
           m.type === "histogram"
             ? [

@@ -16,10 +16,12 @@
  *
  * `mode` says what to do with the findings: `report` returns them;
  * `issue` keeps one open issue current; `pull-request` also bumps the pins
- * in the lexicon's `src/define.ts` on a proposal branch and opens (or
+ * (`OTELCOL_CONTRIB_VERSION` in `src/spec/pin.ts` for `COLLECTOR_PIN`, and
+ * `GENAI_SEMCONV_PIN` in `src/define.ts`) on a proposal branch and opens (or
  * edits) a pull request with the findings as its body. Only the pin values
- * change: the config types written against the old pin are the reviewer's
- * to move, which the body says.
+ * change: refreshing the schema snapshot the config types are generated from
+ * (`just snapshot`, #3361) is the reviewer's, which the body says, and
+ * generation refuses until it is done.
  */
 
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -164,17 +166,27 @@ function behindCount(releases: Release[], pin: string): number {
   return releases.filter((r) => compareSemver(r.tag, pin) > 0).length;
 }
 
-/** `src/define.ts` with `COLLECTOR_PIN` and `GENAI_SEMCONV_PIN` moved to the given versions. */
-export function bumpPins(text: string, to: { collector?: string; genai?: string }): string {
-  let out = text;
-  const bump = (name: string, version: string) => {
-    const re = new RegExp(`(export const ${name}: SchemaPin = Object\\.freeze\\(\\{[^}]*?version:\\s*")([^"]+)(")`);
-    if (!re.test(out)) throw new Error(`define.ts has no ${name} with a version to bump`);
-    out = out.replace(re, `$1${version}$3`);
-  };
-  if (to.collector) bump("COLLECTOR_PIN", to.collector);
-  if (to.genai) bump("GENAI_SEMCONV_PIN", to.genai);
-  return out;
+/**
+ * The pin files with `COLLECTOR_PIN` and `GENAI_SEMCONV_PIN` moved to the
+ * given versions: `COLLECTOR_PIN` follows `OTELCOL_CONTRIB_VERSION` in
+ * `src/spec/pin.ts`, and `GENAI_SEMCONV_PIN` is in `src/define.ts`.
+ */
+export function bumpPins(
+  texts: { define: string; pin: string },
+  to: { collector?: string; genai?: string },
+): { define: string; pin: string } {
+  let { define, pin } = texts;
+  if (to.collector) {
+    const re = /(export const OTELCOL_CONTRIB_VERSION = ")([^"]+)(")/;
+    if (!re.test(pin)) throw new Error("spec/pin.ts has no OTELCOL_CONTRIB_VERSION (COLLECTOR_PIN) to bump");
+    pin = pin.replace(re, `$1${to.collector}$3`);
+  }
+  if (to.genai) {
+    const re = /(export const GENAI_SEMCONV_PIN: SchemaPin = Object\.freeze\(\{[^}]*?version:\s*")([^"]+)(")/;
+    if (!re.test(define)) throw new Error("define.ts has no GENAI_SEMCONV_PIN with a version to bump");
+    define = define.replace(re, `$1${to.genai}$3`);
+  }
+  return { define, pin };
 }
 
 export function renderCollectorAuditSummary(r: Omit<CollectorAuditResult, "summary" | "mode">): string {
@@ -248,16 +260,24 @@ export async function collectorAudit(args: CollectorAuditArgs = {}): Promise<Col
   const lexiconDir = resolve(args.lexiconDir ?? join(cwd, "lexicons", "otel"));
   const root = (await run("git", ["rev-parse", "--show-toplevel"], lexiconDir)).trim();
   const definePath = join(lexiconDir, "src", "define.ts");
-  const content = bumpPins(readFileSync(definePath, "utf8"), to);
+  const pinPath = join(lexiconDir, "src", "spec", "pin.ts");
+  const bumped = bumpPins({ define: readFileSync(definePath, "utf8"), pin: readFileSync(pinPath, "utf8") }, to);
+  const files = [
+    ...(to.collector ? [{ path: relative(root, pinPath), content: bumped.pin }] : []),
+    ...(to.genai ? [{ path: relative(root, definePath), content: bumped.define }] : []),
+  ];
   const moved = [to.collector ? `COLLECTOR_PIN to ${to.collector}` : "", to.genai ? `GENAI_SEMCONV_PIN to ${to.genai}` : ""].filter(Boolean).join(" and ");
   result.prUrl = await proposePullRequest(run, {
     root,
     branch: args.branch ?? "chant/otel-pins",
     title: `chore(otel): move ${moved}`,
     body:
-      `${summary}\n\nThis moves the pin values only. The config types, defaults and checks written against ${collector.pin} ` +
-      "still need reading against the release notes before this merges.\n",
-    files: [{ path: relative(root, definePath), content }],
+      `${summary}\n\nThis moves the pin values only. ` +
+      (to.collector
+        ? "Run `just snapshot` in lexicons/otel, paste the printed OTEL_SPEC_PIN and regenerate: the config types are generated from the snapshot, and generation refuses a snapshot taken at another version. "
+        : "") +
+      `The defaults and checks written against ${collector.pin} still need reading against the release notes before this merges.\n`,
+    files,
     commitMessage: `chore(otel): move ${moved}`,
     worktreeDir: join(mkdtempSync(join(tmpdir(), "chant-otel-pins-")), "wt"),
   });

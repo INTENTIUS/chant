@@ -78,8 +78,8 @@ const retry: RetrySettings = { enabled: true, max_elapsed_time: "300s" };
 const gateway = new OtlpExporter({ name: "gateway", endpoint: "otel-gateway.observability.svc:4317", tls: inCluster, retry_on_failure: retry });
 
 // Resource attributes (k8s.namespace.name, k8s.pod.name, ...) become metric labels.
-const asLabels = { enabled: true };
-const scrape = new PrometheusExporter({ endpoint: "0.0.0.0:8889", resource_to_telemetry_conversion: asLabels });
+const asLabels = { included: ["*"] };
+const scrape = new PrometheusExporter({ endpoint: "0.0.0.0:8889", resource_constant_labels: asLabels });
 
 export { gateway, scrape };
 `;

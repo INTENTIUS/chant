@@ -11,9 +11,16 @@
  * with the exporter's defaults: `.` and any other character Prometheus does
  * not allow become `_`; counters take `_total`; a unit becomes a suffix
  * (`ms` is `_milliseconds`, `s` is `_seconds`); the exporter's `namespace`
- * is a prefix joined with `_`; `add_metric_suffixes: false` drops the
- * suffixes. Attribute names become label names the same way
- * (`service.name` is `service_name`).
+ * is a prefix joined with `_`. The exporter's `translation_strategy` decides
+ * the escaping and the suffixes: the default, `UnderscoreEscapingWithSuffixes`,
+ * is what is described here; `UnderscoreEscapingWithoutSuffixes` drops the
+ * suffixes; `NoUTF8EscapingWithSuffixes` keeps the name's characters;
+ * `NoTranslation` does neither. From collector-contrib v0.154.0 the
+ * `prometheus` exporter ignores the deprecated `add_metric_suffixes`, so a
+ * name read from that exporter follows `translation_strategy` alone; the
+ * `prometheusremotewrite` exporter still honours it when no strategy is set.
+ * Attribute names become label names the same way (`service.name` is
+ * `service_name`).
  *
  * This module holds types and string functions only, so a lexicon that
  * builds queries from it does not load the collector components.
@@ -52,12 +59,52 @@ const UNIT_WORDS: Record<string, string> = {
   "1": "ratio",
 };
 
+/** The `translation_strategy` values the Prometheus exporters take. */
+export type PrometheusTranslationStrategy =
+  | "UnderscoreEscapingWithSuffixes"
+  | "UnderscoreEscapingWithoutSuffixes"
+  | "NoUTF8EscapingWithSuffixes"
+  | "NoTranslation";
+
 /** How the `prometheus` exporter is configured, as far as naming goes. */
 export interface PrometheusNaming {
   /** The exporter's `namespace`, put in front of every name and joined with `_`. */
   namespace?: string;
-  /** The exporter's `add_metric_suffixes` (default true): unit and `_total` suffixes. */
+  /** The exporter's `translation_strategy`. Default `UnderscoreEscapingWithSuffixes`. */
+  translation_strategy?: PrometheusTranslationStrategy | (string & {});
+  /**
+   * `false` drops the unit and `_total` suffixes when no `translation_strategy`
+   * is set, as the `prometheusremotewrite` exporter reads it. The `prometheus`
+   * exporter ignores it at the pinned release, and {@link exporterNaming}
+   * leaves it out for that exporter.
+   *
+   * @deprecated Upstream deprecates it for `translation_strategy`.
+   */
   add_metric_suffixes?: boolean;
+}
+
+/**
+ * The naming a declared `prometheus` exporter (or its config) applies: its
+ * `namespace` and `translation_strategy`. `add_metric_suffixes` is left out,
+ * since the exporter ignores it at the pinned release. A plain
+ * `PrometheusNaming` is returned as given.
+ */
+export function exporterNaming(exporter: PrometheusNaming | { props?: PrometheusNaming; componentType?: unknown } | undefined): PrometheusNaming {
+  if (!exporter) return {};
+  if ("props" in exporter && typeof exporter.props === "object" && exporter.props !== null) {
+    const { add_metric_suffixes: _ignored, ...rest } = exporter.props;
+    return { ...(rest.namespace !== undefined ? { namespace: rest.namespace } : {}), ...(rest.translation_strategy !== undefined ? { translation_strategy: rest.translation_strategy } : {}) };
+  }
+  return exporter as PrometheusNaming;
+}
+
+/** Whether a naming escapes names to `[A-Za-z0-9_:]` and whether it adds suffixes. */
+function strategyOf(naming: PrometheusNaming): { escape: boolean; suffixes: boolean } {
+  const strategy = naming.translation_strategy ?? (naming.add_metric_suffixes === false ? "UnderscoreEscapingWithoutSuffixes" : "UnderscoreEscapingWithSuffixes");
+  return {
+    escape: strategy.startsWith("UnderscoreEscaping"),
+    suffixes: strategy !== "UnderscoreEscapingWithoutSuffixes" && strategy !== "NoTranslation",
+  };
 }
 
 /** An attribute name as a Prometheus label: `service.name` is `service_name`. */
@@ -73,9 +120,11 @@ export function prometheusLabel(attribute: string): string {
  * @param unit The metric's unit, e.g. `ms`. Units in braces (`{call}`) add nothing.
  */
 export function prometheusMetricName(name: string, type: "sum" | "histogram", unit?: string, naming: PrometheusNaming = {}): string {
-  let out = name.replace(/[^A-Za-z0-9_:]/g, "_");
-  if (naming.namespace) out = `${naming.namespace.replace(/[^A-Za-z0-9_:]/g, "_")}_${out}`;
-  if (naming.add_metric_suffixes === false) return out;
+  const { escape, suffixes } = strategyOf(naming);
+  const clean = (s: string) => (escape ? s.replace(/[^A-Za-z0-9_:]/g, "_") : s);
+  let out = clean(name);
+  if (naming.namespace) out = `${clean(naming.namespace)}_${out}`;
+  if (!suffixes) return out;
   const word = unit && !unit.startsWith("{") ? (UNIT_WORDS[unit] ?? unit.replace(/[^A-Za-z0-9_:]/g, "_")) : undefined;
   if (word && !out.endsWith(`_${word}`)) out = `${out}_${word}`;
   if (type === "sum" && !out.endsWith("_total")) out = `${out}_total`;
@@ -85,11 +134,11 @@ export function prometheusMetricName(name: string, type: "sum" | "histogram", un
 /** The parts of a spanmetrics config the metric names depend on. */
 export interface SpanMetricsNamingConfig {
   namespace?: string;
-  dimensions?: Array<{ name: string }>;
-  calls_dimensions?: Array<{ name: string }>;
+  dimensions?: Array<{ name?: string }>;
+  calls_dimensions?: Array<{ name?: string }>;
   exclude_dimensions?: string[];
-  histogram?: { disable?: boolean; unit?: "ms" | "s"; dimensions?: Array<{ name: string }> };
-  events?: { enabled?: boolean; dimensions?: Array<{ name: string }> };
+  histogram?: { disable?: boolean; unit?: "ms" | "s"; dimensions?: Array<{ name?: string }> };
+  events?: { enabled?: boolean; dimensions?: Array<{ name?: string }> };
 }
 
 /** The metrics one `spanmetrics` connector emits, and the labels a query selects them by. */
@@ -139,13 +188,13 @@ export function spanMetricsNames(
   exporter?: PrometheusNaming | { props?: PrometheusNaming },
 ): SpanMetricsNames {
   const c = configOf(connector);
-  const naming: PrometheusNaming =
-    exporter && "props" in exporter && typeof exporter.props === "object" ? (exporter.props as PrometheusNaming) : ((exporter ?? {}) as PrometheusNaming);
+  const naming = exporterNaming(exporter);
   const namespace = c.namespace ?? SPANMETRICS_DEFAULT_NAMESPACE;
   const metricName = (n: string) => (namespace === "" ? n : `${namespace}.${n}`);
   const excluded = new Set(c.exclude_dimensions ?? []);
   const defaults = SPANMETRICS_DEFAULT_DIMENSIONS.filter((d) => !excluded.has(d));
-  const names = (extra?: Array<{ name: string }>) => (extra ?? []).map((d) => d.name);
+  // A `glob` dimension names no single attribute, so it adds no fixed label.
+  const names = (extra?: Array<{ name?: string }>) => (extra ?? []).flatMap((d) => (d.name === undefined ? [] : [d.name]));
   const common = [...defaults, ...names(c.dimensions)];
 
   const metric = (n: string, type: "sum" | "histogram", dims: string[], unit?: string): CollectorMetric => ({
@@ -215,8 +264,7 @@ export function serviceGraphNames(
     throw new Error(`serviceGraphNames: expected a servicegraph connector, got ${d.componentType}`);
   }
   const c = (typeof d.componentType === "string" ? (d.props ?? {}) : connector) as ServiceGraphNamingConfig;
-  const naming: PrometheusNaming =
-    exporter && "props" in exporter && typeof exporter.props === "object" ? (exporter.props as PrometheusNaming) : ((exporter ?? {}) as PrometheusNaming);
+  const naming = exporterNaming(exporter);
   const dimensions = [
     "client",
     "server",

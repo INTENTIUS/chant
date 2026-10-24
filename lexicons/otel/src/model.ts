@@ -125,7 +125,7 @@ export interface ComponentTypeAlias {
 
 /**
  * The renamed built-ins. chant emits `builtin`, which the pinned collector
- * (`COLLECTOR_PIN`, v0.130.0) knows and newer ones still accept. A config
+ * (`COLLECTOR_PIN`) still accepts as each component's deprecated type. A config
  * written for a newer collector may use `type`, so code that reads a config
  * (the importer, the checks, the k8s composites) accepts both.
  */

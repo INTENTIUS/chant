@@ -495,8 +495,8 @@ export interface Listener {
 
 /**
  * The listeners OTEL117 knows, by component type: the config key path to an
- * address, its default at `COLLECTOR_PIN` (collector and contrib v0.130.0,
- * each component's `factory.go`), and the transport. `present` means the
+ * address, its default (read from each component's `factory.go` at collector
+ * and contrib v0.130.0), and the transport. `present` means the
  * default applies only when the key's parent is in the config: an otlp or
  * jaeger protocol that isn't listed doesn't start. A type not listed here is
  * not checked, since its `endpoint` may be a server it connects to (the

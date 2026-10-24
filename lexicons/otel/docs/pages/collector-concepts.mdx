@@ -27,9 +27,13 @@ Declared extensions are enabled in declaration order. Declare a `Service` to cho
 
 Sections always come out as receivers, processors, exporters, connectors, extensions, service. Within a section, components follow the order the build hands them over, and each component's keys keep the order you wrote them in. Processor order inside a pipeline is significant to the collector and is emitted exactly as declared.
 
-## Why the built-in types are hand-written
+## Where the built-in types come from
 
-Most chant lexicons generate their types from an upstream schema. The collector has no such schema: each component defines its config as a Go struct in its own module, and the set changes with every collector release. The built-in types are written against one collector-contrib release, recorded as `COLLECTOR_PIN`, and move when this package does. Components outside that set come in through [`defineComponent`](../custom-components/), which carries its own pin.
+Each collector component defines its config as a Go struct in its own module, and upstream's `schemagen` writes a `config.schema.yaml` next to it. The built-in config types are generated from those schemas at one collector-contrib release, recorded as `COLLECTOR_PIN` (v0.162.0), and scoped by the `otelcol-contrib` distribution's manifest at that release: the modules a given `otelcol-contrib` binary is built from. `otelcol-k8s` is pinned too, for the coverage report. The schemas are kept in a committed snapshot (`src/spec/otel-schemas.snapshot.json`, refreshed with `just snapshot`), pinned by digest, and generation reads only that file.
+
+A schema cannot say everything. Upstream publishes no schema for a few packages the configs embed (the `health_check` extension's settings, `hostmetrics`' scrapers, the `googlecloud` exporter's settings from outside the collector), and it writes `tail_sampling` policies and the `loadbalancing` resolver as structs of optional members where only one may be set. For those, the built-in's definition overlays a hand-written type, and it also marks the fields a component cannot start without as required, since the schemas mark none. The definitions add what a schema has no place for: checks on the config (`validate`), and the endpoints, protocols and connector signal pairs `collectorTopology()` reports. `forward` has no config and keeps a hand-written type.
+
+`coverageReport()` lists the components each distribution ships, which of them are built in, and which upstream ships a schema for. Components outside the built-ins come in through [`defineComponent`](../custom-components/), which carries its own pin.
 
 ## What chant does not do here
 
