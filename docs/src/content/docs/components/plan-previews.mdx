@@ -20,6 +20,8 @@ The table is generated from the capability plugins that core and the lexicons re
 | `generate-sbom` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `health-gate` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `jvm-build` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `publish-artifact` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `publish-image` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `r2-sync` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `scan-vulnerabilities` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `shell` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
@@ -41,8 +43,6 @@ The table is generated from the capability plugins that core and the lexicons re
 | `extract-config-bom` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `lambda-deploy` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `load-image-on-host` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
-| `publish-artifact` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
-| `publish-image` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `remote-exec` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `rollback-previous` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `run-migration` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
@@ -52,10 +52,14 @@ The table is generated from the capability plugins that core and the lexicons re
 | `wait-job` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `wait-steady-state` | aws | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `arm-deploy` | azure | yes | yes | each template resource from ARM by its id, compared with the body the apply would PUT | a create, update, no-op or delete per resource, and each changed property path with its value before and after. See [arm-deploy](#arm-deploy) |
+| `wait-container-app` | azure | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-for-deployment` | azure | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `fly-release` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `fly-rollback` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `run-agent` | fly | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `gcp-apply` | gcp | yes | yes | a GET of each Config Connector resource on the applier's REST transport, decided the way `gcpApply` decides | a create, update, no-op or delete per resource, and each changed top-level field with its value before and after. See [gcp-apply](#gcp-apply) |
+| `wait-cloud-run-ready` | gcp | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `wait-for-operation` | gcp | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `helm-upgrade` | helm | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `argo-app` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `flux-reconcile` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
