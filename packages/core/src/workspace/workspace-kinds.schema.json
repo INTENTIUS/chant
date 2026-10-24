@@ -82,7 +82,7 @@
         "reader": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "description": "A link reader chant ships, by name, that derives a member's links from the member's own files (#3932): dbt-project reads a dbt project's sources. The reader is chant's code and runs offline, parsing files as data; the package supplies only the name. A name this chant doesn't have keeps the kind without a reader, and the load reports it. A chant older than this field fails a kinds file that uses it."
+          "description": "A link reader chant ships, by name, that derives a member's links from the member's own files (#3932): dbt-project reads a dbt project's sources; goose-dir, golang-migrate-dir, clickhouse-migrations-dir and flyway-dir list a migrations directory in order (#4400). The reader is chant's code and runs offline, parsing files as data; the package supplies only the name. A name this chant doesn't have keeps the kind without a reader, and the load reports it. A chant older than this field fails a kinds file that uses it."
         }
       },
       "patternProperties": {
@@ -159,13 +159,41 @@
             }
           },
           "additionalProperties": false
+        },
+        "anyLine": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, has a line that starts with one of starts, after leading space and ignoring case (#4400). A goose directory is found by -- +goose Up. Added by the chant that adds the goose-dir reader.",
+          "required": [
+            "in",
+            "starts"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "starts": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
     },
     "fileName": {
       "type": "string",
-      "description": "A file name, with no directory part. A * matches any run of characters.",
+      "description": "A file name, with no directory part. A * matches any run of characters, and [0-9] one digit.",
       "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
     },
     "graph": {
