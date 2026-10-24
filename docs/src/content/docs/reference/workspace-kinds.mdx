@@ -135,7 +135,7 @@ Some members already say what they read, in files of their own. A dbt project na
 
 The readers are chant's code, and the kinds file only names one. The file stays data, and chant still never imports the package that supplies it. A reader runs offline. It parses files as data and never runs the tool that owns them, so `chant workspace check` still starts no process and reaches no network. chant has one reader, `dbt-project`. A kind that names a reader this chant doesn't have is kept without one, with a `WSP002` problem, and its members' links are only those their entries state.
 
-A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
+A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. It can also return outputs, names its member's files state, which other members link to ([#3935](https://github.com/INTENTIUS/chant/issues/3935)). `resolveLinks` adds them to the member's own outputs (`withReaderOutputs` in `packages/core/src/workspace/links.ts`). A gap flagged as leaving an output out makes the member's output list incomplete. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
 
 A link names its producer when the member's fields say which member that is. When they don't, chant picks the one other member that exposes the output the link is anchored on (for a dbt column, its table). If none does and exactly one other member exposes outputs at all, the link goes to that member, so a dropped table is reported as missing from the only place it could be. Any other case is ambiguous (`WSP095`), and the message names the field that settles it.
 
@@ -247,9 +247,10 @@ The sql lexicon ships a `dbt` kind, since a dbt project reads the tables a sql m
 | Probe | `anyFile: ["dbt_project.yml"]` |
 | Reader | `dbt-project` |
 | `fields.sqlMember` | The member whose tables the project's sources read. Unset, each source table links to the one member that exposes it |
-| `fields.dialect` | `postgres` (the default) or `clickhouse`: how source names are cased before they are matched |
+| `fields.dialect` | `postgres` (the default) or `clickhouse`: how source and model names are cased |
+| `fields.modelSchema` | The schema the project's models land in. Set, each model is the output `<modelSchema>.<model>` ([#3935](https://github.com/INTENTIUS/chant/issues/3935)) |
 
-The kind exposes no outputs of its own yet. dbt models as outputs, so a downstream member can link to a model, are [#3935](https://github.com/INTENTIUS/chant/issues/3935).
+The kind lists no outputs of its own. The reader finds the project's models and exposes them as outputs, so a downstream member can link to a model ([How models become outputs](#how-models-become-outputs)).
 
 ### How sources map to sql outputs
 
@@ -270,6 +271,20 @@ A source, table or column whose value is a Jinja template, such as `schema: "{{ 
 When the sql member marks a column with a `-- previously:` comment, a source that still names the old column fails with a message that names the new one.
 
 dbt sources often point at views. A sql member exposes a view and its columns as outputs, and when a view's columns can't be read statically its outputs are incomplete. A link to such a column is then unresolved (`WSP094`), not missing.
+
+### How models become outputs
+
+The same reader exposes each model as an output ([#3935](https://github.com/INTENTIUS/chant/issues/3935)): `<schema>.<model>`, and `<schema>.<model>.<column>` for each column the model's YAML lists. Names follow the same case and quoting rules as sources. A model is a `.sql` file under the project's `model-paths`, and its name is the file's name or its `alias`. Python models, seeds and snapshots are not read. A model with `enabled: false` is skipped. `alias`, `schema` and `enabled` come from the first of the model's own `{{ config(...) }}`, the `config:` of its entry in a model YAML, and the `+` keys of `dbt_project.yml` that match its directory (the deepest wins). The code is `packages/core/src/workspace/dbt-models-reader.ts`.
+
+Which schema a model lands in is the hard part, because dbt's default `generate_schema_name` joins the target's schema to a custom one (`<target_schema>_<custom>`), and a model with no custom schema lands in the target's schema. Both depend on a target that chant never reads. So the schema is declared first:
+
+| Case | Result |
+|---|---|
+| `fields.modelSchema` is set | Every model is `<modelSchema>.<model>`. dbt's config is not read for the schema, so a templated `+schema` is not a gap |
+| Not set, the project overrides `generate_schema_name` the usual way (the custom schema as it stands, the target's schema when there is none), and the model sets a custom schema | `<custom>.<model>` |
+| Not set, any other case: the default macro, a model with no custom schema, a macro override chant does not evaluate, or a templated schema | A `WSP099` gap at the model's file, with a hint to set `modelSchema`. The model is not an output |
+
+A templated `alias` or `enabled` is a gap in every case. A gap on a model leaves the member's outputs incomplete, so a link to a model the reader could not name is unresolved (`WSP094`), not missing. A model that is simply not in the project is missing (`WSP093`), and the finding lists the outputs the member does have.
 
 ### A sql member and a dbt project
 
@@ -300,6 +315,21 @@ sources:
 ```
 
 `chant workspace check` resolves three links from `analytics` to `db`: `public.orders`, `public.orders.id` and `public.orders.customer_id`. Drop `customer_id` from the table in `db` and the check fails with `WSP093` at `analytics/models/staging/sources.yml:10`, the line that names the column.
+
+### A member that links to a dbt model
+
+Set `modelSchema` on the dbt member, and any other member can link to a model:
+
+```json
+{
+  "members": [
+    { "name": "analytics", "dir": "analytics", "kind": "dbt", "fields": { "modelSchema": "analytics" } },
+    { "name": "dashboard", "dir": "dashboard", "kind": "other", "because": "reads the orders model", "links": [{ "member": "analytics", "output": "analytics.orders" }] }
+  ]
+}
+```
+
+With `analytics/models/orders.sql` in the project, the link resolves. Delete the file and `chant workspace check` fails with `WSP093` on `dashboard`'s link.
 
 ## Overlapping probes
 

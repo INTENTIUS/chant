@@ -68,7 +68,7 @@ chant.workspace.json
 | `WSP096` | link-duplicate | error | yes | A member states the same link twice |
 | `WSP097` | outputs-not-listable | error | yes | An entry lists `outputs` for a kind that doesn't take them from the entry, such as `chant` |
 | `WSP098` | link-protocol-misplaced | error | yes | A link states a `protocol` and its kind is not `telemetry` |
-| `WSP099` | kind-reader-gap | info | yes | A kind's [link reader](/chant/reference/workspace-kinds/#links-read-from-a-members-files) met a value it would have to render to read, such as a Jinja template in a dbt source. The finding names the member's file and line, and the links that value would state are not checked |
+| `WSP099` | kind-reader-gap | info | yes | A kind's [link reader](/chant/reference/workspace-kinds/#links-read-from-a-members-files) met a value it would have to render to read, such as a Jinja template in a dbt source, or a dbt model whose schema depends on the target. The finding names the member's file and line, and the links that value would state are not checked |
 | `WSP101` | generated-drift | error | yes | A [generated file](#generated-files) differs from what its generator writes |
 | `WSP102` | generated-missing | error | yes | A declared generated file does not exist |
 | `WSP103` | generator-failed | error | yes | A generator can't be run, exits non-zero, or writes nothing |

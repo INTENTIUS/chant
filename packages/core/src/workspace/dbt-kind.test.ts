@@ -76,7 +76,7 @@ describe("the dbt kind in the sql lexicon's kinds file (#3932)", () => {
     const { kinds, problems } = parseKindData(SQL_KINDS, "@intentius/chant-lexicon-sql");
     expect(problems).toEqual([]);
     expect(kinds.map((k) => [k.name, k.reader, k.probe])).toEqual([["dbt", "dbt-project", { anyFile: ["dbt_project.yml"] }]]);
-    expect(Object.keys(kinds[0].fields ?? {})).toEqual(["sqlMember", "dialect"]);
+    expect(Object.keys(kinds[0].fields ?? {})).toEqual(["sqlMember", "dialect", "modelSchema"]);
   });
 
   test("a reader this chant doesn't have keeps the kind without one, and says so", () => {
