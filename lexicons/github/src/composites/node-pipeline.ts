@@ -51,7 +51,7 @@ const cacheConfig = {
     cache: undefined,
     installCmd: "bun install --frozen-lockfile",
     runPrefix: "bun run",
-    setupAction: "oven-sh/setup-bun@v2",
+    setupAction: actionRef("oven-sh/setup-bun"),
   },
 } as const;
 
@@ -79,7 +79,7 @@ export const NodePipeline = Composite((props: NodePipelineProps) => {
   const buildCheckout = new Step({ name: "Checkout", uses: actionRef("actions/checkout") });
 
   const buildSetup = isBun
-    ? new Step({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
+    ? new Step({ name: "Setup Bun", uses: actionRef("oven-sh/setup-bun") })
     : new Step({
         name: "Setup Node.js",
         uses: actionRef("actions/setup-node"),
@@ -92,7 +92,7 @@ export const NodePipeline = Composite((props: NodePipelineProps) => {
 
   const buildUpload = new Step({
     name: "Upload build artifacts",
-    uses: "actions/upload-artifact@v4",
+    uses: actionRef("actions/upload-artifact"),
     with: {
       name: artifactName,
       path: buildArtifactPaths.join("\n"),
@@ -109,7 +109,7 @@ export const NodePipeline = Composite((props: NodePipelineProps) => {
   const testCheckout = new Step({ name: "Checkout", uses: actionRef("actions/checkout") });
 
   const testSetup = isBun
-    ? new Step({ name: "Setup Bun", uses: "oven-sh/setup-bun@v2" })
+    ? new Step({ name: "Setup Bun", uses: actionRef("oven-sh/setup-bun") })
     : new Step({
         name: "Setup Node.js",
         uses: actionRef("actions/setup-node"),
@@ -120,7 +120,7 @@ export const NodePipeline = Composite((props: NodePipelineProps) => {
 
   const testDownload = new Step({
     name: "Download build artifacts",
-    uses: "actions/download-artifact@v4",
+    uses: actionRef("actions/download-artifact"),
     with: { name: artifactName },
   });
 

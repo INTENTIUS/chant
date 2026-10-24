@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ACTION_PINS, pinAtMajor, pinMajor, tagComments, unpinnedActions, usesRef } from "./action-pins";
 
 describe("the action pin table", () => {
@@ -34,5 +36,43 @@ describe("the action pin table", () => {
     expect(pinAtMajor(ACTION_PINS.uploadArtifact4.sha, "v9")).toBeUndefined();
     expect(pinAtMajor("0".repeat(40), "v3")).toBeUndefined();
     expect(pinMajor(ACTION_PINS.downloadArtifact4.sha)).toBe(4);
+  });
+});
+
+// #4410: the places that are not generators pin too.
+const repoRoot = join(__dirname, "../../..");
+
+describe("hand-written actions are pinned (#4410)", () => {
+  it("chant's own workflows name every action by a full commit SHA", () => {
+    const dir = join(repoRoot, ".github/workflows");
+    const unpinned: Record<string, string[]> = {};
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".yml"))) {
+      const found = unpinnedActions(readFileSync(join(dir, f), "utf8"));
+      if (found.length) unpinned[f] = found;
+    }
+    expect(unpinned).toEqual({});
+  });
+
+  it("every pinned line in chant's own workflows carries a release comment", () => {
+    const dir = join(repoRoot, ".github/workflows");
+    const bare: string[] = [];
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".yml"))) {
+      for (const line of readFileSync(join(dir, f), "utf8").split("\n")) {
+        if (/uses: *[^\s#]+@[0-9a-f]{40}\s*$/.test(line)) bare.push(`${f}: ${line.trim()}`);
+      }
+    }
+    expect(bare).toEqual([]);
+  });
+
+  it("no github composite writes a `uses:` tag literal; each takes its ref from the pin table", () => {
+    const dir = join(repoRoot, "lexicons/github/src/composites");
+    const literal: Record<string, string[]> = {};
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))) {
+      const found = [...readFileSync(join(dir, f), "utf8").matchAll(/(?:uses|setupAction):\s*["'`]([^"'`]+)["'`]/g)]
+        .map((m) => m[1])
+        .filter((r) => unpinnedActions(`uses: ${r}`).length > 0);
+      if (found.length) literal[f] = found;
+    }
+    expect(literal).toEqual({});
   });
 });
