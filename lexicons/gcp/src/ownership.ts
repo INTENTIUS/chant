@@ -39,3 +39,15 @@ export const GCP_RESOURCE_OWNERSHIP_KEYS: ChannelKeys = {
   stack: "chant-stack",
   env: "chant-env",
 };
+
+/**
+ * Coerce a stack or env name into a legal GCP label value: lowercase letters,
+ * digits, `_` and `-`, at most 63 characters. Anything else becomes `-`.
+ * Returns `undefined` when nothing usable is left. Stamping and reading both go
+ * through this, so `describeStackStatus` matches what `gcpApply` wrote.
+ */
+export function gcpLabelValue(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const v = value.toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 63);
+  return v.length > 0 ? v : undefined;
+}

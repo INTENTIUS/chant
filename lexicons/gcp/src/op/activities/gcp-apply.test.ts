@@ -569,6 +569,38 @@ describe("ownership + prune (#706)", () => {
     expect((topicPlan.create.body as { labels: Record<string, string> }).labels["managed-by"]).toBe("chant");
   });
 
+  test("create bodies carry chant-stack and chant-env from the object's ownership labels (#3143)", () => {
+    const owned: GcpResource = {
+      ...TOPIC,
+      metadata: {
+        name: "events",
+        labels: {
+          team: "data",
+          "app.kubernetes.io/managed-by": "chant",
+          "chant.intentius.io/stack": "Shop/Checkout Service",
+          "chant.intentius.io/env": "prod",
+        },
+      },
+    };
+    const plan = pubSubTopicMapper.plan(owned, { base: "http://x", project: "p" });
+    const labels = (plan.create.body as { labels: Record<string, string> }).labels;
+    expect(labels["managed-by"]).toBe("chant");
+    expect(labels["chant-stack"]).toBe("shop-checkout-service");
+    expect(labels["chant-env"]).toBe("prod");
+  });
+
+  test("chantOwnershipLabels coerces to GCP label rules and keeps a hand-set chant-stack", () => {
+    const long = "A".repeat(80) + "é";
+    const l = chantOwnershipLabels({
+      "app.kubernetes.io/managed-by": "chant",
+      "chant.intentius.io/stack": long,
+    });
+    expect(l["chant-stack"]).toBe("a".repeat(63));
+    expect(l["chant-env"]).toBeUndefined();
+    expect(chantOwnershipLabels({ "chant-stack": "Hand_Set" })["chant-stack"]).toBe("hand_set");
+    expect(chantOwnershipLabels()).toEqual({ "managed-by": "chant" });
+  });
+
   test("list specs read live items (bucket items, topic name from path)", () => {
     expect(storageBucketMapper.list?.url({ base: "http://x", project: "p" })).toBe("http://x/storage/v1/b?project=p");
     expect(storageBucketMapper.list?.items({ items: [{ name: "b", labels: null }] })).toEqual([{ name: "b", labels: null }]);

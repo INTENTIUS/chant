@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
 import { sleep } from "@intentius/chant/op";
-import { hasOwnershipMarker, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
-import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
+import { hasOwnershipMarker, readOwnership, LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+import { GCP_RESOURCE_OWNERSHIP_KEYS, gcpLabelValue } from "../../ownership";
 import { iamPolicyMemberMapper } from "./gcp-iam";
 import {
   changedFields,
@@ -25,15 +25,30 @@ import {
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 
 /**
- * The GCP labels chant stamps on resources it creates.
+ * The GCP labels chant stamps on resources it creates: `managed-by`, plus the
+ * `chant-stack` and `chant-env` labels `describeStackStatus` reads (#3143).
  *
- * Only the managed-by marker, not stack/env: this applier has no ownership
- * marker to hand — the serializer stamps those from project config onto the
- * Config Connector object. Same shape the fly serializer uses when no ownership
- * context is set.
+ * The stack and env come from the serialized Config Connector object's own
+ * ownership labels (`chant.intentius.io/stack|env`, stamped by the serializer
+ * from project config), the way the aws applier takes its stack tags from the
+ * template's marker. Values are coerced to GCP label rules. A manifest that
+ * already carries a GCP-style `chant-stack` / `chant-env` keeps it. With no
+ * marker on the object, only `managed-by` is stamped.
  */
-export function chantOwnershipLabels(): Record<string, string> {
-  return { [GCP_RESOURCE_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
+export function chantOwnershipLabels(
+  manifestLabels?: Record<string, unknown> | null,
+): Record<string, string> {
+  const out: Record<string, string> = { [GCP_RESOURCE_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
+  const marker = manifestLabels ? readOwnership(manifestLabels, LABEL_OWNERSHIP_KEYS) : undefined;
+  const pick = (gcpKey: string, fallback: string | undefined): string | undefined => {
+    const own = manifestLabels?.[gcpKey];
+    return gcpLabelValue(typeof own === "string" && own ? own : fallback);
+  };
+  const stack = pick(GCP_RESOURCE_OWNERSHIP_KEYS.stack, marker?.stack);
+  const env = pick(GCP_RESOURCE_OWNERSHIP_KEYS.env, marker?.env);
+  if (stack) out[GCP_RESOURCE_OWNERSHIP_KEYS.stack] = stack;
+  if (env) out[GCP_RESOURCE_OWNERSHIP_KEYS.env] = env;
+  return out;
 }
 
 /**
@@ -50,9 +65,13 @@ export function isChantOwned(labels: Record<string, string> | null | undefined):
 }
 
 /** Merge the ownership marker into a create/update body's `labels`. */
-function stampOwnership<T extends object>(body: T): T & { labels: Record<string, string> } {
+function stampOwnership<T extends object>(
+  body: T,
+  resource: { metadata?: { labels?: Record<string, unknown> } },
+): T & { labels: Record<string, string> } {
   const existing = (body as { labels?: Record<string, string> }).labels ?? {};
-  return { ...body, labels: { ...existing, ...chantOwnershipLabels() } };
+  const manifest = resource.metadata?.labels;
+  return { ...body, labels: { ...existing, ...chantOwnershipLabels({ ...existing, ...manifest }) } };
 }
 
 /** Minimal shape of a serialized CNRM resource (`*.cnrm.cloud.google.com`). */
@@ -252,7 +271,7 @@ export const storageBucketMapper: ResourceMapper = {
   kind: "StorageBucket",
   defaultHost: "https://storage.googleapis.com",
   plan(resource, { base, project }) {
-    const body = stampOwnership(bucketInsertBody(resource as CnrmStorageBucket));
+    const body = stampOwnership(bucketInsertBody(resource as CnrmStorageBucket), resource);
     const url = `${base}/storage/v1/b/${encodeURIComponent(body.name)}`;
     // Reconcile in place with a PATCH of the desired mutable fields (the name is
     // immutable and travels in the URL).
@@ -278,7 +297,7 @@ export const pubSubTopicMapper: ResourceMapper = {
     // Pub/Sub creates a topic with an idempotent PUT to its resource URL; GET the
     // same URL for the existence check.
     const url = `${base}/v1/projects/${encodeURIComponent(project)}/topics/${encodeURIComponent(topic)}`;
-    const body = stampOwnership(pubSubTopicBody(resource));
+    const body = stampOwnership(pubSubTopicBody(resource), resource);
     // UpdateTopic uses the {topic, updateMask} envelope — the mask lists the
     // fields being set (labels, messageRetentionDuration).
     const update = {
@@ -424,7 +443,7 @@ export const secretManagerSecretMapper: ResourceMapper = {
     if (!name) throw new Error("SecretManagerSecret has no metadata.name");
     const secrets = `${base}/v1/projects/${encodeURIComponent(project)}/secrets`;
     const url = `${secrets}/${encodeURIComponent(name)}`;
-    const body = stampOwnership(secretBody(resource));
+    const body = stampOwnership(secretBody(resource), resource);
     return {
       getUrl: url,
       create: { method: "POST", url: `${secrets}?secretId=${encodeURIComponent(name)}`, body },
