@@ -942,9 +942,12 @@ Workspace (level 1, #2524):
                         its own chant, one process per toolchain. -o <dir>
                         writes <dir>/<member>.json; --member narrows the run;
                         --dry-run prints which chant runs which project
-  workspace lint [dir] [--format stylish|json|sarif] [--member <name>]
+  workspace lint [dir] [--format stylish|json|sarif] [--member <name>] [--cross-root]
                         Lint every chant member and example project with its
-                        own chant; sarif writes one run per member
+                        own chant; sarif writes one run per member.
+                        --cross-root adds the disagreement lint (LNK001 and
+                        the lexicons' cross-root checks) over every member's
+                        graph, where declared links and the graphs disagree
   workspace audit [dir] [--json] [--member <name>]
                         Audit each chant member with its own .chant-audit.json;
                         every finding carries a member field

@@ -358,8 +358,11 @@ export const decryptionAcrossRoots: CrossRootCheck = {
 | `ctx.docs` | every root's parsed documents, each tagged with `root`, built on first access |
 | `ctx.entities` | every root's entities as `{ root, name, entity }`, built on first access |
 | `ctx.env`, `ctx.activityContracts` | as on `PostSynthContext`, for the whole run |
+| `ctx.links` | the links between roots the caller passed, each `{ consumer, producer, output, origin, input?, status? }`, with `origin` `declared`, `kind-reader` or `inferred:<rule>`; absent when the caller passed none |
 
-A finding sets `root` to say which root it is about. A lexicon ships cross-root checks from its plugin's `crossRootChecks()`, kept apart from `postSynthChecks()`. The caller picks what a root is (a workspace member, a project directory) and builds each one; `runCrossRootChecks(checks, [{ root, dir?, env?, buildResult }], { env?, activityContracts? })` does no building and reads no files.
+A finding sets `root` to say which root it is about. A lexicon ships cross-root checks from its plugin's `crossRootChecks()`, kept apart from `postSynthChecks()`. The caller picks what a root is (a workspace member, a project directory) and builds each one; `runCrossRootChecks(checks, [{ root, dir?, env?, buildResult }], { env?, activityContracts?, links? })` does no building and reads no files.
+
+[`chant workspace lint --cross-root`](/chant/cli/workspace-lint/#the-disagreement-lint) is one caller: each composed member is a root, read under its own toolchain, with its graph nodes as entities, and `ctx.links` is the workspace's member links. A lexicon that surfaces a relation between members in its IR checks it there against the links written down, which is how the disagreement lint applies per lexicon ([#2549](https://github.com/INTENTIUS/chant/issues/2549)).
 
 ## Universal Check Patterns
 

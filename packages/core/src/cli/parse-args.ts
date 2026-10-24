@@ -47,6 +47,7 @@ const BOOLEAN_FLAGS = new Set([
   "--up",
   "--down",
   "--include-dependents",
+  "--cross-root",
   "--local",
   "--json",
   "--progress-json",
@@ -380,6 +381,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.head = args[++i];
     } else if (arg === "--include-dependents") {
       result.includeDependents = true;
+    } else if (arg === "--cross-root") {
+      // `chant workspace lint --cross-root` (#2549): the disagreement lint over every member's graph.
+      result.crossRoot = true;
     } else if (arg === "--dependents-of") {
       // `chant workspace run --dependents-of <member> --op <op>` (#2554).
       const value = args[++i];

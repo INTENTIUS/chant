@@ -7,7 +7,7 @@ title: "chant workspace lint"
 ## Synopsis
 
 ```
-chant workspace lint [dir] [--format stylish|json|sarif] [-o <file>] [--member <name>] [--fix] [--dry-run [--json]]
+chant workspace lint [dir] [--format stylish|json|sarif] [-o <file>] [--member <name>] [--fix] [--cross-root [--env <env>]] [--dry-run [--json]]
 ```
 
 ## Description
@@ -49,6 +49,22 @@ A member whose lint printed no SARIF gets a run with no results and a failed inv
 
 With `--format json`, the output is `{ "workspace", "members", "skipped" }`. Each entry in `members` names the member and its directory, and holds the member's exit code and the `diagnostics` array its own `chant lint --format json` printed.
 
+## The disagreement lint
+
+A [member link](/chant/reference/workspace-declaration/#member-links) is written down once, on the consumer, and the members' graphs can surface the same relation on their own. `--cross-root` also reports where the two disagree ([#2549](https://github.com/INTENTIUS/chant/issues/2549)). It is off by default, so a plain `workspace lint` costs nothing more.
+
+It uses the [cross-build-root mode](/chant/lexicon-authoring/post-synth-checks/) of post-synth checks ([#1939](https://github.com/INTENTIUS/chant/issues/1939)). Every `chant` member's graph is read under its own toolchain, as [`chant workspace graph`](/chant/cli/workspace-graph/) reads it. Each composed member becomes one root, and the composed graph's link table is handed to every check. Two kinds of check run:
+
+- `LNK001`, chant's own. It warns when a consumer declares a link to one member's output while its graph joins a parameter of the same name ([`joinKey`](/chant/reference/workspace-declaration/#member-links)) to another member's output.
+- The cross-root checks each lexicon ships through its plugin's `crossRootChecks()`, for every lexicon the members' graphs name. A lexicon applies its own disagreement rules once it surfaces the relation in its IR. A lexicon whose checks can't be loaded from the workspace root's install is listed and skipped.
+
+```
+── cross-root  (LNK001; 1 finding)
+  warning LNK001 [api] api declares a link to legacy-net's output vpcId, but its graph joins parameter vpcId to network's output VpcId. Point the link at the member the graph reads from, or rename the parameter so it joins the declared output.
+```
+
+With `--format json` the document gains `crossRoot: { findings, checks, unloaded }`, and with `--format sarif` the log gains one run whose `automationDetails.id` is `cross-root/`. A finding at `error` severity fails the command, and so does a graph that can't be read. `LNK001` itself only warns.
+
 ## Options
 
 | Option | Effect |
@@ -58,6 +74,7 @@ With `--format json`, the output is `{ "workspace", "members", "skipped" }`. Eac
 | `-o, --output <file>` | Write the `json` or `sarif` document to a file. |
 | `--member <name>` | Run only these members or example groups. Repeatable, and a comma list works too. |
 | `--fix`, `--param <name=value>`, `--params-file <path>` | Passed to each member's lint. |
+| `--cross-root` | Also run [the disagreement lint](#the-disagreement-lint) over every member's graph. `--env <env>` names the environment the checks see. |
 | `--dry-run` | Print the plan and lint nothing. |
 
 ## Exit codes
