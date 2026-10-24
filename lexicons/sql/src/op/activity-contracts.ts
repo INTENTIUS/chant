@@ -124,6 +124,8 @@ const migrationArgs = z.strictObject({
   buildPath: z.string(),
   environment: z.string().optional(),
   using: z.string().optional(),
+  reverse: z.string().optional(),
+  defaultAtContract: z.boolean().optional(),
   retain: z.string().optional(),
   batchSize: z.number().int().positive().optional(),
   replicationLag: z.union([z.literal(false), z.strictObject({ max: z.string().optional(), wait: z.string().optional() })]).optional(),

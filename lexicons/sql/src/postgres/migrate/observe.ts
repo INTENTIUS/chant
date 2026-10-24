@@ -28,8 +28,8 @@
  * do: a table that is not there, a partition (run it on the partitioned
  * table) or an inheritance tree; no primary key to batch by; a column in the
  * partition key; a generated column; a column change the Op does not make
- * (a rename and a type change at once, a rename of a column with a default
- * or a sequence); something that uses the column and is
+ * (a rename and a type change without `reverse`, a rename of a column with a
+ * default or a sequence without `defaultAtContract`); something that uses the column and is
  * not carried over to the new one (`./carry.ts`: indexes, key, check and
  * foreign key constraints and declared views are); a publication that sends
  * it; a working object chant did not make.
@@ -50,7 +50,7 @@ import type { DeclaredPgObject } from "../apply/statements";
 import { col, migrationNames, MIGRATION_TRAILER_KEY, pgName, type MigrationChange, type MigrationNames } from "./names";
 import { publicationsOf, type PublicationHit } from "./replication";
 import { keyText, type KeyColumn } from "./batches";
-import { carriedStates, carriedSubject, discoverDependents, replaceColumn, storedType, type CarriedObject, type CarriedState, type CarriedView, type ColumnSequence, type Dependents } from "./carry";
+import { carriedStates, carriedSubject, columnSequence, discoverDependents, replaceColumn, storedType, type CarriedObject, type CarriedState, type CarriedView, type ColumnSequence, type Dependents } from "./carry";
 
 /** A refusal: the migration cannot start, or cannot go on, for a reason a person has to act on. */
 export class MigrationRefusal extends Error {
@@ -102,7 +102,7 @@ export interface MigrationObservation {
   carriedStates: Map<string, CarriedState>;
   /** The views that read the old column, made again at the switch. */
   views: CarriedView[];
-  /** The sequence that gives the old column its values (identity or serial), moved to the new column at the switch. */
+  /** The sequence that gives the old column its values (identity or serial): moved to the new column at the switch for a type change, at the contract for a rename. */
   sequence?: ColumnSequence;
   /** The table is partitioned: every step runs on it, and its partitions follow. */
   partitioned: boolean;
@@ -118,6 +118,10 @@ export interface MigrationObservation {
   changes: PgChange[];
   /** The expression the new column's value is computed with, over the old row's columns. */
   expression: string;
+  /** A rename with a type change: the expression over the new row's columns that gives the old column's value. */
+  reverse?: string;
+  /** A rename keeps its default, serial or identity on the old column until the contract (`defaultAtContract`). */
+  defaultAtContract?: boolean;
   publications: PublicationHit[];
   major: number;
 }
@@ -132,6 +136,10 @@ export interface ObserveInput {
   objects?: readonly DeclaredPgObject[];
   /** The type change's expression, over the old row's columns. Default: `CAST(<column> AS <declared type>)`. */
   using?: string;
+  /** A rename with a type change: the expression over the new row's columns that gives the old column's value. */
+  reverse?: string;
+  /** A rename of a column with a default, serial or identity: the declared default lands on the new column at the contract, not the switch. */
+  defaultAtContract?: boolean;
   /** The major the build targets; the server's own wins. */
   major?: number;
 }
@@ -216,7 +224,7 @@ async function columnChanges(input: ObserveInput): Promise<{ changes: PgChange[]
 
 const ruleText = (c: PgChange) => `${c.rule} ${PG_CLASSIFIER_RULES[c.rule].title} (${c.field}${c.before !== undefined || c.after !== undefined ? `: ${c.before ?? "-"} -> ${c.after ?? "-"}` : ""})`;
 
-interface RelationRow {
+export interface RelationRow {
   oid: string;
   kind: string;
   partition: boolean;
@@ -371,7 +379,8 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
         );
       },
     );
-    if (change === "type") {
+    const retyped = change === "rename" && input.reverse !== undefined;
+    if (change === "type" || retyped) {
       expression = input.using ?? `CAST(${col(sourceName)} AS ${storedType(column.type)})`;
       if (expression.includes("$chant$")) throw new MigrationRefusal(`${where}: the using expression may not contain $chant$, which quotes the dual-write function's body`);
     } else if (input.using !== undefined) {
@@ -379,7 +388,7 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
     }
     // The declared type as the classifier compared it: the server's spelling (character varying(10), not varchar(10)).
     const serial = storedType(column.type) !== column.type;
-    const expectedType = change === "type" ? (serial ? storedType(column.type)! : String(typeChange?.after ?? column.type)) : source.type;
+    const expectedType = change === "type" || retyped ? (serial ? storedType(column.type)! : String(typeChange?.after ?? column.type)) : source.type;
     if (newColumn && newColumn.type !== expectedType) {
       throw new MigrationRefusal(
         `${where}: ${newColumn.name} was made as ${newColumn.type}, from another declaration of ${input.column} (now ${column.type}). The run fails so onFailure drops it, and the next run starts again from the current declaration.`,
@@ -395,6 +404,12 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
           `A migration of the publisher and the subscriber together is chant #3332.`,
       );
     }
+  }
+
+  // After a rename's switch the old column still holds the default or the identity the contract moves, and its sequence is read for it.
+  if (state === "switched" && old && (old.identity || old.default?.includes("nextval("))) {
+    const seq = await columnSequence(client, rel.oid, old.attnum);
+    if (seq) dependents = { ...dependents, sequence: seq };
   }
 
   return {
@@ -419,13 +434,15 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
     ...(check ? { check } : {}),
     changes,
     expression,
+    ...(input.reverse !== undefined && state === "migrate" ? { reverse: input.reverse } : {}),
+    ...(input.defaultAtContract && state === "migrate" ? { defaultAtContract: true } : {}),
     publications,
     major,
   };
 }
 
 /** The checks that hold only while there is something to migrate. Returns the batch key and what the Op carries over. */
-async function refuseUnsupported(
+export async function refuseUnsupported(
   input: ObserveInput,
   names: MigrationNames,
   rel: RelationRow,
@@ -437,19 +454,37 @@ async function refuseUnsupported(
 ): Promise<{ batchKey: string; keyColumns: KeyColumn[]; dependents: Pick<Dependents, "carried" | "views" | "sequence"> }> {
   const where = `${names.schema}.${names.table}`;
   const oid = rel.oid;
-  if (rename && typeChange) {
+  if (rename && typeChange && input.reverse === undefined) {
     throw new MigrationRefusal(
       `${where}: ${source.name} is renamed to ${names.column} and its type changes (${typeChange.before} -> ${typeChange.after}) in one declaration. ` +
-        `Migrate one at a time: declare the rename with the old type, run the Op to its end, then change the type. ` +
-        `(In one run both names would stay written until the contract, which needs a conversion back to the old type for writers of the new name; chant #3331.)`,
+        `Both names stay written until the contract, so a writer of the new name needs its value converted back to the old type: give that expression as reverse ` +
+        `(over the row's columns, the new column by its declared name; using gives the new value from the old one). The verification fails the run unless reverse over every new value gives the old one back. ` +
+        `Or migrate one at a time: declare the rename with the old type, run the Op to its end, then change the type.`,
     );
   }
-  if (rename && (source.default !== undefined || column.default !== undefined)) {
+  if (input.reverse !== undefined && !(rename && typeChange)) {
+    throw new MigrationRefusal(`${where}.${names.column}: reverse is for a rename combined with a type change, and this migration is ${rename ? "a rename only" : "a type change without a rename"}`);
+  }
+  if (input.reverse !== undefined && input.reverse.includes("$chant$")) {
+    throw new MigrationRefusal(`${where}: the reverse expression may not contain $chant$, which quotes the dual-write function's body`);
+  }
+  const hasDefault = source.default !== undefined || column.default !== undefined;
+  if (rename && typeChange && (hasDefault || source.identity || column.generated?.kind === "identity")) {
     throw new MigrationRefusal(
-      `${where}: ${source.name} has a default (${source.default ?? column.default}). During a rename both columns are written, each from the other, ` +
-        `and a row inserted by a writer that names one column would get the other's default, which the trigger cannot tell from a value it was given. ` +
-        `Drop the default first (the applier does), rename, then declare it again. A rename that keeps its default needs versioned views (chant #3331).`,
+      `${where}: ${source.name} has a default, serial or identity, and its rename also changes its type. The default is an expression of the old type; converting it, and the sequence's type, ` +
+        `is a third conversion on top of using and reverse that nothing verifies. Rename first (defaultAtContract: true), run the Op to its end, then change the type.`,
     );
+  }
+  if (rename && (hasDefault || source.identity) && !input.defaultAtContract) {
+    throw new MigrationRefusal(
+      `${where}: ${source.name} has a default (${source.default ?? column.default ?? "identity"}). During a rename both columns are written, each from the other, ` +
+        `and a row inserted by a writer that names one column would get the other's default, which the trigger cannot tell from a value it was given. ` +
+        `Set defaultAtContract: true to leave the new column without the default until the contract, which gives the default to the new column in the contract's transaction; ` +
+        `until then an INSERT that names the new column with an explicit NULL gets the default, and UPDATE ... SET <new> = DEFAULT sets NULL. Or drop the default first (the applier does), rename, then declare it again.`,
+    );
+  }
+  if (input.defaultAtContract && !(rename && (hasDefault || source.identity))) {
+    throw new MigrationRefusal(`${where}.${names.column}: defaultAtContract is for a rename of a column with a default, serial or identity, and this migration is not one`);
   }
   if (source.generated || (column.generated && column.generated.kind !== "identity")) {
     throw new MigrationRefusal(
@@ -475,6 +510,7 @@ async function refuseUnsupported(
     declared: input.declared,
     defaultSchema: input.target.defaultSchema,
     partitioned: rel.kind === "p",
+    ...(input.defaultAtContract ? { keepSequence: true } : {}),
   });
   if (dependents.refused.length > 0) {
     throw new MigrationRefusal(
@@ -510,6 +546,8 @@ export function migrationPlanSubject(o: MigrationObservation): Record<string, un
     from: o.source ? { name: o.source.name, type: o.source.type, notNull: o.source.notNull, default: o.source.default ?? null } : null,
     to: { name: o.column.name, type: o.column.type ?? null, notNull: o.column.notNull === true, default: o.column.default ?? null, comment: o.column.comment ?? null },
     expression: o.expression,
+    ...(o.reverse !== undefined ? { reverse: o.reverse } : {}),
+    ...(o.defaultAtContract ? { defaultAtContract: true } : {}),
     batchKey: o.batchKey,
     rules: o.changes.map((c) => c.rule),
     ...(o.carried.length > 0 || o.views.length > 0 || o.sequence ? { dependents: carriedSubject(o) } : {}),

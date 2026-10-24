@@ -118,8 +118,8 @@ The Plan phase refuses, naming each object and what to do, a table or column wit
 - a partition (run the Op on its partitioned table) or an inheritance tree (chant #3333);
 - a generated column itself, which the applier changes in place;
 - no primary key;
-- a rename combined with a type change: run the Op twice, the rename first (chant #3331);
-- a rename of a column with a default, an identity or a serial sequence: drop the default, rename, declare it again (chant #3331);
+- a rename combined with a type change, unless the Op gives `reverse` (the old column's value from the new one); with a default, a serial or an identity as well, run the Op twice, the rename first;
+- a rename of a column with a default, an identity or a serial sequence, unless the Op gives `defaultAtContract: true` (the default lands on the new column at the contract; an explicit NULL into the new name gets the default until then);
 - a column a logical replication publication sends; a column list that leaves it out does not stop the Op (chant #3332);
 - a column that needs no migration, where the message says to use the applier.
 

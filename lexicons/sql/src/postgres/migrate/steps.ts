@@ -39,6 +39,10 @@ export interface MigrationRun {
   column: string;
   /** The type change's expression over the old row's columns. */
   using?: string;
+  /** A rename with a type change: the expression that gives the old column's value from the new column's. */
+  reverse?: string;
+  /** A rename of a column with a default, serial or identity: the declared default lands on the new column at the contract. */
+  defaultAtContract?: boolean;
   /** This project's ownership marker, stamped on every working object. */
   marker?: OwnershipMarker;
   /** The major the build targets. */
@@ -70,6 +74,8 @@ export const observe = (run: MigrationRun): Promise<MigrationObservation> =>
     ...(run.objects ? { objects: run.objects } : {}),
     ...(run.marker ? { marker: run.marker } : {}),
     ...(run.using !== undefined ? { using: run.using } : {}),
+    ...(run.reverse !== undefined ? { reverse: run.reverse } : {}),
+    ...(run.defaultAtContract ? { defaultAtContract: true } : {}),
     ...(run.major !== undefined ? { major: run.major } : {}),
   });
 
@@ -174,7 +180,7 @@ export interface ExpandResult {
 }
 
 /** The new column's type: the declared one, with its collation when it declares one. */
-const newColumnType = (o: MigrationObservation): string => `${o.names.change === "rename" ? o.source!.type : storedType(o.column.type)}${o.column.collate ? ` COLLATE ${o.column.collate}` : ""}`;
+const newColumnType = (o: MigrationObservation): string => `${o.names.change === "rename" && o.reverse === undefined ? o.source!.type : storedType(o.column.type)}${o.column.collate ? ` COLLATE ${o.column.collate}` : ""}`;
 
 /**
  * Expand: add the new column, nullable and with no default, which changes
@@ -211,10 +217,27 @@ export async function expand(run: MigrationRun): Promise<ExpandResult> {
  * An insert takes the new column's value when it is given and the old one's
  * otherwise; an update takes whichever of the two it changed.
  */
-export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expression">): string {
+export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expression"> & { reverse?: string }): string {
   const n = o.names;
   const nw = `NEW.${col(n.newColumn)}`;
   const src = `NEW.${col(n.source)}`;
+  if (n.change === "rename" && o.reverse !== undefined) {
+    // A rename with a type change: a writer of the old name has `expression` applied, a writer of the new name `reverse`, each over the row as it is.
+    const fwd = `(SELECT ${o.expression} FROM (SELECT NEW.*) AS ${col(n.table)})`;
+    const back = `(SELECT ${o.reverse} FROM (SELECT NEW.*) AS ${col(n.table)})`;
+    return [
+      `BEGIN`,
+      `  IF TG_OP = 'INSERT' THEN`,
+      `    IF ${nw} IS NULL THEN ${nw} := ${fwd}; ELSE ${src} := ${back}; END IF;`,
+      `  ELSIF ${nw} IS DISTINCT FROM OLD.${col(n.newColumn)} THEN`,
+      `    ${src} := ${back};`,
+      `  ELSE`,
+      `    ${nw} := ${fwd};`,
+      `  END IF;`,
+      `  RETURN NEW;`,
+      `END`,
+    ].join("\n");
+  }
   if (n.change === "type") {
     return [`BEGIN`, `  ${nw} := (SELECT ${o.expression} FROM (SELECT NEW.*) AS ${col(n.table)});`, `  RETURN NEW;`, `END`].join("\n");
   }
@@ -233,7 +256,7 @@ export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expressio
 }
 
 /** The statements that start the dual write: the function, the trigger, their comments. */
-export function dualWriteStatements(o: Pick<MigrationObservation, "names" | "expression">, marker: OwnershipMarker | undefined, defaultSchema: string): string[] {
+export function dualWriteStatements(o: Pick<MigrationObservation, "names" | "expression"> & { reverse?: string }, marker: OwnershipMarker | undefined, defaultSchema: string): string[] {
   const n = o.names;
   return [
     `CREATE OR REPLACE FUNCTION ${n.qualifiedFn}() RETURNS trigger LANGUAGE plpgsql SET search_path = ${quoteIdent(defaultSchema)} AS $chant$\n${dualWriteBody(o)}\n$chant$`,
@@ -373,13 +396,17 @@ export interface SequenceState {
  * `serial` column's sequence is handed over with `OWNED BY`, takes the
  * declared integer type, and becomes the new column's default.
  */
-function sequenceStatements(o: MigrationObservation, state: SequenceState | undefined): { before: string[]; after: string[] } {
+function sequenceStatements(o: MigrationObservation, state: SequenceState | undefined, at: "switch" | "contract" = "switch"): { before: string[]; after: string[] } {
   const seq = o.sequence;
   const n = o.names;
   const t = n.qualifiedTable;
-  if (!seq || n.change !== "type") return { before: [], after: [] };
+  if (!seq || n.change !== (at === "switch" ? "type" : "rename")) return { before: [], after: [] };
+  if (at === "contract" && seq.kind === "serial") {
+    // The sequence goes to the new column before the old one is dropped, which would drop it; the default is set after.
+    return { before: [`ALTER SEQUENCE ${seq.ident} OWNED BY ${t}.${col(n.column)}`], after: [] };
+  }
   if (seq.kind === "identity") {
-    if (!state) throw new Error(`${n.key}: the switch moves the identity of ${n.source} and needs its sequence's state, read under the switch's lock`);
+    if (!state) throw new Error(`${n.key}: the ${at} moves the identity of ${n.source} and needs its sequence's state, read under the switch's lock`);
     const g = o.column.generated;
     const options = [`SEQUENCE NAME ${seq.ident}`, ...(g?.options ? [g.options.trim().replace(/^\(|\)$/g, "")] : [])].join(" ");
     return {
@@ -540,6 +567,31 @@ export const identityOf = (marker: OwnershipMarker | undefined): { stack?: strin
  * catalog change under ACCESS EXCLUSIVE). The migration's receipts go with
  * them. Before the date, say until when and drop nothing.
  */
+/**
+ * The contract's statements. Always: the trigger and its function, then the
+ * old column. A rename of a column with a default, serial or identity
+ * (`defaultAtContract`) also gives the declared default to the new column
+ * here, in the same transaction, so no writer sees both columns defaulted:
+ * a serial's sequence is handed over before the old column is dropped (which
+ * would drop it), an identity is dropped from the old column and added to
+ * the new one under the same sequence name, set to where the old one stood.
+ */
+export function contractStatements(o: MigrationObservation, sequenceState?: SequenceState): string[] {
+  const n = o.names;
+  const t = n.qualifiedTable;
+  const old = o.old!;
+  const sequence = sequenceStatements(o, sequenceState, "contract");
+  const dflt = o.column.default ?? (o.sequence?.kind === "serial" ? old.default : undefined);
+  const out: string[] = [];
+  if (o.trigger) out.push(`DROP TRIGGER ${col(n.trigger)} ON ${t}`);
+  if (o.fn) out.push(`DROP FUNCTION ${n.qualifiedFn}()`);
+  out.push(...sequence.before);
+  out.push(`ALTER TABLE ${t} DROP COLUMN ${col(old.name)}`);
+  if (dflt !== undefined && n.change === "rename" && o.sequence?.kind !== "identity") out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.column)} SET DEFAULT ${dflt}`);
+  out.push(...sequence.after);
+  return out;
+}
+
 export async function contract(run: MigrationRun): Promise<ContractResult> {
   const plan = await retainPlan(run);
   if (!plan.oldColumn) return { state: plan.state, dropped: false };
@@ -550,9 +602,14 @@ export async function contract(run: MigrationRun): Promise<ContractResult> {
   const o = await observe(run);
   const n = o.names;
   await inTransaction(run, async (exec) => {
-    if (o.trigger) await exec(`DROP TRIGGER ${col(n.trigger)} ON ${n.qualifiedTable}`);
-    if (o.fn) await exec(`DROP FUNCTION ${n.qualifiedFn}()`);
-    await exec(`ALTER TABLE ${n.qualifiedTable} DROP COLUMN ${col(o.old!.name)}`);
+    let state: SequenceState | undefined;
+    if (o.sequence?.kind === "identity" && n.change === "rename") {
+      // Writers wait from here, so the sequence's position read next is where the moved identity carries on.
+      await exec(`LOCK TABLE ${n.qualifiedTable} IN ACCESS EXCLUSIVE MODE`);
+      const [row] = await exec(`SELECT last_value::text AS last, is_called AS called FROM ${o.sequence.ident}`);
+      state = { lastValue: String(row?.last), isCalled: row?.called === true };
+    }
+    for (const sql of contractStatements(o, state)) await exec(sql);
   });
   await postgresReceiptStore(run.client, n.schema, identityOf(run.marker)).forget(batchPrefix(identityOf(run.marker), n.key));
   return { state: "done", dropped: true, oldColumn: plan.oldColumn };

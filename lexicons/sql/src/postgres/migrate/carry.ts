@@ -214,10 +214,24 @@ interface DiscoverInput {
   defaultSchema: string;
   /** The table is partitioned: its indexes cannot be built CONCURRENTLY, nor its keys attached USING INDEX. */
   partitioned?: boolean;
+  /** A rename keeps the column's sequence on the old column until the contract (`defaultAtContract`), instead of being refused. */
+  keepSequence?: boolean;
 }
 
 interface Row {
   [key: string]: unknown;
+}
+
+/** The sequence that belongs to a column (an identity's, or a `serial`'s), if it has one. */
+export async function columnSequence(client: PostgresClient, tableOid: string, attnum: number): Promise<ColumnSequence | undefined> {
+  const [row] = await client.query<{ schema: string; name: string; deptype: string }>(
+    `SELECT n.nspname AS schema, c.relname AS name, d.deptype::text AS deptype
+     FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_class c ON c.oid = d.objid AND d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.refobjid = $1::oid AND d.refobjsubid = $2 AND d.deptype IN ('a', 'i') AND c.relkind = 'S'`,
+    [tableOid, attnum],
+  );
+  if (!row) return undefined;
+  return { kind: row.deptype === "i" ? "identity" : "serial", schema: row.schema, name: row.name, ident: `${quoteIdent(row.schema)}.${quoteIdent(row.name)}` };
 }
 
 /** What uses the column the values come from, sorted into what the Op carries over and what it refuses. */
@@ -393,9 +407,10 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
       } else if (kind === "S") {
         const dep = deps.find((d) => d.kind === "class" && d.objid === String(r.oid));
         const seq: ColumnSequence = { kind: dep?.deptype === "i" ? "identity" : "serial", schema: String(r.schema), name, ident: `${quoteIdent(String(r.schema))}.${quoteIdent(name)}` };
-        if (rename) {
+        if (rename && !input.keepSequence) {
           refused.push(
-            `sequence ${r.schema}.${name} gives the column its values (${seq.kind === "identity" ? "an identity column" : "a serial column's default"}); during a rename a writer that names the new column would be given the old one's next value by the trigger, which it cannot tell from a value the writer chose; a rename that keeps its sequence needs versioned views (chant #3331)`,
+            `sequence ${r.schema}.${name} gives the column its values (${seq.kind === "identity" ? "an identity column" : "a serial column's default"}); during a rename a writer that names the new column would get the old one's next value, and the trigger would take it over the writer's, ` +
+              `because it cannot tell a defaulted value from one the writer gave. Set defaultAtContract: true to leave the new column without the default until the contract (see the Op's reference), or drop the default first`,
           );
         } else sequence = seq;
       } else {

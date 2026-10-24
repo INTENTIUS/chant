@@ -169,6 +169,8 @@ export interface VerifyResult {
   mismatched: number;
   /** Rows whose new column is NULL. */
   nulls: number;
+  /** A rename with a type change: rows whose old column differs from `reverse` over the new one. */
+  unreversed?: number;
   /** The sum of a 64-bit hash of every new value, and of every value the expression gives. */
   checksum: string;
   expected: string;
@@ -201,6 +203,7 @@ export async function verifyMigration(run: MigrationRun): Promise<VerifyResult> 
       exec(
         `SELECT count(*)::text AS rows, count(*) FILTER (WHERE ${nw} IS DISTINCT FROM (${o.expression}))::text AS mismatched,
                 count(*) FILTER (WHERE ${nw} IS NULL)::text AS nulls,
+                ${o.reverse !== undefined ? `count(*) FILTER (WHERE (${o.reverse}) IS DISTINCT FROM ${col(n.source)})::text` : "'0'"} AS unreversed,
                 COALESCE(sum(pg_catalog.hashtextextended(${nw}::text, 0)), 0)::text AS checksum,
                 COALESCE(sum(pg_catalog.hashtextextended((${o.expression})::text, 0)), 0)::text AS expected
          FROM ${n.qualifiedTable}`,
@@ -210,6 +213,14 @@ export async function verifyMigration(run: MigrationRun): Promise<VerifyResult> 
   const r = { rows: Number(row?.rows ?? 0), mismatched: Number(row?.mismatched ?? 0), nulls: Number(row?.nulls ?? 0), checksum: String(row?.checksum ?? "0"), expected: String(row?.expected ?? "0") };
   if (r.mismatched > 0 || r.checksum !== r.expected) {
     throw new MigrationVerificationError(n.key, { state: o.state, ...r }, `${r.mismatched} of ${r.rows} row(s) have ${n.newColumn} different from ${o.expression} (checksums ${r.checksum} and ${r.expected})`);
+  }
+  const unreversed = Number(row?.unreversed ?? 0);
+  if (o.reverse !== undefined && unreversed > 0) {
+    throw new MigrationVerificationError(
+      n.key,
+      { state: o.state, ...r, unreversed },
+      `${unreversed} of ${r.rows} row(s) have ${n.source} different from ${o.reverse}, which must give the old value back from the new one (it would write ${n.source} wrongly for a writer of ${n.column})`,
+    );
   }
   if (requiresNotNull(o.column, o.carried) && r.nulls > 0) {
     throw new MigrationVerificationError(n.key, { state: o.state, ...r }, `${r.nulls} of ${r.rows} row(s) have ${n.newColumn} NULL, and ${n.column} is declared NOT NULL or is in the primary key`);
@@ -222,12 +233,13 @@ export async function verifyMigration(run: MigrationRun): Promise<VerifyResult> 
     o.carried.length > 0 || o.views.length > 0
       ? `; ${o.carried.map((c) => `${c.kind} ${c.name}${c.target !== c.name ? ` (as ${c.target})` : ""}`).join(", ") || "no index or constraint"} carried over${o.views.length > 0 ? `, view(s) ${o.views.map((v) => v.name).join(", ")} made again at the switch` : ""}`
       : "";
-  const summary = `${n.key}: ${r.rows} row(s), ${n.newColumn} equal to ${o.expression} in every one (checksum ${r.checksum})${carried}`;
+  const summary = `${n.key}: ${r.rows} row(s), ${n.newColumn} equal to ${o.expression} in every one (checksum ${r.checksum})${o.reverse !== undefined ? `, ${n.source} equal to ${o.reverse} in every one` : ""}${carried}`;
   run.log(`-- ${summary}`);
   return {
     state: o.state,
     planDigest: computePlanDigest("postgres-migration", { plan: migrationPlanSubject(o), table: o.oid, column: o.newColumn.attnum, verified: { mismatched: 0 } }),
     ...r,
+    ...(o.reverse !== undefined ? { unreversed } : {}),
     summary,
   };
 }

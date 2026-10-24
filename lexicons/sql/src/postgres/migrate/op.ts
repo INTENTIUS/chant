@@ -64,6 +64,29 @@ export interface PostgresMigrationOpConfig {
    * and the verification all use it.
    */
   using?: string;
+  /**
+   * A rename combined with a type change: the SQL expression that gives the
+   * old column's value from the new column's, over the row's columns (the
+   * new column by its declared name). `using` gives the new value from the
+   * old one. Both stay in force until the contract: a writer of the old name
+   * has `using` applied, a writer of the new name has `reverse` applied. The
+   * verification fails the run unless `reverse` over every new value gives
+   * the old value back. A new value the old type cannot hold fails the
+   * writer's statement until the contract drops the old column.
+   */
+  reverse?: string;
+  /**
+   * A rename of a column with a default, an identity or a serial sequence.
+   * The declared default (or identity, or the serial's default) lands on the
+   * new column at the contract, not at the switch, so that until then a
+   * writer of either name gets the old column's default once. Two writes
+   * differ from the declaration until then, and `true` accepts both: an
+   * INSERT that names the new column with an explicit NULL gets the default
+   * instead of NULL, and `UPDATE ... SET <new> = DEFAULT` sets NULL. An
+   * `ApplyOp` between the switch and the contract must not set the default
+   * on the new column. Needs `gates: "own"` to end with the contract.
+   */
+  defaultAtContract?: boolean;
   /** The build output the declaration is read from. Default: `dist/schema.json`. */
   output?: string;
   /** Project directory to build. Default: `.`. */
@@ -138,6 +161,8 @@ export interface PostgresMigrationArgs {
   buildPath: string;
   environment?: string;
   using?: string;
+  reverse?: string;
+  defaultAtContract?: boolean;
   retain?: string;
   batchSize?: number;
   replicationLag?: { max?: string; wait?: string } | false;
@@ -178,6 +203,8 @@ export function PostgresMigrationOp(config: PostgresMigrationOpConfig): Postgres
     buildPath: config.output ?? "dist/schema.json",
     environment: config.env,
     ...(config.using !== undefined ? { using: config.using } : {}),
+    ...(config.reverse !== undefined ? { reverse: config.reverse } : {}),
+    ...(config.defaultAtContract ? { defaultAtContract: true } : {}),
     ...(config.retain ? { retain: config.retain } : {}),
     ...(config.batchSize !== undefined ? { batchSize: config.batchSize } : {}),
     ...(config.replicationLag !== undefined ? { replicationLag: config.replicationLag } : {}),
