@@ -111,7 +111,7 @@ The agent-facing entry point is the `chant-fly` skill: a short operational playb
 | ------------------------------------------------------------------------------------------ | ------------------------------------- |
 | [@intentius/chant](https://www.npmjs.com/package/@intentius/chant)                         | Core type system, CLI, build pipeline |
 | [@intentius/chant-lexicon-aws](https://www.npmjs.com/package/@intentius/chant-lexicon-aws) | AWS CloudFormation lexicon            |
-| [@intentius/chant-lexicon-gcp](https://www.npmjs.com/package/@intentius/chant-lexicon-gcp) | GCP Deployment Manager lexicon        |
+| [@intentius/chant-lexicon-gcp](https://www.npmjs.com/package/@intentius/chant-lexicon-gcp) | GCP Config Connector lexicon          |
 
 ## License
 

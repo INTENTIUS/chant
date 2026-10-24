@@ -19,13 +19,15 @@ Core ships only the agnostic verbs (`docker-build`, `sign`, `wait-endpoint`, …
 | Family | Where it sits | AWS leaf | Azure | GCP | k8s / generic |
 |---|---|---|---|---|---|
 | **build** | fully agnostic | docker / zip / jvm | same | same | same |
-| **publish-image** | agnostic (endpoint + auth is env config) | ECR | ACR | Artifact Registry | any OCI |
-| **apply infra** | cloud-shaped | `cfn-deploy` | `arm-deploy` | Config Connector / gcloud | `kubectl` (leveler) / Terraform |
+| **publish-image** | agnostic (endpoint + auth is env config) | ECR | ACR, *planned* ([#3142](https://github.com/INTENTIUS/chant/issues/3142)) | Artifact Registry, *planned* ([#3143](https://github.com/INTENTIUS/chant/issues/3143)) | any OCI |
+| **apply infra** | cloud-shaped | `cfn-deploy` | `arm-deploy` | `gcp-apply` (Config Connector objects over the REST API) | `kubectl` (leveler) / Terraform |
 | **job submission** | cloud-shaped | EMR / Glue / Batch | Synapse / Batch / ADF | Dataproc / Dataflow | Job / Argo / Spark operator |
 | **host / code delivery** | split | SSM + CodeDeploy | Run Command / Arc (no CodeDeploy peer) | OS Config / MIG rolling | SSH (agnostic) |
-| **wait / verify** | split | `wait-for-stack` | ARM wait | DM / CC wait | rollout status; `health-gate` agnostic |
-| **safety / rollback** | coupled to apply | CFN rollback / CodeDeploy auto | ARM | — | rollout undo; saga *mechanism* agnostic |
+| **wait / verify** | split | `wait-for-stack` | ARM wait, *planned* ([#3142](https://github.com/INTENTIUS/chant/issues/3142)) | operation and Cloud Run waits, *planned* ([#3143](https://github.com/INTENTIUS/chant/issues/3143)) | rollout status; `health-gate` agnostic |
+| **safety / rollback** | coupled to apply | CFN rollback / CodeDeploy auto | none yet: `arm-deploy` is `needs-opt-out` | none yet: `gcp-apply` is `needs-opt-out` | rollout undo; saga *mechanism* agnostic |
 | **observe / drift** | lexicon seam | tags | tags | labels | labels |
+
+Only the AWS, k8s and generic leaves are complete. In the Azure and GCP columns, `arm-deploy` and `gcp-apply` ship ([#4273](https://github.com/INTENTIUS/chant/issues/4273)), each with a plan read live from the cloud. A cell marked *planned* names a leaf that doesn't exist yet, so a component can't compose it. The job-submission and host-delivery cells name the cloud's own services, for which chant has no leaf on any cloud but AWS. A step whose verb has no rollback declares `noRollback` with a reason, which COMP003 asks for.
 
 `build`, `publish-image`, `remote-exec` over SSH, and `health-gate` / `wait-endpoint` port almost unchanged. `apply` is the most cloud-shaped. Managed `code-deploy` is nearly AWS-only — there is no clean Azure or GCP peer, so the portable fallback is `copy-to-host` + `remote-exec`.
 
