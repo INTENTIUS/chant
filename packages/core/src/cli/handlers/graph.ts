@@ -118,6 +118,20 @@ export function runGraph(ctx: CommandContext): Promise<number> {
 async function runGraphCommand(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
   const isViewFormat = (viewFormats as readonly string[]).includes(ctx.args.format);
+  // A project whose config names a graph reader module is read by it (#4413): `chant workspace graph` writes such a project for a kind that supplies one.
+  if (isViewFormat && !ctx.args.live && !ctx.args.at && !ctx.args.components) {
+    const { config } = await loadChantConfigUpward(resolve(ctx.args.path === "." ? "." : ctx.args.path)).catch(() => ({ config: {} as ChantConfig }));
+    const reader = config.graph?.reader;
+    if (reader) {
+      const { readGraphWithModule } = await import("./graph-reader");
+      const read = await readGraphWithModule(reader.module, reader.config ?? {}, resolve(ctx.args.path === "." ? "." : ctx.args.path));
+      if ("error" in read) {
+        console.error(formatError({ message: read.error }));
+        return 1;
+      }
+      return emitIr(read.ir, ctx, ctx.args.format as (typeof viewFormats)[number]);
+    }
+  }
   // `--projection <lexicon>` (#989) only means anything for the component
   // graph's IR — it adds the CI/pipeline shape to `GraphIR.pipeline`, a field
   // the other view formats' emitters (mermaid/dot/layout) don't read, and the

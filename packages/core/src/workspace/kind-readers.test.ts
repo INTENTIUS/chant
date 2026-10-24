@@ -132,3 +132,39 @@ describe("workspace graph reads a package kind with a graph block (#2874)", () =
     expect(planMembers("graph", root, { kinds: registry }).groups[0].units[0].reader).toMatchObject({ lexicon: "fake" });
   });
 });
+
+describe("a graph reader module from a package that is not a lexicon (#4413)", () => {
+  /** A fake chant that prints the reader project's config, so the test sees what the member's chant is handed. */
+  const MODULE_CHANT = `#!/bin/sh
+[ "$1" = graph ] || { echo "Error: Unknown command: $1" >&2; exit 1; }
+printf '{"version":1,"nodes":[{"id":"org","kind":"Org","lexicon":"gov","attrs":{"config":'
+cat chant.config.json
+printf ',"linked":%s}}],"edges":[],"groups":{}}\\n' "$([ -e node_modules ] && echo true || echo false)"
+`;
+
+  test("the reader project names the module and links no lexicon", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration([{ name: "forge", dir: "gov", kind: "gov" }], { pins: [{ package: "@acme/warden", version: "1.0.0" }] }),
+      "gov/governance.yml": "org: acme\n",
+      ".gitignore": "node_modules\n",
+      "node_modules/.bin/chant": { text: MODULE_CHANT, mode: 0o755 },
+      "node_modules/@acme/warden/package.json": JSON.stringify({ name: "@acme/warden", version: "1.0.0", exports: { "./workspace-kinds": "./workspace-kinds.json" } }),
+      "node_modules/@acme/warden/graph.mjs": "export default () => ({ nodes: [], edges: [] });\n",
+      "node_modules/@acme/warden/workspace-kinds.json": JSON.stringify({
+        schema: 1,
+        kinds: [{ name: "gov", description: "governance", precedence: 500, probe: { anyFile: ["governance.yml"] }, graph: { reader: "graph.mjs", config: { dir: "{dir}" } } }],
+      }),
+    });
+    const { doc, failed } = await workspaceGraph({ cwd: root });
+    const g = result(doc);
+    expectValid(g);
+    expect(failed).toBe(false);
+    expect(g.members.map((m) => [m.name, m.status])).toEqual([["forge", "composed"]]);
+    const attrs = g.nodes[0].attrs as { config: Record<string, unknown>; linked: boolean };
+    expect(attrs.config).toEqual({
+      lexicons: [],
+      graph: { lint: "report", reader: { module: join(root, "node_modules/@acme/warden/graph.mjs"), config: { dir: `${root}/gov` } } },
+    });
+    expect(attrs.linked).toBe(false);
+  });
+});
