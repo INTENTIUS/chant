@@ -105,6 +105,19 @@ describe("the contract of a rename that kept its default", () => {
     ]);
   });
 
+  test("a serial's sequence named as Postgres names it takes the new column's name, after the default is set", () => {
+    const o = observation({
+      column: { name: "login", type: "serial" },
+      old: { attnum: 2, name: "email", type: "integer", notNull: true, default: "nextval('app.users_email_seq'::regclass)", generated: false, identity: false },
+      sequence: { kind: "serial", schema: "app", name: "users_email_seq", ident: "app.users_email_seq" },
+    });
+    expect(contractStatements(o).slice(-3)).toEqual([
+      "ALTER TABLE app.users DROP COLUMN email",
+      "ALTER TABLE app.users ALTER COLUMN login SET DEFAULT nextval('app.users_email_seq'::regclass)",
+      "ALTER SEQUENCE app.users_email_seq RENAME TO users_login_seq",
+    ]);
+  });
+
   test("an identity moves to the new column under its sequence's name and carries on where the old one stood", () => {
     const o = observation({
       column: { name: "login", type: "integer", generated: { kind: "identity", always: true, options: "(CACHE 5)" } },

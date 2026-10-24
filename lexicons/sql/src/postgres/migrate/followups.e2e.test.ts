@@ -150,7 +150,7 @@ describe.skipIf(!enabled)("a rename of a serial column", () => {
       expect(await one("SELECT n AS n FROM sq.items WHERE id = 1002")).toEqual({ n: 7000 });
     });
     expect(runs.map((r) => r.status)).toEqual(["gated", "gated", "ok"]);
-    expect(await one("SELECT pg_catalog.pg_get_serial_sequence('sq.items', 'num') AS seq")).toEqual({ seq: "sq.items_n_seq" });
+    expect(await one("SELECT pg_catalog.pg_get_serial_sequence('sq.items', 'num') AS seq")).toEqual({ seq: "sq.items_num_seq" });
     const next = await one<{ id: number; num: number }>("INSERT INTO sq.items (id) VALUES (2000) RETURNING id::int AS id, num");
     expect(next.num).toBeGreaterThan(300);
     expect((await plan("sq-v2.json")).changes).toEqual([]);
