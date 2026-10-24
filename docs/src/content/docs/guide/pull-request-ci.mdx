@@ -73,7 +73,25 @@ A root is changed when a changed file sits in its directory, in a local module i
 
 `app` reads `a`'s `id`, and the pull request changes `a`. The id `a` has now is not the one `app` will get, so `app` is planned against what `a`'s plan says `a` will expose. For `terraform-apply` that is the plan's `planned_values.outputs`, less each output `output_changes` marks unknown after apply. These upstreams are listed under `plannedOutputs` in the report, with the output names each plan knows.
 
-An output the plan cannot say is known only after apply. A root whose output reads a resource the plan creates or replaces is one. So is every output of a stack that does not exist yet. The dependent is planned without that value. A `terraform-apply` or `cfn-deploy` dependent creates no plan then: its member gets a hole naming the upstream, with `?` for its counts. The member lists the reference under `unknownInputs`, and the note says `Known only after apply: app reads a.id`, so the reviewer sees which inputs the preview lacked. The apply plans the member again once the upstream applied. When that plan does only what the note showed, with only those inputs filled in, the approval covers it; anything else waits for an approval of its own. A pull request that adds `a` and `app` together plans both this way.
+An output the plan cannot say is known only after apply. A root whose output reads a resource the plan creates or replaces is one. So is every output of a stack that does not exist yet. The dependent is planned without that value. A `terraform-apply` dependent creates no plan then: its member gets a hole naming the upstream, with `?` for its counts. A `cfn-deploy` dependent is [previewed with a stand-in](#cloudformation-stacks) and keeps its changes in the plan. The member lists the reference under `unknownInputs`, and the note says `Known only after apply: app reads a.id`, so the reviewer sees which inputs the preview lacked. The apply plans the member again once the upstream applied. When that plan does only what the note showed, with only those inputs filled in, the approval covers it; anything else waits for an approval of its own. A pull request that adds `a` and `app` together plans both this way.
+
+Two outcomes for the same pull request, with `app` previewed as one create:
+
+```text
+pr-apply-round-2: covered
+  app plans one create (Queue), as the note showed; a.id was filled in
+  approved digest: jcs1-sha256:9204...   no second approval asked
+```
+
+```text
+pr-apply-round-2: waiting
+  app now plans to create Extra, which the first plan did not
+  new digest: jcs1-sha256:51c7...   approve it, then run pr-apply again
+```
+
+The first round is covered: the only difference from the note is the value that was unknown. The second adds a resource the reviewer never saw, so it stops `waiting` at `pr-apply-round-2` and `pr-apply` exits 3. A member whose first plan was a hole with no preview, for example a stack CloudFormation would not preview, is never covered: the approval did not see what it would do.
+
+`pr-apply --resume` and `--wave-gate` make the same decision. A failure part way leaves what applied, applied. `pr-apply` does not undo finished members when a later one fails, and the report lists each member as `applied`, `failed` or `blocked`.
 
 The record job plans the same way on the merged commit and keeps that plan with the merge. With apply on merge, an apply holds back a member whose upstream applied as another value and asks for a second approval; [a dependent that reads an upstream output](/chant/guide/apply-on-merge/#a-dependent-that-reads-an-upstream-output) has the details.
 
@@ -89,7 +107,7 @@ An apply plans again before it runs, and each `cfn-deploy` step then creates the
 
 A template that declares an `AWS::CloudFormation::Stack` gets a change set with its nested stacks included, and each change inside a child is an entry of its own, addressed as `<child>/<logical id>`.
 
-A stack that does not exist yet gets a CREATE change set, so every resource counts as a create. CloudFormation holds that change set in an empty stack in `REVIEW_IN_PROGRESS`, and the plan deletes that empty stack too. It never deletes a stack in any other status. A dependent reads the outputs the upstream's plan says it will have, as the section above describes. When one is known only after apply, the dependent creates no change set: its row says `inputs from network; re-checked on apply`, with `?` for its counts, and the summary lists it under holes.
+A stack that does not exist yet gets a CREATE change set, so every resource counts as a create. CloudFormation holds that change set in an empty stack in `REVIEW_IN_PROGRESS`, and the plan deletes that empty stack too. It never deletes a stack in any other status. A dependent reads the outputs the upstream's plan says it will have, as the section above describes. When one is known only after apply, the plan creates the dependent's change set with a stand-in for each parameter that reads it, an id-shaped value of the parameter's type, and deletes it with the empty stack it may have made. The note shows the dependent's changes, and the properties a stand-in drives are marked known after apply; no stand-in appears as a value. The preview's digest is part of the member's digest, so the approval binds what the reviewer saw. Once the upstream applied, the apply makes the real change set. If it matches the preview, the first approval covers it. If it adds, drops or replaces a resource the preview did not show, it is not executed: the round waits at `<gate>-round-<n>` with the difference named. A template CloudFormation will not preview with stand-ins (a parameter with `AllowedValues`, for instance) stays a hole: its row says `inputs from network; re-checked on apply; no preview: <why>`, with `?` for its counts, and needs its own approval.
 
 The plan and record jobs need AWS credentials and the region. The credentials must be allowed to create, describe and delete change sets. Deleting a stack needs its own permission. Build the templates before `pr-plan` and `pr-record`. Generate the pipeline with `--pr-build` and both jobs do it for you, as the next section shows.
 

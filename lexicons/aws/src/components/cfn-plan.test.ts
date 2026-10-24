@@ -556,3 +556,165 @@ describe("cfn-deploy previews a member whose inputs are unknown, and checks the 
     expect((result as Error).message).toContain("may now replace Eni, which the first plan did not show");
   });
 });
+
+describe("pr-apply through AWS and core together: a previewed member in a round (#4422, #4423)", () => {
+  const queueAdd = { action: "Add" as const, logicalResourceId: "clusterAQueue", resourceType: "AWS::SQS::Queue", replacement: false };
+  const extraAdd = { action: "Add" as const, logicalResourceId: "Extra", resourceType: "AWS::SNS::Topic", replacement: false };
+  const approvedFirst = { status: "approved" as const, approvedBy: ["github:rev"] };
+
+  beforeEach(() => {
+    writeFileSync(
+      template,
+      JSON.stringify({
+        Parameters: { TopicArn: { Type: "String" } },
+        Resources: { Topic: { Type: "AWS::SNS::Topic" }, clusterAQueue: { Type: "AWS::SQS::Queue", Properties: { QueueName: { "Fn::Sub": "q-${TopicArn}" } } } },
+      }),
+    );
+  });
+
+  const components = (): DriverComponent[] => [
+    { name: "network", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "network", template }] }] },
+    {
+      name: "cluster-a",
+      dependsOn: ["network"],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "cluster-a", template, inputs: { TopicArn: { stackOutput: { stack: "network", name: "TopicArn" } } } }] }],
+    },
+  ];
+
+  async function planned(stacks: Record<string, FakeStackConfig>) {
+    const mock = createMockCloudExecutor({ stacks });
+    const registry = new CapabilityRegistry();
+    registry.register(createCfnDeployCapability(mock.executor));
+    const all = components();
+    const plan = planFanOut({ components: all, changed: ["network"] });
+    const set = await planPrSet({ components: all, plan, registry, env: "local" });
+    return { mock, registry, all, plan, set };
+  }
+
+  const stacks = (): Record<string, FakeStackConfig> => ({
+    network: { outputs: { TopicArn: "arn:topic" }, changes: [{ action: "Add", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false }] },
+    "cluster-a": { changes: [queueAdd] },
+  });
+  const executed = (mock: ReturnType<typeof createMockCloudExecutor>) =>
+    mock.calls.filter((c) => c.method === "executeChangeSet").map((c) => (c.args as { stackName: string }).stackName);
+
+  it("the real change set has the previewed shape: the first approval covers the round, nothing asks again, and both stacks are executed", async () => {
+    const { mock, registry, all, plan, set } = await planned(stacks());
+    expect(set.shapes?.["cluster-a"]).toMatchObject({ member: "cluster-a" });
+    let asked = 0;
+    const applied = await applyPrSet({
+      components: all,
+      plan,
+      registry,
+      env: "local",
+      set,
+      approval: approvedFirst,
+      decideRound: async () => {
+        asked++;
+        return { satisfied: false, approval: { status: "pending" } };
+      },
+    });
+    expect(asked).toBe(0);
+    expect(applied.status).toBe("applied");
+    expect(executed(mock)).toEqual(["network", "cluster-a"]);
+    expect(applied.rounds?.[0]).toMatchObject({ round: 2, gate: "pr-apply-round-2", status: "applied", covered: { digest: set.doc.digest, filledInputs: ["network.TopicArn"] } });
+  });
+
+  it("a real change set with a resource the preview did not show is not executed: the member waits at pr-apply-round-2, naming the reason and the new digest", async () => {
+    const { mock, registry, all, plan, set } = await planned(stacks());
+    mock.setStack("cluster-a", { changes: [queueAdd, extraAdd] });
+    const seen: Array<{ gate: string; notCovered?: string; digest: string }> = [];
+    const applied = await applyPrSet({
+      components: all,
+      plan,
+      registry,
+      env: "local",
+      set,
+      approval: approvedFirst,
+      decideRound: async ({ gate, notCovered, set: round }) => {
+        seen.push({ gate, ...(notCovered ? { notCovered } : {}), digest: round.doc.digest });
+        return { satisfied: false, approval: { status: "pending" } };
+      },
+    });
+    expect(applied.status).toBe("waiting");
+    expect(executed(mock)).toEqual(["network"]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ gate: "pr-apply-round-2", notCovered: "cluster-a now plans to create Extra, which the first plan did not" });
+    expect(applied.rounds?.[0]).toMatchObject({ round: 2, gate: "pr-apply-round-2", status: "waiting", digest: seen[0]!.digest, notCovered: seen[0]!.notCovered });
+    expect(applied.rounds?.[0]?.digest).not.toBe(set.doc.digest);
+    expect(applied.members.find((m) => m.member === "cluster-a")).toMatchObject({ status: "waiting", round: 2 });
+  });
+
+  it("a failure part way leaves what applied, applied, and the report says which member failed", async () => {
+    const { mock, registry, all, plan, set } = await planned(stacks());
+    const run = mock.executor.cloudformation.waitForStack;
+    mock.executor.cloudformation.waitForStack = async (name: string, ...rest: never[]) => {
+      if (name === "cluster-a") throw new Error("cluster-a: CREATE_FAILED");
+      return (run as (n: string) => ReturnType<typeof run>)(name, ...(rest as []));
+    };
+    const applied = await applyPrSet({ components: all, plan, registry, env: "local", set, approval: approvedFirst, decideRound: async () => ({ satisfied: false, approval: { status: "pending" } }) });
+    expect(applied.status).toBe("failed");
+    expect(applied.members.map((m) => [m.member, m.status])).toEqual([["cluster-a", "failed"], ["network", "applied"]]);
+  });
+});
+
+describe("the preview's digest and its cleanup (#4423)", () => {
+  const eni = { action: "Modify" as const, logicalResourceId: "Eni", resourceType: "AWS::EC2::NetworkInterface", replacement: false, replacementMode: "False" as const };
+  const driven = (property: string) => ({
+    ...eni,
+    details: [property],
+    drivers: [{ property, changeSource: "ParameterReference", causingEntity: "SubnetId" }],
+  });
+  const input = (): CfnDeployInput => ({ stack: "net", template, inputs: { SubnetId: undefined as never } });
+
+  beforeEach(() => {
+    writeFileSync(
+      template,
+      JSON.stringify({
+        Parameters: { SubnetId: { Type: "AWS::EC2::Subnet::Id" } },
+        Resources: { Eni: { Type: "AWS::EC2::NetworkInterface", Properties: { SubnetId: { Ref: "SubnetId" }, Description: "d" } } },
+      }),
+    );
+  });
+
+  const preview = async (config: FakeStackConfig, unresolved = ["vpc"]) => {
+    const mock = createMockCloudExecutor({ stacks: { net: config } });
+    const out = await createCfnDeployCapability(mock.executor).plan!({ ...ctx, unresolvedInputs: unresolved }, input());
+    return { mock, out };
+  };
+
+  it("the same inputs and template give the same digest across two plans; another preview shape gives another", async () => {
+    const a = await preview({ changes: [driven("SubnetId")] });
+    const b = await preview({ changes: [driven("SubnetId")] });
+    expect(a.out.artifact).toMatchObject({ kind: "cfn-deploy-shape" });
+    expect(b.out.planDigest).toBe(a.out.planDigest);
+    expect(b.out.changeSet!.member.planDigest).toBe(a.out.planDigest);
+    // The preview's digest is in it: a preview that shows another change set is another plan.
+    const other = await preview({ changes: [{ ...driven("SubnetId"), replacement: true, replacementMode: "True" as never }] });
+    expect(other.out.planDigest).not.toBe(a.out.planDigest);
+    // A member left a hole has the digest of its inputs alone.
+    const hole = await createCfnDeployCapability(createMockCloudExecutor({ stacks: { net: {} } }).executor).plan!({ ...ctx, unresolvedInputs: ["up"] }, { stack: "net", template });
+    expect(hole.planDigest).not.toBe(a.out.planDigest);
+  });
+
+  it("a preview that CloudFormation fails after creating the change set deletes the change set and the empty stack, and stays a hole", async () => {
+    const mock = createMockCloudExecutor({ stacks: { net: { missing: true, changes: [driven("SubnetId")] } } });
+    const create = mock.executor.cloudformation.createChangeSet;
+    mock.executor.cloudformation.createChangeSet = async (args) => ({ ...(await create(args)), status: "FAILED", statusReason: "Parameter value for SubnetId is not valid", changes: [] });
+    const out = await createCfnDeployCapability(mock.executor).plan!({ ...ctx, unresolvedInputs: ["vpc"] }, input());
+    expect(out.artifact).toBeUndefined();
+    expect(out.changeSet!.member.holes[0]!.reason).toMatch(/no preview: CloudFormation could not create the change set with stand-in values: Parameter value for SubnetId is not valid/);
+    expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet", "deleteStackShell"]);
+  });
+
+  it("a preview that throws while reading the change set still deletes the change set and the empty stack", async () => {
+    const mock = createMockCloudExecutor({ stacks: { net: { missing: true, changes: [driven("SubnetId")] } } });
+    const create = mock.executor.cloudformation.createChangeSet;
+    mock.executor.cloudformation.createChangeSet = async (args) => {
+      const cs = await create(args);
+      return { ...cs, get changes(): never { throw new Error("could not read the change set"); } } as never;
+    };
+    await expect(createCfnDeployCapability(mock.executor).plan!({ ...ctx, unresolvedInputs: ["vpc"] }, input())).rejects.toThrow(/could not read the change set/);
+    expect(methods(mock)).toEqual(["createChangeSet", "deleteChangeSet", "deleteStackShell"]);
+  });
+});

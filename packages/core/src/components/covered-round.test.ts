@@ -81,6 +81,13 @@ describe("coveredRound", () => {
     expect(r).toEqual({ covered: false, reason: "other was not in the first plan" });
   });
 
+  test("a member that was a hole with no preview shape is not covered, even with its unknown input filled in (#4422)", () => {
+    // The approved side has no shape for svc and no entries: the reviewer never saw what it would do.
+    const fresh = { svc: shape({ unknownInputs: [], entries: [{ logicalId: "Fn", action: "create" }] }) };
+    const r = coveredRound({ approved: side("svc", ["vpc.id"]), approvedDigest: "sha256:aaa", fresh: side("svc", undefined, fresh) });
+    expect(r).toEqual({ covered: false, reason: "svc now plans to create Fn, which the first plan did not" });
+  });
+
   test("a known input that moved is not covered", () => {
     const r = coveredRound({
       approved: side("svc", ["vpc.id"]),

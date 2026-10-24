@@ -479,17 +479,25 @@ function roundCover(
     approvedDigest: options.set.doc.digest,
     fresh: { doc: fresh.doc, members: fresh.members, ...(fresh.shapes ? { shapes: fresh.shapes } : {}) },
     changedKnown,
-    attributes: (member) => {
-      if (!fresh.shapes?.[member]) {
-        const now = fresh.doc.members.find((m) => m.member === member);
-        const was = options.set.doc.members.find((m) => m.member === member);
-        if (now && was && now.planner === "chant" && now.lexicon === "chant" && now.status === "planned" && now.planDigest !== was.planDigest) {
-          return `${member} now plans to ${now.planDigest}, and its planner describes no changes to compare with the first plan`;
-        }
-      }
-      return planCoveredBy(options.set.doc, fresh.doc, member);
-    },
+    attributes: (member) => memberAttributes(options.set.doc, fresh.doc, member, fresh.shapes?.[member] !== undefined),
   });
+}
+
+/**
+ * The part of coverage that reads the change set's own attributes, shared by
+ * a round, a resume and a wave: a member whose planner describes no changes
+ * (and gave no shape) is covered only by the digest it was approved with, and
+ * anything else is {@link planCoveredBy}'s.
+ */
+function memberAttributes(approved: ChangeSetDocument, fresh: ChangeSetDocument, member: string, hasShape: boolean): string | undefined {
+  if (!hasShape) {
+    const now = fresh.members.find((m) => m.member === member);
+    const was = approved.members.find((m) => m.member === member);
+    if (now && was && now.planner === "chant" && now.lexicon === "chant" && now.status === "planned" && now.planDigest !== was.planDigest) {
+      return `${member} now plans to ${now.planDigest}, not the approved ${was.planDigest ?? "(none)"}, and its planner describes no changes to compare`;
+    }
+  }
+  return planCoveredBy(approved, fresh, member);
 }
 
 /** Two runs of one apply as one: `b` ran after `a`, against the outputs `a` left. */
@@ -765,9 +773,8 @@ export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
     seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs },
     ...(options.targets ? { targets: options.targets } : {}),
   });
-  const reasons = fresh.doc.members
-    .map((m) => planCoveredBy(options.record.changeSet, fresh.doc, m.member))
-    .filter((r): r is string => r !== undefined);
+  // #4422: decided as a round decides (`coveredRound`), by the same function a wave uses.
+  const reasons = waveNotCovered(options.record.changeSet, fresh.doc, options.record.members);
   if (reasons.length > 0) return { ok: false, reasons, fresh };
   return {
     ok: true,
@@ -808,20 +815,47 @@ export function prWavePlan(plan: FanOutPlan, components: DriverComponent[], wave
  * returns no change set) is covered only by the digest it was approved
  * with, since with no entries there is nothing to compare a moved plan by.
  */
-export function waveNotCovered(approved: ChangeSetDocument, fresh: ChangeSetDocument, approvedMembers: readonly PrMember[] = []): string[] {
+export function waveNotCovered(
+  approved: ChangeSetDocument,
+  fresh: ChangeSetDocument,
+  approvedMembers: readonly PrMember[] = [],
+  shapes: { approved?: Record<string, PlanShape>; fresh?: Record<string, PlanShape> } = {},
+): string[] {
   // #3999: a member whose approved plan waited only on an artifact a build in
   // the change publishes is covered by that build's provenance, as it is
   // without --wave-gate.
   const byBuild = new Set(approvedMembers.filter((m) => m.buildInputs?.length && !m.unknownInputs?.length).map((m) => m.member));
+  const prMember = new Map(approvedMembers.map((m) => [m.member, m]));
+  // #4422: the same decision a round makes (`coveredRound`), so a resume, a
+  // wave and a round agree for equivalent inputs. A member the document names
+  // and the caller does not stands for a component of its own name.
+  const approvedSide = {
+    doc: approved,
+    members: approved.members.map((m) => ({
+      member: m.member,
+      component: prMember.get(m.member)?.component ?? m.member,
+      ...(prMember.get(m.member)?.unknownInputs?.length ? { unknownInputs: prMember.get(m.member)!.unknownInputs } : {}),
+    })),
+    ...(shapes.approved && shapes.fresh ? { shapes: shapes.approved } : {}),
+  };
   return fresh.members
     .map((m) => {
       if (byBuild.has(m.member)) return undefined;
       const was = approved.members.find((a) => a.member === m.member);
-      const opaque = m.planner === "chant" && m.lexicon === "chant" && m.status === "planned";
-      if (opaque && was && was.planDigest !== m.planDigest) {
-        return `${m.member} now plans to ${m.planDigest}, not the approved ${was.planDigest ?? "(none)"}, and its planner describes no changes to compare`;
-      }
-      return planCoveredBy(approved, fresh, m.member);
+      if (!was) return planCoveredBy(approved, fresh, m.member);
+      if (was.planDigest !== null && m.planDigest === was.planDigest) return undefined;
+      const hasShape = shapes.approved !== undefined && shapes.fresh?.[m.member] !== undefined;
+      const cover = coveredRound({
+        approved: approvedSide,
+        approvedDigest: approved.digest,
+        fresh: {
+          doc: fresh,
+          members: [{ member: m.member, component: prMember.get(m.member)?.component ?? m.member }],
+          ...(hasShape ? { shapes: shapes.fresh! } : {}),
+        },
+        attributes: (member) => memberAttributes(approved, fresh, member, hasShape),
+      });
+      return cover.covered ? undefined : cover.reason;
     })
     .filter((r): r is string => r !== undefined);
 }

@@ -284,6 +284,12 @@ Nested stacks add deployment complexity. Most projects should use [flat composit
 
 CloudFormation nested stacks (`AWS::CloudFormation::Stack`) split resources into child templates. The lexicon supports them via `nestedStack()` for cases where you exceed the 500-resource limit or need to package reusable infrastructure as a black box. See the [Nested Stacks](../nested-stacks/) page for details.
 
+## Stacks that read each other's outputs
+
+When a pull request changes a stack and a stack that reads its outputs, `chant components pr-plan` plans them together. A parameter that reads an output of a stack created in the same run has no value yet, so `cfn-deploy` creates the dependent's change set with an id-shaped stand-in, keeps the shape (logical ids, change kind, replacement flag), marks what the stand-in drives as known after apply, and deletes the change set and any empty stack it made. The shape is part of the plan digest. After the upstream applies, the apply makes the real change set and compares it with the shape: the same shape executes under the first approval, and an extra, missing or replaced resource is not executed and waits at the round gate.
+
+Stack-level locks are CloudFormation's. It refuses a second update to a stack while one is in progress, and chant adds no lock of its own. A failure part way leaves the stacks that applied, applied: chant does not roll back an upstream stack because a later one failed, and the report lists each stack as applied, failed or blocked.
+
 ## Tagging
 
 Use `defaultTags()` to declare project-wide tags. The serializer adds them to every taggable resource at build time:

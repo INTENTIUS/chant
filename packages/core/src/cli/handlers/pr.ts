@@ -1968,7 +1968,7 @@ async function prApplyWaves(
         planFailedIn ??= k;
         continue;
       }
-      const moved = waveNotCovered(approvedSet.doc, fresh.doc, approvedSet.members);
+      const moved = waveNotCovered(approvedSet.doc, fresh.doc, approvedSet.members, { approved: approvedSet.shapes, fresh: fresh.shapes });
       set = fresh;
       if (moved.length === 0) {
         console.error(formatInfo(`wave ${k}: the approved plan covers what it plans now, so it applies under the pull request's approval`));

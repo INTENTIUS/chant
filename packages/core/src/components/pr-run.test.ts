@@ -972,6 +972,85 @@ describe("planCoveredBy", () => {
   });
 });
 
+/**
+ * One decision for a round, a resume and a wave (#4422). The same estate and
+ * the same two outcomes go through `applyPrSet`'s round, `resumePrSet` and
+ * `waveNotCovered` (what `--wave-gate` uses), and each path must give the same
+ * verdict with the same reason.
+ */
+describe("one coverage decision on a round, a resume and a wave (#4422)", () => {
+  const plan = () => planFanOut({ components: ESTATE, changed: ["a"] });
+  const approvedFirst: PrApproval = { status: "approved", approvedBy: ["github:rev"] };
+  /** `a` v2, whose id is known only after apply; `app` reads it. */
+  async function first(w: ReturnType<typeof world>) {
+    w.versions.a = "v2";
+    w.predict.a = () => ({ known: {}, unknown: ["id"] });
+    return planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+  }
+
+  const paths: Record<string, (extra: boolean) => Promise<string | undefined>> = {
+    round: async (extra) => {
+      const w = world();
+      const set = await first(w);
+      w.bumpAppOnApply = extra;
+      let reason: string | undefined;
+      const applied = await applyPrSet({
+        components: ESTATE,
+        plan: plan(),
+        registry: w.registry,
+        env: "prod",
+        set,
+        approval: approvedFirst,
+        decideRound: async ({ notCovered }) => {
+          reason = notCovered;
+          return { satisfied: false, approval: { status: "pending" } };
+        },
+      });
+      expect(applied.status).toBe(extra ? "waiting" : "applied");
+      return reason;
+    },
+    resume: async (extra) => {
+      const w = world();
+      const set = await first(w);
+      w.state.a = { id: "a-v2" };
+      if (extra) w.versions.app = "v2";
+      const resumed = await resumePrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", record: recordOf(set), completed: ["a"] });
+      return resumed.ok ? undefined : resumed.reasons[0];
+    },
+    wave: async (extra) => {
+      const w = world();
+      const set = await first(w);
+      if (extra) w.versions.app = "v2";
+      const wavePlan = prWavePlan(plan(), ESTATE, 2);
+      const fresh = await planPrSet({ components: ESTATE, plan: wavePlan, registry: w.registry, env: "prod", seededOutputs: { ...set.outputs, a: { id: "a-v2" } } });
+      return waveNotCovered(set.doc, fresh.doc, set.members)[0];
+    },
+  };
+
+  test.each([
+    ["only the previewed unknown filled in", false, undefined],
+    ["an entry the first plan did not show", true, "app now plans to update terraform_data.x, which the first plan did not"],
+  ] as const)("%s", async (_name, extra, expected) => {
+    for (const [path, decide] of Object.entries(paths)) {
+      expect({ path, reason: await decide(extra) }).toEqual({ path, reason: expected });
+    }
+  });
+
+  test("a member that was a hole with no preview is not covered by an approval that never saw its shape", () => {
+    const part = (digest: string, entries: ChangeSetEntry[], holes: ChangeSetPart["member"]["holes"]): ChangeSetPart => ({
+      member: { member: "svc", lexicon: "aws", planner: "chant", status: "planned", planDigest: `jcs1-sha256:${digest.repeat(64)}`, holes },
+      entries,
+    });
+    const approved = composeChangeSet([part("1", [], [{ address: "svc", reason: "inputs from net; re-checked on apply" }])]);
+    const entry: ChangeSetEntry = { member: "svc", lexicon: "aws", planner: "chant", address: "Queue", type: "AWS::SQS::Queue", action: "create", attributes: [] };
+    const fresh = composeChangeSet([part("2", [entry], [])]);
+    const members = [{ member: "svc", component: "svc", planDigest: null, status: "planned" as const, counts: { create: 0, update: 0, replace: 0, delete: 0 }, unknownInputs: ["net.id"] }];
+    // Even with the input named unknown, nothing was previewed to cover a create.
+    expect(waveNotCovered(approved, fresh, members)).toEqual(["svc now plans to create Queue, which the first plan did not"]);
+    expect(waveNotCovered(approved, fresh)).toEqual(["svc now plans to create Queue, which the first plan did not"]);
+  });
+});
+
 describe("a gate per wave on merge (#4003)", () => {
   const estate = [root("net"), root("a", ["net"]), root("b", ["net"]), root("app", ["a"])];
   const plan = planFanOut({ components: estate, changed: ["net"] });

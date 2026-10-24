@@ -276,7 +276,9 @@ export function coveredRound(input: CoveredRoundInput): RoundCoverage {
     if (!was) return { covered: false, reason: `${m.member} was not in the first plan` };
     if (was.component !== m.component) return { covered: false, reason: `${m.member} moved from ${was.component} to ${m.component}` };
     const previewed = approved.shapes?.[m.member] ?? shapeFromChangeSet(approved.doc, m.member, { unknownInputs: was.unknownInputs });
-    const unknownInputs = [...new Set([...(previewed.unknownInputs ?? []), ...(was.unknownInputs ?? [])])].sort();
+    const both = [...new Set([...(previewed.unknownInputs ?? []), ...(was.unknownInputs ?? [])])];
+    // A lexicon that only knows the upstream stack lists the bare component; the member names the output. Keep the named one.
+    const unknownInputs = both.filter((ref) => !both.some((other) => other.startsWith(`${ref}.`))).sort();
     const now = fresh.shapes?.[m.member] ?? shapeFromChangeSet(fresh.doc, m.member);
     const reason = planShapeCovers({ ...previewed, unknownInputs }, now);
     if (reason) return { covered: false, reason };
