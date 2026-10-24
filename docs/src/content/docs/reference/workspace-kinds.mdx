@@ -345,7 +345,7 @@ sources:
 
 ## Platform kinds
 
-Seven kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate. Six have a `graph` block, so [`chant workspace graph`](/chant/cli/workspace-graph/) draws their members; `pulumi` is a probe and a check only (see [below](#how-the-platform-kinds-are-read)).
+Seven kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate. All seven have a `graph` block, so [`chant workspace graph`](/chant/cli/workspace-graph/) draws their members (see [below](#how-the-platform-kinds-are-read)).
 
 | Kind | Package | Precedence | Probe |
 |---|---|---|---|
@@ -369,9 +369,9 @@ Seven kinds cover the files a platform repository holds besides Terraform ([#317
 | `kustomize` | the objects `kustomize build` renders, as nodes | `kustomize`, or `kubectl` |
 | `helm-chart` | the objects `helm template` renders, as nodes | `helm` |
 | `cdk` | the same as `cloudformation`, over the templates in the app's cloud assembly (`cdk.out`, or the `output` of `cdk.json`) | an assembly the app already synthesized. chant does not run the app |
-| `pulumi` | not read | no lexicon reads a Pulumi program |
+| `pulumi` | the resources of the `pulumi stack export` JSON checked in beside `Pulumi.yaml` as `stack-export.json`, as nodes; an edge per `dependencies` entry and `parent` between them. Provider resources are left out, and inputs are not copied | an export the member has checked in. chant does not run the program |
 
-A node's id is `<member>/<kind><name>`, such as `web/deploymentWeb`. A member whose render or assembly is missing is still listed, with no nodes, and its graph says why under `meta`: `k8sMember` for kustomize (`rendered: false`), `helmMember` for helm (`rendered: false`), `awsMember` for cdk (`synthesized: false`), each with a `reason`. A render the tool ran and refused, such as a broken overlay, fails the member with `command-failed`.
+A node's id is `<member>/<kind><name>`, such as `web/deploymentWeb`. A member whose render or assembly is missing is still listed, with no nodes, and its graph says why under `meta`: `k8sMember` for kustomize (`rendered: false`), `helmMember` for helm (`rendered: false`), `awsMember` for cdk (`synthesized: false`), `pulumiMember` for pulumi (`exported: false`), each with a `reason`. A render the tool ran and refused, such as a broken overlay, fails the member with `command-failed`.
 
 ## Overlapping probes
 

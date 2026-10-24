@@ -5,6 +5,7 @@ This file records changes to what chant prints or writes for a plain project, th
 ## Unreleased
 
 - [#3179](https://github.com/INTENTIUS/chant/issues/3179) member kinds `helm-chart`, `kustomize`, `argo-app`, `flux-kustomization`, `cloudformation`, `cdk` and `pulumi`, shipped as data by the helm, k8s, aws and terraform lexicons. A kinds file may use a new probe, `anyDocument`, that reads YAML or JSON documents by pointer and value. `chant workspace init` proposes a typed member, and pins its package, for a directory a kind from an installed package claims, where it proposed `other` or nothing. Plain projects see no change.
+- [#3179](https://github.com/INTENTIUS/chant/issues/3179) the `pulumi` member kind has a `graph` block. It reads the `pulumi stack export` JSON a member checks in as `stack-export.json` beside `Pulumi.yaml`: a node per resource, an edge per `dependencies` entry and `parent`. chant never runs the program; with no export the member has no nodes and `meta.pulumiMember` says `exported: false` and why.
 
 - [#3179](https://github.com/INTENTIUS/chant/issues/3179) `chant workspace graph` now reads members of kind `argo-app`, `flux-kustomization`, `cloudformation`, `kustomize`, `helm-chart` and `cdk`, which were listed with `kind-not-run`. A kustomize or helm member that cannot be rendered because the binary is missing has no nodes and says `rendered: false` and why on the graph's `meta`. Plain projects see no change.
 
