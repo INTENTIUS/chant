@@ -17,8 +17,16 @@
  * (`shares` > 1) is a deciding job that plans every run and decides the gate,
  * plus `shares` jobs that each apply a slice of the runs and refuse a run
  * whose plan moved since the decision. Each wave's jobs need the previous
- * wave's last jobs, so a wave that waits (exit 3) or fails stops every later
- * wave.
+ * wave's last jobs, so a wave that waits (exit 3) stops every later wave.
+ *
+ * ## A failed run blocks its dependents (#4322)
+ *
+ * A run's `dependsOn` names the runs it needs applied first. Each job writes
+ * an outcome file ({@link OpWaveJob.outcome}, `../wave-blocked.ts`) and the
+ * next wave's jobs read every earlier one, so a run that failed blocks only
+ * the runs that depend on it, in its own wave and later ones, and the rest
+ * apply. The generated pipelines run a wave's jobs after a failure in the
+ * wave before; a job exits 1 only for its own failed or blocked runs.
  *
  * ## The gate
  *
@@ -81,6 +89,7 @@ import { gatePointProblems, type GatePoint } from "./gate-point";
 import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
+import { waveOutcomeFileName } from "../wave-blocked";
 
 /**
  * The variables a wave job reads its notify secrets from, for the lexicons
@@ -217,6 +226,15 @@ export interface OpWaveRun {
   target: string;
   /** The Op to run. Default: the spec's `op`. */
   op?: string;
+  /**
+   * The runs this one needs applied first (#4322), by target: a run of an
+   * earlier wave (the latest earlier wave that has the target), or one listed
+   * before it in its own wave. A run that failed, or was blocked, blocks this
+   * one, which then is neither planned nor applied; a run with no failed
+   * dependency applies whatever else failed. Within its own wave only when
+   * one job applies the wave (no `shares`, no `jobs`).
+   */
+  dependsOn?: string[];
 }
 
 /**
@@ -549,6 +567,23 @@ export interface OpWaveJob {
   command: string[];
   /** On a share job: the decision record to download. On a deciding job: the one to upload. */
   record?: string;
+  /**
+   * The outcome file the job writes (#4322), which the forge keeps whatever
+   * the job's exit code: each of its runs' outcome, as `../wave-blocked.ts`
+   * writes them. A job with `needs` reads the earlier ones from
+   * {@link opWaveOutcomeDir} first.
+   */
+  outcome: string;
+}
+
+/** Where a wave job writes its outcome file and finds the earlier ones (#4322), at any depth. */
+export function opWaveOutcomeDir(spec: Pick<OpWavesSpec, "name">): string {
+  return `.chant/op-waves/${spec.name}/outcomes`;
+}
+
+/** The outcome file of wave `wave`'s job, or of one group or share of it (#4322). */
+export function opWaveOutcomePath(spec: Pick<OpWavesSpec, "name">, wave: number, part: { group?: string; share?: number } = {}): string {
+  return `${opWaveOutcomeDir(spec)}/${waveOutcomeFileName(wave, part)}`;
 }
 
 const NAME = /^[a-z0-9][a-z0-9_-]*$/;
@@ -697,6 +732,41 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       const problem = opWaveGroupsProblem(wave, wave.runs.map((r) => r.target));
       if (problem) throw new Error(`${where}: ${problem}.`);
     }
+  }
+  assertOpWaveDependsOn(where, spec);
+}
+
+/**
+ * Refuse a `dependsOn` (#4322) that names no run this one could follow: each
+ * entry is a target of an earlier wave, or of a run listed before it in its
+ * own wave when one job applies that wave. A discovering wave's runs are not
+ * in the spec, so after one any target is taken.
+ */
+function assertOpWaveDependsOn(where: string, spec: OpWavesSpec): void {
+  const earlier = new Set<string>();
+  let discovered = false;
+  for (const wave of spec.waves) {
+    const own = new Set<string>();
+    for (const run of wave.runs ?? []) {
+      const deps = run.dependsOn as unknown;
+      if (deps !== undefined) {
+        const at = `wave "${wave.name}" run "${run.target}"`;
+        if (!Array.isArray(deps) || !deps.every((d) => typeof d === "string" && d !== "")) throw new Error(`${where}: ${at} dependsOn must be a list of targets.`);
+        for (const dep of deps as string[]) {
+          if (dep === run.target && !earlier.has(dep)) throw new Error(`${where}: ${at} depends on itself.`);
+          if (own.has(dep)) {
+            if ((wave.shares ?? 1) > 1 || wave.jobs !== undefined) {
+              throw new Error(`${where}: ${at} depends on "${dep}" in its own wave, which ${wave.jobs ? "job groups" : "shares"} apply in separate jobs; move one of them to another wave.`);
+            }
+            continue;
+          }
+          if (!earlier.has(dep) && !discovered) throw new Error(`${where}: ${at} depends on "${dep}", which is no run of an earlier wave or listed before it in its own.`);
+        }
+      }
+      own.add(run.target);
+    }
+    for (const t of own) earlier.add(t);
+    if (wave.discover) discovered = true;
   }
 }
 
@@ -941,13 +1011,13 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     const prefix = `wave-${k}-${wave.name}`;
     const shares = wave.shares ?? 1;
     if (shares === 1 && wave.jobs === undefined) {
-      jobs.push({ jobName: prefix, wave: k, waveName: wave.name, kind: "wave", needs: previous, command });
+      jobs.push({ jobName: prefix, wave: k, waveName: wave.name, kind: "wave", needs: previous, command, outcome: opWaveOutcomePath(spec, k) });
       previous = [prefix];
       return;
     }
     const record = opWaveRecordPath(spec, k);
     const decide = `${prefix}-decide`;
-    jobs.push({ jobName: decide, wave: k, waveName: wave.name, kind: "decide", needs: previous, command: [...command, "--decide"], record });
+    jobs.push({ jobName: decide, wave: k, waveName: wave.name, kind: "decide", needs: previous, command: [...command, "--decide"], record, outcome: opWaveOutcomePath(spec, k) });
     const shareJobs: string[] = [];
     if (wave.jobs !== undefined) {
       // #3914: a job per group, or per share of a group, each applying its runs under the deciding job's decision.
@@ -957,13 +1027,13 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
         if (groupShares === 1) {
           const jobName = `${prefix}-${group.name}`;
           shareJobs.push(jobName);
-          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, needs: [decide], command: groupCommand, record });
+          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, needs: [decide], command: groupCommand, record, outcome: opWaveOutcomePath(spec, k, { group: group.name }) });
           continue;
         }
         for (let share = 1; share <= groupShares; share++) {
           const jobName = `${prefix}-${group.name}-share-${share}`;
           shareJobs.push(jobName);
-          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, share, needs: [decide], command: [...groupCommand, "--share", String(share)], record });
+          jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", group: group.name, share, needs: [decide], command: [...groupCommand, "--share", String(share)], record, outcome: opWaveOutcomePath(spec, k, { group: group.name, share }) });
         }
       }
       previous = shareJobs;
@@ -972,7 +1042,7 @@ export function opWaveJobs(spec: OpWavesSpec, specFile: string): OpWaveJob[] {
     for (let share = 1; share <= shares; share++) {
       const jobName = `${prefix}-share-${share}`;
       shareJobs.push(jobName);
-      jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", share, needs: [decide], command: [...command, "--share", String(share)], record });
+      jobs.push({ jobName, wave: k, waveName: wave.name, kind: "share", share, needs: [decide], command: [...command, "--share", String(share)], record, outcome: opWaveOutcomePath(spec, k, { share }) });
     }
     previous = shareJobs;
   });

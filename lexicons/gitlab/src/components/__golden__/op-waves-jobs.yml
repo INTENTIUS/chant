@@ -1,6 +1,7 @@
 # chant Op waves "migrations": one stage per wave, each needing the one before.
 # A wave that waits at its gate exits 3 and stops the waves after it; approve the
-# digest it prints, then retry the job.
+# digest it prints, then retry the job. A job whose runs failed exits 1, an allowed
+# failure, and the waves after it run what does not depend on those runs.
 
 stages:
   - wave-1-dev
@@ -19,6 +20,14 @@ wave-1-dev:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
   script:
     - chant run wave --spec waves.json --wave 1
+  allow_failure:
+    exit_codes:
+      - 1
+  artifacts:
+    when: always
+    paths:
+      - .chant/op-waves/migrations/outcomes/
+    expire_in: '30 days'
 
 wave-2-prod-decide:
   stage: wave-2-prod
@@ -37,10 +46,14 @@ wave-2-prod-decide:
     - wave-1-dev
   script:
     - chant run wave --spec waves.json --wave 2 --decide
+  allow_failure:
+    exit_codes:
+      - 1
   artifacts:
     when: always
     paths:
       - .chant/op-waves/migrations/wave-2.json
+      - .chant/op-waves/migrations/outcomes/
     expire_in: '30 days'
 
 wave-2-prod-us:
@@ -64,6 +77,14 @@ wave-2-prod-us:
   script:
     - echo us
     - chant run wave --spec waves.json --wave 2 --group us
+  allow_failure:
+    exit_codes:
+      - 1
+  artifacts:
+    when: always
+    paths:
+      - .chant/op-waves/migrations/outcomes/
+    expire_in: '30 days'
 
 wave-2-prod-eu:
   stage: wave-2-prod
@@ -84,3 +105,11 @@ wave-2-prod-eu:
     - wave-2-prod-decide
   script:
     - chant run wave --spec waves.json --wave 2 --group eu
+  allow_failure:
+    exit_codes:
+      - 1
+  artifacts:
+    when: always
+    paths:
+      - .chant/op-waves/migrations/outcomes/
+    expire_in: '30 days'

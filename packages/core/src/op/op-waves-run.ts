@@ -63,6 +63,16 @@ import {
   type WaveStep,
 } from "../wave-engine";
 import type { ReviewApproval } from "../gate-decision";
+import {
+  blockedMembers,
+  blockedWords,
+  earlierWaveOutcomes,
+  passesThrough,
+  readWaveOutcomeFile,
+  waveOutcomeFileName,
+  writeWaveOutcomeFile,
+  type WaveMemberOutcome,
+} from "../wave-blocked";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateDigestMismatch, type GateLedgerPort } from "./gate";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GatePointAsker } from "../point-decision";
@@ -89,6 +99,7 @@ import {
   opWaveGateName,
   opWaveHooksAt,
   opWaveHookRuns,
+  opWaveOutcomeDir,
   opWavePointAt,
   opWavePointProblems,
   opWaveRecordPath,
@@ -607,6 +618,12 @@ export interface RunOpWaveOptions {
   signers?: (base: string) => GateSigners;
   /** How a gate with a `point` asks it (#3836). Default: `workspaceGatePointAsker` over `cwd`. A tool that bundles chant passes `chantGatePointAsker`. */
   points?: GatePointAsker;
+  /**
+   * Where the jobs' outcome files are (#4322), from `cwd`: the job reads the
+   * earlier waves' (a share job, its deciding job's) at any depth under it,
+   * and writes its own there. Default {@link opWaveOutcomeDir}.
+   */
+  outcomeDir?: string;
 }
 
 export interface RunOpWaveResult {
@@ -630,6 +647,12 @@ export interface RunOpWaveResult {
   failed: string[];
   /** Runs a share job refused because their plan moved since the decision. */
   moved: string[];
+  /**
+   * The runs a failure blocked (#4322), each with the run whose failure
+   * blocked it: a run of an earlier wave, or one listed before it in this
+   * wave. None of them was planned or applied.
+   */
+  blocked?: Record<string, string>;
   /** The hooks that ran (#3762). */
   hooks: OpWaveHookOutcome[];
 }
@@ -1150,12 +1173,55 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
   const { spec } = options;
   assertOpWavesSpec(spec);
   const log = options.log ?? ((line: string) => console.error(line));
-  const last = spec.waves[spec.waves.length - 1]!;
+  const cwd = options.cwd ?? process.cwd();
+  const outcomeDir = options.outcomeDir ?? opWaveOutcomeDir(spec);
+  const dir = isAbsolute(outcomeDir) ? outcomeDir : join(cwd, outcomeDir);
+  // #4322: what the earlier jobs' outcome files say: an earlier wave that stopped stops this one, and a failure blocks its dependents.
+  const before = opWaveBefore(options, dir);
+  const blocked = before.blocked;
+  if (before.stop) {
+    log(before.stop.line);
+    const stopped: RunOpWaveResult = { exitCode: before.stop.exitCode, applied: [], failed: [], moved: [], hooks: [], ...(blocked.size > 0 ? { blocked: Object.fromEntries(blocked) } : {}) };
+    writeOpWaveOutcome(options, dir, stopped, before.stop.members);
+    return stopped;
+  }
+  if (blocked.size > 0) log(`wave ${options.wave}: ${blockedWords(blocked)}, so not planned or applied`);
+  const mine = jobRuns(options);
+  if (mine.length > 0 && mine.every((t) => blocked.has(t))) {
+    // Every run of this job is blocked: nothing to plan, decide or apply.
+    const none: RunOpWaveResult = { exitCode: options.decide ? 0 : 1, applied: [], failed: [], moved: [], hooks: [], blocked: Object.fromEntries(blocked) };
+    writeOpWaveOutcome(options, dir, none);
+    return none;
+  }
+  let result: RunOpWaveResult;
   const applied: string[] = [];
+  try {
+    result = await runOpWaveLoop(options, log, applied, blocked);
+  } catch (err) {
+    writeOpWaveOutcome(options, dir, { exitCode: 1, applied, failed: [], moved: [], hooks: [], ...(blocked.size > 0 ? { blocked: Object.fromEntries(blocked) } : {}) });
+    throw err;
+  }
+  const all = { ...Object.fromEntries(blocked), ...(result.blocked ?? {}) };
+  if (Object.keys(all).length > 0) {
+    result.blocked = all;
+    // A deciding job applies nothing; its share jobs fail for the blocked runs of their slices.
+    if (result.exitCode === 0 && !options.decide) {
+      log(`wave ${options.wave}: the runs that could apply did; ${blockedWords(new Map(Object.entries(all)))}, so this job fails`);
+      result.exitCode = 1;
+    }
+  }
+  writeOpWaveOutcome(options, dir, result);
+  return result;
+}
+
+/** The wave engine's loop over this module's steps, from `options.wave` on, with the runs in `skip` left out of that wave. */
+async function runOpWaveLoop(options: RunOpWaveOptions, log: (line: string) => void, applied: string[], skip: ReadonlyMap<string, string>): Promise<RunOpWaveResult> {
+  const { spec } = options;
+  const last = spec.waves[spec.waves.length - 1]!;
   const rest: NonNullable<RunOpWaveResult["rest"]> = [];
   const result = await runWaveLoop<OpWavePlanned, OpWaveDecided, RunOpWaveResult>({
     first: options.wave,
-    plan: (at) => planOpWave(options, at),
+    plan: (at) => planOpWave(options, at, at.k === options.wave ? skip : undefined),
     // A share job applies under the digest its deciding job recorded; it does not take the set digest again.
     digest: (_at, planned) => (planned.kind === "share" ? planned.decision.digest : opWaveSetDigest(spec, planned.members, planned.extras)),
     decide: (at, planned, digest) => (planned.kind === "share" ? shareUnmoved(planned) : decideOpWave(options, at, planned, digest)),
@@ -1181,6 +1247,116 @@ export async function runOpWave(options: RunOpWaveOptions): Promise<RunOpWaveRes
     },
   });
   return { ...result, applied, ...(rest.length > 0 ? { rest } : {}) };
+}
+
+/** What the earlier outcome files hold for a job (#4322): the runs they block, or why the job does not run at all. */
+interface OpWaveBefore {
+  /** Each blocked run of this wave, with the run whose failure blocked it. */
+  blocked: Map<string, string>;
+  /** Set when the job runs nothing: its exit code, the log line, and the outcomes it writes. */
+  stop?: { exitCode: number; line: string; members: Record<string, WaveMemberOutcome> };
+}
+
+/**
+ * Read the outcome files under `dir` for wave `k`'s job (#4322). A wave or
+ * deciding job reads the earlier waves': with none at all (a pipeline
+ * rendered before #4322, or a job run by hand) every earlier run counts as
+ * applied, as `needs:` used to promise. An earlier run that waits at its gate
+ * stops this wave (exit 3), and one that was refused, held, stood down or
+ * moved, or whose share never reported, stops it too (exit 1): only a failure
+ * lets the waves after it go on. Otherwise a run whose `dependsOn` names a
+ * run that failed or was blocked is blocked, and so is one that depends on
+ * it. A share job reads its deciding job's file instead: the runs it blocked
+ * stay blocked, and a run that job failed on stops the share (exit 1), so a
+ * decision record it left behind before failing applies nothing.
+ */
+function opWaveBefore(options: RunOpWaveOptions, dir: string): OpWaveBefore {
+  const { spec, wave: k } = options;
+  const wave = spec.waves[k - 1];
+  if (!wave) return { blocked: new Map() };
+  if (options.share !== undefined || options.group !== undefined) {
+    const decided = readWaveOutcomeFile([dir], waveOutcomeFileName(k));
+    if (!decided) return { blocked: new Map() };
+    const blocked = new Map<string, string>();
+    const held: Array<[string, WaveMemberOutcome]> = [];
+    for (const [target, o] of Object.entries(decided.members)) {
+      if (o.status === "blocked") blocked.set(target, o.by ?? target);
+      // A wave that waits or was refused says so in its decision record, which the share reads as before.
+      else if (o.status !== "decided" && o.status !== "waiting" && o.status !== "refused") held.push([target, o]);
+    }
+    if (held.length === 0) return { blocked };
+    const line = `${shareLabel(options)} of wave ${k} (${wave.name}) applies nothing: its deciding job did not decide ${held.map(([t, o]) => `${t} (${o.status})`).join(", ")}`;
+    return { blocked, stop: { exitCode: 1, line, members: { ...decided.members } } };
+  }
+  if (k === 1) return { blocked: new Map() };
+  const { members } = earlierWaveOutcomes([dir], k);
+  if (members.size === 0) return { blocked: new Map() };
+  const held = [...members].filter(([, o]) => !passesThrough(o) && o.status !== "failed" && o.status !== "blocked");
+  if (held.length > 0) {
+    const waiting = held.filter(([, o]) => o.status === "waiting");
+    const shown = (waiting.length > 0 ? waiting : held).map(([t, o]) => `${t} (wave ${o.wave}${waiting.length > 0 ? "" : `, ${o.status}`})`).join(", ");
+    const line = waiting.length > 0
+      ? `Nothing in wave ${k} (${wave.name}) ran: ${shown} waits at its gate. Approve it and run that wave's job again, then this one.`
+      : `Nothing in wave ${k} (${wave.name}) ran: ${shown} did not apply, and only a failure lets the waves after it go on.`;
+    const status = waiting.length > 0 ? "waiting" : "not-applied";
+    return { blocked: new Map(), stop: { exitCode: waiting.length > 0 ? 3 : 1, line, members: Object.fromEntries((wave.runs ?? []).map((r) => [r.target, { status }])) } };
+  }
+  const runs = wave.runs ?? [];
+  const index = new Map(runs.map((r, i) => [r.target, i]));
+  const ownBefore = (i: number, dep: string): boolean => (index.get(dep) ?? Infinity) < i;
+  const upstreams = new Map(runs.map((r, i) => [r.target, (r.dependsOn ?? []).filter((d) => !ownBefore(i, d))]));
+  const blocked = blockedMembers(runs.map((r) => r.target), upstreams, new Set([...upstreams.values()].flat()), members);
+  // A run listed before this one in its own wave and blocked blocks it too, by the same failure.
+  runs.forEach((run, i) => {
+    if (blocked.has(run.target)) return;
+    const dep = (run.dependsOn ?? []).filter((d) => ownBefore(i, d) && blocked.has(d)).sort()[0];
+    if (dep !== undefined) blocked.set(run.target, blocked.get(dep)!);
+  });
+  return { blocked };
+}
+
+/** The runs of wave `options.wave` this job holds (#4322): its slice for a share job, every run otherwise. Empty for a discovering wave. */
+function jobRuns(options: RunOpWaveOptions, runs?: readonly OpWaveRun[]): string[] {
+  const wave = options.spec.waves[options.wave - 1];
+  if (!wave) return [];
+  const all = runs ?? (wave.discover ? [] : wave.runs);
+  if (options.share === undefined && options.group === undefined) return all.map((r) => r.target);
+  const group = options.group === undefined ? undefined : wave.jobs?.find((g) => g.name === options.group);
+  if (options.group !== undefined && !group) return [];
+  const shares = group ? (group.shares ?? 1) : (wave.shares ?? 1);
+  return opWaveShare(group ? opWaveGroupRuns(group, all) : all, options.share ?? 1, shares).map((r) => r.target);
+}
+
+/**
+ * Write this job's outcome file (#4322): each of its runs' outcome, from how
+ * the job ended. `members`, when given, is written as it is.
+ */
+function writeOpWaveOutcome(options: RunOpWaveOptions, dir: string, result: RunOpWaveResult, members?: Record<string, WaveMemberOutcome>): void {
+  const out: Record<string, WaveMemberOutcome> = { ...(members ?? {}) };
+  if (!members) {
+    const found = result.decision?.discovered !== undefined ? result.decision.members.map((m) => ({ target: m.member })) : undefined;
+    const targets = new Set([...jobRuns(options, found), ...result.applied, ...result.failed, ...result.moved, ...Object.keys(result.blocked ?? {})]);
+    const applied = new Set(result.applied);
+    const failed = new Set(result.failed);
+    const moved = new Set(result.moved);
+    const otherwise: WaveMemberOutcome["status"] =
+      result.exitCode === 0 ? (options.decide ? "decided" : "unchanged")
+      : result.exitCode === 3 ? "waiting"
+      : result.exitCode === 7 || result.exitCode === 8 ? "refused"
+      : result.exitCode >= 4 && result.exitCode <= 6 ? "not-applied"
+      : "failed";
+    for (const t of targets) {
+      const by = result.blocked?.[t];
+      out[t] = by !== undefined ? { status: "blocked", by } : applied.has(t) ? { status: "applied" } : failed.has(t) ? { status: "failed" } : moved.has(t) ? { status: "not-applied" } : { status: otherwise };
+    }
+  }
+  const part = { ...(options.group !== undefined ? { group: options.group } : {}), ...(options.share !== undefined ? { share: options.share } : {}) };
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeWaveOutcomeFile(dir, options.wave, part, out, options.now ?? new Date().toISOString());
+  } catch (err) {
+    (options.log ?? ((line: string) => console.error(line)))(`wave ${options.wave}: could not write its outcome file in ${dir}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** What a share or job group's job calls itself in the log: `share 2`, `job group "prod"`, `share 2 of job group "prod"`. */
@@ -1240,7 +1416,7 @@ interface OpWaveDecided {
  * a hook fails or holds it on another gate, or a share's decision waits or
  * was refused.
  */
-async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<RunOpWaveResult>): Promise<WaveStep<OpWavePlanned, RunOpWaveResult>> {
+async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<RunOpWaveResult>, skip?: ReadonlyMap<string, string>): Promise<WaveStep<OpWavePlanned, RunOpWaveResult>> {
   const { spec } = options;
   const cwd = options.cwd ?? process.cwd();
   const exec = options.exec ?? spawnExec;
@@ -1287,11 +1463,14 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
       wave = { ...wave, runs: decision.members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
       ctx.wave = wave;
     }
-    const slice = opWaveShare(group ? opWaveGroupRuns(group, wave.runs) : wave.runs, options.share ?? 1, shares);
-    if (group && slice.length === 0) {
+    const whole = opWaveShare(group ? opWaveGroupRuns(group, wave.runs) : wave.runs, options.share ?? 1, shares);
+    if (group && whole.length === 0) {
       log(`${part} of wave ${k} (${wave.name}) holds none of the wave's runs; nothing to apply`);
       return { end: result };
     }
+    // #4322: the runs its deciding job blocked are neither planned nor applied here.
+    const slice = whole.filter((r) => !skip?.has(r.target));
+    if (slice.length === 0) return { end: result };
     const before = await runBeforePlanHooks(ctx, decision.hooks, slice);
     if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in ${part} of wave ${k} was planned or applied`) };
     if (before.waitingOn) return { end: await waitOnOther(ctx, decision, before.waitingOn) };
@@ -1347,6 +1526,11 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
     ...(rules.point ? { point: { ...rules.point } } : {}),
   };
+  if (skip?.size && !wave.discover) {
+    // #4322: a run a failure blocked is neither planned nor in the set digest.
+    wave = { ...wave, runs: wave.runs.filter((r) => !skip.has(r.target)) };
+    ctx.wave = wave;
+  }
   const before = await runBeforePlanHooks(ctx, rules.hooks, wave.runs);
   if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
   if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
@@ -2124,7 +2308,16 @@ async function applyStage(
       result.failed.push(...runs.map((r) => r.target));
     }
   } else {
-    for (const run of runs) {
+    const order = new Map(runs.map((r, i) => [r.target, i]));
+    for (const [i, run] of runs.entries()) {
+      // #4322: a run listed before this one that failed, or was blocked, blocks it.
+      const dep = (run.dependsOn ?? []).filter((d) => (order.get(d) ?? Infinity) < i && (result.failed.includes(d) || result.blocked?.[d] !== undefined)).sort()[0];
+      if (dep !== undefined) {
+        const by = result.blocked?.[dep] ?? dep;
+        result.blocked = { ...result.blocked, [run.target]: by };
+        log(`${run.target}: blocked by ${by}, so not applied`);
+        continue;
+      }
       const key = run.target.replace(/[^A-Za-z0-9._-]/g, "_");
       // Under runBy "apply" each run's apply runs its own apply-stage hooks, over a runs file of that run alone.
       const runsPath = byApply ? writeRunsFile(ctx, [run], planned, decision.digest, `.chant/op-waves/${spec.name}/wave-${k}/${key}.runs.json`) : opWaveRunsPath(spec, k);

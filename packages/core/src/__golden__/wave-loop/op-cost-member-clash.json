@@ -37,6 +37,12 @@
   ],
   "logs": [],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {}
+    },
     ".chant/op-waves/tf-apply/wave-1/plans.json": {
       "runs": [
         {

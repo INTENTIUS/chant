@@ -330,6 +330,16 @@
     "Nothing in wave 2 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-2 --plan jcs1-sha256:121fce9fb501cc2872d4239f620d465480edef5fcbe86d290f3b17c017231e8d (with --resume, the approval also starts this job again)"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "staging": {
+          "status": "waiting"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-2/staging.hooks.json": {
       "version": 1,
       "opWaves": "migrations",

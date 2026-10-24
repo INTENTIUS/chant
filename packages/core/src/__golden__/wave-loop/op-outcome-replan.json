@@ -187,6 +187,16 @@
     "wave 1 (layer): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:2bd18e72315aab58b6bc3edeec84b509f0fe4c36e2c4e263000ed65a3c689e28: not-required"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/vpc": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json": {
       "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     },

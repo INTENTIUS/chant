@@ -748,6 +748,16 @@
     "wave 1: its apply asked to plan again 10 times, so the wave stops here"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/vpc": {
+          "status": "failed"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json": {
       "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     },

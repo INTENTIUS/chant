@@ -402,6 +402,19 @@
     "wave 1 (prod): the decision point at base cannot be asked (waves.json at bbbbbbbbbbbb: `point.name` is a decision point's name: lower case letters, digits and hyphens, starting with a letter), so nothing in it was planned or applied"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "db": {
+          "status": "failed"
+        },
+        "net": {
+          "status": "failed"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/db.hooks.json": {
       "version": 1,
       "opWaves": "tf-apply",

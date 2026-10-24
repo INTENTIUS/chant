@@ -44,7 +44,7 @@
  * later member is blocked by `wave-<k>`.
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export const WAVE_OUTCOME_VERSION = 1;
 
@@ -239,7 +239,8 @@ function outcomeFiles(dirs: readonly string[]): string[] {
  * The outcome of each member of the waves before `wave`, as their jobs wrote
  * them under `dirs`, and the earliest such wave that holds every later
  * member, if any. For a member more than one job wrote (a re-run, or a split
- * wave's deciding job and the share that applied it), the newest. A file
+ * wave's deciding job and the share that applied it), the newest, and on a
+ * tie the share's rather than the deciding job's `decided`. A file
  * that does not parse, or is of another version, is skipped.
  */
 export function earlierWaveOutcomes(
@@ -260,7 +261,8 @@ export function earlierWaveOutcomes(
     if (typeof members !== "object" || members === null) continue;
     for (const [member, o] of Object.entries(members)) {
       const had = out.get(member);
-      if (had && had.at > f.at) continue;
+      // #4322: at the same time, what a share reported wins over its deciding job's `decided`.
+      if (had && (had.at > f.at || (had.at === f.at && o.status === "decided" && had.status !== "decided"))) continue;
       out.set(member, { ...o, wave: f.wave!, at: f.at });
     }
     const n = newest.get(f.wave!);
@@ -268,4 +270,27 @@ export function earlierWaveOutcomes(
   }
   const holding = [...newest].filter(([, n]) => n.holdsAll).map(([k]) => k).sort((a, b) => a - b);
   return { members: out, ...(holding.length ? { holdsAll: holding[0] } : {}) };
+}
+
+/**
+ * The newest outcome file named `name` under `dirs` (#4322), as
+ * {@link waveOutcomeFileName} names one job's: a split wave's share job
+ * reads its deciding job's, `outcome-wave-<k>.json`, to learn which runs that
+ * job decided and which it blocked. Undefined when there is none, or none
+ * that parses at this version.
+ */
+export function readWaveOutcomeFile(dirs: readonly string[], name: string): WaveOutcomeFile | undefined {
+  let newest: WaveOutcomeFile | undefined;
+  for (const file of outcomeFiles(dirs)) {
+    if (basename(file) !== name) continue;
+    let f: Partial<WaveOutcomeFile>;
+    try {
+      f = JSON.parse(readFileSync(file, "utf-8"));
+    } catch {
+      continue;
+    }
+    if (f?.version !== WAVE_OUTCOME_VERSION || typeof f.at !== "string" || typeof f.members !== "object" || f.members === null) continue;
+    if (!newest || newest.at <= f.at) newest = f as WaveOutcomeFile;
+  }
+  return newest;
 }

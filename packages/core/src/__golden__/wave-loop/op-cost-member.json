@@ -107,6 +107,19 @@
     "Nothing in wave 1 or after it ran. Read the plans, then approve: chant approve tf-apply wave-1 --plan jcs1-sha256:138f28c4ef2e87abe7454a8f47db147636932e106e166a399866b5bf470a21af (with --resume, the approval also starts this job again)"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/idle": {
+          "status": "waiting"
+        },
+        "a/vpc": {
+          "status": "waiting"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/a_idle.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "empty": true

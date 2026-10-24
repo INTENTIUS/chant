@@ -20,15 +20,27 @@ jobs:
           fetch-depth: 0
       - name: Plan, gate and apply wave 1 (dev)
         run: chant run wave --spec waves.json --wave 1
+      - name: Keep the job's outcome
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: migrations-wave-1-dev-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-1.json
+          if-no-files-found: ignore
   wave-2-prod-decide:
     runs-on: plan
     needs:
       - wave-1-dev
+    if: '!cancelled()'
     container: node:22
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Download the earlier jobs' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: .chant/op-waves/migrations/outcomes
       - name: Plan wave 2 (prod) and decide its gate
         run: chant run wave --spec waves.json --wave 2 --decide
       - name: Keep wave 2's decision
@@ -37,6 +49,13 @@ jobs:
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations/wave-2.json
+          if-no-files-found: ignore
+      - name: Keep the job's outcome
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: migrations-wave-2-prod-decide-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-2.json
           if-no-files-found: ignore
   wave-2-prod-us:
     runs-on:
@@ -59,8 +78,19 @@ jobs:
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
+      - name: Download the earlier jobs' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: .chant/op-waves/migrations/outcomes
       - name: Apply job group us of wave 2 (prod)
         run: chant run wave --spec waves.json --wave 2 --group us
+      - name: Keep the job's outcome
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: migrations-wave-2-prod-us-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-2-group-us.json
+          if-no-files-found: ignore
   wave-2-prod-eu:
     runs-on: eu-apply
     needs:
@@ -75,5 +105,16 @@ jobs:
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
+      - name: Download the earlier jobs' outcomes
+        uses: https://code.forgejo.org/actions/download-artifact@v3
+        with:
+          path: .chant/op-waves/migrations/outcomes
       - name: Apply job group eu of wave 2 (prod)
         run: chant run wave --spec waves.json --wave 2 --group eu
+      - name: Keep the job's outcome
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: migrations-wave-2-prod-eu-outcome
+          path: .chant/op-waves/migrations/outcomes/outcome-wave-2-group-eu.json
+          if-no-files-found: ignore

@@ -332,6 +332,19 @@
     "a hook before the apply failed, so nothing in wave 1 was applied"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "failed"
+        },
+        "t2": {
+          "status": "failed"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-1/runs.json": {
       "wave": "prod",
       "number": 1,

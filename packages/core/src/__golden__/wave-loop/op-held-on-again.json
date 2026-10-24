@@ -149,6 +149,22 @@
     "a hook before the plan failed, so nothing in wave 1 was planned or applied"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "dns": {
+          "status": "failed"
+        },
+        "nat": {
+          "status": "failed"
+        },
+        "vpc": {
+          "status": "failed"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/hold.json": {
       "op": "tf-migrate",
       "gate": "split-queues",

@@ -509,6 +509,19 @@
     "wave 1 (prod): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f: not-required"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "applied"
+        },
+        "t2": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-1/runs.json": {
       "wave": "prod",
       "number": 1,

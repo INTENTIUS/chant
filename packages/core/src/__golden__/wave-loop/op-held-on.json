@@ -1259,6 +1259,22 @@
     "wave 1 (net): gate always (read at bbbbbbbbbbbb), digest jcs1-sha256:6df23c67bc73cda0efdf644058afc91743289bcce343c7f4347298a79a1a84cc: not-required"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "dns": {
+          "status": "applied"
+        },
+        "nat": {
+          "status": "applied"
+        },
+        "vpc": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "empty": true

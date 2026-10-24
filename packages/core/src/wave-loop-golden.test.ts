@@ -262,9 +262,10 @@ describe("Op waves golden transcripts (#3766)", () => {
       { wave: 1, label: "waits" },
       { wave: 1, label: "approved", gates: memoryGateLedgerPort({ resolutions: [resolution("tf-apply", "wave-1", set)] }) },
       { wave: 1, label: "another digest approved", gates: memoryGateLedgerPort({ resolutions: [resolution("tf-apply", "wave-1", digest("9"))] }) },
-      { wave: 2, decide: true, label: "decide a wide never wave" },
-      { wave: 2, share: 1, label: "share 1" },
-      { wave: 2, share: 2, label: "share 2" },
+      // #4322: wave 1's last job here waits, which would stop wave 2; the wide wave keeps its outcomes apart to show its own jobs.
+      { wave: 2, decide: true, label: "decide a wide never wave", outcomeDir: "wide-outcomes" },
+      { wave: 2, share: 1, label: "share 1", outcomeDir: "wide-outcomes" },
+      { wave: 2, share: 2, label: "share 2", outcomeDir: "wide-outcomes" },
     ]);
   });
 

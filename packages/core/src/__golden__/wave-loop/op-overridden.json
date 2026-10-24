@@ -340,6 +340,22 @@
     "wave 1 (net) applies vpc under their overrides, which are now spent"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "dns": {
+          "status": "applied"
+        },
+        "nat": {
+          "status": "applied"
+        },
+        "vpc": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
     },
