@@ -100,7 +100,7 @@ Any HTML comment in the review is escaped, so the model's text cannot plant a ma
 
 ## Let a gate policy read the risk
 
-The note starts with a hidden line that holds the pull request head the review read and its risk (`packages/core/src/op/activities/review-agent.ts:149`). When `ci.policy` is set, `pr-plan` and `pr-apply` read the review note off the pull request and hand it to the policy as `input.review` (`packages/core/src/cli/handlers/pr.ts:574`):
+The note starts with a hidden line that holds the pull request head the review read and its risk (`packages/core/src/op/activities/review-agent.ts:149`). When `ci.policy` is set, `pr-plan` and `pr-apply` read the review note off the pull request and hand it to the policy as `input.review` (`packages/core/src/cli/handlers/pr.ts:625`):
 
 ```json
 { "review": { "found": true, "risk": "high", "head": "<sha>" } }
