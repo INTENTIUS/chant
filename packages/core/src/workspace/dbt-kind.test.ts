@@ -75,7 +75,8 @@ describe("the dbt kind in the sql lexicon's kinds file (#3932)", () => {
   test("validates, probes dbt_project.yml and names the dbt-project reader", () => {
     const { kinds, problems } = parseKindData(SQL_KINDS, "@intentius/chant-lexicon-sql");
     expect(problems).toEqual([]);
-    expect(kinds.map((k) => [k.name, k.reader, k.probe])).toEqual([["dbt", "dbt-project", { anyFile: ["dbt_project.yml"] }]]);
+    expect(kinds.filter((k) => k.name === "dbt").map((k) => [k.name, k.reader, k.probe])).toEqual([["dbt", "dbt-project", { anyFile: ["dbt_project.yml"] }]]);
+    expect(kinds.map((k) => [k.name, k.reader])).toEqual([["dbt", "dbt-project"], ["goose", "goose-dir"], ["golang-migrate", "golang-migrate-dir"], ["clickhouse-migrations", "clickhouse-migrations-dir"], ["flyway", "flyway-dir"]]);
     expect(Object.keys(kinds[0].fields ?? {})).toEqual(["sqlMember", "dialect", "modelSchema"]);
   });
 

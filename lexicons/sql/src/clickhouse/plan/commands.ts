@@ -175,5 +175,10 @@ export const sqlCommands: CommandGroup = {
       description: "Write sql-types.d.ts: typed columns for each table, view and dictionary the build declares, for tags given their name (table<\"app.users\">) and RowOf; --output <path> writes it elsewhere; --check compares instead of writing and exits 1 when the file differs",
       handler: async (ctx) => (await import("../../sql-types-command")).runTypes(ctx),
     },
+    {
+      name: "replay",
+      description: "Replay a goose, golang-migrate, clickhouse-migrations or Flyway directory into the empty server --env binds, and record the tables and columns it makes as chant.replay.json; --check compares instead of writing",
+      handler: async (ctx) => (await import("../../migration-replay")).runReplay(ctx),
+    },
   ],
 };
