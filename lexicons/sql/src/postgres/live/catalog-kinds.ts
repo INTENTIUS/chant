@@ -312,6 +312,57 @@ export async function readRoutineKinds(client: PostgresClient, scope: SchemaScop
   return out;
 }
 
+/** An operator named by another's COMMUTATOR or NEGATOR, as `OPERATOR(schema.symbol)`. */
+const operatorRef = (column: string): string =>
+  `(SELECT 'OPERATOR(' || pg_catalog.quote_ident(rn.nspname) || '.' || r.oprname || ')' FROM pg_catalog.pg_operator r JOIN pg_catalog.pg_namespace rn ON rn.oid = r.oprnamespace WHERE r.oid = ${column})`;
+
+/**
+ * Operators: the ones a schema defines, not the server's own (oids below the
+ * first normal object id) or an extension's. Identified by name and operand
+ * types, `NONE` for a missing side (`DROP OPERATOR`'s spelling).
+ */
+export async function readOperators(client: PostgresClient, scope: SchemaScope): Promise<LivePgObject[]> {
+  const s = scopeSql("n.nspname", scope);
+  const rows = await client.query<Row>(
+    `SELECT o.oid::text AS oid, n.nspname AS schema, o.oprname AS name,
+            CASE WHEN o.oprleft <> 0 THEN pg_catalog.format_type(o.oprleft, NULL) END AS leftarg,
+            CASE WHEN o.oprright <> 0 THEN pg_catalog.format_type(o.oprright, NULL) END AS rightarg,
+            ${proc("o.oprcode::pg_catalog.regproc")} AS func, ${operatorRef("o.oprcom")} AS commutator, ${operatorRef("o.oprnegate")} AS negator,
+            ${proc("o.oprrest::pg_catalog.regproc")} AS restrict, ${proc("o.oprjoin::pg_catalog.regproc")} AS join_func,
+            o.oprcanhash AS hashes, o.oprcanmerge AS merges,
+            pg_catalog.obj_description(o.oid, 'pg_operator') AS comment, ${dependentsOf("pg_operator", "o.oid")} AS dependents
+     FROM pg_catalog.pg_operator o JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+     WHERE ${s.sql} AND o.oid >= 16384 AND ${notExtensionOwned("pg_operator", "o.oid")}
+     ORDER BY n.nspname ${C}, o.oprname ${C}, pg_catalog.format_type(o.oprleft, NULL) ${C} NULLS FIRST, pg_catalog.format_type(o.oprright, NULL) ${C} NULLS FIRST`,
+    s.params,
+  );
+  return rows.map((r) => {
+    const left = str(r.leftarg);
+    const right = str(r.rightarg);
+    const signature = `(${left ?? "NONE"},${right ?? "NONE"})`;
+    const name = `${quoteIdent(String(r.schema))}.${r.name}`;
+    const opts = [`FUNCTION = ${r.func}`];
+    if (left) opts.push(`LEFTARG = ${left}`);
+    if (right) opts.push(`RIGHTARG = ${right}`);
+    if (str(r.commutator)) opts.push(`COMMUTATOR = ${r.commutator}`);
+    if (str(r.negator)) opts.push(`NEGATOR = ${r.negator}`);
+    if (str(r.restrict)) opts.push(`RESTRICT = ${r.restrict}`);
+    if (str(r.join_func)) opts.push(`JOIN = ${r.join_func}`);
+    if (r.hashes === true) opts.push("HASHES");
+    if (r.merges === true) opts.push("MERGES");
+    return {
+      type: POSTGRES_ENTITY_TYPES.operator,
+      schema: String(r.schema),
+      name: String(r.name),
+      oid: String(r.oid),
+      signature,
+      ...withComment(r),
+      ...dependents(r),
+      statement: [`CREATE OPERATOR ${name} (${opts.join(", ")})`, ...commentOn(`OPERATOR ${name}${signature}`, r.comment)].join(";\n"),
+    };
+  });
+}
+
 /** An `OPTIONS (...)` clause from a catalog `text[]` of `name=value`, and the names left out because they hold a credential. */
 function optionsOf(raw: unknown): { clause: string; omitted: string[] } {
   const kept: string[] = [];
@@ -336,7 +387,7 @@ const omittedWarning = (omitted: readonly string[]): { warnings?: string[] } =>
  * not narrow it. A credential in an option is left out and said so.
  */
 export async function readDatabaseKinds(client: PostgresClient, scope: SchemaScope): Promise<LivePgObject[]> {
-  const out: LivePgObject[] = [];
+  const out: LivePgObject[] = [...(await readOperators(client, scope))];
 
   const s = scopeSql("n.nspname", scope);
   const stats = await client.query<Row>(

@@ -39,6 +39,7 @@ const KINDS: Record<string, string> = {
   PostgresCollation: POSTGRES_ENTITY_TYPES.collation,
   PostgresCast: POSTGRES_ENTITY_TYPES.cast,
   PostgresEventTrigger: POSTGRES_ENTITY_TYPES.eventTrigger,
+  PostgresOperator: POSTGRES_ENTITY_TYPES.operator,
   PostgresStatistics: POSTGRES_ENTITY_TYPES.statistics,
   PostgresForeignDataWrapper: POSTGRES_ENTITY_TYPES.foreignDataWrapper,
   PostgresForeignServer: POSTGRES_ENTITY_TYPES.foreignServer,

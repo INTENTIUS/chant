@@ -60,6 +60,7 @@ const TAG: Record<string, string> = {
   [POSTGRES_ENTITY_TYPES.collation]: "collation",
   [POSTGRES_ENTITY_TYPES.cast]: "cast",
   [POSTGRES_ENTITY_TYPES.eventTrigger]: "eventTrigger",
+  [POSTGRES_ENTITY_TYPES.operator]: "operator",
   [POSTGRES_ENTITY_TYPES.statistics]: "statistics",
   [POSTGRES_ENTITY_TYPES.foreignDataWrapper]: "foreignDataWrapper",
   [POSTGRES_ENTITY_TYPES.foreignServer]: "foreignServer",
@@ -85,6 +86,7 @@ const UNREFERENCED: ReadonlySet<string> = new Set([
   POSTGRES_ENTITY_TYPES.extension,
   POSTGRES_ENTITY_TYPES.cast,
   POSTGRES_ENTITY_TYPES.eventTrigger,
+  POSTGRES_ENTITY_TYPES.operator,
   POSTGRES_ENTITY_TYPES.statistics,
   POSTGRES_ENTITY_TYPES.foreignServer,
   POSTGRES_ENTITY_TYPES.publication,
@@ -202,6 +204,11 @@ function templateBody(item: Item, byQualified: Map<string, Item>, schemaExport: 
     }
     const dot = tokens[sig[k + 1] ?? -1];
     const b = tokens[sig[k + 2] ?? -1];
+    // An operator's own `schema.symbol`: the schema is the schema's export, though the symbol is no name.
+    if (item.type === POSTGRES_ENTITY_TYPES.operator && isName(a) && dot?.kind === "punct" && dot.text === "." && b?.kind === "op" && identValue(a) === item.schema && schemaExport.has(item.schema)) {
+      replace.set(sig[k]!, { to: sig[k]! + 1, ref: schemaExport.get(item.schema)! });
+      continue;
+    }
     if (!isName(a) || dot?.kind !== "punct" || dot.text !== "." || !isName(b)) {
       // An extension's `WITH SCHEMA app`, a grant's `ON SCHEMA app`, default privileges' `IN SCHEMA app`.
       const bySchemaWord = item.type === POSTGRES_ENTITY_TYPES.extension || item.type === POSTGRES_ENTITY_TYPES.grant || item.type === POSTGRES_ENTITY_TYPES.defaultPrivileges || schemaAt.size > 0;

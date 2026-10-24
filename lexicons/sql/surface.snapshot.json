@@ -82,6 +82,10 @@
       "kind": "resource",
       "resourceType": "Postgres::MaterializedView"
     },
+    "PostgresOperator": {
+      "kind": "resource",
+      "resourceType": "Postgres::Operator"
+    },
     "PostgresPolicy": {
       "kind": "resource",
       "resourceType": "Postgres::Policy"

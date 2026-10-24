@@ -51,6 +51,7 @@ import { stripMarker } from "../../core/ownership";
 import { sequenceDefaults } from "../live/catalog";
 import type {
   AggregateArgDef,
+  OperatorProps,
   AggregateProps,
   CastProps,
   CheckDef,
@@ -352,6 +353,7 @@ export type CanonicalKind =
   | "collation"
   | "cast"
   | "eventTrigger"
+  | "operator"
   | "statistics"
   | "foreignDataWrapper"
   | "foreignServer"
@@ -401,6 +403,7 @@ const kindOf: Record<string, CanonicalKind> = {
   "Postgres::Collation": "collation",
   "Postgres::Cast": "cast",
   "Postgres::EventTrigger": "eventTrigger",
+  "Postgres::Operator": "operator",
   "Postgres::Statistics": "statistics",
   "Postgres::ForeignDataWrapper": "foreignDataWrapper",
   "Postgres::ForeignServer": "foreignServer",
@@ -712,6 +715,36 @@ function collationFields(p: CollationProps, fields: Record<string, unknown>): vo
   fields.rules = o.rules;
 }
 
+/** An operator's identity among its overloads: its operand types, `(integer,integer)`, `NONE` for a missing side. */
+export function operatorSignature(p: Pick<OperatorProps, "leftArg" | "rightArg">, defaultSchema: string): string {
+  const side = (t: string | undefined) => (t === undefined ? "NONE" : canonicalArgType(t, defaultSchema));
+  return `(${side(p.leftArg)},${side(p.rightArg)})`;
+}
+
+/**
+ * An operator named where another object names it (a COMMUTATOR or NEGATOR):
+ * `OPERATOR(app.===)`, `app.===` or a bare symbol, which the server looks for
+ * in the new operator's own schema, as `schema.symbol`.
+ */
+export function canonicalOperatorRef(text: string, ownSchema: string): string {
+  const inner = text.trim().replace(/^OPERATOR\s*\(\s*(.*?)\s*\)$/is, "$1");
+  const m = /^("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*(\S.*)$/s.exec(inner);
+  return `${quoteIdent(m ? identValue(m[1]!) : ownSchema)}.${(m ? m[2]! : inner).trim()}`;
+}
+
+/** An operator's definition as compared: each function and operator named canonically, a flag only when set. */
+function operatorOptions(p: OperatorProps, ownSchema: string, defaultSchema: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(p.options)) {
+    if (k === "function" || k === "restrict" || k === "join") out[k] = canonicalFunctionName(v, defaultSchema);
+    else if (k === "commutator" || k === "negator") out[k] = canonicalOperatorRef(v, ownSchema);
+    else if (k === "hashes" || k === "merges") {
+      if (isTrue(v)) out[k] = "true";
+    } else out[k] = defValue(v);
+  }
+  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
+}
+
 /** An `OPTIONS (...)` list as compared: by name, none as nothing. */
 function sortedOptions(options: Record<string, string> | undefined): Record<string, string> | undefined {
   const entries = Object.entries(options ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
@@ -828,6 +861,12 @@ export function canonicalPgObject(entityType: string, props: Record<string, unkn
       fields.event = p.event.toLowerCase();
       fields.tags = p.tags && p.tags.length > 0 ? [...new Set(p.tags.map((t) => t.toUpperCase().replace(/\s+/g, " ").trim()))].sort() : undefined;
       fields.function = canonicalFunctionName(p.functionName, defaultSchema);
+      break;
+    }
+    case "operator": {
+      const p = props as unknown as OperatorProps;
+      base.signature = operatorSignature(p, defaultSchema);
+      fields.definition = operatorOptions(p, base.schema!, defaultSchema);
       break;
     }
     case "statistics": {

@@ -342,6 +342,19 @@ export interface EventTriggerProps extends Omit<CommonProps, "schema"> {
   functionName: string;
 }
 
+export interface OperatorProps extends CommonProps {
+  /** `LEFTARG`, as written; absent for a prefix operator. */
+  leftArg?: string;
+  /** `RIGHTARG`, as written; absent for a postfix operator (removed in 14, so for none the server still holds). */
+  rightArg?: string;
+  /**
+   * The rest of the definition by option name, folded (`function`,
+   * `commutator`, `restrict`), to its value as written; `hashes` and `merges`
+   * to `true`. `procedure`, the old spelling, is `function`.
+   */
+  options: Record<string, string>;
+}
+
 /** `CREATE STATISTICS`: extended statistics on columns or expressions of one table. */
 export interface StatisticsProps extends CommonProps {
   ifNotExists?: boolean;
@@ -663,6 +676,11 @@ export interface PostgresEventTrigger extends PostgresObject {
   readonly props: EventTriggerProps;
 }
 
+export interface PostgresOperator extends PostgresObject {
+  readonly entityType: "Postgres::Operator";
+  readonly props: OperatorProps;
+}
+
 export interface PostgresStatistics extends PostgresObject {
   readonly entityType: "Postgres::Statistics";
   readonly props: StatisticsProps;
@@ -841,6 +859,7 @@ export type PostgresTag =
   | "aggregate"
   | "trigger"
   | "eventTrigger"
+  | "operator"
   | "statistics"
   | "foreignDataWrapper"
   | "foreignServer"
@@ -866,6 +885,7 @@ export const STATEMENTS_OF: Record<PostgresTag, readonly StatementNode["statemen
   aggregate: ["aggregate"],
   trigger: ["trigger"],
   eventTrigger: ["eventTrigger"],
+  operator: ["operator"],
   statistics: ["statistics"],
   foreignDataWrapper: ["foreignDataWrapper"],
   foreignServer: ["foreignServer"],
@@ -893,6 +913,7 @@ const TAG_OF: Record<StatementNode["statement"], PostgresTag | undefined> = {
   aggregate: "aggregate",
   trigger: "trigger",
   eventTrigger: "eventTrigger",
+  operator: "operator",
   statistics: "statistics",
   foreignDataWrapper: "foreignDataWrapper",
   foreignServer: "foreignServer",
@@ -923,6 +944,7 @@ export const STATEMENT_NAMES: Record<StatementNode["statement"], string> = {
   aggregate: "CREATE AGGREGATE",
   trigger: "CREATE TRIGGER",
   eventTrigger: "CREATE EVENT TRIGGER",
+  operator: "CREATE OPERATOR",
   statistics: "CREATE STATISTICS",
   foreignDataWrapper: "CREATE FOREIGN DATA WRAPPER",
   foreignServer: "CREATE SERVER",
@@ -1603,6 +1625,15 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
       );
       return make(POSTGRES_ENTITY_TYPES.eventTrigger, { name }, props);
     }
+    case "operator": {
+      const q = qualified(ctx, node.name);
+      const comment = applyComments(tag, ctx, comments, q, ["OPERATOR"]);
+      const opt = definitionValues(ctx, node.options, "options");
+      const { leftarg, rightarg, procedure, ...rest } = opt;
+      const props: OperatorProps = stripUnset({ ...q, leftArg: leftarg, rightArg: rightarg, options: { ...rest, function: opt.function ?? procedure }, comment, ddl, source });
+      // The symbol is unquoted wherever the operator is named: `app.===`.
+      return make(POSTGRES_ENTITY_TYPES.operator, q, props, undefined, q.schema ? `${quoteIdent(q.schema)}.${q.name}` : q.name);
+    }
     case "statistics": {
       const q = qualified(ctx, node.name);
       const comment = applyComments(tag, ctx, comments, q, ["STATISTICS"]);
@@ -2151,6 +2182,15 @@ export function cast(strings: TemplateStringsArray, ...values: unknown[]): Postg
  */
 export function eventTrigger(strings: TemplateStringsArray, ...values: unknown[]): PostgresEventTrigger {
   return build("eventTrigger", strings, values) as PostgresEventTrigger;
+}
+
+/**
+ * `` operator`CREATE OPERATOR app.=== (FUNCTION = ${fn}, LEFTARG = int, RIGHTARG = int)` ``:
+ * one operator, identified by its name and operand types, as a function is by
+ * its name and parameter types.
+ */
+export function operator(strings: TemplateStringsArray, ...values: unknown[]): PostgresOperator {
+  return build("operator", strings, values) as PostgresOperator;
 }
 
 /**

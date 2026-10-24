@@ -6,13 +6,13 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { foreignDataWrapper, foreignServer, func, publication, schema, SqlTemplateError, statistics, table } from "./entities";
+import { foreignDataWrapper, foreignServer, func, operator, publication, schema, SqlTemplateError, statistics, table } from "./entities";
 import { diffObject, keyedByQualifiedName, pgSchemaFromLive, type PgSchemaObject } from "./plan/schema";
 import { diffPgSchemas, matchPgObjects } from "./plan/diff";
 import { alterSteps, dropStatement } from "./apply/statements";
 import { declaredObjects } from "./apply/apply";
 import { readLiveSchema, type LivePgObject } from "./live/catalog";
-import { readDatabaseKinds } from "./live/catalog-kinds";
+import { readDatabaseKinds, readOperators } from "./live/catalog-kinds";
 import type { PostgresClient } from "./live/client";
 import { objectsToIR } from "./import/ir";
 import { PostgresGenerator, postgresTemplates } from "./import/generator";
@@ -25,6 +25,20 @@ const app = schema`CREATE SCHEMA app`;
 const props = (o: { props: unknown }) => o.props as Record<string, unknown>;
 
 describe("the tags", () => {
+  test("operator: a symbol in a schema, identified by its operand types", () => {
+    const eq = func`CREATE FUNCTION ${app}.pair_eq(a int, b int) RETURNS boolean LANGUAGE sql AS 'SELECT a = b'`;
+    const op = operator`CREATE OPERATOR ${app}.=== (FUNCTION = ${eq}, LEFTARG = int, RIGHTARG = int, COMMUTATOR = ===, NEGATOR = OPERATOR(app.!==), RESTRICT = eqsel, JOIN = eqjoinsel, HASHES); COMMENT ON OPERATOR ${app}.===(int, int) IS 'Same pair'`;
+    expect(op.entityType).toBe("Postgres::Operator");
+    expect(op.sqlName).toBe("app.===");
+    expect(op.dependsOn).toContain(eq);
+    expect(op.props).toMatchObject({ schema: "app", name: "===", leftArg: "int", rightArg: "int", comment: "Same pair" });
+    const c = canonicalPgObject(op.entityType, props(op));
+    expect(c.signature).toBe("(integer,integer)");
+    expect(c.fields.definition).toEqual({ commutator: "app.===", function: "app.pair_eq", hashes: "true", negator: "app.!==", restrict: "eqsel", join: "eqjoinsel" });
+    const prefix = operator`CREATE OPERATOR app.@@ (PROCEDURE = app.abs_of, RIGHTARG = int)`;
+    expect(canonicalPgObject(prefix.entityType, props(prefix))).toMatchObject({ name: "@@", signature: "(NONE,integer)", fields: { definition: { function: "app.abs_of" } } });
+  });
+
   test("statistics: a table's columns and expressions, the kinds the server gathers", () => {
     const orders = table`CREATE TABLE ${app}.orders (id int, status text, total numeric)`;
     const s = statistics`CREATE STATISTICS ${app}.orders_stats (dependencies, ndistinct) ON status, id, (total * 2) FROM ${orders}; COMMENT ON STATISTICS ${app}.orders_stats IS 'Correlated'`;
@@ -77,6 +91,10 @@ describe("the tags", () => {
   });
 
   test("what is refused", () => {
+    expect(() => operator`CREATE OPERATOR app.=== (LEFTARG = int, RIGHTARG = int)`).toThrow(/FUNCTION/);
+    expect(() => operator`CREATE OPERATOR app.=== (FUNCTION = f, LEFTARG = int, MERGE = true)`).toThrow(/an option of an operator/);
+    expect(() => operator`CREATE OPERATOR CLASS c FOR TYPE int USING btree AS OPERATOR 1 <`).toThrow(/CREATE OPERATOR CLASS and CREATE OPERATOR FAMILY/);
+    expect(() => operator`CREATE OPERATOR app.eq (FUNCTION = f)`).toThrow(/operator's symbol/);
     expect(() => foreignServer`CREATE SERVER s FOREIGN DATA WRAPPER w OPTIONS (host 'x', password 'hunter2')`).toThrow(/holds a credential/);
     expect(() => foreignDataWrapper`CREATE FOREIGN DATA WRAPPER w OPTIONS (api_key 'x')`).toThrow(SqlTemplateError);
     expect(() => foreignServer`CREATE SERVER s OPTIONS (host 'x')`).toThrow(/FOREIGN DATA WRAPPER/);
@@ -106,6 +124,7 @@ function steps(type: string, liveDdl: string, declaredDdl: string, extra: Partia
   return alterSteps(obj!, m.before!.canonical, diffPgSchemas(before, after).changes, { major: 18 }).steps.map((s) => s.sql);
 }
 
+const OPR = "Postgres::Operator";
 const STAT = "Postgres::Statistics";
 const FDW = "Postgres::ForeignDataWrapper";
 const SRV = "Postgres::ForeignServer";
@@ -122,6 +141,19 @@ describe("the classifier and the statements", () => {
     ).toEqual([]);
     // Options at their default are no change: the publication publishes every action, to its own tables, unless told otherwise.
     expect(rules(PUB, "CREATE PUBLICATION p FOR ALL TABLES", "CREATE PUBLICATION p FOR ALL TABLES WITH (publish = 'insert, update, delete, truncate', publish_via_partition_root = false)")).toEqual([]);
+  });
+
+  test("an operator is dropped and created: it has no ALTER for its function or operands", () => {
+    const O1 = "CREATE OPERATOR app.=== (FUNCTION = app.pair_eq, LEFTARG = integer, RIGHTARG = integer, COMMUTATOR = OPERATOR(app.===), RESTRICT = eqsel)";
+    expect(rules(OPR, O1, "CREATE OPERATOR app.=== (LEFTARG = int, RIGHTARG = int, RESTRICT = eqsel, COMMUTATOR = ===, FUNCTION = app.pair_eq)")).toEqual([]);
+    expect(rules(OPR, O1, O1.replace("eqsel", "scalarltsel"))).toEqual([["definition", "SQLPG300"]]);
+    expect(rules(OPR, O1, O1.replace("eqsel", "scalarltsel"), { dependents: ["operator class app.c for access method btree"] })).toEqual([["definition", "SQLPG301"]]);
+    const recreate = steps(OPR, O1, O1.replace("eqsel", "scalarltsel"));
+    expect(recreate[0]).toBe("DROP OPERATOR app.===(integer,integer)");
+    expect(recreate[1]).toContain("scalarltsel");
+    expect(recreate[2]).toMatch(/^COMMENT ON OPERATOR app\.===\(integer,integer\) IS /);
+    // Another operand type is another operator, not a change.
+    expect(dropStatement("operator", "app", "===", "(NONE,integer)").sql).toBe("DROP OPERATOR app.===(NONE,integer)");
   });
 
   test("statistics are dropped and created: they have no ALTER for their definition", () => {
@@ -243,6 +275,27 @@ describe("reading the catalog", () => {
     for (const o of objects) expect(() => liveProps(o)).not.toThrow();
   });
 
+  test("an operator: its operands, its commutator and its flags, as the catalog holds them", async () => {
+    const client: PostgresClient = {
+      async query<T>(sql: string): Promise<T[]> {
+        if (!sql.includes("FROM pg_catalog.pg_operator o")) return [];
+        return [
+          { oid: "1", schema: "app", name: "===", leftarg: "integer", rightarg: "integer", func: "app.pair_eq", commutator: "OPERATOR(app.===)", negator: null, restrict: "eqsel", join_func: null, hashes: true, merges: false, comment: "Same", dependents: ["operator class app.c"] },
+          { oid: "2", schema: "app", name: "@@", leftarg: null, rightarg: "integer", func: "app.abs_of", commutator: null, negator: null, restrict: null, join_func: null, hashes: false, merges: false, comment: null, dependents: [] },
+        ] as T[];
+      },
+      async end() {},
+    };
+    const ops = await readOperators(client, {});
+    expect(ops.map((o) => [o.schema, o.name, o.signature])).toEqual([["app", "===", "(integer,integer)"], ["app", "@@", "(NONE,integer)"]]);
+    expect(ops[0]!.statement).toBe(
+      "CREATE OPERATOR app.=== (FUNCTION = app.pair_eq, LEFTARG = integer, RIGHTARG = integer, COMMUTATOR = OPERATOR(app.===), RESTRICT = eqsel, HASHES);\nCOMMENT ON OPERATOR app.===(integer,integer) IS 'Same'",
+    );
+    expect(ops[0]!.dependents).toEqual(["operator class app.c"]);
+    expect(ops[1]!.statement).toBe("CREATE OPERATOR app.@@ (FUNCTION = app.abs_of, RIGHTARG = integer)");
+    for (const o of ops) expect(() => liveProps(o)).not.toThrow();
+  });
+
   test("a publication of every table, on a server before 15", async () => {
     const [p] = await readDatabaseKinds(catalogClient({ pubs: [{ oid: "4", name: "all_of_it", alltables: true, pubinsert: true, pubupdate: true, pubdelete: true, pubtruncate: true, def: { pubviaroot: false }, comment: null }] }), {});
     expect(p!.statement).toBe("CREATE PUBLICATION all_of_it FOR ALL TABLES");
@@ -264,6 +317,8 @@ const SERVER_PRINTS: Array<{ type: string; schema?: string; name: string; statem
   { type: "Postgres::Schema", name: "app", statement: "CREATE SCHEMA app" },
   { type: "Postgres::Schema", name: "audit", statement: "CREATE SCHEMA audit" },
   { type: "Postgres::Table", schema: "app", name: "orders", statement: "CREATE TABLE app.orders (\n    id integer,\n    status text\n)" },
+  { type: "Postgres::Function", schema: "app", name: "pair_eq", signature: "(integer,integer)", statement: "CREATE FUNCTION app.pair_eq(a integer, b integer)\n RETURNS boolean\n LANGUAGE sql\nAS $function$SELECT a = b$function$" },
+  { type: OPR, schema: "app", name: "===", signature: "(integer,integer)", statement: "CREATE OPERATOR app.=== (FUNCTION = app.pair_eq, LEFTARG = integer, RIGHTARG = integer, COMMUTATOR = OPERATOR(app.===), HASHES);\nCOMMENT ON OPERATOR app.===(integer,integer) IS 'Same pair'" },
   { type: STAT, schema: "app", name: "orders_stats", statement: "CREATE STATISTICS app.orders_stats (dependencies) ON id, status FROM app.orders;\nCOMMENT ON STATISTICS app.orders_stats IS 'Correlated'" },
   { type: FDW, name: "app_fdw", statement: "CREATE FOREIGN DATA WRAPPER app_fdw OPTIONS (debug 'true');\nCOMMENT ON FOREIGN DATA WRAPPER app_fdw IS 'Remote'" },
   { type: SRV, name: "app_remote", statement: "CREATE SERVER app_remote TYPE 'pg' VERSION '16' FOREIGN DATA WRAPPER app_fdw OPTIONS (host 'db.internal', port '5432')" },
@@ -277,10 +332,13 @@ describe("declare, build, import, plan with no change", () => {
     const orders = table`CREATE TABLE ${app}.orders (id int, status text)`;
     const audit = schema`CREATE SCHEMA audit`;
     const fdw = foreignDataWrapper`CREATE FOREIGN DATA WRAPPER app_fdw OPTIONS (debug 'true'); COMMENT ON FOREIGN DATA WRAPPER app_fdw IS 'Remote'`;
+    const pairEq = func`CREATE FUNCTION ${app}.pair_eq(a integer, b integer) RETURNS boolean LANGUAGE sql AS 'SELECT a = b'`;
     const objects = [
       app,
       audit,
       orders,
+      pairEq,
+      operator`CREATE OPERATOR ${app}.=== (LEFTARG = int, RIGHTARG = int, FUNCTION = ${pairEq}, HASHES, COMMUTATOR = ===); COMMENT ON OPERATOR ${app}.===(int, int) IS 'Same pair'`,
       statistics`CREATE STATISTICS ${app}.orders_stats (dependencies) ON status, id FROM ${orders}; COMMENT ON STATISTICS ${app}.orders_stats IS 'Correlated'`,
       fdw,
       foreignServer`CREATE SERVER app_remote TYPE 'pg' VERSION '16' FOREIGN DATA WRAPPER ${fdw} OPTIONS (port '5432', host 'db.internal')`,
@@ -296,8 +354,10 @@ describe("declare, build, import, plan with no change", () => {
     const ir = objectsToIR(SERVER_PRINTS.map((o) => ({ type: o.type, ...(o.schema ? { schema: o.schema } : {}), name: o.name, ddl: o.statement })));
     const [file] = new PostgresGenerator().generate(ir);
     const content = file!.content;
-    expect(content).toContain('import { foreignDataWrapper, foreignServer, publication, schema, statistics, table } from "@intentius/chant-lexicon-sql/postgres";');
+    expect(content).toContain('import { foreignDataWrapper, foreignServer, func, operator, publication, schema, statistics, table } from "@intentius/chant-lexicon-sql/postgres";');
     expect(content).toContain("export const ordersStats = statistics`");
+    expect(content).toContain("export const pairEq = func`");
+    expect(content).toContain("CREATE OPERATOR ${appSchema}.=== (FUNCTION = ${pairEq}, LEFTARG = integer");
     expect(content).toContain("CREATE STATISTICS ${appSchema}.orders_stats (dependencies) ON id, status FROM ${orders}");
     expect(content).toContain("export const appFdw = foreignDataWrapper`");
     expect(content).toContain("FOREIGN DATA WRAPPER ${appFdw} OPTIONS (host 'db.internal'");

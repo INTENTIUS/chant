@@ -18,7 +18,7 @@
     { "command": "CREATE INDEX", "kind": "index", "status": "declared", "entity": "Postgres::Index" },
     { "command": "CREATE LANGUAGE", "kind": "procedural language", "status": "refused", "reason": "no tag declares a procedural language; an extension installs one, and the extension is declared instead" },
     { "command": "CREATE MATERIALIZED VIEW", "kind": "materialized view", "status": "declared", "entity": "Postgres::MaterializedView" },
-    { "command": "CREATE OPERATOR", "kind": "operator", "status": "refused", "reason": "no tag declares an operator yet" },
+    { "command": "CREATE OPERATOR", "kind": "operator", "status": "declared", "entity": "Postgres::Operator", "note": "identified by its name and operand types; a change is a drop and a create" },
     { "command": "CREATE OPERATOR CLASS", "kind": "operator class", "status": "refused", "reason": "no tag declares an operator class yet" },
     { "command": "CREATE OPERATOR FAMILY", "kind": "operator family", "status": "refused", "reason": "no tag declares an operator family yet" },
     { "command": "CREATE POLICY", "kind": "policy", "status": "declared", "entity": "Postgres::Policy", "note": "read where the profile manages access (sql.profiles.<env>.access)" },

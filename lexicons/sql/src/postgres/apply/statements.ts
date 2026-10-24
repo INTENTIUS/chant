@@ -112,6 +112,8 @@ export const objectIdent = (o: { kind: CanonicalKind; schema?: string; name: str
     ? quoteIdent(o.name)
     : o.kind === "trigger" || o.kind === "policy"
       ? `${quoteIdent(o.name)}${o.signature ?? ""}`
+      : o.kind === "operator"
+        ? `${o.schema ? `${quoteIdent(o.schema)}.` : ""}${o.name}${o.signature ?? ""}`
       : `${pgQualified(o.schema, o.name)}${o.signature ?? ""}`;
 
 /** The words a statement names the object's kind with. */
@@ -133,6 +135,7 @@ export const KIND_WORDS: Readonly<Record<CanonicalKind, string>> = {
   collation: "COLLATION",
   cast: "CAST",
   eventTrigger: "EVENT TRIGGER",
+  operator: "OPERATOR",
   statistics: "STATISTICS",
   foreignDataWrapper: "FOREIGN DATA WRAPPER",
   foreignServer: "SERVER",
@@ -957,6 +960,7 @@ const DROP_ORDER: Record<CanonicalKind, number> = {
   eventTrigger: 5.5,
   cast: 5.5,
   aggregate: 5.5,
+  operator: 5.5,
   // A server before its wrapper, a wrapper before the handler function it calls.
   foreignServer: 5.5,
   foreignDataWrapper: 5.6,

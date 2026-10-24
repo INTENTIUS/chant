@@ -360,8 +360,8 @@ export const PG_CLASSIFIER_RULES = {
   SQLPG300: rule(
     "SQLPG300",
     "metadata",
-    "Drop and create a type, aggregate, collation, cast, event trigger, statistics object, foreign server or publication",
-    "A composite or range type's definition, a collation's, a cast's, an event trigger's and extended statistics' have no ALTER, an aggregate's argument types, state type and final function cannot be replaced, and neither can a foreign server's type or wrapper or a publication's FOR ALL TABLES: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, a function or a cast would make the DROP fail); the locks are on its catalog rows only. Dropped statistics are empty until the next ANALYZE, and a publication that is dropped stops its subscribers until it is created again.",
+    "Drop and create a type, aggregate, collation, cast, event trigger, operator, statistics object, foreign server or publication",
+    "A composite or range type's definition, a collation's, a cast's, an event trigger's, an operator's function and operands and extended statistics' have no ALTER, an aggregate's argument types, state type and final function cannot be replaced, and neither can a foreign server's type or wrapper or a publication's FOR ALL TABLES: the object is dropped and created in one transaction. Nothing on the server depends on it (a column, a view, a function or a cast would make the DROP fail); the locks are on its catalog rows only. Dropped statistics are empty until the next ANALYZE, and a publication that is dropped stops its subscribers until it is created again.",
     `${DOCS}/sql-createtype.html`,
   ),
   SQLPG301: rule(

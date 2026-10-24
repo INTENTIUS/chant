@@ -113,6 +113,7 @@ export const sqlPlugin: LexiconPlugin = {
       { name: "aggregate", isTag: true, description: "A Postgres CREATE AGGREGATE, parsed into an aggregate entity identified by its argument types" },
       { name: "trigger", isTag: true, description: "A Postgres CREATE TRIGGER, parsed into a trigger entity on its table" },
       { name: "eventTrigger", isTag: true, description: "A Postgres CREATE EVENT TRIGGER, parsed into the database's event trigger entity" },
+      { name: "operator", isTag: true, description: "A Postgres CREATE OPERATOR, parsed into an operator entity identified by its name and operand types" },
       { name: "statistics", isTag: true, description: "A Postgres CREATE STATISTICS, parsed into an extended statistics entity on its table" },
       { name: "foreignDataWrapper", isTag: true, description: "A Postgres CREATE FOREIGN DATA WRAPPER, parsed into the database's wrapper entity" },
       { name: "foreignServer", isTag: true, description: "A Postgres CREATE SERVER, parsed into the database's foreign server entity (user mappings are not declared)" },

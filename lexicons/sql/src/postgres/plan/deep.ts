@@ -43,6 +43,7 @@ const TAG: Record<string, (s: TemplateStringsArray) => { props: object }> = {
   [POSTGRES_ENTITY_TYPES.collation]: tags.collation,
   [POSTGRES_ENTITY_TYPES.cast]: tags.cast,
   [POSTGRES_ENTITY_TYPES.eventTrigger]: tags.eventTrigger,
+  [POSTGRES_ENTITY_TYPES.operator]: tags.operator,
   [POSTGRES_ENTITY_TYPES.statistics]: tags.statistics,
   [POSTGRES_ENTITY_TYPES.foreignDataWrapper]: tags.foreignDataWrapper,
   [POSTGRES_ENTITY_TYPES.foreignServer]: tags.foreignServer,
@@ -175,6 +176,7 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
   if (d.schema === l.schema) adopt("schema");
   // An aggregate's argument types and a cast's two types are its identity: the same, they are the declaration's.
   if (d.kind === "aggregate" && d.signature === l.signature) for (const key of ["args", "orderBy"]) adopt(key);
+  if (d.kind === "operator" && d.signature === l.signature) for (const key of ["leftArg", "rightArg"]) adopt(key);
   if (d.kind === "cast" && d.name === l.name) for (const key of ["sourceType", "targetType"]) adopt(key);
 
   const fieldKeys = new Set([...Object.keys(d.fields), ...Object.keys(l.fields)]);
@@ -210,7 +212,7 @@ export function inDeclaredVocabulary(declared: Props, live: Props, d: CanonicalP
   }
   // An aggregate's or a collation's `options` is the declaration's only when every field read from it is the same (a role's `options` shares the key).
   const optionFields =
-    d.kind === "aggregate"
+    d.kind === "aggregate" || d.kind === "operator"
       ? ["definition"]
       : d.kind === "collation"
         ? ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"]

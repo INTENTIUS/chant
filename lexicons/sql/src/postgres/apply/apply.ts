@@ -574,6 +574,7 @@ function liveCanonicalAddress(o: LivePgObject): { kind: CanonicalKind; schema?: 
       "Postgres::Collation": "collation",
       "Postgres::Cast": "cast",
       "Postgres::EventTrigger": "eventTrigger",
+      "Postgres::Operator": "operator",
       "Postgres::Statistics": "statistics",
       "Postgres::ForeignDataWrapper": "foreignDataWrapper",
       "Postgres::ForeignServer": "foreignServer",

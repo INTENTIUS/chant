@@ -1,7 +1,7 @@
 ---
 title: "Declaring Postgres Objects"
 label: "Declaring Objects"
-description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, extended statistics, foreign data wrappers and servers, publications, policies, roles and grants as tagged templates: the twenty-two tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum, composite and range types, domains, extensions, functions, procedures, aggregates, triggers, event triggers, collations, casts, operators, extended statistics, foreign data wrappers and servers, publications, policies, roles and grants as tagged templates: the twenty-three tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
 group: "Postgres"
 order: 11
@@ -55,6 +55,7 @@ export const ticketsTitle = index`
 | `aggregate` | `CREATE [OR REPLACE] AGGREGATE` | `Postgres::Aggregate` |
 | `trigger` | `CREATE [OR REPLACE] [CONSTRAINT] TRIGGER` | `Postgres::Trigger` |
 | `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
+| `operator` | `CREATE OPERATOR` | `Postgres::Operator` |
 | `statistics` | `CREATE STATISTICS` | `Postgres::Statistics` |
 | `foreignDataWrapper` | `CREATE FOREIGN DATA WRAPPER` | `Postgres::ForeignDataWrapper` |
 | `foreignServer` | `CREATE SERVER` | `Postgres::ForeignServer` |
@@ -216,10 +217,13 @@ A cast lives in no schema and is named by its two types, `(app.money_amount AS t
 
 None of the three has an `ALTER` for its definition: a change is a drop and a create in one transaction (SQLPG300), refused while a column uses the collation (SQLPG301).
 
-## Statistics, foreign servers and publications
+## Operators, statistics, foreign servers and publications
 
 ```ts
-import { foreignDataWrapper, foreignServer, publication, statistics } from "@intentius/chant-lexicon-sql/postgres";
+import { foreignDataWrapper, foreignServer, operator, publication, statistics } from "@intentius/chant-lexicon-sql/postgres";
+
+export const sameValue = operator`
+  CREATE OPERATOR ${app}.=== (FUNCTION = ${intSame}, LEFTARG = integer, RIGHTARG = integer, COMMUTATOR = ===, HASHES)`;
 
 export const ordersStats = statistics`
   CREATE STATISTICS ${app}.orders_stats (dependencies, ndistinct) ON user_id, status FROM ${orders}`;
@@ -233,6 +237,8 @@ export const orderEvents = publication`
   CREATE PUBLICATION order_events FOR TABLE ${orders} (id, status) WHERE (status <> 'draft'), TABLES IN SCHEMA ${audit}
   WITH (publish = 'insert, update')`;
 ```
+
+An operator is identified, as an aggregate is, by its name and operand types, `app.===(integer,integer)`, with `NONE` for a missing side. Its function, restrict and join estimators are compared by qualified name (a built-in one bare), and a COMMUTATOR or NEGATOR as `schema.symbol`: written bare, it is in the operator's own schema. `HASHES` and `MERGES` count only when set. A change is a drop and a create (SQLPG300), refused while an operator class, an index or a view depends on it (SQLPG301). `CREATE OPERATOR CLASS` and `CREATE OPERATOR FAMILY` are not declared.
 
 Extended statistics are a schema's, named in the table's schema when you qualify them. Their kinds are compared as a set, and a list that names all three (`ndistinct`, `dependencies`, `mcv`) is the same as none, which is what the server prints. A column and an expression are compared in the order the server keeps them, so `ON b, a` and `ON a, b` are one declaration. A change is a drop and a create (SQLPG300), and the new statistics hold nothing until the next `ANALYZE`.
 

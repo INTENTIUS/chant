@@ -47,6 +47,7 @@ const REQUIRED_ENTITIES = [
   "PostgresCollation",
   "PostgresCast",
   "PostgresEventTrigger",
+  "PostgresOperator",
   "PostgresStatistics",
   "PostgresForeignDataWrapper",
   "PostgresForeignServer",

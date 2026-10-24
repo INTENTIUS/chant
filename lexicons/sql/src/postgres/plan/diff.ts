@@ -215,7 +215,7 @@ function diffUnparsed(key: string, before: PgDiffObject, after: PgDiffObject, ou
 }
 
 /** The kinds (#3911) whose definition has no ALTER: a change is a drop and a create, or (an aggregate's) CREATE OR REPLACE. */
-const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger", "statistics"]);
+const REPLACED_KINDS: ReadonlySet<string> = new Set(["composite", "range", "aggregate", "collation", "cast", "eventTrigger", "operator", "statistics"]);
 
 /** What each of {@link REPLACED_KINDS} compares besides its name and comment. */
 const DEFINITION: Readonly<Record<string, readonly string[]>> = {
@@ -225,6 +225,7 @@ const DEFINITION: Readonly<Record<string, readonly string[]>> = {
   collation: ["provider", "lcCollate", "lcCtype", "locale", "nondeterministic", "rules"],
   cast: ["castMethod", "function", "context"],
   eventTrigger: ["event", "tags", "function"],
+  operator: ["definition"],
   statistics: ["table", "kinds", "targets"],
 };
 

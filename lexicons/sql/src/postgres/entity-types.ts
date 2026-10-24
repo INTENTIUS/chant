@@ -18,6 +18,7 @@ export const POSTGRES_ENTITY_TYPES = {
   collation: "Postgres::Collation",
   cast: "Postgres::Cast",
   eventTrigger: "Postgres::EventTrigger",
+  operator: "Postgres::Operator",
   statistics: "Postgres::Statistics",
   foreignDataWrapper: "Postgres::ForeignDataWrapper",
   foreignServer: "Postgres::ForeignServer",

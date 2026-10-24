@@ -271,6 +271,14 @@ export interface EventTriggerNode {
   function: NameNode;
 }
 
+/** `CREATE OPERATOR [schema.]symbol (FUNCTION = f, LEFTARG = type, RIGHTARG = type, ...)`. */
+export interface OperatorNode {
+  statement: "operator";
+  /** The schema, when written, then the operator's symbol. */
+  name: NameNode;
+  options: DefElem[];
+}
+
 /** `CREATE STATISTICS [IF NOT EXISTS] name [(kind, ...)] ON target, ... FROM table`. */
 export interface StatisticsNode {
   statement: "statistics";
@@ -473,6 +481,7 @@ export type StatementNode =
   | CollationNode
   | CastNode
   | EventTriggerNode
+  | OperatorNode
   | StatisticsNode
   | ForeignDataWrapperNode
   | ForeignServerNode
@@ -561,6 +570,9 @@ export const AGGREGATE_OPTIONS = [
 
 /** `CREATE COLLATION`'s options (sql-createcollation). */
 export const COLLATION_OPTIONS = ["locale", "lc_collate", "lc_ctype", "provider", "deterministic", "rules", "version"];
+
+/** `CREATE OPERATOR`'s options (sql-createoperator); `procedure` is the old spelling of `function`. */
+export const OPERATOR_OPTIONS = ["function", "procedure", "leftarg", "rightarg", "commutator", "negator", "restrict", "join", "hashes", "merges"];
 
 /** `CREATE STATISTICS`'s kinds (sql-createstatistics). */
 export const STATISTICS_KINDS = ["ndistinct", "dependencies", "mcv"];
@@ -1077,6 +1089,7 @@ class PgParser extends SqlCursor {
       if (this.accept("COLLATION")) return this.collation();
       if (this.accept("CAST")) return this.cast();
       if (this.acceptSeq("EVENT", "TRIGGER")) return this.eventTrigger();
+      if (this.accept("OPERATOR")) return this.operator();
       if (this.accept("STATISTICS")) return this.statistics();
       if (this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) return this.foreignDataWrapper();
       if (this.accept("SERVER")) return this.foreignServer();
@@ -1090,7 +1103,7 @@ class PgParser extends SqlCursor {
     const recursive = this.accept("RECURSIVE");
     if (!orReplace && !recursive && persistence === undefined && this.acceptSeq("MATERIALIZED", "VIEW")) return this.view(true, false, false, false);
     if (this.accept("VIEW")) return this.view(false, orReplace, persistence === "temporary", recursive);
-    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY or ROLE");
+    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, OPERATOR, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY or ROLE");
   }
 
   private schema(): SchemaNode {
@@ -1334,6 +1347,37 @@ class PgParser extends SqlCursor {
       this.expectPunct(")");
       return out;
     }
+  }
+
+  /** `[schema.]symbol`: an operator's name, its symbol made of operator characters. */
+  private operatorName(): NameNode {
+    const from = this.idx();
+    const refs: number[] = [];
+    const pieces: string[] = [];
+    const symbol = (): void => {
+      const t = this.next();
+      if (t.kind !== "op") this.fail("expected the operator's symbol (operator characters, such as ===)", t);
+      pieces.push(t.text);
+    };
+    if (this.peek()?.kind === "op") symbol();
+    else {
+      const t = this.next();
+      this.colId(t, "a schema name");
+      if (t.kind === "ref") refs.push(t.part);
+      pieces.push(t.kind === "ref" ? "" : identValue(t));
+      this.expectPunct(".");
+      symbol();
+    }
+    return { pieces, span: this.span(from, refs) };
+  }
+
+  private operator(): OperatorNode {
+    if (kw(this.peek(), "CLASS", "FAMILY") && !this.isPunct(".", 1)) this.fail("expected the operator's name (CREATE OPERATOR CLASS and CREATE OPERATOR FAMILY are not declared)");
+    const name = this.operatorName();
+    const options = this.definition("an operator option");
+    this.checkDefinition(options, OPERATOR_OPTIONS, [], "an operator");
+    if (!options.some((o) => o.name === "function" || o.name === "procedure")) this.fail("expected FUNCTION (an operator needs the function it calls)", this.lastSeen());
+    return { statement: "operator", name, options };
   }
 
   private statistics(): StatisticsNode {
@@ -2030,6 +2074,11 @@ class PgParser extends SqlCursor {
     } else if (this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) {
       objectType = "FOREIGN DATA WRAPPER";
       target = this.qualifiedName("a foreign data wrapper name");
+    } else if (this.accept("OPERATOR")) {
+      objectType = "OPERATOR";
+      target = this.operatorName();
+      if (!this.isPunct("(")) this.fail("expected '(' and the operator's operand types");
+      args = this.parenthesized();
     } else if (this.accept("SERVER", "PUBLICATION", "STATISTICS")) {
       objectType = this.lastSeen()!.text.toUpperCase();
       target = this.qualifiedName(`a ${objectType.toLowerCase()} name`);
@@ -2044,7 +2093,7 @@ class PgParser extends SqlCursor {
       if (this.acceptSeq("MATERIALIZED", "VIEW")) objectType = "MATERIALIZED VIEW";
       else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION", "FUNCTION", "PROCEDURE")) {
         objectType = this.tokens[this.idx(-1)]!.text.toUpperCase();
-      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, TRIGGER, EVENT TRIGGER, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY, ROLE or CONSTRAINT");
+      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, OPERATOR, TRIGGER, EVENT TRIGGER, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY, ROLE or CONSTRAINT");
       target = this.qualifiedName("an object name");
       if ((objectType === "FUNCTION" || objectType === "PROCEDURE") && this.isPunct("(")) args = this.parenthesized();
     }

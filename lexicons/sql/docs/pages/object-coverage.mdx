@@ -26,7 +26,7 @@ What a managed provider, an extension or the server's configuration files define
 
 ## Postgres
 
-Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 27 declared, 17 refused, 2 out of scope.
+Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 28 declared, 16 refused, 2 out of scope.
 
 | Command | Kind | Status | Declared by, or why not |
 |---|---|---|---|
@@ -47,7 +47,7 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 27 declared, 17 refused, 2 out 
 | `CREATE INDEX` | index | declared | `Postgres::Index` |
 | `CREATE LANGUAGE` | procedural language | refused | no tag declares a procedural language; an extension installs one, and the extension is declared instead |
 | `CREATE MATERIALIZED VIEW` | materialized view | declared | `Postgres::MaterializedView` |
-| `CREATE OPERATOR` | operator | refused | no tag declares an operator yet |
+| `CREATE OPERATOR` | operator | declared | `Postgres::Operator`: identified by its name and operand types; a change is a drop and a create |
 | `CREATE OPERATOR CLASS` | operator class | refused | no tag declares an operator class yet |
 | `CREATE OPERATOR FAMILY` | operator family | refused | no tag declares an operator family yet |
 | `CREATE POLICY` | policy | declared | `Postgres::Policy`: read where the profile manages access (sql.profiles.\<env\>.access) |

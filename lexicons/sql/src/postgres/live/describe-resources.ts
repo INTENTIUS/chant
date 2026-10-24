@@ -57,6 +57,7 @@ export function declaredAddress(entity: { type: string; props: Record<string, un
     entity.type === POSTGRES_ENTITY_TYPES.function ||
     entity.type === POSTGRES_ENTITY_TYPES.procedure ||
     entity.type === POSTGRES_ENTITY_TYPES.aggregate ||
+    entity.type === POSTGRES_ENTITY_TYPES.operator ||
     entity.type === POSTGRES_ENTITY_TYPES.trigger ||
     entity.type === POSTGRES_ENTITY_TYPES.policy
   ) {
