@@ -377,6 +377,19 @@ export const REASONS = {
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",
+  // workspace exit (#3177): why a member can't be exited, and what the exit drill finds wrong with one that was.
+  "missing-dir": "The chant member's directory does not exist, so there is nothing to build.",
+  "no-lexicon": "No lexicon is named in the member's chant.config.* or package.json, so there is nothing to build.",
+  "lexicon-unsupported": "A lexicon the member uses has no native target in workspace exit.",
+  "exit-failed": "The member's exit did not finish: its build failed, or it was refused.",
+  "choudoufu-steps-missing": "A choudoufu member's exit listed no roundtrip steps.",
+  "native-missing": "A native file the exit wrote is missing or empty.",
+  "native-unreadable": "A native file the exit wrote is not valid JSON, or has no content.",
+  "no-deploy-command": "A native file that can be deployed has no stock deploy command.",
+  "chant-config-left": "A chant.config.* file is still in the exited member.",
+  "chant-dependency": "The member's package.json still has a chant dependency, or a script that calls chant.",
+  "chant-in-ci": "A CI file of the exited member still calls chant.",
+  "declaration-not-other": "The declaration still gives the exited member a kind other than other.",
 } as const;
 
 export type ReasonCode = keyof typeof REASONS;

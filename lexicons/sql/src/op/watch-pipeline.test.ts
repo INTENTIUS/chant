@@ -13,7 +13,7 @@
  */
 
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { generateOpsPipeline } from "@intentius/chant/op";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
@@ -58,6 +58,13 @@ async function render(forge: "github" | "gitlab" | "forgejo", spec: ScheduledOpS
 const runLine = (steps: Array<Record<string, unknown>>) => steps.find((s) => s.run === "chant run schema-watch");
 
 describe("generateOpsPipeline renders the sql drift watch (#3642)", () => {
+  // The first render loads the github, gitlab and forgejo plugins and discovers the example's Ops. On a loaded CI shard
+  // that cold load took 5.7s and put the first test over the 5s unit-test budget (chant #2817). A file's beforeAll is
+  // not counted against the budget, so the load is paid here and each test below times only its own render.
+  beforeAll(async () => {
+    await generateOpsPipeline([reader(actionsSecret)], "github", { beforeScript: INSTALL.actions }, EXAMPLE);
+  }, 60_000);
+
   test("GitHub: the Op's own cron, a read-only token and the reader's credentials", async () => {
     const { file, doc } = await render("github", reader(actionsSecret));
     expect(file.name).toBe("schema-watch.yml");
