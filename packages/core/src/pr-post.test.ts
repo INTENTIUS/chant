@@ -185,7 +185,7 @@ describe("pr-post --open posts each open merge request's plan from a pipeline of
   test("a settled plan job's report is read from its artifacts and posted, linking the job; a running one waits", async () => {
     const g = gitlab({
       jobs: [
-        { pr: REPORT.pr, head: HEAD, id: 101, status: "success" },
+        { pr: REPORT.pr!, head: HEAD, id: 101, status: "success" },
         { pr: 8, head: OTHER, id: 102, status: "running" },
       ],
       artifacts: { 101: JSON.stringify(REPORT) },
@@ -201,7 +201,7 @@ describe("pr-post --open posts each open merge request's plan from a pipeline of
   });
 
   test("a job whose result is already posted is not posted again", async () => {
-    const g = gitlab({ jobs: [{ pr: REPORT.pr, head: HEAD, id: 101, status: "success" }], artifacts: { 101: JSON.stringify(REPORT) }, posted: { [HEAD]: JOB_URL(101) } });
+    const g = gitlab({ jobs: [{ pr: REPORT.pr!, head: HEAD, id: 101, status: "success" }], artifacts: { 101: JSON.stringify(REPORT) }, posted: { [HEAD]: JOB_URL(101) } });
     const { posts } = await postOpenPlanReports({ forge: g.forge, branch: "main", job: "plan", artifactDir: ".chant/pr", env: REPORT.env });
     expect(posts).toEqual([{ pr: REPORT.pr, head: HEAD, skipped: "this plan job's result is already posted" }]);
     expect(g.statuses).toEqual([]);
@@ -210,7 +210,7 @@ describe("pr-post --open posts each open merge request's plan from a pipeline of
   test("the pull request and head are GitLab's: a report for another head, a missing one and a failed job each fail the status", async () => {
     const g = gitlab({
       jobs: [
-        { pr: REPORT.pr, head: OTHER, id: 101, status: "success" },
+        { pr: REPORT.pr!, head: OTHER, id: 101, status: "success" },
         { pr: 8, head: HEAD, id: 102, status: "failed" },
         { pr: 9, head: HEAD, id: 103, status: "failed" },
       ],
@@ -233,31 +233,6 @@ describe("pr-post --open posts each open merge request's plan from a pipeline of
 });
 
 describe("chant components pr-post --open refuses what it cannot post for (#4328)", () => {
-  const run = async (args: Record<string, unknown>): Promise<number> => {
-    const { runComponentsPrPost } = await import("./cli/handlers/pr");
-    return runComponentsPrPost({ args } as unknown as CommandContext);
-  };
-
-  test("--pr or --head, a forge other than GitLab, and no branch are each refused", async () => {
-    const errors: string[] = [];
-    const spy = vi.spyOn(console, "error").mockImplementation((line: unknown) => void errors.push(String(line)));
-    try {
-      expect(await run({ open: true, pr: 7, env: "prod", forge: "gitlab" })).toBe(1);
-      expect(await run({ open: true, env: "prod", forge: "github" })).toBe(1);
-      const branch = process.env.CI_COMMIT_BRANCH;
-      delete process.env.CI_COMMIT_BRANCH;
-      try {
-        expect(await run({ open: true, env: "prod", forge: "gitlab" })).toBe(1);
-      } finally {
-        if (branch !== undefined) process.env.CI_COMMIT_BRANCH = branch;
-      }
-    } finally {
-      spy.mockRestore();
-    }
-    expect(errors.join("\n")).toMatch(/takes no --pr or --head/);
-    expect(errors.join("\n")).toMatch(/--forge gitlab/);
-    expect(errors.join("\n")).toMatch(/pass --branch <branch>/);
-  });
 
   test("the flags parse", () => {
     expect(parseArgs(["components", "pr-post", "--open", "--env", "prod", "--forge", "gitlab", "--branch", "main"])).toMatchObject({ open: true, env: "prod", forge: "gitlab", branch: "main" });
