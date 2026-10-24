@@ -53,8 +53,8 @@ export interface OtelSpecPin {
 
 /** The accepted resolved set. Paste the block `just snapshot` prints here. */
 export const OTEL_SPEC_PIN: OtelSpecPin = {
-  digest: "sha256:6ac3bf61c11c043972fb423ccc7c841d75ea5ff96a90c2ac7495590a5a01e3f2",
-  documents: 131,
+  digest: "sha256:90ac78ed3f40aac1ef29b4df9a11574a829f08de2758c379817a92e557bb9d05",
+  documents: 133,
   accepted: "2026-10-24",
 };
 

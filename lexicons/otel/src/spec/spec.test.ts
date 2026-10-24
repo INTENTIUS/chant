@@ -129,7 +129,7 @@ describe("the committed snapshot", () => {
     expect(() => assertPinnedSnapshot(edited, { env: {} })).toThrow(/does not match OTEL_SPEC_PIN/);
     const warnings: string[] = [];
     assertPinnedSnapshot(edited, { env: { CHANT_ACCEPT_OTEL_SPEC: "1" }, warn: (m) => warnings.push(m) });
-    expect(warnings[0]).toContain("documents: 132");
+    expect(warnings[0]).toContain("documents: 134");
     expect(() => assertSnapshotVersions({ "otelcol-contrib": "v0.1.0", "otelcol-k8s": OTELCOL_K8S_VERSION })).toThrow(/just snapshot/);
   });
 
