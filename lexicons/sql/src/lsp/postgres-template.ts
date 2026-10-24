@@ -152,6 +152,17 @@ export function postgresDeclarations(content: string, fileName = "file.ts"): Pos
           sqlName = text(node.name.span);
           kind = "event trigger";
           break;
+        case "operator":
+          sqlName = text(node.name.span);
+          kind = "operator";
+          break;
+        case "statistics":
+        case "foreignDataWrapper":
+        case "foreignServer":
+        case "publication":
+          sqlName = text(node.name.span);
+          kind = { statistics: "statistics", foreignDataWrapper: "foreign data wrapper", foreignServer: "foreign server", publication: "publication" }[node.statement];
+          break;
         case "index":
           sqlName = node.name ? text(node.name.span) : undefined;
           break;

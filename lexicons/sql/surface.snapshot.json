@@ -58,6 +58,14 @@
       "kind": "resource",
       "resourceType": "Postgres::Extension"
     },
+    "PostgresForeignDataWrapper": {
+      "kind": "resource",
+      "resourceType": "Postgres::ForeignDataWrapper"
+    },
+    "PostgresForeignServer": {
+      "kind": "resource",
+      "resourceType": "Postgres::ForeignServer"
+    },
     "PostgresFunction": {
       "kind": "resource",
       "resourceType": "Postgres::Function"
@@ -74,6 +82,10 @@
       "kind": "resource",
       "resourceType": "Postgres::MaterializedView"
     },
+    "PostgresOperator": {
+      "kind": "resource",
+      "resourceType": "Postgres::Operator"
+    },
     "PostgresPolicy": {
       "kind": "resource",
       "resourceType": "Postgres::Policy"
@@ -81,6 +93,10 @@
     "PostgresProcedure": {
       "kind": "resource",
       "resourceType": "Postgres::Procedure"
+    },
+    "PostgresPublication": {
+      "kind": "resource",
+      "resourceType": "Postgres::Publication"
     },
     "PostgresRangeType": {
       "kind": "resource",
@@ -97,6 +113,10 @@
     "PostgresSequence": {
       "kind": "resource",
       "resourceType": "Postgres::Sequence"
+    },
+    "PostgresStatistics": {
+      "kind": "resource",
+      "resourceType": "Postgres::Statistics"
     },
     "PostgresTable": {
       "kind": "resource",

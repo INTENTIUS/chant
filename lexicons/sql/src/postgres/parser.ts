@@ -271,6 +271,69 @@ export interface EventTriggerNode {
   function: NameNode;
 }
 
+/** `CREATE OPERATOR [schema.]symbol (FUNCTION = f, LEFTARG = type, RIGHTARG = type, ...)`. */
+export interface OperatorNode {
+  statement: "operator";
+  /** The schema, when written, then the operator's symbol. */
+  name: NameNode;
+  options: DefElem[];
+}
+
+/** `CREATE STATISTICS [IF NOT EXISTS] name [(kind, ...)] ON target, ... FROM table`. */
+export interface StatisticsNode {
+  statement: "statistics";
+  ifNotExists: boolean;
+  name: NameNode;
+  /** `ndistinct`, `dependencies`, `mcv`, folded; empty when the server picks them all. */
+  kinds: string[];
+  /** Each column or parenthesized expression. */
+  targets: Span[];
+  table: NameNode;
+}
+
+/** One `name 'value'` of an `OPTIONS (...)` list. */
+export interface GenericOption {
+  name: string;
+  nameSpan: Span;
+  value: Span;
+}
+
+/** `CREATE FOREIGN DATA WRAPPER name [HANDLER f | NO HANDLER] [VALIDATOR f | NO VALIDATOR] [OPTIONS (...)]`. */
+export interface ForeignDataWrapperNode {
+  statement: "foreignDataWrapper";
+  name: NameNode;
+  /** The handler function; `null` for `NO HANDLER`. */
+  handler?: NameNode | null;
+  /** The validator function; `null` for `NO VALIDATOR`. */
+  validator?: NameNode | null;
+  options: GenericOption[];
+}
+
+/** `CREATE SERVER [IF NOT EXISTS] name [TYPE 't'] [VERSION 'v'] FOREIGN DATA WRAPPER w [OPTIONS (...)]`. */
+export interface ForeignServerNode {
+  statement: "foreignServer";
+  ifNotExists: boolean;
+  name: NameNode;
+  type?: Span;
+  version?: Span;
+  wrapper: NameNode;
+  options: GenericOption[];
+}
+
+/** One member of a publication: a table (with its column list and row filter) or every table of a schema. */
+export type PublicationItem =
+  | { kind: "table"; table: NameNode; columns?: Array<{ name: string; span: Span }>; where?: Span }
+  | { kind: "schema"; schema: NameNode };
+
+/** `CREATE PUBLICATION name [FOR ALL TABLES | FOR TABLE ... | FOR TABLES IN SCHEMA ...] [WITH (...)]`. */
+export interface PublicationNode {
+  statement: "publication";
+  name: NameNode;
+  allTables: boolean;
+  items: PublicationItem[];
+  options: DefElem[];
+}
+
 export interface DomainNode {
   statement: "domain";
   name: NameNode;
@@ -418,6 +481,11 @@ export type StatementNode =
   | CollationNode
   | CastNode
   | EventTriggerNode
+  | OperatorNode
+  | StatisticsNode
+  | ForeignDataWrapperNode
+  | ForeignServerNode
+  | PublicationNode
   | DomainNode
   | ExtensionNode
   | RoutineNode
@@ -502,6 +570,15 @@ export const AGGREGATE_OPTIONS = [
 
 /** `CREATE COLLATION`'s options (sql-createcollation). */
 export const COLLATION_OPTIONS = ["locale", "lc_collate", "lc_ctype", "provider", "deterministic", "rules", "version"];
+
+/** `CREATE OPERATOR`'s options (sql-createoperator); `procedure` is the old spelling of `function`. */
+export const OPERATOR_OPTIONS = ["function", "procedure", "leftarg", "rightarg", "commutator", "negator", "restrict", "join", "hashes", "merges"];
+
+/** `CREATE STATISTICS`'s kinds (sql-createstatistics). */
+export const STATISTICS_KINDS = ["ndistinct", "dependencies", "mcv"];
+
+/** `CREATE PUBLICATION ... WITH (...)`'s options (sql-createpublication); `publish_generated_columns` is 18's. */
+export const PUBLICATION_OPTIONS = ["publish", "publish_via_partition_root", "publish_generated_columns"];
 
 /** What may follow `IS` inside a `b_expr`. */
 const B_EXPR_IS = [["DISTINCT", "FROM"], ["NOT", "DISTINCT", "FROM"], ["DOCUMENT"], ["NOT", "DOCUMENT"]];
@@ -1012,6 +1089,11 @@ class PgParser extends SqlCursor {
       if (this.accept("COLLATION")) return this.collation();
       if (this.accept("CAST")) return this.cast();
       if (this.acceptSeq("EVENT", "TRIGGER")) return this.eventTrigger();
+      if (this.accept("OPERATOR")) return this.operator();
+      if (this.accept("STATISTICS")) return this.statistics();
+      if (this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) return this.foreignDataWrapper();
+      if (this.accept("SERVER")) return this.foreignServer();
+      if (this.accept("PUBLICATION")) return this.publication();
       if (kw(this.peek(), "UNIQUE", "INDEX")) return this.index();
     }
     const persistence = this.persistence();
@@ -1021,7 +1103,7 @@ class PgParser extends SqlCursor {
     const recursive = this.accept("RECURSIVE");
     if (!orReplace && !recursive && persistence === undefined && this.acceptSeq("MATERIALIZED", "VIEW")) return this.view(true, false, false, false);
     if (this.accept("VIEW")) return this.view(false, orReplace, persistence === "temporary", recursive);
-    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, POLICY or ROLE");
+    return this.fail("expected SCHEMA, TABLE, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, TRIGGER, EVENT TRIGGER, COLLATION, CAST, OPERATOR, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY or ROLE");
   }
 
   private schema(): SchemaNode {
@@ -1236,6 +1318,145 @@ class PgParser extends SqlCursor {
     this.expectPunct("(");
     if (!this.isPunct(")")) this.fail("expected ')' (an event trigger's function takes no arguments)");
     this.expectPunct(")");
+    return node;
+  }
+
+  /** An unqualified, database-wide object's name (a wrapper, a server, a publication). */
+  private databaseName(what: string): NameNode {
+    const { text, span } = this.nameTok(what);
+    if (this.isPunct(".")) this.fail(`expected ${what} without a schema (it belongs to the database)`);
+    return { pieces: [text], span };
+  }
+
+  /** `( name 'value' [, ...] )`: a foreign data wrapper's or server's options. */
+  private genericOptions(): GenericOption[] {
+    this.expectPunct("(");
+    const out: GenericOption[] = [];
+    const seen = new Set<string>();
+    for (;;) {
+      const t = this.next();
+      if (t.kind !== "ident" && t.kind !== "qident") this.fail("expected an option name", t);
+      const nameSpan = this.span(this.idx(-1), []);
+      const name = identValue(t);
+      if (seen.has(name)) this.fail(`${name} is given twice`, t);
+      seen.add(name);
+      const v = this.next();
+      if (v.kind !== "string" && v.kind !== "ref") this.fail("expected the option's value, a string", v);
+      out.push({ name, nameSpan, value: this.span(this.idx(-1), v.kind === "ref" ? [v.part] : []) });
+      if (this.acceptPunct(",")) continue;
+      this.expectPunct(")");
+      return out;
+    }
+  }
+
+  /** `[schema.]symbol`: an operator's name, its symbol made of operator characters. */
+  private operatorName(): NameNode {
+    const from = this.idx();
+    const refs: number[] = [];
+    const pieces: string[] = [];
+    const symbol = (): void => {
+      const t = this.next();
+      if (t.kind !== "op") this.fail("expected the operator's symbol (operator characters, such as ===)", t);
+      pieces.push(t.text);
+    };
+    if (this.peek()?.kind === "op") symbol();
+    else {
+      const t = this.next();
+      this.colId(t, "a schema name");
+      if (t.kind === "ref") refs.push(t.part);
+      pieces.push(t.kind === "ref" ? "" : identValue(t));
+      this.expectPunct(".");
+      symbol();
+    }
+    return { pieces, span: this.span(from, refs) };
+  }
+
+  private operator(): OperatorNode {
+    if (kw(this.peek(), "CLASS", "FAMILY") && !this.isPunct(".", 1)) this.fail("expected the operator's name (CREATE OPERATOR CLASS and CREATE OPERATOR FAMILY are not declared)");
+    const name = this.operatorName();
+    const options = this.definition("an operator option");
+    this.checkDefinition(options, OPERATOR_OPTIONS, [], "an operator");
+    if (!options.some((o) => o.name === "function" || o.name === "procedure")) this.fail("expected FUNCTION (an operator needs the function it calls)", this.lastSeen());
+    return { statement: "operator", name, options };
+  }
+
+  private statistics(): StatisticsNode {
+    const ifNotExists = this.ifNotExists();
+    const name = this.qualifiedName("a statistics name");
+    const kinds: string[] = [];
+    if (this.isPunct("(")) {
+      for (const k of this.nameList("a statistics kind")) {
+        if (!STATISTICS_KINDS.includes(k.name)) this.fail(`expected a statistics kind (${STATISTICS_KINDS.join(", ")})`, this.tokens[k.span.from]);
+        kinds.push(k.name);
+      }
+    }
+    this.expect("ON");
+    const targets: Span[] = [];
+    do targets.push(this.expr(["FROM"]));
+    while (this.acceptPunct(","));
+    this.expect("FROM");
+    const table = this.qualifiedName("a table name");
+    return { statement: "statistics", ifNotExists, name, kinds, targets, table };
+  }
+
+  private foreignDataWrapper(): ForeignDataWrapperNode {
+    const node: ForeignDataWrapperNode = { statement: "foreignDataWrapper", name: this.databaseName("a foreign data wrapper name"), options: [] };
+    for (;;) {
+      if (this.accept("HANDLER")) node.handler = this.qualifiedName("a handler function");
+      else if (this.acceptSeq("NO", "HANDLER")) node.handler = null;
+      else if (this.accept("VALIDATOR")) node.validator = this.qualifiedName("a validator function");
+      else if (this.acceptSeq("NO", "VALIDATOR")) node.validator = null;
+      else if (this.accept("OPTIONS")) node.options = this.genericOptions();
+      else return node;
+    }
+  }
+
+  private foreignServer(): ForeignServerNode {
+    const ifNotExists = this.ifNotExists();
+    const name = this.databaseName("a server name");
+    const node: Partial<ForeignServerNode> & { statement: "foreignServer" } = { statement: "foreignServer", ifNotExists, name, options: [] };
+    const string = (what: string): Span => {
+      const t = this.next();
+      if (t.kind !== "string" && t.kind !== "ref") this.fail(`expected ${what} as a string`, t);
+      return this.span(this.idx(-1), t.kind === "ref" ? [t.part] : []);
+    };
+    if (this.accept("TYPE")) node.type = string("the server type");
+    if (this.accept("VERSION")) node.version = string("the server version");
+    if (!this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) this.fail("expected FOREIGN DATA WRAPPER (a server names the wrapper it is for)");
+    node.wrapper = this.qualifiedName("a foreign data wrapper name");
+    if (this.accept("OPTIONS")) node.options = this.genericOptions();
+    return node as ForeignServerNode;
+  }
+
+  private publication(): PublicationNode {
+    const node: PublicationNode = { statement: "publication", name: this.databaseName("a publication name"), allTables: false, items: [], options: [] };
+    if (this.accept("FOR")) {
+      if (this.acceptSeq("ALL", "TABLES")) node.allTables = true;
+      else {
+        let mode: "table" | "schema" | undefined;
+        do {
+          if (this.accept("TABLE")) mode = "table";
+          else if (this.acceptSeq("TABLES", "IN", "SCHEMA")) mode = "schema";
+          else if (mode === undefined) this.fail("expected ALL TABLES, TABLE or TABLES IN SCHEMA");
+          if (mode === "schema") {
+            node.items.push({ kind: "schema", schema: this.qualifiedName("a schema name") });
+            continue;
+          }
+          this.accept("ONLY");
+          const table = this.qualifiedName("a table name");
+          if (this.isOp("*")) this.p++;
+          const item: PublicationItem = { kind: "table", table };
+          if (this.isPunct("(")) item.columns = this.nameList("a column name");
+          if (this.accept("WHERE")) item.where = this.checkedParens();
+          node.items.push(item);
+        } while (this.acceptPunct(","));
+      }
+    }
+    if (kw(this.peek(), "WITH") && this.isPunct("(", 1)) {
+      this.p++;
+      node.options = this.definition("a publication option");
+      this.checkDefinition(node.options, PUBLICATION_OPTIONS, [], "a publication");
+    }
     return node;
   }
 
@@ -1850,6 +2071,17 @@ class PgParser extends SqlCursor {
       const node: CommentNode = { statement: "comment", objectType, target, cast: { source, target: castTarget } };
       if (!this.accept("NULL")) node.text = this.commentText();
       return node;
+    } else if (this.acceptSeq("FOREIGN", "DATA", "WRAPPER")) {
+      objectType = "FOREIGN DATA WRAPPER";
+      target = this.qualifiedName("a foreign data wrapper name");
+    } else if (this.accept("OPERATOR")) {
+      objectType = "OPERATOR";
+      target = this.operatorName();
+      if (!this.isPunct("(")) this.fail("expected '(' and the operator's operand types");
+      args = this.parenthesized();
+    } else if (this.accept("SERVER", "PUBLICATION", "STATISTICS")) {
+      objectType = this.lastSeen()!.text.toUpperCase();
+      target = this.qualifiedName(`a ${objectType.toLowerCase()} name`);
     } else if (this.accept("AGGREGATE", "COLLATION")) {
       objectType = this.lastSeen()!.text.toUpperCase();
       target = this.qualifiedName(`an ${objectType.toLowerCase()} name`);
@@ -1861,7 +2093,7 @@ class PgParser extends SqlCursor {
       if (this.acceptSeq("MATERIALIZED", "VIEW")) objectType = "MATERIALIZED VIEW";
       else if (this.accept("TABLE", "COLUMN", "INDEX", "VIEW", "SEQUENCE", "TYPE", "DOMAIN", "SCHEMA", "EXTENSION", "FUNCTION", "PROCEDURE")) {
         objectType = this.tokens[this.idx(-1)]!.text.toUpperCase();
-      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, TRIGGER, EVENT TRIGGER, POLICY, ROLE or CONSTRAINT");
+      } else return this.fail("expected TABLE, COLUMN, INDEX, VIEW, MATERIALIZED VIEW, SEQUENCE, TYPE, DOMAIN, SCHEMA, EXTENSION, FUNCTION, PROCEDURE, AGGREGATE, COLLATION, CAST, OPERATOR, TRIGGER, EVENT TRIGGER, STATISTICS, FOREIGN DATA WRAPPER, SERVER, PUBLICATION, POLICY, ROLE or CONSTRAINT");
       target = this.qualifiedName("an object name");
       if ((objectType === "FUNCTION" || objectType === "PROCEDURE") && this.isPunct("(")) args = this.parenthesized();
     }

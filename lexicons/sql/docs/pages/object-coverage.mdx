@@ -26,7 +26,7 @@ What a managed provider, an extension or the server's configuration files define
 
 ## Postgres
 
-Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out of scope.
+Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 28 declared, 16 refused, 2 out of scope.
 
 | Command | Kind | Status | Declared by, or why not |
 |---|---|---|---|
@@ -39,7 +39,7 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out 
 | `CREATE DOMAIN` | domain | declared | `Postgres::Domain` |
 | `CREATE EVENT TRIGGER` | event trigger | declared | `Postgres::EventTrigger`: the database's, not a schema's; creating one takes a superuser |
 | `CREATE EXTENSION` | extension | declared | `Postgres::Extension` |
-| `CREATE FOREIGN DATA WRAPPER` | foreign data wrapper | refused | no tag declares a foreign data wrapper yet; one an extension installs comes with the extension |
+| `CREATE FOREIGN DATA WRAPPER` | foreign data wrapper | declared | `Postgres::ForeignDataWrapper`: the database's, not a schema's; creating one takes a superuser; one an extension installs comes with the extension; an option that holds a credential is refused |
 | `CREATE FOREIGN TABLE` | foreign table | refused | no tag declares a foreign table yet |
 | `CREATE FUNCTION` | function | declared | `Postgres::Function` |
 | `CREATE FUNCTION` (RETURN or BEGIN ATOMIC body) | routine with a SQL-standard body | refused | the server stores a SQL-standard body parsed and prints it back rewritten, so a declaration cannot be compared with it; declare the routine with a string body (AS $$ ... $$) |
@@ -47,19 +47,19 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out 
 | `CREATE INDEX` | index | declared | `Postgres::Index` |
 | `CREATE LANGUAGE` | procedural language | refused | no tag declares a procedural language; an extension installs one, and the extension is declared instead |
 | `CREATE MATERIALIZED VIEW` | materialized view | declared | `Postgres::MaterializedView` |
-| `CREATE OPERATOR` | operator | refused | no tag declares an operator yet |
+| `CREATE OPERATOR` | operator | declared | `Postgres::Operator`: identified by its name and operand types; a change is a drop and a create |
 | `CREATE OPERATOR CLASS` | operator class | refused | no tag declares an operator class yet |
 | `CREATE OPERATOR FAMILY` | operator family | refused | no tag declares an operator family yet |
 | `CREATE POLICY` | policy | declared | `Postgres::Policy`: read where the profile manages access (sql.profiles.\<env\>.access) |
 | `CREATE PROCEDURE` | procedure | declared | `Postgres::Procedure` |
-| `CREATE PUBLICATION` | publication | refused | no tag declares a publication yet |
+| `CREATE PUBLICATION` | publication | declared | `Postgres::Publication`: the database's, not a schema's; a table of it may carry a column list and row filter from 15 |
 | `CREATE ROLE` | role | declared | `Postgres::Role`: import reads only the roles a build declares, since a role is the cluster's |
 | `CREATE RULE` | rule | refused | no tag declares a rewrite rule; a view's own rule is the view's |
 | `CREATE SCHEMA` | schema | declared | `Postgres::Schema` |
 | `CREATE SEQUENCE` | sequence | declared | `Postgres::Sequence` |
-| `CREATE SERVER` | foreign server | refused | no tag declares a foreign server yet |
-| `CREATE STATISTICS` | extended statistics | refused | no tag declares extended statistics yet |
-| `CREATE SUBSCRIPTION` | subscription | refused | no tag declares a subscription yet |
+| `CREATE SERVER` | foreign server | declared | `Postgres::ForeignServer`: the database's, not a schema's; its user mappings are refused, so credentials stay out of the declaration |
+| `CREATE STATISTICS` | extended statistics | declared | `Postgres::Statistics` |
+| `CREATE SUBSCRIPTION` | subscription | refused | a subscription's connection string carries a credential, and creating one opens a replication slot on the publisher, outside this database; the environment makes it |
 | `CREATE TABLE` | table | declared | `Postgres::Table` |
 | `CREATE TABLE AS` | table from a query | declared | `Postgres::Table`: the server keeps no query, so the table it made reads as a CREATE TABLE |
 | `CREATE TABLESPACE` | tablespace | out of scope | a tablespace is the cluster's, a directory on the server; a table's TABLESPACE clause is kept |
@@ -74,7 +74,7 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out 
 | `CREATE TYPE` (AS RANGE) | range type | declared | `Postgres::RangeType`: its multirange type comes with it (MULTIRANGE_TYPE_NAME) |
 | `CREATE TYPE` (INPUT, OUTPUT, or a shell type) | base type | refused | no tag declares a base type; its input and output functions are C code an extension installs |
 | `CREATE USER` | user | declared | `Postgres::Role`: an alias of CREATE ROLE ... LOGIN |
-| `CREATE USER MAPPING` | user mapping | refused | no tag declares a user mapping yet |
+| `CREATE USER MAPPING` | user mapping | refused | a user mapping carries the remote user and password, which the environment supplies and a declaration never holds |
 | `CREATE VIEW` | view | declared | `Postgres::View` |
 
 ## ClickHouse

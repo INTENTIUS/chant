@@ -42,6 +42,11 @@ The export name (`users`) is the object's identity in chant. The name in the SQL
 | `aggregate` | `CREATE AGGREGATE` | `Postgres::Aggregate` |
 | `trigger` | `CREATE TRIGGER` | `Postgres::Trigger` |
 | `eventTrigger` | `CREATE EVENT TRIGGER` | `Postgres::EventTrigger` |
+| `operator` | `CREATE OPERATOR` | `Postgres::Operator` |
+| `statistics` | `CREATE STATISTICS` | `Postgres::Statistics` |
+| `foreignDataWrapper` | `CREATE FOREIGN DATA WRAPPER` | `Postgres::ForeignDataWrapper` |
+| `foreignServer` | `CREATE SERVER` | `Postgres::ForeignServer` |
+| `publication` | `CREATE PUBLICATION` | `Postgres::Publication` |
 | `collation` | `CREATE COLLATION` | `Postgres::Collation` |
 | `cast` | `CREATE CAST` | `Postgres::Cast` |
 | `policy` | `CREATE POLICY` | `Postgres::Policy` |
@@ -189,4 +194,4 @@ chant build src --lexicon sql -o dist/schema.json
 
 ## Not covered
 
-`ALTER` (other than a table's row-level security), role memberships, rules, operators, extended statistics, foreign data objects, publications and subscriptions, text search objects and base types are not declared with the tags. An aggregate is identified by its argument types; a cast is named `(source AS target)` and an event trigger lives in no schema. A definition change to a composite or range type, collation, cast or event trigger is a drop and a create, refused while something depends on it. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.
+`ALTER` (other than a table's row-level security), role memberships, rules, operator classes and families, foreign tables, user mappings, subscriptions, text search objects and base types are not declared with the tags. Import names an object of such a kind and stops; `docs/pages/object-coverage.mdx` lists every `CREATE` command and why. An aggregate is identified by its argument types; a cast is named `(source AS target)` and an event trigger lives in no schema. A definition change to a composite or range type, collation, cast or event trigger is a drop and a create, refused while something depends on it. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.

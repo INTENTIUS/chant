@@ -5,7 +5,8 @@
  * sequence options, storage parameters, comments), an extension and the
  * domain over its type, a collation, composite and range types (and a
  * multirange column), plain and ordered-set aggregates, a cast and an event
- * trigger (#3911), a partitioned table and a partition, an ORM's
+ * trigger, an operator, extended statistics, a foreign data wrapper and server, and a
+ * publication (#3911), a partitioned table and a partition, an ORM's
  * revision table that import leaves out, and an object carrying chant's
  * ownership trailer.
  */
@@ -60,5 +61,16 @@ CREATE CAST (app.pair AS text) WITH FUNCTION app.pair_text(app.pair) AS ASSIGNME
 COMMENT ON CAST (app.pair AS text) IS 'a:b';
 CREATE FUNCTION app.audit() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN END $$;
 CREATE EVENT TRIGGER app_audit ON ddl_command_end WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION app.audit();
+CREATE FUNCTION app.int_same(a integer, b integer) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT a = b $$;
+CREATE OPERATOR app.=== (FUNCTION = app.int_same, LEFTARG = integer, RIGHTARG = integer, COMMUTATOR = OPERATOR(app.===), RESTRICT = eqsel, JOIN = eqjoinsel, HASHES, MERGES);
+COMMENT ON OPERATOR app.===(integer, integer) IS 'Same value';
+CREATE STATISTICS app.orders_stats (dependencies) ON user_id, status FROM app.orders;
+COMMENT ON STATISTICS app.orders_stats IS 'Users and their order states';
+CREATE FOREIGN DATA WRAPPER app_fdw OPTIONS (debug 'true');
+COMMENT ON FOREIGN DATA WRAPPER app_fdw IS 'Remote tables';
+CREATE SERVER app_replica TYPE 'pg' VERSION '16' FOREIGN DATA WRAPPER app_fdw OPTIONS (host 'db.internal', port '5432');
+COMMENT ON SERVER app_replica IS 'The read replica';
+CREATE PUBLICATION app_pub FOR TABLE app.orders, app.users WITH (publish = 'insert, update');
+COMMENT ON PUBLICATION app_pub IS 'Order changes';
 CREATE TABLE public._prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64) NOT NULL);
 `;
