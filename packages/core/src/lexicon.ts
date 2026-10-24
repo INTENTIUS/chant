@@ -382,8 +382,11 @@ export function intrinsicCallFoldsEagerly(def: { isTag?: boolean; foldsEagerly?:
  * Options passed to a MigrationSource by `chant migrate`.
  */
 export interface MigrateOptions {
-  /** Output format. */
-  emit?: "yaml" | "ts";
+  /**
+   * Output format. `yaml` and `ts` are the gitlab pair's; `sql` writes plain
+   * DDL for a pair whose target is a database (#4399).
+   */
+  emit?: "yaml" | "ts" | "sql";
   /** Recognise composite patterns when emitting. */
   useComposites?: boolean;
   /** Source file path (for provenance display only). */
@@ -411,6 +414,20 @@ export interface MigrationResult {
   diagnostics: Array<Record<string, unknown>>;
   /** Markdown "Security posture" section, when security analysis ran (#306). */
   securityPosture?: string;
+  /**
+   * Outputs of the source member that the rendered output reads, by the names
+   * a workspace link takes (#4399). In a workspace, `chant migrate` writes
+   * them as `links` of the member the output lands in, so a source that drops
+   * or renames one fails `chant workspace check`.
+   */
+  links?: string[];
+  /**
+   * The checks that need the target's own server, run for `--validate`
+   * instead of the external linter (#4399). Returns the diagnostics found,
+   * `error` severity for a refusal. Throws when the server cannot start, which
+   * `chant migrate` reports as a validation that did not run.
+   */
+  validate?(): Promise<Array<Record<string, unknown>>>;
 }
 
 /**
@@ -420,6 +437,12 @@ export interface MigrationResult {
 export interface MigrationSource {
   /** Lightweight detector: does this content look like the expected source? */
   detect(content: string): boolean;
+  /**
+   * The source may be a directory, which `transform` reads itself from
+   * `opts.sourceFile` (a workspace member, #4399). `chant migrate` then skips
+   * `detect` and passes empty content.
+   */
+  directory?: boolean;
   /** Run the translation. */
   transform(content: string, opts: MigrateOptions): Promise<MigrationResult>;
 }
@@ -1577,10 +1600,14 @@ export interface LexiconPlugin {
    * Return a migration source for translating from another lexicon's
    * format into this lexicon. Returns undefined if `from` is not supported.
    *
+   * `to` is the target as `--to` names it. A side may add a dialect after the
+   * lexicon, `sql/clickhouse` (#4399); `from` is passed as written, and a
+   * lexicon with one target ignores `to`.
+   *
    * Example: the gitlab lexicon implements `migrationSource("github")` to
    * translate `.github/workflows/*.yml` into `.gitlab-ci.yml`.
    */
-  migrationSource?(from: string): MigrationSource | undefined;
+  migrationSource?(from: string, to?: string): MigrationSource | undefined;
 
   // State
   /**
