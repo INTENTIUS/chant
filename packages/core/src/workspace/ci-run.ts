@@ -742,7 +742,9 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   // A generated wave job's command, as prLoopWaveJobs writes it. #4161: a local job's command posts no status or note.
   const forgeCommand = req.noForge ? found.command.replace(` --forge ${req.forge}`, "") : found.command;
   const noStatus = req.local && !/ --no-status(?: |$)/.test(forgeCommand);
-  const command = `${forgeCommand}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${noStatus ? " --no-status" : ""}`;
+  // #4325: a record or apply on a routed branch is told the branch, as the forge's ref would tell it in a pipeline. `ci serve` has no such ref.
+  const branch = req.job !== "plan" && req.loop?.branch !== undefined && !/ --branch(?: |=)/.test(forgeCommand) ? ` --branch ${/^[A-Za-z0-9._\/=:@%+,-]+$/.test(req.loop.branch) ? req.loop.branch : `'${req.loop.branch.replace(/'/g, `'\\''`)}'`}` : "";
+  const command = `${forgeCommand}${branch}${req.wave !== undefined ? ` --wave ${req.wave}` : ""}${noStatus ? " --no-status" : ""}`;
   const job = { ...found, command, ...(req.wave !== undefined ? { wave: req.wave } : {}) };
   const own = ciJobEnv(job, {
     forge: req.forge,
