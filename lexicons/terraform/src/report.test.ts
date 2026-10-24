@@ -5,11 +5,11 @@
  * update, and a sensitive value. The post-apply plan carries the state.
  */
 
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { addToIndex, dirStore, httpStore, runFactsFromEnv, slicePlan, terraformReport, topModule, writeReport } from "./report";
+import { addToIndex, dirStore, estateOfDir, httpStore, moduleEstates, runFactsFromEnv, slicePlan, terraformReport, topModule, writeReport } from "./report";
 import { parseReportArgs } from "./commands";
 
 const rc = (address: string, module: string, type: string, name: string, actions: string[], change: Record<string, unknown>) => ({
@@ -140,6 +140,75 @@ describe("terraformReport, tf-apply", () => {
 
   test("an apply report without the post-apply plan is refused", () => {
     expect(() => terraformReport({ ...base, stage: "tf-apply" })).toThrow(/post-apply plan/);
+  });
+});
+
+describe("reads between the composed modules", () => {
+  const data = (name: string, estate: string, names: string[]) => ({ mode: "data", type: "terraform_estate_outputs", name, expressions: { estate: { constant_value: estate }, names: { constant_value: names } } });
+  const CONFIG = {
+    root_module: {
+      module_calls: {
+        network: { module: { outputs: { subnet_id: { expression: { references: ["aws_subnet.new.id", "aws_subnet.new"] } }, cidr: { expression: { references: ["aws_vpc.main.cidr_block", "aws_vpc.main"] } } } } },
+        app: {
+          module: {
+            resources: [data("net", "tgc-network", ["subnet_id", "cidr"]), { mode: "managed", type: "aws_security_group", name: "sg", expressions: { vpc_id: { references: ["data.terraform_estate_outputs.net.values.subnet_id", "data.terraform_estate_outputs.net.values", "data.terraform_estate_outputs.net"] } } }],
+            outputs: { sg: { expression: { references: ["aws_security_group.sg.id", "aws_security_group.sg"] } } },
+          },
+        },
+        edge: { module: { resources: [data("app", "tgc-app", ["sg"]), data("elsewhere", "tgc-other", ["x"])] } },
+      },
+    },
+  };
+  const ESTATES = { network: "tgc-network", app: "tgc-app", edge: "tgc-edge" };
+  const withReads = { ...base, plan: { ...PLAN, configuration: CONFIG }, estates: ESTATES, stage: "tf-plan" as const };
+  const r = terraformReport(withReads).report as any;
+  const rootReads = (root: string) => r.roots.find((x: any) => x.path === root).reads;
+
+  test("a read of another module's estate is an edge to that module's root, planned and composed", () => {
+    expect(rootReads("estates/app")).toEqual([{ upstream: "estates/network", data: "net", outputs: "planned", unknown: ["subnet_id"], composed: true }]);
+  });
+
+  test("only the outputs the reader uses count as unknown, and a read of an estate nobody owns is left out", () => {
+    expect(rootReads("estates/edge")).toEqual([{ upstream: "estates/app", data: "app", outputs: "planned", unknown: ["sg"], composed: true }]);
+    expect(rootReads("estates/network")).toBeUndefined();
+  });
+
+  test("an output known at plan time is not listed as unknown", () => {
+    const known = terraformReport({ ...withReads, plan: { ...withReads.plan, output_changes: {} } }).report as any;
+    expect(known.roots.find((x: any) => x.path === "estates/app").reads[0].unknown).toEqual(["subnet_id"]);
+    const cfg = JSON.parse(JSON.stringify(CONFIG));
+    cfg.root_module.module_calls.app.module.resources[1].expressions.vpc_id.references = ["data.terraform_estate_outputs.net.values.cidr", "data.terraform_estate_outputs.net.values"];
+    const only = terraformReport({ ...withReads, plan: { ...PLAN, configuration: cfg } }).report as any;
+    expect(only.roots.find((x: any) => x.path === "estates/app").reads[0].unknown).toBeUndefined();
+  });
+
+  test("the composed root's planned outputs name unknowns too", () => {
+    const plan = { ...PLAN, configuration: { root_module: { module_calls: { app: CONFIG.root_module.module_calls.app } } }, output_changes: { network__vpc_id: { actions: ["create"], after_unknown: true } } };
+    const cfg = JSON.parse(JSON.stringify(plan.configuration));
+    cfg.root_module.module_calls.app.module.resources[1].expressions.vpc_id.references = ["data.terraform_estate_outputs.net.values.vpc_id", "data.terraform_estate_outputs.net.values"];
+    const out = terraformReport({ ...withReads, plan: { ...plan, configuration: cfg } }).report as any;
+    expect(out.roots.find((x: any) => x.path === "estates/app").reads[0].unknown).toEqual(["vpc_id"]);
+  });
+
+  test("with no estates, or a plan without configuration, no root has reads", () => {
+    const none = terraformReport({ ...base, stage: "tf-plan" }).report as any;
+    expect(none.roots.some((x: any) => "reads" in x)).toBe(false);
+    const bare = terraformReport({ ...base, stage: "tf-plan", estates: ESTATES }).report as any;
+    expect(bare.roots.some((x: any) => "reads" in x)).toBe(false);
+  });
+
+  test("the estates come from each module's live block", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tf-estates-"));
+    for (const [m, body] of Object.entries({
+      network: 'terraform {\n  live {\n    estate = "tgc-network"\n    record_store "s3" { bucket = "b" }\n  }\n}\n',
+      app: '# live { estate = "wrong" }\nterraform {\n  live {\n    estate = "tgc-app"\n  }\n}\n',
+      edge: "resource \"x\" \"y\" {}\n",
+    })) {
+      mkdirSync(join(repo, "estates", m), { recursive: true });
+      writeFileSync(join(repo, "estates", m, "main.tf"), body);
+    }
+    expect(moduleEstates(repo, "estates", ["network", "app", "edge", "gone"])).toEqual({ network: "tgc-network", app: "tgc-app" });
+    expect(estateOfDir(join(repo, "nowhere"))).toBeUndefined();
   });
 });
 

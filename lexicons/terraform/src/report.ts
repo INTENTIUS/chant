@@ -13,7 +13,11 @@
  * What it writes is the part of the v1 contract a reader needs to draw the
  * run: roots, their changes with before and after values, "known after
  * apply" for values the plan cannot know, one composed wave, the totals,
- * groups and named destroys, and the index row. After an apply, a second
+ * groups and named destroys, the index row, and each root's `reads`: the
+ * `data "terraform_estate_outputs"` blocks that read another module's estate,
+ * which behold draws as the lines between roots. The estate of each module
+ * comes from the `live` block in its directory (`<repo>/<root-dir>/<module>`),
+ * since the plan holds none. After an apply, a second
  * `show -json` (of a plan made once the apply finished, whose `prior_state`
  * holds the state) fills in the values the plan left unknown. It writes no
  * report.html, no plan files, no policy, cost or approval fields.
@@ -23,7 +27,7 @@
  * what changed.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetAttribute, type ChangeSetEntry, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
@@ -90,6 +94,13 @@ export interface TerraformReportInput {
   rootDir?: string;
   /** The path of the composed root itself, which holds any resource declared outside a module. Default: `rootDir`, else `.`. */
   selfRoot?: string;
+  /**
+   * The estate each module's directory names in its `live` block, by module:
+   * what ties a `terraform_estate_outputs` read to the module that owns the
+   * estate. The plan carries no `live` block, so {@link moduleEstates} reads it
+   * from the directories. A read of an estate none of these names has no edge.
+   */
+  estates?: Record<string, string>;
   started?: string;
   finished: string;
   runtime?: string;
@@ -196,6 +207,147 @@ function resolveUnknowns(attributes: ChangeSetAttribute[], res: { values: Json; 
 }
 
 // ---------------------------------------------------------------------------
+// Reads: `data "terraform_estate_outputs"` blocks between the composed modules.
+// ---------------------------------------------------------------------------
+
+/** One `read` of the report schema's `reads`, as a composed run writes it. */
+export interface ReportRead {
+  upstream: string;
+  data: string;
+  outputs: "planned";
+  unknown?: string[];
+  composed: true;
+}
+
+/** The estate named by the first `live { estate = "..." }` block in a directory's `.tf` files, or undefined. */
+export function estateOfDir(dir: string): string | undefined {
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".tf")).sort();
+  } catch {
+    return undefined;
+  }
+  for (const f of files) {
+    const text = readFileSync(join(dir, f), "utf8").replace(/^\s*(#|\/\/).*$/gm, "");
+    const live = /\blive\s*\{/.exec(text);
+    if (!live) continue;
+    const m = /\bestate\s*=\s*"([^"]+)"/.exec(text.slice(live.index + live[0].length));
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
+/** Each module's estate, read from `<repo>/<rootDir>/<module>`. A module whose directory has no `live` block is left out. */
+export function moduleEstates(repo: string, rootDir: string, modules: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of modules) {
+    const dir = join(repo, rootDir, m);
+    const estate = existsSync(dir) ? estateOfDir(dir) : undefined;
+    if (estate) out[m] = estate;
+  }
+  return out;
+}
+
+function anyUnknown(v: unknown): boolean {
+  if (v === true) return true;
+  if (Array.isArray(v)) return v.some(anyUnknown);
+  if (isObject(v)) return Object.values(v).some(anyUnknown);
+  return false;
+}
+
+/** The module's own configuration (`configuration.root_module.module_calls.<m>.module`), or undefined. */
+function moduleConfig(plan: Json, m: string): Json | undefined {
+  const root = isObject(plan.configuration) && isObject(plan.configuration.root_module) ? plan.configuration.root_module : {};
+  const call = isObject(root.module_calls) ? root.module_calls[m] : undefined;
+  return isObject(call) && isObject(call.module) ? call.module : undefined;
+}
+
+/** Every `references` string under an expression or a configuration. */
+function references(v: unknown, out: string[] = []): string[] {
+  if (Array.isArray(v)) for (const x of v) references(x, out);
+  else if (isObject(v)) {
+    for (const [k, x] of Object.entries(v)) {
+      if (k === "references" && Array.isArray(x)) {
+        for (const r of x) if (typeof r === "string") out.push(r);
+      } else references(x, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * The outputs of module `u` that the plan cannot know. Two sources, joined:
+ * the composed root's own planned outputs (`<u>__<name>`, as terragucci's
+ * composed root writes them), and each output of `u`'s configuration whose
+ * expression refers to an attribute of a resource the plan leaves unknown.
+ */
+function unknownOutputsOf(plan: Json, u: string): Set<string> {
+  const out = new Set<string>();
+  const prefix = `${u}__`;
+  if (isObject(plan.output_changes)) {
+    for (const [k, c] of Object.entries(plan.output_changes)) if (k.startsWith(prefix) && isObject(c) && anyUnknown(c.after_unknown)) out.add(k.slice(prefix.length));
+  } else if (isObject(plan.planned_values) && isObject(plan.planned_values.outputs)) {
+    for (const [k, o] of Object.entries(plan.planned_values.outputs)) if (k.startsWith(prefix) && isObject(o) && !("value" in o)) out.add(k.slice(prefix.length));
+  }
+  const cfg = moduleConfig(plan, u);
+  const outputs = cfg && isObject(cfg.outputs) ? cfg.outputs : {};
+  const changes = (Array.isArray(plan.resource_changes) ? plan.resource_changes : []).filter((r): r is Json => isObject(r) && topModule(String(r.module_address ?? r.address ?? "")) === u);
+  for (const [name, o] of Object.entries(outputs)) {
+    for (const ref of references(o)) {
+      const parts = ref.split(".");
+      const data = parts[0] === "data";
+      const [type, rname, attr] = data ? [parts[1], parts[2], parts[3]] : [parts[0], parts[1], parts[2]];
+      if (!type || !rname) continue;
+      const unprefixed = (c: Json): string => unprefix(String(c.address)).replace(/\[[^\]]*\]$/, "");
+      for (const c of changes) {
+        if (unprefixed(c) !== `${data ? "data." : ""}${type}.${rname}`) continue;
+        const after = isObject(c.change) ? c.change.after_unknown : undefined;
+        if (attr === undefined ? anyUnknown(after) : isObject(after) && anyUnknown(after[attr])) out.add(name);
+      }
+    }
+  }
+  return out;
+}
+
+const ESTATE_READ_TYPE = "terraform_estate_outputs";
+
+/** The names a module reads off `data.terraform_estate_outputs.<name>.values`, or undefined when it reads the whole object. */
+function valuesRead(refs: readonly string[], name: string): Set<string> | undefined {
+  const re = new RegExp(`^data\\.${ESTATE_READ_TYPE}\\.${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.values\\.([A-Za-z_][\\w-]*)`);
+  const read = new Set<string>();
+  for (const r of refs) {
+    const m = re.exec(r);
+    if (m) read.add(m[1]!);
+  }
+  return read.size > 0 ? read : undefined;
+}
+
+/**
+ * Module `m`'s reads of another module's estate, as terragucci writes them for
+ * a composed run: `{ upstream, data, outputs: "planned", unknown?, composed }`.
+ * `unknown` names the outputs it reads that the plan cannot know. A read of an
+ * estate no other module owns has no edge and is left out.
+ */
+export function estateReads(plan: Json, m: string, estates: Readonly<Record<string, string>>, rootOf: (m: string | undefined) => string): ReportRead[] {
+  const cfg = moduleConfig(plan, m);
+  if (!cfg) return [];
+  const refs = references(cfg);
+  const reads: ReportRead[] = [];
+  for (const r of Array.isArray(cfg.resources) ? cfg.resources : []) {
+    if (!isObject(r) || r.mode !== "data" || r.type !== ESTATE_READ_TYPE || typeof r.name !== "string") continue;
+    const expr = isObject(r.expressions) && isObject(r.expressions.estate) ? r.expressions.estate : undefined;
+    const estate = expr && typeof expr.constant_value === "string" ? expr.constant_value : undefined;
+    if (estate === undefined) continue;
+    const upstream = Object.keys(estates).sort().find((o) => o !== m && estates[o] === estate);
+    if (upstream === undefined) continue;
+    const read = valuesRead(refs, r.name);
+    const unknown = [...unknownOutputsOf(plan, upstream)].filter((n) => read === undefined || read.has(n)).sort();
+    reads.push({ upstream: rootOf(upstream), data: r.name, outputs: "planned", ...(unknown.length ? { unknown } : {}), composed: true });
+  }
+  return reads;
+}
+
+// ---------------------------------------------------------------------------
 // The report.
 // ---------------------------------------------------------------------------
 
@@ -283,6 +435,8 @@ export function terraformReport(input: TerraformReportInput): TerraformReport {
     }
     const failed = member.status === "failed";
     const group = memberGroup.get(member.member);
+    const mod = keys.find((m) => rootOf(m) === member.member);
+    const reads = mod !== undefined && input.estates ? estateReads(plan, mod, input.estates, rootOf) : [];
     return {
       path: member.member,
       binary: { name: planner, ...(input.binaryVersion ? { version: input.binaryVersion } : {}) },
@@ -292,6 +446,7 @@ export function terraformReport(input: TerraformReportInput): TerraformReport {
       counts,
       ...(group ? { group } : {}),
       plan: {},
+      ...(reads.length > 0 ? { reads } : {}),
       ...(input.run.job_url ? { job_url: input.run.job_url } : {}),
       changes: rootChanges,
       highlights: [],
