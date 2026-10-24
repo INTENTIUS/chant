@@ -497,6 +497,26 @@ describe("chant workspace upgrade", () => {
     expect(port.pending[0].approval).toEqual({ mode: "log-only", quorum: { count: 2, roles: ["maintainer"] } });
   });
 
+  test("a gate's quorum at HEAD in identity.gates is the one asked for, and the patch can't lower it (#4404)", async () => {
+    // The Op's own quorum is 2 at HEAD and 1 in the upgrade; the declaration at HEAD asks 3 of the gate.
+    const op = (overview: string, count: number): string =>
+      `export default { props: { name: "release", overview: ${JSON.stringify(overview)}, phases: [{ name: "Ship", steps: [{ kind: "gate", gate: "ship", approval: { quorum: { count: ${count} } } }] }] } };\n`;
+    release("v1.1.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }], identity: { gates: { ship: { quorum: { count: 3 } } } } }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+      "delivery/ops/release.op.ts": op("v1", 2),
+    });
+    proj = join(root, "members-4404");
+    expect((await initFromCommand({ from: `${tpl}@v1.1.0`, path: proj })).error).toBeUndefined();
+    git(proj, ["init", "-q", "-b", "main"]);
+    commitProject("init from v1.1");
+    release("v2.0.0", { "delivery/ops/release.op.ts": op("v2", 1) });
+    const port = ledger();
+    const result = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port, now: "2026-09-23T10:00:00.000Z" });
+    expect(result.outcome).toBe("gated");
+    expect(result.staged!.governance).toMatchObject({ approval: { mode: "log-only", quorum: { count: 3 } } });
+  });
+
   test("refuses a scope with uncommitted changes, and a scope that does not exist", async () => {
     put(proj, "README.md", "dirty\n");
     await expect(stageUpgrade({ root: proj, to: "v1.0.0" })).rejects.toThrow(/uncommitted changes/);

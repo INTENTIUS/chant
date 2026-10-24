@@ -17,6 +17,7 @@ import { emptyPolicy, type TrustPolicy } from "./trust/policy";
 import { sealGateApproval } from "./trust/seal";
 import { hasSshKeygen, TestRepo, type Key } from "./trust/test-repo";
 import { evaluateGate, memoryGateLedgerPort } from "../op/gate";
+import { gatePolicyVersion } from "../op/gate-approval";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 
 const decl = (identity: unknown): Declaration =>
@@ -71,8 +72,8 @@ describe("identity.attribution", () => {
     expect(decl({ attribution: "identified", gates: { ship: { class: "operator" }, rollback: {} } }).identity).toEqual({
       attribution: "identified",
       gates: {
-        ship: { gate: "ship", class: "operator", quorum: null, pointer: "/identity/gates/ship" },
-        rollback: { gate: "rollback", class: null, quorum: null, pointer: "/identity/gates/rollback" },
+        ship: { gate: "ship", class: "operator", quorum: null, policy: null, mode: null, context: null, pointer: "/identity/gates/ship" },
+        rollback: { gate: "rollback", class: null, quorum: null, policy: null, mode: null, context: null, pointer: "/identity/gates/rollback" },
       },
     });
     expect(() => decl({ attribution: "verified" })).toThrow();
@@ -82,13 +83,27 @@ describe("identity.attribution", () => {
   test("a gate entry takes a quorum beside its class (#4324)", () => {
     const rules = [{ targets: ["prod-*"], count: 2, roles: ["platform"] }, { count: 1 }];
     const gates = decl({ gates: { ship: { class: "operator", quorum: { count: 2 } }, deploy: { quorum: rules } } }).identity!.gates;
-    expect(gates.ship).toEqual({ gate: "ship", class: "operator", quorum: { count: 2 }, pointer: "/identity/gates/ship" });
+    expect(gates.ship).toEqual({ gate: "ship", class: "operator", quorum: { count: 2 }, policy: null, mode: null, context: null, pointer: "/identity/gates/ship" });
     expect(gates.deploy!.quorum).toEqual(rules);
     // The schema refuses a malformed rule, and the reader refuses notAuthor, which an Op gate can't judge.
     expect(() => decl({ gates: { ship: { quorum: { count: 0 } } } })).toThrow();
     expect(() => decl({ gates: { ship: { quorum: [] } } })).toThrow();
     expect(() => decl({ gates: { ship: { quorum: { count: 1, by: "x" } } } })).toThrow();
     expect(() => decl({ gates: { ship: { quorum: { count: 1, notAuthor: true } } } })).toThrow(/identity\.gates\.ship\.quorum\.notAuthor is not read here/);
+  });
+
+  test("a gate entry takes a policy, a mode and a context beside its quorum (#4404)", () => {
+    const text = "permit (principal, action, resource);";
+    const policy = { kind: "gate-policy", lexicon: "cedar", name: "ship", version: gatePolicyVersion(text), text };
+    const gates = decl({ gates: { ship: { policy, mode: "enforce", context: { risk: "high", paths: ["a", "b"], reviewed: true, n: 2 } } } }).identity!.gates;
+    expect(gates.ship).toMatchObject({ policy, mode: "enforce", context: { risk: "high", paths: ["a", "b"], reviewed: true, n: 2 } });
+    // Each field stands alone: enforce with no base policy leaves the Op's policy to enforce.
+    expect(decl({ gates: { ship: { mode: "enforce" } } }).identity!.gates.ship!.policy).toBeNull();
+    expect(() => decl({ gates: { ship: { mode: "block" } } })).toThrow();
+    expect(() => decl({ gates: { ship: { policy: { ...policy, version: "sha256:other" } } } })).toThrow(/not the digest of its text/);
+    expect(() => decl({ gates: { ship: { policy: { kind: "gate-policy" } } } })).toThrow();
+    expect(() => decl({ gates: { ship: { context: { risk: { nested: 1 } } } } })).toThrow();
+    expect(() => decl({ gates: { ship: { context: { plan: "x" } } } })).toThrow(/identity\.gates\.ship\.context\.plan is reserved/);
   });
 
   test("identified refuses a bare name and takes a forge identity or a signer", () => {

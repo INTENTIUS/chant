@@ -19,6 +19,7 @@ import {
 import { gateAdmission } from "./workspace/identity";
 import { hasSshKeygen, TestRepo, type Key } from "./workspace/trust/test-repo";
 import { evaluateGate, memoryGateLedgerPort } from "./op/gate";
+import { gatePolicyVersion } from "./op/gate-approval";
 
 const D1 = "sha256:" + "a".repeat(64);
 const GATES = { ship: {}, deploy: { class: "human" }, release: { class: "runner" }, ops: { class: "operator" } };
@@ -226,6 +227,16 @@ describe.skipIf(!hasSshKeygen)("identity.gates read at base, as chant reads it",
     expect(here.requirement.quorum).toEqual(rules);
     expect(here.requirement.quorum).toEqual(gateAdmission(r.dir, "ship", base)!.requirement.quorum);
     expect(identityGateAdmissionAt(r.dir, base, "deploy")!.requirement).toEqual({ gate: "deploy", class: "human" });
+  });
+
+  test("a gate's policy, mode and context at base, as chant reads them (#4404)", () => {
+    const text = "permit (principal, action, resource);";
+    const policy = { kind: "gate-policy", lexicon: "cedar", name: "ship", version: gatePolicyVersion(text), text };
+    const { r, base } = setup(() => ({}), { identity: { gates: { ship: { policy, mode: "enforce", context: { risk: "high" } } } } });
+    const here = identityGateAdmissionAt(r.dir, base, "ship")!.requirement;
+    const theirs = gateAdmission(r.dir, "ship", base)!.requirement;
+    expect(here).toMatchObject({ policy, mode: "enforce", context: { risk: "high" } });
+    expect({ policy: here.policy, mode: here.mode, context: here.context }).toEqual({ policy: theirs.policy, mode: theirs.mode, context: theirs.context });
   });
 });
 

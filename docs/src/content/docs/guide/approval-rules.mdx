@@ -136,9 +136,39 @@ The Op's `approval` block is part of the Op's build, so it is read from the chan
 }
 ```
 
-A run reads the entry from the declaration at base (`packages/core/src/op/local-executor.ts:803`). Its `quorum` replaces the Op's `approval.quorum`, and it also applies to a gate whose Op has no `approval` block (`packages/core/src/op/local-executor.ts:748`). A pull request that edits the Op or the declaration is still judged by the rules on the base branch. Without a `quorum` at base the Op's own quorum applies as before. The change being run can edit that one.
+A run reads the entry from the declaration at base (`packages/core/src/op/local-executor.ts:833`). Its `quorum` replaces the Op's `approval.quorum`, and it also applies to a gate whose Op has no `approval` block (`packages/core/src/op/local-executor.ts:768`). A pull request that edits the Op or the declaration is still judged by the rules on the base branch. Without a `quorum` at base the Op's own quorum applies as before. The change being run can edit that one, and `chant workspace check` reports the gate as `WSP153` ([#4404](https://github.com/INTENTIUS/chant/issues/4404)).
 
 An `identity.gates` entry also makes the gate count only sealed approvals, so approve with `chant approve ... --sign`. `notAuthor` is refused in the entry, as it is in the Op (`packages/core/src/workspace/declaration.ts:1204`). The rules take effect once the declaration change is merged, since they are read at base.
+
+### The policy, mode and context at base
+
+The rest of the `approval` block has the same exposure. Before chant#4404 a run read `policy`, `mode` and `context` from the Op being run, so a pull request could switch its gate to `enforce` with a permissive policy, or to `log-only`, and the run was judged by that. The entry takes them beside `quorum`:
+
+```json
+"identity": {
+  "gates": {
+    "ship": {
+      "quorum": { "count": 2, "roles": ["maintainer"] },
+      "mode": "enforce",
+      "policy": { "kind": "gate-policy", "lexicon": "cedar", "name": "ship", "version": "sha256:...", "text": "..." },
+      "context": { "risk": "high" }
+    }
+  }
+}
+```
+
+Each field is read on its own (`packages/core/src/op/local-executor.ts:768`). One the entry sets replaces the Op's. A `context` key the entry sets wins over the Op's key of that name. A key only the Op sets still reaches the policy, since the sql lexicon's gates hand a policy step outputs such as `verifiedRows` that no declaration can hold. A field the entry leaves out comes from the Op, so set `mode` and `policy` together: a base `policy` with no base `mode` lets the change pick `log-only`. The `policy` object is what the lexicon's helper renders, and a `version` that is not the digest of `text` is refused when the declaration is read (`packages/core/src/workspace/declaration.ts:1265`).
+
+### Migrating a gate whose Op sets policy or mode
+
+A gate behaves differently only when its `identity.gates.<gate>` entry sets a field the Op also sets to something else. Adding `mode: "enforce"` to an entry makes a gate that ran in `log-only` start refusing approvals its policy denies, and a base `context` key can change what the policy sees. To move an Op's block to base:
+
+1. Run `chant workspace check`. `WSP153` lists each gate with an `approval` block and the fields `identity.gates` does not set.
+2. Copy those fields into the gate's entry. Start with the `mode` the Op has now, and switch to `enforce` once a log-only run has shown the policy's decisions.
+3. Merge the declaration change. The entry takes effect at base, so the merge's own run is still judged by the Op's block.
+4. Set `minReader` to 0.124.49 or newer, so an older chant does not read the entry as one with no policy.
+
+The upgrade gate (`chant workspace upgrade`) asks for the quorum `identity.gates.<gate>.quorum` sets at HEAD for a gate in a changed Op file, as a run does, and the Op's own only when the entry sets none (`packages/core/src/workspace/lineage-upgrade.ts:604`). Both come from HEAD, so the patch it stages can't lower them (`packages/core/src/workspace/lineage-upgrade.ts:594`).
 
 ## In your own tool
 

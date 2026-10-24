@@ -256,6 +256,40 @@ export function gateApprovalProblems(approval: unknown): string[] {
   return problems;
 }
 
+/** A gate's `policy`, `mode` and `context` as `identity.gates.<gate>` declares them at base (#4404). A step output reference is not data a declaration can hold, so a context value is a plain one. */
+export interface GateBaseApproval {
+  policy?: GatePolicyRef | null;
+  mode?: GateApprovalMode | null;
+  context?: Record<string, string | number | boolean | string[]> | null;
+}
+
+/**
+ * What is wrong with the `policy`, `mode` and `context` of an
+ * `identity.gates.<gate>` entry (#4404), one line each, named by `at`. Each
+ * field stands alone: base `mode: "enforce"` with no base `policy` is fine, as
+ * the Op's own policy then applies. `chant workspace check` (WSP153) says so.
+ */
+export function gateBaseApprovalProblems(entry: { policy?: unknown; mode?: unknown; context?: unknown }, at: string): string[] {
+  const problems: string[] = [];
+  if (entry.policy !== undefined) {
+    if (!isGatePolicyRef(entry.policy)) problems.push(`\`${at}.policy\` does not resolve to a gate policy set: it needs kind "gate-policy", lexicon, name, version and text`);
+    else if (entry.policy.version !== gatePolicyVersion(entry.policy.text)) problems.push(`\`${at}.policy\` "${entry.policy.name}" has a version that is not the digest of its text`);
+  }
+  if (entry.mode !== undefined && !GATE_APPROVAL_MODES.includes(entry.mode as GateApprovalMode)) {
+    problems.push(`\`${at}.mode\` must be one of ${GATE_APPROVAL_MODES.map((m) => `"${m}"`).join(", ")}`);
+  }
+  if (entry.context !== undefined) {
+    if (typeof entry.context !== "object" || entry.context === null || Array.isArray(entry.context)) problems.push(`\`${at}.context\` must be an object of plan attributes`);
+    else {
+      for (const [key, value] of Object.entries(entry.context)) {
+        if (key === GATE_PLAN_CONTEXT_KEY) problems.push(`\`${at}.context.${key}\` is reserved: the run fills it with the plan's change-set summary (#3182)`);
+        else if (isStepOutputRef(value) || !isContextValue(value)) problems.push(`\`${at}.context.${key}\` must be a string, number, boolean or list of strings`);
+      }
+    }
+  }
+  return problems;
+}
+
 function isContextValue(value: unknown): boolean {
   if (typeof value === "string" || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);

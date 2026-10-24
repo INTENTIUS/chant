@@ -758,7 +758,7 @@ A tool that runs its own waves can decide a gate by these rules without running 
 | `baseCommit(repo)` | the first parent of HEAD, fetched when the checkout is shallow |
 | `gateSignersAt(repo, base)` | the signers file at base, at the path `.chant/trust.json` names there. An invalid trust.json turns attestation off, as it does in chant |
 | `gateSealRefusal(signers, approval)` | why a seal does not count for its approver, or null when it does |
-| `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates`, each with its `quorum` when the entry sets one ([#4324](https://github.com/INTENTIUS/chant/issues/4324)) |
+| `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates`, each with its `quorum` ([#4324](https://github.com/INTENTIUS/chant/issues/4324)), `policy`, `mode` and `context` ([#4404](https://github.com/INTENTIUS/chant/issues/4404)) when the entry sets them |
 | `identityGateAdmissionAt(repo, base, gate, { packages, classes })` | the `identity.gates` rule for one gate at base, or null when the declaration names none. Its `refuses(approval)` is what chant's own `gateAdmission` answers: the seal against the signers at base, then the class against the role grants in `.chant/trust.json` at base. Pass it to `decideGateApproval` as `refuses` |
 | `admitApprover(rule, approval)` | the same judgement over a rule you build yourself: the gate, its class, the signers, the role grants and the known classes |
 | `reviewApproval(merged, headDigest, digest)` | whether the merged pull request's review approves the digest, under `pr-review` |
