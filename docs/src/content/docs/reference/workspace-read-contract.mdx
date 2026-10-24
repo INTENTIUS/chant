@@ -446,6 +446,18 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `publish-failed` | error, `box publish` | The publisher could not be run, failed with another nonzero exit, or ran out of time; its message says what it had done. |
 | `publish-answer-invalid` | error, `box publish` | The publisher exited 0 with no JSON object on stdout, or one `box-publish.schema.json` doesn't allow. |
 | `publish-unrecorded` | error, `box publish` | The commit the publisher named is missing, or lacks the apply record of ws-075: `Chant-Applied-By` naming `--by`, `Chant-Applied-At`, `Chant-Applied-Commit` and a `Chant-Record` for the item, or a `Chant-Record` for each record sent. |
+| `missing-dir` | error, `exit` | The chant member's directory does not exist. |
+| `no-lexicon` | error, `exit` | No lexicon is named in the member's chant.config.* or package.json. |
+| `lexicon-unsupported` | error, `exit` | A lexicon the member uses has no native target in `workspace exit`. |
+| `exit-failed` | error, `exit` | The member's exit did not finish: its build failed, or it was refused. |
+| `choudoufu-steps-missing` | error, `exit` | A choudoufu member's exit listed no roundtrip steps. |
+| `native-missing` | error, `exit` | A native file the exit wrote is missing or empty. |
+| `native-unreadable` | error, `exit` | A native file the exit wrote is not valid JSON, or has no content. |
+| `no-deploy-command` | error, `exit` | A native file that can be deployed has no stock deploy command. |
+| `chant-config-left` | error, `exit` | A `chant.config.*` file is still in the exited member. |
+| `chant-dependency` | error, `exit` | The member's `package.json` still has a chant dependency, or a script that calls chant. |
+| `chant-in-ci` | error, `exit` | A CI file of the exited member still calls chant. |
+| `declaration-not-other` | error, `exit` | The declaration still gives the exited member a kind other than `other`. |
 | `listing-cover-invalid` | error, `box listing set` | The cover can't be read, isn't a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's. |
 
 `graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.

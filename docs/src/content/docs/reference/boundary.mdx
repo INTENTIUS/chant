@@ -44,14 +44,14 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | studio | behold | plugin |
 |---|---|---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 16 | 5 | 3 | 1 | 1 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 72 | 0 | 0 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 74 | 0 | 0 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 6 | 0 | 0 | 0 | 0 |
 | record kind | none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party | 7 | 0 | 0 | 0 | 1 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 270 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 282 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -148,6 +148,8 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace lineage` | chant | chant workspace lineage --json | Shows each scope in the lineage lock with its template, pin, edited files and open manual steps. |
 | workspace command | `workspace lineage resolve` | chant | chant workspace lineage resolve &lt;path&gt; | Closes a manual step once the file has been merged by hand. |
 | workspace command | `workspace upgrade` | chant | chant workspace upgrade | Brings a lineage scope to a newer template version in a worktree and gates the patch on its digest. |
+| workspace command | `workspace exit` | chant | exit.schema.json | Leaves a member or the workspace in one step: commits each chant member's native output, rewrites its CI to stock commands, drops chant, and gates the patch on its digest; --drill proves on a scratch copy that leaving works (#3177). |
+| workspace command | `workspace promote` | chant | chant workspace promote | Moves a member one rung up the kind ladder (other or terraform, then choudoufu, then chant) in a worktree and gates the patch on its digest (#3178). |
 | workspace command | `workspace adopt-lineage` | chant | chant workspace adopt-lineage --json | Gives a scope with no lineage one matched against the template's versions, or moves a directory lineage onto git. |
 | workspace command | `workspace hash-index` | chant | chant workspace hash-index | Computes the per-version file hashes adopt-lineage matches a scope against, for a template's CI to publish. |
 | workspace command | `workspace versions` | chant | chant workspace versions --json | Reports the template, chant and lexicon versions of every lineage lock under a directory, by template family. |
@@ -474,6 +476,18 @@ Each row follows, in the order of the table above.
 | reason code | `answer-never-over-mcp` | chant | points-write.schema.json | The answer or retraction came over MCP or ACP, or from a process a session on one started, and the question constrains a gate that is never resolved there (#3817). |
 | reason code | `answer-not-answered` | chant | points-write.schema.json | points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351). |
 | reason code | `answer-field-unsupported` | chant | points-write.schema.json | The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a retraction or an ad-hoc question's asked, and chant refuses rather than drop it (#3351, #3403). |
+| reason code | `missing-dir` | chant | exit.schema.json | The chant member's directory does not exist. |
+| reason code | `no-lexicon` | chant | exit.schema.json | No lexicon is named in the member's chant.config.* or package.json. |
+| reason code | `lexicon-unsupported` | chant | exit.schema.json | A lexicon the member uses has no native target in workspace exit. |
+| reason code | `exit-failed` | chant | exit.schema.json | The member's exit did not finish: its build failed, or it was refused. |
+| reason code | `choudoufu-steps-missing` | chant | exit.schema.json | A choudoufu member's exit listed no roundtrip steps. |
+| reason code | `native-missing` | chant | exit.schema.json | A native file the exit wrote is missing or empty. |
+| reason code | `native-unreadable` | chant | exit.schema.json | A native file the exit wrote is not valid JSON, or has no content. |
+| reason code | `no-deploy-command` | chant | exit.schema.json | A native file that can be deployed has no stock deploy command. |
+| reason code | `chant-config-left` | chant | exit.schema.json | A chant.config.* file is still in the exited member. |
+| reason code | `chant-dependency` | chant | exit.schema.json | The member's package.json still has a chant dependency, or a script that calls chant. |
+| reason code | `chant-in-ci` | chant | exit.schema.json | A CI file of the exited member still calls chant. |
+| reason code | `declaration-not-other` | chant | exit.schema.json | The declaration still gives the exited member a kind other than other. |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
 | finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time. |
 | finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |
