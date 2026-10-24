@@ -51,9 +51,9 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 269 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 270 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 64 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
@@ -383,6 +383,7 @@ Each row follows, in the order of the table above.
 | reason code | `ci-workflow-pipeline-differs` | chant | check.schema.json | Under ci.workflow, the merge job does not match the workflow: it applies under trunk-curated, or records under trunk-curated+apply-on-merge. |
 | reason code | `ci-workflow-publish-missing` | chant | check.schema.json | Under ci.workflow, no pipeline file runs chant release publish. |
 | reason code | `ci-branch-route-differs` | chant | check.schema.json | A member's generated pull-request pipeline targets a branch other than the one ci.branches routes the member to. |
+| reason code | `gate-approval-unbased` | chant | check.schema.json | An Op gate's approval block sets a quorum, policy, mode or context that identity.gates does not set at base, so the change being run can edit it. |
 | reason code | `box-fountain-callback-undeclared` | chant | check.schema.json | A box member builds a fountain Box, whose sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner. |
 | reason code | `box-intent-unknown` | chant | check.schema.json | A box block names an intent, and no record of a declared kind named decision has that id. |
 | reason code | `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory. |
@@ -545,6 +546,7 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP133` `diagram-render-drift` | chant | check.schema.json | A diagram that records a sourceHash is unchanged since its render was made: the source's bytes still hash to it. Runs no renderer. |
 | WSP check | `WSP151` `ci-workflow` | chant | check.schema.json | Under ci.workflow: ci.green with pre-merge phases and no apply job required, each member with a component, environments and a gate on each component, and pipeline files that plan, record (or apply under apply on merge), tick and publish. |
 | WSP check | `WSP152` `ci-branch-route` | chant | check.schema.json | A member's generated pull-request pipeline targets the branch ci.branches routes the member to, in its record and apply commands and its push and pull_request triggers. |
+| WSP check | `WSP153` `gate-approval-unbased` | chant | check.schema.json | An Op gate declares an approval block whose quorum, policy, mode or context identity.gates does not set at base, so the change being run can edit it. |
 | WSP check | `WSP161` `security-verified-releases` | chant | check.schema.json | Under the verified-releases group: a signers file, a release gate naming a class, and no publish job that passes --allow-unsigned. |
 | WSP check | `WSP162` `security-supply-chain` | chant | check.schema.json | Under the supply-chain group: every publish target attaches an SBOM it has a source for, publish jobs require OIDC provenance, and components generate an SBOM and verify what they deploy. |
 | WSP check | `WSP163` `security-who-ran-it` | chant | check.schema.json | Under the who-ran-it group: ci.green.signedSince is set, .chant/trust.json lists a runner key, and the tick signs its tags. |

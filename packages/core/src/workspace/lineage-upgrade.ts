@@ -573,16 +573,25 @@ export function isGovernancePath(path: string): boolean {
  * one. The Op files are read from the project's tree, which the upgrade
  * requires to match HEAD for every path the patch touches.
  *
+ * Both come from HEAD, never from the patch: the Op files are read from the
+ * clean project tree, and the declaration through `identityGatesAt(repo,
+ * head)` (`git show`). A change the upgrade itself makes to an Op or to
+ * `chant.workspace.json` cannot lower the approvals it asks for (#4404). A
+ * gate whose `identity.gates.<gate>.quorum` at HEAD sets one is asked for that
+ * quorum, as a run of the gate is (#4324), not the Op's own.
+ *
  * Discovery runs from each changed Op file's own directory, so it finds the
  * file under the project that owns it. Run from a workspace root, it would
  * skip every member's Op files (#2892).
  */
-async function rulesAtHead(repo: string, paths: string[]): Promise<ResolvedGateApproval> {
+async function rulesAtHead(repo: string, paths: string[], head: string): Promise<ResolvedGateApproval> {
   const opFiles = new Set(paths.filter((p) => GOVERNANCE[0].test(p)));
   let count = 1;
   let roles: string[] | undefined;
   if (opFiles.size > 0) {
     const { discoverOps } = await import("../op/discover");
+    const { identityGatesAt } = await import("../gate-decision");
+    const atBase = new Map(identityGatesAt(repo, head).map((g) => [g.gate, g.quorum]));
     const dirs = new Set([...opFiles].map((p) => dirname(join(repo, p))));
     for (const dir of dirs) {
       if (!existsSync(dir)) continue;
@@ -592,7 +601,7 @@ async function rulesAtHead(repo: string, paths: string[]): Promise<ResolvedGateA
         if (!opFiles.has(rel)) continue;
         // #4290: a quorum may be a list of rules; the strictest count is asked for.
         for (const approval of gateApprovals(config)) {
-          for (const rule of quorumRules(approval.quorum)) {
+          for (const rule of quorumRules(atBase.get(approval.gate) ?? approval.quorum)) {
             if (rule.count > count) {
               count = rule.count;
               roles = rule.roles;
@@ -605,12 +614,12 @@ async function rulesAtHead(repo: string, paths: string[]): Promise<ResolvedGateA
   return { mode: "log-only", quorum: { count, ...(roles && roles.length > 0 ? { roles } : {}) } };
 }
 
-type StepLike = { kind: string; approval?: { quorum?: GateQuorumSpec }; steps?: StepLike[] };
+type StepLike = { kind: string; gate?: string; signalName?: string; approval?: { quorum?: GateQuorumSpec }; steps?: StepLike[] };
 
-function gateApprovals(config: { phases?: Array<{ steps: StepLike[] }>; onFailure?: Array<{ steps: StepLike[] }> }): Array<{ quorum?: GateQuorumSpec }> {
-  const out: Array<{ quorum?: GateQuorumSpec }> = [];
+function gateApprovals(config: { phases?: Array<{ steps: StepLike[] }>; onFailure?: Array<{ steps: StepLike[] }> }): Array<{ gate: string; quorum?: GateQuorumSpec }> {
+  const out: Array<{ gate: string; quorum?: GateQuorumSpec }> = [];
   const visit = (step: StepLike): void => {
-    if (step.kind === "gate") out.push(step.approval ?? {});
+    if (step.kind === "gate") out.push({ gate: step.gate ?? step.signalName ?? "", ...(step.approval?.quorum !== undefined ? { quorum: step.approval.quorum } : {}) });
     if (step.kind === "effect") (step.steps ?? []).forEach(visit);
   };
   for (const p of [...(config.phases ?? []), ...(config.onFailure ?? [])]) p.steps.forEach(visit);
@@ -865,7 +874,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       if (touched.length > 0) {
         throw new UpgradeError(`the upgrade changes governance files that have uncommitted edits (${touched.map((l) => l.slice(3)).join(", ")}). Commit them first: their gates are read at HEAD.`);
       }
-      governance = { paths: governed, approval: await rulesAtHead(repo, governed), rules: head };
+      governance = { paths: governed, approval: await rulesAtHead(repo, governed, head), rules: head };
     }
 
     // 5. Checks.

@@ -370,6 +370,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `ci-workflow-pipeline-missing` | finding, `check` | `WSP151`: under ci.workflow, no pipeline file runs the plan job, the merge job or chant ci tick. |
 | `ci-workflow-pipeline-differs` | finding, `check` | `WSP151`: under ci.workflow, the merge job does not match the workflow: it applies under trunk-curated, or records under trunk-curated+apply-on-merge. |
 | `ci-workflow-publish-missing` | finding, `check` | `WSP151`: under ci.workflow, no pipeline file runs chant release publish. |
+| `gate-approval-unbased` | finding, `check` | `WSP153`: an Op gate's approval block sets a quorum, policy, mode or context that identity.gates does not set at base, so the change being run can edit it. |
 | `ci-branch-route-differs` | finding, `check` | `WSP152`: a member's generated pull-request pipeline targets a branch other than the one ci.branches routes the member to. |
 | `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
 | `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |

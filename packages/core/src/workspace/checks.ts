@@ -40,6 +40,7 @@
  * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
  * | WSP151 | what a member under `ci.workflow` still lacks (#4168 step 6) |
  * | WSP152 | a member's generated pipeline targets the branch `ci.branches` routes it to (#4325) |
+ * | WSP153 | an Op gate's approval block that `identity.gates` does not set at base (#4404) |
  * | WSP161 to WSP165 | the security groups the declaration opts into: what each still lacks (#4168 step 7) |
  */
 
@@ -65,6 +66,7 @@ import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { SECURITY_CHECKS } from "./checks/security";
 import { CI_WORKFLOW_CHECKS } from "./checks/ci-workflow";
 import { CI_BRANCH_CHECKS } from "./checks/ci-branch";
+import { GATE_APPROVAL_CHECKS } from "./checks/gate-approval";
 import { ORG_CHECKS, type ForgeRepoList } from "./checks/org";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
@@ -425,6 +427,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...CI_WORKFLOW_CHECKS,
   // A member's pipeline targets the branch ci.branches routes it to (#4325), WSP152.
   ...CI_BRANCH_CHECKS,
+  // An Op gate's approval block that identity.gates does not set at base (#4404), WSP153.
+  ...GATE_APPROVAL_CHECKS,
   // The security groups the declaration opts into (#4168 step 7), WSP161 to WSP165.
   ...SECURITY_CHECKS,
 ];
