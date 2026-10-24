@@ -30,11 +30,11 @@
  * shared verbatim.
  */
 
-import { inboundEdges, outboundEdges } from "./graph";
+import { adjacencyOf, type Adjacency } from "../graph-walk";
 import { computeFolds } from "./folds";
 import { blastRadius, type BlastRadius } from "./reach";
 import { resolveTier, type TierInfo } from "./tier-map";
-import type { TfGraph, TfNode } from "./types";
+import type { TfEdge, TfGraph, TfNode } from "./types";
 
 export type PeelabilityBand = "clean leaf" | "carvable w/ edits" | "leave in Terraform";
 
@@ -160,16 +160,16 @@ const MODULE_TIER = 2 as const;
 
 function scoreNode(
   node: TfNode,
-  graph: TfGraph,
+  adj: Adjacency<TfEdge>,
   foldedChildren: Set<string>,
   opts: ScoreOptions,
 ): Peelability {
   // Inbound excludes edges from this node's own folded sub-resources, and
   // counts output blocks separately — they cost less to bridge (#1638).
-  const inboundAll = inboundEdges(graph, node.address).filter((e) => !foldedChildren.has(e.from));
+  const inboundAll = (adj.in.get(node.address) ?? []).filter((e) => !foldedChildren.has(e.from));
   const inbound = inboundAll.filter((e) => e.fromKind !== "output").length;
   const outputs = inboundAll.length - inbound;
-  const outbound = outboundEdges(graph, node.address).length;
+  const outbound = (adj.out.get(node.address) ?? []).length;
 
   const signals = opts.signalsFor?.(node) ?? {};
   const extra = { ...(signals.penalties ?? {}) };
@@ -243,10 +243,12 @@ function scoreNode(
  */
 export function scoreEstate(graph: TfGraph, opts: ScoreOptions = {}): Peelability[] {
   const { folded, childrenOf } = computeFolds(graph);
+  // One edge index for the whole pass: a per-node edge filter is O(E) each, O(V·E) in all (#4391).
+  const adj = adjacencyOf(graph.edges);
   return graph.nodes
     .filter((n) => !folded.has(n.address))
     .map((n) => {
-      const scored = scoreNode(n, graph, childrenOf.get(n.address) ?? new Set(), opts);
+      const scored = scoreNode(n, adj, childrenOf.get(n.address) ?? new Set(), opts);
       return opts.radius === false ? scored : { ...scored, radius: blastRadius(graph, n.address) };
     })
     .sort((a, b) => b.score - a.score || (a.address < b.address ? -1 : a.address > b.address ? 1 : 0));

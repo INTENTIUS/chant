@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
 import { generateGithubOpWavesPipeline } from "./generate-op-waves-pipeline";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 const spec: OpWavesSpec = {
   name: "migrations",
@@ -26,7 +27,7 @@ describe("generateGithubOpWavesPipeline", () => {
     expect(yaml).toContain("run: chant run wave --spec waves.json --wave 2 --decide");
     expect(yaml).toMatch(/wave-2-prod-share-2:\n\s+runs-on: ubuntu-latest\n\s+needs:\n\s+- wave-2-prod-decide/);
     expect(yaml).toContain("run: chant run wave --spec waves.json --wave 2 --share 2");
-    expect(yaml).toContain("uses: actions/upload-artifact@v4");
+    expect(yaml).toContain(`uses: ${usesRef(ACTION_PINS.uploadArtifact4)}`);
     expect(yaml).toContain("name: migrations-wave-2-decision");
     expect(yaml).toContain("environment:\n      name: production");
   });

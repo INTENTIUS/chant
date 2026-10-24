@@ -176,6 +176,14 @@ export interface OpRunRecord {
    */
   runOrigin?: RunOrigin;
   /**
+   * The workspace run that started this one (#2554, #2524 D17): `chant
+   * workspace run`'s id, and the workspace gate it ran under when it named
+   * one. The workspace run's own record, under `_members/_workspace/` on
+   * `chant/lifecycle`, names this run in turn. Absent on a run nothing in a
+   * workspace started, and on a record written before 0.124.47.
+   */
+  workspaceRun?: { id: string; gate?: string };
+  /**
    * The run's statement (#4044): a DSSE envelope over an in-toto statement
    * (`https://intentius.io/chant/op-run/v1`) a runner key signed at the end
    * of the run, naming the run, its commit and the SHA-256 of this record

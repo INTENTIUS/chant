@@ -3,7 +3,7 @@ import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
-import type { PostSynthCheck } from "./lint/post-synth";
+import type { CrossRootCheck, PostSynthCheck } from "./lint/post-synth";
 import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec, ImportDiagnostic } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { EmbeddedContentImporter } from "./import/embedded";
@@ -1226,6 +1226,14 @@ export interface LexiconPlugin {
 
   /** Return post-synthesis checks for build validation */
   postSynthChecks?(): PostSynthCheck[];
+
+  /**
+   * Checks that read across build roots (chant #1939). Only a cross-root run
+   * (`runCrossRootChecks`, ./lint/post-synth.ts) calls this; `chant build`
+   * and `chant lint` never do, so a lexicon that adds one costs a
+   * single-build project nothing.
+   */
+  crossRootChecks?(): CrossRootCheck[];
 
   /**
    * Activity contracts (`ActivityContract`, `./op/activity-contract.ts`) for

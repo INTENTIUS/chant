@@ -263,6 +263,12 @@ export interface ParsedArgs {
   head?: string;
   /** `chant lifecycle affected --include-dependents` — add downstream consumers */
   includeDependents?: boolean;
+  /** `chant workspace run --dependents-of <member> --op <op>` (#2554): run the Op in every member that links to this one, directly or not. */
+  dependentsOf?: string;
+  /** `chant workspace lint --cross-root` (#2549): also run the disagreement lint and the lexicons' cross-root checks over every member's graph. */
+  crossRoot?: boolean;
+  /** `chant workspace train <env> --pin <member>=<label|digest>` (#2554), repeatable: the release a train pins for that member instead of its newest. */
+  pins?: string[];
   /**
    * `chant components fan-out --from-affected <file>` (#2420) — read the
    * stack-level change signal from the JSON `chant lifecycle affected --json`
@@ -640,6 +646,8 @@ export interface ParsedArgs {
    * generators run member code.
    */
   generated?: boolean;
+  /** `chant workspace check --forge-repos <file>` (#3168): the forge's repository list, checked against an org workspace's repo members (WSP014, WSP015). */
+  forgeRepos?: string;
   /**
    * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
    * the named members or example groups. Repeatable, and a comma list works too.
@@ -798,6 +806,8 @@ export interface ParsedArgs {
   op?: string;
   /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
   since?: string;
+  /** `chant ledger`, `chant workspace records` and `chant workspace runs --where <field><op><value>` (#4363): typed filters, repeatable, all of which have to hold. */
+  where?: string[];
   /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */
   limit?: number;
   /** `chant approve <op> <gate> --url <url>` (#2028) — the address this resolution happened at (the PR/MR that carried the change), recorded typed on the gate-resolution fact so a reader is not sniffing `--note` for something link-shaped. Defaults to the PR/MR the surrounding CI job is for, when there is one. Must be an absolute http/https URL. */

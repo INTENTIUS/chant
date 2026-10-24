@@ -49,7 +49,7 @@ export const DockerBuild = Composite((props: DockerBuildProps) => {
 
   const login = new Step({
     name: "Log in to container registry",
-    uses: "docker/login-action@v3",
+    uses: actionRef("docker/login-action"),
     with: {
       registry,
       username: "${{ github.actor }}",
@@ -59,7 +59,7 @@ export const DockerBuild = Composite((props: DockerBuildProps) => {
 
   const setupBuildx = new Step({
     name: "Set up Docker Buildx",
-    uses: "docker/setup-buildx-action@v3",
+    uses: actionRef("docker/setup-buildx-action"),
   });
 
   // Build tags for metadata action
@@ -71,7 +71,7 @@ export const DockerBuild = Composite((props: DockerBuildProps) => {
   const metadata = new Step({
     name: "Extract metadata",
     id: "meta",
-    uses: "docker/metadata-action@v5",
+    uses: actionRef("docker/metadata-action"),
     with: {
       images: imageName,
       tags: tags.join("\n"),
@@ -98,7 +98,7 @@ export const DockerBuild = Composite((props: DockerBuildProps) => {
 
   const buildPush = new Step({
     name: "Build and push",
-    uses: "docker/build-push-action@v6",
+    uses: actionRef("docker/build-push-action"),
     with: buildPushWith,
   });
 

@@ -183,7 +183,14 @@ Commands:
                         the resources and snapshots each lexicon observed, Op
                         runs, gates, deploys, releases and cuts, loaded into
                         node:sqlite (schema v1, listed in chant_schema).
-                        --member <name> keeps members; --json prints rows
+                        --member <name> keeps members; --json prints rows.
+                        For a read contract, use chant ledger
+  ledger <table> [dir]  One ledger's rows from chant/lifecycle as a read
+                        contract (resources, snapshots, runs, gates, deploys,
+                        releases, cuts; the columns chant query loads).
+                        --where <field><op><value> (= != < <= > >= ~,
+                        repeatable), --since <time|7d>, --at <rev> of
+                        chant/lifecycle, --member <name>, --json
   generate             Generate typed code from sources chant.config declares
                         (k8s.crds, helm.charts) into src/generated/<lexicon>/
                         (codegen.outDir); --check exits 1 when the committed
@@ -626,7 +633,7 @@ Workspace (level 1, #2524):
                         restore, from the deploy records, releases and ci
                         revoked tags. Eight weeks back by default. Read only;
                         never fetches. --json prints the read-contract document
-  workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
+  workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--where <field><op><value>]... [--json]
                         Without --kind, every record kind the declaration
                         names. Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
@@ -639,7 +646,9 @@ Workspace (level 1, #2524):
                         asset-drift or asset-missing. In the working tree,
                         each record says whether it is committed, modified
                         or new against HEAD, with the branch and base;
-                        --uncommitted lists only the modified and new ones
+                        --uncommitted lists only the modified and new ones;
+                        --where keeps the records a typed filter matches
+                        (id, path, state, valid, data.<key>, ...)
   workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
                         What changed in the records between <rev> and --at
                         (default: the working tree): new and removed records,
@@ -709,14 +718,16 @@ Workspace (level 1, #2524):
                         a url or a path pinned by hash) is appended to the
                         item's pins through records amend. Prints the
                         work-evidence document and never commits
-  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
+  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--where <field><op><value>]... [--follow-squash] [--json]
                         The agent runs in the run ledger on chant/lifecycle, each
                         with its model, tokens, cost and the commits it made,
                         and totals per work item, decision and principal; a run
                         that reports no cost is listed as unpriced, never zero.
                         Read-only, never fetches; --follow-squash joins each
                         squash merge to its pull request's runs, fetching a
-                        missing refs/pull/<n>/head from origin
+                        missing refs/pull/<n>/head from origin; --where keeps
+                        the runs a typed filter matches (state, model,
+                        startedAt, cost.amount, ...) before the totals
   workspace runs start --from <file|->
                         Record that an agent run started: who it worked for,
                         its harness, model, work item and lease. Prints the run
@@ -888,7 +899,7 @@ Workspace (level 1, #2524):
   workspace admit <return id> [--note <text>] [--dry-run] [--json]
                         Admit the signers of a return in .chant/trust.json, so
                         its signed work reads as attested once merged
-  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
+  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>] [--forge-repos <file>]
                         Fail on an unreadable lineage lock or an open manual
                         step, and, in a declared workspace, on a WSP check of
                         the declaration, member ledgers, pipelines or
@@ -900,7 +911,10 @@ Workspace (level 1, #2524):
                         resolves each declared member link against the live
                         graph of <env> (each chant member runs chant graph
                         --live, which reaches the account) and reports
-                        WSP141 and WSP142
+                        WSP141 and WSP142. --forge-repos reads a forge's
+                        repository list from a file and reports repos an
+                        org workspace lacks (WSP014) or names that the
+                        forge no longer has (WSP015)
   workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
                         Map each path the diff changes to the current records
                         whose constrains cover it: change-uncovered when none
@@ -928,9 +942,12 @@ Workspace (level 1, #2524):
                         its own chant, one process per toolchain. -o <dir>
                         writes <dir>/<member>.json; --member narrows the run;
                         --dry-run prints which chant runs which project
-  workspace lint [dir] [--format stylish|json|sarif] [--member <name>]
+  workspace lint [dir] [--format stylish|json|sarif] [--member <name>] [--cross-root]
                         Lint every chant member and example project with its
-                        own chant; sarif writes one run per member
+                        own chant; sarif writes one run per member.
+                        --cross-root adds the disagreement lint (LNK001 and
+                        the lexicons' cross-root checks) over every member's
+                        graph, where declared links and the graphs disagree
   workspace audit [dir] [--json] [--member <name>]
                         Audit each chant member with its own .chant-audit.json;
                         every finding carries a member field
@@ -967,6 +984,29 @@ Workspace (level 1, #2524):
                         One decision's intent walk over every path: and member:
                         entry it constrains: the commits in its window, each
                         own, worked, within-other or unexplained, with counts
+  workspace run <member>/<op>... [--env <env>] [--gate <name>] [--on <lexicon>] [--dry-run] [--json]
+                        Run Ops that span members (#2554): each target's chant
+                        run <op> in the member's directory, under its own
+                        chant, producers before the members that link to them.
+                        OPS019 checks every target against the composed graph
+                        first. Member run records cite the workspace run,
+                        whose record goes under _members/_workspace/<env>/.
+                        Exits 3 when a step stops at a gate
+  workspace run --dependents-of <member> --op <op> [--env <env>] [--gate <name>] [--dry-run] [--json]
+                        Run <op> in every member that links to <member>,
+                        directly or not, nearest first; members without the
+                        Op are listed as skipped
+  workspace run approve <gate> [--plan <digest>] [--approver <principal>]
+                        Approve a workspace gate's pending fact. It stands in
+                        for a member gate only when it covers that member's
+                        plan and the member sets acceptWorkspaceGates at base
+  workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
+                        Record a release train: one cut release of every
+                        chant member (the newest, unless --pin picks one),
+                        under _members/_workspace/<env>/trains.jsonl. Refuses
+                        when a member has no release
+  workspace train list <env> [--json]
+                        The release trains recorded for <env>, oldest first
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1504,6 +1544,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "search", handler: runSearch },
   // #4297 — SQL over the snapshots, runs, gates, deploys and releases on chant/lifecycle. Imported on first use.
   { name: "query", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/query")).runQueryCommand(ctx) },
+  { name: "ledger", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/ledger")).runLedgerCommand(ctx) },
   // chant#2591 — `import --agents` and `audit` read chant.config statically
   // and never evaluate it (chant#2589 for audit, which audits code it must not run).
   { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },
@@ -1635,6 +1676,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace audit", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
   // #4374 — chant search in every member, under its own chant, composed with workspace graph's ids: the search document.
+  // #2554 — Ops that span members, as <member>/<op> targets, each run under its member's own chant.
+  { name: "workspace run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/workspace-run")).runWorkspaceRun(ctx) },
+  // #2554 — a release train: one release of every chant member, pinned in the workspace ledger.
+  { name: "workspace train", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-train")).runWorkspaceTrain(ctx) },
   { name: "workspace search", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/search-cli")).runWorkspaceSearch(ctx) },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },

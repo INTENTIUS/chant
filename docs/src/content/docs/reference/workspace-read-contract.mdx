@@ -49,6 +49,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant ci last-green`](/chant/cli/ci/#ci-last-green) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-last-green/v1/ci-last-green.schema.json` |
 | [`chant ci list`](/chant/cli/ci/#ci-list) | `--json` | `https://intentius.io/chant/schemas/workspace/ci-list/v1/ci-list.schema.json` |
 | [`chant ci run --report-url`](/chant/cli/ci/#the-run-index), the file it keeps, and [`chant ci runs`](/chant/cli/ci/#ci-runs) with `--json` | `<report-url>/runs/index.json`, floor chant 0.124.31 | `https://intentius.io/chant/schemas/workspace/ci-run-index/v1/ci-run-index.schema.json` |
+| [`chant ledger`](/chant/cli/ledger/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json` |
 | [`chant release list`](/chant/cli/release/#release-list) | `--json` | `https://intentius.io/chant/schemas/workspace/releases/v1/releases.schema.json` |
 | [`chant release candidates`](/chant/cli/release/#release-candidates) | `--json`, floor chant 0.124.33 | `https://intentius.io/chant/schemas/workspace/release-candidates/v1/release-candidates.schema.json` |
 | [`chant change-set show`](/chant/cli/change-set/#change-set-show) | `--json` | `https://intentius.io/chant/schemas/workspace/change-set-show/v1/change-set-show.schema.json` |
@@ -63,12 +64,14 @@ Each schema is a `oneOf` of a result and a failure. The `records` schema has a t
 
 A workspace is identified by its declared `name` and a git revision ([ws-016](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-016-identity.md)). Every result names both. The name is `workspace.name`, and `at` is the full commit id, or `null` for the working tree. `workspace.root` is the workspace root relative to the git root, so a nested workspace is told apart from the outer one.
 
+`ls`, `graph`, `check` and `status` also say which repository a document came from, as `workspace.repo` ([#3168](https://github.com/INTENTIUS/chant/issues/3168)). It is the URL of the `origin` remote of the git repository that holds the workspace, with any user name or password removed, or `null` when there is no `origin` or no git. Workspaces in different repositories can share a name, so a reader that gathers several repositories' documents, such as the [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) of an org workspace, tells them apart by `repo`. It is a contract 1 field, added in chant 0.124.47. A document from an older chant has no `repo`; read that as unknown.
+
 `ls`, `graph`, `check` and `records` take `--at <rev>` and read from the local git object store. They need no checkout, no clean working tree and no network.
 
 | Command | What `--at` reads |
 |---|---|
 | `ls` | the declaration, and the member and group directories, at the revision |
-| `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
+| `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP012`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
 | `records` | the records at the revision, and the files their pins name, as committed at the revision. For a session kind, its subject records at the revision too |
 | `records --since` | the records at `--since` and at `--at`, or in the working tree without `--at`, compared by id |
 | `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
@@ -84,7 +87,7 @@ Some of what `--at` reads still comes from the working tree, which is how it sta
 - The chant each member runs under is the toolchain installed now, not the one the revision pinned. A member whose config needs a package the revision used and the working tree no longer has fails with `command-failed`.
 - The `records` kind file and its schema come from the working tree.
 - The exported tree is not a git repository, so a member's chant can't read git history there.
-- Remote revisions and URLs are not read. Fetch first.
+- Remote revisions and URLs are not read. Fetch first. The exception is a [`repo` member](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces), whose pinned revision `graph` fetches into the user's cache, whatever `--at` says.
 - `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
 
 ### Revisions and snapshots
@@ -185,8 +188,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `command-failed` | member, `graph` and `search` | The member's own `chant graph` or `chant search` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. A chant member whose source fails `chant lint` fails this way. A member read through its kind's `graph` block does not since 0.124.46: it is composed, and its lint findings are on its `meta.lint` ([behold#919](https://github.com/INTENTIUS/behold/issues/919)). |
 | `output-unreadable` | member, `graph` and `search` | The member's chant printed something that isn't a graph IR, or for `search` a search document. |
 | `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
-| `ledger-unreadable` | ledger, `status`; error, `releases` and `change-set-show` | Reading the ledger failed, so nothing from it is listed. |
+| `ledger-unreadable` | ledger, `status`; error, `releases`, `change-set-show` and `ledger` | Reading the ledger failed, so nothing from it is listed. |
 | `ledger-malformed` | ledger, `status`, `releases` and `change-set-show` | Some ledger lines aren't release records, or for `releases` some release files or cut lines can't be read, and the rest are listed. For `change-set-show`, the file stored under the digest is not the change set that digest names. |
+| `filter-invalid` | error, `ledger` | A `--where` or `--since` names a field the read doesn't have, an operator its type doesn't take, or a value not of its type; nothing was read. `records` and `runs` print the same refusal on stderr. |
+| `table-unknown` | error, `ledger` | `chant ledger` was given a table that is not one of resources, snapshots, runs, gates, deploys, releases or cuts. |
 | `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
 | `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
 | `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
@@ -330,6 +335,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `environments-ledger-undeclared` | member, `graph --composites` | The member's ledger has releases in an environment its config doesn't cover, so `chant run --env` would refuse it and it isn't listed. |
 | `environments-ledger-unreadable` | member, `graph --composites` | The `chant/lifecycle` branch exists and the member's ledger environments couldn't be listed. |
 | `environments-component-undeclared` | member, `graph --composites` | A component declares an environment the member's `chant.config.ts` environments don't cover, so `chant run --env` would refuse it and it is not listed ([#3153](https://github.com/INTENTIUS/chant/issues/3153)). |
+| `executor-none-declared` | environment `executor.reason`, `graph --composites` | The member's `chant.config.ts` declares no `executor` for the environment, so nothing names the forge workflow that deploys it ([#4402](https://github.com/INTENTIUS/chant/issues/4402)). |
+| `executor-config-unreadable` | environment `executor.reason`, `graph --composites` | The member's `chant.config.ts` couldn't be read, so whether a forge workflow deploys the environment is unknown. |
 | `box-credential-declared` | finding, `check` | `WSP121`: a file in a box member's directory carries a literal secret, a credential's shape or a literal where a credential goes. A `${VAR}`, `$VAR` or secret-manager reference isn't one. |
 | `box-capability-unbrokered` | finding, `check` | `WSP122`: a capability in a member's box block names no broker, so the box would hold its credential. |
 | `box-isolation-collision` | finding, `check` | `WSP123`: two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. |
@@ -399,6 +406,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lease-held` | refusal, `work`; error, `workEvidence` | Someone holds a live lease on the work item: another worker, or, for a claim, the same one. |
 | `lease-not-held` | refusal, `work`; error, `workEvidence` | Nobody holds a live lease on the work item: it expired, was released or was never claimed. |
 | `lease-token-mismatch` | refusal, `work`; error, `workEvidence` | The live lease on the work item carries another fencing token than the one given. |
+| `work-evidence-ops-missing` | error, `workEvidence` | The evidence cites a run, deploy, gate answer or release plan the local `chant/lifecycle` branch does not hold (#3171). |
+| `work-evidence-ops-mismatch` | error, `workEvidence` | The cited ops record does not hash to the `sha256` given, or a cited run's outcome disagrees with the evidence's result. |
+| `work-evidence-ops-unfinished` | error, `workEvidence` | The cited run is still gated or waiting, so it has no outcome to show. |
 | `lease-race` | refusal, `work` | Another writer changed the lease between this command's read and its write. |
 | `lease-push-rejected` | refusal, `work` | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
 | `run-exists` | error, `runs start` and `runs record` | The fields give a run id the ledger already has. |
@@ -994,6 +1004,7 @@ These fields are optional in their documents. Each schema description names the 
 
 | Document | Field | Floor | Meaning |
 |---|---|---|---|
+| `composites` | `components[].environments[].executor` | 0.124.47 | The forge and committed workflow that deploys the environment, `{ forge, workflow, reason }`, from the `executor` on the environment's entry in the member's `chant.config.ts`, a literal entry before a pattern. `forge` is `github`, `gitlab` or `forgejo`. Both are `null` when none is declared, and `reason` is then `executor-none-declared` or `executor-config-unreadable` ([#4402](https://github.com/INTENTIUS/chant/issues/4402)). Never derived from a generated workflow's name |
 | `status` | `releases[].approver` | 0.124.28 | Who approved the change at its gate, or `null` for an ungated release. The release ledger has recorded it since [#1035](https://github.com/INTENTIUS/chant/issues/1035), and `status` first lists it here |
 | `status` | `releases[].releaseDigest` | 0.124.29 | The release the deploy was made from, or `null` for a deploy that named none ([#4043](https://github.com/INTENTIUS/chant/issues/4043)) |
 | `status` | `releases[].releaseLabel` | 0.124.29 | The label that release was cut with, or `null` when there is none or the cut line can't be read |
@@ -1050,6 +1061,8 @@ These fields are optional in their documents. Each schema description names the 
 | `pr-report` | `overdue` | 0.124.41 | Plan stage: each scheduled watch or reconcile Op whose cron fired at least twice since its job last ran, or since its pipeline file was added when no run is on record, as `{ op, cron, since, neverRan?, message }`. Absent when none is overdue or the forge was not asked ([#4289](https://github.com/INTENTIUS/chant/issues/4289)) |
 
 The ledger lines behind these fields follow the same rule. A pending fact and a resolution in `_gates/<op>.jsonl` gain `gitSha` and `runId`, a run record in `<env>/runs__<op>.jsonl` gains `gitSha` and `runOrigin`, and `statement` when a runner key signed it ([#4044](https://github.com/INTENTIUS/chant/issues/4044)), and `failure` on a failed `chant ci run` job from chant 0.124.30 ([#4094](https://github.com/INTENTIUS/chant/issues/4094)), and a release record in `<env>/releases.jsonl` gains `admission`. A line written before 0.124.28 lacks them, and every reader in chant reads it unchanged. A `gitSha` or `runId` of the wrong type on a gate line is dropped on read and the line is kept.
+| `records` | `where` | 0.124.47 | The `--where` clauses the records were filtered with; `summary` then counts the records listed ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Absent without `--where` |
+| `runs` | `filter.where` | 0.124.47 | The `--where` clauses the runs were filtered with; the totals count only those runs ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). Absent without `--where` |
 
 ## Reading older records
 

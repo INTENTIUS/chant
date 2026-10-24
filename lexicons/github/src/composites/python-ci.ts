@@ -50,7 +50,7 @@ export const PythonCI = Composite((props: PythonCIProps) => {
       new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
       new Step({
         name: "Setup Python",
-        uses: "actions/setup-python@v5",
+        uses: actionRef("actions/setup-python"),
         with: { "python-version": pythonVersion, cache: cacheType },
       }),
       ...installSteps,
@@ -67,7 +67,7 @@ export const PythonCI = Composite((props: PythonCIProps) => {
             new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
             new Step({
               name: "Setup Python",
-              uses: "actions/setup-python@v5",
+              uses: actionRef("actions/setup-python"),
               with: { "python-version": pythonVersion, cache: cacheType },
             }),
             ...installSteps.map((s: any) => {

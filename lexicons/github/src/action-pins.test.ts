@@ -6,7 +6,12 @@ import { Workflow, Job } from "./generated/index";
 import { Checkout } from "./composites/checkout";
 import { SetupNode } from "./composites/setup-node";
 import { githubSerializer } from "./serializer";
+import { ACTION_PINS as CORE_PINS } from "@intentius/chant/action-pins";
 import { ACTION_PINS, actionRef } from "./action-pins";
+import { CacheAction } from "./composites/cache";
+import { DockerBuild } from "./composites/docker-build";
+import { GoCI } from "./composites/go-ci";
+import { UploadArtifact } from "./composites/upload-artifact";
 import { gha021 } from "./lint/post-synth/gha021";
 import { gha029 } from "./lint/post-synth/gha029";
 import { gha059 } from "./lint/post-synth/gha059";
@@ -47,15 +52,33 @@ describe("action pins (#2510)", () => {
     }
   });
 
-  test("Checkout and SetupNode default to the current major, not v4", () => {
-    expect((Checkout({}).step.props as { uses?: string }).uses).toBe("actions/checkout@v7");
-    expect((SetupNode({}).step.props as { uses?: string }).uses).toBe("actions/setup-node@v7");
+  test("every row is a row of core's table (#4410)", () => {
+    const coreShas = new Set(Object.values(CORE_PINS).map((p) => p.sha));
+    for (const [slug, pin] of Object.entries(ACTION_PINS)) {
+      expect({ slug, inCore: coreShas.has(pin.sha) }).toEqual({ slug, inCore: true });
+    }
+    expect(ACTION_PINS["actions/setup-node"].sha).toBe(CORE_PINS.setupNode7.sha);
+  });
+
+  test("composites default to the pinned SHA with the release comment (#4410)", () => {
+    const uses = (c: { step: unknown }) => ((c.step as { props: unknown }).props as { uses?: string }).uses;
+    expect(uses(Checkout({}))).toBe(actionRef("actions/checkout", "sha"));
+    expect(uses(SetupNode({}))).toBe(actionRef("actions/setup-node", "sha"));
+    expect(uses(CacheAction({ path: "p", key: "k" }))).toBe(actionRef("actions/cache", "sha"));
+    expect(uses(UploadArtifact({ name: "n", path: "p" }))).toBe(actionRef("actions/upload-artifact", "sha"));
+    expect(actionRef("actions/checkout", "sha")).toMatch(/^actions\/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+  });
+
+  test("pin: \"tag\" still emits the major tag, and an explicit ref wins", () => {
+    expect((Checkout({ pin: "tag" }).step.props as { uses?: string }).uses).toBe("actions/checkout@v7");
+    const mine = CacheAction({ path: "p", key: "k", defaults: { step: { uses: "actions/cache@v3" } } });
+    expect((mine.step.props as { uses?: string }).uses).toBe("actions/cache@v3");
   });
 
   test("pin: \"sha\" writes the SHA as the ref and the version as a YAML comment", () => {
     const yaml = workflowYaml("sha");
     expect(yaml).toContain(`uses: actions/checkout@${ACTION_PINS["actions/checkout"].sha} # v7.0.1\n`);
-    expect(yaml).toContain(`uses: actions/setup-node@${ACTION_PINS["actions/setup-node"].sha} # v7.0.0\n`);
+    expect(yaml).toContain(`uses: actions/setup-node@${ACTION_PINS["actions/setup-node"].sha} # ${ACTION_PINS["actions/setup-node"].version}\n`);
     expect(yaml).not.toMatch(/uses: '/);
   });
 
@@ -63,8 +86,8 @@ describe("action pins (#2510)", () => {
     expect(pinningFindings(workflowYaml("sha"))).toEqual([]);
   });
 
-  test("the default tag warning names the exact fix", () => {
-    const messages = pinningFindings(workflowYaml()).map((d) => d.message);
+  test("the tag warning names the exact fix", () => {
+    const messages = pinningFindings(workflowYaml("tag")).map((d) => d.message);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toContain(`\`uses: ${actionRef("actions/checkout", "sha")}\``);
     expect(messages[0]).toContain(`Checkout({ pin: "sha" })`);

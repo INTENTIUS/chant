@@ -63,7 +63,7 @@ jobs:
         id: start-time
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Key the artifacts by their inputs
         id: key
@@ -71,7 +71,7 @@ jobs:
 
       - name: Look for artifacts already built from these inputs
         id: cached
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             lexicons/*/src/generated
@@ -79,7 +79,7 @@ jobs:
           key: ${{ steps.key.outputs.key }}
           lookup-only: true
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         if: steps.cached.outputs.cache-hit != 'true'
         with:
           node-version: '24'
@@ -91,7 +91,7 @@ jobs:
 
       - name: Cache lexicon schemas
         if: steps.cached.outputs.cache-hit != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
@@ -106,7 +106,7 @@ jobs:
 
       - name: Save the artifacts
         if: steps.cached.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             lexicons/*/src/generated
@@ -131,8 +131,8 @@ jobs:
         id: start-time
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -141,7 +141,7 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
@@ -149,7 +149,7 @@ jobs:
             lexicon-schemas-
 
       - name: Restore the lexicon artifacts
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             lexicons/*/src/generated
@@ -196,11 +196,11 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # Whole history, for the trace budget step (#4032): a trace reads a region's commits and blame.
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -209,7 +209,7 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
@@ -217,7 +217,7 @@ jobs:
             lexicon-schemas-
 
       - name: Restore the lexicon artifacts
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             lexicons/*/src/generated
@@ -325,7 +325,7 @@ jobs:
 
       - name: Upload SARIF results
         if: always()
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: results.sarif
 
@@ -356,8 +356,8 @@ jobs:
         id: start-time
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -366,7 +366,7 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
@@ -374,7 +374,7 @@ jobs:
             lexicon-schemas-
 
       - name: Restore the lexicon artifacts
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             lexicons/*/src/generated
@@ -396,7 +396,7 @@ jobs:
       # first, when it has one, and by file size when it does not. Keeping its
       # results between runs lets a long file start first instead of last.
       - name: Restore vitest's recorded durations
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: node_modules/.vite/vitest
           key: vitest-results-unit-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -477,8 +477,8 @@ jobs:
         id: start-time
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -487,7 +487,7 @@ jobs:
         run: npm install
 
       - name: Cache lexicon schemas
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.chant
           key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
@@ -495,7 +495,7 @@ jobs:
             lexicon-schemas-
 
       - name: Restore the lexicon artifacts
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             lexicons/*/src/generated

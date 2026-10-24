@@ -75,6 +75,23 @@ An Op that changes the checkout and ends `not_done` keeps the attempt's work at 
 
 `criterion` names one of the item's acceptance criteria by id, and `result` is `pass` or `fail`. The entry links a `url`, or names a workspace `path` that chant pins by its sha256 now. `as_of` is optional and defaults to now. chant appends the entry to the item's pins field through `records amend`, with the criterion's verification and `by` set to the holder, and prints the [work-evidence document](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/work-evidence.schema.json) with the criteria counted. The record is written and never committed. When the holder or the token isn't the live lease's, chant refuses the entry and writes nothing, as it does for a criterion the item doesn't list. A `manual` criterion is refused too: the holder is the item's implementer, so a person records a manual verdict with `records amend` instead.
 
+#### Citing an ops result
+
+A criterion whose proof is in the estate, such as "the web component runs green in staging", can cite an ops result instead of a link ([#3171](https://github.com/INTENTIUS/chant/issues/3171)). `ops` names a record on the `chant/lifecycle` branch:
+
+```json
+{ "criterion": "AC-1", "result": "pass", "title": "deploy-web in staging", "ops": { "ledger": "run", "env": "staging", "op": "deploy-web", "id": "3f0c..." } }
+```
+
+| `ledger` | Names | The record |
+|---|---|---|
+| `run` | `env`, `op`, `id` | an Op run in `<env>/runs__<op>.jsonl` |
+| `deploy` | `env`, `runId`, and `component` when the run deployed more than one | a deploy record in `<env>/releases.jsonl` |
+| `gate` | `op`, `gate`, `at` (the resolution's timestamp) | a gate answer in `_gates/<op>.jsonl` |
+| `plan` | `digest` | a release plan in `_plans/` |
+
+Each also takes `member`, for a member's ledger, and `sha256`, the hash of the record as stored, when you already have it. chant reads the record from the local branch before it writes anything, and stores it the way `graph --intent`'s `trace` names a link: `ref` (`chant/lifecycle:<path>`), `field`, `value`, and `sha256`, with `env` and the run's `outcome` for a run. A cited run says what it showed. An `ok` run is `pass` evidence and a `fail` run is `fail` evidence, so a result that disagrees is refused with `work-evidence-ops-mismatch`. A run still gated or waiting has no outcome yet (`work-evidence-ops-unfinished`). A record the branch doesn't hold is refused with `work-evidence-ops-missing`; nothing is fetched, so fetch `chant/lifecycle` first when the run happened elsewhere.
+
 ### Members
 
 The lease lives in the ledger of the member that owns the work kind file ([D7](https://github.com/INTENTIUS/chant/issues/2524)), whichever directory the command runs in. A work kind no member owns, such as the reference workspace's `work/work.kind.mjs`, uses the flat ledger: `refs/chant/lease/work/<id>` and `_leases/<id>.jsonl`. A kind inside member `api` uses `refs/chant/lease/_members/api/work/<id>` and `_members/api/_leases/<id>.jsonl`.

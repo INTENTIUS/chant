@@ -18,11 +18,23 @@ import { findWorkspaceRoot } from "../../project-root";
 
 const USAGE = 'chant query "<sql>" [dir] [--member <name>] [--json]';
 
-/** The ledgers `chant query` reads from `cwd`: every member's in a workspace, else the project's own. */
-export async function queryLedgers(cwd: string, members?: readonly string[]): Promise<QueryLedger[]> {
+/**
+ * The ledgers `chant query` and `chant ledger` read from `cwd`: every
+ * member's in a workspace, else the project's own. With `at`, a commit of
+ * `chant/lifecycle` (`chant ledger --at`, #4363), each is read as that commit
+ * held it rather than at the branch tip.
+ */
+export async function queryLedgers(cwd: string, members?: readonly string[], at?: string): Promise<QueryLedger[]> {
   const { gitLedgerReadPort } = await import("../../lifecycle/git");
   const found = findWorkspaceRoot(cwd);
-  if (!found) return [{ member: null, port: gitLedgerReadPort({ cwd }) }];
+  const atPort = at === undefined ? undefined : await (async () => {
+    const { resolveLedgerRevision, revisionLedgerReadPort } = await import("../../lifecycle/ledger-read");
+    const { memberLedgerPrefix } = await import("../../lifecycle/member-ledger");
+    const repo = found?.dir ?? cwd;
+    const commit = resolveLedgerRevision(repo, at);
+    return (member: string | null) => revisionLedgerReadPort(repo, commit, member === null ? "" : memberLedgerPrefix([member]));
+  })();
+  if (!found) return [{ member: null, port: atPort ? atPort(null) : gitLedgerReadPort({ cwd }) }];
   // Workspace code loads only when there is a workspace, so a level-0 project never pays for it.
   const { readDeclaration, WorkspaceReadError } = await import("../../workspace/declaration");
   const { workingTree } = await import("../../workspace/tree");
@@ -41,7 +53,7 @@ export async function queryLedgers(cwd: string, members?: readonly string[]): Pr
   }
   return declaration.members
     .filter((m) => !wanted || wanted.has(m.name))
-    .map((m) => ({ member: m.name, port: gitLedgerReadPort({ cwd: found.dir, member: m.dir === "." ? "." : m.name }) }));
+    .map((m) => ({ member: m.name, port: atPort ? atPort(m.dir === "." ? null : m.name) : gitLedgerReadPort({ cwd: found.dir, member: m.dir === "." ? "." : m.name }) }));
 }
 
 export async function runQueryCommand(ctx: CommandContext): Promise<number> {

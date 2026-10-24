@@ -57,6 +57,17 @@ describe("spanMetricsNames", () => {
     expect(spanMetricsNames(connector, { add_metric_suffixes: false }).duration?.prometheus).toBe("spans_duration");
   });
 
+  test("the prometheus exporter's translation_strategy decides suffixes; it ignores add_metric_suffixes at the pin", () => {
+    const connector = new SpanMetricsConnector({ namespace: "spans", histogram: { unit: "s" } });
+    const without = new PrometheusExporter({ endpoint: "0.0.0.0:8889", translation_strategy: "UnderscoreEscapingWithoutSuffixes" });
+    expect(spanMetricsNames(connector, without).duration?.prometheus).toBe("spans_duration");
+    const ignored = new PrometheusExporter({ endpoint: "0.0.0.0:8889", add_metric_suffixes: false });
+    expect(spanMetricsNames(connector, ignored).duration?.prometheus).toBe("spans_duration_seconds");
+    const utf8 = new PrometheusExporter({ endpoint: "0.0.0.0:8889", translation_strategy: "NoUTF8EscapingWithSuffixes" });
+    expect(spanMetricsNames(connector, utf8).calls.prometheus).toBe("spans.calls_total");
+    expect(spanMetricsNames(connector, { translation_strategy: "NoTranslation" }).calls.prometheus).toBe("spans.calls");
+  });
+
   test("only a spanmetrics connector", () => {
     expect(() => spanMetricsNames(new PrometheusExporter({ endpoint: "0.0.0.0:8889" }) as never)).toThrow(/spanmetrics/);
   });

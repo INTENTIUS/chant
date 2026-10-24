@@ -130,6 +130,20 @@ export const web = new Service({
 
 Exec-form values such as `CMD` stay strings; you can change them to lists (`{ cmd: ["node", "dist/server.js"] }`). See [Dockerfiles](/chant/lexicons/docker/dockerfiles/) for the step format.
 
+## Import a running compose project
+
+```bash
+chant import --from <env> --lexicon docker -o src/compose/
+```
+
+`chant import --from` reads a compose project's containers from the Docker Engine API ([#4388](https://github.com/INTENTIUS/chant/issues/4388)) and writes the services they were created from. The Engine is the one `DOCKER_HOST` names (a `unix://` socket or a plain `tcp://` endpoint), else `/var/run/docker.sock`. The project is `COMPOSE_PROJECT_NAME` when it is set, else the environment name, and its containers are the ones labelled `com.docker.compose.project=<project>`. A scaled service is read from its first container, and `compose run` containers are skipped.
+
+Each service gets its image, command, entrypoint, environment, labels, working directory, user, healthcheck, ports, restart policy, `depends_on`, volumes and networks. What the image already supplies (its command, environment, labels and so on) is left out, so the service reads as it was declared; `--verbatim` keeps it. Compose's own `com.docker.compose.*` labels are always left out. Volumes and networks named after the project become top-level entries; the others are declared `external`.
+
+Outside swarm, a top-level config is not an Engine object, so its key and its `content` are not kept anywhere the Engine can return them. Import reads a config through the container instead: each absolute file path the service's command names (`--config=/etc/otel/config.yaml`) is read with `GET /containers/{id}/archive`, and one that holds a single text file becomes a config with that `content`, mounted at that path and named `<service>-<file name>`. A path inside a volume or a directory bind mount is left to that mount.
+
+`--owned` exports only services labelled `app.kubernetes.io/managed-by: chant` (set with [`defaultLabels`](/chant/lexicons/docker/default-labels/)); the docker serializer stamps no ownership marker of its own.
+
 ## Workflow
 
 Import is a one-time migration step, not an ongoing sync. After importing:
@@ -146,4 +160,5 @@ Import is a one-time migration step, not an ongoing sync. After importing:
 - `MAINTAINER`, which has no step, is left as a comment with a warning; use a `label` step instead
 - Build args with complex shell expressions may need cleanup by hand
 - Environment variable syntax (`${VAR}`) is kept as written; replace it with `env()` by hand if you want
+- A live import does not recover `deploy`, `build`, secrets, or a config the command does not name; a TLS Engine endpoint (`DOCKER_TLS_VERIFY`) is not supported
 ===

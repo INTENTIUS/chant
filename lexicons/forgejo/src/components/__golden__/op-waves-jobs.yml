@@ -15,7 +15,7 @@ jobs:
     runs-on: plan
     container: node:22
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v7
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Plan, gate and apply wave 1 (dev)
@@ -34,7 +34,7 @@ jobs:
     if: '!cancelled()'
     container: node:22
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v7
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Download the earlier jobs' outcomes
@@ -45,7 +45,7 @@ jobs:
         run: chant run wave --spec waves.json --wave 2 --decide
       - name: Keep wave 2's decision
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations/wave-2.json
@@ -70,11 +70,11 @@ jobs:
       REGION: us
       CLOUD_TOKEN_AUDIENCE: us.example
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v7
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Download wave 2's decision
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+        uses: https://code.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
@@ -97,11 +97,11 @@ jobs:
       - wave-2-prod-decide
     container: node:22
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v7
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Download wave 2's decision
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+        uses: https://code.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations

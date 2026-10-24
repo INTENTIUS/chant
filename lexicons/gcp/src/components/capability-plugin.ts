@@ -8,10 +8,15 @@
 import type { Capability } from "@intentius/chant/components/capability";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import { gcpApplyCapability } from "./gcp-apply";
+import { waitForOperationCapability, waitCloudRunReadyCapability } from "./wait-gcp";
+import { artifactRegistryBackend } from "./artifact-registry-backend";
+import { gcsStorageBackend } from "./gcs-backend";
 
 /** The GCP verb families this plugin contributes. */
 export const GCP_VERB_FAMILIES = {
   apply: ["gcp-apply"],
+  waitVerify: ["wait-for-operation", "wait-cloud-run-ready"],
+  // `publish-image` is core's verb; gcp contributes the "artifact-registry" login backend.
 } as const;
 
 /** The gcp lexicon's capability plugin. */
@@ -20,6 +25,9 @@ export const gcpCapabilityPlugin: CapabilityPlugin = {
   get version(): string {
     return ownPackageVersion(import.meta.url);
   },
-  capabilities: () => [gcpApplyCapability] as unknown as Array<Capability<never, unknown>>,
+  capabilities: () =>
+    [gcpApplyCapability, waitForOperationCapability, waitCloudRunReadyCapability] as unknown as Array<Capability<never, unknown>>,
+  registryBackends: () => [artifactRegistryBackend],
+  storageBackends: () => [gcsStorageBackend],
   families: () => GCP_VERB_FAMILIES,
 };

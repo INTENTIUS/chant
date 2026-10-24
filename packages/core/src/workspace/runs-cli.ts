@@ -49,6 +49,7 @@ import {
   type RunWriteContext,
 } from "./runs";
 import { RUN_TRAILER } from "./trailers";
+import { FilterError, matchesWhere, parseWhere, type FilterFields } from "../read-filter";
 import { locateWorkspace } from "./which-chant";
 import { idList } from "./work";
 import { AGENT_ENV } from "./write-scope";
@@ -71,7 +72,7 @@ export const RUNS_WRITE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspac
 export const RUN_STATEMENT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/run-statement/v1/run-statement.schema.json";
 
 const USAGE = [
-  "chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]",
+  "chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--where <field><op><value>]... [--follow-squash] [--json]",
   "chant workspace runs start --from <file|->",
   "chant workspace runs end <run id> [--from <file|->]",
   "chant workspace runs record --from <file|->",
@@ -177,7 +178,35 @@ export interface RunsQuery {
   base?: string;
   /** Follow squash merges on HEAD to their pull requests' original commits, fetching missing pull request refs (#3035). */
   followSquash?: boolean;
+  /** Typed filters (#4363), each `<field><op><value>` over {@link RUN_FILTER_FIELDS}; every one has to hold. Applied before the totals. */
+  where?: readonly string[];
 }
+
+/** The fields `runs --where` filters on (#4363). */
+export const RUN_FILTER_FIELDS: FilterFields = {
+  id: "text",
+  state: "text",
+  startedAt: "time",
+  endedAt: "time",
+  outcome: "text",
+  by: "text",
+  agent: "text",
+  model: "text",
+  provider: "text",
+  lease: "text",
+  "harness.name": "text",
+  "harness.version": "text",
+  "unit.id": "text",
+  "unit.kind": "text",
+  "cost.amount": "number",
+  "cost.currency": "text",
+  "usage.inputTokens": "number",
+  "usage.outputTokens": "number",
+  ledger: "text",
+};
+
+/** Thrown for a `--where` that can't be applied: a usage error, before the ledger is read. */
+export class RunsFilterError extends Error {}
 
 export interface RunsReason {
   code: RunsReasonCode;
@@ -218,7 +247,7 @@ export type RunsDocument =
       workspace: { name: string; root: string };
       ledger: { branch: string; dir: string; commit: string | null };
       /** The options given. `followSquash` was added within contract 1 (#3035). */
-      filter: { unit: string | null; decision: string | null; by: string | null; since: string | null; followSquash?: boolean };
+      filter: { unit: string | null; decision: string | null; by: string | null; since: string | null; followSquash?: boolean; where?: string[] };
       /** The trust policy the run statements are judged by (#3192). */
       trust: RunsTrust;
       /** Newest first, by when each started. Each carries its `attestation`. */
@@ -281,6 +310,13 @@ function tryGit(top: string, args: string[]): string | undefined {
 /** Read the run ledger and build the document. Never throws a {@link WorkspaceReadError}. */
 export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
   const head = { $schema: RUNS_OUTPUT_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION, chant: readerVersion() };
+  let clauses;
+  try {
+    clauses = parseWhere(query.where ?? [], RUN_FILTER_FIELDS);
+  } catch (err) {
+    if (err instanceof FilterError) throw new RunsFilterError(err.message);
+    throw err;
+  }
   try {
     const located = locateWorkspace(query.cwd);
     const declaration = readDeclaration(located.tree, "", { rootChant: true });
@@ -318,6 +354,7 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
       .filter((r) => wantDecision === undefined || r.decisions.some((d) => d === wantDecision || d.slice(d.indexOf("/") + 1) === wantDecision))
       .filter((r) => query.by === undefined || r.by === query.by)
       .filter((r) => !since || r.commits.some((c) => since!.commits.has(c.sha)) || Date.parse(r.startedAt) > since.date)
+      .filter((r) => matchesWhere(r, clauses))
       .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : a.id < b.id ? 1 : -1));
 
     const byUnit = [...groupBy(selected, (r) => [r.unit?.id ?? null])].map(([unit, rs]) => ({ unit, ...totalRuns(rs) }));
@@ -327,7 +364,7 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
       ...head,
       workspace: { name: declaration.name, root: located.root },
       ledger: { branch: LEDGER_BRANCH, dir, commit: tip },
-      filter: { unit: query.unit ?? null, decision: query.decision ?? null, by: query.by ?? null, since: query.since ?? null, followSquash: query.followSquash === true },
+      filter: { unit: query.unit ?? null, decision: query.decision ?? null, by: query.by ?? null, since: query.since ?? null, followSquash: query.followSquash === true, ...(query.where && query.where.length > 0 ? { where: [...query.where] } : {}) },
       trust,
       runs: selected,
       totals: { all: totalRuns(selected), byUnit, byDecision, byPrincipal },
@@ -652,7 +689,14 @@ export async function runWorkspaceRuns(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "runs is a read and takes no --from; write with runs start, end or record", hint: USAGE }));
     return 1;
   }
-  const doc = await workspaceRuns({ cwd, unit: args.unit, decision: args.decision, by: args.by, since: args.since, base: args.base, followSquash: args.followSquash });
+  let doc: RunsDocument;
+  try {
+    doc = await workspaceRuns({ cwd, unit: args.unit, decision: args.decision, by: args.by, since: args.since, base: args.base, followSquash: args.followSquash, where: args.where });
+  } catch (err) {
+    if (!(err instanceof RunsFilterError)) throw err;
+    console.error(formatError({ message: err.message, hint: USAGE }));
+    return 1;
+  }
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   else if ("error" in doc) console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
   else console.log(formatRuns(doc));

@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     container: node:22
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: chant run --components shared-alb --env staging --dump-outputs shared-alb.outputs.json
       - name: Upload shared-alb outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: shared-alb-outputs
           path: shared-alb.outputs.json
@@ -27,9 +27,9 @@ jobs:
       - shared-alb
     container: node:22
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download shared-alb outputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: shared-alb-outputs
           path: .

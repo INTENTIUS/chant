@@ -16,6 +16,7 @@
  * there: it costs nothing, and with it what the job uploads carries
  * provenance whether or not the group requires it.
  */
+import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { GENERATED_MARKER } from "../discovery/files";
 import type { SecurityGroup } from "./security";
 
@@ -91,10 +92,10 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     "    runs-on: ubuntu-latest",
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     "    steps:",
-    "      - uses: actions/checkout@v4",
+    `      - uses: ${usesRef(ACTION_PINS.checkout4)}`,
     "        with:",
     "          fetch-depth: 0",
-    "      - uses: actions/setup-node@v4",
+    `      - uses: ${usesRef(ACTION_PINS.setupNode4)}`,
     "        with:",
     "          node-version: 24",
     "          registry-url: https://registry.npmjs.org",
@@ -105,7 +106,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...(verify ? [`      - run: ${chant} release verify ${label}`] : []),
     `      - run: ${chant} release publish ${label} ${flags}`,
   ];
-  return `${lines.join("\n")}\n`;
+  return tagComments(`${lines.join("\n")}\n`);
 }
 
 /** The header that marks the file generated, naming the command that regenerates it. */

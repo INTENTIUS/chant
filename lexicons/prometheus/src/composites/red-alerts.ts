@@ -59,7 +59,7 @@ export interface RedLatencyAlert extends RedAlertOptions {
 export interface RedAlertsProps {
   /** The `spanmetrics` connector the metrics come from (the otel lexicon's `RedMetrics` has it as `spanMetrics`), or the names `spanMetricsNames()` returned for it. */
   spanMetrics: OTelComponent<"connector", "spanmetrics", SpanMetricsConnectorConfig> | SpanMetricsNames;
-  /** The `prometheus` exporter that serves them, when its `namespace` or `add_metric_suffixes` changes the names. */
+  /** The `prometheus` exporter that serves them, when its `namespace` or `translation_strategy` changes the names. */
   exporter?: OTelComponent<"exporter", "prometheus", PrometheusExporterConfig> | PrometheusNaming;
   /** Error ratio per service (default: on, above 0.05). `false` leaves it out. */
   errorRatio?: boolean | RedErrorRatioAlert;

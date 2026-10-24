@@ -20,6 +20,18 @@ import { COLLECTOR_PIN } from "./define";
 import { collectorTopologyOf } from "./topology";
 import { otelWorkspaceLinks } from "./workspace-links";
 
+/** opentelemetry-collector-releases also tags its tools (`cmd/builder/v0.163.2`); only the plain release tags are distributions. */
+function releaseTag(tag: string): string | null {
+  return /^v\d+\.\d+\.\d+$/.test(tag) ? tag : null;
+}
+
+const SNAPSHOT_MOVES =
+  "The schema snapshot and its digest move with the version: set the version in src/spec/pin.ts, run `just snapshot` " +
+  "(lexicons/otel) on a networked machine, paste the printed OTEL_SPEC_PIN into src/spec/pin.ts, run `npm run generate`, " +
+  "and read the diffs of src/spec/otel-schemas.snapshot.json and the generated types. Moving otelcol-contrib also moves " +
+  "COLLECTOR_PIN and COLLECTOR_IMAGE, the default image of the k8s, docker and fly collector composites, so it is a " +
+  "level-0 change that needs an entry on the exceptions list (#2525).";
+
 const catalogResource: McpResourceContribution = {
   uri: "otel:resource-catalog",
   name: "OpenTelemetry Collector component catalog",
@@ -55,14 +67,46 @@ export const otelPlugin: LexiconPlugin = {
     printValidationResult(await validate());
   },
 
-  async coverage(_options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
-    const components = BUILTIN_CATALOG.filter((c) => c.type !== undefined);
-    const byKind = new Map<string, string[]>();
-    for (const c of components) byKind.set(c.kind, [...(byKind.get(c.kind) ?? []), c.type!]);
-    console.error(`otel: ${components.length} built-in components, typed against ${COLLECTOR_PIN.source} ${COLLECTOR_PIN.version}`);
-    for (const [kind, types] of byKind) console.error(`  ${kind}s: ${types.join(", ")}`);
+  async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
+    const { coverageReport, formatCoverage } = await import("./coverage");
+    const report = coverageReport();
+    console.error(formatCoverage(report));
+    if (options?.verbose) {
+      for (const d of report.distributions) {
+        console.error(`  ${d.distribution}, reached through defineComponent: ${[...d.schemaNotBuiltin, ...d.noSchemaNotBuiltin].join(", ")}`);
+      }
+    }
     console.error("  anything else: defineComponent (see docs: custom components)");
   },
+
+  // #3361: coverage against the otelcol-contrib manifest, offline from the
+  // committed schema snapshot.
+  async coverageReport(): Promise<{ unaccountedKinds?: string[] }> {
+    const { coverageReport } = await import("./coverage");
+    return coverageReport();
+  },
+
+  // The distribution manifests the generated config types are scoped by
+  // (#3361): otelcol-contrib, which COLLECTOR_PIN and COLLECTOR_IMAGE follow,
+  // and otelcol-k8s for the coverage report.
+  upstreamPin: {
+    label: "otelcol-contrib",
+    file: "src/spec/pin.ts",
+    pattern: /export const OTELCOL_CONTRIB_VERSION = "([^"]+)"/,
+    replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${v}"`),
+    alsoMoves: SNAPSHOT_MOVES,
+    upstream: { owner: "open-telemetry", repo: "opentelemetry-collector-releases", kind: "releases", tagVersion: releaseTag },
+  },
+  upstreamPins: [
+    {
+      label: "otelcol-k8s",
+      file: "src/spec/pin.ts",
+      pattern: /export const OTELCOL_K8S_VERSION = "([^"]+)"/,
+      replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${v}"`),
+      alsoMoves: SNAPSHOT_MOVES,
+      upstream: { owner: "open-telemetry", repo: "opentelemetry-collector-releases", kind: "releases", tagVersion: releaseTag },
+    },
+  ],
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
     const { packageLexicon } = await import("./codegen/package");

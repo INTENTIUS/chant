@@ -25,8 +25,7 @@
  * "replace required" and left alone. A network and a subnetwork still
  * reconcile by existence only.
  */
-import { GCP_RESOURCE_OWNERSHIP_KEYS } from "../../ownership";
-import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+import { gcpResourceLabels } from "../../ownership";
 import type { GcpHttp, GcpResource, OperationSpec, ReconcileStep, ResourceMapper } from "./gcp-apply";
 
 export const COMPUTE_HOST = "https://compute.googleapis.com";
@@ -122,16 +121,12 @@ function pick(spec: Obj, keys: readonly string[]): Obj {
 }
 
 /**
- * The resource's labels GCP accepts, plus the ownership marker. Composites put
- * Kubernetes-style keys (`app.kubernetes.io/component`) in `metadata.labels`,
- * which a compute label key can't hold, so those are left out.
+ * The resource's labels GCP accepts, plus the ownership labels (`managed-by`,
+ * `chant-stack`, `chant-env`). Kubernetes-style keys are dropped; see
+ * `gcpResourceLabels`.
  */
-export function computeLabels(labels: Record<string, string> | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(labels ?? {})) {
-    if (/^[a-z][a-z0-9_-]{0,62}$/.test(k) && typeof v === "string" && /^[a-z0-9_-]{0,63}$/.test(v)) out[k] = v;
-  }
-  return { ...out, [GCP_RESOURCE_OWNERSHIP_KEYS.managedBy]: OWNERSHIP_MANAGED_BY_VALUE };
+export function computeLabels(labels: Record<string, unknown> | undefined): Record<string, string> {
+  return gcpResourceLabels(labels);
 }
 
 /** ComputeAddress → addresses.insert body. Pure. */

@@ -100,7 +100,7 @@ export const compositeCatalog: CompositeEntry[] = [
         "name": "exporter",
         "type": "OTelComponent<\"exporter\", \"prometheus\", PrometheusExporterConfig> | PrometheusNaming",
         "required": false,
-        "description": "The `prometheus` exporter that serves them, when its `namespace` or `add_metric_suffixes` changes the names."
+        "description": "The `prometheus` exporter that serves them, when its `namespace` or `translation_strategy` changes the names."
       },
       {
         "name": "quantiles",

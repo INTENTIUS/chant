@@ -14,6 +14,7 @@ import { runCiWorkflow } from "./ci-green-cli";
 import { BUILD_BLOCK_MARKER, buildTriggerEdits, CI_GREEN_WORKFLOW_FILE, dispatchableWorkflows, jobCheckRuns, renderCiGreenWorkflow, workflowsHolding, writeTopLevel } from "./ci-green-workflow";
 import { parseDeclaration } from "./declaration";
 import { cleanScratch, declaration, git, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
+import { ACTION_PINS, usesRef } from "../action-pins";
 
 afterAll(cleanScratch);
 
@@ -82,7 +83,7 @@ describe("the workflows that hold required check runs (#3573)", () => {
     expect(doc.concurrency).toEqual({ group: "chant-ci-green", "cancel-in-progress": false });
     expect(doc.permissions).toEqual({ contents: "write", checks: "read" });
     const steps = doc.jobs.tick.steps;
-    expect(steps[0]).toEqual({ uses: "actions/checkout@v6", with: { ref: "main", "fetch-depth": 0 } });
+    expect(steps[0]).toEqual({ uses: usesRef(ACTION_PINS.checkout6), with: { ref: "main", "fetch-depth": 0 } });
     expect(steps[2].run).toBe("npx --yes @intentius/chant@0.108.0 ci tick");
     expect(steps[2]["working-directory"]).toBeUndefined();
     expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
@@ -128,7 +129,7 @@ describe("the token the tick pushes its tags with (#3573)", () => {
     const plain = renderCiGreenWorkflow(base);
     const text = renderCiGreenWorkflow({ ...base, push: { secret: "CI_GREEN_TOKEN" } });
     const steps = (parseYAMLDocument(text) as Yaml).jobs.tick.steps;
-    expect(steps[0]).toEqual({ uses: "actions/checkout@v6", with: { ref: "main", "fetch-depth": 0, token: "${{ secrets.CI_GREEN_TOKEN || github.token }}" } });
+    expect(steps[0]).toEqual({ uses: usesRef(ACTION_PINS.checkout6), with: { ref: "main", "fetch-depth": 0, token: "${{ secrets.CI_GREEN_TOKEN || github.token }}" } });
     // Check runs are still read with the Actions token: a fine-grained token can't call the Checks API.
     expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
     expect((parseYAMLDocument(text) as Yaml).permissions).toEqual({ contents: "write", checks: "read" });
@@ -147,7 +148,7 @@ describe("the token the tick pushes its tags with (#3573)", () => {
     const steps = (parseYAMLDocument(renderCiGreenWorkflow({ ...base, push: { appIdVar: "CI_GREEN_APP_ID", appKeySecret: "CI_GREEN_APP_KEY" } })) as Yaml).jobs.tick.steps;
     expect(steps[0]).toMatchObject({
       id: "app-token",
-      uses: "actions/create-github-app-token@v2",
+      uses: usesRef(ACTION_PINS.createGithubAppToken2),
       with: { "app-id": "${{ vars.CI_GREEN_APP_ID }}", "private-key": "${{ secrets.CI_GREEN_APP_KEY }}" },
     });
     expect(steps[1].with.token).toBe("${{ steps.app-token.outputs.token }}");

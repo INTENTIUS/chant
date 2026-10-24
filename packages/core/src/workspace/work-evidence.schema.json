@@ -45,7 +45,7 @@
         },
         "evidence": {
           "type": "object",
-          "description": "The entry appended: a title, a url or a path pinned by sha256, as_of, and the criterion, its verification, the result and by, the lease holder.",
+          "description": "The entry appended: a title, a url, a path pinned by sha256 or an ops result verified against its ledger (#3171), as_of, and the criterion, its verification, the result and by, the lease holder.",
           "required": [
             "title",
             "criterion",
@@ -91,6 +91,50 @@
             "by": {
               "type": "string",
               "description": "The lease holder that attached it."
+            },
+            "ops": {
+              "type": "object",
+              "description": "An ops result on the chant/lifecycle branch (#3171), named the way graph --intent's trace names a link: the ledger file in ref, the field and value that pick the record out of it, and the record's sha256 as stored. A run carries its env and outcome, a deploy its env.",
+              "required": [
+                "ledger",
+                "ref",
+                "field",
+                "value",
+                "sha256"
+              ],
+              "properties": {
+                "ledger": {
+                  "enum": [
+                    "run",
+                    "deploy",
+                    "gate",
+                    "plan"
+                  ]
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^chant/lifecycle:"
+                },
+                "field": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "env": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "enum": [
+                    "ok",
+                    "fail"
+                  ]
+                }
+              }
             }
           }
         },
@@ -207,7 +251,10 @@
                 "lease-held",
                 "lease-not-held",
                 "lease-token-mismatch",
-                "not-a-git-repository"
+                "not-a-git-repository",
+                "work-evidence-ops-missing",
+                "work-evidence-ops-mismatch",
+                "work-evidence-ops-unfinished"
               ]
             },
             "message": {

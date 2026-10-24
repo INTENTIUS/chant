@@ -12,6 +12,7 @@
  */
 
 import type { EvidenceResult, WorkAcceptance } from "../../workspace/work";
+import type { OpsCitation } from "../../workspace/work-evidence-ops";
 
 export interface WorkEvidenceArgs {
   /** The run's work lease: `workLeaseOutput()`, which the builder passes. */
@@ -22,8 +23,14 @@ export interface WorkEvidenceArgs {
   title: string;
   /** A public https:// link, or */
   url?: string;
-  /** a workspace file, pinned by the hash of its bytes now. */
+  /** a workspace file, pinned by the hash of its bytes now, or */
   path?: string;
+  /**
+   * an ops result (#3171): a run, a deploy, a gate answer or a release plan
+   * on the `chant/lifecycle` branch, verified against its ledger before the
+   * entry is written. A cited run's outcome must agree with `result`.
+   */
+  ops?: OpsCitation;
   /** The work kind file, when the declaration names more than one with the item. */
   kind?: string;
   /** Where the workspace is found; the run's directory by default. */
@@ -54,6 +61,7 @@ export async function workEvidence(args: WorkEvidenceArgs): Promise<WorkEvidence
     title: args.title,
     ...(args.url !== undefined ? { url: args.url } : {}),
     ...(args.path !== undefined ? { path: args.path } : {}),
+    ...(args.ops !== undefined ? { ops: args.ops } : {}),
     ...(args.kind !== undefined ? { kind: args.kind } : {}),
   });
   if ("error" in out) throw new Error(`workEvidence refused for ${lease.item} ${args.criterion}: ${out.error.code}: ${out.error.message}`);

@@ -8,7 +8,8 @@
  */
 
 import { defineBuiltin } from "../define";
-import type { AttributesMatch } from "./processors";
+import type { Overlay } from "./overlay";
+import type { FilterProcessorSchemaConfig, RedactionProcessorSchemaConfig, TransformProcessorSchemaConfig } from "../generated/index";
 
 /** What an OTTL processor does when a condition or statement errors at run time. */
 export type OttlErrorMode = "ignore" | "silent" | "propagate";
@@ -58,38 +59,7 @@ export interface FilterLogMatch {
  * match blocks (for traces, the legacy blocks sit under `spans`), not both:
  * the collector rejects a signal that mixes them.
  */
-export interface FilterProcessorConfig {
-  /** Default `propagate`: an erroring condition fails the batch. `ignore` logs and moves on. */
-  error_mode?: OttlErrorMode;
-  traces?: {
-    /** Drops the span, e.g. `attributes["http.route"] == "/healthz"`. */
-    span?: string[];
-    /** Drops the span event. */
-    spanevent?: string[];
-  };
-  /** Legacy span matching. With `include`, spans that do not match are dropped; with `exclude`, spans that match. */
-  spans?: { include?: AttributesMatch; exclude?: AttributesMatch };
-  metrics?: {
-    /** Drops the whole metric, e.g. `name == "http.server.duration" and type == METRIC_DATA_TYPE_HISTOGRAM`. */
-    metric?: string[];
-    /** Drops the data point. */
-    datapoint?: string[];
-    /** Legacy: keeps only the metrics that match. */
-    include?: FilterMetricMatch;
-    /** Legacy: drops the metrics that match. */
-    exclude?: FilterMetricMatch;
-    /** Legacy: options for the `regexp` match type. */
-    regexp?: FilterRegexpSettings;
-  };
-  logs?: {
-    /** Drops the log record, e.g. `severity_number < SEVERITY_NUMBER_WARN`. */
-    log_record?: string[];
-    /** Legacy: keeps only the log records that match. */
-    include?: FilterLogMatch;
-    /** Legacy: drops the log records that match. */
-    exclude?: FilterLogMatch;
-  };
-}
+export type FilterProcessorConfig = FilterProcessorSchemaConfig;
 
 /** Drops spans, span events, metrics, data points and log records that match OTTL conditions. */
 export const FilterProcessor = defineBuiltin<FilterProcessorConfig, "processor", "filter">({
@@ -150,13 +120,19 @@ export interface TransformStatementGroup<Ctx extends string = string> {
 /** Each entry is a group, or a bare statement whose context the collector infers. */
 export type TransformStatements<Ctx extends string> = Array<string | TransformStatementGroup<Ctx>>;
 
-export interface TransformProcessorConfig {
-  /** Default `propagate`. */
-  error_mode?: OttlErrorMode;
-  trace_statements?: TransformStatements<TraceStatementContext>;
-  metric_statements?: TransformStatements<MetricStatementContext>;
-  log_statements?: TransformStatements<LogStatementContext>;
-}
+/**
+ * A statement list also takes bare statement strings, which upstream's
+ * custom unmarshaller accepts and its schema does not show; each list is
+ * typed here for the contexts its signal allows.
+ */
+export type TransformProcessorConfig = Overlay<
+  TransformProcessorSchemaConfig,
+  {
+    trace_statements?: TransformStatements<TraceStatementContext>;
+    metric_statements?: TransformStatements<MetricStatementContext>;
+    log_statements?: TransformStatements<LogStatementContext>;
+  }
+>;
 
 const TRANSFORM_CONTEXTS: Record<"trace_statements" | "metric_statements" | "log_statements", readonly string[]> = {
   trace_statements: ["resource", "scope", "span", "spanevent"],
@@ -208,24 +184,7 @@ export const TransformProcessor = defineBuiltin<TransformProcessorConfig, "proce
  * hash when `hash_function` is set; `allowed_values` exempts a value from
  * masking. Patterns are Go (RE2) regular expressions.
  */
-export interface RedactionProcessorConfig {
-  /** Keep every key, so only values are masked. Default false. */
-  allow_all_keys?: boolean;
-  /** The keys that survive when `allow_all_keys` is false. */
-  allowed_keys?: string[];
-  /** Keys never touched: not deleted, not masked. */
-  ignored_keys?: string[];
-  /** Regexes on keys; every value of a matching key is masked. */
-  blocked_key_patterns?: string[];
-  /** Regexes on values; the matching part is masked. */
-  blocked_values?: string[];
-  /** Regexes on values that are never masked, even when they match a blocked pattern. */
-  allowed_values?: string[];
-  /** Hash blocked values with this function instead of masking them. */
-  hash_function?: "md5" | "sha1" | "sha3";
-  /** How much the processor records about what it redacted, as span attributes. Default `info`. */
-  summary?: "debug" | "info" | "silent";
-}
+export type RedactionProcessorConfig = RedactionProcessorSchemaConfig;
 
 /** Deletes attributes whose keys aren't allowed, and masks or hashes values that match blocked patterns. */
 export const RedactionProcessor = defineBuiltin<RedactionProcessorConfig, "processor", "redaction">({

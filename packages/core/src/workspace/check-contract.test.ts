@@ -50,13 +50,13 @@ describe("chant workspace check on the chant repo (#2557)", () => {
   test("validates in the working tree and at HEAD", async () => {
     const now = result(await runChecks(REPO));
     expectValid(now);
-    expect(now.workspace).toEqual({ name: "chant", root: "." });
+    expect(now.workspace).toMatchObject({ name: "chant", root: "." });
     expect(now.declaration?.file).toBe("chant.workspace.json");
 
     const head = result(await runChecks(join(REPO, "packages", "core"), "HEAD"));
     expectValid(head);
     expect(head.at).toBe(git(REPO, "rev-parse", "HEAD"));
-    expect(head.workspace).toEqual({ name: "chant", root: "." });
+    expect(head.workspace).toMatchObject({ name: "chant", root: "." });
     expect(head.declaration?.file).toBe("../../chant.workspace.json");
   });
 });
@@ -83,7 +83,7 @@ describe("chant workspace check on built workspaces", () => {
     const doc = result(await runChecks(root));
     expectValid(doc);
     expect(doc.ok).toBe(false);
-    expect(doc.workspace).toEqual({ name: "acme", root: "." });
+    expect(doc.workspace).toEqual({ name: "acme", root: ".", repo: null });
     expect(ruleIds(doc)).toEqual(["WSP004", "WSP003"]);
 
     const tooOld = repo({ "chant.workspace.json": declaration([], { minReader: "999.0.0" }) });
@@ -94,7 +94,7 @@ describe("chant workspace check on built workspaces", () => {
     ] as const) {
       const d = result(await runChecks(dir));
       expectValid(d);
-      expect(d.workspace).toEqual({ name: null, root: "." });
+      expect(d.workspace).toEqual({ name: null, root: ".", repo: null });
       expect(d.declaration?.diagnostics.map((x) => [x.ruleId, x.code])).toEqual([["WSP001", code]]);
     }
   });

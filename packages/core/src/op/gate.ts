@@ -382,6 +382,31 @@ export interface GateCheckInput {
    * no `empty` resolution counts.
    */
   verifyEmpty?: (planDigest: string) => Promise<boolean>;
+  /**
+   * A workspace gate that may stand in for this gate (#2554, #2524 D17,
+   * ws-039). Read only on a gate bound to a plan, and only when the gate's
+   * own approvals don't pass it. The stand-in decides: it answers an approval
+   * only when the member opted in at base and the workspace approval's
+   * digest covers this member's plan. Absent, a workspace gate never
+   * satisfies this gate.
+   */
+  workspace?: WorkspaceGateStandIn;
+}
+
+/** What a workspace gate approval that stands in for a member gate names (#2554). */
+export interface WorkspaceGateStood {
+  /** The workspace gate's name. */
+  gate: string;
+  /** The digest of the member plans the approval covers. */
+  digest: string;
+  approvedBy: string;
+  /** When the workspace approval was recorded. */
+  timestamp: string;
+}
+
+/** See {@link GateCheckInput.workspace}. */
+export interface WorkspaceGateStandIn {
+  standIn(q: { op: string; gate: string; planDigest: string; environment?: string }): Promise<WorkspaceGateStood | null>;
 }
 
 /**
@@ -452,9 +477,10 @@ export type GateCheck =
        * under one of the gate's aliases counted, on any gate. `"empty"`
        * (#4045) when a release gate passed over an empty change set, on the
        * `empty: true` resolution the promote wrote, after the stored
-       * document was read back and found empty.
+       * document was read back and found empty. `"workspace"` (#2554) when a
+       * workspace gate's approval stood in for it ({@link GateCheckInput.workspace}).
        */
-      via?: "quorum" | "policy" | "alias" | "empty";
+      via?: "quorum" | "policy" | "alias" | "empty" | "workspace";
       /** Every approval that counted toward the quorum. Set with `via`. */
       approvals?: GateResolutionRecord[];
       /** The approvals this run carried from an alias and wrote under the gate's name (#3949). Set when `via` is `"alias"`. */
@@ -895,6 +921,29 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       return { satisfied: true, resolution: written[0]!, via: "alias", carried: written };
     }
     mismatched = found.mismatched;
+  }
+
+  // #2554, ws-039: a workspace gate stands in only when the member opted in
+  // at base and the workspace approval's digest covers this plan.
+  if (input.workspace && input.planDigest !== undefined) {
+    const stood = await input.workspace.standIn({ op: input.op, gate: input.gate, planDigest: input.planDigest, ...(env !== undefined ? { environment: env } : {}) });
+    if (stood) {
+      return {
+        satisfied: true,
+        via: "workspace",
+        resolution: {
+          version: 1,
+          kind: "resolution",
+          op: input.op,
+          gate: input.gate,
+          resolvedBy: stood.approvedBy,
+          timestamp: stood.timestamp,
+          planDigest: input.planDigest,
+          ...(env !== undefined ? { environment: env } : {}),
+          workspaceGate: { gate: stood.gate, digest: stood.digest },
+        },
+      };
+    }
   }
 
   // #4045: an approval of this gate for another release stands as a mismatch

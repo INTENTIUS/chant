@@ -37,7 +37,7 @@ export interface RedDashboardProps extends DashboardOptions {
    * `spanMetricsNames()` returned for it.
    */
   spanMetrics: OTelComponent<"connector", "spanmetrics", SpanMetricsConnectorConfig> | SpanMetricsNames;
-  /** The `prometheus` exporter that serves them, when its `namespace` or `add_metric_suffixes` changes the names. */
+  /** The `prometheus` exporter that serves them, when its `namespace` or `translation_strategy` changes the names. */
   exporter?: OTelComponent<"exporter", "prometheus", PrometheusExporterConfig> | PrometheusNaming;
   /** Duration quantiles, one panel each (default p50, p95 and p99). */
   quantiles?: number[];

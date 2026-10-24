@@ -3,12 +3,14 @@
  */
 
 import { defineBuiltin } from "../define";
+import type { Overlay, Require } from "./overlay";
+import type { DebugExporterSchemaConfig, GoogleCloudExporterSchemaConfig, OtlpExporterSchemaConfig, OtlpHttpExporterSchemaConfig, PrometheusExporterSchemaConfig } from "../generated/index";
 import { queueIssues } from "./common";
-import type { Duration, ExporterHelperSettings, GRPCClientSettings, HTTPClientSettings, TLSServerSettings } from "./common";
+import type { Duration, ExporterHelperSettings } from "./common";
 
 // ── otlp ─────────────────────────────────────────────────────────────
 
-export type OtlpExporterConfig = GRPCClientSettings & ExporterHelperSettings;
+export type OtlpExporterConfig = OtlpExporterSchemaConfig;
 
 /** Sends OTLP over gRPC to another collector or a backend. */
 export const OtlpExporter = defineBuiltin<OtlpExporterConfig, "exporter", "otlp">({
@@ -22,13 +24,7 @@ export const OtlpExporter = defineBuiltin<OtlpExporterConfig, "exporter", "otlp"
 
 // ── otlphttp ─────────────────────────────────────────────────────────
 
-export type OtlpHttpExporterConfig = HTTPClientSettings &
-  ExporterHelperSettings & {
-    traces_endpoint?: string;
-    metrics_endpoint?: string;
-    logs_endpoint?: string;
-    encoding?: "proto" | "json";
-  };
+export type OtlpHttpExporterConfig = OtlpHttpExporterSchemaConfig;
 
 /** Sends OTLP over HTTP. `endpoint` gets `/v1/traces` etc. appended; the per-signal endpoints are used as given. */
 export const OtlpHttpExporter = defineBuiltin<OtlpHttpExporterConfig, "exporter", "otlphttp">({
@@ -48,12 +44,7 @@ export const OtlpHttpExporter = defineBuiltin<OtlpHttpExporterConfig, "exporter"
 
 // ── debug ────────────────────────────────────────────────────────────
 
-export interface DebugExporterConfig {
-  verbosity?: "basic" | "normal" | "detailed";
-  sampling_initial?: number;
-  sampling_thereafter?: number;
-  use_internal_logger?: boolean;
-}
+export type DebugExporterConfig = DebugExporterSchemaConfig;
 
 /** Writes telemetry to the collector's console, for debugging. */
 export const DebugExporter = defineBuiltin<DebugExporterConfig, "exporter", "debug">({
@@ -65,18 +56,8 @@ export const DebugExporter = defineBuiltin<DebugExporterConfig, "exporter", "deb
 
 // ── prometheus ───────────────────────────────────────────────────────
 
-export interface PrometheusExporterConfig {
-  /** The address the exporter serves `/metrics` on, e.g. `0.0.0.0:8889`. */
-  endpoint: string;
-  namespace?: string;
-  const_labels?: Record<string, string>;
-  send_timestamps?: boolean;
-  metric_expiration?: Duration;
-  enable_open_metrics?: boolean;
-  add_metric_suffixes?: boolean;
-  resource_to_telemetry_conversion?: { enabled: boolean };
-  tls?: TLSServerSettings;
-}
+/** The exporter has nothing to serve on without an endpoint. */
+export type PrometheusExporterConfig = Require<PrometheusExporterSchemaConfig, "endpoint">;
 
 /** Serves metrics on an endpoint Prometheus scrapes. */
 export const PrometheusExporter = defineBuiltin<PrometheusExporterConfig, "exporter", "prometheus">({
@@ -94,39 +75,48 @@ export interface GoogleCloudResourceFilter {
   regex?: string;
 }
 
-export interface GoogleCloudExporterConfig extends ExporterHelperSettings {
-  /** The GCP project. Detected from credentials when omitted. */
-  project?: string;
-  user_agent?: string;
-  destination_project_quota?: boolean;
-  metric?: {
-    prefix?: string;
-    endpoint?: string;
-    use_insecure?: boolean;
-    known_domains?: string[];
-    skip_create_descriptor?: boolean;
-    instrumentation_library_labels?: boolean;
-    create_service_timeseries?: boolean;
-    create_metric_descriptor_buffer_size?: number;
-    service_resource_labels?: boolean;
-    resource_filters?: GoogleCloudResourceFilter[];
-    cumulative_normalization?: boolean;
-    sum_of_squared_deviation?: boolean;
-  };
-  trace?: {
-    endpoint?: string;
-    use_insecure?: boolean;
-    attribute_mappings?: Array<{ key: string; replacement: string }>;
-  };
-  log?: {
-    endpoint?: string;
-    use_insecure?: boolean;
-    default_log_name?: string;
-    resource_filters?: GoogleCloudResourceFilter[];
-    service_resource_labels?: boolean;
-    error_reporting_type?: boolean;
-  };
-}
+/**
+ * The exporter embeds `collector.Config` from GoogleCloudPlatform's
+ * opentelemetry-operations-go, outside the collector repositories, so the
+ * schema carries only the exporterhelper fields. The rest is written here
+ * against that module's config.go.
+ */
+export type GoogleCloudExporterConfig = Overlay<
+  GoogleCloudExporterSchemaConfig,
+  {
+    /** The GCP project. Detected from credentials when omitted. */
+    project?: string;
+    user_agent?: string;
+    destination_project_quota?: boolean;
+    metric?: {
+      prefix?: string;
+      endpoint?: string;
+      use_insecure?: boolean;
+      known_domains?: string[];
+      skip_create_descriptor?: boolean;
+      instrumentation_library_labels?: boolean;
+      create_service_timeseries?: boolean;
+      create_metric_descriptor_buffer_size?: number;
+      service_resource_labels?: boolean;
+      resource_filters?: GoogleCloudResourceFilter[];
+      cumulative_normalization?: boolean;
+      sum_of_squared_deviation?: boolean;
+    };
+    trace?: {
+      endpoint?: string;
+      use_insecure?: boolean;
+      attribute_mappings?: Array<{ key: string; replacement: string }>;
+    };
+    log?: {
+      endpoint?: string;
+      use_insecure?: boolean;
+      default_log_name?: string;
+      resource_filters?: GoogleCloudResourceFilter[];
+      service_resource_labels?: boolean;
+      error_reporting_type?: boolean;
+    };
+  }
+>;
 
 /**
  * Sends traces to Cloud Trace, metrics to Cloud Monitoring and logs to Cloud

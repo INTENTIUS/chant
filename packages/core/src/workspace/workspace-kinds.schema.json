@@ -46,7 +46,7 @@
         "name": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
-          "description": "The kind's name, as a member's kind field names it. chant, workspace, other and examples are built in and can't be supplied."
+          "description": "The kind's name, as a member's kind field names it. chant, workspace, repo, design, other and examples are built in and can't be supplied."
         },
         "description": {
           "type": "string",
@@ -83,6 +83,9 @@
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "description": "A link reader chant ships, by name, that derives a member's links from the member's own files (#3932): dbt-project reads a dbt project's sources; goose-dir, golang-migrate-dir, clickhouse-migrations-dir and flyway-dir list a migrations directory in order (#4400). The reader is chant's code and runs offline, parsing files as data; the package supplies only the name. A name this chant doesn't have keeps the kind without a reader, and the load reports it. A chant older than this field fails a kinds file that uses it."
+        },
+        "memberFile": {
+          "$ref": "#/$defs/memberFile"
         }
       },
       "patternProperties": {
@@ -307,6 +310,30 @@
           },
           "description": "The object's own fields, each a string, integer or boolean field. A member sets any of them; the rest take their defaults."
         }
+      },
+      "additionalProperties": false
+    },
+    "memberFile": {
+      "type": "object",
+      "description": "A file every member of this kind has, and the JSON Schema it must pass (#3672). chant workspace check reads the file from the member's directory, parses it as YAML when its name ends in .yml or .yaml and as JSON otherwise, and validates it against the schema (WSP012). The schema is a JSON file inside the supplying package, read as data with draft 2020-12. A chant older than this field fails a kinds file that uses it.",
+      "required": [
+        "path",
+        "schema"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file, relative to the member's directory, such as terragucci.yml. Forward slashes; no .. segment and no leading /.",
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\\\]+$"
+        },
+        "schema": {
+          "type": "string",
+          "description": "The JSON Schema the file must pass, relative to the supplying package's directory, such as schemas/terragucci.schema.json. It must be a .json file inside the package.",
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\\\]+\\.json$"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
       },
       "additionalProperties": false
     }

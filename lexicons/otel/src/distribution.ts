@@ -2,9 +2,9 @@
  * `Distribution`, the builder manifest `ocb` (the OpenTelemetry Collector
  * Builder) builds a custom collector from (#3374).
  *
- * The fields are the builder's `Config` at `COLLECTOR_PIN`
- * (`cmd/builder/internal/builder/config.go` in opentelemetry-collector at
- * v0.130.0): `dist`, a module list per component kind, `providers`,
+ * The fields are the builder's `Config` as read at v0.130.0
+ * (`cmd/builder/internal/builder/config.go` in opentelemetry-collector):
+ * `dist`, a module list per component kind, `providers`,
  * `converters`, `replaces`, `excludes` and `conf_resolver`. `telemetry`
  * (v0.146.0) is not in it, and `otelcol_version`, removed in v0.113.0, is
  * not either.
@@ -12,7 +12,7 @@
  * A component list takes a module (`{ gomod, import?, name?, path? }`) or a
  * component class. A built-in class writes its module at `COLLECTOR_PIN`
  * (`OtlpReceiver` is `go.opentelemetry.io/collector/receiver/otlpreceiver
- * v0.130.0`), and a `defineComponent` class writes its own pin's source and
+ * v0.162.0`), and a `defineComponent` class writes its own pin's source and
  * version, so the manifest names the same versions the config was typed
  * against.
  *

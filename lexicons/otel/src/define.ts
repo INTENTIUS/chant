@@ -12,9 +12,9 @@
  * ## Schema pinning
  *
  * Every definition carries a `pin`: the source its config type was written
- * against and the version of that source. Built-ins share `COLLECTOR_PIN`,
- * which moves only when this package does, so the chant lexicon version pins
- * them. A custom definition must name its own pin, typically the npm package
+ * against and the version of that source. Built-ins share `COLLECTOR_PIN`:
+ * their config types are generated from upstream `config.schema.yaml` at that
+ * release (`src/spec/`, #3361), so the chant lexicon version pins them. A custom definition must name its own pin, typically the npm package
  * (or Go module) that ships the component and the release its type follows,
  * optionally with a digest of the schema document. chant records the pin; it
  * does not fetch or verify the schema. The pin shows up in three places:
@@ -35,6 +35,7 @@
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import { canonicalComponentType, componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
+import { OTELCOL_CONTRIB_VERSION } from "./spec/pin";
 
 /** Where a component's config schema comes from, and which version of it the type follows. */
 export interface SchemaPin {
@@ -47,12 +48,15 @@ export interface SchemaPin {
 }
 
 /**
- * The collector distribution the built-in config types follow. Bumping it is a
- * lexicon change like any other, released with this package.
+ * The collector distribution the built-in config types follow: the
+ * `otelcol-contrib` release whose manifest scopes them and whose component
+ * schemas they are generated from (`OTELCOL_CONTRIB_VERSION` in
+ * `src/spec/pin.ts`). Bumping it is a lexicon change like any other, released
+ * with this package, and it moves `COLLECTOR_IMAGE` with it.
  */
 export const COLLECTOR_PIN: SchemaPin = Object.freeze({
   source: "github.com/open-telemetry/opentelemetry-collector-contrib",
-  version: "v0.130.0",
+  version: OTELCOL_CONTRIB_VERSION,
 });
 
 /**

@@ -1115,8 +1115,10 @@ export const policyGate = (opts?: WithStepRefs<PolicyGateArgs> & { id?: string }
  * Attach evidence to an acceptance criterion of the work item the run holds
  * the lease on (#2772), for an Op that declares `workLease`. The run's lease
  * is passed for it, so the write happens only while the lease is still the
- * run's. `opts` takes the `result` (pass or fail), a `title`, and a `url` or a
- * workspace `path` to pin by hash. A `manual` criterion is refused: the run
+ * run's. `opts` takes the `result` (pass or fail), a `title`, and a `url`, a
+ * workspace `path` to pin by hash, or an `ops` result to cite (#3171): a run,
+ * deploy, gate answer or release plan on `chant/lifecycle`, verified against
+ * its ledger. A `manual` criterion is refused: the run
  * is the item's implementer. The `atMostOnce` profile: each attempt appends.
  */
 export const workEvidence = (

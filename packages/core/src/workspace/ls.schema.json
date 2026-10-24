@@ -51,6 +51,7 @@
           "required": ["name", "root", "file", "schema", "minReader", "pins"],
           "properties": {
             "name": { "type": "string", "description": "The declared name. With the revision, it identifies the workspace." },
+            "repo": { "type": ["string", "null"], "description": "Added in contract 1 by #3168. The repository the document came from: the URL of the remote origin of the git repository that holds the workspace, with any user name or password removed, or null when there is no origin or the workspace is outside git. With name, root and the revision, it says which repository's workspace a document describes, so a reader that gathers several repositories' documents, such as an org workspace's repo members, tells them apart." },
             "root": {
               "type": "string",
               "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself. An absolute path outside a git repository."
@@ -157,6 +158,12 @@
           "description": "Added in contract 1 by #3050. The files the member generates, from its declared generated entries and from the record `chant build --components --generate` and `chant run --generate` write, sorted by path. A hand-written entry is not listed.",
           "type": "array",
           "items": { "$ref": "#/$defs/generatedFile" }
+        },
+        "repo": {
+          "description": "Added in contract 1 by #3168. For a member of kind repo, the other repository's workspace it names: url, the pinned rev and the workspace root inside that repository. Absent for every other kind. A repo member's dir is @repo/<name>, a marker that names no directory of this repository.",
+          "type": "object",
+          "required": ["url", "rev", "workspace"],
+          "properties": { "url": { "type": "string" }, "rev": { "type": "string" }, "workspace": { "type": "string" } }
         },
         "agents": {
           "description": "Added in contract 1 by #3615. The names of the agent sessions the declaration binds to the member (agents[].member or agents[].members), in declaration order, read where workspace.agentsFrom says. Empty when none is. A session bound to several members is listed on each.",

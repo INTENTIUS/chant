@@ -7,9 +7,14 @@
 import type { Capability } from "@intentius/chant/components/capability";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import { armDeployCapability } from "./arm-deploy";
+import { waitForDeploymentCapability, waitContainerAppCapability } from "./wait-azure";
+import { acrRegistryBackend } from "./acr-backend";
+import { azureBlobStorageBackend } from "./blob-backend";
 
 export const AZURE_VERB_FAMILIES = {
   apply: ["arm-deploy"],
+  waitVerify: ["wait-for-deployment", "wait-container-app"],
+  // `publish-image` is core's verb; azure contributes the "acr" registry login backend.
 } as const;
 
 export const azureCapabilityPlugin: CapabilityPlugin = {
@@ -18,7 +23,17 @@ export const azureCapabilityPlugin: CapabilityPlugin = {
     return ownPackageVersion(import.meta.url);
   },
   capabilities(): Array<Capability<never, unknown>> {
-    return [armDeployCapability as Capability<never, unknown>];
+    return [
+      armDeployCapability,
+      waitForDeploymentCapability,
+      waitContainerAppCapability,
+    ] as unknown as Array<Capability<never, unknown>>;
+  },
+  registryBackends() {
+    return [acrRegistryBackend];
+  },
+  storageBackends() {
+    return [azureBlobStorageBackend];
   },
   families(): Record<string, readonly string[]> {
     return AZURE_VERB_FAMILIES;

@@ -11,6 +11,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { generateForgejoOpPipeline } from "./generate-op-pipeline";
 import { generateGithubOpPipeline } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import type { ScheduledOpSpec } from "@intentius/chant/lexicon";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 interface ParsedJob {
   needs?: string;
@@ -214,7 +215,7 @@ describe("generateForgejoOpPipeline: setup steps and additive permissions (#2242
     const steps = doc.jobs!["app-apply"].steps;
     // The checkout is rewritten to the Forgejo mirror; an action with no
     // mapping in ../actions.ts passes through verbatim.
-    expect(steps[0].uses).toContain("actions/checkout@v7");
+    expect(steps[0].uses).toContain(`${usesRef(ACTION_PINS.checkout7)}`);
     expect(steps[1].uses).toBe("aws-actions/configure-aws-credentials@v6");
     expect((steps[1] as { with?: Record<string, string> }).with).toEqual({
       "role-to-assume": "${{ vars.AWS_ROLE_ARN }}",
@@ -336,7 +337,7 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
       "    runs-on: docker",
       "    container: node:22",
       "    steps:",
-      "      - uses: https://code.forgejo.org/actions/checkout@v7",
+      `      - uses: https://code.forgejo.org/${usesRef(ACTION_PINS.checkout7)} # ${ACTION_PINS.checkout7.tag}`,
       "      - run: chant run actions-audit",
       "        env:",
       "          GITHUB_TOKEN: '${{ github.token }}'",

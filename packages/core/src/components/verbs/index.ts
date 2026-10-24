@@ -39,6 +39,8 @@
 
 export * from "./build-archive";
 export * from "./build";
+export * from "./publish-image";
+export * from "./publish-artifact";
 export * from "./bom-writer";
 export * from "./sbom-generator";
 export * from "./sbom";

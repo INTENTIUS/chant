@@ -48,6 +48,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { GENERATED_MARKER } from "../discovery/files";
+import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { emitYAMLEntry, parseYAMLDocument } from "../yaml";
 import { greenBranches, type CiBuild, type CiGreen } from "./declaration";
 import { matchesCheckRun } from "./ci-green";
@@ -228,7 +229,7 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
       ? [
           "      - name: Mint a GitHub App token that may push tags to commits that change workflows",
           "        id: app-token",
-          "        uses: actions/create-github-app-token@v2",
+          `        uses: ${usesRef(ACTION_PINS.createGithubAppToken2)}`,
           "        with:",
           `          app-id: \${{ vars.${push.appIdVar} }}`,
           `          private-key: \${{ secrets.${push.appKeySecret} }}`,
@@ -273,12 +274,12 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     "    timeout-minutes: 15",
     "    steps:",
     ...mint,
-    "      - uses: actions/checkout@v6",
+    `      - uses: ${usesRef(ACTION_PINS.checkout6)}`,
     "        with:",
     `          ref: ${q(green.branch)}`,
     "          fetch-depth: 0",
     ...token,
-    "      - uses: actions/setup-node@v6",
+    `      - uses: ${usesRef(ACTION_PINS.setupNode6)}`,
     "        with:",
     "          node-version: \"24\"",
     ...cache,
@@ -292,7 +293,7 @@ export function renderCiGreenWorkflow(input: WorkflowInput): string {
     ...(input.runnerKeySecret ? [`          CHANT_RUNNER_KEY: \${{ secrets.${input.runnerKeySecret} }}`] : []),
     `        run: ${tick}`,
   ];
-  return lines.join("\n") + "\n";
+  return tagComments(lines.join("\n") + "\n");
 }
 
 /** Whether any phase sets `build` (#4169): then the tick may re-run jobs and start workflows. */

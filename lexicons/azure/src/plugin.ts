@@ -468,6 +468,12 @@ export const tags = defaultTags([
     await packageLexicon(opts);
   },
 
+  /** Deploy-unit status for `arm-deploy`'s resource group (#3142). */
+  async describeStackStatus(options) {
+    const { describeStackStatus } = await import("./describe-stack-status");
+    return describeStackStatus(options);
+  },
+
   async describeResources(options) {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);

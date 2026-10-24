@@ -428,3 +428,21 @@ phase("Test", [shell("npm ci && npm test", { image: "node:24@sha256:<digest>", o
 ```
 
 `docker buildx imagetools inspect node:24` prints the digest a tag points at now, which is the one to pin.
+
+## OPS019: Workspace Op Target
+
+[`chant workspace run`](/chant/cli/workspace-run/) names its work as `<member>/<op>` targets ([#2554](https://github.com/INTENTIUS/chant/issues/2554)). Before anything runs, each target is checked against the composed graph, where every `chant` member is read under its own toolchain as `chant workspace graph` reads it. A target fails when its member is not in that graph (a member of another kind, or one whose read failed) or declares no Op of that name, and the run stops with nothing run. The design named this check OPS014, which was already taken.
+
+It is a cross-root check ([#1939](https://github.com/INTENTIUS/chant/issues/1939)): only `chant workspace run` runs it, so `chant build` and `chant lint` never do.
+
+**Severity:** error
+
+```
+# ❌ Triggers OPS019: api declares deploy and migrate, not release
+chant workspace run api/release
+```
+
+```
+# ✅ Fixed: name an Op the member declares
+chant workspace run api/deploy
+```

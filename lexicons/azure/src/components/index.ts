@@ -7,3 +7,7 @@ export {
   type ArmDeployOutput,
   type ArmDeployPlanArtifact,
 } from "./arm-deploy";
+export * from "./wait-azure";
+export * from "./builders";
+export { createAcrRegistryBackend, acrRegistryBackend } from "./acr-backend";
+export { createAzureBlobStorageBackend, azureBlobStorageBackend } from "./blob-backend";
