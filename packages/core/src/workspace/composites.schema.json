@@ -607,6 +607,28 @@
             }
           ]
         },
+        "executor": {
+          "description": "The forge and committed workflow that deploys this environment, as the member's chant.config.ts declares on the environment's entry (#4402): a literal entry before a pattern. forge and workflow are null when none is declared, and reason then says why. Never derived from a generated workflow's name. Added by chant 0.124.47; a document from an older chant has no executor.",
+          "type": "object",
+          "required": ["forge", "workflow", "reason"],
+          "properties": {
+            "forge": { "enum": ["github", "gitlab", "forgejo", null] },
+            "workflow": { "type": ["string", "null"], "description": "The workflow file the forge runs, such as deploy-prod.yml under .github/workflows/, or .gitlab-ci.yml." },
+            "reason": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["code", "message"],
+                  "properties": {
+                    "code": { "enum": ["executor-none-declared", "executor-config-unreadable"] },
+                    "message": { "type": "string" }
+                  }
+                }
+              ]
+            }
+          }
+        },
         "command": {
           "type": "string",
           "description": "The command that deploys the component to this environment on its default runtime, run in the member's directory: chant run --components <name>, with --on <runtime> when the default runtime isn't local, and --env <env> for any environment but the default."

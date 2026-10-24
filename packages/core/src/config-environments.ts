@@ -21,8 +21,23 @@ import type { ChantConfig } from "./config";
  * `./workspace/promotion-order.ts`), and `canary: true` marks a step as the
  * canary step of that order. The canary is declared and surfaced; chant does
  * not yet act on it.
+ *
+ * `executor` names the forge and the committed workflow that deploys the
+ * environment (#4402), so a reader such as behold knows a release there runs
+ * through CI rather than a local `chant run`. chant declares and prints it
+ * (`chant workspace graph --composites`); it never dispatches it.
  */
-export type EnvironmentDeclaration = string | { name: string; endpoint?: string; canary?: boolean };
+export type EnvironmentDeclaration = string | { name: string; endpoint?: string; canary?: boolean; executor?: EnvironmentExecutor };
+
+/** The forges an environment's executor can name (#4402). */
+export const EXECUTOR_FORGES = ["github", "gitlab", "forgejo"] as const;
+
+/** The forge workflow that deploys one environment (#4402). */
+export interface EnvironmentExecutor {
+  forge: (typeof EXECUTOR_FORGES)[number];
+  /** The committed workflow file the forge runs, such as `deploy-prod.yml` under `.github/workflows/`, or `.gitlab-ci.yml`. */
+  workflow: string;
+}
 
 /**
  * `ownership.env`: a literal environment identity, or a reference to a
@@ -113,6 +128,18 @@ export function environmentEndpoint(environments: EnvironmentDeclaration[] | und
     environments?.find((e) => environmentName(e) === name) ??
     environments?.find((e) => isEnvironmentPattern(environmentName(e)) && matchesEnvironmentPattern(environmentName(e), name));
   return found && typeof found !== "string" ? found.endpoint : undefined;
+}
+
+/**
+ * The executor `name` declares (#4402), resolved like {@link
+ * environmentEndpoint}: a literal entry wins over a pattern, and a literal
+ * entry with no executor does not fall through to a pattern's.
+ */
+export function environmentExecutor(environments: EnvironmentDeclaration[] | undefined, name: string): EnvironmentExecutor | undefined {
+  const found =
+    environments?.find((e) => environmentName(e) === name) ??
+    environments?.find((e) => isEnvironmentPattern(environmentName(e)) && matchesEnvironmentPattern(environmentName(e), name));
+  return found && typeof found !== "string" ? found.executor : undefined;
 }
 
 /** Whether an `ownership.env` entry is a build-parameter reference rather than a literal. */

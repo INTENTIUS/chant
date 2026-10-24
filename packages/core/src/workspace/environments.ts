@@ -23,6 +23,13 @@
  * would take it, or left out with `environments-component-undeclared` when
  * the config's environments don't cover it.
  *
+ * Each environment also names its `executor` (#4402): the forge and committed
+ * workflow that deploys it, as the member's config declares on the
+ * environment's entry (`{ name: "prod", executor: { forge: "github",
+ * workflow: "deploy-prod.yml" } }`), a literal entry before a pattern. When
+ * none is declared, `forge` and `workflow` are null and `reason` says why.
+ * chant never derives it from a generated workflow's name.
+ *
  * `chant run --env` refuses a name the config's `environments` doesn't cover
  * whenever it declares any (`unknownEnvError` in `../env.ts`), so a ledger
  * environment the config no longer covers is left out, with a reason. The
@@ -36,7 +43,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { environmentName, isEnvironmentPattern, matchesDeclaredEnvironment, type EnvironmentDeclaration } from "../config";
+import { environmentExecutor, environmentName, isEnvironmentPattern, matchesDeclaredEnvironment, type EnvironmentDeclaration, type EnvironmentExecutor } from "../config";
 import type { ComponentEnvironmentDeclaration } from "../components/component";
 import type { ReasonCode } from "./reason-codes";
 import { LOCAL_RUNTIME, type MemberRuntimes } from "./runtimes";
@@ -60,6 +67,23 @@ export const ENVIRONMENT_REASON_CODES = [
 ] as const satisfies readonly ReasonCode[];
 export type EnvironmentReasonCode = (typeof ENVIRONMENT_REASON_CODES)[number];
 
+/** Why an environment names no executor (#4402). Closed: part of the read contract. */
+export const EXECUTOR_REASON_CODES = [
+  /** The member's chant.config.ts declares no executor for the environment, so nothing says which forge workflow deploys it. */
+  "executor-none-declared",
+  /** The member's chant.config.ts could not be read, so whether a forge workflow deploys the environment is unknown. */
+  "executor-config-unreadable",
+] as const satisfies readonly ReasonCode[];
+export type ExecutorReasonCode = (typeof EXECUTOR_REASON_CODES)[number];
+
+/** The forge workflow that deploys an environment (#4402), or why none is named. */
+export interface ComponentExecutor {
+  forge: EnvironmentExecutor["forge"] | null;
+  workflow: string | null;
+  /** Null when `forge` and `workflow` are set. */
+  reason: { code: ExecutorReasonCode; message: string } | null;
+}
+
 export interface EnvironmentReason {
   code: EnvironmentReasonCode;
   message: string;
@@ -75,6 +99,8 @@ export interface ComponentEnvironment {
   source: "config" | "ledger" | "builtin" | "component";
   /** Where a release of the component goes in this environment, as the component declares it (#3153), or null when it declares nothing for it. */
   site: ComponentSite | null;
+  /** The forge and committed workflow that deploys this environment, from the member's config (#4402). */
+  executor: ComponentExecutor;
   /** The command that deploys the component there, on the site's runtime when the member hosts it and else the default runtime, run in the member's directory. */
   command: string;
 }
@@ -99,7 +125,7 @@ export type LedgerEnvironmentReader = (member: { name: string; dir: string }, cw
 /** What one member's config and ledger say about environments. */
 export interface MemberEnvironments {
   /** Each environment in list order, without the per-component site and command. */
-  environments: Omit<ComponentEnvironment, "command" | "site">[];
+  environments: Omit<ComponentEnvironment, "command" | "site" | "executor">[];
   reasons: EnvironmentReason[];
   /** The config's environments, for whether `chant run --env` takes a name: null when the config couldn't be read, `[]` when it declares none. */
   declared?: EnvironmentDeclaration[] | null;
@@ -177,6 +203,16 @@ export function memberEnvironments(runtimes: MemberRuntimes | undefined, ledger:
   return { environments: out, reasons, declared };
 }
 
+/** The executor the member's config declares for `env`, or why there is none. */
+export function executorFor(env: string, member: MemberEnvironments | undefined): ComponentExecutor {
+  if (member && member.declared === null) {
+    return { forge: null, workflow: null, reason: { code: "executor-config-unreadable", message: `chant.config.ts could not be read, so no executor is known for ${env}` } };
+  }
+  const found = environmentExecutor(member?.declared ?? undefined, env);
+  if (found) return { forge: found.forge, workflow: found.workflow, reason: null };
+  return { forge: null, workflow: null, reason: { code: "executor-none-declared", message: `chant.config.ts declares no executor for ${env}` } };
+}
+
 /**
  * The environments one component may deploy to, each with its command line.
  * `declared` is what the component's contract says (#3153): an environment
@@ -194,7 +230,7 @@ export function componentEnvironments(
   hosts: readonly string[] = [],
   reasons: EnvironmentReason[] = [],
 ): ComponentEnvironment[] {
-  const list: Omit<ComponentEnvironment, "command" | "site">[] = [...(member?.environments ?? [{ name: LOCAL_ENVIRONMENT, default: true, source: "builtin" as const }])];
+  const list: Omit<ComponentEnvironment, "command" | "site" | "executor">[] = [...(member?.environments ?? [{ name: LOCAL_ENVIRONMENT, default: true, source: "builtin" as const }])];
   const config = member?.declared;
   const takes = (env: string): boolean => !config || config.length === 0 || matchesDeclaredEnvironment(config, env);
   const sites = new Map<string, ComponentSite>();
@@ -212,6 +248,6 @@ export function componentEnvironments(
   return list.map((e) => {
     const site = sites.get(e.name) ?? null;
     const on = site?.runtime && (site.runtime === LOCAL_RUNTIME || hosts.includes(site.runtime)) ? site.runtime : runtime;
-    return { ...e, site, command: `chant run --components ${component}${on === LOCAL_RUNTIME ? "" : ` --on ${on}`}${e.default ? "" : ` --env ${e.name}`}` };
+    return { ...e, site, executor: executorFor(e.name, member), command: `chant run --components ${component}${on === LOCAL_RUNTIME ? "" : ` --on ${on}`}${e.default ? "" : ` --env ${e.name}`}` };
   });
 }

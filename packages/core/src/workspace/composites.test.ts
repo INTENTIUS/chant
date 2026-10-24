@@ -17,6 +17,7 @@ import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import {
   COMPOSITES_CONTRACT_VERSION,
   COMPOSITES_ENVIRONMENT_REASON_CODES,
+  COMPOSITES_EXECUTOR_REASON_CODES,
   COMPOSITES_ERROR_CODES,
   COMPOSITES_OUTPUT_SCHEMA_ID,
   COMPOSITES_REASON_CODES,
@@ -29,6 +30,8 @@ import {
 } from "./composites";
 import { GRAPH_ERROR_CODES } from "./graph-cli";
 import schema from "./composites.schema.json";
+
+const NO_EXECUTOR = { forge: null, workflow: null, reason: { code: "executor-none-declared", message: expect.any(String) } };
 
 afterAll(cleanScratch);
 
@@ -61,7 +64,7 @@ const componentIr = (components: { name: string; composites?: string[]; archetyp
 const local = (name: string) => ({ name: "local", lexicon: null, default: true, command: `chant run --components ${name}` });
 
 /** The default environment, named by nothing but chant itself. */
-const localEnv = (name: string) => ({ name: "local", default: true, source: "builtin", site: null, command: `chant run --components ${name}` });
+const localEnv = (name: string) => ({ name: "local", default: true, source: "builtin", site: null, executor: NO_EXECUTOR, command: `chant run --components ${name}` });
 
 /**
  * app declares three instances and exports ImageUri; delivery links to it and
@@ -117,6 +120,7 @@ describe("composites output schema", () => {
     expect(schema.$defs.member.properties.reason.oneOf[1].properties!.code.enum).toEqual([...MEMBER_RUN_REASON_CODES]);
     expect(schema.$defs.member.properties.runtimeReasons.items.properties.code.enum).toEqual([...COMPOSITES_RUNTIME_REASON_CODES]);
     expect(schema.$defs.member.properties.environmentReasons.items.properties.code.enum).toEqual([...COMPOSITES_ENVIRONMENT_REASON_CODES]);
+    expect(schema.$defs.environment.properties.executor.properties.reason.oneOf[1].properties!.code.enum).toEqual([...COMPOSITES_EXECUTOR_REASON_CODES]);
   });
 });
 
@@ -381,11 +385,11 @@ describe("the environments each component may deploy to (#2695)", () => {
     const g = result((await workspaceComposites({ cwd: declared() })).doc);
     expectValid(g);
     expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments).toEqual([
-      { name: "local", default: true, source: "builtin", site: null, command: "chant run --components queue-runner" },
-      { name: "staging", default: false, source: "config", site: null, command: "chant run --components queue-runner --env staging" },
-      { name: "prod", default: false, source: "config", site: null, command: "chant run --components queue-runner --env prod" },
+      { name: "local", default: true, source: "builtin", site: null, executor: NO_EXECUTOR, command: "chant run --components queue-runner" },
+      { name: "staging", default: false, source: "config", site: null, executor: NO_EXECUTOR, command: "chant run --components queue-runner --env staging" },
+      { name: "prod", default: false, source: "config", site: null, executor: NO_EXECUTOR, command: "chant run --components queue-runner --env prod" },
       // The pattern pr-* is no environment by itself, and it covers the ledger's pr-42.
-      { name: "pr-42", default: false, source: "ledger", site: null, command: "chant run --components queue-runner --env pr-42" },
+      { name: "pr-42", default: false, source: "ledger", site: null, executor: NO_EXECUTOR, command: "chant run --components queue-runner --env pr-42" },
     ]);
     const jobs = g.members.find((m) => m.name === "jobs")!;
     expect(jobs.environmentReasons).toEqual([{ code: "environments-ledger-undeclared", message: expect.stringContaining("retired") }]);
@@ -397,7 +401,7 @@ describe("the environments each component may deploy to (#2695)", () => {
     // delivery has no _members/delivery, so the flat staging ledger is its; its config declares nothing, so anything goes.
     expect(g.components.find((c) => c.id === "delivery/edge")!.environments).toEqual([
       localEnv("edge"),
-      { name: "staging", default: false, source: "ledger", site: null, command: "chant run --components edge --env staging" },
+      { name: "staging", default: false, source: "ledger", site: null, executor: NO_EXECUTOR, command: "chant run --components edge --env staging" },
     ]);
     expect(g.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
     expect(g.members.find((m) => m.name === "docs")!.environmentReasons).toEqual([]);
@@ -409,8 +413,8 @@ describe("the environments each component may deploy to (#2695)", () => {
     const g = result((await workspaceComposites({ cwd: root })).doc);
     expectValid(g);
     expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments).toEqual([
-      { name: "local", default: true, source: "config", site: null, command: "chant run --components queue-runner" },
-      { name: "prod", default: false, source: "config", site: null, command: "chant run --components queue-runner --env prod" },
+      { name: "local", default: true, source: "config", site: null, executor: NO_EXECUTOR, command: "chant run --components queue-runner" },
+      { name: "prod", default: false, source: "config", site: null, executor: NO_EXECUTOR, command: "chant run --components queue-runner --env prod" },
     ]);
     expect(g.members.find((m) => m.name === "jobs")!.environmentReasons).toEqual([]);
   });
@@ -444,5 +448,32 @@ describe("the environments each component may deploy to (#2695)", () => {
     expectValid(g);
     expect(g.members.find((m) => m.name === "jobs")!.environmentReasons).toEqual([{ code: "environments-ledger-unreadable", message: "boom" }]);
     expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments.map((e) => e.name)).toEqual(["local", "prod"]);
+  });
+
+  test("each environment names the forge workflow the config declares for it, a literal before a pattern (#4402)", async () => {
+    const root = declared();
+    writeFileSync(
+      join(root, "jobs", "chant.config.ts"),
+      'export default { environments: ["staging", { name: "prod", executor: { forge: "github", workflow: "deploy-prod.yml" } }, { name: "pr-*", executor: { forge: "forgejo", workflow: "preview.yml" } }] };\n',
+    );
+    const g = result((await workspaceComposites({ cwd: root })).doc);
+    expectValid(g);
+    const executors = Object.fromEntries(g.components.find((c) => c.id === "jobs/queue-runner")!.environments.map((e) => [e.name, e.executor]));
+    expect(executors).toEqual({
+      local: NO_EXECUTOR,
+      staging: NO_EXECUTOR,
+      prod: { forge: "github", workflow: "deploy-prod.yml", reason: null },
+      "pr-42": { forge: "forgejo", workflow: "preview.yml", reason: null },
+    });
+  });
+
+  test("a config that can't be read says no executor is known (#4402)", async () => {
+    const root = declared();
+    writeFileSync(join(root, "jobs", "chant.config.ts"), 'throw new Error("no config here");\nexport default {};\n');
+    const g = result((await workspaceComposites({ cwd: root })).doc);
+    expectValid(g);
+    for (const e of g.components.find((c) => c.id === "jobs/queue-runner")!.environments) {
+      expect(e.executor).toEqual({ forge: null, workflow: null, reason: { code: "executor-config-unreadable", message: expect.stringContaining(e.name) } });
+    }
   });
 });

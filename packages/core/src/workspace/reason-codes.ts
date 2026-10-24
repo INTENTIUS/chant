@@ -240,6 +240,9 @@ export const REASONS = {
   "environments-ledger-undeclared": "The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed.",
   "environments-ledger-unreadable": "The chant/lifecycle branch exists and the member's ledger environments could not be listed.",
   "environments-component-undeclared": "A component declares an environment its member's chant.config.ts environments don't cover, so chant run --env would refuse it and it is not listed (#3153).",
+  // The forge workflow that deploys an environment (graph --composites, #4402): an environment row's executor.reason.
+  "executor-none-declared": "The member's chant.config.ts declares no executor for the environment, so nothing names the forge workflow that deploys it.",
+  "executor-config-unreadable": "The member's chant.config.ts could not be read, so whether a forge workflow deploys the environment is unknown.",
   // A declared diagram's source or render (check, #2764). Each is also a WSP finding.
   "diagram-source-missing": "A declared diagram's source file does not exist in the tree read.",
   "diagram-render-missing": "A declared diagram's render file does not exist in the tree read.",
