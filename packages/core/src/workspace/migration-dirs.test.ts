@@ -231,9 +231,9 @@ describe("the recorded replay", () => {
     const r = run("goose-dir", { ...goose, [REPLAY_FILE]: snapshot(goose, ["public.a", "public.a.id", "public.a.c"]) });
     expect(r.gaps).toEqual([]);
     expect(r.outputs).toEqual([
-      { name: "public.a", file: REPLAY_FILE, line: 5 },
-      { name: "public.a.id", file: REPLAY_FILE, line: 6 },
-      { name: "public.a.c", file: REPLAY_FILE, line: 7 },
+      { name: "public.a", file: REPLAY_FILE, line: 6 },
+      { name: "public.a.id", file: REPLAY_FILE, line: 7 },
+      { name: "public.a.c", file: REPLAY_FILE, line: 8 },
     ]);
   });
 
