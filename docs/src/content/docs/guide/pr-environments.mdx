@@ -24,7 +24,7 @@ Name the template in `chant.workspace.json`:
 }
 ```
 
-`ttl` is how long an environment lives after its last apply, as `90m`, `72h` or `7d`. It is 72h when absent (`packages/core/src/workspace/declaration.ts:1284`). The jobs read the block from the declaration at the pull request's base, never from the pull request (`packages/core/src/cli/handlers/pr-env.ts:168`). A pull request cannot name another template or a longer TTL for itself, and one that adds the block gets no environment until it merges. Set `minReader` to 0.124.42 or newer with the block.
+`ttl` is how long an environment lives after its last apply, as `90m`, `72h` or `7d`. It is 72h when absent (`packages/core/src/workspace/declaration.ts:1301`). The jobs read the block from the declaration at the pull request's base, never from the pull request (`packages/core/src/cli/handlers/pr-env.ts:168`). A pull request cannot name another template or a longer TTL for itself, and one that adds the block gets no environment until it merges. Set `minReader` to 0.124.42 or newer with the block.
 
 ## Make the project's resources say which environment they belong to
 
