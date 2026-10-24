@@ -9,7 +9,7 @@
  * duplicated series and N watches against the API server. Run it in a
  * single-replica Deployment, or set the receiver's `k8s_leader_elector` to a
  * `k8s_leader_elector` extension enabled in `service.extensions` (both ship in
- * otelcol-contrib and otelcol-k8s at the pinned v0.130.0), so only the
+ * otelcol-contrib and otelcol-k8s at the pinned v0.162.0), so only the
  * leader collects.
  *
  * One build root at a time (chant #1939).

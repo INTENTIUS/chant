@@ -14,8 +14,11 @@ import Ajv2020 from "ajv/dist/2020";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeComponentGraph } from "../components/cli-support";
 import componentSchema from "../components/component.schema.json";
+import { ChantConfigSchema, environmentExecutor } from "../config";
 import { componentEnvironments, memberEnvironments, type EnvironmentReason } from "./environments";
 import type { MemberRuntimes } from "./runtimes";
+
+const NO_EXECUTOR = { forge: null, workflow: null, reason: { code: "executor-none-declared", message: expect.any(String) } };
 
 const runtimes = (environments: MemberRuntimes["environments"], lexicons: string[] = []): MemberRuntimes => ({ lexicons, default: "local", reasons: [], environments });
 
@@ -68,13 +71,14 @@ describe("graph --composites lists each environment with the component's site (#
     const member = memberEnvironments(runtimes(["prod", "fly"], ["fly"]), { envs: [], reason: null });
     const envs = componentEnvironments("app", member, "local", SITES, ["fly"]);
     expect(envs).toEqual([
-      { name: "local", default: true, source: "builtin", site: null, command: "chant run --components app" },
-      { name: "prod", default: false, source: "config", site: { runtime: "local", url: null, domain: null, lifecycle: null }, command: "chant run --components app --env prod" },
+      { name: "local", default: true, source: "builtin", site: null, executor: NO_EXECUTOR, command: "chant run --components app" },
+      { name: "prod", default: false, source: "config", site: { runtime: "local", url: null, domain: null, lifecycle: null }, executor: NO_EXECUTOR, command: "chant run --components app --env prod" },
       {
         name: "fly",
         default: false,
         source: "config",
         site: { runtime: "fly", url: "https://shop.fly.dev", domain: "shop.example.com", lifecycle: "origin" },
+        executor: NO_EXECUTOR,
         command: "chant run --components app --on fly --env fly",
       },
     ]);
@@ -101,5 +105,24 @@ describe("graph --composites lists each environment with the component's site (#
     const member = memberEnvironments(runtimes(["pr-*"]), { envs: [], reason: null });
     const envs = componentEnvironments("app", member, "local", [{ name: "pr-7", url: "https://pr-7.example.com" }]);
     expect(envs.find((e) => e.name === "pr-7")).toMatchObject({ source: "component", site: { url: "https://pr-7.example.com" } });
+  });
+});
+
+describe("an environment's executor in chant.config.ts (#4402)", () => {
+  const prod = { name: "prod", executor: { forge: "github" as const, workflow: "deploy-prod.yml" } };
+
+  test("is optional on an environment entry, and refuses an unknown forge, an empty workflow and a stray field", () => {
+    expect(ChantConfigSchema.safeParse({ environments: ["staging", prod] }).success).toBe(true);
+    expect(ChantConfigSchema.safeParse({ environments: [{ name: "prod", executor: { forge: "jenkins", workflow: "x.yml" } }] }).success).toBe(false);
+    expect(ChantConfigSchema.safeParse({ environments: [{ name: "prod", executor: { forge: "github", workflow: "" } }] }).success).toBe(false);
+    expect(ChantConfigSchema.safeParse({ environments: [{ name: "prod", executor: { forge: "github", workflow: "x.yml", ref: "main" } }] }).success).toBe(false);
+  });
+
+  test("resolves a literal entry before a pattern, and a literal without one doesn't take the pattern's", () => {
+    const envs = [prod, "pr-special", { name: "pr-*", executor: { forge: "gitlab" as const, workflow: ".gitlab-ci.yml" } }];
+    expect(environmentExecutor(envs, "prod")).toEqual(prod.executor);
+    expect(environmentExecutor(envs, "pr-7")).toEqual({ forge: "gitlab", workflow: ".gitlab-ci.yml" });
+    expect(environmentExecutor(envs, "pr-special")).toBeUndefined();
+    expect(environmentExecutor(envs, "staging")).toBeUndefined();
   });
 });

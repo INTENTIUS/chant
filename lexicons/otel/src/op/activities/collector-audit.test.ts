@@ -61,17 +61,19 @@ describe("collectorAudit's pieces", () => {
     ]);
   });
 
-  test("bumpPins moves only the two pin versions in define.ts", () => {
-    const text = readFileSync(join(import.meta.dirname, "..", "..", "define.ts"), "utf8");
-    const out = bumpPins(text, { collector: "v0.140.0", genai: "v1.50.0" });
+  test("bumpPins moves only the two pin versions, in spec/pin.ts and define.ts", () => {
+    const define = readFileSync(join(import.meta.dirname, "..", "..", "define.ts"), "utf8");
+    const pin = readFileSync(join(import.meta.dirname, "..", "..", "spec", "pin.ts"), "utf8");
+    const out = bumpPins({ define, pin }, { collector: "v0.170.0", genai: "v1.50.0" });
     const block = (text: string, name: string) => new RegExp(`export const ${name}: SchemaPin = Object\\.freeze\\(\\{[^}]*\\}`).exec(text)![0];
-    expect(block(out, "COLLECTOR_PIN")).toContain('version: "v0.140.0"');
-    expect(block(out, "GENAI_SEMCONV_PIN")).toContain('version: "v1.50.0"');
-    // SEMCONV_PIN, and the custom-component pin in define.ts's doc comment, are left alone.
-    expect(block(out, "SEMCONV_PIN")).toBe(block(text, "SEMCONV_PIN"));
-    const changed = out.split("\n").filter((l, i) => l !== text.split("\n")[i]);
-    expect(changed).toHaveLength(2);
-    expect(() => bumpPins("nothing", { collector: "v1.0.0" })).toThrow(/no COLLECTOR_PIN/);
+    expect(out.pin).toContain('export const OTELCOL_CONTRIB_VERSION = "v0.170.0";');
+    expect(block(out.define, "GENAI_SEMCONV_PIN")).toContain('version: "v1.50.0"');
+    // SEMCONV_PIN, the k8s distribution pin and the custom-component pin in define.ts's doc comment are left alone.
+    expect(block(out.define, "SEMCONV_PIN")).toBe(block(define, "SEMCONV_PIN"));
+    const changed = (a: string, b: string) => a.split("\n").filter((l, i) => l !== b.split("\n")[i]);
+    expect(changed(out.define, define)).toHaveLength(1);
+    expect(changed(out.pin, pin)).toHaveLength(1);
+    expect(() => bumpPins({ define: "nothing", pin: "nothing" }, { collector: "v1.0.0" })).toThrow(/no OTELCOL_CONTRIB_VERSION/);
   });
 
   test("semver ordering", () => {
@@ -79,6 +81,11 @@ describe("collectorAudit's pieces", () => {
     expect(compareSemver("v0.99.0", "v0.130.0")).toBeLessThan(0);
   });
 });
+
+/** The releases after the pin, whatever it is. */
+const minorAfter = (v: string, n: number) => v.replace(/^v(\d+)\.(\d+)\.\d+$/, (_, major: string, minor: string) => `v${major}.${Number(minor) + n}.0`);
+const NEXT = minorAfter(COLLECTOR_PIN.version, 1);
+const AFTER_NEXT = minorAfter(COLLECTOR_PIN.version, 2);
 
 describe("collectorAudit", () => {
   test("current pins and no stability reading: no findings, report mode does nothing else", async () => {
@@ -90,30 +97,30 @@ describe("collectorAudit", () => {
   });
 
   test("pins behind the newest releases are findings, prereleases ignored", async () => {
-    const { f } = fakeFetch(["v0.132.0", "v0.131.0", COLLECTOR_PIN.version], ["v1.42.0", GENAI_SEMCONV_PIN.version]);
+    const { f } = fakeFetch([AFTER_NEXT, NEXT, COLLECTOR_PIN.version], ["v1.42.0", GENAI_SEMCONV_PIN.version]);
     const r = await collectorAudit({ stability: false, _fetch: f });
     expect(r.findings.map((x) => x.kind)).toEqual(["collector-pin-behind", "semconv-pin-behind"]);
-    expect(r.collector).toEqual({ pin: COLLECTOR_PIN.version, latest: "v0.132.0", behind: 2 });
+    expect(r.collector).toEqual({ pin: COLLECTOR_PIN.version, latest: AFTER_NEXT, behind: 2 });
     expect(r.semconv.behind).toBe(1);
   });
 
   test("component stability at the pin and at the newest release, contrib then core, within the budget", async () => {
     const meta = {
       // otlp is a core component: contrib answers 404 for it.
-      [`opentelemetry-collector/v0.131.0/receiver/otlpreceiver`]: stability({ stable: ["traces"], deprecated: ["logs"] }),
+      [`opentelemetry-collector/${NEXT}/receiver/otlpreceiver`]: stability({ stable: ["traces"], deprecated: ["logs"] }),
       [`opentelemetry-collector/${COLLECTOR_PIN.version}/receiver/otlpreceiver`]: stability({ stable: ["traces", "logs"] }),
     };
-    const { f, urls } = fakeFetch(["v0.131.0", COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version], meta);
+    const { f, urls } = fakeFetch([NEXT, COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version], meta);
     const r = await collectorAudit({ _fetch: f, stabilityBudget: 500 });
-    expect(r.findings).toContainEqual({ kind: "deprecated", subject: "receiver/otlp", detail: "logs deprecated at v0.131.0" });
+    expect(r.findings).toContainEqual({ kind: "deprecated", subject: "receiver/otlp", detail: `logs deprecated at ${NEXT}` });
     expect(r.unchecked).not.toContain("receiver/otlp");
     expect(r.unchecked.length).toBe(builtinComponents().length - 1);
     // Looked for in contrib first, then core.
-    const otlp = urls.filter((u) => u.includes("/v0.131.0/receiver/otlpreceiver/"));
+    const otlp = urls.filter((u) => u.includes(`/${NEXT}/receiver/otlpreceiver/`));
     expect(otlp[0]).toContain("opentelemetry-collector-contrib");
     expect(otlp[1]).toContain("open-telemetry/opentelemetry-collector/");
 
-    const capped = fakeFetch(["v0.131.0", COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version], meta);
+    const capped = fakeFetch([NEXT, COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version], meta);
     await collectorAudit({ _fetch: capped.f, stabilityBudget: 3 });
     expect(capped.urls.filter((u) => u.includes("raw.githubusercontent.com"))).toHaveLength(3);
   });
@@ -127,7 +134,7 @@ describe("collectorAudit", () => {
   });
 
   test("pull-request mode bumps the pins in a worktree and opens a pull request", async () => {
-    const { f } = fakeFetch(["v0.131.0", COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version]);
+    const { f } = fakeFetch([NEXT, COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version]);
     const calls: string[] = [];
     const lexiconDir = join(import.meta.dirname, "..", "..", "..");
     const run: CommandRunner = async (bin, args) => {
@@ -143,7 +150,7 @@ describe("collectorAudit", () => {
   });
 
   test("pull-request mode end to end against a recorded git and gh", async () => {
-    const { f } = fakeFetch(["v0.131.0", COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version]);
+    const { f } = fakeFetch([NEXT, COLLECTOR_PIN.version], [GENAI_SEMCONV_PIN.version]);
     const calls: string[] = [];
     const lexiconDir = join(import.meta.dirname, "..", "..", "..");
     const { mkdirSync } = await import("node:fs");
@@ -151,15 +158,15 @@ describe("collectorAudit", () => {
       calls.push(`${bin} ${args.join(" ")}`);
       if (args[0] === "rev-parse") return join(lexiconDir, "..", "..") + "\n";
       if (args[0] === "symbolic-ref") return "origin/main\n";
-      if (args[0] === "worktree" && args[1] === "add") mkdirSync(join(args[5], "lexicons", "otel", "src"), { recursive: true });
+      if (args[0] === "worktree" && args[1] === "add") mkdirSync(join(args[5], "lexicons", "otel", "src", "spec"), { recursive: true });
       if (bin === "gh" && args[1] === "list") return "[]";
       if (bin === "gh" && args[1] === "create") return "https://github.com/INTENTIUS/chant/pull/1\n";
       return "";
     };
     const r = await collectorAudit({ mode: "pull-request", stability: false, lexiconDir, _fetch: f, _run: run });
     expect(r.prUrl).toBe("https://github.com/INTENTIUS/chant/pull/1");
-    expect(calls).toContain("git add lexicons/otel/src/define.ts");
-    expect(calls.some((c) => c.startsWith("git commit -m chore(otel): move COLLECTOR_PIN to v0.131.0"))).toBe(true);
+    expect(calls).toContain("git add lexicons/otel/src/spec/pin.ts");
+    expect(calls.some((c) => c.startsWith(`git commit -m chore(otel): move COLLECTOR_PIN to ${NEXT}`))).toBe(true);
     expect(calls.some((c) => c.startsWith("git push --force origin HEAD:refs/heads/chant/otel-pins"))).toBe(true);
     expect(calls.some((c) => c.startsWith("gh pr create --head chant/otel-pins --base main"))).toBe(true);
   });

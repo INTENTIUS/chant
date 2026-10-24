@@ -79,7 +79,7 @@
       "uniqueItems": true
     },
     "evidence": {
-      "description": "The proof of done: public links, or workspace files pinned by the hash of their bytes (chant workspace records pin <path>). May be empty while the work is open; a done item with none gets the warning work-done-unpinned. An entry that names a criterion from acceptance carries the verification it is and its result, and a manual verdict names who gave it in by (#2772).",
+      "description": "The proof of done: public links, workspace files pinned by the hash of their bytes (chant workspace records pin <path>), or ops results on the chant/lifecycle branch (#3171). May be empty while the work is open; a done item with none gets the warning work-done-unpinned. An entry that names a criterion from acceptance carries the verification it is and its result, and a manual verdict names who gave it in by (#2772).",
       "type": "array",
       "items": {
         "oneOf": [
@@ -88,6 +88,9 @@
           },
           {
             "$ref": "#/definitions/evidencePin"
+          },
+          {
+            "$ref": "#/definitions/evidenceOps"
           }
         ]
       }
@@ -276,6 +279,107 @@
             "null"
           ],
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "criterion": {
+          "description": "The acceptance criterion this evidence is for, by id (#2772).",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "verification": {
+          "$ref": "#/definitions/verification"
+        },
+        "result": {
+          "description": "Whether the evidence shows the criterion met.",
+          "enum": [
+            "pass",
+            "fail"
+          ]
+        },
+        "by": {
+          "description": "Who produced the evidence: the lease holder for a steward's, the person for a manual verdict.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "dependencies": {
+        "criterion": [
+          "verification",
+          "result"
+        ]
+      }
+    },
+    "evidenceOps": {
+      "description": "An ops result on the chant/lifecycle branch (#3171): a run, a deploy, a gate answer or a release plan, named the way graph --intent's trace names a link. chant workspace work evidence and the workEvidence activity check it against the ledger before writing it, and a cited run's outcome agrees with result.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "ops"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ops": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ledger",
+            "ref",
+            "field",
+            "value",
+            "sha256"
+          ],
+          "properties": {
+            "ledger": {
+              "description": "Which ledger: an Op run, a deploy record, a gate answer or a release plan.",
+              "enum": [
+                "run",
+                "deploy",
+                "gate",
+                "plan"
+              ]
+            },
+            "ref": {
+              "description": "The ledger file, as chant/lifecycle:<path>.",
+              "type": "string",
+              "pattern": "^chant/lifecycle:"
+            },
+            "field": {
+              "description": "The field of the record that picks it out of the file, such as id, runId, timestamp or digest.",
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "description": "That field's value.",
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "description": "Hex SHA-256 of the record as the ledger stores it: the line, or the plan file.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "env": {
+              "description": "The environment, for a run or a deploy.",
+              "type": "string"
+            },
+            "outcome": {
+              "description": "The run's status, for a run.",
+              "enum": [
+                "ok",
+                "fail"
+              ]
+            }
+          }
+        },
+        "as_of": {
+          "description": "When the result was cited, as an ISO 8601 timestamp.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "criterion": {
           "description": "The acceptance criterion this evidence is for, by id (#2772).",

@@ -1,4 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
+import { actionRef } from "../action-pins";
 import { Step } from "../generated/index";
 
 export interface UploadArtifactProps {
@@ -22,7 +23,7 @@ export const UploadArtifact = Composite((props: UploadArtifactProps) => {
 
   const step = new Step(mergeDefaults({
     name: "Upload Artifact",
-    uses: "actions/upload-artifact@v4",
+    uses: actionRef("actions/upload-artifact"),
     with: withObj,
   }, defaults?.step));
 

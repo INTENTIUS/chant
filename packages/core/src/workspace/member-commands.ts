@@ -241,6 +241,8 @@ export function planMembers(verb: WorkspaceVerb, root: string, options: PlanOpti
       const why =
         entry.kind === "workspace"
           ? "a nested workspace runs its own chant workspace commands"
+          : entry.kind === "repo"
+            ? "a repo member is another repository's workspace, which runs its own chant workspace commands; chant workspace graph reads it at its pinned revision"
           : entry.kind === "design"
             ? "a design member is data: chant reads its files for record pins and builds nothing"
             : `chant workspace ${verb} runs members of kind chant, and this one is kind ${entry.kind}`;
@@ -556,13 +558,17 @@ export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVe
   }
 
   const results = await executePlan(plan, args);
-  const anyFailed = results.some((r) => r.exitCode !== 0) || plan.unreadable.length > 0;
+  // #2549: the disagreement lint, over every member's graph, when asked for.
+  const cross = verb === "lint" && args.crossRoot ? await runCrossRoot(found.dir, args) : undefined;
+  const anyFailed = results.some((r) => r.exitCode !== 0) || plan.unreadable.length > 0 || cross?.failed === true;
   const workspace = { name: plan.workspace.name, root: plan.workspace.root };
 
   if (verb === "lint" && args.format === "sarif") {
     for (const r of results) if (r.stderr.trim()) process.stderr.write(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     const unreadable: MemberOutput[] = plan.unreadable.map((s) => ({ id: s.name, member: s.name, dir: s.dir ?? ".", exitCode: 1, stdout: "", stderr: `${s.reason.code}: ${s.reason.message}` }));
-    emitDocument(mergeSarif([...results, ...unreadable], plan.workspace.root), args.output);
+    const sarif = mergeSarif([...results, ...unreadable], plan.workspace.root) as { runs?: unknown[] };
+    if (cross) (sarif.runs ??= []).push(crossRootSarifRun(cross));
+    emitDocument(sarif, args.output);
     console.error(summaryLine(plan, results));
     return anyFailed ? 1 : 0;
   }
@@ -598,6 +604,7 @@ export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVe
           ...plan.unreadable.map((s) => ({ member: s.name, dir: s.dir, exitCode: 1, diagnostics: null, reason: s.reason })),
         ],
         skipped: plan.skipped,
+        ...(cross ? { crossRoot: crossRootJson(cross) } : {}),
       };
     }
     emitDocument(doc, args.output);
@@ -608,5 +615,56 @@ export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVe
   // Text: each member's own output under a heading. A build without -o prints
   // no templates, since several members' templates can't share one stdout.
   printSections(plan, results, verb !== "build" || args.output !== undefined);
+  if (cross) printCrossRoot(cross);
   return anyFailed ? 1 : 0;
+}
+
+// ── The disagreement lint (#2549) ────────────────────────────────────────────
+
+interface CrossRootRun {
+  result?: import("./cross-root-lint").CrossRootLintResult;
+  /** Why the members' graphs could not be read. */
+  error?: string;
+  /** An error finding, or a graph that could not be read. */
+  failed: boolean;
+}
+
+async function runCrossRoot(root: string, args: ParsedArgs): Promise<CrossRootRun> {
+  const { workspaceGraph } = await import("./graph-cli");
+  const { crossRootLint } = await import("./cross-root-lint");
+  const { doc, failed } = await workspaceGraph({ cwd: root, ...(args.members?.length ? { members: args.members } : {}), onStderr: (t) => process.stderr.write(t) });
+  if ("error" in doc) return { error: `${doc.error.code}: ${doc.error.message}`, failed: true };
+  const result = await crossRootLint(doc, args.env ? { env: args.env } : {});
+  return { result, failed: failed || result.findings.some((f) => f.severity === "error") };
+}
+
+function crossRootJson(cross: CrossRootRun): unknown {
+  return cross.result ? { findings: cross.result.findings, checks: cross.result.checks, unloaded: cross.result.unloaded } : { error: cross.error };
+}
+
+function crossRootSarifRun(cross: CrossRootRun): unknown {
+  const findings = cross.result?.findings ?? [];
+  return {
+    tool: { driver: { name: "chant", rules: [...new Set(findings.map((f) => f.checkId))].sort().map((id) => ({ id })) } },
+    automationDetails: { id: "cross-root/" },
+    properties: { crossRoot: true, checks: cross.result?.checks ?? [], unloaded: cross.result?.unloaded ?? [] },
+    results: findings.map((f) => ({
+      ruleId: f.checkId,
+      level: f.severity === "error" ? "error" : f.severity === "warning" ? "warning" : "note",
+      message: { text: f.message },
+      ...(f.root ? { properties: { member: f.root } } : {}),
+    })),
+    ...(cross.error ? { invocations: [{ executionSuccessful: false, toolExecutionNotifications: [{ message: { text: cross.error } }] }] } : {}),
+  };
+}
+
+function printCrossRoot(cross: CrossRootRun): void {
+  if (!cross.result) {
+    console.log(`── cross-root  (the members' graphs could not be read: ${cross.error})`);
+    return;
+  }
+  const { findings, checks, unloaded } = cross.result;
+  console.log(`── cross-root  (${checks.join(", ")}; ${findings.length} finding${findings.length === 1 ? "" : "s"})`);
+  for (const f of findings) console.log(`  ${f.severity.padEnd(7)} ${f.checkId}${f.root ? ` [${f.root}]` : ""} ${f.message}`);
+  for (const u of unloaded) console.log(`  (lexicon ${u.lexicon}: its cross-root checks could not be loaded: ${u.reason})`);
 }

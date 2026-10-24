@@ -14,7 +14,7 @@
  *
  *  - runner labels: `runs-on: ubuntu-latest` → the project's Forgejo label
  *    (default `docker`, the label a fresh `act_runner` exposes);
- *  - `uses:` refs (`actions/checkout@v4`, `actions/upload-artifact@v4`, …)
+ *  - `uses:` refs (`actions/checkout`, `actions/upload-artifact`, ...), each pinned by commit SHA,
  *    rewritten to a Forgejo-resolvable form;
  *  - keys the Forgejo runner ignores (`continue-on-error`, and `permissions` bar `id-token`)
  *    dropped (`permissions` keeps only `id-token`, which OIDC needs).

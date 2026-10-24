@@ -17,6 +17,13 @@
  * one: the run holding the lease is the item's implementer, and a manual
  * verdict comes from someone else. A person records that verdict with
  * `records amend`, naming themselves in `by`.
+ *
+ * Evidence is a public link, a workspace file pinned by hash, or an ops
+ * result (#3171): a run, a deploy, a gate answer or a release plan on the
+ * `chant/lifecycle` branch, cited the way `graph --intent`'s trace cites it.
+ * The citation is resolved against the ledger it names before anything is
+ * written, and a run's outcome must agree with the result
+ * (`./work-evidence-ops.ts`).
  */
 
 import { relative, sep } from "node:path";
@@ -26,6 +33,7 @@ import { pinFile } from "./records-cli";
 import { AMEND_ERROR_CODES, amendRecord } from "./records-write";
 import { acceptanceCriteria, EVIDENCE_RESULTS, workAcceptance, type EvidenceResult, type VerificationType, type WorkAcceptance } from "./work";
 import { findWorkItem, WorkError } from "./work-cli";
+import { resolveOpsCitation, type OpsCitation } from "./work-evidence-ops";
 
 /** Why evidence was not attached. Closed. Nothing is written with any of them. */
 export const WORK_EVIDENCE_ERROR_CODES = [
@@ -40,6 +48,9 @@ export const WORK_EVIDENCE_ERROR_CODES = [
   "lease-not-held",
   "lease-token-mismatch",
   "not-a-git-repository",
+  "work-evidence-ops-missing",
+  "work-evidence-ops-mismatch",
+  "work-evidence-ops-unfinished",
 ] as const satisfies readonly ReasonCode[];
 export type WorkEvidenceErrorCode = (typeof WORK_EVIDENCE_ERROR_CODES)[number];
 
@@ -59,8 +70,10 @@ export interface AttachWorkEvidenceRequest {
   title: string;
   /** A public link, or */
   url?: string;
-  /** a workspace file, pinned by the hash of its bytes now. */
+  /** a workspace file, pinned by the hash of its bytes now, or */
   path?: string;
+  /** an ops result on the `chant/lifecycle` branch (#3171), verified against its ledger. */
+  ops?: OpsCitation;
   /** When the evidence was taken, as an ISO 8601 timestamp. Now by default. */
   asOf?: string;
 }
@@ -111,7 +124,9 @@ export async function attachWorkEvidence(req: AttachWorkEvidenceRequest): Promis
       throw new EvidenceError("write-usage-invalid", `result is pass or fail, not ${JSON.stringify(req.result)}`);
     }
     if (typeof req.title !== "string" || req.title.trim() === "") throw new EvidenceError("write-usage-invalid", "the evidence has no title");
-    if ((req.url === undefined) === (req.path === undefined)) throw new EvidenceError("write-usage-invalid", "the evidence is a url or a path, exactly one of them");
+    if ([req.url, req.path, req.ops].filter((v) => v !== undefined).length !== 1) {
+      throw new EvidenceError("write-usage-invalid", "the evidence is a url, a path or an ops result, exactly one of them");
+    }
     if (req.url !== undefined && !req.url.startsWith("https://")) throw new EvidenceError("write-input-invalid", `evidence links are https://, not ${JSON.stringify(req.url)}`);
 
     const found = await findWorkItem(req.item, req.cwd, req.kind);
@@ -139,7 +154,11 @@ export async function attachWorkEvidence(req: AttachWorkEvidenceRequest): Promis
     }
 
     let pin: Record<string, unknown>;
-    if (req.path !== undefined) {
+    if (req.ops !== undefined) {
+      const resolved = await resolveOpsCitation(req.ops, req.result, req.cwd);
+      if ("error" in resolved) throw new EvidenceError(resolved.error.code, resolved.error.message);
+      pin = { ops: resolved.ops };
+    } else if (req.path !== undefined) {
       const pinned = pinFile(req.path, req.cwd);
       if ("error" in pinned) throw new EvidenceError("write-input-invalid", pinned.error);
       pin = { path: pinned.path, sha256: pinned.sha256 };

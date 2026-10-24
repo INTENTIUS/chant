@@ -176,8 +176,10 @@ export interface QueueSettings {
 }
 
 /** Problems in the `sending_queue` of an exporter's `exporterhelper` settings. */
-export function queueIssues(c: ExporterHelperSettings): string[] {
-  const q = c.sending_queue;
+export function queueIssues(c: { sending_queue?: unknown }): string[] {
+  // `blocking` is not an upstream field; reading it through the hand-written
+  // shape is how a config that sets it anyway gets told so.
+  const q = c.sending_queue as QueueSettings | null | undefined;
   if (!q) return [];
   const issues: string[] = [];
   if (q.blocking !== undefined) {

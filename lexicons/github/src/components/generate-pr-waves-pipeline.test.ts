@@ -14,6 +14,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGithubPipeline } from "./generate-pipeline";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 const root = (name: string, dependsOn: string[] = []): DriverComponent => ({
   name,
@@ -112,8 +113,8 @@ describe("the GitHub pull-request workflow with a gate per wave (#4003)", () => 
   test("each wave restores the commit's newest record and saves its own, so wave k reads what wave k-1 left", () => {
     for (const k of [1, 2, 3]) {
       const steps = doc.jobs[`apply-wave-${k}`]!.steps;
-      const restore = steps.find((s) => s.uses === "actions/cache/restore@v4")!;
-      const save = steps.find((s) => s.uses === "actions/cache/save@v4")!;
+      const restore = steps.find((s) => s.uses === `${usesRef(ACTION_PINS.cacheRestore4)}`)!;
+      const save = steps.find((s) => s.uses === `${usesRef(ACTION_PINS.cacheSave4)}`)!;
       const key = `chant-apply-prod-\${{ github.sha }}-\${{ github.run_id }}-\${{ github.run_attempt }}-wave-${k}`;
       expect(restore.with).toEqual({ path: ".chant/pr-resume/pr-apply.json", key, "restore-keys": "chant-apply-prod-${{ github.sha }}-" });
       expect(save).toMatchObject({ if: "always()", with: { path: ".chant/pr-resume/pr-apply.json", key } });

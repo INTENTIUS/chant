@@ -869,10 +869,12 @@ describe("workspace init and ls (#2534)", () => {
       "workspace pin",
       "workspace points",
       "workspace records",
+      "workspace run",
       "workspace runs",
       "workspace search",
       "workspace signers",
       "workspace status",
+      "workspace train",
       "workspace trust",
       "workspace upgrade",
       "workspace verify",
@@ -880,6 +882,19 @@ describe("workspace init and ls (#2534)", () => {
       "workspace wip",
       "workspace work",
     ]);
+  });
+
+  test("run and train take their targets and flags (#2554)", () => {
+    const run = parseArgs(["workspace", "run", "api/deploy", "web/deploy", "--gate", "release", "--env", "prod"]);
+    expect(run).toMatchObject({ command: "workspace", path: "run", positionals: ["run", "api/deploy", "web/deploy"], gate: "release", env: "prod" });
+    expect(resolveCommand(run, commandRegistry)?.def.name).toBe("workspace run");
+    expect(parseArgs(["workspace", "run", "--dependents-of", "network", "--op", "deploy"])).toMatchObject({ dependentsOf: "network", op: "deploy" });
+    expect(() => parseArgs(["workspace", "run", "--dependents-of"])).toThrow(/--dependents-of needs a member/);
+    const train = parseArgs(["workspace", "train", "prod", "--pin", "api=v2", "--pin", "web=v1"]);
+    expect(train).toMatchObject({ positionals: ["train", "prod"], pins: ["api=v2", "web=v1"] });
+    expect(resolveCommand(train, commandRegistry)?.def.name).toBe("workspace train");
+    expect(() => parseArgs(["workspace", "train", "prod", "--pin", "api"])).toThrow(/--pin needs a member and a release/);
+    expect(parseArgs(["workspace", "lint", "--cross-root", "--format", "json"])).toMatchObject({ path: "lint", crossRoot: true, format: "json" });
   });
 
   test("adopt-lineage, hash-index, versions and upgrade --source take their flags (#2551)", () => {

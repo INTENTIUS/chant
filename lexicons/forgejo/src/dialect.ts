@@ -28,6 +28,7 @@
 // be `true`, so the two disagreed about a value carrying `false`. Core's also
 // accepts an entity a host built, which a local identity check cannot.
 import { isDeclarable, isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
+import { ACTION_PINS } from "@intentius/chant/action-pins";
 import { resolveActionRef } from "./actions";
 
 /**
@@ -183,7 +184,9 @@ const V4_ONLY_UPLOAD_INPUTS = new Set(["include-hidden-files", "overwrite"]);
 function dropV4OnlyArtifactInputs(step: Record<string, unknown>): void {
   const uses = step.uses;
   const withs = step.with;
-  if (typeof uses !== "string" || !/\/actions\/upload-artifact@v3$/.test(uses)) return;
+  if (typeof uses !== "string" || !/\/actions\/upload-artifact@(v3|[0-9a-f]{40})$/.test(uses)) return;
+  const at = uses.slice(uses.lastIndexOf("@") + 1);
+  if (at !== "v3" && at !== ACTION_PINS.uploadArtifact3.sha) return;
   if (withs === null || typeof withs !== "object" || Array.isArray(withs)) return;
   const kept = Object.fromEntries(Object.entries(withs as Record<string, unknown>).filter(([k]) => !V4_ONLY_UPLOAD_INPUTS.has(toKebabCase(k))));
   step.with = kept;

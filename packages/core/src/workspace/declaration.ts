@@ -22,7 +22,7 @@ import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
 import { cloudIdentityProblems, CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
 import { expandGlob } from "./glob";
-import { EXAMPLES_KIND, holdsChantProject } from "./kinds";
+import { EXAMPLES_KIND, holdsChantProject, REPO_KIND } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import type { ReasonCode } from "./reason-codes";
 import type { SecurityGroup } from "./security";
@@ -638,9 +638,16 @@ export const DEFAULT_STATE_ROOT = "${XDG_STATE_HOME}/chant/boxes";
 export interface Member {
   type: "member";
   name: string;
-  /** Relative to the workspace root; `"."` is the root member. */
+  /**
+   * Relative to the workspace root; `"."` is the root member. A member of kind
+   * `repo` has no directory here: its `dir` is {@link repoMemberDir}, which
+   * names no directory of this repository, and every reader that looks at
+   * member directories leaves it out by its kind (#3168).
+   */
   dir: string;
   kind: string;
+  /** For a member of kind `repo`, the other repository's workspace it names (#3168); null for every other kind. */
+  repo: RepoRef | null;
   roles: MemberRole[];
   /** Declared generated files, in file order. The implicit ones are not listed here (see `generated-files.ts`). */
   generated: GeneratedFile[];
@@ -660,6 +667,12 @@ export interface Member {
   because: string | null;
   /** Whether `chant workspace export` takes the member (#2552, D10). False when the entry does not say. */
   travel: boolean;
+  /**
+   * Whether a workspace gate's approval may stand in for this member's own
+   * gates (#2554, ws-039), when its digest covers the member's plan. Read
+   * from the declaration at base. Set only when the entry says true.
+   */
+  acceptWorkspaceGates?: true;
   /** The security groups this member adds to the declaration's top-level `security` (#4168 step 7), in file order; empty when it names none. */
   security: SecurityGroup[];
   /** The member's own `ci.workflow` (#4168 step 6), which wins over the top level's; null when it names none. */
@@ -691,10 +704,26 @@ export interface Pin {
   integrity: string | null;
 }
 
+/** Another repository's workspace, by URL and pinned revision (#3168). */
+export interface RepoRef {
+  url: string;
+  /** A full commit id. */
+  rev: string;
+  /** The workspace root inside that repository, relative to its git root; `"."` when the entry doesn't say. */
+  workspace: string;
+}
+
+/** The `dir` a `repo` member reads as (#3168): a marker, never a directory of this repository. */
+export function repoMemberDir(name: string): string {
+  return `@repo/${name}`;
+}
+
 export interface Declaration {
   name: string;
   schema: number;
   minReader: string | null;
+  /** `org` for an org-level workspace, which holds only `repo` members; `repo` otherwise, the default (#3168). */
+  scope: "repo" | "org";
   /** Members and groups, in file order. */
   entries: Entry[];
   members: Member[];
@@ -817,9 +846,13 @@ function explain(e: AjvError, value: unknown): string {
     const missing = String(e.params.missingProperty);
     if (missing === "because" && e.instancePath.endsWith("/handWritten")) return `a hand-written generated file needs "because", saying why it is kept by hand`;
     if (missing === "because") return `a member of kind other needs "because", saying why it is there`;
+    if (missing === "repo") return `a member of kind repo needs "repo", the other repository's url and pinned rev`;
     return `missing required field ${JSON.stringify(missing)}`;
   }
   if (e.keyword === "const" && e.instancePath === "/schema") return `schema must be 1, the only declaration format this chant reads`;
+  // A repo member has repo and no dir; every other member has dir and no repo (#3168).
+  if (e.keyword === "false schema" && e.instancePath.endsWith("/dir")) return `a member of kind repo has no dir: it names another repository's workspace with repo`;
+  if (e.keyword === "false schema" && e.instancePath.endsWith("/repo")) return `only a member of kind repo has repo`;
   return e.message ?? "is invalid";
 }
 
@@ -942,14 +975,17 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       protocol: l.protocol ?? null,
       pointer: `${pointer}/links/${j}`,
     }));
-    const records = recordKindsOf(e.records, e.dir as string, e.name as string, `${pointer}/records`);
+    const repoRaw = e.repo as { url: string; rev: string; workspace?: string } | undefined;
+    const dir = e.kind === REPO_KIND ? repoMemberDir(e.name as string) : (e.dir as string);
+    const records = recordKindsOf(e.records, dir, e.name as string, `${pointer}/records`);
     const diagrams = diagramsOf(e.diagrams, e.name as string, `${pointer}/diagrams`);
     const box = boxOf(e.box, `${pointer}/box`);
     return {
       type: "member",
       name: e.name as string,
-      dir: e.dir as string,
+      dir,
       kind: e.kind as string,
+      repo: repoRaw ? { url: repoRaw.url, rev: repoRaw.rev, workspace: repoRaw.workspace ?? "." } : null,
       roles,
       generated,
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
@@ -961,6 +997,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
       travel: e.travel === true,
+      ...(e.acceptWorkspaceGates === true ? { acceptWorkspaceGates: true as const } : {}),
       security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
       ciWorkflow: ((e.ci as { workflow?: CiWorkflow } | undefined)?.workflow) ?? null,
       ciHooks: ciHooksOf((e.ci as { hooks?: unknown } | undefined)?.hooks, `${pointer}/ci/hooks`, at),
@@ -986,8 +1023,10 @@ export function parseDeclaration(text: string, file: string, reader: string = re
   // Placement (#2524 D2): one root member at most, no two members in one
   // directory, and only the root member contains other members.
   const members = entries.filter((e): e is Member => e.type === "member");
+  // A repo member has no directory here (#3168), so it takes no part in placement.
+  const placed = members.filter((m) => m.kind !== REPO_KIND);
   const byDir = new Map<string, Member>();
-  for (const m of members) {
+  for (const m of placed) {
     const other = byDir.get(m.dir);
     if (other) {
       throw new WorkspaceReadError(
@@ -998,8 +1037,8 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     }
     byDir.set(m.dir, m);
   }
-  for (const m of members) {
-    const outer = members.find((o) => o !== m && o.dir !== "." && isInside(m.dir, o.dir));
+  for (const m of placed) {
+    const outer = placed.find((o) => o !== m && o.dir !== "." && isInside(m.dir, o.dir));
     if (outer) {
       throw new WorkspaceReadError(
         "placement-invalid",
@@ -1109,6 +1148,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     name: obj.name as string,
     schema: obj.schema as number,
     minReader: (obj.minReader as string | undefined) ?? null,
+    scope: obj.scope === "org" ? "org" : "repo",
     entries,
     members,
     groups: entries.filter((e): e is Group => e.type === "group"),

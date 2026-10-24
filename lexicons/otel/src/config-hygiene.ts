@@ -5,8 +5,8 @@
  * so it runs on emitted YAML, on an imported file and on a config inside a
  * ConfigMap alike. `validateCollectorConfig` calls `configHygieneIssues`.
  *
- * Every list and version here is read from collector or collector-contrib
- * v0.130.0 (`COLLECTOR_PIN`); the lint rules page cites the file for each.
+ * Every list and version here is read from collector or collector-contrib at
+ * `COLLECTOR_PIN` (v0.162.0); the lint rules page cites the file for each.
  */
 
 import { parseComponentId, type CollectorConfig } from "./model";
@@ -85,10 +85,12 @@ function invertMatchPaths(value: unknown, path: string[], out: string[]): string
 
 /**
  * OTEL119: a field deprecated at or before the pin. The collector still
- * reads each of these at v0.130.0, and a later release drops them.
+ * parses each of these at v0.162.0 (`COLLECTOR_PIN`), and a later release
+ * drops them.
  *
  * - `invert_match: true` in a `tail_sampling` policy: inverted decisions are
- *   deprecated in contrib v0.126.0 (#39833) for a `drop` policy.
+ *   deprecated in contrib v0.126.0 (#39833) for a `drop` policy, and v0.155.0
+ *   removed the gate that kept them (#48976).
  * - `service.telemetry.metrics.address`: deprecated in core v0.111.0
  *   (#11205) for `readers`.
  * - `dimensions_cache_size` on `spanmetrics`: deprecated in contrib v0.125.0
@@ -107,7 +109,7 @@ function deprecatedFieldIssues(config: CollectorConfig): CollectorIssue[] {
           code: "OTEL119",
           severity: "warning",
           component: id,
-          message: `processor "${id}" policy ${name} sets ${path}; inverted decisions are deprecated since collector-contrib v0.126.0. Use a drop policy to keep the traces out instead`,
+          message: `processor "${id}" policy ${name} sets ${path}; inverted decisions are deprecated since collector-contrib v0.126.0, and v0.155.0 removed the gate that kept them. Use a drop policy to keep the traces out instead`,
         });
       }
     });
@@ -315,8 +317,9 @@ function deliveryIssues(config: CollectorConfig): CollectorIssue[] {
 /**
  * The exporters OTEL125 knows send one request per incoming batch unless
  * told otherwise: `otlp` and `otlphttp`, whose default `sending_queue` at
- * v0.130.0 has no `batch` (`exporterhelper/internal/queue_sender.go`,
- * `NewDefaultQueueConfig`). Other exporters may batch on their own, so they
+ * v0.162.0 has no `batch` (`exporterhelper/internal/queue_sender.go`,
+ * `NewDefaultQueueConfig`, while the alpha `pkg.exporterhelper.queueBatchEnabled`
+ * gate is off). Other exporters may batch on their own, so they
  * are not checked.
  */
 const UNBATCHED_EXPORTERS = new Set(["otlp", "otlphttp"]);
@@ -353,9 +356,9 @@ function batchIssues(config: CollectorConfig): CollectorIssue[] {
 // ── OTEL126, OTEL127: names checked against a fixed list ─────────────
 
 /**
- * The fields `k8sattributes` can extract at v0.130.0: the cases of
- * `Config.Validate` (`processor/k8sattributesprocessor/config.go`), with
- * the semconv v1.6.1 keys and `options.go` constants they name.
+ * The fields `k8sattributes` can extract at v0.162.0 (`COLLECTOR_PIN`): the
+ * cases of `Config.Validate` (`processor/k8sattributesprocessor/config.go`),
+ * with the semconv keys and `options.go` constants they name.
  */
 export const K8S_ATTRIBUTES_METADATA: readonly string[] = Object.freeze([
   "k8s.namespace.name",
@@ -375,12 +378,14 @@ export const K8S_ATTRIBUTES_METADATA: readonly string[] = Object.freeze([
   "k8s.job.name",
   "k8s.job.uid",
   "k8s.cronjob.name",
+  "k8s.cronjob.uid",
   "k8s.node.name",
   "k8s.node.uid",
   "k8s.container.name",
   "container.id",
   "container.image.name",
   "container.image.tag",
+  "container.image.tags",
   "service.namespace",
   "service.name",
   "service.version",
@@ -390,14 +395,22 @@ export const K8S_ATTRIBUTES_METADATA: readonly string[] = Object.freeze([
 ]);
 
 /**
- * The detectors `resourcedetection` knows at v0.130.0: the keys of the map
- * in `NewFactory` (`processor/resourcedetectionprocessor/factory.go`), as
- * each detector's `TypeStr` spells them.
+ * The detectors `resourcedetection` knows at v0.162.0 (`COLLECTOR_PIN`): the
+ * keys of the map in `NewFactory`
+ * (`processor/resourcedetectionprocessor/factory.go`), as each detector's
+ * `TypeStr` spells them. `k8snode` is the deprecated alias of `k8s_api`
+ * (v0.154.0); both still build.
  */
 export const RESOURCE_DETECTORS: readonly string[] = Object.freeze([
+  "akamai",
+  "alibaba_ecs",
   "aks",
   "azure",
+  "azureappservice",
+  "azurecontainerapps",
+  "azurefunctions",
   "consul",
+  "digitalocean",
   "docker",
   "ec2",
   "ecs",
@@ -407,11 +420,21 @@ export const RESOURCE_DETECTORS: readonly string[] = Object.freeze([
   "env",
   "gcp",
   "heroku",
+  "hetzner",
+  "ibmcloud_classic",
+  "ibmcloud_vpc",
+  "scaleway",
   "system",
   "openshift",
+  "nova",
+  "oraclecloud",
+  "k8s_api",
   "k8snode",
   "kubeadm",
   "dynatrace",
+  "tencent_cvm",
+  "upcloud",
+  "vultr",
 ]);
 
 /** OTEL126: `k8sattributes` `extract.metadata` names a field the processor can't extract, so the collector refuses the config. */

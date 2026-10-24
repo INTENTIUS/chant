@@ -23,6 +23,7 @@ import { artifactRoot, generateGithubPipeline } from "./generate-pipeline";
 import { resolveComponentGraph, DependencyCycleError, UnknownDependencyError, type DriverComponent } from "@intentius/chant/components/driver";
 import { searchService } from "@intentius/chant/components/pilots/alb-ecs.pilot";
 import { ordersTable } from "@intentius/chant/components/pilots/dynamodb.pilot";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 /** Real pilot components (#555) plus the shared-alb infra `search-service` depends on, as a realistic multi-wave input. */
 function pilotComponents(): DriverComponent[] {
@@ -67,21 +68,21 @@ describe("generateGithubPipeline: cross-stack output threading (artifacts)", () 
     // job, so it dumps them and uploads the file as a workflow artifact.
     const shared = jobs["shared-alb"];
     expect(runLines(shared).some((line) => line.includes("--dump-outputs shared-alb.outputs.json"))).toBe(true);
-    const uploadStep = shared.steps.find((s) => s.uses === "actions/upload-artifact@v4");
+    const uploadStep = shared.steps.find((s) => s.uses === `${usesRef(ACTION_PINS.uploadArtifact4)}`);
     expect(uploadStep?.with).toEqual({ name: "shared-alb-outputs", path: "shared-alb.outputs.json" });
 
     // Consumer: search-service downloads shared-alb's uploaded artifact and
     // seeds from the dumped file so its stackOutput() references resolve.
     const svc = jobs["search-service"];
-    const downloadStep = svc.steps.find((s) => s.uses === "actions/download-artifact@v4");
+    const downloadStep = svc.steps.find((s) => s.uses === `${usesRef(ACTION_PINS.downloadArtifact4)}`);
     expect(downloadStep?.with).toEqual({ name: "shared-alb-outputs", path: "." });
     expect(runLines(svc).some((line) => line.includes("--seed-outputs shared-alb.outputs.json"))).toBe(true);
 
     // A component nothing depends on neither dumps nor uploads an artifact.
     const orders = jobs["orders-table"];
     expect(runLines(orders).some((line) => line.includes("--dump-outputs"))).toBe(false);
-    expect(orders.steps.some((s) => s.uses === "actions/upload-artifact@v4")).toBe(false);
-    expect(orders.steps.some((s) => s.uses === "actions/download-artifact@v4")).toBe(false);
+    expect(orders.steps.some((s) => s.uses === `${usesRef(ACTION_PINS.uploadArtifact4)}`)).toBe(false);
+    expect(orders.steps.some((s) => s.uses === `${usesRef(ACTION_PINS.downloadArtifact4)}`)).toBe(false);
     expect(runLines(orders).some((line) => line.includes("--seed-outputs"))).toBe(false);
   });
 });
@@ -104,7 +105,7 @@ describe("generateGithubPipeline: structurally valid YAML", () => {
       expect(job.steps.length).toBeGreaterThan(0);
       // Every job starts with a checkout step — a job runs on a fresh runner
       // with no repo present, unlike GitLab's auto-cloned workspace.
-      expect(job.steps[0].uses).toBe("actions/checkout@v7");
+      expect(job.steps[0].uses).toBe(`${usesRef(ACTION_PINS.checkout7)}`);
     }
   });
 
@@ -327,7 +328,7 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
     const jobs = parsedJobs(result.yaml);
 
     const upload = jobs["api"].steps.find((s) => s.name === "Upload api build archive")!;
-    expect(upload.uses).toBe("actions/upload-artifact@v4");
+    expect(upload.uses).toBe(`${usesRef(ACTION_PINS.uploadArtifact4)}`);
     expect(upload.with).toEqual({
       name: "api-archive",
       path: "dist/images/api.tar",
@@ -339,7 +340,7 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
     const promote = jobs["promote-prod"];
     expect(promote.needs).toEqual(["api", "shared-alb", "worker"]);
     expect(promote.container).toBe("node:22");
-    const downloads = promote.steps.filter((s) => s.uses === "actions/download-artifact@v4");
+    const downloads = promote.steps.filter((s) => s.uses === `${usesRef(ACTION_PINS.downloadArtifact4)}`);
     expect(downloads.map((s) => s.with)).toEqual([
       { name: "api-archive", path: "dist/images" },
       { name: "worker-archive", path: "." },
@@ -440,7 +441,7 @@ describe("generateGithubPipeline: gated waves (#3049)", () => {
 
     const steps = parsed.jobs["wave-2"].steps;
     expect(steps[0].with).toEqual({ "fetch-depth": 0 });
-    expect(steps[1]).toMatchObject({ uses: "actions/download-artifact@v4", with: { name: "fan-out-record-wave-1", path: ".chant" } });
+    expect(steps[1]).toMatchObject({ uses: `${usesRef(ACTION_PINS.downloadArtifact4)}`, with: { name: "fan-out-record-wave-1", path: ".chant" } });
     // The default image is the pr-loop one: node:22, with OpenTofu installed when missing.
     expect(parsed.jobs["wave-2"]).toMatchObject({ container: "node:22" });
     expect(steps[2].run).toMatch(/^command -v tofu /);
@@ -449,7 +450,7 @@ describe("generateGithubPipeline: gated waves (#3049)", () => {
     );
     expect(steps[4]).toMatchObject({ if: "always()", with: { name: "fan-out-record-wave-2", path: ".chant/fan-out.json" } });
     // Wave 1 has nothing to download.
-    expect(parsed.jobs["wave-1"].steps.some((s) => s.uses === "actions/download-artifact@v4")).toBe(false);
+    expect(parsed.jobs["wave-1"].steps.some((s) => s.uses === `${usesRef(ACTION_PINS.downloadArtifact4)}`)).toBe(false);
   });
 
   test("a gated-wave pipeline has no promote job", () => {

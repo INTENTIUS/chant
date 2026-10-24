@@ -17,6 +17,7 @@ import { generateGithubPipeline } from "@intentius/chant-lexicon-github/componen
 import { githubBaseFallback, greenCheckout } from "@intentius/chant/components/pr-pipeline";
 import { dropForgeTokens } from "@intentius/chant/ci-handover";
 import { generateForgejoPipeline } from "./generate-pipeline";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 const ESTATE: DriverComponent[] = [
   { name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: "net" }] }] },
@@ -84,21 +85,22 @@ describe("the Forgejo pull-request workflow", () => {
   });
 
   test("the apply keeps its resume record in the runner's cache, through the Forgejo mirror of actions/cache (#3543)", () => {
-    expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/restore@v4");
-    expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/save@v4");
+    expect(result.yaml).toContain(`uses: https://code.forgejo.org/${usesRef(ACTION_PINS.cacheRestore4)}`);
+    expect(result.yaml).toContain(`uses: https://code.forgejo.org/${usesRef(ACTION_PINS.cacheSave4)}`);
     // ci run's inner pr-apply resumes from it (#4156): the job runs in place, where the cache restored it.
     expect(result.yaml).toContain("chant ci run apply --in-place --env prod");
   });
 
   test("keeps its reports with upload-artifact v3, the version a Forgejo runner runs, while GitHub keeps v4 (#4008)", () => {
     // v4 refuses a runner that reads as GitHub Enterprise Server, as Forgejo's does.
-    expect(result.yaml.match(/uses: https:\/\/code\.forgejo\.org\/actions\/upload-artifact@v3$/gm)).toHaveLength(3);
-    expect(result.yaml).not.toMatch(/(upload|download)-artifact@v4/);
+    expect(result.yaml.match(new RegExp(`uses: https://code\\.forgejo\\.org/actions/upload-artifact@${ACTION_PINS.uploadArtifact3.sha} # ${ACTION_PINS.uploadArtifact3.tag}$`, "gm"))).toHaveLength(3);
+    expect(result.yaml).not.toContain(ACTION_PINS.uploadArtifact4.sha);
+    expect(result.yaml).not.toContain(ACTION_PINS.downloadArtifact4.sha);
     // v3 uploads hidden files with no input asking for it, so .chant/pr is still kept.
     expect(result.yaml).not.toContain("include-hidden-files");
     expect(result.yaml).toContain("path: .chant/pr");
     const github = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { applyOnMerge: true } }).yaml;
-    expect(github.match(/uses: actions\/upload-artifact@v4$/gm)).toHaveLength(3);
+    expect(github.match(new RegExp(`uses: actions/upload-artifact@${ACTION_PINS.uploadArtifact4.sha} # ${ACTION_PINS.uploadArtifact4.tag}$`, "gm"))).toHaveLength(3);
     expect(github).toContain("include-hidden-files: true");
   });
 

@@ -15,7 +15,9 @@ const gateway = new OtlpExporter({
   retry_on_failure: retry,
 });
 
-const resourceLabels = { enabled: true };
-const prometheus = new PrometheusExporter({ endpoint: "0.0.0.0:8889", resource_to_telemetry_conversion: resourceLabels });
+// Every resource attribute becomes a metric label. `resource_constant_labels`
+// replaces the deprecated `resource_to_telemetry_conversion` (contrib v0.160.0).
+const resourceLabels = { included: ["*"] };
+const prometheus = new PrometheusExporter({ endpoint: "0.0.0.0:8889", resource_constant_labels: resourceLabels });
 
 export { gateway, prometheus };

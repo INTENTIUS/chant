@@ -52,6 +52,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `schema` | yes | `1`, the only format version so far. |
 | `members` | yes | An array of [members](#members) and [example groups](#example-groups), in the order readers list them. |
 | `minReader` | no | The oldest chant version that may read the file, such as `"0.81.0"`. An older chant refuses it with `reader-too-old`. |
+| `scope` | no | `repo`, the default, or `org` for an [org workspace](#repo-members-and-org-workspaces), which holds only `repo` members. It was added in chant 0.124.47. |
 | `pins` | no | An array of [pins](#pins). |
 | `checks` | no | Severities for the [declaration checks](/chant/cli/workspace-check/#severity-and-suppression), keyed by `WSP` id: `error`, `warning`, `info` or `off`. |
 | `records` | no | The workspace's own [record kinds](#record-kinds), each `{ "kind": "<path>" }` with the path from the workspace root. It was added in chant 0.86.0. |
@@ -73,13 +74,14 @@ Any other field is refused. A field added later within schema 1 is optional. A d
 
 ## Members
 
-A member is an object with `name`, `dir` and `kind`.
+A member is an object with `name`, `dir` and `kind`. A member of kind `repo` has `repo` in place of `dir`.
 
 | Field | Required | Value |
 |---|---|---|
 | `name` | yes | The member's name, in the [name grammar](#names). Frozen once the member deploys. |
-| `dir` | yes | Its directory relative to the workspace root, with `/` separators. `"."` is the root member. |
-| `kind` | yes | How to read it: `chant`, `workspace`, `design`, `other`, or a kind a pinned package supplies. |
+| `dir` | yes, except for `repo` | Its directory relative to the workspace root, with `/` separators. `"."` is the root member. A `repo` member has none. |
+| `kind` | yes | How to read it: `chant`, `workspace`, `repo`, `design`, `other`, or a kind a pinned package supplies. |
+| `repo` | for `repo` | The other repository's workspace: `url`, the pinned `rev` and, optionally, `workspace`. See [Repo members and org workspaces](#repo-members-and-org-workspaces). Only a `repo` member has it. |
 | `roles` | no | Roles the member plays. Each is a role name, or `{ "name": "...", "path": "..." }` with a path inside the member. |
 | `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
 | `links` | no | The [member links](#member-links) this member reads, each `{ "member": "...", "output": "..." }`. |
@@ -91,19 +93,48 @@ A member is an object with `name`, `dir` and `kind`.
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
 | `travel` | no | `true` when the member goes with an export. [`chant workspace export`](/chant/cli/workspace-export/) takes only members that set it. It was added in chant 0.101.0. |
+| `acceptWorkspaceGates` | no | `true` lets an approval of a [workspace gate](/chant/cli/workspace-run/#workspace-gates) stand in for this member's own gates, when its digest covers the plan the member's run reached the gate with. Only the declaration at base counts. It was added in chant 0.124.47. |
 | `suppress` | no | Declaration checks turned off for this member, each `{ "check": "WSP009", "because": "..." }`. See [severity and suppression](/chant/cli/workspace-check/#severity-and-suppression). |
 
-Three kinds are built in.
+These kinds are built in, besides `design` and the group kind `examples`.
 
 | Kind | The directory holds |
 |---|---|
 | `chant` | a chant project, with `chant.config.ts` or `chant.config.json` directly in it |
 | `workspace` | a nested workspace with its own declaration. The outer workspace never runs commands or writes inside it, except [`chant workspace export`](/chant/cli/workspace-export/) into a member with the role `export`. [`chant workspace graph`](/chant/cli/workspace-graph/#nested-workspaces) reads it read-only, through its own `chant workspace graph` |
+| `repo` | nothing in this repository: the member names another repository's workspace. See [below](#repo-members-and-org-workspaces) |
 | `other` | anything chant does not read. `because` is required |
 
 A pinned package can supply more kinds, as data at its `./workspace-kinds` subpath. [Workspace Kinds](/chant/reference/workspace-kinds/) describes the format, which packages are read, and how chant decides when several kinds' probes claim one directory. A member whose kind no built-in or pinned package supplies is listed with the reason `unknown-kind`, and `chant workspace check` fails on it.
 
 A member's directory leaves the root project, and discovery at the root skips it ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). The member's own commands cover it, and [`chant workspace build`](/chant/cli/workspace-build/) runs them for every member ([#2537](https://github.com/INTENTIUS/chant/issues/2537)). `chant workspace init` lists these directories before it writes.
+
+## Repo members and org workspaces
+
+A member of kind `repo` names another repository's workspace by URL and pinned revision ([#3168](https://github.com/INTENTIUS/chant/issues/3168)). It is read only through that repository's own read contract, its `chant workspace graph` at the revision, the way a nested `workspace` member is read, and chant never writes there.
+
+```json
+{
+  "name": "acme",
+  "schema": 1,
+  "minReader": "0.124.47",
+  "scope": "org",
+  "members": [
+    { "name": "payments", "kind": "repo", "repo": { "url": "https://github.com/acme/payments", "rev": "9f2c4e1d0b7a6c5e4f3a2b1c0d9e8f7a6b5c4d3e" } },
+    { "name": "platform", "kind": "repo", "repo": { "url": "git@github.com:acme/platform.git", "rev": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b", "workspace": "infra" } }
+  ]
+}
+```
+
+| `repo` field | Required | Value |
+|---|---|---|
+| `url` | yes | Where git fetches the repository from: an https, ssh or file URL, a local path (from the workspace root), or `git@host:org/repo`. It must carry no password or token (`WSP016`); git's own credential helpers supply access |
+| `rev` | yes | The pinned revision, a full commit id. A branch or tag is not a pin |
+| `workspace` | no | The workspace root inside that repository, from its git root. Defaults to `"."` |
+
+A `repo` member has no directory here, so it takes no part in [placement](#placement). [`chant workspace ls`](/chant/cli/workspace-ls/) lists it with `dir` `@repo/<name>`, a marker that names no directory, and its `repo` object. `build`, `lint` and `audit` skip it with `kind-not-run`. [`chant workspace graph`](/chant/cli/workspace-graph/#repo-members) fetches the revision into the user's cache and folds the other repository's graph in, with that repository's own member list under the member's `nested`. `chant workspace check` never fetches.
+
+An org workspace sets `scope` to `org` and holds only `repo` members, one per repository of the org. `chant workspace check` fails any other member or example group with `WSP013`. A warden generates the declaration from its policy, or checks one against the forge: it writes the org's repository list to a file and runs [`chant workspace check --forge-repos <file>`](/chant/cli/workspace-check/#org-workspaces), which reports a repository the forge has and the declaration lacks (`WSP014`) and one the declaration names that the forge no longer has (`WSP015`). chant reads the list and never asks the forge itself.
 
 ## Member links
 

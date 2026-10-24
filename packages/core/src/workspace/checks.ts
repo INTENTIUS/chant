@@ -21,7 +21,8 @@
  *
  * | Ids | Checks |
  * |---|---|
- * | WSP001 to WSP011 | the declaration and member kinds (this file) |
+ * | WSP001 to WSP012 | the declaration and member kinds (this file), and a member's file against its kind's schema (#3672) |
+ * | WSP013 to WSP016 | org scope: repo members and the org workspace, checked against the forge's list with `--forge-repos` (#3168) |
  * | WSP071, WSP072 | member ledgers |
  * | WSP081 to WSP083 | recorded pipelines |
  * | WSP091 to WSP099 | member links (#2539, #2558), and those a kind's reader finds in a member's files (#3932) |
@@ -48,7 +49,7 @@ import type { PostSynthDiagnostic } from "../lint/post-synth";
 import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, type Entry, type ErrorLocation, type ResolvedGroup } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
-import { loadKindRegistry, probeKind, resolveKind, resolveMemberFields, type KindLoadProblem, type KindRegistry } from "./kinds";
+import { checkMemberFile, loadKindRegistry, probeKind, REPO_KIND, resolveKind, resolveMemberFields, type KindLoadProblem, type KindRegistry } from "./kinds";
 import { coreClassRegistry, loadClassRegistry, unknownScopeClasses, type ClassRegistry } from "./principal-classes";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { LINK_CHECKS, linkTable } from "./checks/links";
@@ -62,6 +63,7 @@ import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { SECURITY_CHECKS } from "./checks/security";
 import { CI_WORKFLOW_CHECKS } from "./checks/ci-workflow";
+import { ORG_CHECKS, type ForgeRepoList } from "./checks/org";
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
 import { resolveBoxIntents, type ResolvedBoxIntent } from "./box-intent";
 import { gatherLexiconOutputs, type MemberLexiconOutputs } from "./lexicon-outputs";
@@ -88,6 +90,8 @@ export interface WorkspaceFacts {
   boxIntents?: readonly ResolvedBoxIntent[];
   /** The outputs linked members' lexicons report about their declarations, read by folding their source (#3931). */
   lexiconOutputs?: ReadonlyMap<string, MemberLexiconOutputs>;
+  /** The forge's repository list, from `--forge-repos` (#3168). */
+  forgeRepos?: ForgeRepoList;
 }
 
 /** What every declaration check reads. */
@@ -174,9 +178,9 @@ function entryFinding(check: WorkspaceCheck, entry: Entry, field: string | null,
   };
 }
 
-/** The dir exists and the kind is known: the members every probe check reads. */
+/** The dir exists and the kind is known: the members every probe check reads. A repo member has no directory here (#3168). */
 function readableMembers(ctx: WorkspaceCheckContext) {
-  return ctx.declaration.members.filter((m) => ctx.tree.stat(memberDir(m.dir)) === "dir" && ctx.kinds.get(m.kind) !== undefined);
+  return ctx.declaration.members.filter((m) => m.kind !== REPO_KIND && ctx.tree.stat(memberDir(m.dir)) === "dir" && ctx.kinds.get(m.kind) !== undefined);
 }
 
 /** The first id of the read failure, used by {@link runDeclarationChecks} when the declaration can't be read. */
@@ -240,7 +244,7 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
     configurable: true,
     check(ctx) {
       return ctx.declaration.members
-        .filter((m) => ctx.tree.stat(memberDir(m.dir)) !== "dir")
+        .filter((m) => m.kind !== REPO_KIND && ctx.tree.stat(memberDir(m.dir)) !== "dir")
         .map((m) => entryFinding(this, m, "dir", `member ${m.name}'s directory ${m.dir} does not exist${ctx.tree.label}`));
     },
   },
@@ -359,6 +363,43 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
       return out;
     },
   },
+  {
+    id: "WSP012",
+    name: "member-file-invalid",
+    description: "Every member of a kind that names a member file has that file, and it passes the kind's JSON Schema (#3672).",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      const out: WorkspaceDiagnostic[] = [];
+      for (const m of readableMembers(ctx)) {
+        const kind = ctx.kinds.get(m.kind)!;
+        const mf = kind.memberFile;
+        if (!mf) continue;
+        const file = memberDir(m.dir) === "" ? mf.path : `${memberDir(m.dir)}/${mf.path}`;
+        if (!mf.validate) {
+          out.push(entryFinding(this, m, "kind", `member ${m.name}'s ${mf.path} can't be checked: kind ${m.kind}'s schema ${mf.schema} did not load (see WSP002)`));
+          continue;
+        }
+        if (ctx.tree.stat(file) !== "file") {
+          out.push(entryFinding(this, m, "dir", `member ${m.name} (${m.dir}) has no ${mf.path}, which kind ${m.kind} requires${ctx.tree.label}`));
+          continue;
+        }
+        let text: string;
+        try {
+          text = ctx.tree.read(file);
+        } catch (err) {
+          out.push(entryFinding(this, m, "dir", `member ${m.name}'s ${mf.path} can't be read: ${(err as Error).message}`));
+          continue;
+        }
+        for (const p of checkMemberFile(mf, mf.path, text)) {
+          out.push({ ...entryFinding(this, m, null, `member ${m.name}'s ${mf.path} fails kind ${m.kind}'s schema ${mf.schema}: ${p.message}`), treeFile: file, line: 1, column: 1 });
+        }
+      }
+      return out;
+    },
+  },
+  // Org scope (#3168), WSP013 to WSP016.
+  ...ORG_CHECKS,
   // Member ledgers (#2538).
   ...LEDGER_CHECKS,
   // Recorded pipelines (#2542).
@@ -463,6 +504,8 @@ export interface DeclarationCheckOptions {
    * account now. `onStderr` gets each member's stderr.
    */
   live?: { env: string; onStderr?: (text: string) => void };
+  /** The forge's repository list, from `--forge-repos` (#3168), for WSP014 and WSP015. Read under `--at` too: it is input, not the tree. */
+  forgeRepos?: ForgeRepoList;
 }
 
 /**
@@ -540,6 +583,7 @@ export async function runDeclarationChecks(
     ...(lexiconOutputs && lexiconOutputs.size > 0 ? { lexiconOutputs } : {}),
     ...gathered,
     ...(options.records ? { records: options.records } : {}),
+    ...(options.forgeRepos ? { forgeRepos: options.forgeRepos } : {}),
     ...(declaredKinds ? { declaredKinds } : {}),
     ...(boxIntents ? { boxIntents } : {}),
     ...(options.live && !options.tree ? { live: await gatherLiveLinkFacts(root, declaration, registry, options.live.env, options.live.onStderr) } : {}),

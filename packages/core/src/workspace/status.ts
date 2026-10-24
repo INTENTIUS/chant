@@ -50,6 +50,7 @@ import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
 import { loadKindRegistry, resolveMemberFields, type MemberFields } from "./kinds";
+import { repoIdentity } from "./repo-ref";
 import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
 import { declaredRecordKinds, extensionsAt, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
@@ -388,7 +389,7 @@ export type StatusDocument =
       lifecycle: { ref: string; commit: string | null };
       /** The branch, head and base of the checkout read (#3160). `records --uncommitted` lists the records it holds uncommitted. */
       checkout: CheckoutHead;
-      workspace: { name: string; root: string; file: string };
+      workspace: { name: string; root: string; file: string; repo: string | null };
       /** Whether a host can plant the workspace as one box (#3146): exactly one member's box block declares services. */
       plantable: Plantable;
       members: StatusMember[];
@@ -813,7 +814,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       compareTo: query.compareTo ?? null,
       lifecycle: { ref: LIFECYCLE_REF, commit },
       checkout: readCheckoutHead(top),
-      workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file },
+      workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file, repo: repoIdentity(found.dir) },
       plantable: plantability(declaration),
       members,
       leases,

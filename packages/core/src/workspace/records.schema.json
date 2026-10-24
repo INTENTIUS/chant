@@ -152,6 +152,11 @@
           "description": "Added in contract 1 by #2683, for a work kind only. Every decision the kind file named in the work kind's work.decisions reads at the same revision, whether or not a work record names it, each with the work records implementing it. A decision with an empty implementedBy has no work item yet.",
           "type": "array",
           "items": { "$ref": "#/$defs/decisionWork" }
+        },
+        "where": {
+          "description": "Added in contract 1 by #4363. Each --where clause, <field><op><value>, as given; every one held for each record listed, and summary's total, valid and invalid count the records listed. Absent without --where.",
+          "type": "array",
+          "items": { "type": "string" }
         }
       },
       "allOf": [

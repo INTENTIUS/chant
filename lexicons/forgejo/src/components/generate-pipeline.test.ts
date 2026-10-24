@@ -16,6 +16,7 @@ import { generateGithubPipeline } from "@intentius/chant-lexicon-github/componen
 import { type DriverComponent } from "@intentius/chant/components/driver";
 import { searchService } from "@intentius/chant/components/pilots/alb-ecs.pilot";
 import { ordersTable } from "@intentius/chant/components/pilots/dynamodb.pilot";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 function pilotComponents(): DriverComponent[] {
   return [
@@ -110,7 +111,7 @@ describe("generateForgejoPipeline: dialect applied", () => {
       expect(ref).toContain("code.forgejo.org/actions/");
     }
     // checkout is present and mirrored.
-    expect(all.some((r) => r === "https://code.forgejo.org/actions/checkout@v7")).toBe(true);
+    expect(all.some((r) => r === `https://code.forgejo.org/${usesRef(ACTION_PINS.checkout7)}`)).toBe(true);
   });
 });
 

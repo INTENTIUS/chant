@@ -39,7 +39,7 @@ It separates PR-worthy security findings (with ready-to-apply fix diffs) from hy
 | [@intentius/chant](packages/core) | Type system, discovery, build pipeline, semantic lint engine, CLI |
 | [@intentius/chant-lexicon-aws](lexicons/aws) | AWS lexicon — S3, Lambda, IAM types + semantic lint rules |
 | [@intentius/chant-lexicon-azure](lexicons/azure) | Azure lexicon — ARM resource types, template functions |
-| [@intentius/chant-lexicon-gcp](lexicons/gcp) | GCP lexicon — Deployment Manager resource types |
+| [@intentius/chant-lexicon-gcp](lexicons/gcp) | GCP lexicon — Config Connector resource types, applied by `kubectl` or by chant's REST applier |
 | [@intentius/chant-lexicon-gitlab](lexicons/gitlab) | GitLab CI lexicon — pipelines, jobs, variables |
 | [@intentius/chant-lexicon-grafana](lexicons/grafana) | Grafana lexicon — dashboards, panels, typed PromQL/TraceQL/LogQL queries and datasources, emitted as dashboard JSON and provisioning files |
 | [@intentius/chant-lexicon-helm](lexicons/helm) | Helm lexicon — charts, releases, values |

@@ -43,7 +43,13 @@ The set is a plugin registry, not a closed enum. Verbs group into families. The 
 | **escape hatch** | `shell` | core | typed, lint-flagged |
 | **apply (Cloudflare Workers)** | `wrangler-deploy`, `wrangler-versions-promote`, `r2-sync` | core | wraps the `wrangler`/`rclone` CLIs directly — the Workers plane is deliberately ceded to `wrangler` (no cloudflare lexicon owns these; [#1293](https://github.com/INTENTIUS/chant/issues/1293)); `r2-sync` mirrors `s3-sync`'s input shape |
 | **sbom (config)** | `extract-config-bom` | aws | IaC config-BOM (declared resources / nested stacks / external refs) from the synthesized CloudFormation template into the build archive |
-| **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | aws | deploy-time, promote by identity; an interface with backends |
+| **publish (registry)** | `publish-image` | core | one verb; load, tag, push and the digest read-back are core's. Each cloud lexicon contributes its registry login as a backend (aws `ecr`, azure `acr`, gcp `artifact-registry`), picked by the registry host or `$env.publish.backend` ([#3142](https://github.com/INTENTIUS/chant/issues/3142), [#3143](https://github.com/INTENTIUS/chant/issues/3143)) |
+| **publish (artifact)** | `publish-artifact` (alias `publish-asset`) | core | one verb; the content digest and object URI are core's. Each cloud lexicon contributes an upload as a storage backend through `CapabilityPlugin.storageBackends()` (aws `s3`, azure `azure-blob`, gcp `gcs`), picked by `$env.publish.backend` or the destination URI ([#4408](https://github.com/INTENTIUS/chant/issues/4408)) |
+| **publish** | `load-image-on-host`, `publish-asset` / `publish-artifact` | aws | deploy-time, promote by identity |
+| **apply (azure)** | `arm-deploy` | azure | native per-resource ARM applier, owned-only prune |
+| **wait / verify (azure)** | `wait-for-deployment`, `wait-container-app` | azure | ARM provisioning-state poll; Container App latest-revision poll |
+| **apply (gcp)** | `gcp-apply` | gcp | native REST applier over Config Connector manifests |
+| **wait / verify (gcp)** | `wait-for-operation`, `wait-cloud-run-ready` | gcp | long-running operation poll; Cloud Run terminal-condition poll |
 | **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration` | aws | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
 | **job submission** | `emr-start-job-run`, `emr-submit-step` | aws | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |
 | **host / code delivery** | `code-deploy`, `copy-to-host`, `remote-exec` | aws | `code-deploy` = AWS CodeDeploy; the others are SSM host verbs (SSH transport pending) |
@@ -53,6 +59,9 @@ The set is a plugin registry, not a closed enum. Verbs group into families. The 
 | **apply** | `gcp-apply` | gcp | a Config Connector manifest over the applier's REST mappers, planned from a live read of each resource; honours `GCP_ENDPOINT_URL` for floci-gcp |
 | **apply** | `kubectl-apply`, `kustomize-apply` | k8s | server-side apply as `chant:<stack>` with the marker-scoped prune; kustomize renders in front of the same pipeline |
 | **gitops** | `argo-app`, `flux-reconcile` | k8s | apply the controller's CR through the same stack-labelled pipeline, then wait for convergence — Healthy+Synced for Argo, `Ready` (terminal on wedge reasons) for Flux |
+| **apply** | `helm-upgrade` | helm | `helm upgrade --install` of one release, on the cluster the environment's k8s binding names; native rollback to the previous revision, so COMP003 asks no opt-out |
+| **apply** | `terraform-apply` | terraform | one Terraform root from `terraform.roots`, planned with `terraform plan` |
+| **apply** | `fly-release`, `fly-rollback` | fly | a release served by a Fly Machine, and going back to an earlier one |
 
 A genuinely new apply *family* (job submission was one) is written once and then reused across every component of that shape. A new *component* is a declaration only. This is why the family count grows sub-linearly against components — see [the cloud boundary](/chant/components/cloud-boundary/) for how each family's leaf maps per cloud.
 

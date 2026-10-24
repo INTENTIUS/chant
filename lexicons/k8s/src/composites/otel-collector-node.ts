@@ -7,7 +7,7 @@
  * Only components a pipeline runs count, since the collector starts no
  * other. A config that reads nothing from the node gets nothing, so its
  * DaemonSet is unchanged. Each requirement cites the component's README at
- * collector-contrib v0.130.0, the version the otel lexicon pins:
+ * collector-contrib v0.130.0:
  *
  * - The node's name, from the downward API (`spec.nodeName`), in each
  *   variable a `k8sattributes` processor names in `filter.node_from_env_var`

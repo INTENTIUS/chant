@@ -7,6 +7,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseYAML } from "@intentius/chant/yaml";
+import type { ParseContext } from "@intentius/chant/import/parser";
+import { delegateEmbedded } from "./embedded";
 
 export interface ServiceIR {
   kind: "service";
@@ -125,12 +127,20 @@ function extractProps(
  * Converts YAML to an IR consumable by the TypeScript generator.
  */
 export class DockerParser {
-  parse(content: string): ParseResult {
+  /**
+   * With `context.embedded` (`chant import`), a config's `content` another
+   * lexicon owns (a collector config) is handed to it (see ./embedded.ts).
+   * Without it, every config is kept as written.
+   */
+  parse(content: string, context?: ParseContext): ParseResult {
     if (!content.trim()) return { entities: [], warnings: [] };
+    return this.parseDocument(parseYAML(content) as Record<string, unknown>, context);
+  }
 
+  /** The same as {@link parse}, over a compose document already read (live export builds one). */
+  parseDocument(doc: Record<string, unknown> | undefined, context?: ParseContext): ParseResult {
     const entities: DockerIR[] = [];
     const warnings: string[] = [];
-    const doc = parseYAML(content) as Record<string, unknown>;
     const fields = composeFields();
 
     const known = new Set<string>(SECTIONS.map((s) => s.section));
@@ -148,6 +158,13 @@ export class DockerParser {
           props: extractProps(raw, fields.get(kind)!, `${section}.${name}`, kind, warnings),
         } as DockerIR);
       }
+    }
+
+    if (context?.embedded) {
+      const configs = new Map(entities.filter((e): e is ConfigIR => e.kind === "config").map((e) => [e.name, e.props]));
+      const services = doc?.services;
+      delegateEmbedded(configs, services && typeof services === "object" && !Array.isArray(services) ? (services as Record<string, unknown>) : undefined, context.embedded);
+      for (const e of entities) if (e.kind === "config") e.props = configs.get(e.name)!;
     }
 
     return { entities, warnings };

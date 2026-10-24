@@ -19,7 +19,7 @@ import { adviseCloudAssembly, CDK_DIALECT } from "../../cdk/advise";
 import { isCloudAssembly } from "../../cdk/assembly";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { scoreEstate, type Peelability, type PeelabilityBand, type ScoreOptions } from "../../terraform/score";
-import { boundaryReport, type BoundaryEdge, type CarveDialect } from "../../terraform/carve";
+import { boundaryIndex, boundaryReport, type BoundaryIndex, type BoundaryEdge, type CarveDialect } from "../../terraform/carve";
 import type { TfGraph } from "../../terraform/types";
 
 export interface CarveAdviseOptions {
@@ -204,6 +204,7 @@ export function carveJson(result: CarveAdviseResult): CarveJsonReport {
   );
   const source = result.source ?? "terraform";
   const dialect: CarveDialect = source === "cdk" ? CDK_DIALECT : "terraform";
+  const index = result.graph ? boundaryIndex(result.graph) : undefined;
   return {
     version: CARVE_REPORT_VERSION,
     from: result.from,
@@ -212,7 +213,7 @@ export function carveJson(result: CarveAdviseResult): CarveJsonReport {
     count: results.length,
     bands: counts,
     ...(result.diagnostics?.length ? { diagnostics: result.diagnostics } : {}),
-    resources: results.map((r) => withBoundary(r, result.graph, dialect, result.scoreOptions)),
+    resources: results.map((r) => withBoundary(r, result.graph, dialect, result.scoreOptions, index)),
   };
 }
 
@@ -222,9 +223,11 @@ function withBoundary(
   graph: TfGraph | undefined,
   dialect: CarveDialect,
   score: ScoreOptions | undefined,
+  index: BoundaryIndex | undefined,
 ): CarveJsonResource {
   if (!graph) return r;
-  const report = boundaryReport(graph, r.address, { dialect, score });
+  // The ranking already scored this resource; the report reads it back rather than rescoring the estate (#4391).
+  const report = boundaryReport(graph, r.address, { dialect, score, peelability: r, index });
   if (!report) return r;
   return { ...r, boundary: { inbound: report.inbound, outbound: report.outbound } };
 }

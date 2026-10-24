@@ -9,8 +9,9 @@
  */
 
 import { defineBuiltin } from "../define";
+import type { Overlay, Require } from "./overlay";
+import type { CountConnectorSchemaConfig, RoutingConnectorSchemaConfig, ServiceGraphConnectorSchemaConfig, SignalToMetricsConnectorSchemaConfig, SpanMetricsConnectorSchemaConfig, SumConnectorSchemaConfig } from "../generated/index";
 import type { ConnectorSignalPair } from "../model";
-import type { Duration } from "./common";
 
 const SAME_SIGNAL: ConnectorSignalPair[] = [
   { from: "traces", to: "traces" },
@@ -27,39 +28,7 @@ export interface SpanMetricsDimension {
   default?: string;
 }
 
-export interface SpanMetricsConnectorConfig {
-  /** Extra dimensions on every metric, beyond service.name, span.name, span.kind and status.code. */
-  dimensions?: SpanMetricsDimension[];
-  /** Extra dimensions on the calls metric only. */
-  calls_dimensions?: SpanMetricsDimension[];
-  /** Default dimensions to leave out. */
-  exclude_dimensions?: string[];
-  resource_metrics_cache_size?: number;
-  /** Resource attributes that key the metrics' resource, so a restart doesn't start a new series. */
-  resource_metrics_key_attributes?: string[];
-  aggregation_temporality?: "AGGREGATION_TEMPORALITY_CUMULATIVE" | "AGGREGATION_TEMPORALITY_DELTA";
-  histogram?: {
-    disable?: boolean;
-    unit?: "ms" | "s";
-    /** Explicit bucket boundaries. Set this or `exponential`, not both. */
-    explicit?: { buckets?: Duration[] };
-    exponential?: { max_size?: number };
-    /** Extra dimensions on the duration histogram only. */
-    dimensions?: SpanMetricsDimension[];
-  };
-  /** How often metrics are emitted (default 60s). */
-  metrics_flush_interval?: Duration;
-  /** Drop a series not updated for this long. */
-  metrics_expiration?: Duration;
-  metric_timestamp_cache_size?: number;
-  /** Prefix for the emitted metric names (default `traces.span.metrics`). */
-  namespace?: string;
-  exemplars?: { enabled?: boolean; max_per_data_point?: number };
-  /** Also count span events. Needs `dimensions` when enabled. */
-  events?: { enabled?: boolean; dimensions?: SpanMetricsDimension[] };
-  include_instrumentation_scope?: string[];
-  aggregation_cardinality_limit?: number;
-}
+export type SpanMetricsConnectorConfig = SpanMetricsConnectorSchemaConfig;
 
 /** Turns spans into request, error and duration (RED) metrics. */
 export const SpanMetricsConnector = defineBuiltin<SpanMetricsConnectorConfig, "connector", "spanmetrics">({
@@ -77,6 +46,8 @@ export const SpanMetricsConnector = defineBuiltin<SpanMetricsConnectorConfig, "c
     }
     const reserved = new Set(["service.name", "span.name", "span.kind", "status.code"]);
     for (const d of c.dimensions ?? []) {
+      // A dimension names one attribute or matches several by `glob`.
+      if (d.name === undefined) continue;
       if (reserved.has(d.name)) problems.push(`dimensions: "${d.name}" is already a default dimension`);
       reserved.add(d.name);
     }
@@ -86,21 +57,7 @@ export const SpanMetricsConnector = defineBuiltin<SpanMetricsConnectorConfig, "c
 
 // ── servicegraph ─────────────────────────────────────────────────────
 
-export interface ServiceGraphConnectorConfig {
-  latency_histogram_buckets?: Duration[];
-  /** Span attributes added as dimensions on the edge metrics. */
-  dimensions?: string[];
-  /** How long an unpaired client or server span waits for its other half. */
-  store?: { ttl?: Duration; max_items?: number };
-  cache_loop?: Duration;
-  store_expiration_loop?: Duration;
-  /** Attributes that name the peer when only one side of a call is instrumented. */
-  virtual_node_peer_attributes?: string[];
-  virtual_node_extra_label?: boolean;
-  metrics_flush_interval?: Duration;
-  /** Attributes that name the database for a database call edge. */
-  database_name_attributes?: string[];
-}
+export type ServiceGraphConnectorConfig = ServiceGraphConnectorSchemaConfig;
 
 /** Builds service-to-service edge metrics from paired client and server spans. */
 export const ServiceGraphConnector = defineBuiltin<ServiceGraphConnectorConfig, "connector", "servicegraph">({
@@ -113,7 +70,12 @@ export const ServiceGraphConnector = defineBuiltin<ServiceGraphConnectorConfig, 
 // ── routing ──────────────────────────────────────────────────────────
 
 export interface RoutingTableItem {
-  /** The OTTL context the condition runs in. `request` routes on request metadata such as headers. */
+  /**
+   * The OTTL context the condition runs in. `request` routes on request
+   * metadata such as headers; it is deprecated since collector-contrib
+   * v0.156.0 for `otelcol.client.metadata[...]` and `otelcol.grpc.metadata[...]`
+   * paths, which work in every context.
+   */
   context?: "resource" | "span" | "metric" | "datapoint" | "log" | "request";
   /** An OTTL `route() where ...` statement. Set this or `condition`, not both. */
   statement?: string;
@@ -123,12 +85,8 @@ export interface RoutingTableItem {
   pipelines: string[];
 }
 
-export interface RoutingConnectorConfig {
-  table: RoutingTableItem[];
-  /** Pipelines for data no route matches. */
-  default_pipelines?: string[];
-  error_mode?: "ignore" | "silent" | "propagate";
-}
+/** The connector refuses to start with no routing table. */
+export type RoutingConnectorConfig = Require<RoutingConnectorSchemaConfig, "table">;
 
 /** Sends each item to the pipelines whose route matches it. */
 export const RoutingConnector = defineBuiltin<RoutingConnectorConfig, "connector", "routing">({
@@ -172,14 +130,7 @@ export interface CountMetricInfo {
 }
 
 /** Each key is the name of a metric to emit. */
-export interface CountConnectorConfig {
-  spans?: Record<string, CountMetricInfo>;
-  spanevents?: Record<string, CountMetricInfo>;
-  metrics?: Record<string, CountMetricInfo>;
-  datapoints?: Record<string, CountMetricInfo>;
-  logs?: Record<string, CountMetricInfo>;
-  profiles?: Record<string, CountMetricInfo>;
-}
+export type CountConnectorConfig = CountConnectorSchemaConfig;
 
 /** Counts spans, span events, metrics, data points or log records, as metrics. */
 export const CountConnector = defineBuiltin<CountConnectorConfig, "connector", "count">({
@@ -229,13 +180,7 @@ export interface SumMetricInfo {
  * while an exporter that needs cumulative input wants a `deltatocumulative`
  * processor in front of it.
  */
-export interface SumConnectorConfig {
-  spans?: Record<string, SumMetricInfo>;
-  spanevents?: Record<string, SumMetricInfo>;
-  metrics?: Record<string, SumMetricInfo>;
-  datapoints?: Record<string, SumMetricInfo>;
-  logs?: Record<string, SumMetricInfo>;
-}
+export type SumConnectorConfig = SumConnectorSchemaConfig;
 
 /** Sums a numeric attribute of spans, span events, data points or log records, as metrics. */
 export const SumConnector = defineBuiltin<SumConnectorConfig, "connector", "sum">({
@@ -383,12 +328,20 @@ export type SignalToMetricsMetric = SignalToMetricsMetricBase &
  * exporter that needs cumulative input (Prometheus remote write) wants a
  * `deltatocumulative` processor in front of it.
  */
-export interface SignalToMetricsConnectorConfig {
-  spans?: SignalToMetricsMetric[];
-  datapoints?: SignalToMetricsMetric[];
-  logs?: SignalToMetricsMetric[];
-  profiles?: SignalToMetricsMetric[];
-}
+/**
+ * Upstream writes a metric as one struct with `sum`, `gauge`, `histogram` and
+ * `exponential_histogram` all optional; the connector takes exactly one, so
+ * here each entry is a union with one metric type set.
+ */
+export type SignalToMetricsConnectorConfig = Overlay<
+  SignalToMetricsConnectorSchemaConfig,
+  {
+    spans?: SignalToMetricsMetric[];
+    datapoints?: SignalToMetricsMetric[];
+    logs?: SignalToMetricsMetric[];
+    profiles?: SignalToMetricsMetric[];
+  }
+>;
 
 /** One entry of a `signaltometrics` config, with where it sits. */
 export interface SignalToMetricsEntry {

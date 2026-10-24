@@ -61,10 +61,10 @@ function pkg(name: string, version: string, kinds: unknown[] | null, extra: Reco
 }
 
 describe("the built-in kinds (#2535)", () => {
-  test("are chant, workspace, design and other, and the group kind examples", () => {
-    expect(BUILTIN_KINDS.map((k) => `${k.name}:${k.shape}`)).toEqual(["chant:member", "workspace:member", "other:member", "design:member", "examples:group"]);
+  test("are chant, workspace, repo, design and other, and the group kind examples", () => {
+    expect(BUILTIN_KINDS.map((k) => `${k.name}:${k.shape}`)).toEqual(["chant:member", "workspace:member", "repo:member", "other:member", "design:member", "examples:group"]);
     const registry = builtinKindRegistry();
-    expect(registry.names()).toEqual(["chant", "design", "other", "workspace"]);
+    expect(registry.names()).toEqual(["chant", "design", "other", "repo", "workspace"]);
     expect(registry.get(EXAMPLES_KIND)?.shape).toBe("group");
   });
 
@@ -72,8 +72,13 @@ describe("the built-in kinds (#2535)", () => {
     const entry = declarationSchema.$defs.entry;
     expect(entry.if.properties.kind.const).toBe(EXAMPLES_KIND);
     expect(declarationSchema.$defs.group.properties.kind.const).toBe(EXAMPLES_KIND);
-    expect(declarationSchema.$defs.member.if.properties.kind.const).toBe("other");
-    expect(declarationSchema.$defs.member.then.required).toEqual(["because"]);
+    const [other, repo] = declarationSchema.$defs.member.allOf;
+    expect(other.if.properties.kind.const).toBe("other");
+    expect(other.then.required).toEqual(["because"]);
+    // A repo member (#3168) has repo and no dir; every other member has dir and no repo.
+    expect(repo.if.properties.kind.const).toBe("repo");
+    expect(repo.then.required).toEqual(["repo"]);
+    expect(repo.else?.required).toEqual(["dir"]);
   });
 
   test("a registry refuses a name twice", () => {
@@ -203,7 +208,7 @@ describe("loadKindRegistry: kinds from the pins", () => {
     const { registry, problems } = loadKindRegistry([{ package: "@acme/chant-lexicon-tf", version: "1.2.3", path: null }], root);
     expect(problems).toEqual([]);
     expect(registry.get("terraform")).toMatchObject({ source: "@acme/chant-lexicon-tf", precedence: 400 });
-    expect(registry.names()).toEqual(["chant", "design", "other", "terraform", "workspace"]);
+    expect(registry.names()).toEqual(["chant", "design", "other", "repo", "terraform", "workspace"]);
     expect(existsSync(join(root, "node_modules/@acme/chant-lexicon-tf/IMPORTED"))).toBe(false);
     expect((globalThis as { __chantKindsImported?: boolean }).__chantKindsImported).toBeUndefined();
   });
@@ -223,7 +228,7 @@ describe("loadKindRegistry: kinds from the pins", () => {
       ],
       root,
     );
-    expect(registry.names()).toEqual(["chant", "design", "other", "workspace"]);
+    expect(registry.names()).toEqual(["chant", "design", "other", "repo", "workspace"]);
     expect(problems).toEqual([
       { pin: 1, message: "pinned package absent is not installed; install it to read the kinds it supplies" },
       { pin: 2, message: "tf-kinds is pinned at 1.0.0, and 2.0.0 is installed" },

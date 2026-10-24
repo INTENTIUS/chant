@@ -39,7 +39,8 @@ import {
 } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { memberGenerated, type LsGenerated } from "./ls-generated";
-import { loadKindRegistry, probeKind, type KindRegistry } from "./kinds";
+import { repoIdentity } from "./repo-ref";
+import { loadKindRegistry, probeKind, REPO_KIND, type KindRegistry } from "./kinds";
 import type { WorkspaceTree } from "./tree";
 import { handToRootChant, locateWorkspace } from "./which-chant";
 import { declaredSessions } from "./write-scope";
@@ -117,6 +118,8 @@ export interface LsMember {
   generated: LsGenerated[];
   /** The agent sessions bound to the member, in declaration order (#3615); empty when none is. */
   agents: string[];
+  /** For a member of kind repo, the other repository's workspace it names (#3168). Absent for every other kind. */
+  repo?: { url: string; rev: string; workspace: string };
 }
 
 /**
@@ -168,6 +171,8 @@ export type LsDocument =
       at: string | null;
       workspace: {
         name: string;
+        /** The repository the document came from (#3168): its origin URL, redacted, or null. */
+        repo: string | null;
         /** The workspace root relative to the git root, `"."` for the git root itself. Absolute outside git. */
         root: string;
         file: string;
@@ -211,6 +216,8 @@ export interface LsQuery {
 
 /** A member's reason code, or null when its kind can read it. */
 export function memberReason(member: Member, tree: WorkspaceTree, kinds: KindRegistry): LsMember["reason"] {
+  // A repo member has no directory here (#3168); it is read from its own repository.
+  if (member.kind === REPO_KIND) return null;
   if (tree.stat(member.dir === "." ? "" : member.dir) !== "dir") {
     return { code: "dir-missing", message: `${member.dir} is not a directory${tree.label}` };
   }
@@ -283,6 +290,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
         records: unloaded(m.records),
         generated: memberGenerated(m, tree, repoPrefix),
         agents: sessions.agents.filter((a) => a.members.includes(m.name)).map((a) => a.name),
+        ...(m.repo ? { repo: { ...m.repo } } : {}),
         // The member's x- keys, as declared (#3595).
         ...extensionsAt(declaration, m.pointer),
       };
@@ -311,6 +319,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
       at,
       workspace: {
         name: declaration.name,
+        repo: repoIdentity(rootOnDisk),
         root: located.root,
         file: declaration.file,
         schema: declaration.schema,

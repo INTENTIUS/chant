@@ -5,8 +5,7 @@
  * `agentClusterRules` is the ClusterRole `OtelCollector` and
  * `GkeOtelCollector` share: what the `k8sattributes` processor needs, plus
  * what the config's Kubernetes receivers need. Each rule cites the
- * component's RBAC requirements at collector-contrib v0.130.0, the version the
- * otel lexicon pins.
+ * component's RBAC requirements as read at collector-contrib v0.130.0.
  *
  * `namespacedRoles` builds one Role and RoleBinding per namespace, for access
  * a collector needs in namespaces other than its own: Endpoints for a

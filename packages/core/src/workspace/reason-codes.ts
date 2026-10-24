@@ -66,6 +66,9 @@ export const REASONS = {
   // A ledger status can't fully read.
   "ledger-unreadable": "Reading the ledger failed, so nothing from it is listed.",
   "ledger-malformed": "Some lines of the ledger aren't release records; the rest are listed.",
+  // chant ledger (#4363): a read that can't start.
+  "filter-invalid": "A --where or --since names a field the read doesn't have, an operator its type doesn't take, or a value not of its type; nothing was read.",
+  "table-unknown": "chant ledger was given a table that is not one of resources, snapshots, runs, gates, deploys, releases or cuts.",
   // A member's gates status can't list (status, #2674).
   "gates-no-ledger": "The checkout has no chant/lifecycle branch, so there is no gate ledger to read.",
   "gates-no-gate-ledger": "The branch has no gate ledger for the member: no run of it has reached a gate.",
@@ -237,6 +240,9 @@ export const REASONS = {
   "environments-ledger-undeclared": "The member's ledger has releases in an environment its config's environments don't cover, so chant run --env would refuse it and it is not listed.",
   "environments-ledger-unreadable": "The chant/lifecycle branch exists and the member's ledger environments could not be listed.",
   "environments-component-undeclared": "A component declares an environment its member's chant.config.ts environments don't cover, so chant run --env would refuse it and it is not listed (#3153).",
+  // The forge workflow that deploys an environment (graph --composites, #4402): an environment row's executor.reason.
+  "executor-none-declared": "The member's chant.config.ts declares no executor for the environment, so nothing names the forge workflow that deploys it.",
+  "executor-config-unreadable": "The member's chant.config.ts could not be read, so whether a forge workflow deploys the environment is unknown.",
   // A declared diagram's source or render (check, #2764). Each is also a WSP finding.
   "diagram-source-missing": "A declared diagram's source file does not exist in the tree read.",
   "diagram-render-missing": "A declared diagram's render file does not exist in the tree read.",
@@ -291,6 +297,10 @@ export const REASONS = {
   "lease-held": "Someone holds a live lease on the work item: another worker, or, for a claim, the same one.",
   "lease-not-held": "Nobody holds a live lease on the work item: it expired, was released or was never claimed.",
   "lease-token-mismatch": "The live lease on the work item carries another fencing token than the one given.",
+  // Evidence that cites an ops result (work evidence, #3171): why the citation was refused. Nothing is written.
+  "work-evidence-ops-missing": "Work evidence cites a run, deploy, gate answer or release plan the local chant/lifecycle branch does not hold.",
+  "work-evidence-ops-mismatch": "Work evidence cites an ops record that does not hash to the sha256 given, or a run whose outcome disagrees with the evidence's result.",
+  "work-evidence-ops-unfinished": "Work evidence cites a run that is still gated or waiting, so it has no outcome to show.",
   "lease-race": "Another writer changed the lease between this command's read and its write.",
   "lease-push-rejected": "The remote refused the lease push: another clone claimed the item first, or the remote could not be reached.",
   // The agent run record (chant workspace runs, #3033): why a write was refused, and what a read could not see. Nothing is written on a refusal.

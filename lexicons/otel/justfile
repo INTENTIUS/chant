@@ -2,9 +2,13 @@
 default:
     @just --list
 
-# Derive the registry from the built-in component catalog
+# Generate the built-in config types from the committed schema snapshot, and the registry
 generate:
     npx tsx src/codegen/generate-cli.ts
+
+# Refresh the committed schema snapshot from upstream at the versions in src/spec/pin.ts (needs the network)
+snapshot:
+    npx tsx src/spec/snapshot-cli.ts
 
 # Validate generated artifacts
 validate:

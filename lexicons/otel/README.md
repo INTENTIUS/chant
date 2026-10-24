@@ -23,7 +23,7 @@ export { otlp, batch, backend, traces };
 | connectors | spanmetrics, servicegraph, routing, forward, count, sum, signaltometrics |
 | extensions | health_check, pprof, zpages, k8s_leader_elector |
 
-The config types follow the collector-contrib release in `COLLECTOR_PIN`.
+The config types are generated from upstream `config.schema.yaml` at the collector-contrib release in `COLLECTOR_PIN` (v0.162.0), scoped by the `otelcol-contrib` distribution manifest, with hand-written overlays where a schema falls short. `coverageReport()` says which components of `otelcol-contrib` and `otelcol-k8s` are built in.
 
 Sampling and routing: `tail_sampling` takes its policies as a discriminated union (`status_code`, `latency`, `probabilistic`, `and`, `composite` and the rest), and `loadbalancing` takes a `static`, `dns`, `k8s` or `aws_cloud_map` resolver. Content handling: `filter`, `transform` (OTTL statement groups per context) and `redaction`. Cluster metrics: `k8s_cluster` and `kubeletstats`.
 

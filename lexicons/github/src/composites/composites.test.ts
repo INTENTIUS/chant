@@ -1,4 +1,5 @@
 import { describe, test, expect } from "vitest";
+import { actionRef, type PinnedAction } from "../action-pins";
 import { Checkout } from "./checkout";
 import { SetupNode } from "./setup-node";
 import { SetupGo } from "./setup-go";
@@ -22,7 +23,7 @@ describe("Checkout", () => {
   test("returns step with checkout action", () => {
     const result = Checkout({});
     expect(result.step).toBeDefined();
-    expect(propsOf(result.step).uses).toBe("actions/checkout@v7");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/checkout" as PinnedAction));
     expect(propsOf(result.step).name).toBe("Checkout");
   });
 
@@ -48,7 +49,7 @@ describe("Checkout", () => {
 describe("SetupNode", () => {
   test("returns step with setup-node action", () => {
     const result = SetupNode({});
-    expect(propsOf(result.step).uses).toBe("actions/setup-node@v7");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/setup-node" as PinnedAction));
     expect(propsOf(result.step).name).toBe("Setup Node.js");
   });
 
@@ -68,7 +69,7 @@ describe("SetupNode", () => {
 describe("SetupGo", () => {
   test("returns step with setup-go action", () => {
     const result = SetupGo({});
-    expect(propsOf(result.step).uses).toBe("actions/setup-go@v5");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/setup-go" as PinnedAction));
   });
 
   test("passes goVersion", () => {
@@ -82,7 +83,7 @@ describe("SetupGo", () => {
 describe("SetupPython", () => {
   test("returns step with setup-python action", () => {
     const result = SetupPython({});
-    expect(propsOf(result.step).uses).toBe("actions/setup-python@v5");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/setup-python" as PinnedAction));
   });
 
   test("passes pythonVersion", () => {
@@ -96,7 +97,7 @@ describe("SetupPython", () => {
 describe("CacheAction", () => {
   test("returns step with cache action", () => {
     const result = CacheAction({ path: "node_modules", key: "npm-${{ hashFiles('package-lock.json') }}" });
-    expect(propsOf(result.step).uses).toBe("actions/cache@v4");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/cache" as PinnedAction));
     expect((propsOf(result.step).with as Record<string, string>).path).toBe("node_modules");
     expect((propsOf(result.step).with as Record<string, string>).key).toBe("npm-${{ hashFiles('package-lock.json') }}");
   });
@@ -107,7 +108,7 @@ describe("CacheAction", () => {
 describe("UploadArtifact", () => {
   test("returns step with upload action", () => {
     const result = UploadArtifact({ name: "build", path: "dist/" });
-    expect(propsOf(result.step).uses).toBe("actions/upload-artifact@v4");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/upload-artifact" as PinnedAction));
     expect((propsOf(result.step).with as Record<string, string>).name).toBe("build");
     expect((propsOf(result.step).with as Record<string, string>).path).toBe("dist/");
   });
@@ -123,7 +124,7 @@ describe("UploadArtifact", () => {
 describe("DownloadArtifact", () => {
   test("returns step with download action", () => {
     const result = DownloadArtifact({ name: "build" });
-    expect(propsOf(result.step).uses).toBe("actions/download-artifact@v4");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/download-artifact" as PinnedAction));
     expect((propsOf(result.step).with as Record<string, string>).name).toBe("build");
   });
 });
@@ -228,7 +229,7 @@ describe("NodePipeline", () => {
   test("bun uses oven-sh/setup-bun instead of setup-node", () => {
     const result = NodePipeline({ packageManager: "bun" });
     const steps = propsOf(result.buildJob).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[1].props.uses).toBe("oven-sh/setup-bun@v2");
+    expect(steps[1].props.uses).toBe(actionRef("oven-sh/setup-bun" as PinnedAction));
     expect(steps[1].props.name).toBe("Setup Bun");
   });
 
@@ -247,14 +248,14 @@ describe("NodePipeline", () => {
   test("upload step uses upload-artifact with configured name", () => {
     const result = NodePipeline({ artifactName: "my-build" });
     const steps = propsOf(result.buildJob).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[4].props.uses).toBe("actions/upload-artifact@v4");
+    expect(steps[4].props.uses).toBe(actionRef("actions/upload-artifact" as PinnedAction));
     expect((steps[4].props.with as Record<string, string>).name).toBe("my-build");
   });
 
   test("download step in testJob uses configured artifact name", () => {
     const result = NodePipeline({ artifactName: "my-build" });
     const steps = propsOf(result.testJob).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[3].props.uses).toBe("actions/download-artifact@v4");
+    expect(steps[3].props.uses).toBe(actionRef("actions/download-artifact" as PinnedAction));
     expect((steps[3].props.with as Record<string, string>).name).toBe("my-build");
   });
 
@@ -289,7 +290,7 @@ describe("BunPipeline", () => {
   test("defaults to bun package manager", () => {
     const result = BunPipeline({});
     const steps = propsOf(result.buildJob).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[1].props.uses).toBe("oven-sh/setup-bun@v2");
+    expect(steps[1].props.uses).toBe(actionRef("oven-sh/setup-bun" as PinnedAction));
     expect(steps[2].props.run).toBe("bun install --frozen-lockfile");
   });
 });
@@ -340,7 +341,7 @@ describe("PythonCI", () => {
     const result = PythonCI({});
     const steps = propsOf(result.testJob).steps as Array<{ props: Record<string, unknown> }>;
     const setupStep = steps[1];
-    expect(propsOf(setupStep).uses).toBe("actions/setup-python@v5");
+    expect(propsOf(setupStep).uses).toBe(actionRef("actions/setup-python" as PinnedAction));
     expect((propsOf(setupStep).with as Record<string, string>)["python-version"]).toBe("3.12");
   });
 
@@ -430,25 +431,25 @@ describe("DockerBuild", () => {
   test("uses docker/login-action", () => {
     const result = DockerBuild({});
     const steps = propsOf(result.job).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[1].props.uses).toBe("docker/login-action@v3");
+    expect(steps[1].props.uses).toBe(actionRef("docker/login-action" as PinnedAction));
   });
 
   test("uses docker/setup-buildx-action", () => {
     const result = DockerBuild({});
     const steps = propsOf(result.job).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[2].props.uses).toBe("docker/setup-buildx-action@v3");
+    expect(steps[2].props.uses).toBe(actionRef("docker/setup-buildx-action" as PinnedAction));
   });
 
   test("uses docker/metadata-action", () => {
     const result = DockerBuild({});
     const steps = propsOf(result.job).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[3].props.uses).toBe("docker/metadata-action@v5");
+    expect(steps[3].props.uses).toBe(actionRef("docker/metadata-action" as PinnedAction));
   });
 
   test("uses docker/build-push-action", () => {
     const result = DockerBuild({});
     const steps = propsOf(result.job).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[4].props.uses).toBe("docker/build-push-action@v6");
+    expect(steps[4].props.uses).toBe(actionRef("docker/build-push-action" as PinnedAction));
   });
 
   test("login step uses ghcr.io by default", () => {
@@ -543,7 +544,7 @@ describe("DeployEnvironment", () => {
     const result = DeployEnvironment({ name: "staging", deployScript: "npm run deploy" });
     const steps = propsOf(result.deployJob).steps as Array<{ props: Record<string, unknown> }>;
     expect(steps.length).toBe(2);
-    expect(steps[0].props.uses).toBe("actions/checkout@v7");
+    expect(steps[0].props.uses).toBe(actionRef("actions/checkout" as PinnedAction));
     expect(steps[1].props.run).toBe("npm run deploy");
   });
 
@@ -630,7 +631,7 @@ describe("GoCI", () => {
   test("buildJob uses setup-go with default version", () => {
     const result = GoCI({});
     const steps = propsOf(result.buildJob).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[1].props.uses).toBe("actions/setup-go@v5");
+    expect(steps[1].props.uses).toBe(actionRef("actions/setup-go" as PinnedAction));
     expect((steps[1].props.with as Record<string, string>)["go-version"]).toBe("1.22");
   });
 
@@ -667,7 +668,7 @@ describe("GoCI", () => {
   test("lintJob uses golangci-lint-action", () => {
     const result = GoCI({});
     const steps = propsOf(result.lintJob!).steps as Array<{ props: Record<string, unknown> }>;
-    expect(steps[2].props.uses).toBe("golangci/golangci-lint-action@v6");
+    expect(steps[2].props.uses).toBe(actionRef("golangci/golangci-lint-action" as PinnedAction));
   });
 
   test("uses custom runsOn", () => {
@@ -686,7 +687,7 @@ describe("defaults overrides", () => {
       defaults: { step: { id: "my-checkout" } },
     });
     expect(propsOf(result.step).id).toBe("my-checkout");
-    expect(propsOf(result.step).uses).toBe("actions/checkout@v7");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/checkout" as PinnedAction));
   });
 
   test("SetupNode defaults override step props", () => {
@@ -769,7 +770,7 @@ describe("defaults overrides", () => {
       defaults: { step: { id: "upload" } },
     });
     expect(propsOf(result.step).id).toBe("upload");
-    expect(propsOf(result.step).uses).toBe("actions/upload-artifact@v4");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/upload-artifact" as PinnedAction));
   });
 
   test("CacheAction defaults override step props", () => {
@@ -779,6 +780,6 @@ describe("defaults overrides", () => {
       defaults: { step: { id: "cache-step" } },
     });
     expect(propsOf(result.step).id).toBe("cache-step");
-    expect(propsOf(result.step).uses).toBe("actions/cache@v4");
+    expect(propsOf(result.step).uses).toBe(actionRef("actions/cache" as PinnedAction));
   });
 });

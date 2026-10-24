@@ -163,6 +163,19 @@ environments: [
 
 The canary is declared and shown, not enforced. chant records it in `promotionOrder` and does nothing else with it yet. Promote deploys to a canary step like any other step, with no traffic split or hold.
 
+#### The workflow that deploys an environment
+
+An entry can name the forge and the committed workflow that deploys it, as `executor: { forge, workflow }` ([#4402](https://github.com/INTENTIUS/chant/issues/4402)). `forge` is `github`, `gitlab` or `forgejo`, and `workflow` is the file the forge runs:
+
+```typescript
+environments: [
+  "staging",
+  { name: "prod", executor: { forge: "github", workflow: "deploy-prod.yml" } },
+],
+```
+
+chant doesn't run or dispatch it. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) prints it on each component's environment, so a reader such as behold knows that a release there goes through CI. A pattern entry can carry one too, and a literal entry wins over a pattern.
+
 ### `lint.extends`
 
 An array of preset configuration paths to inherit from:

@@ -28,6 +28,8 @@ export { ops016 } from "./ops016-gate-resume";
 export { ops017, ops017Check, workspaceIdentityGates } from "./ops017-gate-alias";
 export { ops018 } from "./ops018-shell-image-digest";
 export { sys010, sys010Check } from "./sys010-key-over-plain-http";
+// OPS019 (#2554) reads across members, so it is a cross-root check that only `chant workspace run` runs.
+export { ops019Check, parseWorkspaceOpTarget, formatWorkspaceOpTarget, OPS019_ID, type WorkspaceOpTarget } from "./ops019-workspace-op-target";
 
 export interface CoreOpCheckOptions {
   /** `decide.backends` from the project's chant.config, for SYS010 (#2828). */

@@ -37,7 +37,7 @@ Pods send OTLP to `otel-collector.observability.svc:4317` (gRPC) or `:4318` (HTT
 
 ### RBAC
 
-The ClusterRole is the one `GkeOtelCollector` grants too. It holds what the `k8sattributes` processor reads, so an agent can add pod metadata without extra rules, plus what the config's Kubernetes receivers read. The rules follow each component's README at collector-contrib v0.130.0, the version the otel lexicon pins.
+The ClusterRole is the one `GkeOtelCollector` grants too. It holds what the `k8sattributes` processor reads, so an agent can add pod metadata without extra rules, plus what the config's Kubernetes receivers read. The rules follow each component's README as read at collector-contrib v0.130.0.
 
 | Component | Rules |
 |-----------|-------|

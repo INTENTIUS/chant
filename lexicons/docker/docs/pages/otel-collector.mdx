@@ -53,4 +53,8 @@ chant build src --lexicon docker -o docker-compose.yml
 docker compose up
 ```
 
+## Importing a collector service
+
+`chant import docker-compose.yml` and `chant import --from <env>` both hand the collector config to the otel lexicon ([#3373](https://github.com/INTENTIUS/chant/issues/3373)). The config is imported as `chant import config.yaml` would import it, into a directory named after the service that mounts it, and the config's `content` becomes `collectorYaml([...])` over the imported declarations. A live import reads the config out of the running container at the path in the service's `--config=` flag. A config whose content is not a YAML or JSON document is kept as written.
+
 The example project is `lexicons/docker/examples/otel-collector`.

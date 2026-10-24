@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
+chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>] [--forge-repos <file>]
 chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
 ```
 
@@ -54,6 +54,11 @@ chant.workspace.json
 | `WSP009` | other-member | warning | yes | A member is kind `other`. `chant doctor` shows it too |
 | `WSP010` | group-empty | warning | yes | An example group matches no chant project |
 | `WSP011` | check-settings-invalid | error | no | `checks` or a `suppress` entry names an unknown id or one that can't be set |
+| `WSP012` | member-file-invalid | error | yes | A member's file is missing or fails the JSON Schema its kind names in [`memberFile`](/chant/reference/workspace-kinds/#a-members-own-file) |
+| `WSP013` | org-member-local | error | no | An [org workspace](#org-workspaces) holds a member or group that isn't kind `repo` |
+| `WSP014` | org-repo-undeclared | error | yes | With `--forge-repos`, the forge lists a repository, not archived, that no `repo` member names |
+| `WSP015` | org-repo-dropped | warning | yes | With `--forge-repos`, a `repo` member names a repository the forge no longer lists |
+| `WSP016` | repo-url-credential | error | no | A `repo` member's URL carries a password or token |
 | `WSP071` | ownership-stack-shared | error | no | Two `chant` members set the same `ownership.stack` ([ledgers](/chant/reference/workspace-declaration/#ledgers)) |
 | `WSP072` | flat-ledger-environment-shared | error | no | Two members that write the top of the ledger branch share an environment name ([ledgers](/chant/reference/workspace-declaration/#ledgers)) |
 | `WSP073` | ledger-settings-unread | info | yes | A `chant` member's `ownership` or `environments` can't be read from its config without running it, so `WSP071` and `WSP072` skip the member |
@@ -156,6 +161,28 @@ Only declared links of kind `output` are resolved live. A `telemetry` link names
 An empty live read is never reported as missing. `chant graph --live` reports an account it could not reach as warnings on stderr and exits 0, and a lexicon whose live read has no stack outputs looks the same, so a producer that returned no outputs leaves its links unresolved.
 
 `--json` and `--format json` add `declaration.live`, `{ env, links }`, where each link is a row of the table above with `resolves` set to `live`. The source rows stay in `declaration.links`. `--live` needs `--env` and takes no `--at`, since a live read is of the account now, and it needs a declaration.
+
+### Org workspaces
+
+An org workspace (`"scope": "org"`) holds only [`repo` members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces), one per repository of the org ([#3168](https://github.com/INTENTIUS/chant/issues/3168)). `WSP013` fails any other entry, and `WSP016` any repo URL that carries a credential. Neither needs the forge.
+
+Whether the declaration still matches the org is a question for the forge, and chant doesn't ask it. A warden, which already lists the org's repositories from the forge's API to govern them, writes that list to a file, and `--forge-repos <file>` reads it:
+
+```json
+{
+  "forge": "github",
+  "org": "acme",
+  "repos": [
+    { "url": "https://github.com/acme/payments" },
+    { "url": "https://github.com/acme/legacy", "archived": true },
+    "https://github.com/acme/platform"
+  ]
+}
+```
+
+The file is an object with `repos`, or a bare array. Each repository is a URL, or an object with `url` and, optionally, `archived`. Other fields, such as `forge` and `org`, are ignored. URLs are compared by host and path, lowercased, without scheme, user, port, `.git` or a trailing slash, so `git@github.com:acme/payments.git` in the declaration matches the forge's `https://github.com/acme/payments`. A local path or file URL compares by its absolute path.
+
+`WSP014` reports each listed repository, archived ones aside, that no `repo` member names, and `WSP015` each member whose repository the list lacks. An archived repository needn't be declared, and declaring one is not a drop. The list is read under `--at` too, since it is input and not part of the tree. A file that isn't such a list exits 1 before any check runs. Without `--forge-repos` neither check runs.
 
 ### Severity and suppression
 
@@ -333,12 +360,13 @@ On a developer machine the trailer and the author are what the commit claims, so
 | `--at <rev>` | Check the declaration and the lineage lock as they were at a commit, read from the local git object store. No checkout or network is needed. The declaration, kind and member link checks read the revision's tree. The ledger, pipeline and generated-file checks (`WSP071` to `WSP083`, `WSP101` to `WSP106`) read the checkout, so they find nothing at a revision, and `--generated` does nothing there. |
 | `--json` | Print `{ lock, ok, findings }`, plus `declaration` when there is one. Each lock finding has `code`, `scope`, `path` and `message`, and `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. `declaration` holds `file`, `ok`, `diagnostics`, `suppressed` and `links`. The entries of `diagnostics` and `suppressed` have the shape `chant lint --format json` prints, plus `entity` naming the entry and `reason` for a suppressed one. `ok` covers both |
 | `--format stylish` | The default. Lock findings print as above, and declaration findings print as `chant lint` prints its own |
-| `--format json` | Print the [read contract](/chant/reference/workspace-read-contract/) document, which follows `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json`. It holds what `--json` prints, with `$schema`, `contract`, `chant`, `at` and `workspace` (the declaration's `name` and `root`, or `null` without one) added. A `WSP001` finding also has `code`, the reason code the declaration couldn't be read with. `--at` outside a git repository or at an unknown revision prints `{ "$schema", "contract", "chant", "error" }` instead |
+| `--format json` | Print the [read contract](/chant/reference/workspace-read-contract/) document, which follows `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json`. It holds what `--json` prints, with `$schema`, `contract`, `chant`, `at` and `workspace` (the declaration's `name`, `root` and `repo`, or `null` without one) added. A `WSP001` finding also has `code`, the reason code the declaration couldn't be read with. `--at` outside a git repository or at an unknown revision prints `{ "$schema", "contract", "chant", "error" }` instead |
 | `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
 | `--generated` | Run each declared generator and compare its output with the file in the tree, as described under [generated files](#generated-files). Off by default, since generators run member code |
 | `--kind <kind file>` | Read the records of this record kind and run the [record checks](#record-checks). The path is resolved against the current directory. With `--at`, the records and the files they pin are read at the revision. With `--changes` it repeats, and the kinds given replace the declared ones |
 | `--live` | Resolve each declared `output` link against the live graph of the environment named with `--env`, and run `WSP141` and `WSP142`. Reaches the account through each `chant` member's own `chant graph --live`. See [live links](#live-links) |
 | `--env <env>` | With `--live`: the environment each member's `chant graph --live` reads |
+| `--forge-repos <file>` | Read the forge's repository list from a file, as a warden writes it, and run `WSP014` and `WSP015` against the declaration's `repo` members. See [org workspaces](#org-workspaces). Reaches nothing |
 | `--changes <range>` | Run the [forward coverage check](#the-forward-coverage-check) over `<base>..<head>`, `<base>...<head>` or `<base>`, in place of the checks above. Takes no `--at` |
 | `--work <id>` | With `--changes`: the work item in hand, whose `out_of_scope` and whose decisions' `out_of_scope` apply. An id no work record has is `work-item-unknown` |
 | `--severity off\|warn\|fail` | With `--changes`: in place of the declaration's `changes.severity` |

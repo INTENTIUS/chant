@@ -4,17 +4,16 @@
  */
 
 import { defineBuiltin } from "../define";
-import { goDurationMs, type AttributeAction, type Duration } from "./common";
+import type { Require } from "./overlay";
+import type { AttributesProcessorSchemaConfig, BatchProcessorSchemaConfig, DeltaToCumulativeProcessorSchemaConfig, K8sAttributesProcessorSchemaConfig, MemoryLimiterProcessorSchemaConfig, ResourceDetectionProcessorSchemaConfig, ResourceProcessorSchemaConfig } from "../generated/index";
+import { goDurationMs } from "./common";
+
+/** One entry of `actions` (attributes) or `attributes` (resource), as upstream's `attraction.ActionKeyValue` types it. */
+export type AttributeActionConfig = NonNullable<AttributesProcessorSchemaConfig["actions"]>[number];
 
 // ── batch ────────────────────────────────────────────────────────────
 
-export interface BatchProcessorConfig {
-  timeout?: Duration;
-  send_batch_size?: number;
-  send_batch_max_size?: number;
-  metadata_keys?: string[];
-  metadata_cardinality_limit?: number;
-}
+export type BatchProcessorConfig = BatchProcessorSchemaConfig;
 
 /** Batches telemetry before export, to cut request count and compress better. */
 export const BatchProcessor = defineBuiltin<BatchProcessorConfig, "processor", "batch">({
@@ -29,13 +28,8 @@ export const BatchProcessor = defineBuiltin<BatchProcessorConfig, "processor", "
 
 // ── memory_limiter ───────────────────────────────────────────────────
 
-export interface MemoryLimiterProcessorConfig {
-  check_interval: Duration;
-  limit_mib?: number;
-  spike_limit_mib?: number;
-  limit_percentage?: number;
-  spike_limit_percentage?: number;
-}
+/** With no `check_interval` the limiter never measures, so chant asks for it. */
+export type MemoryLimiterProcessorConfig = Require<MemoryLimiterProcessorSchemaConfig, "check_interval">;
 
 /** Refuses data when the collector nears its memory limit. Belongs first in every pipeline. */
 export const MemoryLimiterProcessor = defineBuiltin<MemoryLimiterProcessorConfig, "processor", "memory_limiter">({
@@ -59,9 +53,8 @@ export const MemoryLimiterProcessor = defineBuiltin<MemoryLimiterProcessorConfig
 
 // ── resource ─────────────────────────────────────────────────────────
 
-export interface ResourceProcessorConfig {
-  attributes: AttributeAction[];
-}
+/** The processor refuses to start with no actions. */
+export type ResourceProcessorConfig = Require<ResourceProcessorSchemaConfig, "attributes">;
 
 /** Inserts, updates or deletes resource attributes. */
 export const ResourceProcessor = defineBuiltin<ResourceProcessorConfig, "processor", "resource">({
@@ -89,11 +82,8 @@ export interface AttributesMatch {
   libraries?: Array<{ name: string; version?: string }>;
 }
 
-export interface AttributesProcessorConfig {
-  actions: AttributeAction[];
-  include?: AttributesMatch;
-  exclude?: AttributesMatch;
-}
+/** The processor refuses to start with no actions. */
+export type AttributesProcessorConfig = Require<AttributesProcessorSchemaConfig, "actions">;
 
 /** Inserts, updates, hashes or deletes span, log and metric attributes. */
 export const AttributesProcessor = defineBuiltin<AttributesProcessorConfig, "processor", "attributes">({
@@ -103,7 +93,7 @@ export const AttributesProcessor = defineBuiltin<AttributesProcessorConfig, "pro
   validate: (c) => actionProblems(c.actions, "actions"),
 });
 
-function actionProblems(actions: AttributeAction[] | undefined, field: string): string[] {
+function actionProblems(actions: ReadonlyArray<AttributeActionConfig> | undefined, field: string): string[] {
   if (!actions || actions.length === 0) return [`${field} is empty, so the processor changes nothing`];
   const problems: string[] = [];
   actions.forEach((a, i) => {
@@ -136,27 +126,7 @@ export interface K8sPodAssociationSource {
   name?: string;
 }
 
-export interface K8sAttributesProcessorConfig {
-  auth_type?: "none" | "serviceAccount" | "kubeConfig" | "tls";
-  passthrough?: boolean;
-  filter?: {
-    node?: string;
-    node_from_env_var?: string;
-    namespace?: string;
-    fields?: Array<{ key: string; value: string; op?: "equals" | "not-equals" }>;
-    labels?: Array<{ key: string; value: string; op?: "equals" | "not-equals" | "exists" | "does-not-exist" }>;
-  };
-  extract?: {
-    metadata?: string[];
-    labels?: K8sFieldExtract[];
-    annotations?: K8sFieldExtract[];
-    otel_annotations?: boolean;
-  };
-  pod_association?: Array<{ sources: K8sPodAssociationSource[] }>;
-  exclude?: { pods?: Array<{ name: string }> };
-  wait_for_metadata?: boolean;
-  wait_for_metadata_timeout?: Duration;
-}
+export type K8sAttributesProcessorConfig = K8sAttributesProcessorSchemaConfig;
 
 /** Adds Kubernetes pod, namespace and node metadata to telemetry. */
 export const K8sAttributesProcessor = defineBuiltin<K8sAttributesProcessorConfig, "processor", "k8sattributes">({
@@ -186,18 +156,8 @@ export type ResourceDetector =
   | "kubeadm"
   | "dynatrace";
 
-export interface ResourceDetectionProcessorConfig {
-  detectors: Array<ResourceDetector | (string & {})>;
-  timeout?: Duration;
-  override?: boolean;
-  /** Per-detector settings, e.g. `system: { hostname_sources: ["os"] }`. */
-  system?: Record<string, unknown>;
-  ec2?: Record<string, unknown>;
-  gcp?: Record<string, unknown>;
-  azure?: Record<string, unknown>;
-  k8snode?: Record<string, unknown>;
-  docker?: Record<string, unknown>;
-}
+/** With no detectors the processor detects nothing, so chant asks for the list. */
+export type ResourceDetectionProcessorConfig = Require<ResourceDetectionProcessorSchemaConfig, "detectors">;
 
 /** Detects the host's resource attributes (cloud, container, host) and adds them. */
 export const ResourceDetectionProcessor = defineBuiltin<
@@ -221,12 +181,7 @@ export const ResourceDetectionProcessor = defineBuiltin<
 // total in memory, so one collector instance must see all of a stream's
 // deltas for its totals to be right.
 
-export interface DeltaToCumulativeProcessorConfig {
-  /** How long a stream that receives no samples is kept before it is dropped. Positive. Default `5m`. */
-  max_stale?: Duration;
-  /** The most streams tracked at once; samples of new streams past it are dropped. Not negative. Default unlimited. */
-  max_streams?: number;
-}
+export type DeltaToCumulativeProcessorConfig = DeltaToCumulativeProcessorSchemaConfig;
 
 /**
  * Turns delta metrics into cumulative ones by keeping a running total per

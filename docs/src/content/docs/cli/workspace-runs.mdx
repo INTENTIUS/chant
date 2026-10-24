@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
+chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--where <field><op><value>]... [--follow-squash] [--json]
 chant workspace runs start --from <file|->
 chant workspace runs end <run id> [--from <file|->]
 chant workspace runs record --from <file|->
@@ -111,6 +111,7 @@ Each run lists the `commits` it made. A commit the run's end lists has `joinedBy
 | `--decision <id>` | the runs that carried out that decision, by its id or `<kind>/<id>` |
 | `--by <principal>` | the runs made for that principal |
 | `--since <rev>` | the runs that made a commit in `<rev>..HEAD`, or started after `<rev>`'s commit date |
+| `--where <field><op><value>` | the runs a typed filter holds for ([#4363](https://github.com/INTENTIUS/chant/issues/4363)), repeatable: `id`, `state`, `outcome`, `by`, `agent`, `model`, `provider`, `lease`, `ledger`, `harness.name`, `harness.version`, `unit.id`, `unit.kind` and `cost.currency` (text), `startedAt` and `endedAt` (time), and `cost.amount`, `usage.inputTokens` and `usage.outputTokens` (number), with the operators of [`chant ledger`](/chant/cli/ledger/#filters). `filter.where` repeats the clauses |
 
 With `--follow-squash`, a squash merge on `HEAD`'s history joins each run its pull request's original commits join ([#3035](https://github.com/INTENTIUS/chant/issues/3035), [ws-092](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-092-following-a-squash-merge.md)). The squash commit is added to the run's `commits` with `joinedBy: ["squash"]` and `via`, the original commits through which it joins: one the run's end lists, or one whose `Chant-Run` names the run. The read takes each pull request's head from `refs/pull/<n>/head`, the ref GitHub and Forgejo keep, fetching the ones the clone lacks from `origin` into `refs/chant/pull/<n>/head`, so a later read needs no network. Only squashes made since the earliest run started are followed. A ref that can't be read or fetched is named by the reason `squash-unfollowed`, and `filter.followSquash` says whether the option was given. Without it the read never fetches.
 

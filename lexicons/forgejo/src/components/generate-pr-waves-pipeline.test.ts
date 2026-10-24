@@ -10,6 +10,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateForgejoPipeline } from "./generate-pipeline";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 const root = (name: string, dependsOn: string[] = []): DriverComponent => ({
   name,
@@ -56,7 +57,7 @@ describe("the Forgejo pull-request workflow with a gate per wave (#4003)", () =>
       const job = doc.jobs[`apply-wave-${k}`]!;
       expect(job["runs-on"]).toBe("docker");
       expect(job.steps.find((s) => s.run?.includes("ci run apply"))!.run).toContain(`--forge forgejo --wave-gate release --wave ${k}`);
-      expect(job.steps.some((s) => s.uses === "https://code.forgejo.org/actions/cache/restore@v4")).toBe(true);
+      expect(job.steps.some((s) => s.uses === `https://code.forgejo.org/${usesRef(ACTION_PINS.cacheRestore4)}`)).toBe(true);
     }
   });
 });

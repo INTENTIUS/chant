@@ -3,22 +3,13 @@
  */
 
 import { defineBuiltin } from "../define";
-import type { Duration, GRPCServerSettings, HTTPServerSettings, TLSClientSettings } from "./common";
+import type { Overlay, Require } from "./overlay";
+import type { FileLogReceiverSchemaConfig, HostMetricsReceiverSchemaConfig, OtlpReceiverSchemaConfig, PrometheusReceiverSchemaConfig } from "../generated/index";
+import type { Duration } from "./common";
 
 // ── otlp ─────────────────────────────────────────────────────────────
 
-export interface OtlpReceiverConfig {
-  protocols?: {
-    grpc?: GRPCServerSettings | null;
-    http?:
-      | (HTTPServerSettings & {
-          traces_url_path?: string;
-          metrics_url_path?: string;
-          logs_url_path?: string;
-        })
-      | null;
-  };
-}
+export type OtlpReceiverConfig = OtlpReceiverSchemaConfig;
 
 /** Receives OTLP over gRPC (default port 4317) and HTTP (default port 4318). */
 export const OtlpReceiver = defineBuiltin<OtlpReceiverConfig, "receiver", "otlp">({
@@ -154,21 +145,8 @@ export interface PrometheusScrapeConfig extends PrometheusProxySettings {
   metric_name_escaping_scheme?: "allow-utf-8" | "underscores" | "dots" | "values";
 }
 
-export interface PrometheusReceiverConfig {
-  config: {
-    global?: { scrape_interval?: Duration; scrape_timeout?: Duration; evaluation_interval?: Duration; external_labels?: Record<string, string> };
-    scrape_configs: PrometheusScrapeConfig[];
-  };
-  trim_metric_suffixes?: boolean;
-  use_start_time_metric?: boolean;
-  start_time_metric_regex?: string;
-  target_allocator?: {
-    endpoint: string;
-    interval?: Duration;
-    collector_id?: string;
-    tls?: TLSClientSettings;
-  };
-}
+/** The receiver refuses to start without a Prometheus `config`. */
+export type PrometheusReceiverConfig = Require<PrometheusReceiverSchemaConfig, "config">;
 
 /** Scrapes Prometheus endpoints with Prometheus's own scrape config. */
 export const PrometheusReceiver = defineBuiltin<PrometheusReceiverConfig, "receiver", "prometheus">({
@@ -179,6 +157,7 @@ export const PrometheusReceiver = defineBuiltin<PrometheusReceiverConfig, "recei
     const problems: string[] = [];
     const seen = new Set<string>();
     for (const job of c.config?.scrape_configs ?? []) {
+      if (job.job_name === undefined) continue;
       if (seen.has(job.job_name)) problems.push(`scrape job "${job.job_name}" is declared twice`);
       seen.add(job.job_name);
     }
@@ -188,7 +167,7 @@ export const PrometheusReceiver = defineBuiltin<PrometheusReceiverConfig, "recei
     return problems;
   },
   endpoints: (c) =>
-    (c.config?.scrape_configs ?? []).flatMap((job) => (job.static_configs ?? []).flatMap((s) => s.targets)),
+    (c.config?.scrape_configs ?? []).flatMap((job) => (job.static_configs ?? []).flatMap((s) => s.targets ?? [])),
 });
 
 // ── hostmetrics ──────────────────────────────────────────────────────
@@ -205,14 +184,16 @@ export type HostMetricsScraper =
   | "process"
   | "system";
 
-export interface HostMetricsReceiverConfig {
-  collection_interval?: Duration;
-  initial_delay?: Duration;
-  /** Host root when the collector runs in a container, e.g. `/hostfs`. */
-  root_path?: string;
-  /** Scraper name to its settings; `{}` enables a scraper with its defaults. */
-  scrapers: Partial<Record<HostMetricsScraper, Record<string, unknown>>>;
-}
+/**
+ * Upstream publishes no schema for the scraper packages
+ * (`internal/scraper/*scraper`), so `scrapers` is written here: scraper name
+ * to its settings, `{}` for a scraper's defaults. The receiver refuses to
+ * start with none.
+ */
+export type HostMetricsReceiverConfig = Overlay<
+  HostMetricsReceiverSchemaConfig,
+  { scrapers: Partial<Record<HostMetricsScraper, Record<string, unknown>>> }
+>;
 
 /** Scrapes CPU, memory, disk, filesystem, network and process metrics from the host. */
 export const HostMetricsReceiver = defineBuiltin<HostMetricsReceiverConfig, "receiver", "hostmetrics">({
@@ -232,29 +213,8 @@ export interface FileLogOperator {
   [key: string]: unknown;
 }
 
-export interface FileLogReceiverConfig {
-  include: string[];
-  exclude?: string[];
-  start_at?: "beginning" | "end";
-  include_file_name?: boolean;
-  include_file_path?: boolean;
-  include_file_name_resolved?: boolean;
-  include_file_path_resolved?: boolean;
-  poll_interval?: Duration;
-  max_concurrent_files?: number;
-  max_log_size?: string;
-  fingerprint_size?: string;
-  encoding?: string;
-  force_flush_period?: Duration;
-  delete_after_read?: boolean;
-  /** The id of a storage extension, so offsets survive a restart. */
-  storage?: string;
-  multiline?: { line_start_pattern?: string; line_end_pattern?: string; omit_pattern?: boolean };
-  operators?: FileLogOperator[];
-  attributes?: Record<string, string>;
-  resource?: Record<string, string>;
-  retry_on_failure?: { enabled?: boolean; initial_interval?: Duration; max_interval?: Duration; max_elapsed_time?: Duration };
-}
+/** The receiver refuses to start with no `include` pattern. */
+export type FileLogReceiverConfig = Require<FileLogReceiverSchemaConfig, "include">;
 
 /** Tails log files and parses them with stanza operators. */
 export const FileLogReceiver = defineBuiltin<FileLogReceiverConfig, "receiver", "filelog">({

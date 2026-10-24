@@ -10,6 +10,8 @@
  * can't place as a diagnostic (never dropping or silently passing it through).
  */
 
+import { pinAtMajor, pinMajor } from "@intentius/chant/action-pins";
+
 /**
  * Default actions root. `code.forgejo.org` hosts the Forgejo `actions/*` mirror
  * (checkout, setup-*, cache, upload/download-artifact, …). Override per project
@@ -118,9 +120,24 @@ export function resolveActionRef(ref: string, options: ActionResolveOptions = {}
 
   const base = target.kind === "mirror" ? `${root}/${target.repo}` : target.url;
   const withSubpath = subpath ? `${base}/${subpath}` : base;
-  const pinned = target.kind === "mirror" && target.newest && laterMajor(version, target.newest) ? target.newest : version;
+  const pinned = target.kind === "mirror" && target.newest ? olderPin(version, target.newest) : version;
   const rewritten = pinned ? `${withSubpath}@${pinned}` : withSubpath;
   return { rewritten };
+}
+
+/**
+ * `version` held to `newest`: a tag of a later major becomes `newest`, and a
+ * pinned commit of a later major becomes the commit of `newest` in chant's pin
+ * table (the mirror carries the same commits as GitHub's). Anything else,
+ * including a commit the table does not know, passes through.
+ */
+function olderPin(version: string, newest: string): string {
+  if (/^[0-9a-f]{40}$/.test(version)) {
+    const major = pinMajor(version);
+    const target = Number(newest.replace(/^v/, ""));
+    return major !== undefined && major > target ? (pinAtMajor(version, newest)?.sha ?? version) : version;
+  }
+  return laterMajor(version, newest) ? newest : version;
 }
 
 /** Whether `version` (`v4`, `v4.1.0`) names a later major than `newest` (`v3`). A SHA or branch never does. */

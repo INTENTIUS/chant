@@ -1,4 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
+import { actionRef } from "../action-pins";
 import { Step } from "../generated/index";
 
 export interface CacheActionProps {
@@ -20,7 +21,7 @@ export const CacheAction = Composite((props: CacheActionProps) => {
 
   const step = new Step(mergeDefaults({
     name: "Cache",
-    uses: "actions/cache@v4",
+    uses: actionRef("actions/cache"),
     with: withObj,
   }, defaults?.step));
 

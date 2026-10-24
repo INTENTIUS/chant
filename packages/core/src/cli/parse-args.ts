@@ -47,6 +47,7 @@ const BOOLEAN_FLAGS = new Set([
   "--up",
   "--down",
   "--include-dependents",
+  "--cross-root",
   "--local",
   "--json",
   "--progress-json",
@@ -380,6 +381,19 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.head = args[++i];
     } else if (arg === "--include-dependents") {
       result.includeDependents = true;
+    } else if (arg === "--cross-root") {
+      // `chant workspace lint --cross-root` (#2549): the disagreement lint over every member's graph.
+      result.crossRoot = true;
+    } else if (arg === "--dependents-of") {
+      // `chant workspace run --dependents-of <member> --op <op>` (#2554).
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--dependents-of needs a member name: --dependents-of <member>");
+      result.dependentsOf = value;
+    } else if (arg === "--pin") {
+      // `chant workspace train <env> --pin <member>=<label|digest>` (#2554), repeatable.
+      const value = args[++i];
+      if (!value || value.startsWith("-") || !value.includes("=")) throw new Error("--pin needs a member and a release: --pin <member>=<label|digest>");
+      (result.pins ??= []).push(value);
     } else if (arg === "--from-affected") {
       result.fromAffected = args[++i];
     } else if (arg === "--gate") {
@@ -971,6 +985,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2537 — `chant build` and `chant lint` at a declared workspace root
       // run on the root project alone instead of refusing with WSP000.
       result.rootOnly = true;
+    } else if (arg === "--forge-repos") {
+      // #3168 — `chant workspace check --forge-repos <file>`: the forge's
+      // repository list, as a warden reads it, for an org workspace's checks.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--forge-repos needs a file: --forge-repos <repos.json>");
+      result.forgeRepos = value;
     } else if (arg === "--generated") {
       // #2641 — `chant workspace check --generated` runs each declared
       // generator and compares its output with the file in the tree.
@@ -991,6 +1011,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.url = args[++i];
     } else if (arg === "--op") {
       result.op = args[++i];
+    } else if (arg === "--where") {
+      // #4363 — a typed filter on a contract read; repeatable, every clause has to hold.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("--")) throw new Error("--where needs a clause: --where <field><op><value>");
+      result.where = [...(result.where ?? []), value];
     } else if (arg === "--since") {
       result.since = args[++i];
     } else if (arg === "--limit") {

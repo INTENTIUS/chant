@@ -26,6 +26,8 @@ import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import type { CapabilityPlugin } from "./capability-plugin";
 import { isCapabilityPlugin } from "./capability-plugin";
 import { starterCapabilityPlugin } from "./starter-plugin";
+import { isRegistryBackendConsumer, type RegistryLoginBackend } from "./verbs/publish-image";
+import { isStorageBackendConsumer, type ArtifactStorageBackend } from "./verbs/publish-artifact";
 
 /** Thrown when a dynamically-imported capability package does not satisfy `CapabilityPlugin` — the "malformed capability package" case #559 asks doctor/validation to detect. */
 export class MalformedCapabilityPluginError extends Error {
@@ -165,9 +167,19 @@ export function registerCapabilityPlugins(
     }
   }
 
+  const backends: RegistryLoginBackend[] = [];
+  for (const plugin of plugins) backends.push(...(plugin.registryBackends?.() ?? []));
+  const storage: ArtifactStorageBackend[] = [];
+  for (const plugin of plugins) storage.push(...(plugin.storageBackends?.() ?? []));
+
   for (const plugin of plugins) {
     for (const capability of plugin.capabilities()) {
-      registry.register(capability);
+      // A capability that consumes registry login backends (`publish-image`)
+      // is re-bound to the backends of the plugins loaded for this registry.
+      let bound = capability;
+      if (isRegistryBackendConsumer(bound)) bound = bound.withRegistryBackends(backends) as typeof bound;
+      if (isStorageBackendConsumer(bound)) bound = bound.withStorageBackends(storage) as typeof bound;
+      registry.register(bound);
     }
   }
   return registry;

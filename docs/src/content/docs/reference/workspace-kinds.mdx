@@ -13,12 +13,13 @@ Kinds are plain data. Besides its name and description, each kind carries a prob
 | Kind | Precedence | The directory holds |
 |---|---|---|
 | `workspace` | 1000 | a nested workspace, with its own `chant.workspace.json` or `.jsonc` |
+| `repo` | never claims a directory | nothing here: the member names another repository's workspace by URL and pinned revision. See [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) |
 | `chant` | 500 | a chant project, with `chant.config.ts` or `chant.config.json` directly in it |
 | `design` | never claims a directory | the design artifacts the workspace owns, as data. chant reads the files and builds nothing |
 | `other` | never claims a directory | anything chant does not read. The member needs `because` |
 | `examples` | never claims a directory | the kind of an [example group](/chant/reference/workspace-declaration/#example-groups), not of a member |
 
-Each kind also says which outputs its members expose to [member links](/chant/reference/workspace-declaration/#member-links). A `chant` member exposes the outputs its source declares, a nested `workspace` exposes none, and an `other` or `design` member exposes what its entry lists.
+Each kind also says which outputs its members expose to [member links](/chant/reference/workspace-declaration/#member-links). A `chant` member exposes the outputs its source declares, a nested `workspace` or a `repo` member exposes none, and an `other` or `design` member exposes what its entry lists.
 
 A `design` member is the data member of [D18](https://github.com/INTENTIUS/chant/issues/2524) ([#2549](https://github.com/INTENTIUS/chant/issues/2549), [ws-062](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-062-live-links-and-design-kind.md)). It needs no `because`, and `WSP009` does not report it. Its probe, like the one of `other`, only checks that the directory exists. [Records pin its files by hash](/chant/reference/workspace-declaration/#record-kinds), `chant workspace graph --intent` shows them, and the per-member commands leave it out with `kind-not-run`. A declaration that uses the kind needs chant 0.101.0, since an older chant lists the member with `unknown-kind`.
 
@@ -61,7 +62,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | Field | Value |
 |---|---|
 | `schema` | `1` |
-| `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `other` or `examples`, and a package lists each name once |
+| `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `repo`, `design`, `other` or `examples`, and a package lists each name once |
 | `kinds[].description` | One line saying what the directory holds, shown in listings and messages |
 | `kinds[].precedence` | An integer from 1 to 999 |
 | `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |
@@ -71,6 +72,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
 | `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
 | `kinds[].reader` | Optional. The link reader chant runs over a member's own files. See [Links read from a member's files](#links-read-from-a-members-files) |
+| `kinds[].memberFile` | Optional. A file every member has and the JSON Schema it must pass. See [A member's own file](#a-members-own-file) |
 
 A probe needs at least one of `anyFile`, `anyBlock` and `anyJsonKey`, and it passes when any one does. All three only look at files directly in the directory, never below it.
 
@@ -138,6 +140,24 @@ The readers are chant's code, and the kinds file only names one. The file stays 
 A reader returns links, each with the file and line that state it, and gaps: the places it could not read without guessing. The links are resolved beside the declared ones with origin `kind-reader`, so a missing output fails with `WSP093` and an unreadable one is kept as `WSP094`, both at the member's file and line. Each gap is a `WSP099` finding. `chant workspace graph` lists the same rows in `links`, with `reader`, `file` and `line`.
 
 A link names its producer when the member's fields say which member that is. When they don't, chant picks the one other member that exposes the output the link is anchored on (for a dbt column, its table). If none does and exactly one other member exposes outputs at all, the link goes to that member, so a dropped table is reported as missing from the only place it could be. Any other case is ambiguous (`WSP095`), and the message names the field that settles it.
+
+### A member's own file
+
+Records are checked against their kind, and a kind can also check a file each of its members carries, such as the `terragucci.yml` of a terragucci control repo ([#3672](https://github.com/INTENTIUS/chant/issues/3672)).
+
+```json
+{
+  "name": "control",
+  "memberFile": { "path": "terragucci.yml", "schema": "schemas/terragucci.schema.json" }
+}
+```
+
+| Field | Value |
+|---|---|
+| `memberFile.path` | The file, relative to the member's directory, with forward slashes and no `..` |
+| `memberFile.schema` | A draft 2020-12 JSON Schema, a `.json` file inside the supplying package, relative to the package's directory |
+
+chant reads the schema when it reads the package's kinds, as data, the same way it reads the kinds file. A schema that is missing, isn't JSON or doesn't compile is a `WSP002` problem. [`chant workspace check`](/chant/cli/workspace-check/) reads each member's file, parsing it as YAML when its name ends in `.yml` or `.yaml` and as JSON otherwise, and fails a member whose file is missing, doesn't parse or doesn't pass the schema with `WSP012`, one finding per reason. A `$ref` to another file is not followed. A chant older than this field fails a kinds file that uses it, so ship the schema in the package's `files` and raise the chant floor with it.
 
 ### Which packages are read
 

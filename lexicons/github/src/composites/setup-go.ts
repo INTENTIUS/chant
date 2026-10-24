@@ -1,4 +1,5 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
+import { actionRef } from "../action-pins";
 import { Step } from "../generated/index";
 
 export interface SetupGoProps {
@@ -19,7 +20,7 @@ export const SetupGo = Composite((props: SetupGoProps) => {
 
   const step = new Step(mergeDefaults({
     name: "Setup Go",
-    uses: "actions/setup-go@v5",
+    uses: actionRef("actions/setup-go"),
     ...(Object.keys(withObj).length > 0 ? { with: withObj } : {}),
   }, defaults?.step));
 
