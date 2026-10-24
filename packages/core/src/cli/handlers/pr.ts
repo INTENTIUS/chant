@@ -135,6 +135,8 @@ import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type P
 import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
+import type { PrMigrationFile } from "../../pr-migrations";
+import { lexiconNames } from "../../lexicon-module";
 
 
 /** Where the reports land unless `--output` says. */
@@ -525,7 +527,7 @@ async function publish(forge: PrForge | undefined, report: PrReport, note: strin
   if (report.pr === null) return;
   // A member the change does not reach has nothing to say: one note per
   // member would put a line on every pull request for each member it skips.
-  if (report.member && report.status === "nothing" && !report.overdue?.length) return;
+  if (report.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length) return;
   try {
     await forge.upsertNote(report.pr, prNoteMarker(report.env, report.member), note);
   } catch (err) {
@@ -726,8 +728,10 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   }
   const status = p.plan.order.length === 0 ? "nothing" : set.failed ? "plan-failed" : "planned";
   const overdue = await overdueOps(p.forge, p.member);
+  const migrations = await newMigrations(p);
   const planned = prReport({
     stage: "plan",
+    ...(migrations.length > 0 ? { migrations } : {}),
     pr: ctx.args.pr,
     env: p.env,
     ...(p.member ? { member: p.member } : {}),
@@ -755,6 +759,39 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
   }
   if (judged.stop) console.error(formatWarning({ message: judged.stop.message }));
   return status === "plan-failed" || judged.stop ? 1 : 0;
+}
+
+/**
+ * The migration files the pull request adds in a migration-directory member
+ * (#4407), each statement classified offline by the sql lexicon. Nothing is
+ * applied and no server is contacted. A workspace without such a member, or
+ * a classifier that cannot load, leaves the note as it was.
+ */
+async function newMigrations(p: Prepared): Promise<PrMigrationFile[]> {
+  const { newMigrationFilesBetween } = await import("../../workspace/new-migrations");
+  try {
+    return await newMigrationFilesBetween(resolve("."), p.base, p.head, {
+      ...(p.member ? { member: p.member } : {}),
+      plugins: async () => {
+        const { loadPlugin } = await import("../plugins");
+        const names = ["sql", ...lexiconNames(p.config.lexicons ?? []).filter((n) => n !== "sql")];
+        const loaded = [];
+        for (const name of names) {
+          try {
+            const plugin = await loadPlugin(name);
+            if (plugin.classifyMigrations) loaded.push(plugin);
+            if (loaded.length > 0) break;
+          } catch {
+            // not installed: the next name, or the note says no lexicon classifies the dialect
+          }
+        }
+        return loaded;
+      },
+    });
+  } catch (err) {
+    console.error(formatWarning({ message: `could not classify the new migration files: ${err instanceof Error ? err.message : String(err)}` }));
+    return [];
+  }
 }
 
 /**

@@ -49,6 +49,7 @@
 
 import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
 import type { PrRequireOutcome } from "./pr-requires";
+import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
 
 /** The schema a pull-request report names in `$schema`. */
@@ -83,6 +84,9 @@ export const PR_REPORT_POLICY_FLOOR = "0.124.41";
 
 /** The first chant whose apply report can carry `beforeMerge` and the `requires-unmet` and `before-merge-off` refusals (#4301, ws-106). */
 export const PR_REPORT_BEFORE_MERGE_FLOOR = "0.124.42";
+
+/** The first chant whose plan report can carry `migrations` (#4407). */
+export const PR_REPORT_MIGRATIONS_FLOOR = "0.124.49";
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -436,6 +440,13 @@ export interface PrReport {
    * {@link PR_REPORT_OVERDUE_FLOOR}.
    */
   overdue?: PrOverdue[];
+  /**
+   * Plan stage (#4407): the migration files the pull request adds in a
+   * migration-directory workspace member, each statement classified offline.
+   * Absent when it adds none. Added within contract 1 by chant
+   * {@link PR_REPORT_MIGRATIONS_FLOOR}.
+   */
+  migrations?: PrMigrationFile[];
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
     changed: string[];
@@ -690,6 +701,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     out.push("", `Hooks: ${passed} passed${other.length > 0 ? `; ${other.join("; ")}` : ""}.`);
   }
   out.push(...policyLines(report));
+  out.push(...renderMigrationLines(report.migrations));
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);
   }

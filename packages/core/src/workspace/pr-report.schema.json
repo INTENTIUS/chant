@@ -92,6 +92,39 @@
         }
       }
     },
+    "migrations": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4407, written by chant 0.124.49 and newer. Plan stage: the migration files the pull request adds in a migration-directory workspace member (goose, golang-migrate, clickhouse-migrations, Flyway), each statement with the class the lexicon's classifier gives it, read offline. Absent when the pull request adds none.",
+      "items": {
+        "type": "object",
+        "required": ["member", "reader", "file", "version", "name", "type", "dialect", "statements"],
+        "properties": {
+          "member": { "type": "string" },
+          "reader": { "type": "string" },
+          "file": { "type": "string", "description": "Relative to the workspace root." },
+          "version": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "enum": ["versioned", "repeatable", "baseline", "undo"] },
+          "dialect": { "type": "string" },
+          "error": { "type": "string", "description": "Why the file could not be read; its statements are then empty." },
+          "statements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["index", "sql", "outcome", "changes"],
+              "properties": {
+                "index": { "type": "integer", "minimum": 1 },
+                "sql": { "type": "string" },
+                "outcome": { "enum": ["classified", "undecided", "unclassified", "data"] },
+                "changes": { "type": "array", "items": { "$ref": "#/$defs/migrationChange" } },
+                "candidates": { "type": "array", "items": { "$ref": "#/$defs/migrationChange" }, "description": "With undecided: the rules that could apply." },
+                "note": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "plannedOutputs": {
       "type": "object",
       "description": "Added within contract version 1 by #3999, written by chant 0.124.32 and newer. Per dependency in the change that a member was planned against, the names of the outputs its plan knows, sorted. An output a member reads that is not listed is known only after apply, and the member lists it under unknownInputs. Absent when no member read one.",
@@ -258,6 +291,19 @@
     }
   },
   "$defs": {
+    "migrationChange": {
+      "type": "object",
+      "required": ["rule", "class", "label", "title"],
+      "properties": {
+        "rule": { "type": "string" },
+        "class": { "type": "string" },
+        "label": { "type": "string" },
+        "title": { "type": "string" },
+        "lock": { "type": "string" },
+        "destructive": { "type": "boolean" },
+        "note": { "type": "string" }
+      }
+    },
     "policyFinding": {
       "type": "object",
       "required": ["rule", "message"],

@@ -295,6 +295,15 @@ export const sqlPlugin: LexiconPlugin = {
     return { ...classifyDisruption(options), ...classifyPgDisruption(options) };
   },
 
+  /**
+   * The migration files a pull request adds (#4407): each up statement given
+   * the class the schema-diff classifier gives the same change. Offline.
+   */
+  async classifyMigrations(options) {
+    const { classifyMigrationFiles } = await import("./migration-classify");
+    return classifyMigrationFiles(options);
+  },
+
   /** `chant sql diff` and `chant sql plan`: schema changes, classified. */
   commands() {
     return sqlCommands;
