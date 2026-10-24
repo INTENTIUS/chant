@@ -30,6 +30,7 @@ describe("the sql composite catalog", () => {
       "RollupView",
       "ShardedTable",
       "SoftDeleteTable",
+      "StreamIngest",
       "TenantTable",
     ]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- sql`").toEqual(exported);
@@ -49,6 +50,7 @@ describe("the sql composite catalog", () => {
       RollupView: ["ClickHouseTable", "ClickHouseView"],
       ShardedTable: ["ClickHouseTable"],
       OtelTables: ["ClickHouseTable", "ClickHouseView"],
+      StreamIngest: ["ClickHouseTable", "ClickHouseView"],
     });
     for (const entry of compositeCatalog) {
       expect(entry.lexicon, entry.name).toBe("sql");

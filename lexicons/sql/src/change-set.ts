@@ -25,7 +25,7 @@
  * dialects' `CHANGE_CLASSES` and `PG_CHANGE_CLASSES` price them:
  *
  * - a `drop` class is a `delete` (`destroy`); a `create` class a `create`;
- * - a `rebuild` or `expand` class, or a step a migration Op makes, is a
+ * - a `rebuild`, `replace` or `expand` class, or a step a migration Op makes, is a
  *   `replace` (`replace`): the object, or a column of it, is built again;
  * - anything else is an `update`, its disruption the worst class's
  *   (`metadata` in-place; `validate`, `concurrently` and `rewrite` rolling).
@@ -67,6 +67,7 @@ export const SQL_CLASS_DISRUPTION: Readonly<Record<string, ChangeSetDisruption>>
   validate: "rolling",
   concurrently: "rolling",
   rewrite: "rolling",
+  replace: "replace",
   rebuild: "replace",
   expand: "replace",
   drop: "destroy",

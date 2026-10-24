@@ -24,6 +24,7 @@ import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "../pl
 import { stampedComment } from "../ownership";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
 import { renderFor, type Topology } from "../topology";
+import { readsTable } from "../plan/stream";
 import { accessClauseText, alterAccessField, alterQuotaOrProfileField, grantStatement, revokeStatement, SECRETLESS, type GrantAtom } from "../access";
 
 /** A backquoted identifier. */
@@ -613,6 +614,24 @@ function deferredDefaultRoles(
   return out;
 }
 
+/**
+ * The statements that replace a stream table (#4396), in the order they run:
+ * detach each materialized view that reads it (`readers`, as the server has
+ * them), drop the table, create it as declared, attach the views. The table
+ * holds no rows, so nothing is copied; a view that stays detached for the
+ * length of the replacement reads nothing, and the messages wait in the
+ * broker (or the files in the bucket) for the new table.
+ */
+export function replaceStreamSteps(obj: DeclaredObject, live: CanonicalObject, readers: readonly CanonicalObject[], marker: OwnershipMarker | undefined): Step[] {
+  const view = (r: CanonicalObject) => qualifiedIdent(r.database, r.name);
+  return [
+    ...readers.map((r) => stepFor(`DETACH TABLE ${view(r)}`, "SQLCH225")),
+    stepFor(`DROP TABLE ${qualifiedIdent(live.database, live.name)} SYNC`, "SQLCH225"),
+    stepFor(createStatement(obj, marker), "SQLCH225"),
+    ...readers.map((r) => stepFor(`ATTACH TABLE ${view(r)}`, "SQLCH225")),
+  ];
+}
+
 function planDeclared(input: StatementPlanInput): StatementPlan {
   const keyOf = input.keyOf ?? ((o: DeclaredObject) => o.key);
   const byObject = new Map<string, Change[]>();
@@ -640,6 +659,12 @@ function planDeclared(input: StatementPlanInput): StatementPlan {
     const renamedFrom = mine.find((c) => c.rule === "SQLCH230" || c.rule === "SQLCH231")?.before;
     const currentKey = renamedFrom !== undefined && input.current.has(renamedFrom) ? renamedFrom : key;
     const live = input.current.get(currentKey);
+    // A stream table (#4396): the views that read it are detached, it is dropped and created, and they are attached again.
+    if (live && mine.some((c) => c.rule === "SQLCH225")) {
+      const dropped = new Set(input.changes.filter((c) => c.rule === "SQLCH250").map((c) => c.object));
+      const readers = [...input.current].filter(([k, o]) => !dropped.has(k) && readsTable(o, live)).map(([, o]) => o);
+      return { verdict: "alter", obj, changes: mine, steps: replaceStreamSteps(obj, live, readers, input.marker) };
+    }
     // A function has no comment, so nothing to restamp: it never carries the marker.
     const restamp =
       obj.type !== CLICKHOUSE_ENTITY_TYPES.function && !stepsSetComment(obj, mine) && (mine.some((c) => c.field === "comment") || !(input.carriesMarker?.(currentKey) ?? true));

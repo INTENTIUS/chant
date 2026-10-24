@@ -509,6 +509,71 @@ export const compositeCatalog: CompositeEntry[] = [
     ]
   },
   {
+    "name": "StreamIngest",
+    "lexicon": "sql",
+    "description": "A stream table, the materialized view that reads it, and the MergeTree target the view writes.",
+    "bundles": [
+      "ClickHouseTable",
+      "ClickHouseView"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "The target table's name."
+      },
+      {
+        "name": "columns",
+        "type": "string",
+        "required": true,
+        "description": "The target's columns, as SQL: `ts DateTime, user_id UInt64, kind LowCardinality(String)`."
+      },
+      {
+        "name": "engine",
+        "type": "string",
+        "required": true,
+        "description": "The stream table's engine, with a named collection as its first argument rather than inline credentials: `Kafka(kafka_creds)`, `S3Queue(lake_creds)`."
+      },
+      {
+        "name": "settings",
+        "type": "string",
+        "required": false,
+        "description": "The engine's settings, the body of a `SETTINGS` clause: `kafka_topic_list = 'events', kafka_group_name = 'ingest', kafka_format = 'JSONEachRow'`."
+      },
+      {
+        "name": "streamColumns",
+        "type": "string",
+        "required": false,
+        "description": "The stream table's columns when they differ from the target's: the message as it arrives."
+      },
+      {
+        "name": "select",
+        "type": "string",
+        "required": false,
+        "description": "The view's select list over the stream table, each item aliased to a target column."
+      },
+      {
+        "name": "orderBy",
+        "type": "string",
+        "required": true,
+        "description": "The target's sort key (a column list or an expression)."
+      },
+      {
+        "name": "targetEngine",
+        "type": "string",
+        "required": false,
+        "description": "The target's engine (default `MergeTree`)."
+      },
+      {
+        "name": "partitionBy",
+        "type": "string",
+        "required": false,
+        "description": "The target's partition key."
+      }
+    ]
+  },
+  {
     "name": "TenantTable",
     "lexicon": "sql",
     "description": "A multi-tenant table with the tenant key first in its primary key and its index.",
