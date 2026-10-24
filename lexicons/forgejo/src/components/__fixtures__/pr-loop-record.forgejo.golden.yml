@@ -73,7 +73,7 @@ jobs:
     container: node:22
     steps:
       - name: Check out the target branch's commit
-        uses: https://code.forgejo.org/actions/checkout@v7
+        uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: '${{ github.event.pull_request.base.sha }}'
       - name: Take the plan report from the plan job
@@ -87,7 +87,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: chant-pr-plan
           path: .chant/pr
@@ -108,7 +108,7 @@ jobs:
       group: chant-record-prod
       cancel-in-progress: false
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v7
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
@@ -122,7 +122,7 @@ jobs:
           chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge forgejo
       - name: Keep the record report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: chant-pr-record
           path: .chant/pr

@@ -11,15 +11,18 @@
 import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { BUILD_REQUEST_TAGS, GITHUB_JOB_TOKEN, pushBranches } from "@intentius/chant/ci-jobs";
 import type { OpTrigger } from "@intentius/chant/lexicon";
-import { actionRef } from "../action-pins";
+import { ACTION_PINS as PINS, tagComments, usesRef } from "@intentius/chant/action-pins";
 
 /** The artifact actions every generated job uses, at the major the generators have always pinned. */
-export const UPLOAD_ARTIFACT = "actions/upload-artifact@v4";
-export const DOWNLOAD_ARTIFACT = "actions/download-artifact@v4";
+export const UPLOAD_ARTIFACT = usesRef(PINS.uploadArtifact4);
+export const DOWNLOAD_ARTIFACT = usesRef(PINS.downloadArtifact4);
+export const CHECKOUT = usesRef(PINS.checkout7);
+export const CACHE_RESTORE = usesRef(PINS.cacheRestore4);
+export const CACHE_SAVE = usesRef(PINS.cacheSave4);
 
 /** The checkout step; `fullHistory` fetches every commit, for a job that reads the base commit or measures a change with git. */
 export function checkoutStep(fullHistory = false): Record<string, unknown> {
-  return fullHistory ? { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } } : { uses: actionRef("actions/checkout") };
+  return fullHistory ? { uses: CHECKOUT, with: { "fetch-depth": 0 } } : { uses: CHECKOUT };
 }
 
 /** One `run:` step per line, so each line is its own step in the log. */
@@ -135,5 +138,5 @@ export function emitWorkflowYAML(doc: GithubWorkflowDoc): string {
   if (doc.concurrency) sections.push(emitYAMLEntry("concurrency", doc.concurrency));
   if (doc.permissions && Object.keys(doc.permissions).length > 0) sections.push(emitYAMLEntry("permissions", doc.permissions));
   sections.push(emitYAMLEntry("jobs", doc.jobsDoc));
-  return sections.join("\n\n") + "\n";
+  return tagComments(sections.join("\n\n") + "\n");
 }

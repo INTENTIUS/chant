@@ -90,8 +90,7 @@ import type {
   ComponentPipelineResult as GenerateGithubResult,
   PipelineMember,
 } from "@intentius/chant/lexicon";
-import { afterEarlierWave, checkoutStep, concurrency, downloadArtifactStep, emitWorkflowYAML, keepRecordStep, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
-import { actionRef } from "../action-pins";
+import { afterEarlierWave, CACHE_RESTORE, CACHE_SAVE, CHECKOUT, checkoutStep, concurrency, downloadArtifactStep, emitWorkflowYAML, keepRecordStep, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
 
@@ -270,13 +269,13 @@ function prLoopGithubDoc(
   const recordKey = (wave?: number) => `${recordPrefix}\${{ github.run_id }}-\${{ github.run_attempt }}${wave ? `-wave-${wave}` : ""}`;
   const restoreRecord = (wave?: number) => ({
     name: wave ? "Restore the newest record of this commit's apply" : "Restore the record of an earlier attempt at this commit",
-    uses: "actions/cache/restore@v4",
+    uses: CACHE_RESTORE,
     with: { path: recordPath, key: recordKey(wave), "restore-keys": recordPrefix },
   });
   const saveRecord = (wave?: number) => ({
     name: wave ? "Keep the record for the next wave and a re-run" : "Keep the record for a re-run",
     if: "always()",
-    uses: "actions/cache/save@v4",
+    uses: CACHE_SAVE,
     with: { path: recordPath, key: recordKey(wave) },
   });
   // #4296: the step that trades the job's OIDC token for its cloud identity, before the checkout.
@@ -380,7 +379,7 @@ function prLoopGithubDoc(
   const post = prLoopPostJob(forgeName, env, member?.name);
   const noteSteps: Array<Record<string, unknown>> = [
     // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
-    { name: "Check out the target branch's commit", uses: actionRef("actions/checkout"), with: { ref: "${{ github.event.pull_request.base.sha }}" } },
+    { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}" } },
     ...runSteps(beforeScript),
     { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
     { name: "Keep the plan report", if: "always()", uses: UPLOAD_ARTIFACT, with: { name: reportName(plan), path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true } },
@@ -519,7 +518,7 @@ function prEnvGithubJobs(
     permissions: writes,
     steps: [
       // The target branch's commit: the chant this job runs is the target branch's, and none of the change's code is here.
-      { name: "Check out the target branch's commit", uses: actionRef("actions/checkout"), with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+      { name: "Check out the target branch's commit", uses: CHECKOUT, with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
       ...runSteps(beforeScript),
       { name: "Take the environment's report from the env-up job", run: takeOverScript("env-up", PR_ENV_REPORT_DIR, forge) },
       keep("env-up"),
@@ -534,7 +533,7 @@ function prEnvGithubJobs(
     permissions: withIdToken(writes),
     steps: [
       ...tradeStep,
-      { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0, ...(ref ? { ref } : {}) } },
+      { uses: CHECKOUT, with: { "fetch-depth": 0, ...(ref ? { ref } : {}) } },
       ...runSteps(prLoopSetup(image)),
       ...runSteps(beforeScript),
       { name, env: j.env, run: j.command },

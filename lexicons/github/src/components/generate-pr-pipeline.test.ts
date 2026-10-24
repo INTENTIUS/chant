@@ -14,6 +14,7 @@ import type { DriverComponent } from "@intentius/chant/components/driver";
 import { githubBaseFallback, greenCheckout, prApplyGroup, prApplyRecordKey, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 import { dropForgeTokens } from "@intentius/chant/ci-handover";
 import { generateGithubPipeline } from "./generate-pipeline";
+import { ACTION_PINS, usesRef } from "@intentius/chant/action-pins";
 
 const ESTATE: DriverComponent[] = [
   { name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: "net" }] }] },
@@ -123,9 +124,9 @@ describe("the GitHub pull-request workflow", () => {
 
   test("the apply resumes from a record the cache keeps for the pushed commit across a re-run (#3543)", () => {
     const steps = doc.jobs.apply.steps;
-    const restore = steps.findIndex((s) => s.uses === "actions/cache/restore@v4");
+    const restore = steps.findIndex((s) => s.uses === `${usesRef(ACTION_PINS.cacheRestore4)}`);
     const run = steps.findIndex((s) => s.run?.includes("ci run apply"));
-    const save = steps.findIndex((s) => s.uses === "actions/cache/save@v4");
+    const save = steps.findIndex((s) => s.uses === `${usesRef(ACTION_PINS.cacheSave4)}`);
     expect(restore).toBeGreaterThan(-1);
     expect(restore).toBeLessThan(run);
     expect(save).toBeGreaterThan(run);
@@ -199,7 +200,7 @@ describe("the GitHub pull-request workflow", () => {
     expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply.network.prod", "cancel-in-progress": false });
     // The record path is relative to the member for --resume and to the repository for the cache.
     expect(apply.run).toContain("--in-place");
-    const restore = mdoc.jobs.apply.steps.find((s) => s.uses === "actions/cache/restore@v4")!;
+    const restore = mdoc.jobs.apply.steps.find((s) => s.uses === `${usesRef(ACTION_PINS.cacheRestore4)}`)!;
     expect(restore.with).toMatchObject({ path: "infra/network/.chant/pr-resume/pr-apply.json", "restore-keys": "chant-apply.network.prod-${{ github.sha }}-" });
     // #4295: the plan job uploads nothing; the plan-note job keeps its report.
     expect(mdoc.jobs.plan.steps.some((s) => s.uses?.startsWith("actions/upload-artifact"))).toBe(false);

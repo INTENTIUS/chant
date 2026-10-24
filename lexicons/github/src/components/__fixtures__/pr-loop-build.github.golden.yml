@@ -91,7 +91,7 @@ jobs:
       statuses: write
     steps:
       - name: Check out the target branch's commit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: '${{ github.event.pull_request.base.sha }}'
       - name: Take the plan report from the plan job
@@ -102,7 +102,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chant-pr-plan
           path: .chant/pr
@@ -128,7 +128,7 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
@@ -146,7 +146,7 @@ jobs:
           chant ci run record --in-place --base "$BASE_SHA" --env prod --gate pr-apply --forge github
       - name: Keep the record report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chant-pr-record
           path: .chant/pr
@@ -164,7 +164,7 @@ jobs:
       pull-requests: write
       statuses: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
@@ -173,7 +173,7 @@ jobs:
       - name: Lint the project
         run: chant lint
       - name: Restore the record of an earlier attempt at this commit
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .chant/pr-resume/pr-apply.json
           key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -187,13 +187,13 @@ jobs:
           chant ci run apply --in-place --env prod --gate pr-apply --forge github
       - name: Keep the record for a re-run
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .chant/pr-resume/pr-apply.json
           key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Keep the apply report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chant-pr-apply
           path: .chant/pr
