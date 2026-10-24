@@ -268,11 +268,11 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     if (missing.length === 0) return hole(fallback);
     const preview = await previewCfnDeploy(executor, stack, input, [...missing].sort(), unresolved.length > 0 ? unresolved : undefined);
     if (typeof preview === "string") return hole(`${fallback}; no preview: ${preview}`);
-    const { entries, shape } = preview;
+    const { entries, shape, outputs } = preview;
     const artifact: CfnShapeArtifact = { kind: "cfn-deploy-shape", member: stack, shape, digest: planShapeDigest(shape) };
     // The preview's shape enters the digest (#4423); `member` reads it when called below.
     planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved, artifact.digest);
-    return { member: stack, planDigest, artifact, shape, changeSet: { member: member([]), entries } };
+    return { member: stack, planDigest, artifact, shape, changeSet: { member: member([]), entries }, ...(outputs ? { outputs } : {}) };
   }
 
   const changeSet = await executor.cloudformation.createChangeSet({
@@ -297,7 +297,7 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     if (blocked.length > 0 && (input.onReplace ?? "block") === "block") throw new CfnReplacementBlockedError(stack, blocked);
     const entries = changeSet.changes.map((c) => cfnChangeEntry(stack, c));
     const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
-    const outputs = changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes);
+    const outputs = changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes, knownParameters(parameters));
     // The real change set's shape, with the replacement CloudFormation reports,
     // for a round that checks it against a preview (#4419).
     const shape = cfnPlanShape(stack, changeSet, []);
@@ -453,7 +453,7 @@ async function previewCfnDeploy(
   input: CfnDeployInput,
   unknown: string[],
   refs: string[] = unknown,
-): Promise<{ entries: ChangeSetEntry[]; shape: PlanShape } | string> {
+): Promise<{ entries: ChangeSetEntry[]; shape: PlanShape; outputs?: PlannedOutputs } | string> {
   const facts = templateFacts(input.template, unknown);
   const parameters: Record<string, string> = { ...(flattenCfnInputs(input) ?? {}) };
   for (const k of unknown) parameters[k] = cfnPlaceholder(facts.parameterTypes[k]);
@@ -469,7 +469,12 @@ async function previewCfnDeploy(
     }
     const noop = isNoopChangeSet(changeSet);
     const entries = noop ? [] : changeSet.changes.map((c) => cfnChangeEntry(stack, c, drivenProperties(c, unknown, facts)));
-    return { entries, shape: cfnPlanShape(stack, changeSet, unknown, input.template, refs) };
+    // What the stack's outputs will be, for the members that read them: an
+    // output that reads one of the unknown parameters is unknown, one that
+    // reads a known parameter or states its value is not (#4419).
+    const given = Object.fromEntries(Object.entries(parameters).filter(([k]) => !unknown.includes(k)));
+    const outputs = noop || changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes, given);
+    return { entries, shape: cfnPlanShape(stack, changeSet, unknown, input.template, refs), ...(outputs ? { outputs } : {}) };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
   }
@@ -509,11 +514,17 @@ async function standingOutputs(executor: CloudExecutor, stack: string): Promise<
  * What the plan says of the stack's outputs once `changes` apply: none to
  * say for a template with no `Outputs`, which needs no `DescribeStacks`.
  */
-async function plannedStackOutputs(executor: CloudExecutor, stack: string, templatePath: string, changes: readonly CfnChange[]): Promise<PlannedOutputs | undefined> {
+async function plannedStackOutputs(
+  executor: CloudExecutor,
+  stack: string,
+  templatePath: string,
+  changes: readonly CfnChange[],
+  parameters: Record<string, string> = {},
+): Promise<PlannedOutputs | undefined> {
   const template = readTemplate(templatePath) as { Outputs?: Record<string, unknown> } | undefined;
   if (!template || typeof template !== "object") return undefined;
   if (Object.keys(template.Outputs ?? {}).length === 0) return { known: {}, unknown: [] };
-  return cfnPlannedOutputs(template, changes, await standingOutputs(executor, stack));
+  return cfnPlannedOutputs(template, changes, await standingOutputs(executor, stack), parameters);
 }
 
 /** The template at `path` as JSON, or `undefined` when it cannot be read or parsed here. */
@@ -583,9 +594,21 @@ function valueReads(value: unknown): { ids: Set<string>; opaque: boolean } {
  * `Dynamic`, no replacement, no change in a nested stack under it). One
  * that reads a parameter, an import or a condition, one the stack does not
  * have yet, and every output of a template this cannot read, is unknown.
+ *
+ * Two kinds of output need no standing value. An output whose `Value` is a
+ * plain string is known at that string, changed or new: the template says it.
+ * An output that is a `Ref` to a parameter the plan was given a value for is
+ * known at that value (`given`, the inputs of this plan). Both are what
+ * the stack's outputs will be, whatever they are now.
+ *
  * `undefined` when there is no template or no standing stack to read from.
  */
-export function cfnPlannedOutputs(template: unknown, changes: readonly CfnChange[], standing: Record<string, string> | undefined): PlannedOutputs | undefined {
+export function cfnPlannedOutputs(
+  template: unknown,
+  changes: readonly CfnChange[],
+  standing: Record<string, string> | undefined,
+  given: Record<string, string> = {},
+): PlannedOutputs | undefined {
   if (!standing || template === null || typeof template !== "object") return undefined;
   const t = template as { Outputs?: Record<string, { Value?: unknown; Condition?: unknown }>; Parameters?: Record<string, unknown> };
   const parameters = new Set(Object.keys(t.Parameters ?? {}));
@@ -598,6 +621,11 @@ export function cfnPlannedOutputs(template: unknown, changes: readonly CfnChange
   const known: Record<string, unknown> = {};
   const unknown: string[] = [];
   for (const [name, output] of Object.entries(t.Outputs ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const stated = statedOutput(output, given, t.Parameters);
+    if (stated !== undefined) {
+      known[name] = stated;
+      continue;
+    }
     const { ids, opaque } = valueReads(output?.Value);
     const stays =
       !opaque && output?.Condition === undefined && name in standing &&
@@ -606,6 +634,32 @@ export function cfnPlannedOutputs(template: unknown, changes: readonly CfnChange
     else unknown.push(name);
   }
   return { known, unknown };
+}
+
+/** The inputs a plan was given a value for: every parameter that is not null. */
+function knownParameters(parameters: Record<string, string | null>): Record<string, string> {
+  return Object.fromEntries(Object.entries(parameters).filter((e): e is [string, string] => e[1] !== null));
+}
+
+/**
+ * What an output's `Value` says outright: a plain string, or a `Ref` to a
+ * parameter this plan has a value for. `undefined` for anything that reads a
+ * resource, an import or a condition, which the standing outputs speak for.
+ */
+function statedOutput(
+  output: { Value?: unknown; Condition?: unknown } | undefined,
+  parameters: Record<string, string>,
+  declared: Record<string, unknown> | undefined,
+): string | undefined {
+  if (output?.Condition !== undefined) return undefined;
+  const value = output?.Value;
+  if (typeof value === "string") return value;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const [key, arg] = entries[0] ?? [];
+    if (entries.length === 1 && key === "Ref" && typeof arg === "string" && declared && arg in declared && arg in parameters) return parameters[arg];
+  }
+  return undefined;
 }
 
 /** Whether a CloudFormation error says the stack does not exist. */

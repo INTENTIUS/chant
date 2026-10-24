@@ -462,6 +462,13 @@ function roundCover(
   byName: ReadonlyMap<string, DriverComponent>,
 ): RoundCoverage {
   if (options.approval?.status !== "approved") return { covered: false, reason: "no approval of the first plan stands" };
+  // The values the round reads of a component it plans again are the ones
+  // that plan says it will expose: it has not applied yet, so the outputs
+  // standing say nothing of it. An output the first plan knew and the round's
+  // plan knows as the same value is not a changed input, whichever of the
+  // two applies first.
+  const reads: Record<string, Record<string, unknown>> = { ...now };
+  for (const name of plan.order) if (fresh.outputs[name]) reads[name] = fresh.outputs[name]!;
   const changedKnown: Record<string, string[]> = {};
   for (const name of plan.order) {
     const component = byName.get(name);
@@ -469,7 +476,7 @@ function roundCover(
     const refs = new Set<string>();
     for (const step of capabilitySteps(component.deploy)) {
       const { kind: _kind, ...rest } = step;
-      for (const r of movedWiringReferences(rest, options.set.outputs, now)) if (!(r.publish && inChange.has(r.source))) refs.add(r.ref);
+      for (const r of movedWiringReferences(rest, options.set.outputs, reads)) if (!(r.publish && inChange.has(r.source))) refs.add(r.ref);
     }
     changedKnown[name] = [...refs].sort();
   }

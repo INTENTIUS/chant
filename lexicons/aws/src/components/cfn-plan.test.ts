@@ -123,6 +123,31 @@ describe("cfn-deploy plan (#4084)", () => {
     expect(planned.outputs).toEqual({ known: { Region: "us-east-1", TopicArn: "arn:topic" }, unknown: ["EnvName", "Imported", "QueueUrl", "TableArn"] });
   });
 
+  it("an output that is a plain string, or a Ref to a parameter this plan has a value for, is known at that value, changed or new (#4419)", async () => {
+    writeFileSync(
+      template,
+      JSON.stringify({
+        Parameters: { Port: { Type: "String" }, Later: { Type: "String" } },
+        Resources: { Setting: { Type: "AWS::SSM::Parameter" } },
+        Outputs: {
+          Literal: { Value: "8090" },
+          NewLiteral: { Value: "9000" },
+          Passed: { Value: { Ref: "Port" } },
+          NotYet: { Value: { Ref: "Later" } },
+          Setting: { Value: { Ref: "Setting" } },
+        },
+      }),
+    );
+    const { planned } = await planOne(
+      {
+        outputs: { Literal: "8080", Passed: "8080", NotYet: "x", Setting: "/setting" },
+        changes: [{ action: "Modify", logicalResourceId: "Setting", resourceType: "AWS::SSM::Parameter", replacement: false, replacementMode: "False" }],
+      },
+      { inputs: { Port: "8090" } },
+    );
+    expect(planned.outputs).toEqual({ known: { Literal: "8090", NewLiteral: "9000", Passed: "8090", Setting: "/setting" }, unknown: ["NotYet"] });
+  });
+
   it("a stack the change set creates says nothing of its outputs (#3999)", async () => {
     const { planned } = await planOne({ missing: true, changes: [{ action: "Add", logicalResourceId: "Topic", resourceType: "AWS::SNS::Topic", replacement: false }] });
     expect(planned.outputs).toBeUndefined();
@@ -493,6 +518,20 @@ describe("cfn-deploy previews a member whose inputs are unknown, and checks the 
     expect(planned.shape).toMatchObject({ member: "net", unknownInputs: ["vpc"] });
     expect(planned.shape!.entries.find((e) => e.logicalId === "Eni")).toMatchObject({ action: "update", replacement: "false", properties: ["Description", "SubnetId"], unknown: ["SubnetId"] });
     expect(planned.shape!.entries.find((e) => e.logicalId === "Q")).toMatchObject({ action: "create", unknown: ["QueueName"] });
+  });
+
+  it("a previewed member still says the outputs that do not read an unknown input (#4419)", async () => {
+    writeFileSync(
+      template,
+      JSON.stringify({
+        Parameters: { SubnetId: { Type: "AWS::EC2::Subnet::Id" }, Port: { Type: "String" } },
+        Resources: { Eni: { Type: "AWS::EC2::NetworkInterface", Properties: { SubnetId: { Ref: "SubnetId" } } } },
+        Outputs: { Port: { Value: { Ref: "Port" } }, Fixed: { Value: "8080" }, Id: { Value: { Ref: "SubnetId" } } },
+      }),
+    );
+    const mock = createMockCloudExecutor({ stacks: { net: { outputs: { Port: "1", Fixed: "1", Id: "x" }, changes: [{ ...eni, action: "Add" as const, details: [] }] } } });
+    const planned = await createCfnDeployCapability(mock.executor).plan!({ ...ctx, unresolvedInputs: ["vpc"] }, { stack: "net", template, inputs: { SubnetId: undefined as never, Port: "8080" } });
+    expect(planned.outputs).toEqual({ known: { Fixed: "8080", Port: "8080" }, unknown: ["Id"] });
   });
 
   it("a conditional replacement in the real change set is read as conditional", async () => {
