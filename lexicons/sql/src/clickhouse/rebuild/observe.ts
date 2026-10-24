@@ -27,7 +27,9 @@
  *
  * Anything else is refused with a {@link RebuildRefusal}: a database that is
  * neither Atomic nor Replicated, a table that is not there, a change that is
- * not a rebuild, a working object chant did not make.
+ * not a rebuild, a working object chant did not make, a table on a stream
+ * engine (Kafka, S3Queue, AzureQueue, RabbitMQ, NATS, FileLog), which holds no
+ * rows to copy and is replaced by the applier instead (#4396).
  *
  * A Replicated database (#3249) is Atomic on every replica, with its DDL run
  * on each through Keeper, so the same EXCHANGE swaps the table everywhere.
@@ -47,6 +49,7 @@ import { dropFormattingOnly } from "../plan/server-format";
 import { CLASSIFIER_RULES } from "../plan/rules";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
 import { carriesMarker, readTrailerPairs, REBUILD_TRAILER_KEY, stripMarkerFromStatement } from "../ownership";
+import { isStreamEngine } from "../plan/stream";
 import { ident, isRebuild, qualifiedIdent, sqlString, type DeclaredObject } from "../apply/statements";
 
 /** How the new table keeps up with writes to the old one while it is filled. */
@@ -250,10 +253,20 @@ function ownWorkingObject(o: ServerObject | undefined, names: RebuildNames, role
   return o;
 }
 
+/** The refusal for a stream-engine table, naming the engine and where its change goes instead (#4396). */
+function streamRefusal(key: string, engine: string, side: "declared" | "live"): RebuildRefusal {
+  return new RebuildRefusal(
+    `${key} is ${side === "declared" ? "declared on" : "on the server as"} the ${engine} engine, a stream engine: it stores no rows, so there is nothing to backfill, and a direct SELECT from it either fails ` +
+      `or consumes messages. A change to it is SQLCH225 (replace a stream table), which the applier makes in place: it detaches the materialized views that read the table, drops and creates it, and attaches the views again ` +
+      `(ApplyOp with target "clickhouse").`,
+  );
+}
+
 /** Observe the rebuild of the declared table on the server. */
 export async function observeRebuild(target: ClickHouseTarget, declared: DeclaredObject, marker: OwnershipMarker | undefined): Promise<RebuildObservation> {
   const database = declared.canonical.database ?? target.defaultDatabase;
   const names = rebuildNames(database, declared.canonical.name);
+  if (isStreamEngine(declared.canonical.engineName)) throw streamRefusal(names.key, declared.canonical.engineName!, "declared");
 
   const [db] = await clickhouseQuery<{ engine: string }>(target.endpoint, `SELECT engine FROM system.databases WHERE name = ${sqlString(database)}`);
   if (!db) throw new RebuildRefusal(`database ${database} is not on the server, so there is no ${names.key} to rebuild; the applier creates it`);
@@ -272,6 +285,7 @@ export async function observeRebuild(target: ClickHouseTarget, declared: Declare
   // Between EXCHANGE and the end of the swap, the table's own name holds the
   // new table, still carrying role=new, and the new table's name holds the
   // old table until it is renamed; the swap step finishes that.
+  if (isStreamEngine(liveRow.engine)) throw streamRefusal(names.key, liveRow.engine, "live");
   const exchanged = liveRow.pairs?.get(REBUILD_TRAILER_KEY) === names.key && liveRow.pairs.get("role") === "new";
   const newTable = exchanged ? undefined : ownWorkingObject(objects.get(names.newName), names, "new", marker);
   const exchangedOld = exchanged ? objects.get(names.newName) : undefined;

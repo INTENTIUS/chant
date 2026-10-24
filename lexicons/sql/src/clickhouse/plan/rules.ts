@@ -10,6 +10,9 @@
  *   parts until `MATERIALIZE INDEX`).
  * - `rewrite`: the change is a mutation that rewrites existing parts in the
  *   background (`system.mutations`), with no rollback.
+ * - `replace`: ClickHouse cannot alter the object, but it holds no rows to
+ *   keep, so the applier drops and creates it, around the views that read it
+ *   (a stream-engine table, #4396). Nothing is copied.
  * - `rebuild`: ClickHouse cannot make the change to the table it has; the data
  *   has to be copied into a new table. A plan refuses to make one in place.
  *
@@ -18,16 +21,16 @@
 
 import { classifierRule, type ChangeClasses, type ClassifierRule as SqlClassifierRule } from "../../core/classifier";
 
-export type ChangeClass = "metadata" | "rewrite" | "rebuild" | "create" | "drop";
+export type ChangeClass = "metadata" | "rewrite" | "replace" | "rebuild" | "create" | "drop";
 
 /** A ClickHouse rule: the shared core's rule shape over these classes, citing a clickhouse.com page. */
 export type ClassifierRule = SqlClassifierRule<ChangeClass>;
 
 /** The classes as data: report order and labels, and what each costs for `classifyDisruption()`. */
 export const CHANGE_CLASSES: ChangeClasses<ChangeClass> = {
-  order: ["create", "metadata", "rewrite", "rebuild", "drop"],
-  label: { create: "create", drop: "drop", metadata: "metadata only", rewrite: "background rewrite", rebuild: "REBUILD" },
-  disruption: { metadata: "in-place", rewrite: "rolling", rebuild: "replace", create: "in-place", drop: "destroy" },
+  order: ["create", "metadata", "rewrite", "replace", "rebuild", "drop"],
+  label: { create: "create", drop: "drop", metadata: "metadata only", rewrite: "background rewrite", replace: "replace table", rebuild: "REBUILD" },
+  disruption: { metadata: "in-place", rewrite: "rolling", replace: "replace", rebuild: "replace", create: "in-place", drop: "destroy" },
 };
 
 const DOCS = "https://clickhouse.com/docs/sql-reference/statements";
@@ -191,6 +194,13 @@ export const CLASSIFIER_RULES = {
     "Change what kind of object it is",
     "A table cannot become a view or a view a table; the old object is dropped and the new one created.",
     `${DOCS}/create`,
+  ),
+  SQLCH225: rule(
+    "SQLCH225",
+    "replace",
+    "Change a stream table",
+    "A Kafka, S3Queue, AzureQueue, RabbitMQ, NATS or FileLog table stores no rows and has no ALTER for its engine arguments, settings or columns; the views that read it are detached, the table is dropped and created, and the views are attached again. Its position (a Kafka group's offsets, an S3Queue's record of processed files) is kept by the broker or Keeper, not by the table.",
+    `${DOCS}/create/table`,
   ),
   SQLCH230: rule(
     "SQLCH230",

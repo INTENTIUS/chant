@@ -19,6 +19,7 @@
 import type { CanonicalObject } from "./normalize";
 import type { SchemaDiff } from "./diff";
 import { migrationOpName, renderMigrationOps, type MigrationOpSuggestion } from "../../core/handoff";
+import { isStreamEngine } from "./stream";
 import { collapsesRows } from "../rebuild/engines";
 
 export interface RebuildOpSuggestion extends MigrationOpSuggestion {
@@ -41,6 +42,8 @@ export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<str
   for (const key of [...new Set(diff.rebuilds.filter((c) => c.rule !== "SQLCH290").map((c) => c.object))]) {
     const c = declared.get(key);
     if (!c || c.kind !== "table") continue;
+    // The Op refuses a stream-engine table (#4396); a change to one that reaches here is a move to or from a stream engine, for review.
+    if (isStreamEngine(c.engineName)) continue;
     const table = `${c.database ?? "default"}.${c.name}`;
     const time = c.columns.find((col) => !col.nullable && TIME_TYPE.test(col.type) && (!col.defaultKind || col.defaultKind === "DEFAULT"));
     const dualWrite: RebuildOpSuggestion["dualWrite"] = time ? { mode: "materialized-view", cutoverColumn: time.name } : { mode: "app" };

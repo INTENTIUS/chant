@@ -1,11 +1,11 @@
 ---
 title: "Composites"
-description: "The five ClickHouse composites and the five Postgres composites: their members, props and defaults, and when their fields keep parameter provenance"
+description: "The seven ClickHouse composites and the five Postgres composites: their members, props and defaults, and when their fields keep parameter provenance"
 diataxis: reference
 order: 1
 ---
 
-Eleven composites for tables that are usually declared the same way: six for ClickHouse and five for Postgres. Each dialect's subpath exports only its own: `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror`, `ShardedTable` and `OtelTables` from `@intentius/chant-lexicon-sql/clickhouse`, and `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` from `@intentius/chant-lexicon-sql/postgres`. Each is built from its dialect's tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
+Twelve composites for tables that are usually declared the same way: seven for ClickHouse and five for Postgres. Each dialect's subpath exports only its own: `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror`, `ShardedTable`, `StreamIngest` and `OtelTables` from `@intentius/chant-lexicon-sql/clickhouse`, and `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` from `@intentius/chant-lexicon-sql/postgres`. Each is built from its dialect's tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
 
 ## ClickHouse composites
 
@@ -146,6 +146,56 @@ The tables the OpenTelemetry Collector's `clickhouse` exporter writes, with the 
 | `traceIdLookup` | `true` | |
 
 In one build root, OTEL129 fails when a `ClickHouseExporter` writes a table or column this build does not declare, and warns when `create_schema` is true for tables it declares. Across workspace members, `chant workspace check` fails (WSP093) when a table the exporter writes is renamed or dropped in the sql member.
+
+### StreamIngest
+
+The usual ingestion chain: a stream table (Kafka, S3Queue, AzureQueue, RabbitMQ, NATS or FileLog), a materialized view that reads it, and the MergeTree target the view writes. The stream table stores no rows. It is the consumer, and the view moves each batch through it into the target with `TO`. The view reads the stream table by reference and writes the target by reference, so the build creates both before the view, and SQLCH110 checks that the view writes only columns the target declares.
+
+| Member | Entity |
+|---|---|
+| `target` | `ClickHouse::Table`, named `<name>`, `ENGINE = MergeTree` |
+| `stream` | `ClickHouse::Table`, named `<name>_stream`, on the engine you give |
+| `view` | `ClickHouse::MaterializedView`, named `<name>_mv`, `TO` the target, reading the stream table |
+
+| Prop | Default | |
+|---|---|---|
+| `name` | | the target's name |
+| `columns` | | the target's columns |
+| `engine` | | the stream table's engine, with a named collection as its first argument: `Kafka(kafka_creds)` |
+| `settings` | none | the body of the stream table's `SETTINGS` clause: topic list, group name, format |
+| `streamColumns` | `columns` | the stream table's columns when the message differs from the target's row |
+| `select` | `*` | the view's select list; alias each item to a target column |
+| `orderBy` | | the target's sort key |
+| `targetEngine` | `MergeTree` | |
+| `partitionBy` | none | |
+
+A stream table usually needs credentials. Keep them in a named collection on the server and name it as the engine's first argument. Chant checks that the collection exists when it plans, and never reads its values ([Named collections](../clickhouse-ddl/#named-collections)). A password written in `engine` or `settings` fails the build with SQLCH128.
+
+```ts title="src/ingest.ts"
+import { StreamIngest } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const events = StreamIngest({
+  name: "analytics.events",
+  columns: "ts DateTime, user_id UInt64, kind LowCardinality(String)",
+  engine: "Kafka(kafka_creds)",
+  settings: "kafka_topic_list = 'events', kafka_group_name = 'ingest', kafka_format = 'JSONEachRow'",
+  orderBy: "(kind, user_id, ts)",
+});
+```
+
+```ts title="src/files.ts"
+import { StreamIngest } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const files = StreamIngest({
+  name: "analytics.files",
+  columns: "id UInt64, v String",
+  engine: "S3Queue(lake_creds, format = 'CSV')",
+  settings: "mode = 'unordered', keeper_path = '/chant/analytics/files'",
+  orderBy: "id",
+});
+```
+
+A change to the stream table plans as SQLCH225, a replacement around the view, and not as a rebuild: see [Stream tables](../change-classifier/#stream-tables). Changing `kafka_group_name` or an S3Queue `keeper_path` loses the table's position, and the plan says so.
 
 ## Postgres composites
 
