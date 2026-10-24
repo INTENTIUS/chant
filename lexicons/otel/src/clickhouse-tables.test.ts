@@ -15,6 +15,7 @@ import { OtelTables } from "@intentius/chant-lexicon-sql/clickhouse";
 import { sqlSerializer } from "@intentius/chant-lexicon-sql/serializer";
 import { CLICKHOUSE_EXPORTER_COLUMNS, clickhouseExportersOf, clickhouseExporterTargets } from "./clickhouse-tables";
 import { collectorYaml } from "./collector";
+import { COLLECTOR_PIN } from "./define";
 import { ClickHouseExporter, OtlpReceiver, BatchProcessor } from "./components";
 import { Pipeline } from "./pipeline";
 import { otel129 } from "./lint/post-synth/otel129";
@@ -84,7 +85,7 @@ describe("clickhouseExporterTargets", () => {
 describe("ClickHouseExporter", () => {
   test("is a built-in at COLLECTOR_PIN, with an endpoint check", () => {
     expect(ClickHouseExporter.definition.builtin).toBe(true);
-    expect(ClickHouseExporter.definition.pin.version).toBe("v0.130.0");
+    expect(ClickHouseExporter.definition.pin.version).toBe(COLLECTOR_PIN.version);
     const validate = ClickHouseExporter.definition.validate as (c: unknown) => string[];
     expect(validate({ endpoint: "" })).toEqual(["endpoint is empty; the exporter requires it"]);
     expect(validate({ endpoint: "clickhouse 9000" })[0]).toMatch(/is not a URL/);

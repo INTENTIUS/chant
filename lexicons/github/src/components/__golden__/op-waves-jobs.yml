@@ -27,7 +27,7 @@ jobs:
         run: chant run wave --spec waves.json --wave 1
       - name: Keep the job's outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: migrations-wave-1-dev-outcome
           path: .chant/op-waves/migrations/outcomes/outcome-wave-1.json
@@ -51,7 +51,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download the earlier jobs' outcomes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: .chant/op-waves/migrations/outcomes
       - name: Plan wave 2 (prod) and decide its gate
@@ -67,7 +67,7 @@ jobs:
           overwrite: true
       - name: Keep the job's outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: migrations-wave-2-prod-decide-outcome
           path: .chant/op-waves/migrations/outcomes/outcome-wave-2.json
@@ -101,7 +101,7 @@ jobs:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
       - name: Download the earlier jobs' outcomes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: .chant/op-waves/migrations/outcomes
       - run: echo us
@@ -109,7 +109,7 @@ jobs:
         run: chant run wave --spec waves.json --wave 2 --group us --share 1
       - name: Keep the job's outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: migrations-wave-2-prod-us-share-1-outcome
           path: .chant/op-waves/migrations/outcomes/outcome-wave-2-group-us-share-1.json
@@ -143,7 +143,7 @@ jobs:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
       - name: Download the earlier jobs' outcomes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: .chant/op-waves/migrations/outcomes
       - run: echo us
@@ -151,7 +151,7 @@ jobs:
         run: chant run wave --spec waves.json --wave 2 --group us --share 2
       - name: Keep the job's outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: migrations-wave-2-prod-us-share-2-outcome
           path: .chant/op-waves/migrations/outcomes/outcome-wave-2-group-us-share-2.json
@@ -181,14 +181,14 @@ jobs:
           name: migrations-wave-2-decision
           path: .chant/op-waves/migrations
       - name: Download the earlier jobs' outcomes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: .chant/op-waves/migrations/outcomes
       - name: Apply job group eu of wave 2 (prod)
         run: chant run wave --spec waves.json --wave 2 --group eu
       - name: Keep the job's outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: migrations-wave-2-prod-eu-outcome
           path: .chant/op-waves/migrations/outcomes/outcome-wave-2-group-eu.json

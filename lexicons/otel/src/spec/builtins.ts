@@ -40,6 +40,7 @@ export const BUILTIN_SPECS: readonly BuiltinSpec[] = [
   { className: "DebugExporter", kind: "exporter", type: "debug" },
   { className: "PrometheusExporter", kind: "exporter", type: "prometheus" },
   { className: "GoogleCloudExporter", kind: "exporter", type: "googlecloud" },
+  { className: "ClickHouseExporter", kind: "exporter", type: "clickhouse" },
   { className: "LoadBalancingExporter", kind: "exporter", type: "loadbalancing" },
   { className: "SpanMetricsConnector", kind: "connector", type: "spanmetrics" },
   { className: "ServiceGraphConnector", kind: "connector", type: "servicegraph" },
