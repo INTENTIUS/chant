@@ -1065,6 +1065,39 @@
     "after-plan hook check (t2) exited 1, so wave 1 (prod) waits for an approval of its set digest"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1-share-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "waiting"
+        }
+      }
+    },
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1-share-2.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t2": {
+          "status": "applied"
+        }
+      }
+    },
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "decided"
+        },
+        "t2": {
+          "status": "decided"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-1/runs.json": {
       "wave": "prod",
       "number": 1,

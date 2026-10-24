@@ -198,6 +198,16 @@
     "t1: the apply exited 0 without running its before-apply and after-apply hooks (runOpWaveApplyHooks with CHANT_HOOKS), which the spec at base hands it"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-1/runs.json": {
       "wave": "prod",
       "number": 1,

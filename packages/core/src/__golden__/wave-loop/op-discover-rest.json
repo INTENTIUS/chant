@@ -383,6 +383,32 @@
     "wave 4 (rest): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:c4e95f3a58a2ec264b0cf76b5affe5047b584ec2eca38446bd0d1a41d0337ccb: not-required"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/vpc": {
+          "status": "applied"
+        }
+      }
+    },
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "b/db": {
+          "status": "applied"
+        },
+        "c/app": {
+          "status": "applied"
+        },
+        "d/dns": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json": {
       "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     },

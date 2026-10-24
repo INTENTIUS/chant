@@ -541,6 +541,22 @@
     "wave 1 (net) waits on tf-migrate / split-queues, which before-apply hook migrate holds it on: nobody approved sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq. Approve: chant approve tf-migrate split-queues --plan sha256:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "dns": {
+          "status": "waiting"
+        },
+        "nat": {
+          "status": "waiting"
+        },
+        "vpc": {
+          "status": "waiting"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "empty": true

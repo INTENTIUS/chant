@@ -118,6 +118,16 @@
     "wave 1 (layer): the apply wrote an outcome that cannot be read (outcome \"maybe\" is none of stood-down, held, replan), so its exit code decides"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/vpc": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/a_vpc.plan.json": {
       "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     },

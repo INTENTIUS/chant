@@ -459,6 +459,19 @@
     "t1: apply failed"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "failed"
+        },
+        "t2": {
+          "status": "applied"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-1/runs.json": {
       "wave": "prod",
       "number": 1,

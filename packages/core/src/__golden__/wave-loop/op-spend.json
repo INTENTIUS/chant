@@ -278,6 +278,16 @@
     "wave 2 (staging) could not record that it applies under the approval by alice, so nothing applied: this gate ledger cannot record an applied approval"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "staging": {
+          "status": "failed"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-2/staging.hooks.json": {
       "version": 1,
       "opWaves": "migrations",

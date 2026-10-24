@@ -99,6 +99,19 @@
     "Nothing in wave 1 or after it ran. Read the plans, then approve: chant approve migrations migrations-wave-1 --plan jcs1-sha256:52d1b04601e89971eab0e24094024707e878042be4b79ad476d6230ac5ef383f (with --resume, the approval also starts this job again)"
   ],
   "files": {
+    ".chant/op-waves/migrations/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "waiting"
+        },
+        "t2": {
+          "status": "waiting"
+        }
+      }
+    },
     ".chant/op-waves/migrations/wave-1/t1.plan.json": {
       "planDigest": "sha256:tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
     },

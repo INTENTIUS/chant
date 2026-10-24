@@ -273,6 +273,22 @@
     "Nothing in wave 1 (net) or after it ran: the policy denied vpc, and no override counts for it."
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "dns": {
+          "status": "refused"
+        },
+        "nat": {
+          "status": "refused"
+        },
+        "vpc": {
+          "status": "refused"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/dns.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
     },

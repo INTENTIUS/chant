@@ -200,6 +200,19 @@
     "wave 3 (rest): apply failed, so none of c/app counts as applied"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-2.json": {
+      "version": 1,
+      "wave": 2,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "b/db": {
+          "status": "applied"
+        },
+        "c/app": {
+          "status": "failed"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-2/b_db.plan.json": {
       "planDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
     },

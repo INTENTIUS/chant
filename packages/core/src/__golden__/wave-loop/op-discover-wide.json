@@ -202,6 +202,32 @@
     "wave 1 (layer): gate never (read at bbbbbbbbbbbb), digest jcs1-sha256:4d9e89787bbd94a604b577a540e11b5578d1e267e24659fcf196502ad13838d1: not-required"
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1-share-2.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/3": {
+          "status": "applied"
+        }
+      }
+    },
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "a/1": {
+          "status": "decided"
+        },
+        "a/2": {
+          "status": "decided"
+        },
+        "a/3": {
+          "status": "decided"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/a_1.plan.json": {
       "planDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
     },

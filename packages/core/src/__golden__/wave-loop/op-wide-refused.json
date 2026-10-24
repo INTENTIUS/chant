@@ -190,6 +190,32 @@
     "wave 1 (apps) is refused by its policy; nothing applied."
   ],
   "files": {
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1-share-2.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t3": {
+          "status": "refused"
+        }
+      }
+    },
+    ".chant/op-waves/tf-apply/outcomes/outcome-wave-1.json": {
+      "version": 1,
+      "wave": 1,
+      "at": "2026-10-11T00:00:00.000Z",
+      "members": {
+        "t1": {
+          "status": "refused"
+        },
+        "t2": {
+          "status": "refused"
+        },
+        "t3": {
+          "status": "refused"
+        }
+      }
+    },
     ".chant/op-waves/tf-apply/wave-1/plans.json": {
       "runs": [
         {
