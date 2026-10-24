@@ -39,6 +39,11 @@
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
     },
+    "./components": {
+      "development": "./src/components/index.ts",
+      "types": "./dist/components/index.d.ts",
+      "default": "./dist/components/index.js"
+    },
     "./detect": {
       "development": "./src/detect.ts",
       "types": "./dist/detect.d.ts",

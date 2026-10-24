@@ -19,11 +19,11 @@ Core ships only the agnostic verbs (`docker-build`, `sign`, `wait-endpoint`, …
 | Family | Where it sits | AWS leaf | Azure | GCP | k8s / generic |
 |---|---|---|---|---|---|
 | **build** | fully agnostic | docker / zip / jvm | same | same | same |
-| **publish-image** | agnostic (endpoint + auth is env config) | ECR | ACR, *planned* ([#3142](https://github.com/INTENTIUS/chant/issues/3142)) | Artifact Registry, *planned* ([#3143](https://github.com/INTENTIUS/chant/issues/3143)) | any OCI |
+| **publish-image** | agnostic (endpoint + auth is env config) | ECR | ACR (`az acr login` backend) | Artifact Registry (`gcloud auth configure-docker` backend) | any OCI |
 | **apply infra** | cloud-shaped | `cfn-deploy` | `arm-deploy` | `gcp-apply` (Config Connector objects over the REST API) | `kubectl` (leveler) / Terraform |
 | **job submission** | cloud-shaped | EMR / Glue / Batch | Synapse / Batch / ADF | Dataproc / Dataflow | Job / Argo / Spark operator |
 | **host / code delivery** | split | SSM + CodeDeploy | Run Command / Arc (no CodeDeploy peer) | OS Config / MIG rolling | SSH (agnostic) |
-| **wait / verify** | split | `wait-for-stack` | ARM wait, *planned* ([#3142](https://github.com/INTENTIUS/chant/issues/3142)) | operation and Cloud Run waits, *planned* ([#3143](https://github.com/INTENTIUS/chant/issues/3143)) | rollout status; `health-gate` agnostic |
+| **wait / verify** | split | `wait-for-stack` | `wait-for-deployment`, `wait-container-app` | `wait-for-operation`, `wait-cloud-run-ready` | rollout status; `health-gate` agnostic |
 | **safety / rollback** | coupled to apply | CFN rollback / CodeDeploy auto | none yet: `arm-deploy` is `needs-opt-out` | none yet: `gcp-apply` is `needs-opt-out` | rollout undo; saga *mechanism* agnostic |
 | **observe / drift** | lexicon seam | tags | tags | labels | labels |
 
