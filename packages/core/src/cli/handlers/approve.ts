@@ -22,7 +22,7 @@ import {
 } from "../../op/gate-approval";
 import { approverOf, humanQuorumSince, tallyGateApprovals } from "../../op/gate";
 import { quorumRuleLine, quorumRules, trustQuorumJudge, UNPROVEN_JUDGE, type GateQuorumJudge } from "../../op/gate-quorum";
-import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, RELEASE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
+import { FAN_OUT_GATE_OP, OVERRIDE_GATE_OP, RELEASE_GATE_OP, WORKSPACE_PROMOTE_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
 import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycleReport, requireLifecycleLedger } from "../../lifecycle/git";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../../lifecycle/local-note";
@@ -128,6 +128,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
         ? `The next \`chant components fan-out\` decides this gate from scratch and records a fresh pending fact.`
         : PR_GATE_OP.test(opName)
           ? `The next \`chant components pr-apply\` decides this gate from scratch and records a fresh pending fact.`
+          : opName === WORKSPACE_PROMOTE_GATE_OP
+          ? `The next \`chant workspace promote ${gate}\` decides this gate from scratch and records a fresh pending fact.`
           : opName === WORKSPACE_UPGRADE_GATE_OP
           ? `The next \`chant workspace upgrade ${gate}\` decides this gate from scratch and records a fresh pending fact.`
           : opName === RELEASE_GATE_OP
@@ -180,6 +182,8 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
         ? `Repeat the \`chant components fan-out\` command and it walks through gate "${gate}".`
         : PR_GATE_OP.test(opName)
           ? `The pull request's apply (\`chant components pr-apply\`) walks through gate "${gate}" when it plans this same digest.`
+          : opName === WORKSPACE_PROMOTE_GATE_OP
+          ? `Repeat \`chant workspace promote ${gate}\`, and it applies the patch this approval names.`
           : opName === WORKSPACE_UPGRADE_GATE_OP
           ? `Repeat \`chant workspace upgrade ${gate}\` with the same target, and it applies the patch this approval names.`
           : opName === RELEASE_GATE_OP
@@ -330,7 +334,7 @@ export async function recordGateApproval(
   // so there is no `*.op.ts` to find and nothing is wrong when none is there.
   // #3949: a gate that lists this one as an alias, after an Op was restructured.
   const successor = aliasingGate([...ops.values()].map((o) => o.config), opName, gate);
-  if (!successor && !ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== OVERRIDE_GATE_OP && opName !== RELEASE_GATE_OP) {
+  if (!successor && !ops.has(opName) && opName !== FAN_OUT_GATE_OP && opName !== WORKSPACE_UPGRADE_GATE_OP && opName !== WORKSPACE_PROMOTE_GATE_OP && opName !== OVERRIDE_GATE_OP && opName !== RELEASE_GATE_OP) {
     console.error(formatWarning({
       message: `Op "${opName}" was not found among discovered *.op.ts declarations — recording the resolution anyway`,
     }));
