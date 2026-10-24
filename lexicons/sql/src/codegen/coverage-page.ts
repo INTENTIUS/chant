@@ -9,7 +9,7 @@ import type { SqlDialect } from "../dialects";
 
 const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/[{}<>]/g, (c) => `\\${c}`);
 
-const STATUS: Record<KindRow["status"], string> = { declared: "declared", refused: "refused", "out-of-scope": "out of scope" };
+const STATUS: Record<KindRow["status"], string> = { declared: "declared", referenced: "referenced", refused: "refused", "out-of-scope": "out of scope" };
 
 function table(dialect: SqlDialect): string {
   const rows = [...KIND_COVERAGE[dialect]].sort((a, b) => (a.command < b.command ? -1 : a.command > b.command ? 1 : 0));
@@ -27,7 +27,8 @@ function table(dialect: SqlDialect): string {
 function counts(dialect: SqlDialect): string {
   const rows = KIND_COVERAGE[dialect];
   const n = (s: KindRow["status"]) => rows.filter((r) => r.status === s).length;
-  return `${n("declared")} declared, ${n("refused")} refused, ${n("out-of-scope")} out of scope`;
+  const referenced = n("referenced") > 0 ? `, ${n("referenced")} referenced` : "";
+  return `${n("declared")} declared${referenced}, ${n("refused")} refused, ${n("out-of-scope")} out of scope`;
 }
 
 export function renderCoveragePage(): string {
@@ -36,7 +37,7 @@ export function renderCoveragePage(): string {
   return `---
 title: "Object Coverage"
 label: "Object Coverage"
-description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, refused with a reason, or out of scope, and what import does with each"
+description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, referenced, refused with a reason, or out of scope, and what import does with each"
 diataxis: reference
 order: 3
 ---
@@ -46,6 +47,7 @@ order: 3
 Each row is a \`CREATE\` command a pinned server has, or one form of a command where chant treats the forms apart (\`CREATE TYPE ... AS ENUM\` is declared, \`CREATE TYPE ... AS RANGE\` is not). The commands come from the servers' own sources at each pinned version (\`scripts/sql-create-commands.ts\`), and a test fails when a pinned server has a command with no row here, so a new server release cannot add a kind nobody looked at.
 
 - **declared**: a tag declares it, and import writes it as that declaration.
+- **referenced**: the environment's, and never declared: a declaration names one, and chant never reads its values. A ClickHouse named collection is one ([#4395](https://github.com/INTENTIUS/chant/issues/4395)): \`ENGINE = S3(lake_creds, format = 'Parquet')\` names \`lake_creds\`, the build records the name, and \`chant sql plan\` fails when the server has no collection of that name. \`chant import --from <env>\` lists the server's SQL-defined collections as prerequisites and imports the rest. See [Named collections](../clickhouse-ddl/#named-collections).
 - **refused**: no declaration holds it yet. \`chant import --from <env>\` fails when the server has one, naming every such object (kind, schema, name) at once, and \`chant import schema.sql\` fails on the statement. Nothing is left out without a word.
 - **out of scope**: the environment's, not a schema's: import never reads it.
 

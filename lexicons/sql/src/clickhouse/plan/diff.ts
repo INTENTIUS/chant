@@ -38,6 +38,22 @@ export interface SchemaDiff extends ChangeSet<Change> {
    * it out.
    */
   unreadable?: UnreadableEntry[];
+  /**
+   * The named collections the build references, checked against the server
+   * by name (#4395). A plan with one `missing`, or whose check could not run
+   * (`unread`), fails naming it. Their values are never read.
+   */
+  namedCollections?: NamedCollectionCheck;
+}
+
+/** What a plan found of the named collections a build references: each by name, never its values. */
+export interface NamedCollectionCheck {
+  /** Every collection the build names, sorted. */
+  referenced: string[];
+  /** Those the server has no collection of, or that the plan's user may not see. */
+  missing: string[];
+  /** Why the server's collections could not be read, when they could not. */
+  unread?: string;
 }
 
 /** An object a plan could not read: `database.name`, its type and why. */

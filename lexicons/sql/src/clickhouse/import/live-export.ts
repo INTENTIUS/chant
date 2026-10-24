@@ -23,12 +23,16 @@
  *   (#3745), so a use is found by that body (`./inlined.ts`) as well as by
  *   the name. A function carries no comment, so `owned` does
  *   not apply to it.
- * - An object of a kind no declaration holds (a window view, a quota, a
- *   settings profile, a named collection, ...; `../live/undeclarable.ts`)
- *   fails the import, which names every one of them (#3911).
+ * - An object of a kind no declaration holds (a window view, a workload,
+ *   an HTTP handler, ...; `../live/undeclarable.ts`) fails the import, which
+ *   names every one of them (#3911).
  *   `skipUndeclarable` (`--skip-undeclarable`) imports the rest and lists
  *   them as warnings. A selector or `owned` import asks for objects chant can
  *   hold, so it does not look.
+ * - A SQL-defined named collection is the environment's (#4395): the import
+ *   reads its name only, never its values, and lists it as a prerequisite
+ *   (a warning, and `metadata.prerequisites` with the imported objects that
+ *   name it) instead of refusing the server.
  */
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
@@ -41,8 +45,9 @@ import { isTrivia, tokenizeText } from "../tokens";
 import { unquote } from "../parser";
 import type { LiveObject } from "../live/catalog";
 import { inlinedFunctions } from "./inlined";
-import { readUndeclarable } from "../live/undeclarable";
+import { readReferenced, readUndeclarable } from "../live/undeclarable";
 import { refuseUndeclarable } from "../../core/undeclarable";
+import { namedCollectionPrerequisites } from "../named-collections";
 
 /** The functions among `names` a statement calls: a name followed by `(`. */
 export function calledFunctions(ddl: string, names: ReadonlySet<string>): string[] {
@@ -137,5 +142,15 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
       name: o.name,
       ddl: options.verbatim ? o.statement : stripServerDefaults(o.statement),
     }));
-  return objectsToIR(objects, warnings) as ExportedTemplate;
+  // Named collections are the environment's (#4395): listed as prerequisites, never imported.
+  const referenced = await readReferenced(target);
+  for (const u of referenced.unread) warnings.push(`the server's named collections were not read, so the import cannot list them as prerequisites: ${u}`);
+  const { prerequisites, warnings: prereq } = namedCollectionPrerequisites(referenced.objects, objects, {
+    of: options.environment,
+    found: "the server holds it",
+    unseen: "the reader did not see it on the server (it needs SHOW NAMED COLLECTIONS)",
+  });
+  warnings.push(...prereq);
+  const ir = objectsToIR(objects, warnings);
+  return (prerequisites.length > 0 ? { ...ir, metadata: { ...ir.metadata, prerequisites } } : ir) as ExportedTemplate;
 }

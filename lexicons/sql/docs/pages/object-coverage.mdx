@@ -1,7 +1,7 @@
 ---
 title: "Object Coverage"
 label: "Object Coverage"
-description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, refused with a reason, or out of scope, and what import does with each"
+description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, referenced, refused with a reason, or out of scope, and what import does with each"
 diataxis: reference
 order: 3
 ---
@@ -11,6 +11,7 @@ order: 3
 Each row is a `CREATE` command a pinned server has, or one form of a command where chant treats the forms apart (`CREATE TYPE ... AS ENUM` is declared, `CREATE TYPE ... AS RANGE` is not). The commands come from the servers' own sources at each pinned version (`scripts/sql-create-commands.ts`), and a test fails when a pinned server has a command with no row here, so a new server release cannot add a kind nobody looked at.
 
 - **declared**: a tag declares it, and import writes it as that declaration.
+- **referenced**: the environment's, and never declared: a declaration names one, and chant never reads its values. A ClickHouse named collection is one ([#4395](https://github.com/INTENTIUS/chant/issues/4395)): `ENGINE = S3(lake_creds, format = 'Parquet')` names `lake_creds`, the build records the name, and `chant sql plan` fails when the server has no collection of that name. `chant import --from <env>` lists the server's SQL-defined collections as prerequisites and imports the rest. See [Named collections](../clickhouse-ddl/#named-collections).
 - **refused**: no declaration holds it yet. `chant import --from <env>` fails when the server has one, naming every such object (kind, schema, name) at once, and `chant import schema.sql` fails on the statement. Nothing is left out without a word.
 - **out of scope**: the environment's, not a schema's: import never reads it.
 
@@ -78,7 +79,7 @@ Pinned majors: 14.24, 15.19, 16.15, 17.11, 18.6. 23 declared, 21 refused, 2 out 
 
 ## ClickHouse
 
-Pinned release: 26.8.15.10. 12 declared, 7 refused, 1 out of scope.
+Pinned release: 26.8.15.10. 12 declared, 1 referenced, 6 refused, 1 out of scope.
 
 | Command | Kind | Status | Declared by, or why not |
 |---|---|---|---|
@@ -89,7 +90,7 @@ Pinned release: 26.8.15.10. 12 declared, 7 refused, 1 out of scope.
 | `CREATE HANDLER` | HTTP handler | refused | an HTTP handler is server-level configuration, not a schema object |
 | `CREATE INDEX` | index | declared | `ClickHouse::Table`: an index is part of its table: SHOW CREATE TABLE prints it, and the table's declaration holds it |
 | `CREATE MASKING POLICY` | masking policy | refused | masking policies are available only in ClickHouse Cloud, not on the pinned server |
-| `CREATE NAMED COLLECTION` | named collection | refused | a named collection holds credentials (a password, a secret key), which are the environment's and never in a build; the server hides its values, so a plan could not compare them either |
+| `CREATE NAMED COLLECTION` | named collection | referenced | a named collection holds credentials (a password, a secret key), which are the environment's: chant never declares one or reads its values. An engine, a table function or a dictionary SOURCE names it, a plan checks that it exists, and import lists the server's as prerequisites |
 | `CREATE QUOTA` | quota | declared | `ClickHouse::Quota`: import reads only the access objects a build declares |
 | `CREATE RESOURCE` | workload resource | refused | a resource is server-level scheduling (a disk's reads or writes), configured with the server, not a schema object |
 | `CREATE ROLE` | role | declared | `ClickHouse::Role`: import reads only the access objects a build declares |

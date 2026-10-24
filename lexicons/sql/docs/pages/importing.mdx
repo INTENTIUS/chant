@@ -62,7 +62,15 @@ warning: legacy.schema_migrations is kept by a migration runner (Rails, golang-m
 
 A plan never proposes dropping it (SQLCH250); it names the table in a hint and leaves it alone.
 
-An object of a kind no declaration holds yet stops the import: a window view, or a quota, settings profile, named collection, workload or HTTP handler made with SQL. The error names every such object at once; `--skip-undeclarable` imports everything else and prints each as a warning. What the server's configuration files define, such as the `default` quota from `users.xml`, is the server's and is not refused. [Object Coverage](../object-coverage/) lists every kind and its status.
+An object of a kind no declaration holds yet stops the import, such as a window view or a workload made with SQL. The error names every such object at once; `--skip-undeclarable` imports everything else and prints each as a warning. What the server's configuration files define, such as the `default` quota from `users.xml`, is the server's and is not refused. [Object Coverage](../object-coverage/) lists every kind and its status.
+
+A named collection made with SQL doesn't stop the import ([#4395](https://github.com/INTENTIUS/chant/issues/4395)). It is the environment's, so the import reads its name and never its values, and lists it as a prerequisite, with the imported objects that name it:
+
+```
+warning: named collection lake_creds is a prerequisite of prod, named by analytics.lake: the server holds it, and chant does not declare it or read its values. Create it on every server the project applies to; chant sql plan checks that it exists
+```
+
+The same list is in the import's `metadata.prerequisites`. An imported table keeps the collection's name in its engine (`ENGINE = S3(lake_creds, ...)`), and `chant sql plan` checks that each server it plans against has it (see [Named collections](../clickhouse-ddl/#named-collections)). The import's user needs `SHOW NAMED COLLECTIONS` to see them. A collection an imported object names that the user can't see is listed too, marked as not seen. A `.sql` file's `CREATE NAMED COLLECTION`, imported with `chant import schema.sql`, is listed the same way.
 
 `--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier appends after the declared comment (see [Applying to a Server](../applying/)). The trailer is never written into an imported declaration. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
 

@@ -4,6 +4,7 @@ import { renderChangeSet } from "../../core/classifier";
 import { CHANGE_CLASSES, CLASSIFIER_RULES } from "./rules";
 import type { SchemaDiff } from "./diff";
 import { renderRebuildOps } from "./rebuild-handoff";
+import { renderNamedCollections } from "../live/named-collections";
 
 export function renderDiff(diff: SchemaDiff, opts: { title?: string } = {}): string {
   const unreadable = diff.unreadable ?? [];
@@ -17,6 +18,7 @@ export function renderDiff(diff: SchemaDiff, opts: { title?: string } = {}): str
       : [];
   const trailer = [
     ...refusedRead,
+    ...renderNamedCollections(diff.namedCollections),
     ...(diff.rebuilds.length > 0
       ? [
           "",
@@ -26,5 +28,8 @@ export function renderDiff(diff: SchemaDiff, opts: { title?: string } = {}): str
         ]
       : []),
   ];
-  return renderChangeSet(diff, { ...(opts.title ? { title: opts.title } : {}), rules: CLASSIFIER_RULES, classes: CHANGE_CLASSES, trailer });
+  const text = renderChangeSet(diff, { ...(opts.title ? { title: opts.title } : {}), rules: CLASSIFIER_RULES, classes: CHANGE_CLASSES, trailer });
+  // The shared report prints no trailer under "No changes."; a missing named collection fails the plan all the same (#4395).
+  const missing = renderNamedCollections(diff.namedCollections);
+  return diff.changes.length === 0 && missing.length > 0 ? [text, ...missing].join("\n") : text;
 }

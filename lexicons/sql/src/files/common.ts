@@ -3,7 +3,7 @@
 import type { Token } from "../core/tokens";
 import type { UnknownClause } from "../core/cursor";
 import type { SqlDialect } from "../dialects";
-import { statementKind } from "../coverage";
+import { statementKind, type KindRow } from "../coverage";
 
 export interface ReadOptions {
   /** Names the DDL in errors: a file's path, a command. */
@@ -19,6 +19,19 @@ export interface ReadOptions {
    * --parser-option skipUndeclarable` lists them as warnings.
    */
   undeclarable?: string[];
+  /**
+   * Where a statement of a referenced kind goes (#4395), as the name it
+   * creates: `chant import` lists a named collection's `CREATE` as an
+   * environment prerequisite. Without it, such a statement is a problem, as
+   * in a build's `.sql` file, which never declares one.
+   */
+  prerequisites?: Array<{ kind: string; name: string }>;
+}
+
+/** The coverage row of a `CREATE` of a referenced kind (#4395), or undefined for any other statement. */
+export function referencedStatement(dialect: SqlDialect, sql: string): KindRow | undefined {
+  const row = statementKind(dialect, sql);
+  return row?.status === "referenced" ? row : undefined;
 }
 
 /**

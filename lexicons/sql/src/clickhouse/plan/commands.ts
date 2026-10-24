@@ -13,7 +13,8 @@
  * expressions the rules leave different. Both exit 2 when a change needs a
  * rebuild, which a plan refuses to make in place, and `plan` also when the
  * declared databases hold an object whose definition it cannot read (#3653),
- * which it names; 0 otherwise. For each
+ * which it names, or when the build references a named collection the
+ * server does not have (#4395), which it names; 0 otherwise. For each
  * refused table they name the `ClickHouseRebuildOp` to run instead
  * (`rebuildOps` in `--json`, `./rebuild-handoff.ts`).
  *
@@ -40,6 +41,7 @@ import { bindClickHouse } from "../live/bind";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
 import { readFileSync } from "node:fs";
 import { parseTopology, type Topology } from "../topology";
+import { checkNamedCollections, namedCollectionsFail, referencedCollectionsOf } from "../live/named-collections";
 
 /** The dialect a build output names. */
 function outputDialect(path: string): string | undefined {
@@ -90,7 +92,7 @@ async function runDiffStatements(before: string, after: string, json: boolean, t
 
 function emit(diff: SchemaDiff, json: boolean, title: string): number {
   console.log(json ? JSON.stringify(diff, null, 2) : renderDiff(diff, { title }));
-  return diff.rebuilds.length > 0 || (diff.unreadable?.length ?? 0) > 0 ? 2 : 0;
+  return diff.rebuilds.length > 0 || (diff.unreadable?.length ?? 0) > 0 || namedCollectionsFail(diff.namedCollections) ? 2 : 0;
 }
 
 export async function runDiff(ctx: CommandGroupContext): Promise<number> {
@@ -134,6 +136,8 @@ export async function planAgainstServer(environment: string, buildFile: string, 
     new Map(declared.map((o) => [o.key, o.canonical])),
     environment,
   );
+  // Each named collection the build references must exist on the server, by name; its values are never read (#4395).
+  const namedCollections = await checkNamedCollections(target.endpoint, referencedCollectionsOf(buildFile));
   const label = new Map(declared.map((o) => [o.key, o.exportName === o.key ? o.key : `${o.exportName} (${o.key})`]));
   const relabel = changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
   return {
@@ -142,6 +146,7 @@ export async function planAgainstServer(environment: string, buildFile: string, 
     hints: unmanaged > 0 ? [...diff.hints, accessUnmanagedHint(unmanaged, environment)] : diff.hints,
     ...(rebuildOps.length > 0 ? { rebuildOps } : {}),
     ...(unreadable.length > 0 ? { unreadable } : {}),
+    ...(namedCollections ? { namedCollections } : {}),
   };
 }
 

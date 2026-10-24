@@ -29,6 +29,7 @@ import { sqlch124 } from "./sqlch124";
 import { sqlch125 } from "./sqlch125";
 import { sqlch126 } from "./sqlch126";
 import { sqlch127 } from "./sqlch127";
+import { sqlch128 } from "./sqlch128";
 import { sqlpg101 } from "./sqlpg101";
 import { sqlpg102 } from "./sqlpg102";
 import { sqlpg103 } from "./sqlpg103";
@@ -86,6 +87,7 @@ export const postSynthChecks: PostSynthCheck[] = [
   sqlch125,
   sqlch126,
   sqlch127,
+  sqlch128,
   sqlpg101,
   sqlpg102,
   sqlpg103,

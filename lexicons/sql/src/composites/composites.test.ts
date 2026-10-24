@@ -234,7 +234,7 @@ describe("the composites pass the lexicon's post-synth checks", () => {
     const ids = clickhouse.map((c) => c.id).sort();
     expect(ids[0]).toBe("SQL101");
     expect(ids).toContain("SQLCH101");
-    expect(ids.at(-1)).toBe("SQLCH127");
+    expect(ids.at(-1)).toBe("SQLCH128");
     expect(clickhouse.flatMap((check) => check.check(ctx))).toEqual([]);
   });
 });

@@ -114,6 +114,7 @@ When chant interprets a composite's factory at build time, each field records th
 | SQLCH002 | lint | a `Nullable` column in the sort key or primary key, which ClickHouse refuses without `allow_nullable_key` |
 | SQLCH003 | lint | `${events.kind}` where `${events.columns.kind}` was meant |
 | SQLCH101 | build | an engine the pinned ClickHouse server does not have |
+| SQLCH128 | build | a literal credential in an integration engine's or table function's arguments; name a named collection instead |
 
 ## Commands
 
@@ -126,6 +127,6 @@ chant build src --lexicon sql -o dist/schema.json
 
 ## Not covered
 
-`CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` are not declared with the tags. Dictionaries, functions, named collections and access control are not modelled. A second dialect is not supported.
+`CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` are not declared with the tags. A named collection is never declared: name one in an integration engine, a table function or a dictionary `SOURCE` (`ENGINE = S3(lake_creds, format = 'Parquet')`), and `chant sql plan` checks that the server has it. A second dialect is not supported.
 
 Note that `chant migrate` does not run schema migrations. Schema changes go through `chant sql plan`, apply and the rebuild Op, described in the `chant-sql-plan` and `chant-sql-rebuild` skills.

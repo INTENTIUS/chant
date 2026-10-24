@@ -1,6 +1,6 @@
 ---
 title: "Declaring ClickHouse Tables and Views"
-description: "ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates: the tags, tables over table functions, materialized views, dictionaries, functions, the kinds that are not declared, and what each kind of interpolation means"
+description: "ClickHouse databases, tables, views, materialized views, dictionaries and functions as SQL-shaped tagged templates: the tags, tables over table functions, materialized views, dictionaries, functions, named collections, the kinds that are not declared, and what each kind of interpolation means"
 diataxis: how-to
 order: 1
 label: "Declaring Tables and Views"
@@ -130,7 +130,7 @@ The source names its table as strings (`TABLE 'rates' DB 'analytics'`), since th
 
 The server prints a dictionary back its own way: the source's and the layout's key words upper case, `LIFETIME(300)` as `LIFETIME(MIN 0 MAX 300)`, a `PASSWORD` as `'[HIDDEN]'`. A plan compares the declaration and the server's copy with these undone. A changed comment is metadata only (SQLCH203). Any other change is SQLCH245: the applier sends `CREATE OR REPLACE DICTIONARY`, and the dictionary loads again from its source. A prune drops a dictionary chant created before the tables it reads.
 
-A password written in the source is part of the declaration and of the build output. Use a named collection on the server instead (`SOURCE(CLICKHOUSE(NAME rates_source))`) to keep it out of the project.
+A password written in the source is part of the declaration and of the build output, and SQLCH128 fails the build. Name a named collection on the server instead (`SOURCE(CLICKHOUSE(NAME rates_source))`, see [Named collections](#named-collections)).
 
 ## Functions
 
@@ -146,6 +146,30 @@ A function belongs to no database, so its name is never qualified. A plan reads 
 
 A function has no comment, so it cannot carry chant's ownership marker. Chant replaces a declared function when its declaration changes, and never drops one; drop a function the build no longer declares by hand. A function is not in any database, so a `Replicated` database's log does not carry it. In the `replicated` topology a function goes `ON CLUSTER` the topology's cluster, when one is named. With none, apply to each replica.
 
+## Named collections
+
+A named collection holds an integration's connection settings and credentials on the server. Chant never declares one and never reads its values: the credentials are the environment's, as a user's password is ([#4395](https://github.com/INTENTIUS/chant/issues/4395)). A declaration names one where the server takes a collection in place of inline arguments:
+
+```ts
+export const lake = table`CREATE TABLE ${analytics}.lake (a Int32)
+  ENGINE = S3(lake_creds, url = 'https://bucket.s3.amazonaws.com/events/*.parquet', format = 'Parquet')`;
+
+export const orders = view`CREATE VIEW ${analytics}.orders AS SELECT * FROM mysql(shop_db, table = 'orders')`;
+
+export const names = dictionary`CREATE DICTIONARY ${analytics}.names (id UInt64, name String)
+  PRIMARY KEY id SOURCE(MYSQL(NAME shop_db TABLE 'names')) LAYOUT(HASHED()) LIFETIME(300)`;
+```
+
+When the first argument of an integration engine or a table function is a bare name, it names a collection. `src/clickhouse/named-collections.ts` lists the engines (`S3`, `Kafka`, `PostgreSQL` and the rest) and the table functions (`s3`, `mysql` and the rest) that take one. A dictionary source's `NAME` does the same. A `...Cluster` table function takes its cluster first, so its first argument is never read as a collection. `key = value` arguments after the name override the collection's keys for that table.
+
+The build records each name: `namedCollections` on the object, and the build's whole list on the document. `chant sql plan` checks that each exists in `system.named_collections` on the server it plans against, reading the `name` column only (`src/clickhouse/live/named-collections.ts`). A plan with a name the server lacks exits 2 and names it under `Refused`, as `namedCollections.missing` in `--json`. The plan checks only the server the profile binds, so on a cluster create each collection `ON CLUSTER`.
+
+The plan's user needs the `SHOW NAMED COLLECTIONS` grant on the collections it checks. On the pinned server, a user without that grant reads `system.named_collections` with no error and sees no rows, so the plan reports the collection missing and says to check the grant. A user who has the grant but not `SHOW NAMED COLLECTIONS SECRETS` sees every key with each value masked as `'[HIDDEN]'`, and the plan still compares names only.
+
+The `CREATE NAMED COLLECTION` statement is still never declared: a template or a `.sql` file holding one fails. Create collections on the server, with SQL or in its configuration. [Importing a Live Server](../importing/) lists a server's SQL-defined collections as prerequisites.
+
+Credentials written inline, in an integration engine's or table function's arguments, fail SQLCH128. That includes a Kafka table's `kafka_sasl_password` setting and a dictionary source's `PASSWORD`. Without the check, the secret would land in the build output and in `clickhouse.sql`.
+
 ## Kinds that are not declared
 
 The pinned server (26.8) has `CREATE` statements chant does not declare. A template, a `.sql` file or an import holding one fails with the kind's name and the reason, never as a parse error:
@@ -155,7 +179,7 @@ The pinned server (26.8) has `CREATE` statements chant does not declare. A templ
 | `CREATE LIVE VIEW` | the pinned server no longer has live views; a refreshable materialized view replaces them |
 | `CREATE WINDOW VIEW` | experimental, and refused by the pinned server under its default query analyzer |
 | `CREATE TEMPORARY TABLE` | lives for one session, never in the catalog a plan reads |
-| `CREATE NAMED COLLECTION` | holds credentials, which are the environment's and never in a build; the server hides the values, so a plan could not compare them either |
+| `CREATE NAMED COLLECTION` | holds credentials, which are the environment's and never in a build. A declaration names one instead (see [Named collections](#named-collections)) |
 | `CREATE MASKING POLICY` | ClickHouse Cloud only |
 | `CREATE WORKLOAD`, `CREATE RESOURCE` | server-level scheduling, configured with the server |
 | `CREATE HANDLER` | server-level HTTP configuration |
@@ -209,4 +233,4 @@ References become dependency edges and, for a view, column lineage. See [Referen
 
 A clause chant's parser does not know yet, such as one a new server release adds, does not fail the build: the statement is kept and sent as written, the build warns naming the clause, and a plan classes a change to it as one to review (SQLCH290). [Plain .sql Files](../sql-files/#clauses-chant-does-not-read) says where the line falls between such a clause and SQL that is wrong.
 
-Lint parses every template as you type: SQLCH001 reports a statement that does not parse at the token, SQLCH002 a `Nullable` column in a sort or primary key, and SQLCH003 a column written without `.columns`. The build then runs the post-synth checks, SQL101 and SQLCH101 to SQLCH127, against what the pinned server accepts. For each column that means its type's family, parameters and `Nullable` nesting, its codec's name and parameters, and the functions its `DEFAULT`, `MATERIALIZED`, `ALIAS`, `EPHEMERAL` and TTL expressions call; a column declared twice fails too. Column names inside those expressions are left to the server. [Lint Rules and Checks](../lint-rules/) lists each one.
+Lint parses every template as you type: SQLCH001 reports a statement that does not parse at the token, SQLCH002 a `Nullable` column in a sort or primary key, and SQLCH003 a column written without `.columns`. The build then runs the post-synth checks, SQL101 and SQLCH101 to SQLCH128, against what the pinned server accepts. For each column that means its type's family, parameters and `Nullable` nesting, its codec's name and parameters, and the functions its `DEFAULT`, `MATERIALIZED`, `ALIAS`, `EPHEMERAL` and TTL expressions call; a column declared twice fails too. Column names inside those expressions are left to the server. [Lint Rules and Checks](../lint-rules/) lists each one.
