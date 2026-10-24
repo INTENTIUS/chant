@@ -13,8 +13,9 @@
 
 import { inboundEdges, outboundEdges } from "./graph";
 import { foldParentOf, resolveTier } from "./tier-map";
-import { scoreEstate, type ScoreOptions } from "./score";
-import type { TfGraph } from "./types";
+import { scoreEstate, type Peelability, type ScoreOptions } from "./score";
+import { adjacencyOf, type Adjacency } from "../graph-walk";
+import type { TfEdge, TfGraph, TfNode } from "./types";
 
 /** One resource in the carve set (the selected node plus its folded sub-resources). */
 export interface CarveMember {
@@ -85,22 +86,51 @@ export interface CarveReport {
  * that fold into it (same name, a `foldParentOf` child type whose parent is the
  * selection). Those are carried along and inlined, not left behind.
  */
-export function resolveCarveSet(graph: TfGraph, target: string): CarveMember[] {
-  const byAddress = new Map(graph.nodes.map((n) => [n.address, n]));
+export function resolveCarveSet(graph: TfGraph, target: string, index?: BoundaryIndex): CarveMember[] {
+  const { byAddress, foldChildren } = index ?? boundaryIndex(graph);
   const selected = byAddress.get(target);
   if (!selected) return [];
 
   const members: CarveMember[] = [{ address: selected.address, type: selected.type }];
   if (selected.kind === "resource" && selected.type) {
-    for (const node of graph.nodes) {
-      if (node.kind !== "resource" || !node.type) continue;
-      const parentType = foldParentOf(node.type);
-      if (parentType === selected.type && node.name === selected.name) {
-        members.push({ address: node.address, type: node.type, foldedInto: selected.address });
-      }
+    for (const node of foldChildren.get(foldKey(selected.type, selected.name)) ?? []) {
+      members.push({ address: node.address, type: node.type, foldedInto: selected.address });
     }
   }
   return members;
+}
+
+const foldKey = (parentType: string, name: string): string => `${parentType}\u001f${name}`;
+
+/**
+ * What `boundaryReport` looks up per target, built once per graph: nodes by
+ * address, the edges by both ends, and each fold parent's children in graph
+ * order. Without it each report scans the node and edge lists itself, which
+ * over a whole estate is O(V·E) (#4391).
+ */
+export interface BoundaryIndex {
+  byAddress: Map<string, TfNode>;
+  adjacency: Adjacency<TfEdge>;
+  /** `foldKey(parent type, name)` → resource nodes that fold into that parent. */
+  foldChildren: Map<string, TfNode[]>;
+}
+
+export function boundaryIndex(graph: TfGraph): BoundaryIndex {
+  const foldChildren = new Map<string, TfNode[]>();
+  for (const node of graph.nodes) {
+    if (node.kind !== "resource" || !node.type) continue;
+    const parentType = foldParentOf(node.type);
+    if (!parentType) continue;
+    const key = foldKey(parentType, node.name);
+    const list = foldChildren.get(key);
+    if (list) list.push(node);
+    else foldChildren.set(key, [node]);
+  }
+  return {
+    byAddress: new Map(graph.nodes.map((n) => [n.address, n])),
+    adjacency: adjacencyOf(graph.edges),
+    foldChildren,
+  };
 }
 
 /**
@@ -115,6 +145,13 @@ export interface BoundaryOptions {
   dialect?: CarveDialect;
   /** Scoring hooks, so `peelability` is the same number the ranking reported. */
   score?: ScoreOptions;
+  /**
+   * The target's score, when the caller already holds it (`carve advise`).
+   * Without it the estate is scored to find it (#4391).
+   */
+  peelability?: Pick<Peelability, "score">;
+  /** `boundaryIndex(graph)`, shared across calls on one graph. */
+  index?: BoundaryIndex;
 }
 
 /** The bridge patch an inbound cut needs, per source. */
@@ -131,7 +168,7 @@ function inboundBridge(dialect: CarveDialect, fromOutput: boolean): BoundaryEdge
  */
 export function boundaryReport(graph: TfGraph, target: string, opts: BoundaryOptions = {}): CarveReport | null {
   const dialect = opts.dialect ?? "terraform";
-  const carveSet = resolveCarveSet(graph, target);
+  const carveSet = resolveCarveSet(graph, target, opts.index);
   if (carveSet.length === 0) return null;
   const inSet = new Set(carveSet.map((m) => m.address));
 
@@ -139,7 +176,7 @@ export function boundaryReport(graph: TfGraph, target: string, opts: BoundaryOpt
   const outbound: BoundaryEdge[] = [];
 
   for (const member of carveSet) {
-    for (const e of inboundEdges(graph, member.address)) {
+    for (const e of (opts.index ? (opts.index.adjacency.in.get(member.address) ?? []) : inboundEdges(graph, member.address))) {
       if (inSet.has(e.from)) continue; // internal edge
       inbound.push({
         direction: "inbound",
@@ -152,7 +189,7 @@ export function boundaryReport(graph: TfGraph, target: string, opts: BoundaryOpt
         ...(e.crossStack ? { crossStack: true } : {}),
       });
     }
-    for (const e of outboundEdges(graph, member.address)) {
+    for (const e of (opts.index ? (opts.index.adjacency.out.get(member.address) ?? []) : outboundEdges(graph, member.address))) {
       if (inSet.has(e.to)) continue; // internal edge
       outbound.push({
         direction: "outbound",
@@ -167,13 +204,13 @@ export function boundaryReport(graph: TfGraph, target: string, opts: BoundaryOpt
     }
   }
 
-  const score = scoreEstate(graph, { ...opts.score, radius: false }).find((r) => r.address === target);
+  const score = opts.peelability ?? scoreEstate(graph, { ...opts.score, radius: false }).find((r) => r.address === target);
   const diagnostics: string[] = [];
   const tierOf = opts.score?.tierOf ?? resolveTier;
   if (
     carveSet[0].type &&
     tierOf(carveSet[0].type) === null &&
-    graph.nodes.find((n) => n.address === target)?.kind === "resource"
+    (opts.index?.byAddress ?? new Map(graph.nodes.map((n) => [n.address, n]))).get(target)?.kind === "resource"
   ) {
     diagnostics.push(`No known native mapping for ${carveSet[0].type} — emit will have no target type.`);
   }
