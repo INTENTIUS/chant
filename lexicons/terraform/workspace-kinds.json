@@ -1,5 +1,5 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#2545). chant reads this file as data and never imports the lexicon. Both probes are behold's, narrowed to the member's own directory: a choudoufu estate is a Terraform root with an estate.chdf.hcl sidecar or a live block, and the lexicon's choudoufu mode (#2103) reads it, so the kind lives here. Each kind's graph block is how chant workspace graph reads a member (#2874): a reader project with this lexicon and one root named for the member, with moduleRoot at the workspace root so a member's ../modules calls stay readable.",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#2545). chant reads this file as data and never imports the lexicon. Both probes are behold's, narrowed to the member's own directory: a choudoufu estate is a Terraform root with an estate.chdf.hcl sidecar or a live block, and the lexicon's choudoufu mode (#2103) reads it, so the kind lives here. Each kind's graph block is how chant workspace graph reads a member (#2874): a reader project with this lexicon and one root named for the member, with moduleRoot at the workspace root so a member's ../modules calls stay readable. The pulumi kind (#3179) is here because no lexicon knows Pulumi and this one already supplies the other infrastructure-as-code engines' kinds; it is a probe and a check of Pulumi.yaml, with no graph block until a reader exists.",
   "schema": 1,
   "kinds": [
     {
@@ -51,6 +51,20 @@
             }
           }
         }
+      }
+    },
+    {
+      "name": "pulumi",
+      "description": "a Pulumi program, with a Pulumi.yaml in its directory",
+      "precedence": 310,
+      "probe": {
+        "anyFile": [
+          "Pulumi.yaml"
+        ]
+      },
+      "memberFile": {
+        "path": "Pulumi.yaml",
+        "schema": "schemas/pulumi.schema.json"
       }
     }
   ]

@@ -46,6 +46,7 @@ function install(root: string, from: string): string {
   mkdirSync(dir, { recursive: true });
   cpSync(join(from, "package.json"), join(dir, "package.json"));
   cpSync(join(from, "workspace-kinds.json"), join(dir, "workspace-kinds.json"));
+  if (existsSync(join(from, "schemas"))) cpSync(join(from, "schemas"), join(dir, "schemas"), { recursive: true });
   const targets = new Set<string>(["./index.js"]);
   const collect = (entry: unknown): void => {
     if (typeof entry === "string") targets.add(entry.replace("*", "workspace-kinds"));

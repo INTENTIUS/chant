@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -55,6 +55,60 @@ const ACME = {
   "test/unit2/x.ts": "",
   "test/unit3/x.ts": "",
 };
+
+describe("proposeWorkspace with package kinds (#3179)", () => {
+  /** Install the real kinds files of the helm and k8s lexicons under node_modules, as a package manager would. */
+  function install(root: string): void {
+    for (const lexicon of ["helm", "k8s"]) {
+      const from = join(REPO, "lexicons", lexicon);
+      const to = join(root, "node_modules", "@intentius", `chant-lexicon-${lexicon}`);
+      mkdirSync(to, { recursive: true });
+      cpSync(join(from, "workspace-kinds.json"), join(to, "workspace-kinds.json"));
+      if (existsSync(join(from, "schemas"))) cpSync(join(from, "schemas"), join(to, "schemas"), { recursive: true });
+      const { name, version, exports, files } = JSON.parse(readFileSync(join(from, "package.json"), "utf-8"));
+      writeFileSync(join(to, "package.json"), JSON.stringify({ name, version, exports, files }));
+    }
+  }
+
+  const files = {
+    "charts/web/Chart.yaml": "apiVersion: v2\nname: web\nversion: 0.1.0\n",
+    "charts/web/values.yaml": "a: 1\n",
+    "deploy/prod/kustomization.yaml": "resources:\n  - ../base\n",
+    "gitops/guestbook.yaml": "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: guestbook\nspec: {}\n",
+    "tools/docs/package.json": pkg("docs-site"),
+  };
+
+  test("proposes a chart, an overlay and an Argo app as three typed members, with their packages pinned", () => {
+    const root = repo(files);
+    install(root);
+    const { declaration } = proposeWorkspace(root);
+    expect(declaration.members.map((m) => [m.dir, m.kind])).toEqual([
+      ["charts/web", "helm-chart"],
+      ["deploy/prod", "kustomize"],
+      ["gitops", "argo-app"],
+      ["tools/docs", "other"],
+    ]);
+    expect(declaration.pins?.map((p) => p.package)).toEqual(["@intentius/chant-lexicon-helm", "@intentius/chant-lexicon-k8s"]);
+    // The proposal is a valid declaration, and the kinds resolve through its pins.
+    expect(() => parseDeclaration(JSON.stringify(declaration), "chant.workspace.json")).not.toThrow();
+  });
+
+  test("pins only the packages whose kinds it used, and proposes nothing typed with no kinds installed", () => {
+    const root = repo({ "charts/web/Chart.yaml": files["charts/web/Chart.yaml"] });
+    install(root);
+    expect(proposeWorkspace(root).declaration.pins?.map((p) => p.package)).toEqual(["@intentius/chant-lexicon-helm"]);
+    const bare = repo(files);
+    const proposal = proposeWorkspace(bare).declaration;
+    expect(proposal.pins).toBeUndefined();
+    expect(proposal.members.map((m) => m.kind)).toEqual(["other"]);
+  });
+
+  test("a typed directory with a package.json is not also proposed as other", () => {
+    const root = repo({ "app/Chart.yaml": files["charts/web/Chart.yaml"], "app/package.json": pkg("app") });
+    install(root);
+    expect(proposeWorkspace(root).declaration.members.map((m) => [m.dir, m.kind])).toEqual([["app", "helm-chart"]]);
+  });
+});
 
 describe("proposeWorkspace (#2534)", () => {
   test("proposes members from projects, nested workspaces and packages, and example groups (ws-051)", () => {

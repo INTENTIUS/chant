@@ -48,7 +48,8 @@ import {
 } from "./declaration";
 import { expandGlob } from "./glob";
 import { setProperty } from "./json-edit";
-import { holdsChantProject } from "./kinds";
+import { dataExportTarget } from "./class-data";
+import { holdsChantProject, loadKindRegistry, resolveKind } from "./kinds";
 import { gitTop, skippedDir, workingTree, type WorkspaceTree } from "./tree";
 
 const USAGE = "chant workspace init [dir] [--name <name>] [--yes] [--verbose]\n       chant workspace init --profile ideation|app|infra [dir] [--name <name>] [--param name=<display name>] [--from <repo>@<ref>|<chant checkout>] [--yes]\n       chant workspace init --from tfc|spacelift|backstage [dir] [--org <organization>] [--endpoint <url>] [--input <export.json>] [--token <token>] [--yes]";
@@ -119,7 +120,7 @@ export interface StackProposal {
 export interface Proposal {
   root: string;
   /** The declaration as it would be written. */
-  declaration: { name: string; schema: 1; members: ProposedEntry[] };
+  declaration: { name: string; schema: 1; pins?: { package: string; version: string }[]; members: ProposedEntry[] };
   /** Directories leaving the root project, with the .ts source files each holds. */
   leaving: { dir: string; owner: string; files: string[] }[];
   /** One ownership stack per `chant` member, all distinct (ws-037). */
@@ -384,6 +385,33 @@ function groupName(glob: string): string {
 
 // ── The proposal ─────────────────────────────────────────────────────────────
 
+/**
+ * The packages installed at `root` that supply member kinds, as pins at their
+ * installed versions. A declaration only reads kinds from its pins, so a
+ * proposal that names a package's kind has to pin the package too.
+ */
+function installedKindPins(root: string): { package: string; version: string }[] {
+  const scope = join(root, "node_modules", "@intentius");
+  let names: string[];
+  try {
+    names = readdirSync(scope).sort();
+  } catch {
+    return [];
+  }
+  const pins: { package: string; version: string }[] = [];
+  for (const n of names) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(scope, n, "package.json"), "utf-8")) as Record<string, unknown>;
+      if (typeof pkg.name === "string" && typeof pkg.version === "string" && typeof dataExportTarget(pkg, "./workspace-kinds") === "string") {
+        pins.push({ package: pkg.name, version: pkg.version });
+      }
+    } catch {
+      // Not a package, or not readable: it supplies nothing.
+    }
+  }
+  return pins;
+}
+
 export function proposeWorkspace(root: string, options: { name?: string } = {}): Proposal {
   const tree = workingTree(root);
   const files = listFiles(root);
@@ -424,7 +452,26 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
     [...matches].some((m) => isInside(d, m)) ||
     chantMembers.some((c) => isInside(d, c) || isInside(c, d)) ||
     exampleMatch(d) !== undefined;
-  const packages = outermost([...pkgDirs].filter((d) => d !== "" && !claimed(d)));
+  // A directory that an installed package's kind claims is a typed member
+  // (#3179), taking the place of `other` for the same directory. Members
+  // don't nest, so a typed member is the outermost one, and never sits inside
+  // a project or package that is a member itself.
+  const packageDirs = outermost([...pkgDirs].filter((d) => d !== "" && !claimed(d)));
+  const kindPins = installedKindPins(root);
+  const kindRegistry = kindPins.length > 0 ? loadKindRegistry(kindPins.map((p) => ({ ...p, path: null, integrity: null })), root).registry : undefined;
+  const typed = new Map<string, string>();
+  if (kindRegistry) {
+    const winners = new Map<string, string>();
+    const others = [...configDirs, ...nested, ...packageDirs];
+    for (const d of new Set(files.map(dirOf))) {
+      if (d === "" || claimed(d) || configDirs.has(d) || nested.includes(d)) continue;
+      if (others.some((o) => o !== d && isInside(d, o))) continue;
+      const winner = resolveKind(kindRegistry, tree, d).winner;
+      if (winner && winner.source !== "builtin") winners.set(d, winner.name);
+    }
+    for (const d of outermost(winners.keys())) typed.set(d, winners.get(d)!);
+  }
+  const packages = packageDirs.filter((d) => ![...typed.keys()].some((t) => isInside(d, t)));
 
   const taken = new Set<string>([name]);
   const entries: (ProposedEntry & { sort: string })[] = [];
@@ -440,6 +487,9 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
       because: npmWorkspaces.has(d) ? "an npm workspace package with no chant project" : "an npm package with no chant project",
     });
   }
+  for (const [d, kind] of typed) {
+    entries.push({ sort: d, name: uniqueName(memberName(tree, d, name), taken), dir: d, kind });
+  }
   entries.sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));
   taken.delete(name);
 
@@ -453,9 +503,12 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
     .map(([n, globs]) => ({ name: uniqueName(n, taken), kind: "examples", glob: globs.length === 1 ? globs[0] : globs }))
     .sort((a, b) => ([a.glob].flat()[0] < [b.glob].flat()[0] ? -1 : 1));
 
+  const usedSources = new Set([...typed.values()].map((k) => kindRegistry!.get(k)!.source));
+  const pins = kindPins.filter((p) => usedSources.has(p.package));
   const declaration = {
     name,
     schema: 1 as const,
+    ...(pins.length > 0 ? { pins } : {}),
     members: [...entries.map(({ sort: _sort, ...e }) => e), ...groups],
   };
 

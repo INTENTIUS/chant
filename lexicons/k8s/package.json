@@ -23,12 +23,14 @@
   "type": "module",
   "files": [
     "src/",
-    "dist/"
+    "dist/",
+    "workspace-kinds.json"
   ],
   "publishConfig": {
     "access": "public"
   },
   "exports": {
+    "./workspace-kinds": "./workspace-kinds.json",
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
