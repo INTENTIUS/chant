@@ -424,3 +424,55 @@ describe("the policy in the report and the note (#4294)", () => {
     expect(prStatusDescription({ ...denied, stage: "apply", status: "refused", refusal: "policy-denied" })).toBe("refused: the policy denied the plan (main.deny_public)");
   });
 });
+
+describe("new migration files in the plan note (#4407)", () => {
+  const migrations: NonNullable<PrReport["migrations"]> = [
+    {
+      member: "ledger",
+      reader: "goose-dir",
+      file: "db/00002_index.sql",
+      version: "00002",
+      name: "index",
+      type: "versioned",
+      dialect: "postgres",
+      statements: [
+        {
+          index: 1,
+          sql: "CREATE INDEX orders_status_idx ON orders (status)",
+          outcome: "classified",
+          changes: [{ rule: "SQLPG241", class: "concurrently", label: "needs CONCURRENTLY", title: "Create an index without CONCURRENTLY", lock: "SHARE" }],
+        },
+        {
+          index: 2,
+          sql: "ALTER TABLE orders ALTER COLUMN a TYPE bigint",
+          outcome: "undecided",
+          changes: [],
+          candidates: [
+            { rule: "SQLPG206", class: "metadata", label: "metadata only", title: "t" },
+            { rule: "SQLPG207", class: "rewrite", label: "ACCESS EXCLUSIVE rewrite or scan", title: "t" },
+          ],
+          note: "x",
+        },
+      ],
+    },
+  ];
+  const withMigrations: PrReport = { ...planReport, migrations };
+
+  test("the report validates and the note lists each statement with its class, rule and lock", () => {
+    expectValid(withMigrations);
+    const note = renderPrNote(withMigrations);
+    expect(note).toContain("New migration files (1), classified offline. Nothing is applied and no server is contacted.");
+    expect(note).toContain("`db/00002_index.sql` (member `ledger`, postgres)");
+    expect(note).toContain("- 1. `CREATE INDEX orders_status_idx ON orders (status)`: needs CONCURRENTLY (SQLPG241, SHARE)");
+    expect(note).toContain("undecided between SQLPG206 metadata only and SQLPG207 ACCESS EXCLUSIVE rewrite or scan");
+  });
+
+  test("a report with none renders as before", () => {
+    expect(renderPrNote(planReport)).not.toContain("migration");
+  });
+
+  test("a note line cannot be broken out of by a file's text", () => {
+    const note = renderPrNote({ ...withMigrations, migrations: [{ ...migrations[0]!, statements: [], error: "bad\n\n# heading `x`" }] });
+    expect(note).toContain("- not read: bad # heading `x`");
+  });
+});

@@ -99,6 +99,7 @@ import type { CapabilityRegistry, PlannedOutputs } from "./capability";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
 import { capabilitySteps, planWaveComponent, readDeployedOutputs } from "./wave-plan";
+import type { PrMigrationFile } from "../pr-migrations";
 
 export interface PrPlanSetOptions {
   /** Every component in the project, not the selection: a planned member's dependency outside it is read too (#4104). */
@@ -773,6 +774,8 @@ export interface PrReportInput {
   waves?: PrWave[];
   /** The rounds the apply planned after an upstream applied (#3999). */
   rounds?: PrRound[];
+  /** Plan stage (#4407): the new migration files, classified. */
+  migrations?: PrMigrationFile[];
 }
 
 /** The report a stage writes. */
@@ -797,6 +800,7 @@ export function prReport(input: PrReportInput): PrReport {
     ...(input.set.deployedOutputs ? { deployedOutputs: input.set.deployedOutputs } : {}),
     ...(input.set.plannedOutputs ? { plannedOutputs: input.set.plannedOutputs } : {}),
     ...(input.rounds && input.rounds.length > 0 ? { rounds: input.rounds } : {}),
+    ...(input.migrations && input.migrations.length > 0 ? { migrations: input.migrations } : {}),
     approval: input.approval,
     ...(input.waveGate ? { waveGate: input.waveGate } : {}),
     ...(input.waveGate && input.waves?.length ? { waves: [...input.waves].sort((a, b) => a.wave - b.wave) } : {}),

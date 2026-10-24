@@ -385,6 +385,8 @@ Pass `--forge` to post the note on the pull request and set the `chant/plan`, `c
 
 With `--forge`, `pr-plan` and `pr-post` also ask when each scheduled watch or reconcile Op last ran, and the note warns of one whose cron fired twice since ([#4289](https://github.com/INTENTIUS/chant/issues/4289), [Catch a Stopped Watch Schedule](/chant/guide/overdue-scheduled-ops/)).
 
+When the workspace has a goose, golang-migrate, clickhouse-migrations or Flyway member, `pr-plan` also lists each migration file the pull request adds to it, with the class of each statement, in the report's `migrations` and in the note ([#4407](https://github.com/INTENTIUS/chant/issues/4407), [Migration files on a pull request](/chant/lexicons/sql/change-classifier/)). It reads the files and applies nothing. A pull request that only adds migration files to a member with no component still gets the note.
+
 `--no-status` posts neither. The generated plan passes it, since it runs the pull request's code with no forge token ([#4295](https://github.com/INTENTIUS/chant/issues/4295)). Then `pr-post` posts from the `plan-note` job.
 
 #### `components pr-post`

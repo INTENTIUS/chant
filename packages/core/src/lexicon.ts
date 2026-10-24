@@ -1743,6 +1743,30 @@ export interface LexiconPlugin {
   }): Record<string, DisruptionVerdict> | Promise<Record<string, DisruptionVerdict>>;
 
   /**
+   * Classify the migration files a pull request adds (#4407), offline. Core
+   * lists the new files of a migration-directory workspace member (goose,
+   * golang-migrate, clickhouse-migrations, Flyway) and asks the lexicon whose
+   * dialect they are written in; the lexicon reads each file's up statements
+   * and gives each the class its schema-diff classifier gives the same change.
+   * A statement that alone cannot decide a class comes back `undecided`,
+   * naming the candidate rules. The answer is shown in the plan note; nothing
+   * is applied and no server is contacted. Omit for a lexicon with no
+   * migration dialect.
+   */
+  classifyMigrations?(options: {
+    /** The member's kind reader: `goose-dir`, `golang-migrate-dir`, `clickhouse-migrations-dir` or `flyway-dir`. */
+    reader: string;
+    /** The SQL dialect the member's migrations are written in. A lexicon answers only for its own dialects (an empty list otherwise). */
+    dialect: string;
+    /** The tree the files are read from (the pull request's head), rooted at the workspace root. */
+    tree: import("./workspace/tree").WorkspaceTree;
+    /** The member's directory in that tree; "" for the root. */
+    dir: string;
+    /** The new files to classify, relative to the workspace root. */
+    files: string[];
+  }): import("./pr-migrations").MigrationFileClassification[] | Promise<import("./pr-migrations").MigrationFileClassification[]>;
+
+  /**
    * Report the undeclared resources this estate *depends on* (#1273), as
    * opposed to the ones it manages.
    *

@@ -137,7 +137,7 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       state = prStatusState(report);
       description = prStatusDescription(report);
       // A member the change does not reach has nothing to say on the pull request (as pr-plan's own publish).
-      if (!(input.member && report.status === "nothing" && !report.overdue?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member));
+      if (!(input.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member));
     } catch (err) {
       refused = `the plan report does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";
