@@ -18,7 +18,7 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
-import { SqlFileParser, dialectOption } from "./import-parser";
+import { SqlFileParser, dialectOption, sourceOption } from "./import-parser";
 import { sqlTemplateGenerator } from "./import-generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
@@ -171,7 +171,14 @@ export const sqlPlugin: LexiconPlugin = {
 
   /** `chant import schema.sql`: a file of Postgres or ClickHouse DDL (`./import-parser.ts`). */
   templateParser(options) {
-    return new SqlFileParser(dialectOption(options), { skipUndeclarable: options?.skipUndeclarable === true });
+    const from = sourceOption(options);
+    return new SqlFileParser(dialectOption(options), { skipUndeclarable: options?.skipUndeclarable === true, ...(from ? { from } : {}) });
+  },
+
+  /** `chant import --validate` (#4398): create the imported DDL on the pinned ClickHouse emulator. */
+  async validateImport(ir) {
+    const { validateOnEmulator } = await import("./sqlserver/validate");
+    return validateOnEmulator(ir);
   },
 
   parserOptions() {
@@ -180,6 +187,11 @@ export const sqlPlugin: LexiconPlugin = {
         name: "dialect",
         type: "string" as const,
         description: "the DDL's dialect, clickhouse or postgres; read off its statements when omitted",
+      },
+      {
+        name: "from",
+        type: "string" as const,
+        description: "read the file as a SQL Server schema (sqlserver) and translate it to ClickHouse; each judgment call is a needs-review diagnostic for --report and --strict",
       },
       {
         name: "skipUndeclarable",
