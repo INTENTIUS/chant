@@ -556,6 +556,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network.",
   },
   {
+    file: "lexicons/docker/src/import/engine.ts",
+    primitives: ["node:http"],
+    phase: "apply",
+    destination: "the local Docker Engine socket (`/var/run/docker.sock`), or the unix:// or plain tcp:// endpoint `DOCKER_HOST` names",
+    why: "`chant import --live` for the docker lexicon (#4388) reads containers, networks and volumes through read-only GETs on the Engine API; the client is injectable, so tests need no daemon.",
+  },
+  {
     file: "lexicons/grafana/src/api/client.ts",
     primitives: ["fetch"],
     phase: "apply",
