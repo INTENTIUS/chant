@@ -190,6 +190,8 @@ function cfnPlanDigest(
   input: CfnDeployInput,
   parameters: Record<string, string | null>,
   unresolved: string[],
+  /** The digest of the preview's shape (#4423), so an approval binds what the reviewer saw of a member planned before its inputs were known. */
+  preview?: string,
 ): string {
   return computePlanDigest("cfn-deploy-plan", {
     env: ctx.env,
@@ -198,6 +200,7 @@ function cfnPlanDigest(
     templateDigest: templateDigest(input.template),
     parameters,
     unresolved,
+    ...(preview ? { preview } : {}),
   });
 }
 
@@ -240,7 +243,7 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     } else parameters[key] = typeof value === "string" ? value : JSON.stringify(value);
   }
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
-  const planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved);
+  let planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved);
   const member = (holes: ChangeSetHole[]): ChangeSetPart["member"] => ({
     member: stack,
     lexicon: "aws",
@@ -267,6 +270,8 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     if (typeof preview === "string") return hole(`${fallback}; no preview: ${preview}`);
     const { entries, shape } = preview;
     const artifact: CfnShapeArtifact = { kind: "cfn-deploy-shape", member: stack, shape, digest: planShapeDigest(shape) };
+    // The preview's shape enters the digest (#4423); `member` reads it when called below.
+    planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved, artifact.digest);
     return { member: stack, planDigest, artifact, shape, changeSet: { member: member([]), entries } };
   }
 

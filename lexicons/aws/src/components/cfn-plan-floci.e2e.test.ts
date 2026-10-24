@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CfnPlanMovedError, createCfnDeployCapability } from "./apply";
+import { PlanShapeMovedError } from "@intentius/chant/components/covered-round";
 import { defaultCloudExecutor } from "./cloud-executor";
 
 const endpoint = process.env.CHANT_FLOCI_ENDPOINT;
@@ -73,4 +74,56 @@ describe.skipIf(!endpoint)("cfn-deploy plan against Floci (#3997)", () => {
     expect(same.changeSet!.entries).toEqual([]);
     expect(changeSets()).toEqual([]);
   }, 600_000); // each `aws` call takes seconds, and a plan or a run makes several
+});
+
+describe.skipIf(!endpoint)("cfn-deploy preview against Floci (#4423)", () => {
+  const stack = `zz-4419-prev-${process.pid}`;
+  const ctx = { env: "local", component: stack, unresolvedInputs: ["network"] };
+  const saved = { ...process.env };
+  let dir: string;
+  let template: string;
+  const aws = (...args: string[]): string => execFileSync("aws", ["--endpoint-url", endpoint!, ...args], { encoding: "utf8" });
+  const open = (): string[] =>
+    ((JSON.parse(aws("cloudformation", "list-change-sets", "--stack-name", stack)) as { Summaries?: Array<{ ChangeSetName: string; ExecutionStatus?: string }> }).Summaries ?? [])
+      .filter((c) => c.ExecutionStatus !== "EXECUTE_COMPLETE")
+      .map((c) => c.ChangeSetName);
+  const queue = (extra: Record<string, unknown> = {}) => ({
+    Parameters: { Prefix: { Type: "String" } },
+    Resources: { Queue: { Type: "AWS::SQS::Queue", Properties: { QueueName: { "Fn::Sub": "${Prefix}-q" } } }, ...extra },
+  });
+  const input = (prefix?: string) => ({ stack, template, inputs: { Prefix: prefix as never } });
+
+  beforeAll(() => {
+    Object.assign(process.env, { AWS_ENDPOINT_URL: endpoint, AWS_ACCESS_KEY_ID: "test", AWS_SECRET_ACCESS_KEY: "test", AWS_REGION: "us-east-1" });
+    dir = mkdtempSync(join(tmpdir(), "cfn-preview-floci-"));
+    template = join(dir, "stack.template.json");
+  });
+
+  afterAll(() => {
+    try {
+      aws("cloudformation", "delete-stack", "--stack-name", stack);
+    } catch { /* never created */ }
+    process.env = saved;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("previews a stack that does not exist yet, leaves nothing behind, refuses a real change set that adds a resource, and executes one with the previewed shape", async () => {
+    const capability = createCfnDeployCapability(defaultCloudExecutor());
+    writeFileSync(template, JSON.stringify(queue()));
+    const planned = await capability.plan!(ctx, input());
+    expect(planned.artifact).toMatchObject({ kind: "cfn-deploy-shape" });
+    expect(planned.changeSet!.entries.map((e) => [e.address, e.action])).toEqual([["Queue", "create"]]);
+    expect(open()).toEqual([]);
+    await expect(capability.outputs!(ctx, { stack, template })).resolves.toEqual({});
+    // The same template and inputs plan to the same digest.
+    expect((await capability.plan!(ctx, input())).planDigest).toBe(planned.planDigest);
+
+    writeFileSync(template, JSON.stringify(queue({ Extra: { Type: "AWS::SQS::Queue" } })));
+    await expect(capability.run({ ...ctx, plans: { [stack]: planned.artifact } }, input("p"))).rejects.toBeInstanceOf(PlanShapeMovedError);
+    expect(open()).toEqual([]);
+
+    writeFileSync(template, JSON.stringify(queue()));
+    const done = await capability.run({ ...ctx, plans: { [stack]: planned.artifact } }, input("p"));
+    expect(done.stackStatus).toBe("CREATE_COMPLETE");
+  }, 600_000);
 });
