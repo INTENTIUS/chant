@@ -1,5 +1,5 @@
 /**
- * Built-in exporters: otlp, otlphttp, debug, prometheus, googlecloud.
+ * Built-in exporters: otlp, otlphttp, debug, prometheus, googlecloud, clickhouse.
  */
 
 import { defineBuiltin } from "../define";
@@ -143,4 +143,81 @@ export const GoogleCloudExporter = defineBuiltin<GoogleCloudExporterConfig, "exp
     );
     return [`googlecloud://projects/${c.project ?? "(detected)"}`, ...overrides];
   },
+});
+
+// ── clickhouse ───────────────────────────────────────────────────────
+
+/** One metric type's table under `metrics_tables`. */
+export interface ClickHouseMetricTable {
+  name?: string;
+}
+
+/**
+ * The `clickhouse` exporter's config at contrib v0.130.0
+ * (`exporter/clickhouseexporter/config.go`). Stability there: traces and logs
+ * beta, metrics alpha.
+ */
+export interface ClickHouseExporterConfig extends ExporterHelperSettings {
+  /** The server, as a DSN URL: `tcp://clickhouse:9000`, `http://clickhouse:8123`, `https://...`. A path names the database. */
+  endpoint: string;
+  username?: string;
+  password?: string;
+  /** The database to write to (default `default`). Wins over the endpoint's database unless it is `default`. */
+  database?: string;
+  /** Extra DSN query parameters, such as `dial_timeout`. */
+  connection_params?: Record<string, string>;
+  /** Default `otel_logs`. */
+  logs_table_name?: string;
+  /** Default `otel_traces`. */
+  traces_table_name?: string;
+  /** @deprecated A prefix for the metric tables, read only when `metrics_tables` names none. Use `metrics_tables`. */
+  metrics_table_name?: string;
+  /** The table per metric type (defaults `otel_metrics_gauge`, `_sum`, `_summary`, `_histogram`, `_exponential_histogram`). */
+  metrics_tables?: {
+    gauge?: ClickHouseMetricTable;
+    sum?: ClickHouseMetricTable;
+    summary?: ClickHouseMetricTable;
+    histogram?: ClickHouseMetricTable;
+    exponential_histogram?: ClickHouseMetricTable;
+  };
+  /** How long rows are kept, as a Go duration (`72h`). Used only when the exporter creates the tables. 0 means no TTL. */
+  ttl?: Duration;
+  /** The engine of the tables the exporter creates (default `MergeTree()`). */
+  table_engine?: { name?: string; params?: string };
+  /** Adds `ON CLUSTER <name>` to the exporter's create statements. */
+  cluster_name?: string;
+  /**
+   * Run the create statements for the database and tables at start (default
+   * true). The exporter's README advises false in production, with the schema
+   * managed elsewhere, such as the sql lexicon's `OtelTables`.
+   */
+  create_schema?: boolean;
+  /** `none`, `zstd`, `lz4` (default), `gzip`, `deflate`, `br`, or `true` for lz4. */
+  compress?: "none" | "zstd" | "lz4" | "gzip" | "deflate" | "br" | "true";
+  /** Async inserts (default true), unless the endpoint or `connection_params` set them. */
+  async_insert?: boolean;
+}
+
+/**
+ * Writes traces, metrics and logs into ClickHouse tables. The tables it writes
+ * are the ones `ClickHouseExporterConfig` names; OTEL129 checks them against
+ * the tables a sql build in the same root declares.
+ */
+export const ClickHouseExporter = defineBuiltin<ClickHouseExporterConfig, "exporter", "clickhouse">({
+  kind: "exporter",
+  type: "clickhouse",
+  description: "Writes traces, metrics and logs into ClickHouse tables",
+  validate: (c) => {
+    const problems: string[] = [];
+    if (!c.endpoint) problems.push("endpoint is empty; the exporter requires it");
+    else if (!c.endpoint.includes("${")) {
+      try {
+        new URL(c.endpoint);
+      } catch {
+        problems.push(`endpoint ${c.endpoint} is not a URL; the exporter parses it as a DSN such as tcp://host:9000`);
+      }
+    }
+    return [...problems, ...queueIssues(c)];
+  },
+  endpoints: (c) => (c.endpoint ? [c.endpoint] : []),
 });

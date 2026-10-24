@@ -210,6 +210,33 @@ export interface LexiconWorkspaceOutputs {
   gaps?: string[];
 }
 
+/**
+ * One link a lexicon reads from its own declarations (#4397): an output of
+ * another member that a declaration depends on, such as a table an otel
+ * `clickhouse` exporter writes.
+ */
+export interface LexiconWorkspaceLink {
+  /** The producer's output the declaration reads or writes: `default.otel_logs`, `default.otel_logs.Body`. */
+  output: string;
+  /**
+   * The output that picks the producer when `member` is unset; unset, the
+   * output itself. A column is anchored on its table, so a dropped column is
+   * missing from the member that still has the table.
+   */
+  anchor?: string;
+  /** The producer, when the declaration names it. Unset, the one member exposing `anchor`. */
+  member?: string;
+  /** The entity key that states the link, for the finding's file and line. */
+  entity: string;
+}
+
+/** What a lexicon's `workspaceLinks` hook returns (#4397). */
+export interface LexiconWorkspaceLinks {
+  links: LexiconWorkspaceLink[];
+  /** Places the hook could not read without the environment, one line each. Their links are left out. */
+  gaps?: string[];
+}
+
 /** What a lexicon's `graphEdges` hook returns (#3910). */
 export interface LexiconGraphEdges {
   references: LexiconGraphReference[];

@@ -5,3 +5,4 @@ export { EventsTable, type EventsTableProps, type EventsTableMembers } from "./e
 export { RollupView, type RollupViewProps, type RollupViewMembers } from "./rollup-view";
 export { CdcMirror, type CdcMirrorProps, type CdcMirrorMembers } from "./cdc-mirror";
 export { ShardedTable, type ShardedTableProps, type ShardedTableMembers } from "./sharded-table";
+export { OtelTables, OTEL_EXPORTER_DEFAULT_TABLES, otelTtlClause, type OtelTablesProps, type OtelTablesMembers, type OtelTableNames } from "./otel-tables";

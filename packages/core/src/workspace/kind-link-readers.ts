@@ -57,8 +57,8 @@ export interface KindReadGap {
 }
 
 export interface KindLinkRead {
-  /** The reader that ran. */
-  reader: KindLinkReaderName;
+  /** The reader that ran: a kind's reader, or `lexicon <name>` for links a member's lexicon read from its declarations (#4397). */
+  reader: KindLinkReaderName | `lexicon${string}`;
   links: KindReadLink[];
   gaps: KindReadGap[];
   /**

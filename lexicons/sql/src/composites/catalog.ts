@@ -216,6 +216,41 @@ export const compositeCatalog: CompositeEntry[] = [
     ]
   },
   {
+    "name": "OtelTables",
+    "lexicon": "sql",
+    "description": "The logs, traces and metrics tables the OpenTelemetry Collector's clickhouse exporter writes, as it creates them at v0.130.0.",
+    "bundles": [
+      "ClickHouseTable",
+      "ClickHouseView"
+    ],
+    "params": [
+      {
+        "name": "database",
+        "type": "string",
+        "required": false,
+        "description": "The database the tables are created in, the exporter's `database`."
+      },
+      {
+        "name": "ttl",
+        "type": "string",
+        "required": false,
+        "description": "How long rows are kept, as the exporter's `ttl` takes it: a Go duration such as `72h` or `30m`."
+      },
+      {
+        "name": "tables",
+        "type": "OtelTableNames",
+        "required": false,
+        "description": "Table names other than the exporter's defaults, as set on the exporter."
+      },
+      {
+        "name": "traceIdLookup",
+        "type": "boolean",
+        "required": false,
+        "description": "Declare the trace-id lookup table and its materialized view (default true)."
+      }
+    ]
+  },
+  {
     "name": "RefreshedView",
     "lexicon": "sql",
     "description": "A materialized view over a source, with the unique index that allows REFRESH ...",

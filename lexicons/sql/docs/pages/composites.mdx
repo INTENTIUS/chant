@@ -5,7 +5,7 @@ diataxis: reference
 order: 1
 ---
 
-Ten composites for tables that are usually declared the same way, five per dialect. Each dialect's subpath exports only its own: `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror` and `ShardedTable` from `@intentius/chant-lexicon-sql/clickhouse`, and `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` from `@intentius/chant-lexicon-sql/postgres`. Each is built from its dialect's tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
+Eleven composites for tables that are usually declared the same way: six for ClickHouse and five for Postgres. Each dialect's subpath exports only its own: `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror`, `ShardedTable` and `OtelTables` from `@intentius/chant-lexicon-sql/clickhouse`, and `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` from `@intentius/chant-lexicon-sql/postgres`. Each is built from its dialect's tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
 
 ## ClickHouse composites
 
@@ -127,6 +127,25 @@ A ReplicatedMergeTree table on every node of a cluster, and the Distributed tabl
 | `orderBy` | | the local table's sort key |
 | `shardingKey` | `rand()` | |
 | `partitionBy` | none | the local table's partition key |
+
+### OtelTables
+
+The tables the OpenTelemetry Collector's `clickhouse` exporter writes, with the exporter's own columns, so the exporter can run with `create_schema: false` and this build owns the schema. The DDL follows the exporter's create statements at contrib v0.130.0 (`exporter/clickhouseexporter/internal/sqltemplates/*.sql`), the otel lexicon's `COLLECTOR_PIN`. With `create_schema: true` the exporter also creates a trace-id lookup table, `<traces>_trace_id_ts`, and a materialized view, `<traces>_trace_id_ts_mv`, that fills it from the traces table (`createTraceTables` in `exporter_traces.go`); both are declared unless `traceIdLookup` is false. The exporter's JSON tables, used only behind its `clickhouse.json` feature gate, are not declared.
+
+| Member | Entity |
+|---|---|
+| `logs`, `traces` | `ClickHouse::Table`, `otel_logs` and `otel_traces` |
+| `metricsGauge`, `metricsSum`, `metricsSummary`, `metricsHistogram`, `metricsExponentialHistogram` | `ClickHouse::Table`, `otel_metrics_<type>` |
+| `traceIdTs`, `traceIdTsView` | the lookup table and its `ClickHouse::View`, absent when `traceIdLookup` is false |
+
+| Prop | Default | |
+|---|---|---|
+| `database` | none | the exporter's `database`; unset, the tables are unqualified and land in `default` |
+| `ttl` | none | a Go duration such as `72h`, rendered as the exporter renders it |
+| `tables` | the exporter's names | other names, as set on the exporter (`logs`, `traces`, `gauge`, `sum`, `summary`, `histogram`, `exponentialHistogram`) |
+| `traceIdLookup` | `true` | |
+
+In one build root, OTEL129 fails when a `ClickHouseExporter` writes a table or column this build does not declare, and warns when `create_schema` is true for tables it declares. Across workspace members, `chant workspace check` fails (WSP093) when a table the exporter writes is renamed or dropped in the sql member.
 
 ## Postgres composites
 
