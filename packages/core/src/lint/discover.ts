@@ -143,6 +143,8 @@ function isPostSynthCheck(obj: unknown): obj is PostSynthCheck {
     typeof o.description === "string" &&
     typeof o.check === "function" &&
     // Exclude LintRules (which also have check) by checking for PostSynthCheck-specific fields
-    typeof o.severity !== "string"
+    typeof o.severity !== "string" &&
+    // A cross-root check (chant #1939) is not a per-build check.
+    o.scope !== "cross-root"
   );
 }

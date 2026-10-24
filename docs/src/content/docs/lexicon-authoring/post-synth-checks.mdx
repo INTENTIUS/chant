@@ -326,13 +326,40 @@ Keep helpers in a `*-helpers.ts` file. The barrel generator skips files that exp
 
 The same join underlies conformance checks in general: a custom resource against the schema that defines it, a composition against the kinds it references. Any check that needs to know about *other* resources in the output is a post-synth check, and this is its shape.
 
-### One build root at a time (chant #1939)
+### One build root at a time, unless the check reads across roots (chant #1939)
 
 A bundle-join check only sees the build root of the *current* `chant build` invocation, since `ctx.outputs`, `ctx.docs` and `ctx.entities` are all scoped to that one invocation. Split the two halves of a join across separate build roots and the check goes silent rather than wrong, because a `PostSynthContext` has no way to tell "wired up in the other build" apart from "forgotten entirely."
 
-The k8s lexicon's `WK8505` (`lint/post-synth/wk8505.ts`) shows why this matters. It warns when a committed-encrypted secret has no Flux `Kustomization` setting `spec.decryption`, and that join needs the secret and the Kustomization declared in the same build root. A project that splits workload and Flux wiring into separate roots, a common shape as a project grows, gets no warning even when the decryption wiring is genuinely missing.
+The k8s lexicon's `WK8505` (`lint/post-synth/wk8505.ts`) shows why this matters. It warns when a committed-encrypted secret has no Flux `Kustomization` setting `spec.decryption`, and that join needs the secret and the Kustomization declared in the same build root. A project that splits workload and Flux wiring into separate roots gets no warning even when the decryption wiring is missing.
 
-Chant #1939 tracks whether checks like this should get an opt-in project-level mode that runs across every build root. Until that ships, a check that joins across resources sees one build root, and an author has two options: keep the resources a check joins across in the same build root, or accept that the check will not fire once those resources live apart.
+A check that needs to see every root declares it with `scope: "cross-root"` and becomes a `CrossRootCheck`. The mode is off by default. `chant build`, `chant lint` and `lint.policies` never run a cross-root check, so a project that doesn't ask for one pays nothing. Only `runCrossRootChecks` runs them, over roots its caller has already built:
+
+```typescript
+import type { CrossRootCheck } from "@intentius/chant/lint/post-synth";
+
+export const decryptionAcrossRoots: CrossRootCheck = {
+  id: "XR001",
+  description: "A committed-encrypted Secret needs a decrypting Kustomization in some root",
+  scope: "cross-root",
+  check(ctx) {
+    const decrypts = ctx.docs.some((d) => (d.value as any)?.spec?.decryption);
+    if (decrypts) return [];
+    return ctx.docs
+      .filter((d) => (d.value as any)?.kind === "Secret")
+      .map((d) => ({ checkId: "XR001", severity: "warning", message: "no root decrypts this Secret", root: d.root }));
+  },
+};
+```
+
+| Member | What it holds |
+|---|---|
+| `ctx.roots` | one `PostSynthContext` per root, with its `root` name and `dir`, so per-build helpers work on each |
+| `ctx.root(name)` | one root by name |
+| `ctx.docs` | every root's parsed documents, each tagged with `root`, built on first access |
+| `ctx.entities` | every root's entities as `{ root, name, entity }`, built on first access |
+| `ctx.env`, `ctx.activityContracts` | as on `PostSynthContext`, for the whole run |
+
+A finding sets `root` to say which root it is about. A lexicon ships cross-root checks from its plugin's `crossRootChecks()`, kept apart from `postSynthChecks()`. The caller picks what a root is (a workspace member, a project directory) and builds each one; `runCrossRootChecks(checks, [{ root, dir?, env?, buildResult }], { env?, activityContracts? })` does no building and reads no files.
 
 ## Universal Check Patterns
 
