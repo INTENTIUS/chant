@@ -193,15 +193,15 @@ The check runs only when the build stamps the attribution. A project outside a w
 
 ## OTEL119: deprecated fields
 
-These fields still work at the pinned release, v0.130.0, and are deprecated there. A later release removes them, so a config that uses one breaks on the next pin bump.
+These fields still parse at the pinned release, v0.162.0, and are deprecated there. A later release removes them, so a config that uses one breaks on a later pin bump.
 
 | Field | Deprecated in | Use instead |
 |---|---|---|
-| `invert_match: true` in a `tail_sampling` policy or sub-policy | collector-contrib v0.126.0 (#39833): "The invert decisions (InvertSampled and InvertNotSampled) have been deprecated" | a `drop` policy |
+| `invert_match: true` in a `tail_sampling` policy or sub-policy | collector-contrib v0.126.0 (#39833): "The invert decisions (InvertSampled and InvertNotSampled) have been deprecated"; v0.155.0 removed the `processor.tailsamplingprocessor.disableinvertdecisions` gate (#48976) | a `drop` policy |
 | `service.telemetry.metrics.address` | collector v0.111.0 (#11205) | `service.telemetry.metrics.readers` |
 | `dimensions_cache_size` on `spanmetrics` | collector-contrib v0.125.0 (#39646), marked `Deprecated [v0.130.0]` in `connector/spanmetricsconnector/config.go` (#41101) | `aggregation_cardinality_limit` |
 
-The versions come from each repository's `CHANGELOG.md` at the v0.130.0 tag. `invert_match: false` is not reported, since it asks for no inverted decision. The `invert_match` fields of the lexicon's policy types carry `@deprecated`. Renames and removals after the pin are left to the pin bump.
+The versions come from each repository's `CHANGELOG.md`. `invert_match: false` is not reported, since it asks for no inverted decision. The `invert_match` fields of the lexicon's policy types carry `@deprecated`. Renames and removals after the pin are left to the pin bump.
 
 ## OTEL120 and OTEL121: credentials in the config
 
@@ -225,15 +225,15 @@ Both look at exporters with a remote endpoint: an `endpoint` (or `traces_endpoin
 
 OTEL124 reports `sending_queue.enabled: false`, which makes a slow backend block the pipeline, and `retry_on_failure.enabled: false`, which drops a failed request's data.
 
-OTEL125 reports a pipeline with no `batch` processor (any `batch/name` counts) that sends to a remote `otlp` or `otlphttp` exporter with no `sending_queue.batch`. At v0.130.0 those two exporters do not batch by default: `NewDefaultQueueConfig` in `exporter/exporterhelper/internal/queue_sender.go` sets no `batch`. Other exporters may batch on their own, so OTEL125 leaves them alone and covers only these two.
+OTEL125 reports a pipeline with no `batch` processor (any `batch/name` counts) that sends to a remote `otlp` or `otlphttp` exporter with no `sending_queue.batch`. At v0.162.0 those two exporters do not batch by default: `NewDefaultQueueConfig` in `exporter/exporterhelper/internal/queue_sender.go` sets no `batch` while the alpha `pkg.exporterhelper.queueBatchEnabled` gate is off. Other exporters may batch on their own, so OTEL125 leaves them alone and covers only these two.
 
 ## OTEL126 and OTEL127: names from a fixed list
 
 The collector rejects an unknown name at start-up. These two checks catch it without a collector binary.
 
-OTEL126 compares each `k8sattributes` `extract.metadata` entry with the fields `Config.Validate` accepts in `processor/k8sattributesprocessor/config.go` at collector-contrib v0.130.0. The list is `K8S_ATTRIBUTES_METADATA`: the `k8s.namespace`, `k8s.pod`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset`, `k8s.statefulset`, `k8s.job`, `k8s.cronjob`, `k8s.node` and `k8s.container` names and ids, `k8s.pod.hostname`, `k8s.pod.start_time`, `k8s.pod.ip`, `k8s.cluster.uid`, `container.id`, `container.image.name`, `container.image.tag`, `container.image.repo_digests`, and `service.namespace`, `service.name`, `service.version`, `service.instance.id`. Any other name makes the collector refuse the config. Labels and annotations are extracted with `extract.labels` and `extract.annotations`.
+OTEL126 compares each `k8sattributes` `extract.metadata` entry with the fields `Config.Validate` accepts in `processor/k8sattributesprocessor/config.go` at collector-contrib v0.162.0. The list is `K8S_ATTRIBUTES_METADATA`: the `k8s.namespace`, `k8s.pod`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset`, `k8s.statefulset`, `k8s.job`, `k8s.cronjob`, `k8s.node` and `k8s.container` names and ids, `k8s.pod.hostname`, `k8s.pod.start_time`, `k8s.pod.ip`, `k8s.cluster.uid`, `container.id`, `container.image.name`, `container.image.tag`, `container.image.tags`, `container.image.repo_digests`, and `service.namespace`, `service.name`, `service.version`, `service.instance.id`. Any other name makes the collector refuse the config. Labels and annotations are extracted with `extract.labels` and `extract.annotations`.
 
-OTEL127 compares each detector a started `resourcedetection` lists with the map `NewFactory` registers in `processor/resourcedetectionprocessor/factory.go` at v0.130.0, `RESOURCE_DETECTORS`: `aks`, `azure`, `consul`, `docker`, `dynatrace`, `ec2`, `ecs`, `eks`, `elastic_beanstalk`, `env`, `gcp`, `heroku`, `k8snode`, `kubeadm`, `lambda`, `openshift` and `system`. An unknown name fails the processor's build with "invalid detector key" and the collector exits. The Elastic Beanstalk detector is spelled `elastic_beanstalk`, and the message says so for `elasticbeanstalk`. An `${env:...}` entry is not checked.
+OTEL127 compares each detector a started `resourcedetection` lists with the map `NewFactory` registers in `processor/resourcedetectionprocessor/factory.go` at v0.162.0, `RESOURCE_DETECTORS`: `akamai`, `aks`, `alibaba_ecs`, `azure`, `azureappservice`, `azurecontainerapps`, `azurefunctions`, `consul`, `digitalocean`, `docker`, `dynatrace`, `ec2`, `ecs`, `eks`, `elastic_beanstalk`, `env`, `gcp`, `heroku`, `hetzner`, `ibmcloud_classic`, `ibmcloud_vpc`, `k8s_api`, `k8snode` (deprecated alias of `k8s_api` since v0.154.0), `kubeadm`, `lambda`, `nova`, `openshift`, `oraclecloud`, `scaleway`, `system`, `tencent_cvm`, `upcloud` and `vultr`. An unknown name fails the processor's build with "invalid detector key" and the collector exits. The Elastic Beanstalk detector is spelled `elastic_beanstalk`, and the message says so for `elasticbeanstalk`. An `${env:...}` entry is not checked.
 
 ## Using the checks outside a build
 

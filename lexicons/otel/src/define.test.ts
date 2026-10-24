@@ -94,12 +94,14 @@ describe("defineComponent", () => {
 
   test("sending_queue.blocking is reported; the collector reads block_on_overflow", () => {
     const otlp = new OtlpReceiver({ protocols: { grpc: {} } });
+    // @ts-expect-error: `blocking` is not an upstream field, which is what the check reports
     const old = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { blocking: true } });
     const r = build([otlp, old, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [old] })]);
     expect(r.diags.filter((d) => d.checkId === "OTEL107").map((d) => d.message)).toEqual([
       'exporter "otlp": sending_queue.blocking is not a collector setting; use sending_queue.block_on_overflow',
     ]);
 
+    // @ts-expect-error: `blocking` is not an upstream field, which is what the check reports
     const both = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { blocking: true, block_on_overflow: true } });
     const r2 = build([otlp, both, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [both] })]);
     expect(r2.diags.filter((d) => d.checkId === "OTEL107")).toHaveLength(1);

@@ -51,7 +51,7 @@ RedDashboard({ spanMetrics, exporter?, quantiles?, spanKinds?, datasource, ... }
 ```
 
 - `spanMetrics`: the `spanmetrics` connector, or what `spanMetricsNames(connector)` returned.
-- `exporter`: the `prometheus` exporter serving the metrics, when its `namespace` or `add_metric_suffixes: false` changes the names Prometheus sees.
+- `exporter`: the `prometheus` exporter serving the metrics, when its `namespace` or `translation_strategy` changes the names Prometheus sees.
 - `quantiles`: duration quantiles, one panel each. Default `[0.5, 0.95, 0.99]`.
 - `spanKinds`: the span kinds counted. Default `["SPAN_KIND_SERVER", "SPAN_KIND_CONSUMER"]` (`RED_DEFAULT_SPAN_KINDS`), the spans that handle a request or a message; `[]` counts every kind.
 

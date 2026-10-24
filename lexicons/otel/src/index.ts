@@ -7,6 +7,48 @@ export { otelSerializer } from "./serializer";
 // Built-in components and their config types
 export * from "./components";
 
+// The config types generated from upstream config.schema.yaml at COLLECTOR_PIN
+// (#3361), before any hand-written overlay. Each built-in's `<Class>Config`
+// builds on its `<Class>SchemaConfig`.
+export type {
+  AttributesProcessorSchemaConfig,
+  BatchProcessorSchemaConfig,
+  CountConnectorSchemaConfig,
+  DebugExporterSchemaConfig,
+  DeltaToCumulativeProcessorSchemaConfig,
+  FileLogReceiverSchemaConfig,
+  FilterProcessorSchemaConfig,
+  GoogleCloudExporterSchemaConfig,
+  HealthCheckExtensionSchemaConfig,
+  HostMetricsReceiverSchemaConfig,
+  K8sAttributesProcessorSchemaConfig,
+  K8sClusterReceiverSchemaConfig,
+  K8sLeaderElectorExtensionSchemaConfig,
+  KubeletStatsReceiverSchemaConfig,
+  LoadBalancingExporterSchemaConfig,
+  MemoryLimiterProcessorSchemaConfig,
+  OtlpExporterSchemaConfig,
+  OtlpHttpExporterSchemaConfig,
+  OtlpReceiverSchemaConfig,
+  PprofExtensionSchemaConfig,
+  ProbabilisticSamplerProcessorSchemaConfig,
+  PrometheusExporterSchemaConfig,
+  PrometheusReceiverSchemaConfig,
+  RedactionProcessorSchemaConfig,
+  ResourceDetectionProcessorSchemaConfig,
+  ResourceProcessorSchemaConfig,
+  RoutingConnectorSchemaConfig,
+  ServiceGraphConnectorSchemaConfig,
+  SignalToMetricsConnectorSchemaConfig,
+  SpanMetricsConnectorSchemaConfig,
+  SumConnectorSchemaConfig,
+  TailSamplingProcessorSchemaConfig,
+  TransformProcessorSchemaConfig,
+  ZPagesExtensionSchemaConfig,
+} from "./generated/index";
+export { coverageReport, formatCoverage, type OtelCoverageReport, type DistributionCoverage } from "./coverage";
+export { OTELCOL_CONTRIB_VERSION, OTELCOL_K8S_VERSION, OTEL_SPEC_PIN, type OtelSpecPin } from "./spec/pin";
+
 // Pipelines and the service block
 export {
   Pipeline,
@@ -168,6 +210,8 @@ export {
   type SpanMetricsNames,
   type SpanMetricsNamingConfig,
   type PrometheusNaming,
+  type PrometheusTranslationStrategy,
+  exporterNaming,
   promSelector,
   promSumRate,
   promErrorRatio,
