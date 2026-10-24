@@ -105,8 +105,78 @@ async function runPinRolloutVerb(ctx: CommandGroupContext): Promise<number> {
   }
 }
 
+const REPORT_USAGE =
+  "usage: chant terraform report --stage tf-plan|tf-apply --plan <show.json> [--applied <show-after-apply.json>] (--out <dir> | --to <url>) " +
+  "[--project <host/path>] [--commit <sha>] [--pull-request <n>] [--binary <name>] [--binary-version <v>] [--root-dir <dir>] [--self-root <dir>] " +
+  "[--started <iso>] [--finished <iso>] [--json]";
+
+const REPORT_VALUE_FLAGS = new Set(["--stage", "--plan", "--applied", "--out", "--to", "--project", "--commit", "--pull-request", "--binary", "--binary-version", "--root-dir", "--self-root", "--started", "--finished"]);
+
+/** Parse `chant terraform report`'s flags. Throws on an unknown flag, a missing value or a missing required flag. */
+export function parseReportArgs(rawArgs: string[]): { values: Map<string, string>; json: boolean } {
+  const tokens = splitJoinedFlags(rawArgs, new Set(["--json"]));
+  const values = new Map<string, string>();
+  let json = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    if (t === "--json") {
+      json = true;
+      continue;
+    }
+    if (!REPORT_VALUE_FLAGS.has(t)) throw t.startsWith("-") ? unknownFlagError(t, REPORT_USAGE) : new Error(`unexpected argument "${t}"\n${REPORT_USAGE}`);
+    const v = tokens[++i];
+    if (v === undefined || v.startsWith("--")) throw new Error(`${t} needs a value\n${REPORT_USAGE}`);
+    values.set(t, v);
+  }
+  const stage = values.get("--stage");
+  if (stage !== "tf-plan" && stage !== "tf-apply") throw new Error(`--stage is tf-plan or tf-apply\n${REPORT_USAGE}`);
+  if (!values.has("--plan")) throw new Error(`--plan is required\n${REPORT_USAGE}`);
+  if (stage === "tf-apply" && !values.has("--applied")) throw new Error(`--stage tf-apply needs --applied, the show -json of a plan made after the apply\n${REPORT_USAGE}`);
+  if (values.has("--out") === values.has("--to")) throw new Error(`give one of --out <dir> and --to <url>\n${REPORT_USAGE}`);
+  return { values, json };
+}
+
+async function runReportVerb(ctx: CommandGroupContext): Promise<number> {
+  try {
+    const { values, json } = parseReportArgs(ctx.rawArgs);
+    const { readFileSync } = await import("node:fs");
+    const { runFactsFromEnv, terraformReport, writeReport, httpStore, dirStore } = await import("./report");
+    const read = (flag: string): unknown => {
+      const file = values.get(flag)!;
+      try {
+        return JSON.parse(readFileSync(file, "utf8"));
+      } catch (err) {
+        throw new Error(`${flag} ${file}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    const run = runFactsFromEnv(process.env, { pullRequest: values.get("--pull-request"), project: values.get("--project"), commit: values.get("--commit") });
+    const result = terraformReport({
+      stage: values.get("--stage") as "tf-plan" | "tf-apply",
+      plan: read("--plan"),
+      ...(values.has("--applied") ? { applied: read("--applied") } : {}),
+      run,
+      ...(values.has("--binary") ? { binary: values.get("--binary")! } : {}),
+      ...(values.has("--binary-version") ? { binaryVersion: values.get("--binary-version")! } : {}),
+      ...(values.has("--root-dir") ? { rootDir: values.get("--root-dir")! } : {}),
+      ...(values.has("--self-root") ? { selfRoot: values.get("--self-root")! } : {}),
+      ...(values.has("--started") ? { started: values.get("--started")! } : {}),
+      finished: values.get("--finished") ?? new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    });
+    const store = values.has("--out") ? dirStore(values.get("--out")!) : httpStore(values.get("--to")!);
+    const keys = await writeReport(store, result);
+    console.log(json ? JSON.stringify({ path: result.path, keys, row: result.row }, null, 2) : `wrote ${keys.join(", ")}`);
+    return 0;
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+}
+
 export const terraformCommands: CommandGroup = {
   name: "terraform",
-  description: "Terraform and OpenTofu roots: roll a module version out as one pin-bump PR per wave",
-  commands: [{ name: "pin-rollout", description: "Read a pin-bump rollout's state and open the next wave's PR when it is due", handler: runPinRolloutVerb }],
+  description: "Terraform and OpenTofu roots: roll a module version out as one pin-bump PR per wave; write a run report from a saved plan",
+  commands: [
+    { name: "pin-rollout", description: "Read a pin-bump rollout's state and open the next wave's PR when it is due", handler: runPinRolloutVerb },
+    { name: "report", description: "Write a terragucci.report/v1 run report and its index row from show -json of a composed plan", handler: runReportVerb },
+  ],
 };

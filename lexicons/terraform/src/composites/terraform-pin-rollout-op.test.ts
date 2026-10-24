@@ -29,9 +29,9 @@ describe("TerraformPinRolloutOp (#3189)", () => {
 });
 
 describe("chant terraform pin-rollout", () => {
-  test("is mounted as the terraform group's pin-rollout verb", () => {
+  test("is mounted as the terraform group's pin-rollout and report verbs", () => {
     expect(terraformCommands.name).toBe("terraform");
-    expect(terraformCommands.commands.map((c) => c.name)).toEqual(["pin-rollout"]);
+    expect(terraformCommands.commands.map((c) => c.name)).toEqual(["pin-rollout", "report"]);
   });
 
   test("parses roots, dependencies, a generated root and canaries into the activity's args", () => {
