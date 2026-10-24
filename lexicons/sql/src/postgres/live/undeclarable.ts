@@ -39,7 +39,7 @@ const C = 'COLLATE "C"';
 
 /** Not part of another object (`pg_depend.deptype = 'i'`): the multirange cast a range type makes for itself is the range type's. */
 const notInternal = (catalog: string, oid: string) =>
-  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'i')`;
+  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dep_ WHERE dep_.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND dep_.objid = ${oid} AND dep_.deptype = 'i')`;
 const ns = (alias: string, column: string) => `JOIN pg_catalog.pg_namespace ${alias} ON ${alias}.oid = ${column}`;
 const args = (oid: string) => `'(' || pg_catalog.replace(pg_catalog.oidvectortypes(${oid}), ', ', ',') || ')'`;
 

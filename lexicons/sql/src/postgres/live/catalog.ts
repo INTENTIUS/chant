@@ -132,11 +132,11 @@ export function scopeSql(column: string, scope: SchemaScope): { sql: string; par
 
 /** `NOT <object is owned by an extension>`, for an object of catalog `catalog` with oid column `oid`. */
 export const notExtensionOwned = (catalog: string, oid: string): string =>
-  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'e')`;
+  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dep_ WHERE dep_.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND dep_.objid = ${oid} AND dep_.deptype = 'e')`;
 
 /** `NOT <object is part of another>` (`pg_depend.deptype = 'i'`): a range type's constructor functions, its multirange cast. */
 const notInternal = (catalog: string, oid: string): string =>
-  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND d.objid = ${oid} AND d.deptype = 'i')`;
+  `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dep_ WHERE dep_.classid = 'pg_catalog.${catalog}'::pg_catalog.regclass AND dep_.objid = ${oid} AND dep_.deptype = 'i')`;
 
 /** A collation name as a clause, `pg_catalog` names unqualified. */
 const COLLATION_NAME = (oid: string) =>

@@ -50,8 +50,8 @@ const dependentsOf = (catalog: string, oid: string): string =>
 
 /** A collation's name as a clause: a `pg_catalog` one bare. */
 const collationName = (oid: string): string =>
-  `(SELECT CASE WHEN cn.nspname = 'pg_catalog' THEN pg_catalog.quote_ident(co.collname) ELSE pg_catalog.quote_ident(cn.nspname) || '.' || pg_catalog.quote_ident(co.collname) END ` +
-  `FROM pg_catalog.pg_collation co JOIN pg_catalog.pg_namespace cn ON cn.oid = co.collnamespace WHERE co.oid = ${oid})`;
+  `(SELECT CASE WHEN colln_.nspname = 'pg_catalog' THEN pg_catalog.quote_ident(coll_.collname) ELSE pg_catalog.quote_ident(colln_.nspname) || '.' || pg_catalog.quote_ident(coll_.collname) END ` +
+  `FROM pg_catalog.pg_collation coll_ JOIN pg_catalog.pg_namespace colln_ ON colln_.oid = coll_.collnamespace WHERE coll_.oid = ${oid})`;
 
 /** A function named by a `regproc` column, or nothing for 0 (which `regproc` prints as `-`). */
 const proc = (column: string): string => `NULLIF(${column}::text, '-')`;
@@ -315,7 +315,7 @@ export async function readRoutineKinds(client: PostgresClient, scope: SchemaScop
 
 /** An operator named by another's COMMUTATOR or NEGATOR, as `OPERATOR(schema.symbol)`. */
 const operatorRef = (column: string): string =>
-  `(SELECT 'OPERATOR(' || pg_catalog.quote_ident(rn.nspname) || '.' || r.oprname || ')' FROM pg_catalog.pg_operator r JOIN pg_catalog.pg_namespace rn ON rn.oid = r.oprnamespace WHERE r.oid = ${column})`;
+  `(SELECT 'OPERATOR(' || pg_catalog.quote_ident(oprn_.nspname) || '.' || opr_.oprname || ')' FROM pg_catalog.pg_operator opr_ JOIN pg_catalog.pg_namespace oprn_ ON oprn_.oid = opr_.oprnamespace WHERE opr_.oid = ${column})`;
 
 /**
  * Operators: the ones a schema defines, not the server's own (oids below the
