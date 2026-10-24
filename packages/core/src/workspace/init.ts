@@ -51,7 +51,7 @@ import { setProperty } from "./json-edit";
 import { holdsChantProject } from "./kinds";
 import { gitTop, skippedDir, workingTree, type WorkspaceTree } from "./tree";
 
-const USAGE = "chant workspace init [dir] [--name <name>] [--yes] [--verbose]\n       chant workspace init --profile ideation|app|infra [dir] [--name <name>] [--param name=<display name>] [--from <repo>@<ref>|<chant checkout>] [--yes]";
+const USAGE = "chant workspace init [dir] [--name <name>] [--yes] [--verbose]\n       chant workspace init --profile ideation|app|infra [dir] [--name <name>] [--param name=<display name>] [--from <repo>@<ref>|<chant checkout>] [--yes]\n       chant workspace init --from tfc|spacelift|backstage [dir] [--org <organization>] [--endpoint <url>] [--input <export.json>] [--token <token>] [--yes]";
 
 /** The profiles `--profile` takes (#3174), each a directory under {@link PROFILES_DIR} in the chant repository. */
 export const PROFILES = ["ideation", "app", "infra"] as const;
@@ -575,6 +575,15 @@ export async function runWorkspaceInit(ctx: CommandContext): Promise<number> {
   }
 
   if (args.profile !== undefined) return initProfile(args, root);
+  // #3178: --from tfc|spacelift|backstage proposes from structure held outside the repository.
+  const { isImportSource, runImportInit, IMPORT_USAGE } = await import("./import-init");
+  if (args.migrateFrom !== undefined) {
+    if (!isImportSource(args.migrateFrom)) {
+      console.error(formatError({ message: `--from ${JSON.stringify(args.migrateFrom)} is not a source; the sources are tfc, spacelift, backstage`, hint: IMPORT_USAGE }));
+      return 1;
+    }
+    return runImportInit(args.migrateFrom, root, args);
+  }
 
   let proposal: Proposal;
   try {

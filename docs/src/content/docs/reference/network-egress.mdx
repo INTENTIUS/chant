@@ -194,6 +194,14 @@ A `k8sInclude` whose `source` is an `http(s)` URL is fetched by `chant build` th
 |---|---|---|---|---|
 | `chant workspace graph, for a member of kind repo` | `git fetch` | `packages/core/src/workspace/repo-ref.ts` | the URL the repo member names, a forge or any git remote. A local path reaches nothing | `git fetch origin <rev>` into a clone in the user's cache directory, and a fetch of every branch and tag when the server refuses a commit by id, so the member's pinned revision can be read through that repository's own `chant workspace graph` (#3168). Only when the cache lacks the revision. Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and each fetch times out after two minutes. |
 
+### Importing structure from another tool
+
+`chant workspace init --from tfc` and `--from spacelift` read the organization or account the user names, with the token the user supplies, and only read: GET requests to the Terraform Cloud API and one GraphQL query to Spacelift. `--input <export.json>` reads an exported file instead and reaches nothing, and `--from backstage` reads `catalog-info.yaml` files on disk (#3178).
+
+| Module | Primitive | Destination | Why |
+|---|---|---|---|
+| `packages/core/src/workspace/import-fetch.ts` | `fetch` | the Terraform Cloud (or Terraform Enterprise) API for the named organization, or the Spacelift GraphQL endpoint the user passes | `chant workspace init --from tfc\|spacelift` reads workspaces, projects, variables keys, run triggers and policy sets (or stacks, dependencies and policies) with the user's token; read-only, and the transport is injectable so a test never opens a connection (#3178). |
+
 ### Auditing a remote repository
 
 `chant audit <url>` reads someone else's repository over a git host's API. Auditing a local path reaches nothing.
@@ -228,7 +236,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**75 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
+**76 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 

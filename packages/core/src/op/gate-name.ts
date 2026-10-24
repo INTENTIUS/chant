@@ -46,6 +46,13 @@ export const WORKSPACE_UPGRADE_GATE_OP = "workspace-upgrade";
 export const WORKSPACE_EXIT_GATE_OP = "workspace-exit";
 
 /**
+ * The op name a `chant workspace promote` gate is recorded under (#3178). The
+ * gate is the member, and it binds the digest of the promotion's patch. A
+ * command with no `*.op.ts` behind it, like the upgrade.
+ */
+export const WORKSPACE_PROMOTE_GATE_OP = "workspace-promote";
+
+/**
  * The op name the override gate records denials and overrides under (#3760):
  * `_gates/policy-override.jsonl`, gate the subject a policy denied. Like a
  * fan-out it has no `*.op.ts`, and an override is a person's, never a model's.

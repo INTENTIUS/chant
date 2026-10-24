@@ -44,7 +44,7 @@ import ts from "typescript";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "include" | "template" | "upgrade" | "provenance" | "org" | "ci" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "include" | "template" | "upgrade" | "provenance" | "org" | "import" | "ci" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -102,6 +102,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Reading another repository's workspace",
     summary:
       "`chant workspace graph` on a workspace with members of kind `repo` fetches each one's pinned revision from the URL it names, into the user's cache directory, and runs that repository's own `chant workspace graph` there (#3168). A revision already in the cache is not fetched again, and a URL that is a local path or a local bare repository reaches nothing. `chant workspace check` never fetches: `--forge-repos` reads the forge's repository list from a file a warden writes. The fetch is a `git` child process, listed below as a shell-out.",
+  },
+  {
+    id: "import",
+    label: "Importing structure from another tool",
+    summary:
+      "`chant workspace init --from tfc` and `--from spacelift` read the organization or account the user names, with the token the user supplies, and only read: GET requests to the Terraform Cloud API and one GraphQL query to Spacelift. `--input <export.json>` reads an exported file instead and reaches nothing, and `--from backstage` reads `catalog-info.yaml` files on disk (#3178).",
   },
   {
     id: "audit",
@@ -435,6 +441,14 @@ export interface EgressSite {
  * without a row fails `test/no-egress.e2e.test.ts`.
  */
 export const EGRESS_CATALOGUE: readonly EgressSite[] = [
+  // ── import ─────────────────────────────────────────────────────────────────
+  {
+    file: "packages/core/src/workspace/import-fetch.ts",
+    primitives: ["fetch"],
+    phase: "import",
+    destination: "the Terraform Cloud (or Terraform Enterprise) API for the named organization, or the Spacelift GraphQL endpoint the user passes",
+    why: "`chant workspace init --from tfc|spacelift` reads workspaces, projects, variables keys, run triggers and policy sets (or stacks, dependencies and policies) with the user's token; read-only, and the transport is injectable so a test never opens a connection (#3178).",
+  },
   // ── apply ──────────────────────────────────────────────────────────────────
   {
     file: "packages/core/src/components/verbs/cloud-executor.ts",
