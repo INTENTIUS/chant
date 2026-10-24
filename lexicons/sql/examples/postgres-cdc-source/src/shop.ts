@@ -4,8 +4,10 @@ export const shop = schema`CREATE SCHEMA shop`;
 
 // The source tables of the ClickHouse CDC mirror in ../cdc-mirror. A build
 // holds one dialect, so the two sides are two projects: this one declares
-// what the application writes, that one what the pipeline fills. The column
-// names match, and examples.test.ts holds them to it.
+// what the application writes, that one what the pipeline fills. `chant
+// migrate --from sql/postgres --to sql/clickhouse` writes the mirror from
+// this file, and in a workspace links each mirrored column to the output
+// named here, so dropping or renaming one fails `chant workspace check`.
 export const customers = table`
   CREATE TABLE ${shop}.customers (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -13,7 +15,7 @@ export const customers = table`
     country    text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
   );
-  COMMENT ON COLUMN ${shop}.customers.email IS 'Personal data: hashed downstream before it reaches the mirror'`;
+  COMMENT ON COLUMN ${shop}.customers.email IS 'PII, hashed downstream'`;
 
 export const orders = table`
   CREATE TABLE ${shop}.orders (

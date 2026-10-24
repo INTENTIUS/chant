@@ -29,6 +29,7 @@ import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { POSTGRES_EMULATOR } from "./op/activities/postgres-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
+import { looksLikePostgres } from "./migrate/from-postgres/detect";
 import { sqlWorkspaceOutputs } from "./workspace-outputs";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
 import { compositeCatalog } from "./composites/catalog";
@@ -179,6 +180,23 @@ export const sqlPlugin: LexiconPlugin = {
   async validateImport(ir) {
     const { validateOnEmulator } = await import("./sqlserver/validate");
     return validateOnEmulator(ir);
+  },
+
+  /**
+   * `chant migrate --from sql/postgres --to sql/clickhouse` (#4399): the
+   * Postgres tables a CDC pipeline mirrors, as ClickHouse tables or
+   * `CdcMirror` calls (`./migrate/from-postgres/index.ts`).
+   */
+  migrationSource(from, to) {
+    if (from !== "sql/postgres" || (to !== undefined && to !== "sql/clickhouse")) return undefined;
+    return {
+      detect: looksLikePostgres,
+      directory: true,
+      async transform(content, opts) {
+        const { transform } = await import("./migrate/from-postgres/index");
+        return transform(content, opts);
+      },
+    };
   },
 
   parserOptions() {

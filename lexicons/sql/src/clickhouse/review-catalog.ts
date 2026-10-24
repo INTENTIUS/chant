@@ -20,7 +20,8 @@
  *   finding that names the chosen candidate and the others it passed over.
  * - {@link engineReview}: `MergeTree` for an append-only table;
  *   `ReplacingMergeTree(_version, _deleted)` for a CDC mirror, with the two
- *   columns it adds in `extraColumns`.
+ *   columns it adds in `extraColumns`. `cdcColumns` names them otherwise
+ *   (the Postgres pair uses the `CdcMirror` composite's `_is_deleted`).
  * - {@link nullableReview}: a column's final type. A `NOT NULL` column keeps
  *   its type with no finding. A nullable column becomes `Nullable(T)` with a
  *   finding; when it has a default the finding says the default could
@@ -28,8 +29,8 @@
  * - {@link lowCardinalityReview}: a finding for a `String` column whose name
  *   and declared length suggest few distinct values. It never changes the
  *   type; offline, the name and the type are all there is to read.
- * - {@link constraintReview}: foreign keys, checks and unique constraints,
- *   which ClickHouse does not enforce. Returns `comments` (SQL `--` lines to
+ * - {@link constraintReview}: foreign keys, checks, unique and exclusion
+ *   constraints, which ClickHouse does not enforce. Returns `comments` (SQL `--` lines to
  *   put before the `CREATE`) and one finding per constraint.
  * - {@link REVIEW_RULES}: every rule id with its summary and the ClickHouse
  *   documentation it rests on, for report metadata.
@@ -277,6 +278,12 @@ export interface EngineInput {
   facts?: readonly string[];
   /** The columns the source enforces unique, when it does. */
   uniqueKey?: readonly string[];
+  /**
+   * For `cdc`, the names of the version and deleted columns, when the pipeline
+   * or the `CdcMirror` composite names them other than `_version` and
+   * `_deleted`. The names are the caller's; the catalog only writes them.
+   */
+  cdcColumns?: { version: string; deleted: string };
   at?: SourcePosition;
 }
 
@@ -296,16 +303,21 @@ export function engineReview(input: EngineInput): EngineResult {
   const unique = input.uniqueKey && input.uniqueKey.length > 0 ? list(input.uniqueKey) : undefined;
   if (input.mode === "cdc") {
     evidence.push(`the table is mirrored from a source that updates rows in place${unique ? `, keyed on (${unique})` : ""}`);
+    const version = input.cdcColumns?.version ?? CDC_VERSION_COLUMN.name;
+    const deleted = input.cdcColumns?.deleted ?? CDC_DELETED_COLUMN.name;
     return {
-      engine: `ReplacingMergeTree(${CDC_VERSION_COLUMN.name}, ${CDC_DELETED_COLUMN.name})`,
-      extraColumns: [{ ...CDC_VERSION_COLUMN }, { ...CDC_DELETED_COLUMN }],
+      engine: `ReplacingMergeTree(${version}, ${deleted})`,
+      extraColumns: [
+        { name: version, type: CDC_VERSION_COLUMN.type },
+        { name: deleted, type: CDC_DELETED_COLUMN.type },
+      ],
       finding: {
         ruleId: "SQLRV002",
         severity: "warning",
         object: input.object,
-        message: "ReplacingMergeTree(_version, _deleted) chosen for a mirror; it adds the columns _version and _deleted.",
+        message: `ReplacingMergeTree(${version}, ${deleted}) chosen for a mirror; it adds the columns ${version} and ${deleted}.`,
         evidence,
-        suggestion: "The sort key must be the source key, because rows with an equal sort key collapse to the highest _version on merge. Read with FINAL, or filter on _deleted, to see the collapsed rows before a merge.",
+        suggestion: `The sort key must be the source key, because rows with an equal sort key collapse to the highest ${version} on merge. Read with FINAL, or filter on ${deleted}, to see the collapsed rows before a merge.`,
         ...(input.at ? { at: input.at } : {}),
       },
     };
@@ -418,11 +430,11 @@ export function lowCardinalityReview(input: LowCardinalityInput): ReviewFinding 
 // --- constraints ----------------------------------------------------------
 
 export interface ConstraintFact {
-  kind: "foreign-key" | "check" | "unique";
+  kind: "foreign-key" | "check" | "unique" | "exclusion";
   name?: string;
   columns?: readonly string[];
   references?: { table: string; columns: readonly string[] };
-  /** A check's expression as the source wrote it. */
+  /** A check's expression, or an exclusion's `USING method (element WITH operator, ...)`, as the source wrote it. */
   expression?: string;
   at?: SourcePosition;
 }
@@ -452,6 +464,10 @@ export function constraintReview(input: { object: string; constraints: readonly 
       text = `UNIQUE${label} (${list(c.columns ?? [])})`;
       message = `Unique constraint${label} is not enforced by ClickHouse and is kept as a comment.`;
       suggestion = "A MergeTree sort key does not make rows unique. ReplacingMergeTree collapses duplicates on merge only.";
+    } else if (c.kind === "exclusion") {
+      text = `EXCLUDE${label} ${oneLine(c.expression ?? "")}`;
+      message = `Exclusion constraint${label} is not enforced by ClickHouse and is kept as a comment.`;
+      suggestion = "ClickHouse has no constraint that rejects overlapping rows. Check for overlaps in the load, or in a query.";
     } else {
       text = `CHECK${label} ${oneLine(c.expression ?? "")}`;
       message = `Check constraint${label} is not translated and is kept as a comment.`;
@@ -462,7 +478,7 @@ export function constraintReview(input: { object: string; constraints: readonly 
       ruleId: "SQLRV005",
       severity: "warning",
       object: input.object,
-      ...(c.kind !== "check" && c.columns && c.columns.length === 1 ? { column: c.columns[0]! } : {}),
+      ...(c.kind !== "check" && c.kind !== "exclusion" && c.columns && c.columns.length === 1 ? { column: c.columns[0]! } : {}),
       message,
       evidence: [oneLine(text)],
       suggestion,
