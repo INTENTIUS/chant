@@ -33,6 +33,7 @@ import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
 import type { K8sChantConfig } from "./config";
 import { renderKustomizeRoots } from "./kustomize/root";
+import { lastMemberReport, readK8sMember, setLastMemberReport } from "./workspace-member";
 import { encryptedSecretBuildRoot } from "./sops/encrypted-secret-file";
 import { k8sProjectCodegen } from "./crd/project-codegen";
 import { includeBuildRoot } from "./include/resolve";
@@ -111,6 +112,16 @@ export const k8sPlugin: LexiconPlugin = {
       warnings.push(...rendered.warnings);
     }
 
+    // A workspace member's reader project (#3179): see ./workspace-member.ts.
+    setLastMemberReport(undefined);
+    const member = (ctx.config as { k8s?: K8sChantConfig }).k8s?.member;
+    if (member) {
+      const read = await readK8sMember({ member });
+      for (const [name, entity] of read.entities) entities.set(name, entity);
+      warnings.push(...read.warnings);
+      setLastMemberReport(read.report);
+    }
+
     const included = await includeBuildRoot(ctx);
     for (const [name, entity] of included.entities) entities.set(name, entity);
 
@@ -119,6 +130,12 @@ export const k8sPlugin: LexiconPlugin = {
     warnings.push(...(encrypted.warnings ?? []));
 
     return { entities, warnings };
+  },
+
+  // What the workspace member read (#3179): whether a kustomize member rendered, and why not.
+  graphMeta() {
+    const report = lastMemberReport();
+    return report ? { k8sMember: report } : undefined;
   },
 
   // K8s YAML has no template interpolation functions like CloudFormation's

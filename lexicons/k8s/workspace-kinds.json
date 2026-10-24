@@ -1,5 +1,5 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The Argo and Flux probes read the manifest's apiVersion and kind, so a Flux Kustomization is told apart from the kustomize one that shares its kind name. No graph blocks yet: this lexicon's kustomize reader runs kustomize, and nothing reads an Argo Application or a Flux Kustomization into the graph.",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The Argo and Flux probes read the manifest's apiVersion and kind, so a Flux Kustomization is told apart from the kustomize one that shares its kind name. Each kind's graph block (#3179) reads the member through the k8s lexicon's member reader (src/workspace-member.ts): a kustomize member is rendered, and says rendered: false on meta.k8sMember when neither kustomize nor kubectl is installed; an Argo or Flux member is read from its manifests.",
   "schema": 1,
   "kinds": [
     {
@@ -22,6 +22,16 @@
               ]
             }
           ]
+        }
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "argo-app",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
         }
       }
     },
@@ -46,6 +56,16 @@
             }
           ]
         }
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "flux-kustomization",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
       }
     },
     {
@@ -58,6 +78,16 @@
           "kustomization.yml",
           "Kustomization"
         ]
+      },
+      "graph": {
+        "lexicon": "k8s",
+        "config": {
+          "member": {
+            "kind": "kustomize",
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
       }
     }
   ]

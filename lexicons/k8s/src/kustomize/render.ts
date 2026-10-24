@@ -42,6 +42,18 @@ export function renderCommand(dir: string, tool: "kustomize" | "kubectl" = "kust
   return tool === "kustomize" ? `kustomize build ${q(dir)}` : `kubectl kustomize ${q(dir)}`;
 }
 
+/**
+ * Neither `kustomize` nor `kubectl` is installed. A class of its own so a
+ * caller that can say "not rendered, and why" (the workspace graph reader,
+ * #3179) tells it from a render the binary ran and refused.
+ */
+export class KustomizeBinaryMissingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KustomizeBinaryMissingError";
+  }
+}
+
 /** Does this error mean "the binary is not installed" (vs "the render failed")? */
 function isMissingBinary(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -67,7 +79,7 @@ export async function renderKustomizeDocuments(
       ({ stdout } = await run(renderCommand(dir, "kubectl")));
     } catch (err2) {
       if (isMissingBinary(err2)) {
-        throw new Error(
+        throw new KustomizeBinaryMissingError(
           `Cannot render kustomization "${dir}": neither the \`kustomize\` binary nor \`kubectl\` ` +
             `(whose vendored \`kubectl kustomize\` is the fallback) was found on PATH. ` +
             `Install kustomize or kubectl and retry.`,

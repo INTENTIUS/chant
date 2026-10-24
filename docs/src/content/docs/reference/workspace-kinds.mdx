@@ -345,7 +345,7 @@ sources:
 
 ## Platform kinds
 
-Seven kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate, and each ships a probe only: none has a `graph` block yet, because no lexicon reads these members into the graph.
+Seven kinds cover the files a platform repository holds besides Terraform ([#3179](https://github.com/INTENTIUS/chant/issues/3179)). Each is data in the kinds file of the package that knows the substrate. Six have a `graph` block, so [`chant workspace graph`](/chant/cli/workspace-graph/) draws their members; `pulumi` is a probe and a check only (see [below](#how-the-platform-kinds-are-read)).
 
 | Kind | Package | Precedence | Probe |
 |---|---|---|---|
@@ -358,6 +358,20 @@ Seven kinds cover the files a platform repository holds besides Terraform ([#317
 | `pulumi` | `@intentius/chant-lexicon-terraform` | 310 | `Pulumi.yaml`, which the kind also checks (`name`, `runtime`). No lexicon knows Pulumi, so the kind rides with the one that supplies the other infrastructure engines' kinds |
 
 [`chant workspace init`](/chant/cli/workspace-init/) proposes these kinds, and pins the packages, when the packages are installed at the root.
+
+### How the platform kinds are read
+
+| Kind | What the graph holds | Needs |
+|---|---|---|
+| `argo-app` | an `Application` per document, as a node | nothing; the manifests are read as data |
+| `flux-kustomization` | a Flux `Kustomization` per document, as a node | nothing |
+| `cloudformation` | a node per resource; an edge per `Ref`, `Fn::GetAtt`, `Fn::Sub` reference and `DependsOn` between resources of the template | nothing |
+| `kustomize` | the objects `kustomize build` renders, as nodes | `kustomize`, or `kubectl` |
+| `helm-chart` | the objects `helm template` renders, as nodes | `helm` |
+| `cdk` | the same as `cloudformation`, over the templates in the app's cloud assembly (`cdk.out`, or the `output` of `cdk.json`) | an assembly the app already synthesized. chant does not run the app |
+| `pulumi` | not read | no lexicon reads a Pulumi program |
+
+A node's id is `<member>/<kind><name>`, such as `web/deploymentWeb`. A member whose render or assembly is missing is still listed, with no nodes, and its graph says why under `meta`: `k8sMember` for kustomize (`rendered: false`), `helmMember` for helm (`rendered: false`), `awsMember` for cdk (`synthesized: false`), each with a `reason`. A render the tool ran and refused, such as a broken overlay, fails the member with `command-failed`.
 
 ## Overlapping probes
 

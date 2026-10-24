@@ -112,7 +112,7 @@ const cfnYamlTypes = [
   }),
 ];
 
-const CF_SCHEMA = yaml.DEFAULT_SCHEMA.extend(cfnYamlTypes);
+export const CF_SCHEMA = yaml.DEFAULT_SCHEMA.extend(cfnYamlTypes);
 
 /**
  * CloudFormation template structure
