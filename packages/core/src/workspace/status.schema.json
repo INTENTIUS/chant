@@ -104,6 +104,7 @@
           "required": ["name", "root", "file"],
           "properties": {
             "name": { "type": "string" },
+            "repo": { "type": ["string", "null"], "description": "Added in contract 1 by #3168. The repository the document came from: the URL of the remote origin of the git repository that holds the workspace, with any user name or password removed, or null when there is no origin or the workspace is outside git. With name, root and the revision, it says which repository's workspace a document describes, so a reader that gathers several repositories' documents, such as an org workspace's repo members, tells them apart." },
             "root": { "type": "string", "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself." },
             "file": { "enum": ["chant.workspace.json", "chant.workspace.jsonc"] }
           }

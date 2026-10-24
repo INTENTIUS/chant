@@ -13,12 +13,13 @@ Kinds are plain data. Besides its name and description, each kind carries a prob
 | Kind | Precedence | The directory holds |
 |---|---|---|
 | `workspace` | 1000 | a nested workspace, with its own `chant.workspace.json` or `.jsonc` |
+| `repo` | never claims a directory | nothing here: the member names another repository's workspace by URL and pinned revision. See [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) |
 | `chant` | 500 | a chant project, with `chant.config.ts` or `chant.config.json` directly in it |
 | `design` | never claims a directory | the design artifacts the workspace owns, as data. chant reads the files and builds nothing |
 | `other` | never claims a directory | anything chant does not read. The member needs `because` |
 | `examples` | never claims a directory | the kind of an [example group](/chant/reference/workspace-declaration/#example-groups), not of a member |
 
-Each kind also says which outputs its members expose to [member links](/chant/reference/workspace-declaration/#member-links). A `chant` member exposes the outputs its source declares, a nested `workspace` exposes none, and an `other` or `design` member exposes what its entry lists.
+Each kind also says which outputs its members expose to [member links](/chant/reference/workspace-declaration/#member-links). A `chant` member exposes the outputs its source declares, a nested `workspace` or a `repo` member exposes none, and an `other` or `design` member exposes what its entry lists.
 
 A `design` member is the data member of [D18](https://github.com/INTENTIUS/chant/issues/2524) ([#2549](https://github.com/INTENTIUS/chant/issues/2549), [ws-062](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-062-live-links-and-design-kind.md)). It needs no `because`, and `WSP009` does not report it. Its probe, like the one of `other`, only checks that the directory exists. [Records pin its files by hash](/chant/reference/workspace-declaration/#record-kinds), `chant workspace graph --intent` shows them, and the per-member commands leave it out with `kind-not-run`. A declaration that uses the kind needs chant 0.101.0, since an older chant lists the member with `unknown-kind`.
 
@@ -61,7 +62,7 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | Field | Value |
 |---|---|
 | `schema` | `1` |
-| `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `other` or `examples`, and a package lists each name once |
+| `kinds[].name` | `^[a-z][a-z0-9-]{0,39}$`. It can't be `chant`, `workspace`, `repo`, `design`, `other` or `examples`, and a package lists each name once |
 | `kinds[].description` | One line saying what the directory holds, shown in listings and messages |
 | `kinds[].precedence` | An integer from 1 to 999 |
 | `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |

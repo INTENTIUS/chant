@@ -44,7 +44,7 @@ import ts from "typescript";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "include" | "template" | "upgrade" | "provenance" | "ci" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "include" | "template" | "upgrade" | "provenance" | "org" | "ci" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -59,7 +59,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "apply",
     label: "Reading and changing an estate",
     summary:
-      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that do (`chant workspace check` without `--live` reads files only). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
+      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that reach an account (`chant workspace check` without `--live` reads files only; `chant workspace graph` also fetches the pinned revision of a `repo` member, listed under its own heading). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
   },
   {
     id: "emulator",
@@ -96,6 +96,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Following a squash merge",
     summary:
       "`chant workspace graph --intent`, `graph --intent --record` and `chant workspace runs` read git history locally and reach nothing, unless `--follow-squash` is given. Then a squash commit's pull request head is fetched from `origin` when the clone lacks it, once per pull request, into `refs/chant/pull/<n>/head` where later reads find it (#3035). Its row is in the shell-out table below, since git does the fetching.",
+  },
+  {
+    id: "org",
+    label: "Reading another repository's workspace",
+    summary:
+      "`chant workspace graph` on a workspace with members of kind `repo` fetches each one's pinned revision from the URL it names, into the user's cache directory, and runs that repository's own `chant workspace graph` there (#3168). A revision already in the cache is not fetched again, and a URL that is a local path or a local bare repository reaches nothing. `chant workspace check` never fetches: `--forge-repos` reads the forge's repository list from a file a warden writes. The fetch is a `git` child process, listed below as a shell-out.",
   },
   {
     id: "audit",
@@ -305,6 +311,15 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     phase: "provenance",
     destination: "the clone's `origin` remote, GitHub or Forgejo, which keeps each pull request's head at `refs/pull/<n>/head`. A local repository reaches nothing",
     why: "`git fetch --no-tags origin +refs/pull/<n>/head:refs/chant/pull/<n>/head` for each squash whose pull request head the clone lacks, in one fetch, so the walk can read the pull request's original commits (#3035). Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and the fetch times out after a minute. Without `--follow-squash` it never runs.",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace graph, for a member of kind repo",
+    file: "packages/core/src/workspace/repo-ref.ts",
+    phase: "org",
+    destination: "the URL the repo member names, a forge or any git remote. A local path reaches nothing",
+    why: "`git fetch origin <rev>` into a clone in the user's cache directory, and a fetch of every branch and tag when the server refuses a commit by id, so the member's pinned revision can be read through that repository's own `chant workspace graph` (#3168). Only when the cache lacks the revision. Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and each fetch times out after two minutes.",
   },
   {
     binary: "git",

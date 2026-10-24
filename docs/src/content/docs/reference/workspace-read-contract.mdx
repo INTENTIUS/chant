@@ -64,6 +64,8 @@ Each schema is a `oneOf` of a result and a failure. The `records` schema has a t
 
 A workspace is identified by its declared `name` and a git revision ([ws-016](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-016-identity.md)). Every result names both. The name is `workspace.name`, and `at` is the full commit id, or `null` for the working tree. `workspace.root` is the workspace root relative to the git root, so a nested workspace is told apart from the outer one.
 
+`ls`, `graph`, `check` and `status` also say which repository a document came from, as `workspace.repo` ([#3168](https://github.com/INTENTIUS/chant/issues/3168)). It is the URL of the `origin` remote of the git repository that holds the workspace, with any user name or password removed, or `null` when there is no `origin` or no git. Workspaces in different repositories can share a name, so a reader that gathers several repositories' documents, such as the [repo members](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces) of an org workspace, tells them apart by `repo`. It is a contract 1 field, added in chant 0.124.47. A document from an older chant has no `repo`; read that as unknown.
+
 `ls`, `graph`, `check` and `records` take `--at <rev>` and read from the local git object store. They need no checkout, no clean working tree and no network.
 
 | Command | What `--at` reads |
@@ -85,7 +87,7 @@ Some of what `--at` reads still comes from the working tree, which is how it sta
 - The chant each member runs under is the toolchain installed now, not the one the revision pinned. A member whose config needs a package the revision used and the working tree no longer has fails with `command-failed`.
 - The `records` kind file and its schema come from the working tree.
 - The exported tree is not a git repository, so a member's chant can't read git history there.
-- Remote revisions and URLs are not read. Fetch first.
+- Remote revisions and URLs are not read. Fetch first. The exception is a [`repo` member](/chant/reference/workspace-declaration/#repo-members-and-org-workspaces), whose pinned revision `graph` fetches into the user's cache, whatever `--at` says.
 - `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
 
 ### Revisions and snapshots

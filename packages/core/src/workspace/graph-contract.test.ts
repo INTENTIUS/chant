@@ -230,7 +230,9 @@ describe("chant workspace graph on the chant repo (#2557)", () => {
     const g = result(doc);
     expectValid(g);
     expect(failed).toBe(false);
-    expect(g.workspace).toEqual({ name: "chant", root: "." });
+    expect(g.workspace).toMatchObject({ name: "chant", root: "." });
+    // The repo identity (#3168) is this checkout's origin, whatever it is here.
+    expect(g.workspace.repo === null || typeof g.workspace.repo === "string").toBe(true);
     expect(g.at).toBeNull();
     expect(g.members.every((m) => m.status === "skipped" && m.reason?.code === "kind-not-run")).toBe(true);
   });
@@ -294,7 +296,7 @@ describe("chant workspace graph on built workspaces", () => {
     for (const at of [undefined, sha]) {
       const g = result((await workspaceGraph({ cwd: join(top, "infra", "api"), at })).doc);
       expectValid(g);
-      expect(g.workspace).toEqual({ name: "acme", root: "infra" });
+      expect(g.workspace).toEqual({ name: "acme", root: "infra", repo: null });
       expect(g.nodes.map((n) => n.id)).toEqual(["api/Queue"]);
     }
   });
