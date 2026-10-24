@@ -216,6 +216,14 @@ export interface PrLoopPipelineOptions {
    */
   prEnvironment?: boolean;
   /**
+   * `ci.locks: plan` (#4293, #4327): a `lock` job after the plan that runs
+   * `chant lock --from-report`, and an `unlock` job when the pull request
+   * closes that runs `chant unlock`. Both check out the target branch's
+   * commit, so neither runs the change's code. Set from the declaration at
+   * base; GitHub and Forgejo only. Absent: neither job.
+   */
+  locks?: "plan";
+  /**
    * The cloud identity a pull request environment's jobs take (#4330), from
    * `ci.identity.cloud` (`resolvePrEnvCloudIdentity` in ../ci-identity.ts):
    * the apply identity of a rule that names the pull request environments.
@@ -225,6 +233,18 @@ export interface PrLoopPipelineOptions {
    */
   prEnvIdentity?: CloudTradeSpec;
 }
+
+/** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
+export const PR_LOCK_JOB = "lock";
+export const PR_UNLOCK_JOB = "unlock";
+
+/** `chant lock --from-report` for the plan's report in {@link PR_LOOP_REPORT_DIR}; reads `PR_NUMBER` and `HEAD_SHA`. */
+export function prLockCommand(forge: ForgeKind): string {
+  return ["chant", "lock", "--from-report", `${PR_LOOP_REPORT_DIR}/pr-plan.json`, "--pr", '"$PR_NUMBER"', "--head", '"$HEAD_SHA"', "--stage", "plan", "--forge", forge].join(" ");
+}
+
+/** `chant unlock` for the pull request that closed; reads `PR_NUMBER`. */
+export const PR_UNLOCK_COMMAND = 'chant unlock --pr "$PR_NUMBER"';
 
 /** One job's command and the forge values it reads, as environment variables for its step. */
 export interface PrLoopJob {

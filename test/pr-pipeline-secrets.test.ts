@@ -62,6 +62,7 @@ const SHAPES: Array<[string, Partial<ComponentPipelineOptions>]> = [
   ["cloud identities", { prLoop: { applyOnMerge: true, identity: IDENTITY } }],
   ["a pull request environment", { prLoop: { prEnvironment: true, prEnvIdentity: IDENTITY.apply } }],
   ["apply before merge", { prLoop: { applyBeforeMerge: true } }],
+  ["locks on plan", { prLoop: { locks: "plan" } }],
   ["a workspace member", { prLoop: { applyOnMerge: true, events: true }, member: MEMBER }],
 ];
 

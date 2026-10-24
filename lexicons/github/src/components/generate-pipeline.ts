@@ -76,6 +76,10 @@ import {
   prLoopPostJob,
   prLoopSetup,
   PR_PLAN_NOTE_JOB,
+  PR_LOCK_JOB,
+  PR_UNLOCK_JOB,
+  PR_UNLOCK_COMMAND,
+  prLockCommand,
   prLoopWaveJobs,
   prLoopWithWaves,
   prEnvJobs,
@@ -388,9 +392,46 @@ function prLoopGithubDoc(
   ];
   // #4298: with a pull request environment the pull_request trigger fires on close too, and the plan skips that event.
   const prEnv = loop.prEnvironment ? prEnvGithubJobs(loop.forge ?? "github", image, beforeScript, extraScript, loop, member) : undefined;
+  // #4327: with ci.locks: plan the pull_request trigger fires on close too, for the unlock job, and the plan skips that event.
+  const locks = loop.locks === "plan";
+  const closes = Boolean(prEnv) || locks;
+  const lockJobs: Record<string, unknown> = locks
+    ? {
+        [PR_LOCK_JOB]: {
+          // The plan job's outputs carry the report; a plan that was skipped or failed leaves this job skipped.
+          needs: ["plan"],
+          if: "github.event_name == 'pull_request'",
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: { contents: "write", "pull-requests": "read", statuses: "write" },
+          steps: [
+            // The target branch's commit: this job pushes chant/lifecycle, so none of the change's code runs in it.
+            { name: "Check out the target branch's commit", uses: actionRef("actions/checkout"), with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+            ...runSteps(beforeScript),
+            { name: "Take the plan report from the plan job", run: takeOverScript("plan", PR_LOOP_REPORT_DIR, forgeName) },
+            {
+              name: "Lock the components the plan selected",
+              env: { PR_NUMBER: "${{ github.event.pull_request.number }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", GITHUB_TOKEN: GITHUB_JOB_TOKEN },
+              run: prLockCommand(forgeName),
+            },
+          ],
+        },
+        [PR_UNLOCK_JOB]: {
+          if: "github.event_name == 'pull_request' && github.event.action == 'closed'",
+          "runs-on": GITHUB_RUNNER,
+          container: image,
+          permissions: { contents: "write" },
+          steps: [
+            { name: "Check out the target branch's commit", uses: actionRef("actions/checkout"), with: { ref: "${{ github.event.pull_request.base.sha }}", "fetch-depth": 0 } },
+            ...runSteps(beforeScript),
+            { name: "Release the pull request's locks", env: { PR_NUMBER: "${{ github.event.pull_request.number }}" }, run: PR_UNLOCK_COMMAND },
+          ],
+        },
+      }
+    : {};
   const jobsDoc: Record<string, unknown> = {
     plan: {
-      if: prEnv ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
+      if: closes ? "github.event_name == 'pull_request' && github.event.action != 'closed'" : "github.event_name == 'pull_request'",
       "runs-on": GITHUB_RUNNER,
       container: image,
       permissions: withIdToken({ contents: "read" }),
@@ -406,6 +447,7 @@ function prLoopGithubDoc(
       permissions: { actions: "read", contents: "read", "pull-requests": "write", statuses: "write" },
       steps: noteSteps,
     },
+    ...lockJobs,
     ...Object.fromEntries(applyJobs),
     ...(prEnv ? prEnv.jobs : {}),
   };
@@ -415,6 +457,7 @@ function prLoopGithubDoc(
     : forgejo
       ? { pull_request: { branches: [branch] }, push: { branches: [branch], tags: [GREEN_TAG_PATTERN] } }
       : { pull_request: { branches: [branch] }, push: { branches: [branch] }, workflow_run: { workflows: [GREEN_TICK_WORKFLOW], types: ["completed"] }, workflow_dispatch: {} };
+  if (closes) on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
   if (prEnv) {
     on.pull_request = { branches: [branch], types: ["opened", "synchronize", "reopened", "closed"] };
     on.schedule = [{ cron: PR_ENV_SWEEP_CRON }];
@@ -428,10 +471,16 @@ function prLoopGithubDoc(
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
-    stages: ["plan", PR_PLAN_NOTE_JOB, ...applyNames, ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
+    stages: ["plan", PR_PLAN_NOTE_JOB, ...(locks ? [PR_LOCK_JOB, PR_UNLOCK_JOB] : []), ...applyNames, ...(prEnv ? ["env-up", PR_ENV_POST_JOB, "env-down", "env-sweep"] : [])],
     jobs: [
       { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
       { jobName: PR_PLAN_NOTE_JOB, component: "pull request plan note", stage: PR_PLAN_NOTE_JOB, needs: ["plan"] },
+      ...(locks
+        ? [
+            { jobName: PR_LOCK_JOB, component: "pull request lock", stage: PR_LOCK_JOB, needs: ["plan"] },
+            { jobName: PR_UNLOCK_JOB, component: "pull request unlock", stage: PR_UNLOCK_JOB, needs: [] },
+          ]
+        : []),
       ...applyNames.map((name, i) => ({
         jobName: name,
         component: name === "record" ? "merge record" : loop.applyBeforeMerge ? "apply before merge" : loop.waveGate ? `green apply, wave ${i}` : "green apply",

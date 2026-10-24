@@ -1,10 +1,10 @@
 ---
 title: Lock the Targets a Pull Request Reaches
-description: Turn on ci.locks so a pull request holds the components it reaches until it merges or closes, add the lock job on GitHub, and release a stuck lock with chant unlock
+description: Turn on ci.locks so a pull request holds the components it reaches until it merges or closes, let the generated pipeline lock and unlock, and release a stuck lock with chant unlock
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/target-locks/.
-  Add `"locks": "plan"` to the `ci` block of `chant.workspace.json`, add the lock and unlock jobs this page shows to the pull-request workflow, and open a pull request with both.
+  Add `"locks": "plan"` to the `ci` block of `chant.workspace.json`, regenerate the pull-request workflow so it has the lock and unlock jobs, and open a pull request with both.
   Show me `npx chant lock --list` before and after.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -23,68 +23,20 @@ Set `ci.locks` in `chant.workspace.json`:
 }
 ```
 
-`plan` makes the plan take the locks, through the lock job below. `apply` leaves the plan alone. Then only `chant lock` and an [apply before merge](/chant/guide/apply-before-merge/) take locks ([#4301](https://github.com/INTENTIUS/chant/issues/4301)). Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L791)). It reads the field at base ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ci-locks.ts#L15)), so the pull request that adds it does not lock yet. Set `minReader` to `0.124.36` or newer.
+`plan` makes the plan take the locks, through the generated lock job. `apply` leaves the plan alone. Then only `chant lock` and an [apply before merge](/chant/guide/apply-before-merge/) take locks ([#4301](https://github.com/INTENTIUS/chant/issues/4301)). Under either value, `chant components pr-apply` refuses with `locked` when another open pull request holds a component it reaches, and applies nothing ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/cli/handlers/pr.ts#L791)). It reads the field at base ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ci-locks.ts#L15)), so the pull request that adds it does not lock yet. Set `minReader` to `0.124.36` or newer.
 
-## Add the lock job on GitHub
+## The generated jobs
 
-The plan job runs the pull request's code, so it writes nothing to `chant/lifecycle`. The lock job runs the target branch's code instead. It reads the components the plan selected from the plan job's report and locks them.
+With `ci.locks: plan` in the declaration, `chant build --components --pr-loop --generate github` (or `forgejo`) writes two more jobs into the pull-request workflow ([source](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/src/components/generate-pipeline.ts)). Regenerate the workflow after you set the field. Without `ci.locks` the workflow is unchanged.
 
-Add this job to the generated workflow, beside the plan job. `chant-pr-plan` is the artifact the plan job keeps. Give it the same setup steps as the plan job, so `chant` is installed.
+| Job | Runs | Command |
+| --- | --- | --- |
+| `lock` | After the plan job succeeds | `chant lock --from-report .chant/pr/pr-plan.json --stage plan` |
+| `unlock` | When the pull request closes | `chant unlock --pr <n>` |
 
-```yaml
-  lock:
-    if: github.event_name == 'pull_request'
-    needs: plan
-    runs-on: ubuntu-latest
-    container: node:22
-    permissions:
-      contents: write
-      pull-requests: read
-      statuses: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 0
-      - run: npm ci
-      - uses: actions/download-artifact@v4
-        with:
-          name: chant-pr-plan
-          path: .chant/pr
-      - name: Lock the components the plan selected
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          npx chant lock --from-report .chant/pr/pr-plan.json
-          --pr ${{ github.event.pull_request.number }}
-          --head ${{ github.event.pull_request.head.sha }}
-          --stage plan --forge github
-```
+The plan job runs the pull request's code, so it writes nothing to `chant/lifecycle`. Both new jobs check out the target branch's commit instead, so they run the target branch's `chant` and none of the pull request's code. The `lock` job takes the plan's report from the plan job's outputs and locks the components it selected. The `unlock` job needs no report. The workflow now also fires on `closed`, and the plan job skips that event.
 
-Release the locks when a pull request closes, in a workflow of its own so the plan does not run on close:
-
-```yaml
-# .github/workflows/chant-pr-unlock.yml
-name: chant-pr-unlock
-on:
-  pull_request:
-    types: [closed]
-jobs:
-  unlock:
-    runs-on: ubuntu-latest
-    container: node:22
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - run: npm ci
-      - name: Release the pull request's locks
-        run: npx chant unlock --pr ${{ github.event.pull_request.number }}
-```
-
-Each new push to the pull request plans again and locks again. A component the new head no longer reaches is released ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L281)). The unlock workflow tidies the file. Without it, a lock whose pull request closed still reads as released, because `--forge` asks GitHub whether each holder is open ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L285)).
+Each new push to the pull request plans again and locks again. A component the new head no longer reaches is released ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L281)). The unlock job tidies the file. Without it, a lock whose pull request closed still reads as released, because `--forge` asks GitHub whether each holder is open ([source](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/lifecycle/target-lock.ts#L285)).
 
 A held pull request does not lock again on its own when the holder merges. Re-run its lock job, or push to it.
 
@@ -92,7 +44,7 @@ A fork's pull request gets a read-only token, so its lock job cannot push `chant
 
 To block the merge of a pull request whose components another one holds, make `chant/lock` a required status in the branch protection rule.
 
-On GitLab and Forgejo the commands are the same. Run `chant lock` in a job that checks out the target branch and has the plan job's `.chant/pr` as an artifact, with `--forge gitlab` or `--forge forgejo`.
+Forgejo gets the same jobs from the same generator. On GitLab the commands are the same, but the pipeline does not write the jobs yet. Run `chant lock` in a job that checks out the target branch and has the plan job's `.chant/pr` as an artifact, with `--forge gitlab`.
 
 ## See who holds what
 
