@@ -1,0 +1,98 @@
+---
+title: Drift Record
+description: One record per resource instance for what each engine's read found, in one shape for chant, terraform, tofu and choudoufu members.
+diataxis: reference
+---
+
+A drift record says what one read found for one resource instance ([#4451](https://github.com/INTENTIUS/chant/issues/4451)). Chant's live diff, deep observe, component status, a stock terraform root's state and plan, and a choudoufu root's `live-plan`, `live-ls` and plan each become the same records, so a renderer colours a card from one pair, `(status, read)`, with no per-engine branches.
+
+The module is `@intentius/chant/drift-record`, and the terraform family's adapters are `@intentius/chant-lexicon-terraform/drift-record`. Both bundle with the change-set code, under the same guard, described [below](#bundling). The schema ships at `src/workspace/drift.schema.json`, `$id` `https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json`. The document is versioned by its `drift: "v1"` field rather than `contract`. Within the version, fields are only added.
+
+Change sets keep holding planned changes only. A drift record authorizes nothing and is bound to no gate.
+
+## The record
+
+| Field | Holds |
+|---|---|
+| `member` | the workspace member, or a choudoufu estate |
+| `engine` | `terraform`, `tofu`, `choudoufu`, `chant`, `warden`, `sql`, `pulumi` or `plunge` |
+| `address` | the engine's own address, at instance level: `aws_eip.pool[0]`, a Pulumi URN, a chant entity name |
+| `resourceType` | the resource type, when the read reports one |
+| `node` | the graph node, by the change set's rule (`graphNodeFor`): an instance of a `count` or `for_each` block is on `<blockNode>[0]` or `<blockNode>["a"]`, an instance under an expanded module call is on its block node. `null` when the graph holds none, and for a Pulumi URN until a URN-to-graph rule exists |
+| `instanceOf` | on a record whose `node` is an instance node, the block node |
+| `observedAt` | RFC 3339, per record |
+| `read` | `state`, `plan`, `refresh`, `live-read` or `ownership` |
+| `fellBackFrom` | the read that was asked for and failed, what `RootRead.depth` holds when `fellBackTo` is set |
+| `status` | see [Statuses](#statuses) |
+| `unobserved` | on `not-observed` only: `{ reason, detail, queried }` |
+| `attributes` | on `drifted` only: `{ path, before, after, sensitive }`, sorted by path |
+| `attributesUnobserved` | on `in-sync` or `drifted`: presence is known and the attributes are not, as after a failed deep read |
+| `ownership` | `{ verdict, by, markerOnObject, ownedBy, adopt }`, with `verdict` one of `owned`, `foreign`, `adoptable`, `unknown` and `by` one of `marker`, `derived`, `record`, `cache`, `state`, `label` |
+| `evidence` | `{ tool, version, command, engineCode }`. `engineCode` keeps the engine's own token, such as `UNOWNED`, `NEEDS_DISCOVERY` or `ABSENT` |
+
+### Statuses
+
+| Status | Means |
+|---|---|
+| `in-sync` | present, and nothing the read compares differs |
+| `drifted` | present, and something differs |
+| `pending` | declared and confirmed absent, never deployed |
+| `missing` | recorded or deployed, and now gone |
+| `unclaimed` | something live sits at a declared identity without this member's marker |
+| `undeclared` | live or recorded, and not declared |
+| `runtime` | live, undeclared and expected, such as a controller's child |
+| `recorded` | in the engine's state |
+| `not-observed` | the read could not say; `unobserved.reason` says why |
+
+`driftRecord` builds every record and refuses one that breaks a rule, with a `DriftRecordError` naming the member, the address, the read, the status and the rule:
+
+- A `state` read is `recorded`, `pending` or `not-observed`, never `in-sync` or `drifted`. State says what the last apply recorded, not what the account holds.
+- `not-observed` always carries a reason from the [observation contract](/chant/lexicon-authoring/observation-contract/), and is never absence. `not-reached` is the reason a stream gives an address it expected and never heard about.
+- An attribute the planner marked sensitive keeps its path and drops both values. A second pass does the same for any path with a key segment `isSensitiveKey` names, such as `db_password` or `tags["api_token"]`.
+
+In an attribute, `before` is what was expected (the record, the snapshot, the declaration) and `after` is what the read found. Values are optional; a card needs only the paths.
+
+## The document
+
+| Field | Holds |
+|---|---|
+| `$schema` | the schema's `$id` |
+| `drift` | `"v1"` |
+| `chant` | the chant that wrote it, when known |
+| `records` | sorted by member, address and read, one per `(member, address, read)`; a later record replaces an earlier one |
+| `counts` | records per status, every status present |
+
+`driftDocumentDigest` hashes the records without `observedAt` and `evidence`. It is for a WatchOp that keeps its document as evidence in its own run ledger; no gate binds it.
+
+`mapDriftToGraph` fills `node` and `instanceOf` against a member's graph. `rollupDriftByBlock` groups records by block node and rolls each block up with core's `rollupInstances` over `DRIFT_INSTANCE_ROLLUP`: `not-observed`, `drifted`, `missing`, `unclaimed`, `undeclared`, `pending`, `in-sync`, `recorded`, `runtime`, first match wins.
+
+## Adapters
+
+| Source | Function | Read | Status |
+|---|---|---|---|
+| `chant lifecycle diff --live` | `liveDiffDriftRecords` | `live-read` | unchanged and newly observed: in-sync. Drifted since snapshot: drifted. Missing: pending. Disappeared: missing. Orphan: undeclared. Runtime children: runtime. Unobserved: not-observed |
+| deep observe | `deepDiffDriftRecords`, `mergeDeepDrift` | `live-read` | a changed or absent path: drifted with paths. Laid over the thin read, a deep hole becomes `attributesUnobserved` and leaves the status alone |
+| `chant components status --live` | `componentStatusDriftRecords` | `live-read` | reconciled: in-sync. Drifted: drifted. Stale: missing. Unrecorded: drifted when live, pending when not. Unknown: not-observed |
+| `terraform show -json` over state | `terraformStateDriftRecords` | `state` | in state: recorded. Declared and not in state: pending |
+| `terraform show -json` of a plan | `terraformPlanDriftRecords` | `plan` | a `resource_drift` update: drifted. A drift delete: missing. A create with no prior row: pending. A delete with no drift: undeclared. Otherwise in-sync |
+| `choudoufu live-plan -json` | `choudoufuLivePlanDriftRecords` | `ownership` | bound: in-sync, owned by its source. Unowned and adoptable: unclaimed. `ABSENT`: pending. Any other omission: not-observed, `VERIFIED_NOT_IMPORTABLE` as `read-failed` and `OUT_OF_SCOPE` as `filtered`. Foreign: undeclared. Controller held: runtime |
+| `choudoufu live-ls -json` | `choudoufuLiveLsDriftRecords`, `choudoufuLiveDriftRecords` | `ownership` | `declared: false`: undeclared. A gap live-plan did not answer: not-observed |
+| live-plan with a plan | `choudoufuLivePlusPlanDriftRecords` | `plan` | bound with a planned update or replace: drifted with paths, live-plan's ownership kept |
+
+An `UNOWNED` omission with no `unowned[]` row is not-observed, `read-failed`, with `engineCode: "UNOWNED"`: nothing in the document says what holds the identity.
+
+## Streaming
+
+A read can stream its records as NDJSON, one object per line, in the layout choudoufu's `live-plan -resource` writes. Every line has a `type`:
+
+| `type` | Holds |
+|---|---|
+| `drift-start` | `drift`, `member`, `engine`, `read`, and `expected`, the addresses it will report, each a bare address or `{ address, node, instanceOf, resourceType }`. Optionally `resource`, `fellBackFrom`, `at` and `evidence` |
+| `drift-record` | a record's own fields. A later line for the same `(member, address, read)` replaces the earlier one |
+| `drift-settle` | `drift`, `member`, `engine`, `read`, and `counts` per status (a status with none may be left out). Optionally `reads`, the engine's own account of what the read cost, carried and never interpreted, `at`, and `notReached` |
+
+At settle, every expected address no record answered, under any read, becomes `not-observed` with reason `not-reached`. Between start and settle a renderer shows an unanswered card as reading, which is not a status. `encodeDriftLine`, `decodeDriftLine`, `decodeDriftLines`, `driftStart`, `driftSettle` and `foldDriftLines` read and write the stream.
+
+## Bundling
+
+`@intentius/chant/drift-record` and `@intentius/chant-lexicon-terraform/drift-record` import the plan hashing code, the observation contract's reason list, the change-set graph's node rule, the instance rollup, the sensitive-key list and the plan projection, and nothing else. `change-set-bundle.test.ts` lists every module in that bundle and fails when TypeScript, esbuild, zod or chant's fold, lint or codegen code joins it.

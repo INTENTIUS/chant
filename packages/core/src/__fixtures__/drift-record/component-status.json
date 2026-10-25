@@ -1,0 +1,13 @@
+{
+  "env": "prod",
+  "malformedLedgerLines": 0,
+  "rows": [
+    { "component": "api", "env": "prod", "reconciliation": "reconciled", "detail": "recorded 2026-10-01T00:00:00Z (digest sha256:aa), live and consistent", "live": true },
+    { "component": "web", "env": "prod", "reconciliation": "drifted", "detail": "recorded 2026-10-01T00:00:00Z (digest sha256:bb), but the live digest is sha256:cc", "live": true },
+    { "component": "jobs", "env": "prod", "reconciliation": "stale", "detail": "recorded 2026-10-01T00:00:00Z (digest sha256:dd), but nothing observed live now", "live": false },
+    { "component": "edge", "env": "prod", "reconciliation": "unrecorded", "detail": "live and chant-owned, but no release record exists — deployed outside the recorded path", "live": true },
+    { "component": "docs", "env": "prod", "reconciliation": "unrecorded", "detail": "no release record and nothing observed live", "live": false },
+    { "component": "search", "env": "prod", "reconciliation": "unknown", "detail": "recorded, but live state could not be observed — no credentials", "unobserved": { "reason": "no-credentials", "detail": "AWS_PROFILE unset" } },
+    { "component": "mail", "env": "prod", "reconciliation": "unknown", "detail": "recorded; live status not queried (pass --live to reconcile)" }
+  ]
+}
