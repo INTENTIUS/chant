@@ -407,6 +407,19 @@ describe("a dependent planned on its upstream's planned outputs (#3999)", () => 
     expect(w.applied).toEqual(["a", "app"]);
   });
 
+  test("each member names every upstream output it reads, the known ones too, and the apply report keeps them", async () => {
+    const w = world();
+    w.versions.a = "v2";
+    const set = await planPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod" });
+    // a reads net, which is not in the change: a read of a deployed output is a read too.
+    expect(set.members.map((m) => [m.member, m.reads])).toEqual([
+      ["a", [{ upstream: "net", outputs: ["cidr"] }]],
+      ["app", [{ upstream: "a", outputs: ["id"] }]],
+    ]);
+    const applied = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set });
+    expect(applied.members.find((m) => m.member === "app")?.reads).toEqual([{ upstream: "a", outputs: ["id"] }]);
+  });
+
   test("an output the change moves: the dependent plans on the moved value, not the one standing now", async () => {
     const w = world();
     w.versions.a = "v2";
@@ -432,6 +445,7 @@ describe("a dependent planned on its upstream's planned outputs (#3999)", () => 
       ["a", undefined],
       ["app", ["a.id"]],
     ]);
+    expect(set.members.find((m) => m.member === "app")?.reads).toEqual([{ upstream: "a", outputs: ["id"], unknown: ["id"] }]);
 
     // No approval of the plan made after a applied: a applies, app waits.
     const waiting = await applyPrSet({ components: ESTATE, plan: plan(), registry: w.registry, env: "prod", set, decideRound: decideWith(new Set()) });

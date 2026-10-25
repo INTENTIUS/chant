@@ -79,6 +79,7 @@ import {
   PR_REPORT_SCHEMA_ID,
   type PrApproval,
   type PrMember,
+  type PrMemberRead,
   type PrRefusal,
   type PrRound,
   type PrReport,
@@ -89,6 +90,7 @@ import {
   deployContext,
   movedWiringReferences,
   unresolvedWiringReferences,
+  wiringReads,
   type DriverComponent,
   type DriverComponentResult,
 } from "./driver";
@@ -182,6 +184,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const parts: ChangeSetPart[] = [];
   const componentOf = new Map<string, string>();
   const unknownOf = new Map<string, { unknown: string[]; build: string[] }>();
+  const readsBy = new Map<string, PrMemberRead[]>();
   const plans: Record<string, Record<string, unknown>> = {};
   const shapes: Record<string, PlanShape> = {};
   let failed = false;
@@ -228,6 +231,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       const component = byName.get(p.component)!;
       const unknown = unknownInputsOf(component, outputs, inChange);
       if (unknown.unknown.length > 0 || unknown.build.length > 0) unknownOf.set(p.component, unknown);
+      const reads = readsOf(component, outputs);
+      if (reads.length > 0) readsBy.set(p.component, reads);
       if ("error" in p) {
         failed = true;
         plannedBy.set(p.component, undefined);
@@ -252,6 +257,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const members: PrMember[] = doc.members.map((m) => {
     const component = componentOf.get(m.member) ?? m.member;
     const unknown = unknownOf.get(component);
+    const reads = readsBy.get(component);
     return {
       member: m.member,
       component,
@@ -261,6 +267,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       ...(m.error ? { error: m.error } : {}),
       ...(unknown?.unknown.length ? { unknownInputs: unknown.unknown } : {}),
       ...(unknown?.build.length ? { buildInputs: unknown.build } : {}),
+      ...(reads ? { reads } : {}),
     };
   });
   const sorted = (r: Record<string, string[]>) => Object.fromEntries(Object.entries(r).sort(([a], [b]) => a.localeCompare(b)));
@@ -300,6 +307,31 @@ function unknownInputsOf(
     }
   }
   return { unknown: [...unknown].sort(), build: [...build].sort() };
+}
+
+/**
+ * Every other component's output `component`'s steps read, one entry per
+ * upstream, sorted: what the report's `reads` says. A read whose value
+ * `outputs` holds is listed as well as one it lacks (`unknown`), so the
+ * report names each read between components whether or not the plan knew
+ * its value. A component's reads of its own outputs are left out.
+ */
+function readsOf(component: DriverComponent, outputs: Record<string, Record<string, unknown>>): PrMemberRead[] {
+  const by = new Map<string, { outputs: Set<string>; unknown: Set<string> }>();
+  for (const step of capabilitySteps(component.deploy)) {
+    const { kind: _kind, ...rest } = step;
+    for (const r of wiringReads(rest, outputs)) {
+      if (r.source === component.name) continue;
+      const name = r.ref.slice(r.source.length + 1);
+      const at = by.get(r.source) ?? { outputs: new Set<string>(), unknown: new Set<string>() };
+      by.set(r.source, at);
+      at.outputs.add(name);
+      if (!r.known) at.unknown.add(name);
+    }
+  }
+  return [...by.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([upstream, r]) => ({ upstream, outputs: [...r.outputs].sort(), ...(r.unknown.size > 0 ? { unknown: [...r.unknown].sort() } : {}) }));
 }
 
 /**

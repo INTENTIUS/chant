@@ -392,6 +392,18 @@ export function unresolvedWiringReferences(
 }
 
 /**
+ * Every cross-component reference in `input`, sorted by `ref` and each once,
+ * with whether `componentOutputs` holds a value for it. A pull request's
+ * report records each as a read between components, known at plan or not.
+ */
+export function wiringReads(
+  input: Record<string, unknown>,
+  componentOutputs: Record<string, Record<string, unknown>>,
+): Array<WiringReference & { known: boolean }> {
+  return wiringReferences(input).map(({ source, ref, publish, value }) => ({ source, ref, publish, known: value(componentOutputs) !== undefined }));
+}
+
+/**
  * Every cross-component reference in `input`, each once, sorted by `ref`,
  * with the value it resolves to against a given outputs map.
  */
