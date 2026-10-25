@@ -1,0 +1,90 @@
+/**
+ * The pulumi lexicon's `readDrift` (#4455), what `chant workspace drift
+ * --member <pulumi member>` reaches through `chant lifecycle drift` in the
+ * member's reader project: it dispatches to #4453's runner and adapters,
+ * `pulumi refresh --preview-only --target` per resource on a stock member
+ * and `plunge drift --resource --stream` on a member on plunge, and wraps
+ * the records in one stream. The runners are fakes over the hand-written
+ * fixtures; no binary runs here.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, test } from "vitest";
+import { foldDriftLines, type ReadDriftOptions } from "@intentius/chant/drift-record";
+import { readPulumiDrift } from "./drift-read";
+import { pulumiPlugin } from "./plugin";
+import type { PulumiRunner } from "./run";
+
+const testdata = join(import.meta.dirname, "testdata");
+const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
+const AT = "2026-10-25T12:00:00Z";
+const assets = "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets";
+const role = "urn:pulumi:dev::site::aws:iam/role:Role::web";
+
+function fake(answer: (args: string[]) => string): { run: PulumiRunner; calls: string[][] } {
+  const calls: string[][] = [];
+  return {
+    calls,
+    run: async (args) => {
+      calls.push(args);
+      return { stdout: answer(args) };
+    },
+  };
+}
+
+const never = fake(() => {
+  throw new Error("this binary must not run");
+});
+
+function options(dir: string, extra: Partial<ReadDriftOptions> = {}): ReadDriftOptions {
+  return { member: "site", projectRoot: dir, config: { pulumi: { member: { dir, label: "site" } } }, observedAt: AT, ...extra };
+}
+
+describe("readPulumiDrift", () => {
+  test("the plugin has a drift read", () => {
+    expect(typeof pulumiPlugin.readDrift).toBe("function");
+  });
+
+  test("--resource on a stock member: one refresh --preview-only --target, as one stream", async () => {
+    const pulumi = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const dir = join(testdata, "pulumi-preview");
+    const answer = await readPulumiDrift(options(dir, { resource: assets }), { run: pulumi.run, plunge: never.run });
+    if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
+    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--target", assets]]);
+    expect(answer.lines.map((l) => l.type)).toEqual(["drift-start", "drift-record", "drift-settle"]);
+    expect(answer.lines[0]).toMatchObject({ member: "site", engine: "pulumi", read: "refresh", resource: assets, expected: [assets] });
+    const { document } = foldDriftLines(answer.lines);
+    expect(document.records.map((r) => [r.address, r.status])).toEqual([[assets, "drifted"]]);
+  });
+
+  test("a member on plunge reads each resource in its export with plunge drift --resource --stream, never pulumi", async () => {
+    const plunge = fake((args) => text("plunge-drift", args[2] === assets ? "assets-drifted.ndjson" : "role-in-sync.ndjson"));
+    const dir = join(testdata, "plunge-member");
+    const answer = await readPulumiDrift(options(dir), { run: never.run, plunge: plunge.run });
+    if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
+    expect(plunge.calls).toEqual([assets, role].map((u) => ["drift", "--resource", u, "--stream", "--member", "site"]));
+    expect(answer.lines[0]).toMatchObject({ engine: "plunge", read: "refresh" });
+    const { document } = foldDriftLines(answer.lines);
+    expect(document.records.map((r) => [r.address, r.status]).sort()).toEqual([
+      [role, "in-sync"],
+      [assets, "drifted"],
+    ].sort());
+  });
+
+  test("--resource on a member on plunge reads that URN alone", async () => {
+    const plunge = fake(() => text("plunge-drift", "assets-drifted.ndjson"));
+    const answer = await readPulumiDrift(options(join(testdata, "plunge-member"), { resource: assets }), { run: never.run, plunge: plunge.run });
+    expect("lines" in answer).toBe(true);
+    expect(plunge.calls).toEqual([["drift", "--resource", assets, "--stream", "--member", "site"]]);
+  });
+
+  test("a read other than refresh is refused, and so is a project with no pulumi member", async () => {
+    const dir = join(testdata, "pulumi-preview");
+    expect(await readPulumiDrift(options(dir, { read: "state" }), { run: never.run })).toEqual({
+      refused: { code: "read-unsupported", message: "a Pulumi member answers refresh, not state" },
+    });
+    const none = await readPulumiDrift({ member: "site", projectRoot: dir, config: {}, observedAt: AT });
+    expect("refused" in none && none.refused.code).toBe("no-drift-read");
+    expect(never.calls).toEqual([]);
+  });
+});

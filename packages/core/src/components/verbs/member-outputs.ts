@@ -58,11 +58,14 @@
  *   `live-plan-set -json` over the member's root, its plan's
  *   `planned_values.outputs` with every output whose `output_changes` entry
  *   marks any part `after_unknown` named unknown (`terraformPlannedOutputs`).
- * - `pulumi`: not written yet (chant#4455's Pulumi half, after chant#4453).
- *   It plugs in as another source with `kinds: ["pulumi"]`: applied values
- *   from `pulumi stack output --json --show-secrets`, planned values from
- *   `pulumi preview --json`, where an output the preview cannot know is
- *   unknown. Nothing in this module or in the consumer changes for it.
+ * - `pulumi` (the pulumi lexicon, `pulumiOutputSource`): applied values
+ *   from `pulumi stack output --json --show-secrets=false`, or from the
+ *   member's checked-in `stack-export.json` when chant must not run pulumi
+ *   (`CHANT_PULUMI_APPLIED_OUTPUTS=export`); planned values from `pulumi
+ *   preview --json`, the stack step's outputs, where an output holding
+ *   Pulumi's unknown sentinel is unknown. Secret outputs are left out of
+ *   both. A member on plunge runs the same commands under `plunge`.
+ *   Nothing in this module or in the consumer changes for it.
  *
  * ## Run reads, it never applies
  *
@@ -158,7 +161,7 @@ export class EngineOutputSourceMissingError extends Error {
     super(
       `${MEMBER_OUTPUTS_KIND}: member "${member}" is kind ${kind}, and no loaded lexicon reads that engine's outputs` +
         (available.length > 0 ? ` (loaded: ${available.join(", ")})` : "") +
-        `. ${kind === "choudoufu" ? 'Add "terraform" to the project\'s lexicons.' : "Load the lexicon that drives it."}`,
+        `. ${kind === "choudoufu" ? 'Add "terraform" to the project\'s lexicons.' : kind === "pulumi" ? 'Add "pulumi" to the project\'s lexicons.' : "Load the lexicon that drives it."}`,
     );
     this.name = "EngineOutputSourceMissingError";
   }

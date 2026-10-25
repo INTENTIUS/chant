@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+      "newState": {
+        "urn": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack",
+        "outputs": {
+          "awsEndpoint": "web-old.execute-api.localhost.localstack.cloud",
+          "apiKey": { "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270", "ciphertext": "[secret]" }
+        }
+      }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+      "newState": {
+        "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+        "custom": true,
+        "id": "web-old",
+        "type": "aws:apigatewayv2/api:Api",
+        "parent": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+        "inputs": { "name": "web", "protocolType": "HTTP" }
+      }
+    }
+  ],
+  "changeSummary": { "same": 2 }
+}
