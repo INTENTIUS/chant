@@ -1,0 +1,62 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": { "time": "2026-10-25T09:00:00Z", "magic": "x", "version": "v3.140.0" },
+    "resources": [
+      { "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev", "custom": false, "type": "pulumi:pulumi:Stack" },
+      { "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0", "custom": true, "id": "prov-1", "type": "pulumi:providers:aws" },
+      {
+        "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "id": "assets-4f1c",
+        "type": "aws:s3/bucket:Bucket",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+        "inputs": { "acl": "private" }
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site::site",
+        "custom": false,
+        "type": "my:web:Site",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site$pulumi:providers:aws::site-east",
+        "custom": true,
+        "id": "prov-2",
+        "type": "pulumi:providers:aws",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site$aws:s3/bucketPolicy:BucketPolicy::site-policy",
+        "custom": true,
+        "id": "assets-4f1c",
+        "type": "aws:s3/bucketPolicy:BucketPolicy",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site",
+        "provider": "urn:pulumi:dev::site::my:web:Site$pulumi:providers:aws::site-east::prov-2",
+        "dependencies": ["urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets"]
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn",
+        "custom": false,
+        "type": "my:web:Cdn",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
+        "custom": true,
+        "id": "E2EXAMPLE",
+        "type": "aws:cloudfront/distribution:Distribution",
+        "parent": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn",
+        "dependencies": ["urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets"]
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:iam/role:Role::old-deployer",
+        "custom": true,
+        "id": "old-deployer",
+        "type": "aws:iam/role:Role",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      }
+    ]
+  }
+}
