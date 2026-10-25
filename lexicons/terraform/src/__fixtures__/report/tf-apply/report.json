@@ -1,0 +1,338 @@
+{
+  "schema": "terragucci.report/v1",
+  "minor": 48,
+  "run": {
+    "project": "forgejo:3000/admin/demo-terragrunt",
+    "commit": "4439c0ffee",
+    "stage": "tf-apply",
+    "binary": "choudoufu",
+    "runtime": "ci",
+    "started": "2026-10-25T10:05:00Z",
+    "finished": "2026-10-25T10:05:00Z",
+    "job_url": "http://forgejo:3000/admin/demo-terragrunt/actions/runs/1",
+    "pull_request": "1"
+  },
+  "change_set": "jcs1-sha256:48ff3d6ad4d5cb31edd6cc22fd67bf02b3162687f75d21f6db3ef3ae411c7bbc",
+  "unit": "member",
+  "units": 3,
+  "totals": {
+    "create": 3,
+    "update": 1,
+    "replace": 0,
+    "delete": 0,
+    "read": 0,
+    "no-op": 0,
+    "forget": 0
+  },
+  "totals_roots": 3,
+  "groups": [
+    {
+      "id": "f1f19cf81a95",
+      "units": [
+        "estates/app"
+      ],
+      "outlier": true,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "+ aws_security_group.sg",
+          "action": "create",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "open",
+      "why": [
+        "outlier: read it on its own"
+      ]
+    },
+    {
+      "id": "ff0fa8d40f32",
+      "units": [
+        "estates/edge"
+      ],
+      "outlier": true,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "+ aws_route_table.rt",
+          "action": "create",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "open",
+      "why": [
+        "outlier: read it on its own"
+      ]
+    },
+    {
+      "id": "798d3a9502dd",
+      "units": [
+        "estates/network"
+      ],
+      "outlier": true,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "+ aws_subnet.new",
+          "action": "create",
+          "count": 1
+        },
+        {
+          "line": "~ aws_vpc.main: enable_dns_support",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "open",
+      "why": [
+        "outlier: read it on its own"
+      ]
+    }
+  ],
+  "roots": [
+    {
+      "path": "estates/app",
+      "binary": {
+        "name": "choudoufu"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:035c64a8e2dbaa66d06b3dc73fcbb41d304e8e0c0b4678c393083cf8e5ae9fff",
+      "counts": {
+        "create": 1
+      },
+      "group": "f1f19cf81a95",
+      "plan": {},
+      "reads": [
+        {
+          "upstream": "estates/network",
+          "data": "net",
+          "outputs": "planned",
+          "unknown": [
+            "subnet_id"
+          ],
+          "composed": true
+        }
+      ],
+      "job_url": "http://forgejo:3000/admin/demo-terragrunt/actions/runs/1",
+      "changes": [
+        {
+          "address": "aws_security_group.sg",
+          "type": "aws_security_group",
+          "action": "create",
+          "attributes": [
+            {
+              "path": "id",
+              "after": "sg-0c2d"
+            },
+            {
+              "path": "name",
+              "after": "demo-sg"
+            },
+            {
+              "path": "vpc_id",
+              "after": "vpc-0e3f"
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "open",
+      "why": [],
+      "composed": {
+        "wave": 1,
+        "module": "module.app"
+      }
+    },
+    {
+      "path": "estates/edge",
+      "binary": {
+        "name": "choudoufu"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:5e22262b5c68660c37a3d547ae89d46c95c67c494dccff1c52f9873999a9adfd",
+      "counts": {
+        "create": 1
+      },
+      "group": "ff0fa8d40f32",
+      "plan": {},
+      "reads": [
+        {
+          "upstream": "estates/app",
+          "data": "app",
+          "outputs": "planned",
+          "unknown": [
+            "sg"
+          ],
+          "composed": true
+        }
+      ],
+      "job_url": "http://forgejo:3000/admin/demo-terragrunt/actions/runs/1",
+      "changes": [
+        {
+          "address": "aws_route_table.rt",
+          "type": "aws_route_table",
+          "action": "create",
+          "attributes": [
+            {
+              "path": "id",
+              "after": "rtb-0f4a"
+            },
+            {
+              "path": "tags",
+              "after": {
+                "Name": "edge"
+              }
+            },
+            {
+              "path": "vpc_id",
+              "after": "vpc-0e3f"
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "open",
+      "why": [],
+      "composed": {
+        "wave": 1,
+        "module": "module.edge"
+      }
+    },
+    {
+      "path": "estates/network",
+      "binary": {
+        "name": "choudoufu"
+      },
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:2f5b9678160933175ce9772c423f2738c5b6b290f9027756c1b6c9e3c3fbab2d",
+      "counts": {
+        "create": 1,
+        "update": 1
+      },
+      "group": "798d3a9502dd",
+      "plan": {},
+      "job_url": "http://forgejo:3000/admin/demo-terragrunt/actions/runs/1",
+      "changes": [
+        {
+          "address": "aws_subnet.new",
+          "type": "aws_subnet",
+          "action": "create",
+          "attributes": [
+            {
+              "path": "arn",
+              "after": "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-0a1b"
+            },
+            {
+              "path": "cidr_block",
+              "after": "10.0.9.0/24"
+            },
+            {
+              "path": "id",
+              "after": "subnet-0a1b"
+            },
+            {
+              "path": "tags",
+              "after": {
+                "Name": "new"
+              }
+            }
+          ],
+          "fold": "open"
+        },
+        {
+          "address": "aws_vpc.main",
+          "type": "aws_vpc",
+          "action": "update",
+          "disruption": "in-place",
+          "attributes": [
+            {
+              "path": "enable_dns_support",
+              "before": true,
+              "after": false
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "open",
+      "why": [],
+      "composed": {
+        "wave": 1,
+        "module": "module.network"
+      }
+    }
+  ],
+  "waves": [
+    {
+      "number": 1,
+      "roots": [
+        "estates/app",
+        "estates/edge",
+        "estates/network"
+      ],
+      "set_digest": "jcs1-sha256:f7c0be9e84abf5fa7a605823e19263355a533e8de54b8b14c8461f50faff5081",
+      "approval": "not-requested",
+      "state": "applied",
+      "composed": {
+        "plan_digest": "jcs1-sha256:f7c0be9e84abf5fa7a605823e19263355a533e8de54b8b14c8461f50faff5081",
+        "members": [
+          {
+            "root": "estates/app",
+            "module": "module.app",
+            "apply": "applied",
+            "changes": {
+              "done": 1,
+              "planned": 1
+            },
+            "state": "written"
+          },
+          {
+            "root": "estates/edge",
+            "module": "module.edge",
+            "apply": "applied",
+            "changes": {
+              "done": 1,
+              "planned": 1
+            },
+            "state": "written"
+          },
+          {
+            "root": "estates/network",
+            "module": "module.network",
+            "apply": "applied",
+            "changes": {
+              "done": 2,
+              "planned": 2
+            },
+            "state": "written"
+          }
+        ]
+      }
+    }
+  ],
+  "named": [],
+  "holes": [],
+  "redaction": {
+    "marker": "(sensitive, redacted by terragucci)",
+    "values": 0
+  },
+  "compose": {
+    "roots": [
+      "estates/app",
+      "estates/edge",
+      "estates/network"
+    ],
+    "max": 3,
+    "wave": 1,
+    "estate": true
+  }
+}

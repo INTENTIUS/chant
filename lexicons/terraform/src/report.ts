@@ -30,7 +30,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetAttribute, type ChangeSetEntry, type ChangeSetPlanner } from "@intentius/chant/change-set";
+import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetDocument, type ChangeSetAttribute, type ChangeSetEntry, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
 
@@ -494,6 +494,8 @@ function rawChanges(plan: Json): Map<string, RawChange> {
 
 export interface TerraformReport {
   report: Json;
+  /** The change set whose digest `report.change_set` names: what behold reads beside the report. */
+  changeSet: ChangeSetDocument;
   /** The run's directory, relative to the project's own index: `yyyy/mm/<commit>/<stage>`. */
   path: string;
   row: IndexRow;
@@ -680,7 +682,7 @@ export function terraformReport(input: TerraformReportInput): TerraformReport {
     ...(run.pull_request_url ? { pull_request_url: run.pull_request_url } : {}),
     ...(run.job_url ? { job_url: run.job_url } : {}),
   };
-  return { report, path, row };
+  return { report, changeSet: doc, path, row };
 }
 
 // ---------------------------------------------------------------------------
@@ -716,7 +718,8 @@ export interface ReportStore {
 }
 
 /**
- * Write the run's `report.json` and add its row to the project's index
+ * Write the run's `report.json` and `change-set.json` (the document whose
+ * digest the report names, as `chant change-set` writes it), and add its row to the project's index
  * (`<project>/index.json`, paths relative to it) and to the prefix's
  * (`index.json`, paths starting at the project), the two places terragucci
  * writes. Returns the keys written.
@@ -729,6 +732,7 @@ export async function writeReport(store: ReportStore, r: TerraformReport): Promi
     keys.push(key);
   };
   await put(`${project}/${r.path}/report.json`, r.report);
+  await put(`${project}/${r.path}/change-set.json`, r.changeSet);
   for (const [key, path] of [[`${project}/index.json`, r.path], ["index.json", `${project}/${r.path}`]] as const) {
     await put(key, addToIndex(await store.read(key), { ...r.row, path }));
   }
