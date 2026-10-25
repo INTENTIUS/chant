@@ -34,6 +34,7 @@ import { fileURLToPath } from "node:url";
 import type { Capability } from "./capability";
 import type { RegistryLoginBackend } from "./verbs/publish-image";
 import type { ArtifactStorageBackend } from "./verbs/publish-artifact";
+import type { EngineOutputSource } from "./verbs/member-outputs";
 
 /**
  * Manifest for a packaged capability plugin — the capability-side analogue
@@ -103,6 +104,15 @@ export interface CapabilityPlugin {
    * `registryBackends`, not capabilities, so several plugins may contribute.
    */
   storageBackends?(): ArtifactStorageBackend[];
+
+  /**
+   * Engine output sources this plugin contributes to core's `member-outputs`
+   * verb (#4455): how another workspace member's outputs are read, applied
+   * and planned, for the member kinds the source names (terraform:
+   * `choudoufu`). Like `registryBackends`, not capabilities, so several
+   * engines may contribute.
+   */
+  engineOutputSources?(): EngineOutputSource[];
 
   /** Optional initialization hook, called once after load (mirrors `LexiconPlugin.init`). */
   init?(): void | Promise<void>;

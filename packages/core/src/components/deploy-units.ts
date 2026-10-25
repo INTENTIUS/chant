@@ -64,6 +64,10 @@ export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   // A Config Connector manifest applied over REST (#4273). Its unit is the
   // step's `stack`, the member its plan names.
   { kind: "gcp-apply", field: "stack", lexicon: "gcp" },
+  // Another workspace member's outputs (#4455). Its unit is the member, so a
+  // change signal naming the member puts the component in the change. No
+  // lexicon observes it: the member's own pipeline reports its status.
+  { kind: "member-outputs", field: "member", lexicon: "workspace" },
 ];
 
 /** One resolved unit a component's deploy composition targets. */

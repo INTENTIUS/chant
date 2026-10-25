@@ -63,13 +63,27 @@
  *
  * chant's waves stay the order. Each root is its own one-root set, so
  * choudoufu's wave over it is always wave 1.
+ *
+ * ## A choudoufu member's outputs, for another member (#4455)
+ *
+ * The plugin also contributes {@link choudoufuOutputSource} to core's
+ * `member-outputs` verb (`CapabilityPlugin.engineOutputSources`), which is
+ * how a chant member's parameters read a choudoufu member of the same
+ * workspace: `choudoufu output -json` in the member's directory for the
+ * applied values, and `live-plan-set -json` over it for the planned ones,
+ * read the way `plan` reads a root's (`terraformPlannedOutputs`). The member
+ * is not a `terraform.roots` entry of the reading project; its directory
+ * comes from the workspace declaration.
  */
 
 import type { Capability, DeployContext, CapabilityPlan, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
+import type { EngineMemberRef, EngineOutputSource, EnginePlannedOutputs } from "@intentius/chant/components/verbs/member-outputs";
 import {
+  choudoufuMemberOutputs,
+  choudoufuMemberPlanSet,
   choudoufuPlanSet,
   choudoufuWaveApply,
   choudoufuWaveRoot,
@@ -162,6 +176,29 @@ export function terraformPlannedOutputs(json: unknown): PlannedOutputs {
   }
   return { known, unknown };
 }
+
+/**
+ * What a choudoufu member's set plan says about its outputs (#4455), for
+ * `member-outputs`: {@link terraformPlannedOutputs} of the embedded plan,
+ * chant's digest of that plan, and whether it has changes to apply.
+ */
+export function choudoufuMemberPlannedOutputs(set: { planDigest: string; changed: boolean; json: unknown }): EnginePlannedOutputs {
+  return { ...terraformPlannedOutputs(set.json), planDigest: set.planDigest, changes: set.changed };
+}
+
+const memberArgs = (ref: EngineMemberRef) => ({ member: ref.member, dir: ref.dir, projectRoot: ref.workspaceRoot });
+
+/**
+ * The choudoufu engine's member outputs (#4455): what core's
+ * `member-outputs` reads a workspace member of kind `choudoufu` through.
+ * Applied values from the member's root outputs (the record store, for a
+ * live estate); planned values from its one-root set plan.
+ */
+export const choudoufuOutputSource: EngineOutputSource = {
+  kinds: ["choudoufu"],
+  applied: (_ctx, ref) => choudoufuMemberOutputs(memberArgs(ref)),
+  planned: async (_ctx, ref) => choudoufuMemberPlannedOutputs(await choudoufuMemberPlanSet(memberArgs(ref))),
+};
 
 /**
  * The member of a root whose `vars` read outputs not known yet (#3999): no
@@ -319,5 +356,8 @@ export const terraformCapabilityPlugin: CapabilityPlugin = {
   },
   families(): Record<string, readonly string[]> {
     return TERRAFORM_VERB_FAMILIES;
+  },
+  engineOutputSources(): EngineOutputSource[] {
+    return [choudoufuOutputSource];
   },
 };
