@@ -42,6 +42,15 @@
  * naming the roots it waits on and no artifact, and the run that applies it
  * plans it once their outputs are known.
  *
+ * ## The plan's shape (#4436)
+ *
+ * `plan` also answers `shape`, `terraformPlanShape` over `show -json`: each
+ * resource the plan changes with its action, type, replacement, the
+ * attributes that differ and the ones unknown after apply. Core's
+ * `coveredRound` compares it with the shape of a later plan of the root. A
+ * root waiting on outputs not known yet has no plan, so no shape, and stays
+ * uncovered.
+ *
  * ## choudoufu roots in a gated wave (#3459)
  *
  * A live choudoufu root that `live-plan-set` can plan as chant would (no
@@ -78,6 +87,7 @@ import {
   terraformOutputs,
   terraformPlan,
 } from "../op/activities/terraform";
+import { terraformPlanShape } from "../plan-shape";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -265,7 +275,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
         planDigest: set.planDigest,
         choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
       };
-      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json) };
+      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
     }
     const { changeSet, json, ...planned } = await planRoot(input, targets);
     return {
@@ -274,6 +284,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       artifact: planned,
       ...(changeSet ? { changeSet } : {}),
       outputs: terraformPlannedOutputs(json),
+      shape: terraformPlanShape(json, input.root),
       ...(targets ? { targets } : {}),
     };
   },
