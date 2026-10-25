@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { addToIndex, dirStore, estateOfDir, httpStore, moduleEstates, runFactsFromEnv, slicePlan, terraformReport, topModule, writeReport } from "./report";
+import { addToIndex, atmosOutputReads, atmosStackReads, dirStore, estateOfDir, httpStore, moduleEstates, runFactsFromEnv, slicePlan, terraformReport, topModule, writeReport } from "./report";
 import { parseReportArgs } from "./commands";
 
 const rc = (address: string, module: string, type: string, name: string, actions: string[], change: Record<string, unknown>) => ({
@@ -209,6 +209,75 @@ describe("reads between the composed modules", () => {
     }
     expect(moduleEstates(repo, "estates", ["network", "app", "edge", "gone"])).toEqual({ network: "tgc-network", app: "tgc-app" });
     expect(estateOfDir(join(repo, "nowhere"))).toBeUndefined();
+  });
+});
+
+describe("reads from an Atmos stack's !terraform.output", () => {
+  const STACK = [
+    "# One stack, three components.",
+    "vars:",
+    "  stage: dev",
+    "components:",
+    "  terraform:",
+    "    network:",
+    "      vars:",
+    "        subnet_a_cidr: 10.0.1.0/24",
+    "    app:",
+    "      settings:",
+    "        depends_on:",
+    "          1:",
+    "            component: network",
+    "      vars:",
+    "        vpc_id: !terraform.output network vpc_id",
+    "        subnet_id: !terraform.output network dev '.subnet_id' # with a stack",
+    "    edge:",
+    "      vars:",
+    "        listener_port: !terraform.output app listener_port",
+    "        cidr: !terraform.output network subnet_a_cidr",
+    "        ports:",
+    "          - !terraform.output app admin_port",
+    "    edge-blue:",
+    "      metadata:",
+    "        component: edge",
+    "      vars:",
+    "        extra: !terraform.output network vpc_id",
+    "",
+  ].join("\n");
+
+  test("each component's reads, by the component directory, outputs sorted", () => {
+    expect(atmosOutputReads(STACK)).toEqual({
+      app: { network: ["subnet_id", "vpc_id"] },
+      edge: { app: ["admin_port", "listener_port"], network: ["subnet_a_cidr", "vpc_id"] },
+    });
+    expect(atmosOutputReads("components:\n  terraform:\n    a:\n      vars:\n        x: 1\n")).toEqual({});
+  });
+
+  test("the stack manifests under atmos.yaml's stacks.base_path, and none without atmos.yaml", () => {
+    const repo = mkdtempSync(join(tmpdir(), "tf-atmos-"));
+    expect(atmosStackReads(repo)).toEqual({});
+    writeFileSync(join(repo, "atmos.yaml"), "base_path: .\ncomponents:\n  terraform:\n    base_path: components/terraform\nstacks:\n  base_path: my-stacks\n  name_template: '{{ .vars.stage }}'\n");
+    mkdirSync(join(repo, "my-stacks", "deploy"), { recursive: true });
+    writeFileSync(join(repo, "my-stacks", "deploy", "dev.yaml"), STACK);
+    expect(atmosStackReads(repo).app).toEqual({ network: ["subnet_id", "vpc_id"] });
+  });
+
+  test("a read is an edge to the upstream's root, planned and composed, with the unknown outputs it reads", () => {
+    const plan = {
+      ...PLAN,
+      output_changes: { network__vpc_id: { actions: ["no-op"], after: "vpc-1", after_unknown: false }, network__subnet_id: { actions: ["create"], after_unknown: true } },
+    };
+    const r = terraformReport({ ...base, rootDir: "components/terraform", plan, stage: "tf-plan", componentReads: atmosOutputReads(STACK) }).report as any;
+    const reads = (root: string) => r.roots.find((x: any) => x.path === root).reads;
+    expect(reads("components/terraform/app")).toEqual([
+      { upstream: "components/terraform/network", data: "network", outputs: "planned", unknown: ["subnet_id"], why: "!terraform.output network: subnet_id, vpc_id", composed: true },
+    ]);
+    expect(reads("components/terraform/edge").map((x: any) => x.upstream)).toEqual(["components/terraform/app", "components/terraform/network"]);
+    expect(reads("components/terraform/network")).toBeUndefined();
+  });
+
+  test("an upstream that is no module of the run has no edge", () => {
+    const r = terraformReport({ ...base, stage: "tf-plan", componentReads: { app: { vault: ["x"] } } }).report as any;
+    expect(r.roots.some((x: any) => "reads" in x)).toBe(false);
   });
 });
 

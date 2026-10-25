@@ -15,6 +15,7 @@
  * apply" for values the plan cannot know, one composed wave, the totals,
  * groups and named destroys, the index row, and each root's `reads`: the
  * `data "terraform_estate_outputs"` blocks that read another module's estate,
+ * and, in an Atmos repo, the `!terraform.output` calls in its stack manifests,
  * which behold draws as the lines between roots. The estate of each module
  * comes from the `live` block in its directory (`<repo>/<root-dir>/<module>`),
  * since the plan holds none. After an apply, a second
@@ -101,6 +102,14 @@ export interface TerraformReportInput {
    * from the directories. A read of an estate none of these names has no edge.
    */
   estates?: Record<string, string>;
+  /**
+   * What each module reads off the others' outputs through the stack that
+   * wires them, by module: Atmos's `!terraform.output` ({@link atmosStackReads}).
+   * Atmos resolves those into plain variables before the plan, so the plan
+   * holds no trace of them. A module already read through an estate data
+   * block is not read twice.
+   */
+  componentReads?: ComponentReads;
   started?: string;
   finished: string;
   runtime?: string;
@@ -216,6 +225,8 @@ export interface ReportRead {
   data: string;
   outputs: "planned";
   unknown?: string[];
+  /** Why the read is there, when no data block names it: Atmos's `!terraform.output` and the outputs it reads. */
+  why?: string;
   composed: true;
 }
 
@@ -348,6 +359,117 @@ export function estateReads(plan: Json, m: string, estates: Readonly<Record<stri
 }
 
 // ---------------------------------------------------------------------------
+// Reads: Atmos `!terraform.output` between the stack's components.
+// ---------------------------------------------------------------------------
+
+/** What each component reads off another with `!terraform.output`: reader -> upstream -> output names. */
+export type ComponentReads = Record<string, Record<string, string[]>>;
+
+const unquote = (s: string): string => s.replace(/^(["'])(.*)\1$/, "$2");
+
+/**
+ * Each component's `!terraform.output <component> [<stack>] <output>` reads in
+ * one Atmos stack manifest. The components are the keys under
+ * `components.terraform`, named by their `metadata.component` when they set
+ * one. A line scan, not a YAML parser: Atmos writes the function as a tagged
+ * scalar, one per line, which is all this reads.
+ */
+export function atmosOutputReads(yaml: string): ComponentReads {
+  const path: { indent: number; key: string }[] = [];
+  const found: { component: string; upstream: string; output: string }[] = [];
+  const dirOf = new Map<string, string>();
+  for (const raw of yaml.split(/\r?\n/)) {
+    const line = raw.replace(/\s+#.*$/, "");
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    const indent = line.length - line.trimStart().length;
+    const key = /^\s*(?:-\s+)?(["']?)([^"':#\s][^"':#]*?)\1\s*:(?:\s+(.*))?$/.exec(line);
+    while (path.length && path[path.length - 1]!.indent >= indent) path.pop();
+    const keys = path.map((p) => p.key);
+    const at = keys.findIndex((k, i) => k === "components" && keys[i + 1] === "terraform");
+    const component = at >= 0 ? keys[at + 2] : undefined;
+    const value = key ? (key[3] ?? "") : line.trim().replace(/^-\s+/, "");
+    if (key) {
+      if (component !== undefined && keys.length === at + 4 && keys[at + 3] === "metadata" && key[2] === "component" && value) {
+        dirOf.set(component, unquote(value.trim()));
+      }
+      path.push({ indent, key: key[2]! });
+    }
+    const call = /!terraform\.output\s+(.+)$/.exec(value);
+    if (!call || component === undefined) continue;
+    const args = call[1]!.trim().split(/\s+/).map(unquote);
+    if (args.length < 2) continue;
+    const output = /^\.?([A-Za-z_][\w-]*)/.exec(args[args.length - 1]!)?.[1];
+    if (output) found.push({ component, upstream: args[0]!, output });
+  }
+  const out: ComponentReads = {};
+  for (const f of found) {
+    const reader = dirOf.get(f.component) ?? f.component;
+    const upstream = dirOf.get(f.upstream) ?? f.upstream;
+    if (reader === upstream) continue;
+    const names = ((out[reader] ??= {})[upstream] ??= []);
+    if (!names.includes(f.output)) names.push(f.output);
+  }
+  for (const ups of Object.values(out)) for (const names of Object.values(ups)) names.sort();
+  return out;
+}
+
+/**
+ * The `!terraform.output` reads of every stack manifest in an Atmos repo: the
+ * `.yaml`/`.yml` files under `stacks.base_path` of `<repo>/atmos.yaml`
+ * (`stacks` when it names none), joined. Empty when the repo has no atmos.yaml.
+ */
+export function atmosStackReads(repo: string): ComponentReads {
+  const config = join(repo, "atmos.yaml");
+  if (!existsSync(config)) return {};
+  let base = "stacks";
+  const text = readFileSync(config, "utf8");
+  const stacks = /^stacks\s*:\s*$([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(text);
+  const named = stacks ? /^\s+base_path\s*:\s*(["']?)([^"'#\s]+)\1/m.exec(stacks[1]!) : null;
+  if (named) base = named[2]!;
+  const out: ComponentReads = {};
+  const walk = (dir: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.ya?ml$/.test(e.name)) {
+        for (const [reader, ups] of Object.entries(atmosOutputReads(readFileSync(p, "utf8")))) {
+          for (const [up, names] of Object.entries(ups)) {
+            const into = ((out[reader] ??= {})[up] ??= []);
+            for (const n of names) if (!into.includes(n)) into.push(n);
+            into.sort();
+          }
+        }
+      }
+    }
+  };
+  walk(join(repo, base));
+  return out;
+}
+
+/**
+ * Module `m`'s reads of the other modules' outputs that the stack wires in
+ * (`componentReads`, from Atmos's `!terraform.output`): one per upstream that
+ * is a module of this run, planned and composed, as {@link estateReads} writes
+ * them. Under choudoufu the reader is planned on the upstream's planned
+ * outputs, so `unknown` names the ones read that the plan cannot know.
+ */
+export function componentOutputReads(plan: Json, m: string, componentReads: ComponentReads, modules: readonly string[], rootOf: (m: string | undefined) => string): ReportRead[] {
+  const reads: ReportRead[] = [];
+  for (const [upstream, names] of Object.entries(componentReads[m] ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    if (upstream === m || !modules.includes(upstream)) continue;
+    const unknown = [...unknownOutputsOf(plan, upstream)].filter((n) => names.includes(n)).sort();
+    reads.push({ upstream: rootOf(upstream), data: upstream, outputs: "planned", ...(unknown.length ? { unknown } : {}), why: `!terraform.output ${upstream}: ${names.join(", ")}`, composed: true });
+  }
+  return reads;
+}
+
+// ---------------------------------------------------------------------------
 // The report.
 // ---------------------------------------------------------------------------
 
@@ -437,6 +559,11 @@ export function terraformReport(input: TerraformReportInput): TerraformReport {
     const group = memberGroup.get(member.member);
     const mod = keys.find((m) => rootOf(m) === member.member);
     const reads = mod !== undefined && input.estates ? estateReads(plan, mod, input.estates, rootOf) : [];
+    if (mod !== undefined && input.componentReads) {
+      const named = new Set(reads.map((r) => r.upstream));
+      const declared = keys.filter((k): k is string => k !== undefined);
+      for (const r of componentOutputReads(plan, mod, input.componentReads, declared, rootOf)) if (!named.has(r.upstream)) reads.push(r);
+    }
     return {
       path: member.member,
       binary: { name: planner, ...(input.binaryVersion ? { version: input.binaryVersion } : {}) },

@@ -140,7 +140,7 @@ async function runReportVerb(ctx: CommandGroupContext): Promise<number> {
   try {
     const { values, json } = parseReportArgs(ctx.rawArgs);
     const { readFileSync } = await import("node:fs");
-    const { runFactsFromEnv, terraformReport, writeReport, httpStore, dirStore, moduleEstates, topModule } = await import("./report");
+    const { runFactsFromEnv, terraformReport, writeReport, httpStore, dirStore, moduleEstates, atmosStackReads, topModule } = await import("./report");
     const read = (flag: string): unknown => {
       const file = values.get(flag)!;
       try {
@@ -155,10 +155,13 @@ async function runReportVerb(ctx: CommandGroupContext): Promise<number> {
     const repo = values.get("--repo") ?? process.env.GITHUB_WORKSPACE ?? process.cwd();
     const modules = [...new Set(((plan as { resource_changes?: { address?: string; module_address?: string }[] }).resource_changes ?? []).map((r) => topModule(String(r.module_address ?? r.address ?? ""))).filter((m): m is string => m !== undefined))];
     const estates = moduleEstates(repo, values.get("--root-dir") ?? "", modules);
+    // An Atmos repo wires its components with !terraform.output in the stack manifests, which the plan does not keep.
+    const componentReads = atmosStackReads(repo);
     const result = terraformReport({
       stage: values.get("--stage") as "tf-plan" | "tf-apply",
       plan,
       ...(Object.keys(estates).length > 0 ? { estates } : {}),
+      ...(Object.keys(componentReads).length > 0 ? { componentReads } : {}),
       ...(values.has("--applied") ? { applied: read("--applied") } : {}),
       run,
       ...(values.has("--binary") ? { binary: values.get("--binary")! } : {}),
