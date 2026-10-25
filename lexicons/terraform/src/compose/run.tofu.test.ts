@@ -87,7 +87,11 @@ function project(be: Backend, failB = false) {
 }
 
 const idOf = (s: StateFile): string => (s.resources[0]!.instances![0] as { attributes: { id: string } }).attributes.id;
-const inputOf = (s: StateFile): string => (s.resources[0]!.instances![0] as { attributes: { input: string } }).attributes.input;
+/** terraform_data's `input` as state records it: the value itself, or `{ type, value }` (the dynamic attribute's encoding). */
+const inputOf = (s: StateFile): unknown => {
+  const input = (s.resources[0]!.instances![0] as { attributes: { input: unknown } }).attributes.input;
+  return input !== null && typeof input === "object" && "value" in input ? (input as { value: unknown }).value : input;
+};
 
 describe.skipIf(!BINARY)("a composed run on tofu with local state (#4444)", () => {
   const stateOf = (dir: string, m: string): StateFile => JSON.parse(readFileSync(join(dir, "roots", m, "terraform.tfstate"), "utf-8")) as StateFile;

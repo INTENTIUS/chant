@@ -56,6 +56,9 @@ interface Stack {
 const stack = (name: string): Stack => (aws("cloudformation", "describe-stacks", "--stack-name", name) as { Stacks: Stack[] }).Stacks[0]!;
 const ssm = (name: string): string => (aws("ssm", "get-parameter", "--name", name) as { Parameter: { Value: string } }).Parameter.Value;
 const byComponent = (r: PrReport): Record<string, PrMember> => Object.fromEntries(r.members.map((m) => [m.component, m]));
+// The report lists members by the change set's order, which the report does
+// not define as dependency order; `selection.waves` holds that.
+const statuses = (r: PrReport): string[][] => r.members.map((m) => [m.component, m.status]).sort(([a], [b]) => a!.localeCompare(b!));
 const total = (r: PrReport, action: "create" | "update" | "replace" | "delete"): number => r.members.reduce((n, m) => n + m.counts[action], 0);
 
 /**
@@ -91,6 +94,8 @@ function actSuite(scenario: string, tests: (ctx: { loop: () => ScenarioLoop; id:
       });
       // The base, as the demo host applies it before a scenario.
       expect(await loop.applyBase()).toBe(0);
+      // describe-stacks throws on a stack the base did not create.
+      for (const s of STACKS) stack(`${id}-${s}`);
     }, TIMEOUT);
 
     afterAll(async () => {
@@ -114,10 +119,11 @@ actSuite("chant-compose-edit", ({ loop, id }) => {
     expect(code).toBe(0);
     expect(plan.status).toBe("planned");
     expect([...plan.selection.changed].sort()).toEqual(["app", "edge", "network"]);
-    expect(plan.members.map((m) => [m.component, m.status])).toEqual([
-      ["network", "planned"],
+    expect(plan.selection.waves).toEqual([["network"], ["app"], ["edge"]]);
+    expect(statuses(plan)).toEqual([
       ["app", "planned"],
       ["edge", "planned"],
+      ["network", "planned"],
     ]);
     for (const m of plan.members) expect(m.unknownInputs).toBeUndefined();
     expect([total(plan, "create"), total(plan, "update"), total(plan, "delete")]).toEqual([3, 3, 0]);
@@ -136,10 +142,10 @@ actSuite("chant-compose-edit", ({ loop, id }) => {
       expect(r.status).toBe("applied");
       expect(r.covered?.digest).toBe(plan.digest);
     }
-    expect(applied.members.map((m) => [m.component, m.status])).toEqual([
-      ["network", "applied"],
+    expect(statuses(applied)).toEqual([
       ["app", "applied"],
       ["edge", "applied"],
+      ["network", "applied"],
     ]);
     expect(ssm(`/${id}/upstream`)).toBe("http://app:8090");
     expect(ssm(`/${id}/admin-upstream`)).toBe("http://app:9000");

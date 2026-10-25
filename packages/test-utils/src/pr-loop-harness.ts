@@ -82,6 +82,13 @@ export interface ScenarioLoopOptions {
   processEnv?: Record<string, string>;
   /** The graph ids pr-apply maps its stored change set onto. Default: an empty graph, so no `chant graph` is started. */
   graphIds?: (dir: string) => Promise<{ ids: string[] }>;
+  /**
+   * Discover components in a child process on each command (`--sandbox`).
+   * Default true: a scenario overlays `*.component.ts` files at the paths the
+   * base imported, and an in-process `import()` returns the base's module
+   * from its cache, so pr-plan would plan the base's inputs.
+   */
+  sandbox?: boolean;
 }
 
 export interface ScenarioLoop {
@@ -90,7 +97,7 @@ export interface ScenarioLoop {
   git(...a: string[]): string;
   /** `.chant/pr/pr-<stage>.json`. */
   report(stage: "plan" | "apply"): PrReport;
-  /** Apply every component, root by root, as the demo host applies the base. Exit code of the fan-out. */
+  /** Apply every component, root by root, as the demo host applies the base: every unit their steps deploy, marked changed. Exit code of the fan-out. */
   applyBase(): Promise<number>;
   /** Branch `pr-<pr>`, overlay the scenario's `pull/`, commit, and run pr-plan. */
   open(pr: number, scenario: string): Promise<{ code: number; report: PrReport }>;
@@ -129,9 +136,6 @@ const args = (env: string, overrides: Partial<ParsedArgs>): ParsedArgs => ({
   live: false,
   env,
   noReleaseRecord: true,
-  // Each command imports the *.component.ts files in a child process of its own. In process, the module
-  // registry would hand pr-plan the base's components, which applyBase imported from the same paths.
-  sandbox: true,
   ...overrides,
 });
 
@@ -151,7 +155,7 @@ export async function openScenarioLoop(o: ScenarioLoopOptions): Promise<Scenario
       else cpSync(source, target);
     }
   };
-  const ctx = (overrides: Partial<ParsedArgs>) => ({ args: args(o.env, overrides), plugins: o.plugins, serializers: o.plugins.map((p) => p.serializer) });
+  const ctx = (overrides: Partial<ParsedArgs>) => ({ args: args(o.env, { sandbox: o.sandbox ?? true, ...overrides }), plugins: o.plugins, serializers: o.plugins.map((p) => p.serializer) });
   const RESUME = ".chant/pr-resume/pr-apply.json";
   let mergedFrom = "";
 
@@ -187,9 +191,15 @@ export async function openScenarioLoop(o: ScenarioLoopOptions): Promise<Scenario
     report: (stage) => JSON.parse(readFileSync(join(dir, ".chant", "pr", `pr-${stage}.json`), "utf8")) as PrReport,
     async applyBase() {
       const { discoverComponents } = await import("@intentius/chant/components");
-      const found = await discoverComponents(dir, { sandbox: true });
-      const names = [...found.components.keys()];
-      writeFileSync(join(dir, ".chant-base.json"), JSON.stringify({ changed: names }));
+      const { deployUnits } = await import("@intentius/chant/components/deploy-units");
+      const found = await discoverComponents(dir, { sandbox: o.sandbox ?? true });
+      // The fan-out selects by the units the steps deploy (a stack, a root),
+      // which a rewrite may have renamed away from the component's name.
+      const units = [...found.components.values()].flatMap(({ component }) => {
+        const own = deployUnits(component.deploy).map((u) => u.unit);
+        return own.length > 0 ? own : [component.name];
+      });
+      writeFileSync(join(dir, ".chant-base.json"), JSON.stringify({ changed: [...new Set(units)] }));
       // The result as JSON, so a failed step's error can be printed: the human summary names only the component.
       const out: string[] = [];
       const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {

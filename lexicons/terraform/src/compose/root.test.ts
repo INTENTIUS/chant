@@ -166,7 +166,7 @@ describe("writeComposedRoot", () => {
       const net = readFileSync(join(dir, "roots/net/main.tf"), "utf-8");
       expect(net).not.toMatch(/backend\s+"local"/);
       expect(net).toContain("moved {");
-      expect(main).not.toContain("moved");
+      expect(main).not.toMatch(/^\s*moved\s*\{/m);
       expect(root.rewritten).toEqual(["roots/app/main.tf", "roots/edge/main.tf.json", "roots/net/main.tf"]);
     } finally {
       root.restore();
@@ -277,7 +277,7 @@ moved {
       expect(main).toContain("removed {\n  from = module.a.terraform_data.gone\n  lifecycle {\n    destroy = false\n  }\n}");
       expect(main).toContain('import {\n  to = module.b.terraform_data.z\n  id = "z-1"\n}');
       expect(main).toContain("removed {\n  from = module.b.terraform_data.old\n}");
-      expect(main).not.toContain("moved");
+      expect(main).not.toMatch(/^\s*moved\s*\{/m);
       const a = readFileSync(join(dir, "roots/a/main.tf"), "utf-8");
       expect(a).not.toMatch(/^\s*(import|removed)\s*\{/m);
       expect(a).toContain("moved {\n  from = terraform_data.y");
