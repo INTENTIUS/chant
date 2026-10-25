@@ -100,6 +100,10 @@ chant init --lexicon azure --template web-app
 chant init --lexicon azure --template aks-cluster
 ```
 
+## In a composed run
+
+An `arm-deploy` step is a hole in a composed run ([ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md)). When its input reads another component's output that has no value yet, the plan reads nothing and the member's hole says `inputs from <component>; re-checked on apply`. After the upstream applies, that round needs its own approval. The step takes no template parameters, so an upstream value can only name the target. chant applies each resource with its own PUT and makes no ARM deployment, so ARM what-if has nothing to preview.
+
 ## Next steps
 
 - [Resources](/chant/lexicons/azure/resources/) — Learn about resource types and fields
