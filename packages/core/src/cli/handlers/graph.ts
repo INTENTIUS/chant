@@ -10,6 +10,7 @@ import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { carryAnnotations, observeResources } from "../../lifecycle/observe";
+import type { RootRead } from "../../observation";
 import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
 import { loadChantConfig, environmentNames, matchesDeclaredEnvironment, loadChantConfigUpward, type ChantConfig } from "../../config";
@@ -293,6 +294,8 @@ async function runGraphLive(
     let observations: LiveObservation[];
     // Facts about absent entities (#4372), carried onto the overlay's nodes.
     let annotations: Record<string, Record<string, unknown>> | undefined;
+    // Which read answered each root (#4452), carried onto the IR as written.
+    let rootReads: Record<string, RootRead> | undefined;
     // A replay is a graph of what was recorded, so it must not reach the provider
     // at all — not for observation and not for enrichment. Anything that quietly
     // called out would make `--at` a live read with an older label on it.
@@ -322,6 +325,7 @@ async function runGraphLive(
       });
       observations = observeResult.observations;
       annotations = observeResult.annotations;
+      rootReads = observeResult.rootReads;
       const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
       // Unobserved entities (#1089) arrive as warnings — a node missing from the
@@ -483,6 +487,11 @@ async function runGraphLive(
       ir = { ...ir, groups: { ...ir.groups, byContainer } };
     }
   }
+
+  // The structured read report (#4452) goes on last, past the overlay, lens
+  // and detail passes that each build a fresh IR, so it is in every format's
+  // IR whatever those kept.
+  if (rootReads && Object.keys(rootReads).length > 0) ir = { ...ir, rootReads };
 
   return emitIr(ir, ctx, format);
 }

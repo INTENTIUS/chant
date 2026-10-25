@@ -7,7 +7,7 @@ import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { subTemplateRefs } from "./graph-sub-template";
 import type { ResourceMetadata } from "./lexicon";
-import type { UnobservedEntity } from "./observation";
+import type { RootRead, UnobservedEntity } from "./observation";
 
 export { subTemplateRefs };
 
@@ -517,6 +517,18 @@ export interface GraphIR {
    * (`capabilities/view.ts`). Absent unless asked for.
    */
   capabilityView?: unknown;
+  /**
+   * With `chant graph --live` (INTENTIUS/chant#4452): which read answered each
+   * root, the observation's structured {@link RootRead} report passed through
+   * as the lexicon wrote it, keyed by the lexicon's root key (terraform uses
+   * `terraform.roots.<root>`). `depth` is the read asked for, and `fellBackTo`
+   * and `reason` are set only when that read failed, so the read that answered
+   * is `fellBackTo ?? depth`. A consumer reads this and never the stderr notes
+   * that say the same thing in prose. Additive: absent when no lexicon reported
+   * one (a lexicon with one read path, a source graph, an `--at` replay), and
+   * an older chant never writes it.
+   */
+  rootReads?: Record<string, RootRead>;
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */
