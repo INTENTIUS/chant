@@ -2,6 +2,11 @@
 title: Composed Runs
 description: How chant plans and applies the components a change reaches as one run, which lexicons do it as a group, a preview or a hole, and what a lexicon without a preview gets.
 diataxis: explanation
+prompt: |
+  Read https://intentius.io/chant/guide/composed-runs/.
+  Say which components of this repository a pull request run would plan as a group, with a preview or with a hole, and why, as the page's table shows.
+  Change no files.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 A composed run is how chant handles a pull request that changes a component and one that reads its output. chant names the components the change reaches, plans them together, binds one digest, takes one approval and applies in one run, passing each new value on to the components that read it. It belongs to chant, not to a lexicon. Each lexicon takes part in the way its own plan and API allow ([ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md)).
@@ -41,7 +46,7 @@ A failure part way through a run leaves what applied, applied. chant rolls nothi
 
 ## Where each lexicon says more
 
-- Terraform: [In a composed run](/chant/lexicons/terraform/ops/#in-a-composed-run), the `terraform.compose` setting, the files it writes to `.chant-compose/` and the reasons a group falls back.
+- Terraform: [In a composed run](/chant/lexicons/terraform/ops/#in-a-composed-run) covers the `terraform.compose` setting and the files it writes to `.chant-compose/`. It also lists the reasons a group falls back.
 - AWS: [Stacks that read each other's outputs](/chant/lexicons/aws/cloudformation/#stacks-that-read-each-others-outputs), the preview and what the real change set is checked against.
 - The [pull-request CI guide](/chant/guide/pull-request-ci/#components-applied-as-one) shows a group in a plan note and what a resume does.
 - [Plan previews](/chant/components/plan-previews/) lists what the note shows for each capability.
