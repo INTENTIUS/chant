@@ -1,0 +1,27 @@
+{
+  "estate": "sections-estate",
+  "choudoufu_version": "v0.31.0",
+  "upstream_version": "1.13.0",
+  "bound": [
+    { "addr": "aws_s3_bucket.records", "type": "aws_s3_bucket", "identity": "", "source": "record" },
+    { "addr": "aws_iam_role.app", "type": "aws_iam_role", "identity": "app", "source": "cache" }
+  ],
+  "omissions": [
+    { "addr": "aws_cloudwatch_log_group.orphan_unowned", "reason": "UNOWNED", "detail": "A live aws_cloudwatch_log_group already exists and carries no tofu-estate marker." },
+    { "addr": "aws_instance.verified", "reason": "VERIFIED_NOT_IMPORTABLE", "detail": "The tagging index lists i-0abc for this address and the import read found nothing." },
+    { "addr": "kubernetes_manifest.issuer", "reason": "OUT_OF_SCOPE", "detail": "-target leaves this block out of the plan." },
+    { "addr": "aws_lambda_function.fn", "reason": "FAILED", "detail": "AccessDenied: not authorized to perform lambda:GetFunction" },
+    { "addr": "aws_sqs_queue.later", "reason": "SOMETHING_NEW", "detail": "a reason this chant does not know" }
+  ],
+  "unowned": [],
+  "foreign": [
+    { "type": "aws_s3_bucket", "identity": "arn:aws:s3:::someone-elses", "display_name": "someone-elses", "tofu_estate": "other-estate", "why": "marked for another estate" },
+    { "type": "aws_sqs_queue", "identity": "https://sqs.us-east-1.amazonaws.com/000000000000/loose", "why": "no marker" }
+  ],
+  "adoptable": [],
+  "swept": ["aws_s3_bucket", "aws_sqs_queue"],
+  "controller_held": [
+    { "type": "aws_s3_bucket", "identity": "arn:aws:s3:::ack-made", "controller": "ACK", "held_by": "ACK Bucket default/assets" },
+    { "type": "kubernetes_deployment", "identity": "apps/v1/Deployment/default/web", "kind": "Deployment", "controller": "Helm", "held_by": "Helm release web", "addr": "kubernetes_deployment.legacy" }
+  ]
+}

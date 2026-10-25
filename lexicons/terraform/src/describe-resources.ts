@@ -249,6 +249,7 @@ import {
 } from "./op/activities/terraform";
 import { blockAddressOf, indexPlan, planAttributesFor, plannedAttributesFor, type PlanIndex } from "./plan-observation";
 import type { TerraformObserveDepth } from "./config";
+import { LIVE_PLAN_OMISSION_REASONS, readsAsCredentials } from "./live-plan-reasons";
 import { DATA_TYPE, MODULE_TYPE, RESOURCE_TYPE, callersOfKey } from "./hcl/parse";
 
 // The channel keys live in their own module so `plugin.ts` can declare
@@ -256,6 +257,7 @@ import { DATA_TYPE, MODULE_TYPE, RESOURCE_TYPE, callersOfKey } from "./hcl/parse
 // this is where they are used.
 export { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 export { TERRAFORM_LIVE_MARKER_KEYS } from "./live-ownership";
+export { LIVE_PLAN_OMISSION_REASONS } from "./live-plan-reasons";
 
 /** One row out of `values.root_module.resources[]`, at any module depth. */
 export interface StateResourceRow {
@@ -512,43 +514,6 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
     ]),
   ].sort();
   return index;
-}
-
-/**
- * choudoufu's omission reason codes, mapped onto chant's total vocabulary
- * (`internal/live/projection/result.go`). `"absent"` is not an
- * {@link UnobservedReason}: it is the tri-state's OBSERVED-ABSENT, the one
- * omission that is a claim of knowledge rather than of ignorance.
- *
- * A code this table does not know maps to `read-failed`, which is the safe
- * direction: no NOT-OBSERVED verdict ever becomes a create or a delete.
- */
-export const LIVE_PLAN_OMISSION_REASONS: Readonly<Record<string, UnobservedReason | "absent">> = {
-  // The provider was asked and reported, normally, that nothing is there.
-  ABSENT: "absent",
-  // The provider errored, or could not be reached in a usable order.
-  FAILED: "read-failed",
-  PARENT_UNAVAILABLE: "read-failed",
-  CYCLE: "read-failed",
-  INCOMPLETE_BLOCK: "read-failed",
-  LISTED_NOT_IMPORTABLE: "read-failed",
-  // Something exists at the identity and does not carry this estate's marker.
-  // Normally answered by the `unowned[]` section before this table is read;
-  // this entry is what happens if a document ever carries the omission alone.
-  UNOWNED: "read-failed",
-  // The mode cannot name, list or tag this instance at all: a server-assigned
-  // identity with no marker to find it by, a resource with no cloud object to
-  // read, or an address another declared instance has taken over.
-  NEEDS_DISCOVERY: "unsupported-kind",
-  UNREADABLE: "unsupported-kind",
-  SUPERSEDED: "unsupported-kind",
-};
-
-/** Does this text name a credentials or authorization failure rather than any other error? */
-function readsAsCredentials(text: string): boolean {
-  return /\b(no valid credential|credentials?|not authorized|unauthorized|accessdenied|access denied|expiredtoken|invalidclienttokenid|signature)\b/i.test(
-    text,
-  );
 }
 
 /** The chant verdict for one omission: `no-credentials` when its detail says so. */

@@ -411,7 +411,7 @@ export interface PredictedBehaviour {
  * at an address that is answering perfectly well.
  */
 export type BehaviourUnpredictedReason =
-  | Exclude<UnobservedReason, "no-credentials">
+  | Exclude<UnobservedReason, "no-credentials" | "not-reached">
   | "no-engine"
   | "engine-unreachable"
   | "engine-out-of-credit"

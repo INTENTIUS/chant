@@ -55,6 +55,7 @@ Use one of these reasons, which are total:
 | `no-binding` | the environment resolves to no concrete target (no kubectl context, no subscription, no stack) |
 | `unsupported-kind` | your lexicon has no reader for this entity type |
 | `filtered` | the resource was reached but withheld by `owned: true` (it exists, it just isn't chant's) |
+| `not-reached` | the read that would have answered never reported this entity, such as a [drift stream](/chant/reference/drift-record/#streaming) that settled without a row for it |
 
 Returning the bare `Record<string, ResourceMetadata>` map is still valid and means "everything I was asked about, I looked at". Use it only when that is true.
 
@@ -358,7 +359,7 @@ Behaviour keeps the three-verdict discipline `describeResources()` established, 
 
 The thin read needs a third position for "the provider was asked and said it is not there". A prediction has no equivalent answer, so an entity in neither map means the lexicon lost track of one.
 
-`BehaviourUnpredictedReason` derives from `UnobservedReason` rather than restating it, so the four shared verdicts keep their exact spelling. It differs twice, both deliberately. `no-credentials` is excluded, because a read that is handed no credential has none to be missing, and an enum able to say it would invite a lexicon to send an operator hunting for a variable this contract forbids. Four reasons about the predictor itself are added, because `no-binding` describes the environment resolving to no target and says nothing about the engine.
+`BehaviourUnpredictedReason` derives from `UnobservedReason` rather than restating it, so the four shared verdicts keep their exact spelling. It differs three times, each deliberately. `not-reached` is excluded, because a prediction is one call and has no stream to settle. `no-credentials` is excluded, because a read that is handed no credential has none to be missing, and an enum able to say it would invite a lexicon to send an operator hunting for a variable this contract forbids. Four reasons about the predictor itself are added, because `no-binding` describes the environment resolving to no target and says nothing about the engine.
 
 Those four are one axis split four ways because each has a different remedy, and a refusal exists to be acted on. Set a variable for `no-engine`. Check the address for `engine-unreachable`. On `engine-out-of-credit` somebody has to pay, and no amount of waiting will fix it, while `engine-over-quota` usually clears on its own once the window rolls over. Folding either of the last two into `engine-unreachable` would point an operator at an address that is answering perfectly well.
 
