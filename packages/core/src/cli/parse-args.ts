@@ -79,6 +79,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-require-review",
   "--expire",
   "--check-live",
+  "--stream",
   "--check-snapshot",
   "--fail-on-drift",
   "--durable-requests",
@@ -1039,6 +1040,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined || value.startsWith("--")) throw new Error("--where needs a clause: --where <field><op><value>");
       result.where = [...(result.where ?? []), value];
+    } else if (arg === "--read") {
+      // behold#995 - `chant workspace drift --read <read>`: which read the member's engine answers with.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--read needs a read: --read <state|plan|refresh|live-read|ownership>");
+      result.driftRead = value;
+    } else if (arg === "--stream") {
+      result.stream = true;
+    } else if (arg === "--resource") {
+      // behold#995 - `chant workspace drift --resource <addr>`: one resource's drift.
+      const value = args[++i];
+      if (!value || value.startsWith("--")) throw new Error("--resource needs an address: --resource <addr>");
+      result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
     } else if (arg === "--limit") {

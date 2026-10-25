@@ -93,6 +93,30 @@ A read can stream its records as NDJSON, one object per line, in the layout chou
 
 At settle, every expected address no record answered, under any read, becomes `not-observed` with reason `not-reached`. Between start and settle a renderer shows an unanswered card as reading, which is not a status. `encodeDriftLine`, `decodeDriftLine`, `decodeDriftLines`, `driftStart`, `driftSettle` and `foldDriftLines` read and write the stream.
 
+## Reading a member: `chant workspace drift`
+
+```
+chant workspace drift --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--env <env>] [--components] [--stream] [-o <file>]
+```
+
+One member's drift, read by the engine that owns it ([behold#995](https://github.com/INTENTIUS/behold/issues/995)). It is a read-contract command: it changes nothing in the workspace and starts no apply.
+
+| Member kind | `--read` | What runs |
+|---|---|---|
+| `chant` | `live-read`, the only one | the member's own `chant lifecycle diff <env> --live --json`, under its toolchain, through `liveDiffDriftRecords` (with `mergeDeepDrift` when a lexicon has a deep reader). `--components` adds `chant components status <env> --live --json` through `componentStatusDriftRecords`. Needs `--env` |
+| `terraform` | `state` (default) or `plan` | `chant lifecycle drift` in the member's reader project (the one `workspace graph` writes): `show -json` over state, or `plan -input=false -lock=false -out=<tmp>` and `show -json`. A plan that fails falls back to state, with `fellBackFrom: "plan"` |
+| `choudoufu` | `ownership` (default) or `plan` | the same, through `choudoufu live-plan -json` and `live-ls -json`, or for `plan` live-plan with a plan beside it (`choudoufuLivePlusPlanDriftRecords`). A plan that fails falls back to ownership, with `fellBackFrom: "live+plan"`. `--resource <addr>` runs `choudoufu live-plan -resource=<addr>` and passes its stream through, decoded and re-encoded with this codec |
+
+Any other kind answers the error `no-drift-read`. `refresh` belongs to a Pulumi member, which the pulumi lexicon reads (#4453); until that lexicon adds its row to `DRIFT_READS_BY_KIND` (`packages/core/src/workspace/drift-cli.ts`), a pulumi member answers `no-drift-read`. Nothing is written in a member: `init` is never run, so a root that was never initialised reads `not-observed` with the init line in its detail.
+
+Every record's `node` is placed on the member's source graph by `graphNodeFor`, the change set's rule, from the graph `chant workspace graph --member <name>` reads (served from the per-member cache when the source has not moved). For a terraform or choudoufu member that is `<member>/<root>/<block key>`, the root being named after the member in its reader project, and an instance of a `count` or `for_each` block is on its instance node. choudoufu names its own estate in `member`; the command puts the workspace member's name there.
+
+Without `--stream` it prints one drift document with the read contract's head beside it: `contract: 1`, `chant` and `member`. When the read could not run, the document has no records and `error: { code, message }`, and the command exits 1. The codes are the declaration's, and `member-required`, `no-drift-read`, `read-unsupported`, `resource-unsupported`, `env-required` and `command-failed`.
+
+With `--stream` it prints the NDJSON stream: a `drift-start`, the records and a `drift-settle` for each read. For a chant member chant writes the start and settle itself around the diff's records. A read that could not run prints nothing on stdout and says why on stderr, with exit 1.
+
+The member half is `chant lifecycle drift [--member <name>] [--read <read>] [--resource <addr>]`, which asks each lexicon's `readDrift` (`LexiconPlugin.readDrift`) and prints its stream. A refusal is one stdout line, `{"refused": {code, message}}`, and exit 3.
+
 ## Bundling
 
 `@intentius/chant/drift-record` and `@intentius/chant-lexicon-terraform/drift-record` import the plan hashing code, the observation contract's reason list, the change-set graph's node rule, the instance rollup, the sensitive-key list and the plan projection, and nothing else. `change-set-bundle.test.ts` lists every module in that bundle and fails when TypeScript, esbuild, zod or chant's fold, lint or codegen code joins it.

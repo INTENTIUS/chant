@@ -987,6 +987,15 @@ Workspace (level 1, #2524):
                         --no-cache reads every member
                         --capability-view: each member's chant adds its
                         capability view, mapped by its own lexicons
+  workspace drift --member <name> [--read <state|plan|refresh|live-read|ownership>] [--resource <addr>] [--env <name>] [--stream] [-o <file>]
+                        One member's drift, read by its own engine: a chant
+                        member through lifecycle diff --live (needs --env), a
+                        terraform member through its state or a plan, a
+                        choudoufu member through live-plan (and a plan for
+                        --read plan), one resource through choudoufu
+                        live-plan -resource. One drift document, or with
+                        --stream the NDJSON stream (drift-start, records,
+                        drift-settle)
   workspace search "<query>" [--member <name>] [--env <name>] [--snapshot <ref> | --live] [--at <rev>] [--explain] [--count-by ...] [--json]
                         chant search in every chant member, each under its own
                         chant, as one read-contract document: ids are
@@ -1056,6 +1065,9 @@ Lifecycle (alias: lc):
                             drift: ECS running vs desired, Route 53 health
                             checks, Container Apps revisions, Cloud Run Ready.
                             A failed read is "not read", never unhealthy (--json)
+  lifecycle drift           Each lexicon's own drift read, as drift-record
+                            NDJSON (--member, --read, --resource); what
+                            workspace drift runs in a member's reader project
   lifecycle whoami <env>    Who chant would act as in each configured lexicon,
                             and what that principal is scoped to — read-only,
                             before anything acts (--json, --strict)
@@ -1708,6 +1720,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/workspace-run")).runWorkspaceRun(ctx) },
   // #2554 — a release train: one release of every chant member, pinned in the workspace ledger.
   { name: "workspace train", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-train")).runWorkspaceTrain(ctx) },
+  { name: "workspace drift", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/drift-cli")).runWorkspaceDrift(ctx) },
   { name: "workspace search", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/search-cli")).runWorkspaceSearch(ctx) },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
@@ -1736,6 +1749,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "lifecycle rollback", handler: runLifecycleRollback },
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
+  { name: "lifecycle drift", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/lifecycle-drift")).runLifecycleDrift(ctx) },
   { name: "lifecycle whoami", requiresPlugins: true, handler: runLifecycleWhoami },
   // #4177 — runtime health, separate from drift. Imported on first use.
   { name: "lifecycle health", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/lifecycle-health")).runLifecycleHealth(ctx) },
