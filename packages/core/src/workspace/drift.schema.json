@@ -17,6 +17,15 @@
     "drift": {
       "const": "v1"
     },
+    "contract": {
+      "type": "integer",
+      "const": 1,
+      "description": "The read-contract version, on the document chant workspace drift prints (behold#995). Absent from a document driftDocument builds on its own."
+    },
+    "member": {
+      "type": "string",
+      "description": "The member chant workspace drift read."
+    },
     "chant": {
       "type": "string",
       "description": "The chant that wrote the document."
@@ -30,6 +39,23 @@
     },
     "counts": {
       "$ref": "#/$defs/counts"
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Why the read could not run: a declaration code, or member-required, no-drift-read, read-unsupported, resource-unsupported, env-required, command-failed."
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "description": "On chant workspace drift's document when the read could not run. records is then empty."
     }
   },
   "$defs": {

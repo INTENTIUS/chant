@@ -1141,3 +1141,38 @@ export function componentStatusDriftRecords(input: ComponentStatusDriftInput): D
     })
     .sort((a, b) => byString(a.address, b.address));
 }
+
+// ── a lexicon's own drift read ─────────────────────────────────────────────────
+
+/**
+ * What `chant lifecycle drift` asks a lexicon for (`LexiconPlugin.readDrift`,
+ * behold#995). `chant workspace drift` runs that command in a member's reader
+ * project, so a lexicon that reads members of a package kind (the terraform
+ * lexicon's `terraform` and `choudoufu` kinds) answers with its own engine,
+ * and chant core never imports the lexicon.
+ */
+export interface ReadDriftOptions {
+  /** The workspace member the records are for. Every line the lexicon returns names it. */
+  member: string;
+  /** The directory holding the project's `chant.config.*`. */
+  projectRoot: string;
+  /** The project's resolved config, for the lexicon's own namespace. */
+  config: Record<string, unknown>;
+  /** The read asked for. Unset, the lexicon's default read for what it finds. */
+  read?: DriftRead;
+  /** One address to read, on an engine that can read one resource on its own. */
+  resource?: string;
+  /** RFC 3339, the `observedAt` of every record the lexicon builds itself. */
+  observedAt: string;
+}
+
+/** Why a lexicon will not answer a drift read, in a code a caller can branch on. */
+export type ReadDriftRefusalCode = "read-unsupported" | "resource-unsupported" | "no-drift-read";
+
+/**
+ * A lexicon's answer: the stream lines of each read it ran, in order (a
+ * `drift-start`, its records, a `drift-settle`, per root), or a refusal. A
+ * read that ran and failed is not a refusal: its addresses are records
+ * with status `not-observed`.
+ */
+export type ReadDriftResult = { lines: DriftLine[] } | { refused: { code: ReadDriftRefusalCode; message: string } };

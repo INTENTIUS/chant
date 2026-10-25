@@ -496,6 +496,12 @@ export interface ParsedArgs {
   store?: "tree" | "ledger";
   /** `chant workspace points answer <id> --answer <value>` (#2739): the people's answer. */
   answer?: string;
+  /** `chant workspace drift --read <state|plan|refresh|live-read|ownership>` and `chant lifecycle drift --read` (behold#995): the read to ask the member's engine for. Unset, the member kind's default read. */
+  driftRead?: string;
+  /** `chant workspace drift --stream` (behold#995): print the drift stream (drift-start, records, drift-settle) as NDJSON instead of one document. */
+  stream?: boolean;
+  /** `chant workspace drift --resource <addr>` and `chant lifecycle drift --resource` (behold#995): read one resource, through `choudoufu live-plan -resource` on a choudoufu member. */
+  resource?: string;
   /** `chant workspace graph --no-cache` (#2876): read every member, bypassing the per-member cache. */
   noCache?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
