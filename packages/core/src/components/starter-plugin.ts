@@ -47,6 +47,7 @@ import {
   wranglerDeployCapability,
   wranglerVersionsPromoteCapability,
   r2SyncCapability,
+  memberOutputsStarterCapability,
 } from "./verbs/index";
 import { ownPackageVersion, type CapabilityPlugin } from "./capability-plugin";
 
@@ -82,6 +83,10 @@ export const STARTER_VERB_FAMILIES = {
   // there is no cloudflare lexicon for these three verbs to live in. Revisit
   // if/when the zone-plane lexicon (#1294) lands.
   cloudflare: ["wrangler-deploy", "wrangler-versions-promote", "r2-sync"],
+  // Another workspace member's outputs, read through the engine it runs on
+  // (#4455). One agnostic verb; each engine's lexicon contributes a source
+  // (`CapabilityPlugin.engineOutputSources`).
+  engineOutputs: ["member-outputs"],
 } as const;
 
 /**
@@ -112,6 +117,7 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     wranglerDeployCapability,
     wranglerVersionsPromoteCapability,
     r2SyncCapability,
+    memberOutputsStarterCapability,
   ] as unknown as Array<Capability<never, unknown>>;
 }
 
