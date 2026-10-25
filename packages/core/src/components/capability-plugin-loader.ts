@@ -27,6 +27,7 @@ import type { CapabilityPlugin } from "./capability-plugin";
 import { isCapabilityPlugin } from "./capability-plugin";
 import { starterCapabilityPlugin } from "./starter-plugin";
 import { isRegistryBackendConsumer, type RegistryLoginBackend } from "./verbs/publish-image";
+import { isEngineOutputSourceConsumer, type EngineOutputSource } from "./verbs/member-outputs";
 import { isStorageBackendConsumer, type ArtifactStorageBackend } from "./verbs/publish-artifact";
 
 /** Thrown when a dynamically-imported capability package does not satisfy `CapabilityPlugin` — the "malformed capability package" case #559 asks doctor/validation to detect. */
@@ -171,6 +172,8 @@ export function registerCapabilityPlugins(
   for (const plugin of plugins) backends.push(...(plugin.registryBackends?.() ?? []));
   const storage: ArtifactStorageBackend[] = [];
   for (const plugin of plugins) storage.push(...(plugin.storageBackends?.() ?? []));
+  const engines: EngineOutputSource[] = [];
+  for (const plugin of plugins) engines.push(...(plugin.engineOutputSources?.() ?? []));
 
   for (const plugin of plugins) {
     for (const capability of plugin.capabilities()) {
@@ -179,6 +182,7 @@ export function registerCapabilityPlugins(
       let bound = capability;
       if (isRegistryBackendConsumer(bound)) bound = bound.withRegistryBackends(backends) as typeof bound;
       if (isStorageBackendConsumer(bound)) bound = bound.withStorageBackends(storage) as typeof bound;
+      if (isEngineOutputSourceConsumer(bound)) bound = bound.withEngineOutputSources(engines) as typeof bound;
       registry.register(bound);
     }
   }

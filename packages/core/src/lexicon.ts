@@ -27,6 +27,7 @@ import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
+import type { ReadDriftOptions, ReadDriftResult } from "./drift-record";
 import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity";
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { BehaviourResult, PredictBehaviourOptions } from "./behaviour";
@@ -1989,6 +1990,24 @@ export interface LexiconPlugin {
    * refusal: it says which variable, and a stack trace does not.
    */
   predictBehaviour?(options: PredictBehaviourOptions): Promise<BehaviourResult>;
+
+  /**
+   * The drift of what this lexicon reads, as drift-record stream lines
+   * (behold#995, `./drift-record.ts`): a `drift-start`, one record per
+   * resource instance and a `drift-settle`, for each root or stack the
+   * project declares. `chant lifecycle drift` calls it and prints the lines,
+   * and `chant workspace drift` runs that command in the reader project of
+   * a member whose kind the lexicon reads, so a terraform or choudoufu
+   * member's drift comes from the engine that owns it.
+   *
+   * Optional. A lexicon without it has no drift read of its own; a chant
+   * member's drift comes from `lifecycle diff --live` instead. A read that
+   * the lexicon cannot answer (a read its engine does not have, or one
+   * resource on an engine that cannot read one alone) is a `refused`
+   * answer. A read that ran and failed is records, `not-observed`, never a
+   * refusal and never a throw.
+   */
+  readDrift?(options: ReadDriftOptions): Promise<ReadDriftResult>;
 
   /**
    * What this lexicon's own entity types are, to an engine that prices them

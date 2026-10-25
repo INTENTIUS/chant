@@ -53,6 +53,7 @@ export * from "./verify";
 export * from "./run-agent";
 export * from "./wrangler";
 export * from "./r2-sync";
+export * from "./member-outputs";
 export * from "./vuln-scan";
 export * from "./vex";
 export * from "./license-policy";
