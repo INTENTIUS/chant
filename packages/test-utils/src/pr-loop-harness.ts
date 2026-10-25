@@ -129,6 +129,9 @@ const args = (env: string, overrides: Partial<ParsedArgs>): ParsedArgs => ({
   live: false,
   env,
   noReleaseRecord: true,
+  // Each command imports the *.component.ts files in a child process of its own. In process, the module
+  // registry would hand pr-plan the base's components, which applyBase imported from the same paths.
+  sandbox: true,
   ...overrides,
 });
 
@@ -184,12 +187,33 @@ export async function openScenarioLoop(o: ScenarioLoopOptions): Promise<Scenario
     report: (stage) => JSON.parse(readFileSync(join(dir, ".chant", "pr", `pr-${stage}.json`), "utf8")) as PrReport,
     async applyBase() {
       const { discoverComponents } = await import("@intentius/chant/components");
-      const found = await discoverComponents(dir);
+      const found = await discoverComponents(dir, { sandbox: true });
       const names = [...found.components.keys()];
       writeFileSync(join(dir, ".chant-base.json"), JSON.stringify({ changed: names }));
+      // The result as JSON, so a failed step's error can be printed: the human summary names only the component.
+      const out: string[] = [];
+      const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+        out.push(String(chunk));
+        return true;
+      });
       try {
-        return await runComponentsFanOut(ctx({ fromAffected: ".chant-base.json" }) as never);
+        const code = await runComponentsFanOut(ctx({ fromAffected: ".chant-base.json", json: true }) as never);
+        write.mockRestore();
+        if (code !== 0) {
+          const line = out.join("").trim().split("\n").pop() ?? "";
+          let result: { results?: Array<{ component: string; status: string; records?: Array<{ kind: string; status: string; error?: string }> }> } = {};
+          try {
+            result = JSON.parse(line);
+          } catch {
+            console.error(`applyBase: fan-out exited ${code}: ${out.join("")}`);
+          }
+          for (const r of result.results ?? []) {
+            for (const rec of r.records ?? []) if (rec.error) console.error(`applyBase: ${r.component} ${rec.kind} ${rec.status}: ${rec.error}`);
+          }
+        }
+        return code;
       } finally {
+        write.mockRestore();
         rmSync(join(dir, ".chant-base.json"), { force: true });
       }
     },
