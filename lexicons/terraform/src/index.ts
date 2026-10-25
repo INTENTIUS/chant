@@ -14,6 +14,9 @@ export {
   type TerraformApplyStepOutput,
 } from "./components/capability-plugin";
 
+// The plan shape of a `show -json` plan (#4436), for core's `coveredRound`.
+export { terraformPlanShape, type TerraformPlanShapeOptions } from "./plan-shape";
+
 // Serializer
 export { terraformSerializer } from "./serializer";
 
