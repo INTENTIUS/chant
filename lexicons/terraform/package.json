@@ -39,6 +39,11 @@
       "types": "./dist/terragrunt/index.d.ts",
       "default": "./dist/terragrunt/index.js"
     },
+    "./state": {
+      "development": "./src/state/index.ts",
+      "types": "./dist/state/index.d.ts",
+      "default": "./dist/state/index.js"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",

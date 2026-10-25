@@ -52,6 +52,9 @@ export const CHANGE_SET_SCHEMA_ID = "https://intentius.io/chant/schemas/workspac
 /** The read-contract version the document follows. */
 export const CHANGE_SET_CONTRACT = 1;
 
+/** The first chant whose change set can carry a member's `group` (ws-107, #4440). */
+export const CHANGE_SET_GROUP_FLOOR = "0.124.53";
+
 /** What a planner proposes for one resource. `no-op`, `read` and `forget` appear only when the planner reports them. */
 export type ChangeSetAction = "create" | "update" | "replace" | "delete" | "read" | "no-op" | "forget";
 
@@ -185,6 +188,23 @@ export interface ChangeSetMember {
   /** The planner's own digest of the same plan, when it prints one (choudoufu's per-root digest). */
   nativeDigest?: string;
   holes: ChangeSetHole[];
+  /**
+   * Set on a member a capability planned with others as one group (ws-107,
+   * #4440). Part of the document's digest when present. Added within
+   * contract 1 by chant {@link CHANGE_SET_GROUP_FLOOR}.
+   */
+  group?: ChangeSetMemberGroup;
+}
+
+/** A grouped member's group (ws-107): the group digest folded into its `planDigest`, and what it reads inside the group. */
+export interface ChangeSetMemberGroup {
+  digest: string;
+  /**
+   * The `<component>.<output>` values it reads from another member of its
+   * group that the plan does not know, sorted. The group's apply computes
+   * them. A change set with any is never empty ({@link isEmptyChangeSet}).
+   */
+  reads: string[];
 }
 
 /** A provider-defined side effect an apply runs: a Terraform `action` block's invocation. */
@@ -312,7 +332,8 @@ export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "me
  *
  * A release gate's document (#4045) also hashes the `releaseDigest` and
  * `environment` it was planned for. A document without them hashes as it
- * always has, so no earlier digest moves.
+ * always has, so no earlier digest moves. A grouped member's `group`
+ * (ws-107) is hashed with it the same way: only when present.
  */
 export function changeSetDocumentDigest(
   doc: Pick<ChangeSetDocument, "members" | "entries" | "sideEffects" | "releaseDigest" | "environment">,
@@ -320,7 +341,7 @@ export function changeSetDocumentDigest(
   const provisional = new Set(doc.members.filter((m) => m.provisional === true).map((m) => m.member));
   const members = doc.members
     .filter((m) => !provisional.has(m.member))
-    .map((m) => ({ member: m.member, status: m.status, holes: m.holes }))
+    .map((m) => ({ member: m.member, status: m.status, holes: m.holes, ...(m.group ? { group: { digest: m.group.digest, reads: [...m.group.reads].sort() } } : {}) }))
     .sort((a, b) => byString(a.member, b.member));
   // An entry's graph node (#4022), its block node (#4454) and its source
   // file (#4025) say where on the graph the change is, not what the plan
@@ -438,13 +459,16 @@ export function verifyChangeSetDigest(
  * Whether a change set changes nothing (ws-104 question 6, #4045): it has at
  * least one member, every member planned, none failed or provisional, no
  * member has a hole, and every entry is a `no-op` or a `read` that no
- * planner marked `mayAppear`. A release
- * gate over such a document passes without an approval.
+ * planner marked `mayAppear`. A release gate over such a document passes
+ * without an approval. A member that reads a value its group computes in its
+ * apply (`group.reads`, ws-107 ruling 4) makes it not empty: what the plan
+ * shows may not be all the apply does.
  */
 export function isEmptyChangeSet(doc: Pick<ChangeSetDocument, "members" | "entries">): boolean {
   if (doc.members.length === 0) return false;
   for (const m of doc.members) {
     if (m.status !== "planned" || m.provisional === true || m.holes.length > 0) return false;
+    if (m.group && m.group.reads.length > 0) return false;
   }
   return doc.entries.every((e) => (e.action === "no-op" || e.action === "read") && e.mayAppear !== true);
 }

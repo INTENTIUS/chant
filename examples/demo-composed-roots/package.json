@@ -1,0 +1,17 @@
+{
+  "name": "demo-chant-compose-roots",
+  "private": true,
+  "type": "module",
+  "description": "Composed roots demo: network, app and edge as three Terraform roots, planned as one plan on each pull request and applied as one apply on merge",
+  "dependencies": {
+    "@intentius/chant": "0.124.30",
+    "@intentius/chant-lexicon-terraform": "0.124.30"
+  },
+  "devDependencies": {
+    "@intentius/chant-lexicon-forgejo": "0.124.30",
+    "@intentius/chant-lexicon-github": "0.124.30"
+  },
+  "scripts": {
+    "lint": "chant lint src"
+  }
+}

@@ -519,6 +519,7 @@ export default defineConfig({
 								{ label: 'Overview', slug: 'components/overview' },
 								{ label: 'Supply-Chain Attestations', slug: 'components/supply-chain' },
 								{ label: 'Orchestration', slug: 'components/orchestration' },
+								{ label: 'Composed Runs', slug: 'guide/composed-runs' },
 								{ label: 'Cloud-Agnostic Boundary', slug: 'components/cloud-boundary' },
 							],
 						},

@@ -99,6 +99,18 @@ An artifact a build in the same pull request publishes is the exception. A deplo
 
 For `cfn-deploy`, a stack keeps an output when its template `Value` reads only resources the change set modifies in place. An output whose `Value` is a plain string is known at that string, whether the string changed or the output is new. An output that is a `Ref` to a parameter is known at the value the plan gave that parameter, so a port that one stack passes to the next shows as its new value all the way down. An output is known only after apply when it reads a resource the change set adds or replaces, an import or a condition, or a parameter the plan has no value for. A `kubectl-apply` step has outputs only when it names them, each a field of an object its manifest declares: `outputs: { host: { object: "Service/prod/web", field: "status.loadBalancer.ingress.0.hostname" } }`. Such a field is known before apply when the manifest sets it, or when the dry run leaves its object unchanged.
 
+### Components applied as one
+
+A capability that plans and applies a group ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)) takes `a` and `app` above in one plan and one apply. `terraform-apply` declares one with [#4447](https://github.com/INTENTIUS/chant/issues/4447). `app` reads `a.id` inside that apply, so it is not held for a round and lists no `unknownInputs`. The report's `groups` names the group, its wave and its digest, and the note says it in one line:
+
+```text
+`a` and `app` plan and apply as one (`terraform-apply`, wave 1); `app` reads `a.id`, known when the group applies.
+```
+
+A component that could have joined and did not is listed under `fallbacks` with the reason, and plans wave by wave as above. One approval covers the group. A change set that looks empty while the group has reads it does not know yet waits for a person.
+
+If the group's apply fails on `app` after `a` applied, `a` stays applied. The report lists `a` with `groupOutcome` `applied` and `app` with `failed`, and the note says `` `a` applied and stays applied; `app` failed``. Running the apply job again with the same `--resume` record plans only `app`, against the outputs `a` applied with. When its new plan does only what the approved plan showed, it applies under the first approval. When it does more, the apply plans everything again and waits for an approval of that plan. [Groups planned and applied as one](/chant/cli/components/#groups-planned-and-applied-as-one) lists the report's fields, and [Composed runs](/chant/guide/composed-runs/) says what a capability without a group or a preview gets.
+
 ### CloudFormation stacks
 
 A component whose step is `cfn-deploy` is planned with a CloudFormation change set. The plan creates one for the stack's template and resolved parameters, reads the changes it proposes and deletes it without executing it. The member is named after the stack. An `Add` counts as a create, a `Modify` as an update, or as a replace when CloudFormation says `Replacement: True` or `Conditional`, and a `Remove` as a delete. A change set with nothing to apply gives the member no changes. The proposed changes are part of the digest the gate binds, as every planner's are, so a change set that proposes something else at merge moves the digest and the apply refuses.

@@ -208,6 +208,189 @@ export interface Capability<In = unknown, Out = unknown> {
    * why. Unset refuses too, with a reason that names the verb.
    */
   readonly targets?: TargetSupport;
+  /**
+   * Optional (#4435, ws-107): why this capability will not plan and apply
+   * `members` as one group, or `undefined` when it will. Core asks before
+   * anything is planned, so the answer must come from the declaration and
+   * the files alone, never from a plan. A fallback with
+   * {@link GroupFallback.drop} leaves only those members out: core forms
+   * the group again from the rest and asks again (#4419 ruling 1). A
+   * capability with `planGroup` and no `groupFallback` takes every group
+   * core forms.
+   */
+  groupFallback?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<GroupFallback | undefined>;
+  /**
+   * Optional (#4447): reads between this capability's components that core
+   * cannot see in their declarations, such as a Terraform root's
+   * `terraform_remote_state` block. Core asks once per capability, before
+   * groups form, with every component of the change whose step this
+   * capability takes (`ctx.components` in plan order, no `input`), and adds
+   * each read to the reads it joins, orders and splits groups by, and to
+   * the group reads the report names. The answer must come from the
+   * declaration and the files alone. A read naming a component outside
+   * `members` is ignored; a throw counts as no reads.
+   */
+  groupReads?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<ReportedGroupRead[]>;
+  /**
+   * Optional (#4435, ws-107): plan `members` as one, in one call. Declared
+   * together with `runGroup`; a capability with only one of the two never
+   * gets a group. Throwing makes every member plan-failed.
+   */
+  planGroup?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<CapabilityGroupPlan>;
+  /**
+   * Optional (#4435, ws-107): apply the group `planGroup` planned, in one
+   * call, and say how each member's part ended. It should not throw: a throw
+   * reads as every member `failed`, or every member `not-started` when the
+   * error is a moved plan ({@link isPlanMovedError}).
+   */
+  runGroup?(ctx: GroupContext, run: GroupRun, members: readonly GroupMember<In>[]): Promise<CapabilityGroupOutcome>;
+}
+
+/**
+ * What a group's calls share (ws-107): the run's environment and variables,
+ * and the group's components in apply order. Each member's own context is
+ * {@link GroupMember.ctx}.
+ */
+export interface GroupContext {
+  env: string;
+  vars?: Record<string, unknown>;
+  /** The group's components, upstreams first. */
+  components: string[];
+}
+
+/**
+ * A read of one group member's output by another (ws-107). Core leaves the
+ * value out of the reader's `input` (it is `undefined` at `at`) and the
+ * capability wires it inside its own apply.
+ */
+export interface GroupRead {
+  /** Where in the reader's step input the value goes, as a JSON Pointer. */
+  at: string;
+  /** `<component>.<output>`, as `PrMember.reads` and `unknownInputs` name it. */
+  ref: string;
+  /** The member whose output it is. */
+  component: string;
+  output: string;
+}
+
+/**
+ * A read of one component by another that a capability reports through
+ * `groupReads` (#4447), with no place in the reader's step input.
+ */
+export interface ReportedGroupRead {
+  /** The component that reads. */
+  reader: string;
+  /** The component whose output it reads. */
+  upstream: string;
+  /** The read as the report names it, e.g. `data.terraform_remote_state.network`. */
+  ref: string;
+  /**
+   * The upstream output read, when the capability knows it. Without it the
+   * read counts as known at plan only when the upstream's plan knows every
+   * output it names.
+   */
+  output?: string;
+}
+
+/** One component of a group, as core hands it to the capability (ws-107). */
+export interface GroupMember<In = unknown> {
+  component: string;
+  /** The component's one step as declared, without `kind`, wiring unresolved. */
+  step: Record<string, unknown>;
+  /**
+   * The step's input resolved against the outputs from outside the group.
+   * Each {@link GroupRead} is `undefined` here. Absent in `groupFallback`,
+   * which is asked before any output is read.
+   */
+  input?: In;
+  /** The member's reads of other members, sorted by `ref`. */
+  reads: GroupRead[];
+  /**
+   * The component's `dependsOn` as declared (#4447): an order with no read,
+   * which a capability that applies the group in one call has to keep or
+   * refuse.
+   */
+  dependsOn?: string[];
+  /**
+   * The member's own context: `component`, `targets`, `carried` and `carry`
+   * as for a single step. `unresolvedInputs` names only components outside
+   * the group. In `runGroup`, `plans` holds this member's plan.
+   */
+  ctx: DeployContext;
+}
+
+/**
+ * Why a set of components does not run as one group (ws-107). `kind` is a
+ * short stable word the report keys on; `reason` is one line for a person.
+ * Core's own kinds are `steps`, `split` and `cycle`; a capability names its
+ * own. A capability's `off` is recorded and not printed in the note.
+ *
+ * Without `drop`, the fallback is every member's and the group dissolves.
+ * With `drop`, only the members it names leave, each with its own `kind`
+ * and `reason` or else the fallback's; core forms the group again from the
+ * rest by its own rules (`split`, `steps`, `cycle`, and a set of one is no
+ * group) and asks again for each set that changed (#4419 ruling 1). A
+ * `drop` that names no member of the group dissolves it.
+ */
+export interface GroupFallback {
+  kind: string;
+  reason: string;
+  /** The members to leave out, when not the whole group. */
+  drop?: GroupDrop[];
+}
+
+/** A member a {@link GroupFallback} leaves out of its group (#4419 ruling 1). */
+export interface GroupDrop {
+  component: string;
+  /** Default: the fallback's `kind`. */
+  kind?: string;
+  /** Default: the fallback's `reason`. */
+  reason?: string;
+}
+
+/** What `planGroup` returns (ws-107). */
+export interface CapabilityGroupPlan {
+  /**
+   * One plan per member, by component: what `plan` would give for that
+   * member, with `planDigest` before the group is folded in. Core folds the
+   * group digest into each `planDigest` and its change-set part. `artifact`
+   * on these is ignored; the group's artifact is below.
+   */
+  members: Record<string, CapabilityPlan>;
+  /** The capability's digest of what the group adds to its members' plans. */
+  digest: string;
+  /** Handed back to `runGroup` in {@link GroupRun}. Core never reads it. */
+  artifact?: unknown;
+}
+
+/** What core hands `runGroup` (ws-107): the plan that was approved. */
+export interface GroupRun {
+  artifact?: unknown;
+  /** The group digest core bound: the capability's digest with the members folded in. */
+  digest: string;
+  /** Each member's plan as bound into the change set, by component. */
+  plans: Record<string, CapabilityPlan>;
+}
+
+/**
+ * How one member's part of a group apply ended (ws-107). `partial`: some of
+ * its planned changes applied. `not-started`: the apply stopped before its
+ * part began. `no-changes`: it planned none.
+ */
+export type GroupMemberStatus = "applied" | "partial" | "failed" | "not-started" | "no-changes";
+
+export interface GroupMemberOutcome {
+  status: GroupMemberStatus;
+  /** What the member exposes now, as `run`'s outputs: set for `applied` and `no-changes`. */
+  outputs?: Record<string, unknown>;
+  error?: string;
+}
+
+/** What `runGroup` returns (ws-107): every member's outcome, by component. */
+export interface CapabilityGroupOutcome {
+  members: Record<string, GroupMemberOutcome>;
+  /** An error no member's part names. */
+  error?: string;
 }
 
 /** A capability's relationship to rollback — see `Capability.rollbackPolicy`. */

@@ -169,6 +169,28 @@
               }
             }
           }
+        },
+        "group": {
+          "type": "object",
+          "required": [
+            "digest",
+            "reads"
+          ],
+          "description": "Added in contract 1 by #4440, written by chant 0.124.53 and newer. Set on a member a capability planned with others as one group (ws-107). Part of digest when present.",
+          "properties": {
+            "digest": {
+              "type": "string",
+              "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
+              "description": "The group digest folded into planDigest: computePlanDigest(\"capability-group\", ...) over the capability's kind, each member's component, member and own plan digest, and the capability's digest of the composition."
+            },
+            "reads": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The <component>.<output> values the member reads from another member of its group that the plan does not know, sorted. The group's apply computes them. A change set with any is never passed as empty."
+            }
+          }
         }
       }
     },

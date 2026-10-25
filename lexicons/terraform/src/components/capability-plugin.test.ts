@@ -25,7 +25,7 @@ vi.mock("../op/activities/terraform", () => ({
       rootDigest: `sha256:root-${args.root}`,
       planDigest: `jcs1-sha256:${args.root}`,
       changed: true,
-      json: {},
+      json: planJson,
       changeSet: { member: { member: args.root, nativeDigest: `sha256:root-${args.root}` }, entries: [] },
       planSetFile: `/x/.chant/choudoufu-waves/${args.root}/plan-set.json`,
       root: `estates/${args.root}`,
@@ -191,8 +191,33 @@ describe("terraform-apply", () => {
       planDigest: "jcs1-sha256:app",
       artifact: { planFile: "chant.tfplan", planDigest: "jcs1-sha256:app" },
       outputs: { known: {}, unknown: [] },
+      shape: { member: "app", entries: [], unknownInputs: [] },
     });
     expect(calls).toEqual(["init app", 'plan app {"vpc":"v-1"}']);
+  });
+
+  test("plan returns the shape of the plan's show -json, on the plain path and the choudoufu set path (#4436)", async () => {
+    planJson = {
+      resource_changes: [
+        { address: "terraform_data.keep", type: "terraform_data", change: { actions: ["no-op"] } },
+        { address: "terraform_data.web", type: "terraform_data", change: { actions: ["create"], before: null, after: { input: "x" }, after_unknown: { id: true } } },
+      ],
+    };
+    const expected = {
+      member: "app",
+      entries: [{ logicalId: "terraform_data.web", action: "create", type: "terraform_data", properties: ["id", "input"], unknown: ["id"] }],
+      unknownInputs: [],
+    };
+    const plain = await terraformApplyCapability.plan!({ env: "test", component: "app" }, { root: "app" });
+    expect(plain.shape).toEqual(expected);
+    waveRoot = { wave: true, root: "estates/app" };
+    const set = await terraformApplyCapability.plan!({ env: "test", component: "app" }, { root: "app" });
+    expect(set.shape).toEqual(expected);
+  });
+
+  test("a root waiting on unknown outputs returns no shape, so it stays uncovered (#4436)", async () => {
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "app", unresolvedInputs: ["net"] }, { root: "app", vars: { vpc: undefined } });
+    expect(planned.shape).toBeUndefined();
   });
 
   test("plan answers the outputs the root will have, from the plan's planned values (#3999)", async () => {

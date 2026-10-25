@@ -52,6 +52,17 @@ export {
   type CapabilityInput,
   type CapabilityOutput,
   type DeployContext,
+  type CapabilityGroupOutcome,
+  type CapabilityGroupPlan,
+  type GroupContext,
+  type GroupDrop,
+  type GroupFallback,
+  type GroupMember,
+  type GroupMemberOutcome,
+  type GroupMemberStatus,
+  type GroupRead,
+  type GroupRun,
+  type ReportedGroupRead,
   CapabilityRegistry,
   CapabilityNotImplementedError,
 } from "./capability";
@@ -72,6 +83,11 @@ export {
   type RoundCoverage,
   type ShapeReplacement,
 } from "./covered-round";
+export {
+  checkPlanShapeConformance,
+  planShapeProblems,
+  type PlanShapeConformanceConfig,
+} from "./plan-shape-conformance";
 export { createCapabilityRegistry, STARTER_VERB_FAMILIES } from "./registry";
 export {
   type CapabilityPlugin,
@@ -121,6 +137,8 @@ export {
 export {
   type FanOutRequest,
   type FanOutPlan,
+  type FanOutGroup,
+  type FanOutGroupFallback,
   type FanOutSkip,
   type FanOutSkipReason,
   type ChangedUnits,
@@ -132,6 +150,20 @@ export {
   downstreamWithin,
   UnknownComponentError,
 } from "./fan-out";
+export {
+  type FindComponentGroupsOptions,
+  type FoundComponentGroups,
+  type ComponentGroupPlan,
+  type ComponentGroupRunResult,
+  findComponentGroups,
+  groupFanOut,
+  narrowGroups,
+  regroupRemaining,
+  groupDigest,
+  bindGroup,
+  planComponentGroup,
+  runComponentGroup,
+} from "./groups";
 export {
   type FanOutGate,
   type FanOutRunOptions,

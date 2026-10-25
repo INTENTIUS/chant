@@ -1,0 +1,5 @@
+{
+  "changes": "Network changes its proxy port and adds an admin port. App and edge follow both, each with a resource of its own.",
+  "watch": "Every value is known at plan. The three roots are planned as one plan, and one approval covers the whole change.",
+  "shows": "A change that reaches three Terraform roots is planned as one plan and applied as one apply under one approval."
+}

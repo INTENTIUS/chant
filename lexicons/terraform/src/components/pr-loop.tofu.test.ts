@@ -13,6 +13,8 @@
  * estate is net -> a, b and a -> app, with dns on its own; a and b read net's
  * output and app reads a's, through `stackOutput()`. Skipped when neither
  * binary is on the PATH.
+ *
+ * Composed runs over three roots are `pr-loop-compose.tofu.e2e.test.ts`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -253,6 +255,9 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     const round = waiting.rounds![0]!;
     expect(round).toMatchObject({ round: 2, gate: "pr-apply-round-2", components: ["app"], status: "waiting", approval: { status: "pending" } });
     expect(round.changeSet.entries.map((e) => [e.member, e.address, e.action])).toEqual([["app", "terraform_data.app", "update"]]);
+    // #4436: the round's fresh plan carries a Terraform shape, and adds a resource the first plan (a hole) did not preview, so the first approval does not cover it and the reason names the address.
+    expect(round.covered).toBeUndefined();
+    expect(round.notCovered).toContain("terraform_data.app");
     expect(state("a")).toContain("10.0.0.0/16/a-v2");
     expect(state("app")).not.toContain("a-v2");
     expect(github.statuses.at(-1)).toMatchObject({ context: "chant/apply", state: "pending" });

@@ -17,6 +17,78 @@ export {
   type TerraformApplyStepOutput,
 } from "./components/capability-plugin";
 
+// Composed runs (#4442): the working state merged and split, the composed
+// plan cut into one plan per member, and each member's apply outcome.
+export { mergeStates, splitState, splitStates, derivedLineage, COMPOSE_LINEAGE, type SplitState } from "./compose/state-merge";
+export {
+  slicePlan as sliceComposedPlan,
+  sliceText,
+  planCounts,
+  composedReads,
+  composedMemberPlans,
+  type PlanCounts,
+  type ComposedMemberRead,
+  type ComposedMemberPlan,
+  type ComposedMemberPlansOptions,
+} from "./compose/slice";
+export { readApplyEvents, memberApply, composedApplyOutcomes, type ApplyEvents, type MemberApply, type MemberApplyOutcome } from "./compose/apply-events";
+export { topModule, stripModule, stripChange, moduleChanges } from "./compose/module-address";
+
+// Composed runs of choudoufu estates (#4445): one plan and one apply, values read from a post-apply plan.
+export {
+  EstateRun,
+  estateVersionFallback,
+  estateOutcomes,
+  readEstateApplyText,
+  type ComposedRunner,
+  type ComposedRunPlan,
+  type ComposedRunApply,
+  type ComposedMemberOutcome,
+  type EstateRunOptions,
+} from "./compose/estate";
+export { priorStateValues, stateResources, stateOutputs, type StateResourceValues } from "./applied-state";
+
+// Composed runs over roots with state (#4444): one plan and one apply, each
+// state written back whatever happened. Implements `ComposedRunner` (#4445).
+export {
+  ComposedRun,
+  composedPlanDigest,
+  changesSomething,
+  type ComposedRunOptions,
+  type ComposedRunStage,
+  type StateRunPlan,
+  type StateRunApply,
+  type StateMemberOutcome,
+  type ComposedStateWrite,
+  type ComposeHook,
+  type ComposeHookMoment,
+} from "./compose/run";
+
+// The plan shape of a `show -json` plan (#4436), for core's `coveredRound`.
+export { terraformPlanShape, type TerraformPlanShapeOptions } from "./plan-shape";
+
+// Composed runs (#4419, #4438): which roots compose, in what order, and why
+// the others fall back. Off unless `terraform.compose.enabled` is set.
+export {
+  compositionFor,
+  compositionIfEnabled,
+  composeOff,
+  composeSet,
+  readOrder,
+  moduleNames,
+  fallbackLine,
+  withPlanFailed,
+  identityKey,
+  DEFAULT_COMPOSE_MAX,
+  COMPOSE_STEP_KIND,
+  type Composition,
+  type CompositionInput,
+  type ComposedRead,
+  type ComposeFallback,
+  type ComposeFallbackKind,
+  type ExpectedBinary,
+} from "./compose";
+
 // Serializer
 export { terraformSerializer } from "./serializer";
 

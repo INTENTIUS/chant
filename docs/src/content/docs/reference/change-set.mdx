@@ -36,10 +36,13 @@ The document is part of the [workspace read contract](/chant/reference/workspace
 | `nativeDigest` | the planner's own hash of the same plan, such as choudoufu's per-root value |
 | `holes` | what the planner could not read, each `{ address, type, reason }` |
 | `provisional` | `true` for a preview planned before what it reads applied, such as a Terragrunt dependent planned on `mock_outputs`; absent otherwise |
+| `group` | on a member a capability planned with others as one group ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)): `{ digest, reads }`, the group digest folded into `planDigest` and the `<component>.<output>` values it reads from the group that the plan does not know. Part of the digest when present. Written by chant 0.124.53 and newer |
 
 A member with holes has an incomplete plan. Its entries say nothing about the addresses listed there.
 
 A provisional member is left out of the document's digest, so approving the document never approves it. A wave's set digest refuses it, and the grouped summary never puts it in a group with real plans.
+
+A change set in which any member has `group.reads` is never treated as empty, so a gate that passes an empty change set without an approval still waits for one.
 
 ### Entries
 
@@ -90,12 +93,13 @@ Each member carries the value a gate on that member alone binds ([#2300](https:/
 | `chant`, a component with no step that has `plan` | `componentPlanDigest` over the environment, the composition and its vars, plus `inputs`, the content digest of each local file its steps deploy from ([#4155](https://github.com/INTENTIUS/chant/issues/4155)), when any exists |
 | `pulumi` | `computePlanDigest("pulumi-preview", …)` over each step's op, URN, provider, id, inputs before and after, `diffReasons`, `replaceReasons` and `detailedDiff`, sorted by URN and op |
 | `chant`, `<component>#inputs` | `computePlanDigest("component-inputs", …)` over the environment, the component and the content digests of the files its steps without `plan` deploy from |
+| any, a member of a group | `computePlanDigest("capability-group-member", { plan, group })` over the member's own digest and the group digest, which is `computePlanDigest("capability-group", { kind, members, composition })` over the capability's kind, each member's component, member and own digest, and the capability's digest of the composition |
 
 A component member's holes include each step whose content the digest can't name, with a reason that starts `unbound:`. [Plan previews](/chant/components/plan-previews/#a-capability-without-plan) lists the fields read.
 
 The set digest is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member that is not provisional, sorted by member. `changeSetDigest(members)` computes it. A wave of [gated waves](https://github.com/INTENTIUS/chant/issues/3049) is a subset of members, and the wave's gate value is the set digest over that subset.
 
-The document's `digest` is `computePlanDigest("change-set-document", { set, members, entries, sideEffects })`, with `planned: { releaseDigest, environment }` added for a release gate's document. It covers the set digest and the entries and side effects, leaving out each entry's `node`. For each member it also covers the `member` name, `status` and `holes`. Provisional members and their entries are left out. `changeSetDocumentDigest(doc)` computes it. Members are sorted by name, entries and side effects as the document sorts them, so order makes no difference. The digest has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). It changes when any member's `planDigest` changes. A changed entry, hole or side effect changes it too. A set that names a member twice is refused. A release gate's document hashes the release and the environment it was planned for, so two releases whose plans read the same still have two digests, and an approval of one is never an approval of the other. A document without them hashes as before.
+The document's `digest` is `computePlanDigest("change-set-document", { set, members, entries, sideEffects })`, with `planned: { releaseDigest, environment }` added for a release gate's document. It covers the set digest and the entries and side effects, leaving out each entry's `node`. For each member it also covers the `member` name, `status` and `holes`, and `group` when the member has one. Provisional members and their entries are left out. `changeSetDocumentDigest(doc)` computes it. Members are sorted by name, entries and side effects as the document sorts them, so order makes no difference. The digest has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). It changes when any member's `planDigest` changes. A changed entry, hole or side effect changes it too. A set that names a member twice is refused. A release gate's document hashes the release and the environment it was planned for, so two releases whose plans read the same still have two digests, and an approval of one is never an approval of the other. A document without them hashes as before.
 
 An approval of the document therefore binds what the document says about each plan, so a resumed pull-request apply checks a re-planned member against entries the approval covers ([#3555](https://github.com/INTENTIUS/chant/issues/3555)). The summary is computed from the entries and is not hashed. A change to how chant projects a plan into entries moves the digest, so an approval given under one chant release can need giving again under the next. `verifyChangeSetDigest(doc)` recomputes the value from the document.
 

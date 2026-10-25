@@ -30,9 +30,13 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetAttribute, type ChangeSetEntry, type ChangeSetPlanner } from "@intentius/chant/change-set";
+import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetDocument, type ChangeSetAttribute, type ChangeSetEntry, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
+import { moduleChanges, stripModule, topModule } from "./compose/module-address";
+import { stateResources } from "./applied-state";
+
+export { topModule } from "./compose/module-address";
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -139,40 +143,15 @@ export interface IndexRow {
 // Slicing the composed plan into one plan per module.
 // ---------------------------------------------------------------------------
 
-const TOP_MODULE = /^module\.([^.[\]]+)(?:\[(?:"(?:[^"\\]|\\.)*"|\d+)\])?(?:\.|$)/;
-
-/** The top-level module an address or module address is in, or undefined for the composed root's own. */
-export function topModule(address: string): string | undefined {
-  return TOP_MODULE.exec(address)?.[1];
-}
-
-/** `address` with its leading `module.<m>` (and index) taken off. */
-function unprefix(address: string): string {
-  const m = TOP_MODULE.exec(address);
-  return m ? address.slice(m[0].length) : address;
-}
-
 /** The plan's `resource_changes` that belong to module `m` (undefined: the root's own), each with the module taken off its address. */
 export function slicePlan(plan: unknown, m: string | undefined): Json {
   const p = isObject(plan) ? plan : {};
-  const list = Array.isArray(p.resource_changes) ? p.resource_changes : [];
-  const mine = list.filter((r) => isObject(r) && topModule(String(r.module_address ?? r.address ?? "")) === m);
-  const resource_changes = mine.map((r) => {
-    const rc = r as Json;
-    const out: Json = { ...rc, address: unprefix(String(rc.address)) };
-    if (typeof rc.previous_address === "string") out.previous_address = unprefix(rc.previous_address);
-    if (typeof rc.module_address === "string") {
-      const rest = unprefix(rc.module_address);
-      if (rest === "" || rest === rc.module_address) delete out.module_address;
-      else out.module_address = rest;
-    }
-    return out;
-  });
-  return { ...(p.errored === true ? { errored: true } : {}), resource_changes };
+  return { ...(p.errored === true ? { errored: true } : {}), resource_changes: moduleChanges(p.resource_changes, m) };
 }
 
 // ---------------------------------------------------------------------------
-// Applied values: the state after the apply gives the values the plan left unknown.
+// Applied values: the state after the apply gives the values the plan left unknown,
+// read through `./applied-state`, as the composed estate run reads them.
 // ---------------------------------------------------------------------------
 
 /** Whether a sensitivity map marks anything under it `true`. */
@@ -181,25 +160,6 @@ function marks(v: unknown): boolean {
   if (Array.isArray(v)) return v.some(marks);
   if (isObject(v)) return Object.values(v).some(marks);
   return false;
-}
-
-/** Every resource of a `show -json` state, by address. A deposed object is left out. */
-function stateResources(show: unknown): Map<string, { values: Json; sensitive: Json }> {
-  const out = new Map<string, { values: Json; sensitive: Json }>();
-  const walk = (mod: unknown): void => {
-    if (!isObject(mod)) return;
-    for (const r of Array.isArray(mod.resources) ? mod.resources : []) {
-      if (!isObject(r) || typeof r.address !== "string" || r.deposed_key !== undefined) continue;
-      out.set(r.address, { values: isObject(r.values) ? r.values : {}, sensitive: isObject(r.sensitive_values) ? r.sensitive_values : {} });
-    }
-    for (const c of Array.isArray(mod.child_modules) ? mod.child_modules : []) walk(c);
-  };
-  const root = isObject(show) ? show : {};
-  // A plan's `prior_state` is the state; a `show -json` of state has `values` itself.
-  const state = isObject(root.prior_state) ? root.prior_state : root;
-  const values = isObject(state.values) ? state.values : {};
-  walk(values.root_module);
-  return out;
 }
 
 /** Each unknown attribute given the value the state holds. One the state lacks stays unknown; a sensitive one stays `sensitive`. */
@@ -309,7 +269,7 @@ function unknownOutputsOf(plan: Json, u: string): Set<string> {
       const data = parts[0] === "data";
       const [type, rname, attr] = data ? [parts[1], parts[2], parts[3]] : [parts[0], parts[1], parts[2]];
       if (!type || !rname) continue;
-      const unprefixed = (c: Json): string => unprefix(String(c.address)).replace(/\[[^\]]*\]$/, "");
+      const unprefixed = (c: Json): string => stripModule(String(c.address)).replace(/\[[^\]]*\]$/, "");
       for (const c of changes) {
         if (unprefixed(c) !== `${data ? "data." : ""}${type}.${rname}`) continue;
         const after = isObject(c.change) ? c.change.after_unknown : undefined;
@@ -494,6 +454,8 @@ function rawChanges(plan: Json): Map<string, RawChange> {
 
 export interface TerraformReport {
   report: Json;
+  /** The change set whose digest `report.change_set` names: what behold reads beside the report. */
+  changeSet: ChangeSetDocument;
   /** The run's directory, relative to the project's own index: `yyyy/mm/<commit>/<stage>`. */
   path: string;
   row: IndexRow;
@@ -680,7 +642,7 @@ export function terraformReport(input: TerraformReportInput): TerraformReport {
     ...(run.pull_request_url ? { pull_request_url: run.pull_request_url } : {}),
     ...(run.job_url ? { job_url: run.job_url } : {}),
   };
-  return { report, path, row };
+  return { report, changeSet: doc, path, row };
 }
 
 // ---------------------------------------------------------------------------
@@ -716,7 +678,8 @@ export interface ReportStore {
 }
 
 /**
- * Write the run's `report.json` and add its row to the project's index
+ * Write the run's `report.json` and `change-set.json` (the document whose
+ * digest the report names, as `chant change-set` writes it), and add its row to the project's index
  * (`<project>/index.json`, paths relative to it) and to the prefix's
  * (`index.json`, paths starting at the project), the two places terragucci
  * writes. Returns the keys written.
@@ -729,6 +692,7 @@ export async function writeReport(store: ReportStore, r: TerraformReport): Promi
     keys.push(key);
   };
   await put(`${project}/${r.path}/report.json`, r.report);
+  await put(`${project}/${r.path}/change-set.json`, r.changeSet);
   for (const [key, path] of [[`${project}/index.json`, r.path], ["index.json", `${project}/${r.path}`]] as const) {
     await put(key, addToIndex(await store.read(key), { ...r.row, path }));
   }

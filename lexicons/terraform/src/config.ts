@@ -145,6 +145,23 @@ export const terraformConfigSchema = z.strictObject({
   moduleRoot: z.string().optional(),
   /** The default {@link TerraformRootConfig.observe} for every root that sets none (#4358). */
   observe: terraformObserveDepthSchema.optional(),
+  /**
+   * Composed runs (#4419, #4438), off unless `enabled` is true. When on, the
+   * `terraform-apply` components a change reaches, and the ones they read,
+   * plan as one plan and apply as one apply of a composed root of `module`
+   * calls, so a value one root creates reaches its readers in that apply. A
+   * component that cannot compose plans wave by wave as without the setting,
+   * and the report says why (`compositionFor` in `compose.ts`).
+   *
+   * `max` caps how many roots compose; a change over it applies wholly in
+   * waves. Default 10.
+   */
+  compose: z
+    .strictObject({
+      enabled: z.boolean(),
+      max: z.number().int().min(2).optional(),
+    })
+    .optional(),
   /** Named root modules. The name is the entity-key prefix, so keep it stable. */
   roots: z.record(z.string(), terraformRootSchema).default({}),
 });

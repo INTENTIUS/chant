@@ -207,14 +207,20 @@ function globBody(g: string, paths: boolean): string {
 
 const matches = (globs: readonly string[] | undefined, name: string | undefined): boolean => globs === undefined || (name !== undefined && globs.some((g) => nameGlobMatch(g, name)));
 
-const coversTarget = (r: CloudIdentityRule, target: string | undefined): boolean =>
-  r.targets === undefined || (target !== undefined && r.targets.some((g) => targetGlobMatch(g, target)));
+/** One target's names: a string, or the several names a tool knows it by, such as a Terraform root's key and its directory. */
+export type TargetNames = string | readonly string[];
+
+const coversTarget = (r: CloudIdentityRule, target: TargetNames | undefined): boolean =>
+  r.targets === undefined || (target !== undefined && (typeof target === "string" ? [target] : target).some((n) => r.targets!.some((g) => targetGlobMatch(g, n))));
 
 /**
  * The first rule that covers `env`, `member` and `target`, or undefined.
  * With no `target`, the first rule that names no targets: the pipeline's own.
+ * A `target` given as several names is covered by a rule when any one name
+ * matches a glob, and the first rule in declared order wins, whichever name
+ * it matched.
  */
-export function ruleFor(rules: readonly CloudIdentityRule[], env: string, member?: string, target?: string): CloudIdentityRule | undefined {
+export function ruleFor(rules: readonly CloudIdentityRule[], env: string, member?: string, target?: TargetNames): CloudIdentityRule | undefined {
   return rules.find((r) => matches(r.environments, env) && matches(r.members, member) && coversTarget(r, target));
 }
 
@@ -289,7 +295,7 @@ export function resolveCloudIdentity(decl: CloudIdentityDeclaration | undefined,
  * any cloud covers it. Each trade names one identity per cloud and no
  * `targets`.
  */
-export function resolveTargetCloudIdentity(decl: CloudIdentityDeclaration | undefined, env: string, member: string | undefined, target: string): PipelineCloudIdentity | undefined {
+export function resolveTargetCloudIdentity(decl: CloudIdentityDeclaration | undefined, env: string, member: string | undefined, target: TargetNames): PipelineCloudIdentity | undefined {
   if (!decl) return undefined;
   const plan: Record<string, unknown> = {};
   const apply: Record<string, unknown> = {};

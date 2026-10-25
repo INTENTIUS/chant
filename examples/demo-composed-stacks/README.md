@@ -73,9 +73,10 @@ objects with a title, a body and an optional link).
 - `chant-compose-create`: network adds `subnetB` (10.0.2.0/24) and publishes
   `SubnetBId`, unknown at plan. app adds `workerInterface` in it, reading
   `SubnetBId` through a parameter of its own. edge's `allowlist` becomes
-  `10.0.1.0/24,10.0.2.0/24`, a known value. The plan is 2 to create, 1 to
-  change and 0 to delete. One value is known after apply: the worker's
-  `SubnetId`. After network applies, the apply plans app and edge again, and
+  `10.0.1.0/24,10.0.2.0/24`, a known value. app publishes the worker's subnet
+  as `WorkerSubnetId`, and edge records it in `workerSubnet`. The plan is 3 to
+  create, 1 to change and 0 to delete. Two values are known after apply: the
+  worker's `SubnetId` and edge's `WorkerSubnetId`. After network applies, the apply plans app and edge again, and
   the first approval covers that round.
 
 ## The base and the reset

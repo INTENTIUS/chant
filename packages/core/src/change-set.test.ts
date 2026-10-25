@@ -28,6 +28,7 @@ import {
   changeSetDigest,
   changeSetDocumentDigest,
   composeChangeSet,
+  isEmptyChangeSet,
   lifecyclePlanPart,
   readChangeSetPartFile,
   reconcilePlanPart,
@@ -289,5 +290,28 @@ describe("readChangeSetPartFile (#3767)", () => {
     const p = sqlPart();
     const failed = readChangeSetPartFile({ ...p, member: { ...p.member, status: "failed", error: "out of order", planDigest: null } }, "sql", "w");
     expect(failed.member).toMatchObject({ status: "failed", error: "out of order", planDigest: null });
+  });
+});
+
+describe("a grouped member (ws-107, #4440)", () => {
+  const digest = computePlanDigest("capability-group", { kind: "k", members: [], composition: "c" });
+  const part = (member: string, group?: { digest: string; reads: string[] }): ChangeSetPart => ({
+    member: { member, lexicon: "chant", planner: "chant", status: "planned", planDigest: computePlanDigest("p", member), holes: [], ...(group ? { group } : {}) },
+    entries: [],
+  });
+
+  test("a member without a group hashes as before; with one, the group is in the digest and the schema", () => {
+    const plain = composeChangeSet([part("a"), part("b")]);
+    const grouped = composeChangeSet([part("a", { digest, reads: [] }), part("b", { digest, reads: ["a.id"] })]);
+    expect(plain.digest).toBe(changeSetDocumentDigest({ members: plain.members, entries: [] }));
+    expect(grouped.digest).not.toBe(plain.digest);
+    expect(composeChangeSet([part("a", { digest, reads: [] }), part("b", { digest, reads: [] })]).digest).not.toBe(grouped.digest);
+    expect(verifyChangeSetDigest(grouped)).toBe(true);
+    expectValid(grouped);
+  });
+
+  test("a change set whose member reads a value its group computes is never empty (ruling 4)", () => {
+    expect(isEmptyChangeSet(composeChangeSet([part("a", { digest, reads: [] }), part("b", { digest, reads: [] })]))).toBe(true);
+    expect(isEmptyChangeSet(composeChangeSet([part("a", { digest, reads: [] }), part("b", { digest, reads: ["a.id"] })]))).toBe(false);
   });
 });
