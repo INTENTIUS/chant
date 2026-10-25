@@ -390,6 +390,12 @@ export const REASONS = {
   "chant-dependency": "The member's package.json still has a chant dependency, or a script that calls chant.",
   "chant-in-ci": "A CI file of the exited member still calls chant.",
   "declaration-not-other": "The declaration still gives the exited member a kind other than other.",
+  // workspace drift (behold#995): why a member's drift read could not run. records is then empty.
+  "member-required": "workspace drift was given no --member, or more than one: it reads one member.",
+  "no-drift-read": "The member's kind has no drift read, such as other, app or a nested workspace.",
+  "read-unsupported": "--read names a read the member's engine does not answer, such as state on a chant member.",
+  "resource-unsupported": "--resource was given for an engine that cannot read one resource on its own.",
+  "env-required": "A chant member's live drift read needs an environment, and --env was not given.",
 } as const;
 
 export type ReasonCode = keyof typeof REASONS;

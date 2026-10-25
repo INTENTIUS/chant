@@ -120,6 +120,10 @@ A member that cannot compose leaves the group and plans root by root as without 
 
 A composed plan that fails makes every member plan-failed with its error, and nothing applies. Outside a group, a root whose `vars` wait on an output not known yet is a hole and its round needs its own approval.
 
+### A choudoufu member's outputs, read by another member
+
+The lexicon also gives core's `member-outputs` verb its choudoufu source ([#4455](https://github.com/INTENTIUS/chant/issues/4455)). A chant member of the same workspace reads a choudoufu member's outputs as parameters through it, without the choudoufu member being one of its own `terraform.roots`: the member's directory comes from `chant.workspace.json`. The applied values are `choudoufu output -json` in the member's directory, after `choudoufu init`; a live estate answers them from its record store. The planned values come from `choudoufu live-plan-set -json` over the member, run from the workspace root, read the way `plan` reads a root's: `planned_values.outputs`, with every output whose `output_changes` entry marks any part `after_unknown` named unknown. The member must be a live estate for the planned read. See [Another member's outputs](/chant/components/wiring-howto/#another-members-outputs) for the consumer's side. The consumer's `chant.config.ts` lists `terraform` among its lexicons, so the source is loaded.
+
 ## TerraformApplyOp
 
 The composite that phases the four activities into Init, Plan, an optional approval Gate, then Apply:

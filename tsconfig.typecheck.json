@@ -29,7 +29,11 @@
     "",
     "examples/fan-out-estate/demo/overlays/ is excluded (#4091): each file there is copied over the example's",
     "src/ by the demo's pull requests, so its relative imports (./params) resolve only in that copy.",
-    "examples/fan-out-estate/demo/driver.test.ts holds each one to the base file it replaces."
+    "examples/fan-out-estate/demo/driver.test.ts holds each one to the base file it replaces.",
+    "",
+    "examples/demo-composed-stacks/scenarios/*/pull/ is excluded for the same reason: the demo host overlays one",
+    "scenario's pull/ onto the example for its pull request, so chant-compose-create's edge/resources.ts imports",
+    "an ./params that only the base example's src/edge/ has."
   ],
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -53,6 +57,7 @@
     "lexicons/terraform/src/lint/rules/fixtures/**/*-op.ts",
     "lexicons/sql/test-fixtures/**",
     "lexicons/sql/examples/postgres-typed-columns/**",
-    "examples/fan-out-estate/demo/overlays/**"
+    "examples/fan-out-estate/demo/overlays/**",
+    "examples/demo-composed-stacks/scenarios/*/pull/**"
   ]
 }

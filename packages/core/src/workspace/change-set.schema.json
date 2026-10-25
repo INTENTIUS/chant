@@ -292,7 +292,11 @@
         },
         "node": {
           "type": ["string", "null"],
-          "description": "Added in contract 1 by #4022, written by chant 0.124.28 and newer on a stored change set (chant change-set show). The graph node the entry changes, as chant graph --format ir names it, with the member in front (<member>/<id>) inside a workspace, as chant workspace graph names it. A chant entry's node is its address; a terraform-family entry's is <root>/<block key>, where the block key is each module call as module.<name>/ and then the block's address with no index. Null when the graph holds no node for the address, such as a delete of a block the source no longer declares. Absent on a document never mapped onto a graph. Not part of digest."
+          "description": "Added in contract 1 by #4022, written by chant 0.124.28 and newer on a stored change set (chant change-set show). The graph node the entry changes, as chant graph --format ir names it, with the member in front (<member>/<id>) inside a workspace, as chant workspace graph names it. A chant entry's node is its address; a terraform-family entry's is <root>/<block key>, where the block key is each module call as module.<name>/ and then the block's address with no index. Since #4454 an instance of a count or for_each block gets the instance node's id, the block node's id followed by the instance key as the planner prints it (<root>/aws_eip.pool[0], <root>/aws_eip.pool[\"a\"]), with instanceOf naming the block node; an instance under an expanded module call keeps the block node. Null when the graph holds no node for the address, such as a delete of a block the source no longer declares. Absent on a document never mapped onto a graph. Not part of digest."
+        },
+        "instanceOf": {
+          "type": "string",
+          "description": "Added in contract 1 by #4454. Set when node is an instance node of a count or for_each block: the id of the block node it is an instance of, in the same id space as node. The block node is the rollup. Absent on every other entry. Not part of digest."
         },
         "source": {
           "type": "string",

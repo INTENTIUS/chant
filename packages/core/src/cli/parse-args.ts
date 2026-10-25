@@ -24,6 +24,7 @@ const BOOLEAN_FLAGS = new Set([
   "--agents",
   "--agent",
   "--all-projects",
+  "--all",
   "--force",
   "--fix",
   "--watch",
@@ -78,6 +79,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-require-review",
   "--expire",
   "--check-live",
+  "--stream",
   "--check-snapshot",
   "--fail-on-drift",
   "--durable-requests",
@@ -266,6 +268,20 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.skipUndeclarable = true;
     } else if (arg === "--state") {
       result.statePath = args[++i];
+      // `chant workspace promote --all --state <member>=<path>` (#4461), repeatable.
+      if (result.statePath !== undefined) (result.statePaths ??= []).push(result.statePath);
+    } else if (arg === "--state-dir") {
+      // `chant workspace promote --all --state-dir <dir>` (#4461): <dir>/<member>.tfstate.
+      result.stateDir = args[++i];
+      if (!result.stateDir || result.stateDir.startsWith("-")) throw new Error("--state-dir needs a directory: --state-dir <dir>");
+    } else if (arg === "--wave-size") {
+      const raw = args[++i];
+      const size = Number(raw);
+      if (!Number.isInteger(size) || size < 1) throw new Error(`--wave-size needs a whole number from 1: got "${raw ?? ""}"`);
+      result.waveSize = size;
+    } else if (arg === "--all") {
+      // `chant workspace promote --all` (#4461): every terraform member.
+      result.all = true;
     } else if (arg === "--select") {
       result.selectAddress = args[++i];
     } else if (arg === "--live-name") {
@@ -1024,6 +1040,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined || value.startsWith("--")) throw new Error("--where needs a clause: --where <field><op><value>");
       result.where = [...(result.where ?? []), value];
+    } else if (arg === "--read") {
+      // behold#995 - `chant workspace drift --read <read>`: which read the member's engine answers with.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--read needs a read: --read <state|plan|refresh|live-read|ownership>");
+      result.driftRead = value;
+    } else if (arg === "--stream") {
+      result.stream = true;
+    } else if (arg === "--resource") {
+      // behold#995 - `chant workspace drift --resource <addr>`: one resource's drift.
+      const value = args[++i];
+      if (!value || value.startsWith("--")) throw new Error("--resource needs an address: --resource <addr>");
+      result.resource = value;
     } else if (arg === "--since") {
       result.since = args[++i];
     } else if (arg === "--limit") {

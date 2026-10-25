@@ -20,6 +20,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `generate-sbom` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `health-gate` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `jvm-build` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `member-outputs` | core | yes | yes | another workspace member's plan, through the engine its kind names (choudoufu's `live-plan-set -json`) | no entries: the member plans and applies through its own pipeline. A hole per output known only after it applies. See [member-outputs](#member-outputs) |
 | `publish-artifact` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `publish-image` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `r2-sync` | core | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
@@ -82,7 +83,7 @@ A component's members come from its steps that have `plan`, one member per such 
 
 ## Capabilities with plan
 
-Five capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
+Six capabilities have `plan`. Each section below says what the plan reads and what the note shows. It also says what holds the apply to the approved plan. A step that finds its target moved since the approved plan applies nothing, and the command exits 3 ([#3997](https://github.com/INTENTIUS/chant/issues/3997)).
 
 ### `arm-deploy`
 
@@ -145,6 +146,16 @@ When the API server refuses a change in the dry run, as it does for a Deployment
 The digest covers the documents sent, the target they are sent to and the delete mode. For each object it also covers the action and the new value of every changed field. On apply, `run` dry-runs the approved documents again. It applies them only when that dry run gives the approved digest. Otherwise it fails before the cluster changes and names both digests.
 
 `kubectl-apply` has outputs only when the step names them: `outputs: { host: { object: "Service/prod/web", field: "status.loadBalancer.ingress.0.hostname" } }`, each a field of an object the manifest declares. `outputs` reads those fields from the cluster, and `run` returns them once it applied. The plan knows a field the manifest sets, and any field of an object the dry run leaves unchanged.
+
+### `member-outputs`
+
+The capability is in `packages/core/src/components/verbs/member-outputs.ts` ([#4455](https://github.com/INTENTIUS/chant/issues/4455)). Its step names another member of the workspace, and the member's declared kind picks the engine output source that reads it. A lexicon contributes a source through `CapabilityPlugin.engineOutputSources()`. The terraform lexicon's reads a `choudoufu` member.
+
+The plan asks the source for the member's planned outputs. For a choudoufu member that is `live-plan-set -json` over the member's root: its `planned_values.outputs`, less each output whose `output_changes` entry is unknown after apply. The member in the consumer's change set is `<member>#outputs`. It has no entries, since the member's own pipeline plans and applies its changes. Each output known only after apply is a hole, `<member>.<output>`, and a step that reads one is planned again once the member applied.
+
+The digest covers the environment, the member, its kind, the digest of the member's own plan and the known and unknown outputs, so a member's plan that moves after review moves the consumer's digest too. `run` applies nothing. It plans the member again and refuses while the member has changes left to apply, then answers the member's applied outputs.
+
+`outputs` answers the member's outputs as applied now, for a choudoufu member from `choudoufu output -json` in its directory.
 
 ### `terraform-apply`
 

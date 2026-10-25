@@ -29,7 +29,9 @@ describe("plan previews page (chant #4001)", () => {
     const doc = readFileSync(join(ROOT, PLAN_PREVIEWS_DOC), "utf-8");
     for (const [kind, note] of Object.entries(PLANNERS)) {
       const source = readFileSync(join(ROOT, note.source), "utf-8");
-      expect(source, `${note.source} declares ${kind}`).toContain(`kind: "${kind}"`);
+      // Literally, or through a constant as member-outputs.ts does (`kind: MEMBER_OUTPUTS_KIND`).
+      const declared = source.includes(`kind: "${kind}"`) || [...source.matchAll(/\b([A-Z_]+_KIND) = "([^"]+)"/g)].some((m) => m[2] === kind && source.includes(`kind: ${m[1]}`));
+      expect(declared, `${note.source} declares ${kind}`).toBe(true);
       expect(doc, `the page has a "### \`${kind}\`" section`).toContain(`### \`${kind}\``);
       expect(doc, `the page cites ${note.source}`).toContain(note.source);
     }

@@ -10,6 +10,9 @@ export {
   terraformApplyCapability,
   TerraformPlanMovedError,
   TERRAFORM_VERB_FAMILIES,
+  // #4455: a choudoufu member's outputs, read for core's `member-outputs`.
+  choudoufuOutputSource,
+  choudoufuMemberPlannedOutputs,
   type TerraformApplyStepInput,
   type TerraformApplyStepOutput,
 } from "./components/capability-plugin";

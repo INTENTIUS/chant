@@ -142,6 +142,18 @@ export const terraformPlugin: LexiconPlugin = {
   },
 
   /**
+   * Each root's drift, as drift-record stream lines (behold#995): a stock
+   * root through its state or a plan, a live root through `live-plan` (and a
+   * plan), one resource through `live-plan -resource`. `chant workspace
+   * drift` reaches it through `chant lifecycle drift` in a member's reader
+   * project. See `./drift-read.ts`.
+   */
+  async readDrift(options) {
+    const { readTerraformDrift } = await import("./drift-read");
+    return readTerraformDrift(options);
+  },
+
+  /**
    * The prediction, for whichever estate `options.from` names (#2495). The
    * producer is `predictTerraformBehaviour` and this is its second caller, not
    * a second producer: the contract's options are read as its own and handed

@@ -59,7 +59,8 @@ A change set in which any member has `group.reads` is never treated as empty, so
 | `disruption` | on `update`, `replace` and `delete`: `in-place`, `rolling`, `replace`, `destroy` or `unknown` |
 | `region`, `scope` | where the change lands |
 | `attributes` | the top-level attributes the change writes |
-| `node` | on a stored change set, the graph node the change is made to, or `null` when the graph has none for the address |
+| `node` | on a stored change set, the graph node the change is made to, or `null` when the graph has none for the address. An instance of a `count` or `for_each` block gets its instance node, `<block node>[0]` ([#4454](https://github.com/INTENTIUS/chant/issues/4454)) |
+| `instanceOf` | on a stored change set, when `node` is an instance node: the block node it is an instance of, which is the rollup |
 
 Each attribute is `{ path, before, after }`. `unknown: true` replaces `after` when the value is known only after apply. `sensitive: true` replaces both values when the planner marked either side sensitive. `forcesReplacement: true` marks the attributes that force a replace. Redaction follows the planner's marks. A value the planner leaves unmarked is carried as the plan JSON carries it.
 

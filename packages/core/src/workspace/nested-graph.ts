@@ -143,6 +143,7 @@ export function foldNested(graph: WorkspaceGraph, member: ComposedMember, inner:
     };
     if (node.compositeInstance) n.compositeInstance = prefixed(outer, node.compositeInstance);
     if (node.runtimeOwner) n.runtimeOwner = prefixed(outer, node.runtimeOwner);
+    if (node.instanceOf) n.instanceOf = prefixed(outer, node.instanceOf);
     if (node.compositeParent) n.compositeParent = node.compositeParent;
     // sourceLoc is relative to the member's directory: the outer member's is the nested root.
     const dir = dirs.get(node.member);

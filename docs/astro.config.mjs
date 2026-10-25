@@ -325,6 +325,7 @@ export default defineConfig({
 						{ label: 'Security Features', slug: 'reference/security-features' },
 						{ label: 'CI Workflows', slug: 'reference/ci-workflows' },
 						{ label: 'Change-Set Document', slug: 'reference/change-set' },
+						{ label: 'Drift Record', slug: 'reference/drift-record' },
 						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
 						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },

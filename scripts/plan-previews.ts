@@ -81,6 +81,12 @@ export const PLANNERS: Record<string, PlannerNote> = {
     shows: "a create, update, no-op or delete per object, and each changed field path with its value before and after",
     anchor: "kubectl-apply",
   },
+  "member-outputs": {
+    source: "packages/core/src/components/verbs/member-outputs.ts",
+    reads: "another workspace member's plan, through the engine its kind names (choudoufu's `live-plan-set -json`)",
+    shows: "no entries: the member plans and applies through its own pipeline. A hole per output known only after it applies",
+    anchor: "member-outputs",
+  },
   "terraform-apply": {
     source: "lexicons/terraform/src/components/capability-plugin.ts",
     reads: "`terraform plan` (or tofu or choudoufu) in the root, against its state",

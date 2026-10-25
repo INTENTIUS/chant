@@ -123,8 +123,19 @@ export interface ChangeSetEntry {
    * a delete of a block the source no longer declares. Absent until the
    * document is mapped onto a graph (`./change-set-graph.ts`), and never
    * part of the digest.
+   *
+   * An instance of a `count` or `for_each` block (#4454) gets the instance
+   * node's id, the block node's id followed by the key as the planner prints
+   * it (`<member>/aws_eip.pool[0]`), and {@link instanceOf} names the block
+   * node. See `./instance-nodes.ts`.
    */
   node?: string | null;
+  /**
+   * On an entry whose `node` is an instance node (#4454): the id of the block
+   * node it is an instance of, the rollup, in the same id space as `node`.
+   * Absent on every other entry. Like `node`, never part of the digest.
+   */
+  instanceOf?: string;
   /**
    * The source file that declares the entry's node, from the repository
    * root (#4025): the node's `sourceLoc.file` in the member's graph IR, with
@@ -319,13 +330,13 @@ export function changeSetDocumentDigest(
     .filter((m) => !provisional.has(m.member))
     .map((m) => ({ member: m.member, status: m.status, holes: m.holes, ...(m.group ? { group: { digest: m.group.digest, reads: [...m.group.reads].sort() } } : {}) }))
     .sort((a, b) => byString(a.member, b.member));
-  // An entry's graph node (#4022) and its source file (#4025) say where on
-  // the graph the change is, not what the plan does, so they stay outside
-  // the digest: mapping a stored
+  // An entry's graph node (#4022), its block node (#4454) and its source
+  // file (#4025) say where on the graph the change is, not what the plan
+  // does, so they stay outside the digest: mapping a stored
   // document onto a graph never moves the value its gate bound.
   const entries = doc.entries
     .filter((e) => !provisional.has(e.member))
-    .map(({ node: _node, source: _source, ...e }) => e)
+    .map(({ node: _node, instanceOf: _instanceOf, source: _source, ...e }) => e)
     .sort((a, b) => byString(entryKey(a), entryKey(b)));
   const sideEffects = (doc.sideEffects ?? []).filter((s) => !provisional.has(s.member)).sort(bySideEffect);
   const planned =
