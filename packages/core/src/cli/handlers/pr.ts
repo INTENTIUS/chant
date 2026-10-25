@@ -1658,6 +1658,7 @@ async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: 
     seededOutputs: p.seededOutputs,
     record,
     completed,
+    applied: outputs,
   });
   if (!resumed.ok) return skip(`what is left is not what was approved. ${resumed.reasons.join("; ")}`);
   console.error(formatInfo(`resume  : ${completed.join(", ")} applied in an earlier attempt; applying ${resumed.plan.order.join(", ") || "nothing more"} under the approval of ${record.digest}`));

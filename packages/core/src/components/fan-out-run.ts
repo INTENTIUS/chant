@@ -50,7 +50,7 @@ import { downstreamWithin, remainingFanOut, type FanOutGroup, type FanOutPlan, t
 import { evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "../op/gate";
 import type { RunProgressEvent } from "./run-progress";
 import { emitGateStep, joinRunEventSinks, progressSinkOf, type RunEventSink } from "../run-event-stream";
-import type { CapabilityRegistry, GroupRun } from "./capability";
+import type { CapabilityRegistry, GroupMemberStatus, GroupRun } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
 import { groupsByComponent, runComponentGroup } from "./groups";
@@ -290,6 +290,8 @@ export interface FanOutRunResult {
    * it outside the group is blocked by it. Absent when none.
    */
   notStarted?: string[];
+  /** How each member of a group that ran ended, as its capability said (#4446), by component. Absent when no group ran. */
+  groupOutcomes?: Record<string, GroupMemberStatus>;
 }
 
 /**
@@ -366,6 +368,7 @@ export async function runFanOut(
   const completed: string[] = [];
   const failed: string[] = [];
   const notStarted: string[] = [];
+  const groupOutcomes: Record<string, GroupMemberStatus> = {};
   const blockedBy = new Map<string, string>();
   const held = new Map<string, FanOutHeld>();
   let gatedFact: PendingGateRecord | undefined;
@@ -481,6 +484,7 @@ export async function runFanOut(
     // or never started, outside the group, is blocked by that member.
     for (const ran of groupResults) {
       results.push(...ran.results);
+      Object.assign(groupOutcomes, ran.outcomes);
       const stopped: string[] = [];
       for (const result of ran.results) {
         if (result.status === "ok") completed.push(result.component);
@@ -521,6 +525,7 @@ export async function runFanOut(
     ...(gatedFact ? { gate: gatedFact } : {}),
     ...(held.size > 0 ? { held: active.order.filter((name) => held.has(name)).map((name) => held.get(name)!) } : {}),
     ...(notStarted.length > 0 ? { notStarted: [...notStarted].sort() } : {}),
+    ...(Object.keys(groupOutcomes).length > 0 ? { groupOutcomes } : {}),
   };
 }
 
