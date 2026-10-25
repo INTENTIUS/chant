@@ -16,7 +16,10 @@
  * - `terraform` to `choudoufu`: `choudoufu live-check` in the member's
  *   directory must pass, then `choudoufu live-import -state=<--state>
  *   -estate=<member>` prints its ratification report (read-only: it stamps
- *   nothing without `-approve`). The patch changes the member's kind.
+ *   nothing without `-approve`). The patch changes the member's kind. The
+ *   report, one entry per resource with its status, rides on `--json` as
+ *   `adoption` (INTENTIUS/behold#999, ./adoption-report.ts), so
+ *   `--dry-run --json` is the read-only way to ask what adopting would claim.
  * - `choudoufu` or `other` to `chant`: `chant import` writes TypeScript into
  *   the member's directory. The patch holds those files and the kind change.
  *
@@ -33,6 +36,7 @@ import { computePlanDigest } from "../lifecycle/plan-digest";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 import { approveCommand, describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import { WORKSPACE_PROMOTE_GATE_OP } from "../op/gate-name";
+import { parseLiveImportReport, type AdoptionReport } from "./adoption-report";
 import { DECLARATION_FILES, readDeclaration } from "./declaration";
 import { setProperty } from "./json-edit";
 import { workingTree } from "./tree";
@@ -125,7 +129,12 @@ export interface PromoteResult {
   digest?: string;
   patch?: string;
   ran?: { label: string; exitCode: number }[];
+  /** The `terraform` to `choudoufu` rung's adoption report, from `live-import` without `-approve`. */
+  adoption?: AdoptionReport;
 }
+
+/** The staging step whose output is the adoption report. */
+const REPORT_STEP = "choudoufu live-import (report)";
 
 function declarationFile(root: string): string {
   const f = DECLARATION_FILES.find((n) => existsSync(join(root, n)));
@@ -195,17 +204,24 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     git(repo, ["worktree", "add", "-q", "--detach", worktree, head]);
     const project = projectRel ? join(worktree, projectRel) : worktree;
     const ran: { label: string; exitCode: number }[] = [];
+    let adoption: AdoptionReport | undefined;
     for (const step of staging) {
       const cwd = join(project, step.cwd);
       mkdirSync(cwd, { recursive: true });
       const result = await run(step.argv, cwd);
       ran.push({ label: step.label, exitCode: result.exitCode });
       if (!opts.json) say(formatInfo(`${step.label}: exit ${result.exitCode}`));
+      if (step.label === REPORT_STEP) {
+        adoption = parseLiveImportReport(result.output);
+        // The report is what the gate asks a person to review, so it is shown, not only counted.
+        if (result.exitCode === 0 && result.output.trim()) say(result.output.trimEnd());
+      }
       if (result.exitCode !== 0) {
-        say(formatError({ message: `${step.label} failed in the staging worktree`, hint: result.output.trimEnd().split("\n").slice(-20).join("\n") }));
+        const tail = result.output.trimEnd().split("\n").slice(-20).join("\n");
+        say(formatError({ message: `${step.label} failed in the staging worktree`, hint: tail }));
         say(formatError({ message: "the promotion was not gated: its checks must pass first. The tree is unchanged." }));
-        if (opts.json) console.log(JSON.stringify({ outcome: "checks-failed", member: found.name, ran }, null, 2));
-        return { outcome: "checks-failed", exitCode: 1, member: found.name, from: rung.from, to: rung.to, ran };
+        if (opts.json) console.log(JSON.stringify({ outcome: "checks-failed", member: found.name, from: rung.from, to: rung.to, ran, ...(adoption ? { adoption } : {}), failed: { label: step.label, output: tail } }, null, 2));
+        return { outcome: "checks-failed", exitCode: 1, member: found.name, from: rung.from, to: rung.to, ran, ...(adoption ? { adoption } : {}) };
       }
     }
     const declPath = join(project, declFile);
@@ -213,9 +229,9 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     git(worktree, ["add", "-A"]);
     const patch = git(worktree, ["diff", "--cached", "--binary", "HEAD"]);
     const digest = computePlanDigest(PROMOTE_PLAN_KIND, { member: found.name, from: rung.from, to: rung.to, patch });
-    const base: PromoteResult = { outcome: "dry-run", exitCode: 0, member: found.name, from: rung.from, to: rung.to, digest, patch, ran };
+    const base: PromoteResult = { outcome: "dry-run", exitCode: 0, member: found.name, from: rung.from, to: rung.to, digest, patch, ran, ...(adoption ? { adoption } : {}) };
     const report = (outcome: PromoteOutcome, exitCode: number, extra: Record<string, unknown> = {}): PromoteResult => {
-      if (opts.json) console.log(JSON.stringify({ outcome, member: found.name, from: rung.from, to: rung.to, digest, ran, ...extra }, null, 2));
+      if (opts.json) console.log(JSON.stringify({ outcome, member: found.name, from: rung.from, to: rung.to, digest, ran, ...(adoption ? { adoption } : {}), ...extra }, null, 2));
       return { ...base, outcome, exitCode };
     };
     say(formatInfo(`${found.name}: ${rung.from} to ${rung.to}, patch ${digest}`));
