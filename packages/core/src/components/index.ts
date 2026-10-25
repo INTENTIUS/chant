@@ -55,6 +55,7 @@ export {
   type CapabilityGroupOutcome,
   type CapabilityGroupPlan,
   type GroupContext,
+  type GroupDrop,
   type GroupFallback,
   type GroupMember,
   type GroupMemberOutcome,

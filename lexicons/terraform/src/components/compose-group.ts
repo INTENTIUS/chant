@@ -5,9 +5,12 @@
  * root creates reaches its readers inside that apply.
  *
  * - `groupFallback` answers `off` while `terraform.compose.enabled` is unset,
- *   else builds the {@link Composition} (#4438) from the files and the
- *   config and answers its fallback, if any. A composition of estates also
- *   asks `choudoufu version` (#4445). Nothing plans.
+ *   else builds the {@link Composition} (#4438) from the files, the config
+ *   and each member's cloud identity, and answers its fallback, if any. A
+ *   member the composition leaves out is dropped with its own kind and
+ *   reason, and core forms the group again from the rest (#4419 ruling 1).
+ *   A composition of estates also asks `choudoufu version` (#4445).
+ *   Nothing plans.
  * - `planGroup` builds the composition again, plans it once with
  *   `ComposedRun` (#4444) or, for estates, `EstateRun` (#4445), and answers
  *   each member's part (#4442): its change-set part, planned outputs and
@@ -22,20 +25,23 @@
  *   of the working state's `show -json` for roots with state, the post-apply
  *   plan's `prior_state` for estates.
  *
- * Core gives a group whole or not at all, so a composition that leaves any
- * member out refuses the whole group with that member's fallback, and every
- * member plans wave by wave.
+ * Each member's identity is `ci.identity.cloud` resolved for its root as
+ * the target (`resolveTargetCloudIdentity`, #4332), compared by
+ * `identityKey`, so members that apply under different identities do not
+ * compose (#4438's `identity`).
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
+import type { PipelineCloudIdentity } from "@intentius/chant/ci-identity";
 import type {
   CapabilityGroupOutcome,
   CapabilityGroupPlan,
   CapabilityPlan,
   GroupContext,
+  GroupDrop,
   GroupFallback,
   GroupMember,
   GroupMemberOutcome,
@@ -45,7 +51,8 @@ import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { wiringReferencesAt } from "@intentius/chant/components/driver";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { COMPOSE_STEP_KIND, composeOff, compositionFor, type ComposeFallback, type Composition } from "../compose";
+import { declaredTargetCloudIdentity } from "@intentius/chant/workspace/ci-cloud-identity";
+import { COMPOSE_STEP_KIND, composeOff, compositionFor, identityKey, type Composition } from "../compose";
 import type { TerraformConfig } from "../config";
 import { terraformBinary, terraformOutputs } from "../op/activities/terraform";
 import { runBinary, type BinaryExec } from "../state/exec";
@@ -93,6 +100,12 @@ export interface ComposeGroupDeps {
   project?: () => Promise<ComposeProject>;
   /** The run for a composition. Default: `EstateRun` when `estate` is set, else `ComposedRun`. */
   runner?: (o: GroupRunnerOptions) => ComposedRunner;
+  /**
+   * Each target's cloud identity for `env` (`resolveTargetCloudIdentity`,
+   * #4332), or undefined when there is no workspace to read. Default:
+   * `declaredTargetCloudIdentity` from the project root.
+   */
+  identity?: (projectRoot: string, env: string) => Promise<((target: string) => PipelineCloudIdentity | undefined) | undefined>;
   /** How `choudoufu version` runs. Default `runBinary`. */
   exec?: BinaryExec;
   /** A root's outputs as its state holds them, for a member whose part of the working state could not be shown. Default `terraformOutputs`. */
@@ -146,8 +159,27 @@ export function memberComponents(members: readonly GroupMember<StepInput>[]): Dr
   }));
 }
 
+/**
+ * Each member's identity as `compositionFor` compares it: `identityKey` of
+ * `lookup` for the member's root. Undefined without a lookup, so no member
+ * falls back as `identity`.
+ */
+export function memberIdentity(
+  members: readonly GroupMember<StepInput>[],
+  lookup: ((target: string) => PipelineCloudIdentity | undefined) | undefined,
+): ((member: string) => string | undefined) | undefined {
+  if (!lookup) return undefined;
+  const keys = new Map(members.map((m) => [m.component, identityKey(lookup(m.step.root as string))] as const));
+  return (member) => keys.get(member);
+}
+
 /** The composition of exactly the group's members (core has already formed the group). */
-export function groupComposition(project: ComposeProject, members: readonly GroupMember<StepInput>[], env: NodeJS.ProcessEnv): Composition {
+export function groupComposition(
+  project: ComposeProject,
+  members: readonly GroupMember<StepInput>[],
+  env: NodeJS.ProcessEnv,
+  identity?: (member: string) => string | undefined,
+): Composition {
   const targets = Object.fromEntries(members.flatMap((m) => (m.ctx.targets?.length ? [[m.component, m.ctx.targets] as const] : [])));
   return compositionFor({
     projectRoot: project.projectRoot,
@@ -156,25 +188,28 @@ export function groupComposition(project: ComposeProject, members: readonly Grou
     selected: new Set(members.map((m) => m.component)),
     env,
     targets,
+    ...(identity ? { identity } : {}),
   });
 }
 
 /**
- * The one fallback core records for the group: the whole change's when it
- * is not `one-root`, else the first member left out, else `one-root`.
- * Undefined when every member composes. A member left out takes the group
- * with it, since core gives a group whole or not at all.
+ * What core is told of the group (#4419 ruling 1): the whole change's
+ * fallback when it is not `one-root`; else each member the composition left
+ * out as a drop with its own kind and reason, so core groups the rest
+ * again without them; else `one-root`. Undefined when every member
+ * composes.
  */
-export function groupFallbackOf(c: Composition, members: readonly string[]): ComposeFallback | undefined {
-  if (c.fallback && c.fallback.kind !== "one-root") return c.fallback;
-  const left = c.fallbacks[0];
-  if (left) {
-    const rest = members.filter((m) => m !== left.member);
-    return { ...left, reason: `${left.reason}, and ${rest.map((m) => `\`${m}\``).join(", ")} ${rest.length === 1 ? "plans" : "plan"} wave by wave with it, since a group composes whole` };
+export function groupFallbackOf(c: Composition, members: readonly string[]): GroupFallback | undefined {
+  if (c.fallback && c.fallback.kind !== "one-root") return { kind: c.fallback.kind, reason: c.fallback.reason };
+  const drop: GroupDrop[] = c.fallbacks.flatMap((f) => (f.member !== undefined && members.includes(f.member) ? [{ component: f.member, kind: f.kind, reason: f.reason }] : []));
+  if (!c.fallback) {
+    const named = new Set(drop.map((d) => d.component));
+    for (const m of members) {
+      if (!named.has(m) && !c.members.includes(m)) drop.push({ component: m, kind: "path", reason: `\`${m}\` deploys no root the composition could read` });
+    }
   }
-  if (c.fallback) return c.fallback;
-  const missing = members.filter((m) => !c.members.includes(m));
-  if (missing.length > 0) return { kind: "path", member: missing[0]!, reason: `\`${missing[0]}\` deploys no root the composition could read` };
+  if (drop.length > 0) return { kind: drop[0]!.kind!, reason: drop[0]!.reason!, drop };
+  if (c.fallback) return { kind: c.fallback.kind, reason: c.fallback.reason };
   return undefined;
 }
 
@@ -264,13 +299,20 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   const envOf = (): NodeJS.ProcessEnv => deps.env ?? process.env;
   const log = deps.log ?? ((line: string) => console.error(line));
   const readOutputs = deps.outputs ?? ((root: string) => terraformOutputs({ root }));
+  const identities = deps.identity ?? declaredTargetCloudIdentity;
+
+  /** The composition of `members` as `groupFallback` judges it, with each member's identity. */
+  async function compositionOf(ctx: GroupContext, p: ComposeProject, members: readonly GroupMember<StepInput>[]): Promise<Composition> {
+    const lookup = await identities(p.projectRoot, ctx.env);
+    return groupComposition(p, members, envOf(), memberIdentity(members, lookup));
+  }
 
   /** The composition the group plans as, or throws when it does not compose. */
-  async function composed(members: readonly GroupMember<StepInput>[]): Promise<{ p: ComposeProject; c: Composition }> {
+  async function composed(ctx: GroupContext, members: readonly GroupMember<StepInput>[]): Promise<{ p: ComposeProject; c: Composition }> {
     const p = await project();
     const off = composeOff(p.terraform);
     if (off) throw new Error(off.reason);
-    const c = groupComposition(p, members, envOf());
+    const c = await compositionOf(ctx, p, members);
     const refused = groupFallbackOf(c, members.map((m) => m.component));
     if (refused) throw new Error(`the group no longer composes: ${refused.reason}`);
     return { p, c };
@@ -301,13 +343,14 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   }
 
   return {
-    async groupFallback(_ctx, members) {
+    async groupFallback(ctx, members) {
       const p = await project();
       const off = composeOff(p.terraform);
-      if (off) return off;
-      const c = groupComposition(p, members, envOf());
+      if (off) return { kind: off.kind, reason: off.reason };
+      const c = await compositionOf(ctx, p, members);
+      // A member left out is dropped alone; core asks again with the rest, and the estate check runs then.
       const refused = groupFallbackOf(c, members.map((m) => m.component));
-      if (refused) return { kind: refused.kind, reason: refused.reason };
+      if (refused) return refused;
       if (c.estate) {
         const binary = p.terraform.binary ?? "choudoufu";
         const v = await exec(binary, ["version"], p.projectRoot, envOf());
@@ -321,7 +364,7 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
     async planGroup(ctx, members) {
       const unresolved = unresolvedOf(members);
       if (unresolved.size > 0) return waitingGroup(ctx, members, unresolved);
-      const { p, c } = await composed(members);
+      const { p, c } = await composed(ctx, members);
       // Planned without locks and released at once: nothing stays held or changed if core refuses the plan or makes it wait.
       const planned = await withRunner(p, c, members, false, (r) => r.plan());
       if (planned.fallback) throw new Error(`the group no longer composes: ${planned.fallback.reason}`);
@@ -336,11 +379,11 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
       return { members: plans, digest: planned.digest, artifact };
     },
 
-    async runGroup(_ctx, run, members) {
+    async runGroup(ctx, run, members) {
       if (unresolvedOf(members).size > 0) throw new Error("the group reads outputs of components outside it that are not known yet, so it cannot apply");
       const approved = run.artifact as ComposedArtifact | undefined;
       if (typeof approved?.digest !== "string" || approved.digest === "") throw new Error("no composed plan of the group to apply");
-      const { p, c } = await composed(members);
+      const { p, c } = await composed(ctx, members);
       const notStarted = (error: string): CapabilityGroupOutcome => ({
         members: Object.fromEntries(members.map((m) => [m.component, { status: "not-started" as const, error }])),
         error,

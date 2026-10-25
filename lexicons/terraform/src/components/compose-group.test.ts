@@ -19,7 +19,8 @@ import {
   type GroupMember,
 } from "@intentius/chant/components/capability";
 import { resolveStepInput, type DriverComponent } from "@intentius/chant/components/driver";
-import { planComponentGroup, runComponentGroup } from "@intentius/chant/components/groups";
+import { findComponentGroups, planComponentGroup, runComponentGroup } from "@intentius/chant/components/groups";
+import { planFanOut } from "@intentius/chant/components/fan-out";
 import { composeChangeSet, isEmptyChangeSet, type ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig } from "../config";
 import type { ComposedRunApply, ComposedRunner, ComposedRunPlan } from "../compose/estate";
@@ -166,13 +167,38 @@ describe("groupFallback (#4447)", () => {
     expect(await g.groupFallback({ env: "test", components: ["a", "b", "c"] }, members(false))).toBeUndefined();
   });
 
-  test("a member #4438 leaves out refuses the whole group with its kind, naming the rest", async () => {
+  test("a member #4438 leaves out is dropped alone with its kind and reason, so core groups the rest (#4419 ruling 1)", async () => {
     const dir = project({ "roots/c/paths.tf": 'locals {\n  here = path.root\n}\n' });
     const g = composeGroup(deps(dir));
     const refused = await g.groupFallback({ env: "test", components: ["a", "b", "c"] }, members(false));
     expect(refused?.kind).toBe("path");
-    expect(refused?.reason).toContain("`c` uses `path.root` or `path.cwd`");
-    expect(refused?.reason).toContain("`a`, `b` plan wave by wave with it");
+    expect(refused?.drop).toEqual([{ component: "c", kind: "path", reason: expect.stringContaining("`c` uses `path.root` or `path.cwd`") }]);
+    // Asked again with the rest, it takes them.
+    expect(await g.groupFallback({ env: "test", components: ["a", "b"] }, members(false).filter((m) => m.component !== "c"))).toBeUndefined();
+  });
+
+  test("a member under another cloud identity is dropped as identity: each root resolved as its target (#4438, #4332)", async () => {
+    const id = (role: string) => ({ plan: { aws: { role: `${role}-plan`, region: "us-east-1", audience: "sts.amazonaws.com" } }, apply: { aws: { role, region: "us-east-1", audience: "sts.amazonaws.com" } } }) as never;
+    const asked: string[] = [];
+    const g = composeGroup(
+      deps(project(), true, {
+        identity: async (projectRoot, env) => {
+          asked.push(env);
+          expect(projectRoot).toBeTruthy();
+          return (target) => (target === "c" ? id("role/other") : id("role/apply"));
+        },
+      }),
+    );
+    const refused = await g.groupFallback({ env: "test", components: ["a", "b", "c"] }, members(false));
+    expect(asked).toEqual(["test"]);
+    expect(refused?.drop).toEqual([
+      { component: "c", kind: "identity", reason: "`c` applies under another cloud identity (`ci.identity.cloud`) than `a`, `b`, and one run has one set of credentials" },
+    ]);
+  });
+
+  test("members under one cloud identity compose", async () => {
+    const g = composeGroup(deps(project(), true, { identity: async () => () => ({ plan: { aws: { role: "p", region: "us-east-1", audience: "sts.amazonaws.com" } }, apply: { aws: { role: "a", region: "us-east-1", audience: "sts.amazonaws.com" } } }) as never }));
+    expect(await g.groupFallback({ env: "test", components: ["a", "b", "c"] }, members(false))).toBeUndefined();
   });
 
   test("a dependsOn with no read between two members falls back as order-only", async () => {
@@ -320,6 +346,16 @@ describe("through core's group calls (#4447, ws-107)", () => {
     };
     return new CapabilityRegistry().register(cap);
   }
+
+  test("core forms the group again without a member terraform-apply drops, and records its fallback (#4419 ruling 1)", async () => {
+    const dir = project({ "roots/c/paths.tf": 'locals {\n  here = path.root\n}\n' });
+    const net: DriverComponent = { name: "net", deploy: [{ phase: "Apply", steps: [{ kind: "shell", cmd: "true" }] }] };
+    const all = [net, ...components];
+    const plan = planFanOut({ components: all, changed: ["a", "net"] });
+    const found = await findComponentGroups({ components: all, plan, registry: registry(dir), env: "test" });
+    expect(found.groups).toEqual([{ capability: "terraform-apply", components: ["a", "b"] }]);
+    expect(found.fallbacks).toEqual([{ component: "c", capability: "terraform-apply", kind: "path", reason: expect.stringContaining("`c` uses `path.root` or `path.cwd`") }]);
+  });
 
   test("b's read of a's unknown id is not a hole, and the change set does not look empty though b changes nothing (ruling 4)", async () => {
     const planned = await planComponentGroup({

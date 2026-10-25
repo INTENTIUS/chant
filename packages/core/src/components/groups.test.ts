@@ -112,6 +112,68 @@ describe("which components form a group (ws-107)", () => {
   });
 });
 
+describe("a groupFallback that drops members (#4419 ruling 1)", () => {
+  /** A fallback that drops `names` while any of them is still in the group, and takes the group once none is. */
+  const dropping = (names: string[]) => (members: readonly GroupMember[]): GroupFallback | undefined => {
+    const hit = members.filter((m) => names.includes(m.component)).map((m) => m.component);
+    return hit.length === 0 ? undefined : { kind: "lock", reason: "holds no lock", drop: hit.map((component) => ({ component, reason: `${component} holds no lock` })) };
+  };
+
+  test("dropping one of three leaves the other two grouped; core asks again with the two, and the report names the one", async () => {
+    const components = [grouped("a"), grouped("b", ["a"], { upstream: so("a", "id") }), grouped("c", ["b"], { upstream: so("b", "id") })];
+    const r = registry(dropping(["c"]));
+    const { found, grouped: plan } = await groupsOf(components, ["a"], r.registry);
+    expect(r.asked.map((ms) => ms.map((m) => m.component))).toEqual([
+      ["a", "b", "c"],
+      ["a", "b"],
+    ]);
+    expect(found.groups).toEqual([{ capability: "fake-group", components: ["a", "b"] }]);
+    expect(found.fallbacks).toEqual([{ component: "c", capability: "fake-group", kind: "lock", reason: "c holds no lock" }]);
+    expect(plan.fallbacks).toEqual(found.fallbacks);
+    // c depends on the group, so it plans in the wave after it.
+    expect(plan.waves).toEqual([["a", "b"], ["c"], []]);
+  });
+
+  test("a dropped member on a dependency path between the rest splits them, each as split", async () => {
+    // c reads a and b; b reads a. Without b, a and c still read each other, but b applies between them.
+    const components = [grouped("a"), grouped("b", ["a"], { upstream: so("a", "id") }), grouped("c", ["a", "b"], { first: so("a", "id"), second: so("b", "id") })];
+    const r = registry(dropping(["b"]));
+    const { found } = await groupsOf(components, ["a"], r.registry);
+    expect(r.asked).toHaveLength(1);
+    expect(found.groups).toEqual([]);
+    expect(found.fallbacks.map((f) => [f.component, f.kind])).toEqual([
+      ["a", "split"],
+      ["b", "lock"],
+      ["c", "split"],
+    ]);
+    expect(found.fallbacks[0]!.reason).toMatch(/^b lies on a dependency path between a/);
+  });
+
+  test("a drop that leaves one member is no group, and that member falls back as alone", async () => {
+    const components = [grouped("a"), grouped("b", ["a"], { upstream: so("a", "id") })];
+    const r = registry(dropping(["a"]));
+    const { found, grouped: plan, plan: derived } = await groupsOf(components, ["a"], r.registry);
+    expect(r.asked).toHaveLength(1);
+    expect(found.groups).toEqual([]);
+    expect(found.fallbacks).toEqual([
+      { component: "a", capability: "fake-group", kind: "lock", reason: "a holds no lock" },
+      { component: "b", capability: "fake-group", kind: "alone", reason: "b is the only member of its group left once a fell back, and a group of one is no group" },
+    ]);
+    expect(plan.waves).toEqual(derived.waves);
+  });
+
+  test("a drop that names no member of the group dissolves it with the fallback's kind", async () => {
+    const r = registry(() => ({ kind: "lock", reason: "holds no lock", drop: [{ component: "elsewhere" }] }));
+    const components = [grouped("a"), grouped("b", ["a"], { upstream: so("a", "id") })];
+    const { found } = await groupsOf(components, ["a"], r.registry);
+    expect(found.groups).toEqual([]);
+    expect(found.fallbacks.map((f) => [f.component, f.kind, f.reason])).toEqual([
+      ["a", "lock", "holds no lock"],
+      ["b", "lock", "holds no lock"],
+    ]);
+  });
+});
+
 describe("where a group sits (ws-107)", () => {
   test("in the earliest wave any member is in; the waves it left stay, empty, and the digest is the derivation's", async () => {
     const components = [grouped("a"), grouped("b", ["a"], { upstream: so("a", "id") }), grouped("c", ["b"], { upstream: so("b", "id") })];

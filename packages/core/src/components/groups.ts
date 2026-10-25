@@ -287,13 +287,18 @@ function groupContext(group: FanOutGroup, env: string, vars?: Record<string, unk
  *    parts are joined by reads again (ruling 2). Outside components are
  *    taken in plan order.
  * 4. A set of one is no group. Each other set is offered to its
- *    capability's `groupFallback`; a fallback dissolves it.
+ *    capability's `groupFallback`. A fallback without `drop` dissolves it.
+ *    One with `drop` leaves those members out (#4419 ruling 1): the rest
+ *    are joined by reads and split by rule 3 again, a member left on its
+ *    own falls back as `alone` (or `split`, when a dependency path split
+ *    it off), and each set that is left is offered again.
  * 5. A group whose placement would put it and another each before the other
  *    is dissolved (`cycle`).
  *
  * The fallbacks name every component whose capability declares the pair,
  * that a read joins to another such component of its capability, and that
- * ended in no group: `steps`, `split`, `cycle`, or the capability's own kind.
+ * ended in no group: `steps`, `split`, `alone`, `cycle`, or the capability's
+ * own kind.
  */
 export async function findComponentGroups(options: FindComponentGroupsOptions): Promise<FoundComponentGroups> {
   const byName = new Map(options.components.map((c) => [c.name, c]));
@@ -323,46 +328,54 @@ export async function findComponentGroups(options: FindComponentGroupsOptions): 
     }
   }
 
-  let sets = connected(eligible, joined);
-  const partnered = new Set(sets.filter((s) => s.length > 1).flat());
   const upstreams = upstreamsOf(byName);
   const below = (name: string, of: string): boolean => upstreams(name).has(of);
-  const splitBy = new Map<string, string>();
-  for (let changed = true; changed; ) {
-    changed = false;
-    const next: string[][] = [];
-    for (const set of sets) {
-      const inSet = new Set(set);
-      const between = order.find((x) => !inSet.has(x) && set.some((m) => below(x, m)) && set.some((m) => below(m, x)));
-      if (between === undefined) {
-        next.push(set);
-        continue;
+  /** `start` split while a component outside a set lies on a `dependsOn` path between two of its members (ruling 2), and what split each member. */
+  const split = (start: string[][]): { sets: string[][]; by: Map<string, string> } => {
+    let sets = start;
+    const by = new Map<string, string>();
+    for (let changed = true; changed; ) {
+      changed = false;
+      const next: string[][] = [];
+      for (const set of sets) {
+        const inSet = new Set(set);
+        const between = order.find((x) => !inSet.has(x) && set.some((m) => below(x, m)) && set.some((m) => below(m, x)));
+        if (between === undefined) {
+          next.push(set);
+          continue;
+        }
+        changed = true;
+        for (const m of set) by.set(m, between);
+        const down = set.filter((m) => below(m, between));
+        const up = set.filter((m) => !below(m, between));
+        next.push(...connected(up, joined), ...connected(down, joined));
       }
-      changed = true;
-      for (const m of set) splitBy.set(m, between);
-      const down = set.filter((m) => below(m, between));
-      const up = set.filter((m) => !below(m, between));
-      next.push(...connected(up, joined), ...connected(down, joined));
+      sets = next;
     }
-    sets = next;
-  }
+    return { sets, by };
+  };
+  const splitReason = (only: string, by: string | undefined): string =>
+    `${by ?? "a component outside the group"} lies on a dependency path between ${only} and the rest of its group, and a group applies in one call`;
 
+  const joinedSets = connected(eligible, joined);
+  const partnered = new Set(joinedSets.filter((s) => s.length > 1).flat());
+  const first = split(joinedSets);
   const candidates: string[][] = [];
-  for (const set of sets) {
+  for (const set of first.sets) {
     if (set.length > 1) {
       candidates.push(set);
       continue;
     }
     const [only] = set;
-    if (only !== undefined && partnered.has(only)) {
-      const by = splitBy.get(only);
-      fallBack(only, "split", `${by ?? "a component outside the group"} lies on a dependency path between ${only} and the rest of its group, and a group applies in one call`);
-    }
+    if (only !== undefined && partnered.has(only)) fallBack(only, "split", splitReason(only, first.by.get(only)));
   }
 
   const ctxOf = (component: string): DeployContext => ({ env: options.env, component, ...(options.vars ? { vars: options.vars } : {}) });
   const taken: FanOutGroup[] = [];
-  for (const set of candidates) {
+  // Each set formed again after a drop goes to the front, so groups are still taken in plan order of their first member.
+  const queue = [...candidates];
+  while (queue.length > 0) {
+    const set = queue.shift()!;
     const group: FanOutGroup = { capability: steps.get(set[0]!)!.kind, components: set };
     const capability = options.registry.resolve(group.capability);
     let refused: GroupFallback | undefined;
@@ -374,7 +387,24 @@ export async function findComponentGroups(options: FindComponentGroupsOptions): 
       }
     }
     if (refused) {
-      for (const m of set) fallBack(m, refused.kind, refused.reason);
+      const inSet = new Set(set);
+      const drops = (refused.drop ?? []).filter((d) => inSet.has(d.component));
+      if (drops.length === 0) {
+        for (const m of set) fallBack(m, refused.kind, refused.reason);
+        continue;
+      }
+      // Ruling 1: only the dropped members leave; the rest form again by the same rules and are asked again.
+      for (const d of drops) fallBack(d.component, d.kind ?? refused.kind, d.reason ?? refused.reason);
+      const gone = new Set(drops.map((d) => d.component));
+      const again = split(connected(set.filter((m) => !gone.has(m)), joined));
+      for (const s of again.sets) {
+        const [only] = s;
+        if (s.length > 1 || only === undefined) continue;
+        const by = again.by.get(only);
+        if (by !== undefined) fallBack(only, "split", splitReason(only, by));
+        else fallBack(only, "alone", `${only} is the only member of its group left once ${[...gone].join(", ")} fell back, and a group of one is no group`);
+      }
+      queue.unshift(...again.sets.filter((s) => s.length > 1));
       continue;
     }
     // Placed in plan order of the first member; a group that would close a cycle with those before it is dissolved.
@@ -429,7 +459,9 @@ export function narrowGroups(plan: FanOutPlan, components: DriverComponent[], gr
  * of one of `groups` group again, by the same rule and the same
  * `groupFallback`, so what is left of a group plans as a smaller group, or
  * one by one when fewer than two are left, when they no longer join by
- * reads, or when the capability refuses. The fallbacks are the ones this
+ * reads, or when the capability refuses them. A capability that drops some
+ * members leaves the rest to group again as {@link findComponentGroups}
+ * does. The fallbacks are the ones this
  * pass found, then those of `fallbacks` for components still in `plan`.
  */
 export async function regroupRemaining(
