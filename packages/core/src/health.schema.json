@@ -175,7 +175,8 @@
             "no-credentials",
             "no-binding",
             "unsupported-kind",
-            "filtered"
+            "filtered",
+            "not-reached"
           ]
         },
         "detail": {

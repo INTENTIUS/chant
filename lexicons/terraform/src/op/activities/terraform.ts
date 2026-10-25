@@ -1092,7 +1092,11 @@ export async function terraformOutputs(
   args: TerraformRootArgs,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const { binary, root, dir } = await resolveRoot(args, signal);
+  return outputsIn(await resolveRoot(args, signal), signal);
+}
+
+/** `<binary> output -json` in a resolved root, as `{ name: value }`. */
+async function outputsIn({ binary, root, dir }: ResolvedRoot, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const { stdout } = await run(`${binary} output -json`, dir, terraformEnvironment(root), signal);
   const parsed = JSON.parse(stdout || "{}") as Record<string, { value?: unknown }>;
   return Object.fromEntries(Object.entries(parsed).map(([name, entry]) => [name, entry?.value]));
@@ -1275,13 +1279,17 @@ export interface ChoudoufuPlanSetResult extends ChoudoufuPlanSet {
  * `live-wave-apply` hands back to choudoufu with the set digest.
  */
 export async function choudoufuPlanSet(args: TerraformRootArgs, signal?: AbortSignal): Promise<ChoudoufuPlanSetResult> {
-  const resolved = await resolveRoot(args, signal);
+  return planSetIn(await resolveRoot(args, signal), args.root, signal);
+}
+
+/** {@link choudoufuPlanSet} over a resolved root, `key` naming it in errors, in the waves directory and as the change-set member. */
+async function planSetIn(resolved: ResolvedRoot, key: string, signal?: AbortSignal): Promise<ChoudoufuPlanSetResult> {
   const { binary, root, dir, projectRoot } = resolved;
-  if (binary !== "choudoufu") throw new Error(`choudoufuPlanSet: root "${args.root}" runs ${binary}, not choudoufu`);
+  if (binary !== "choudoufu") throw new Error(`choudoufuPlanSet: root "${key}" runs ${binary}, not choudoufu`);
   await ensureChoudoufuWavesVersion(binary, signal);
   const rootPath = choudoufuSetRootPath(projectRoot, dir);
-  if (rootPath === undefined) throw new Error(`choudoufuPlanSet: root "${args.root}" (${dir}) is not inside ${projectRoot}`);
-  const wavesDir = choudoufuWavesDir(projectRoot, args.root);
+  if (rootPath === undefined) throw new Error(`choudoufuPlanSet: root "${key}" (${dir}) is not inside ${projectRoot}`);
+  const wavesDir = choudoufuWavesDir(projectRoot, key);
   mkdirSync(wavesDir, { recursive: true });
   const cmd = choudoufuPlanSetCommand({ binary, root: rootPath, outDir: fromProject(projectRoot, join(wavesDir, "out")) });
 
@@ -1299,10 +1307,62 @@ export async function choudoufuPlanSet(args: TerraformRootArgs, signal?: AbortSi
     stdout = failure.stdout ?? "";
   }
 
-  const parsed = parseChoudoufuPlanSet(stdout, { member: args.root, root: rootPath });
+  const parsed = parseChoudoufuPlanSet(stdout, { member: key, root: rootPath });
   const planSetFile = join(wavesDir, "plan-set.json");
   writeFileSync(planSetFile, stdout);
   return { ...parsed, planSetFile, root: rootPath };
+}
+
+// ── A choudoufu workspace member's outputs (#4455) ─────────────────────────
+
+/**
+ * A choudoufu member of the workspace, as `member-outputs` names it: not a
+ * `terraform.roots` entry of the reading project but a directory the
+ * workspace declaration gives. Its binary is `choudoufu`, it has no var
+ * files, workspace or backend config, and it runs from `projectRoot`, a
+ * directory above it (the workspace root), since `live-plan-set` plans only
+ * roots inside the directory it runs in.
+ */
+export interface ChoudoufuMemberArgs {
+  /** The member's name: the waves directory's name, and the plan's member in errors. */
+  member: string;
+  /** The member's directory, absolute. */
+  dir: string;
+  /** Where `live-plan-set` runs from, absolute: a directory above `dir`. */
+  projectRoot: string;
+}
+
+async function resolveMemberRoot(args: ChoudoufuMemberArgs, signal?: AbortSignal): Promise<ResolvedRoot> {
+  const binary = "choudoufu";
+  await ensureChoudoufuVersion(binary, signal);
+  const dir = resolve(args.dir);
+  const estate = detectLiveEstate(dir);
+  return { binary, root: { dir }, dir, ...(estate !== undefined ? { estate } : {}), live: estate !== undefined, projectRoot: resolve(args.projectRoot) };
+}
+
+/**
+ * The member's outputs as applied (#4455): `choudoufu init`, then `choudoufu
+ * output -json` in its directory, the read the `terraform-apply` capability's
+ * `outputs` makes for a root. A live estate's outputs come from its record
+ * store.
+ */
+export async function choudoufuMemberOutputs(args: ChoudoufuMemberArgs, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const resolved = await resolveMemberRoot(args, signal);
+  const { stdout, stderr } = await run(terraformInitCommand({ binary: resolved.binary }), resolved.dir, terraformEnvironment(resolved.root), signal);
+  report(stdout, stderr);
+  return outputsIn(resolved, signal);
+}
+
+/**
+ * The member planned as a one-root set (#4455), the way a choudoufu root in
+ * a gated wave is ({@link choudoufuPlanSet}): `live-plan-set -json` from
+ * `projectRoot`. The document's embedded plan carries `planned_values` and
+ * `output_changes`, which say what the member's outputs will be.
+ */
+export async function choudoufuMemberPlanSet(args: ChoudoufuMemberArgs, signal?: AbortSignal): Promise<ChoudoufuPlanSetResult> {
+  const resolved = await resolveMemberRoot(args, signal);
+  if (!resolved.live) throw new Error(`choudoufu member "${args.member}" (${resolved.dir}) declares no live estate, so live-plan-set cannot plan it`);
+  return planSetIn(resolved, args.member, signal);
 }
 
 /**

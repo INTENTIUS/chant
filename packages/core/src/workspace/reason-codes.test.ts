@@ -53,6 +53,7 @@ import { TRUST_WRITE_ERROR_CODES } from "./trust/trust-write";
 import { BOX_PUBLISH_ERROR_CODES } from "./box-publish";
 import { WRITE_LOCK_ERROR_CODES } from "./write-lock-cli";
 import { EXIT_CODES } from "./exit";
+import { DRIFT_ERROR_CODES } from "./drift-cli";
 import { WIP_ERROR_CODES, WIP_WRITE_ERROR_CODES } from "./wip";
 import { CI_GREEN_ERROR_CODES } from "./ci-green";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
@@ -148,6 +149,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   CAPABILITIES_ERROR_CODES,
   CAPABILITY_SUPPORT_CODES,
   EXIT_CODES,
+  DRIFT_ERROR_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */

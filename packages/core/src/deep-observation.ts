@@ -45,6 +45,7 @@
 
 import type { UnobservedEntity } from "./observation";
 import { isHeldElsewhere, isNormalizedHeldElsewhere, normalizeHeldElsewhere } from "./held-elsewhere";
+import { isSensitiveKey } from "./sensitive-key";
 
 /**
  * A live property tree for one declared entity, already normalized by the
@@ -203,29 +204,10 @@ export const UNRESOLVED = "<chant:unresolved>";
 /** Value a masked (secret-bearing) property takes. Matches the thin path's convention. */
 export const MASKED = "[REDACTED]";
 
-/**
- * Property-name patterns that mark a value secret-bearing. Deliberately narrow
- * and key-name based: broadening this to e.g. `/key/i` would mask an AWS tag's
- * `Key` field and every `*KeyName` reference, which is how masking turns into
- * its own drift signal.
- *
- * Shared with the thin snapshot path (`./lifecycle/snapshot.ts`), which warns
- * on the same names — one list, so the two paths cannot disagree about what
- * counts as a secret.
- */
-export const SENSITIVE_KEY_PATTERNS: readonly RegExp[] = [
-  /password/i,
-  /secret/i,
-  /token/i,
-  /private.?key/i,
-  /credential/i,
-  /connection.?string/i,
-];
-
-/** True when a property name looks secret-bearing (see {@link SENSITIVE_KEY_PATTERNS}). */
-export function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEY_PATTERNS.some((p) => p.test(key));
-}
+// The secret-key list lives in `./sensitive-key.ts` so the drift record
+// (`./drift-record.ts`) can redact with it inside the change-set bundle,
+// which may not import this module's normalization code.
+export { SENSITIVE_KEY_PATTERNS, isSensitiveKey } from "./sensitive-key";
 
 /** Which tree a hook is being invoked on. */
 export type DeepSide = "declared" | "live";

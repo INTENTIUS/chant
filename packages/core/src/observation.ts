@@ -49,13 +49,18 @@ import type { ResourceMetadata } from "./lexicon";
  *   filter (`owned: true` against a resource carrying no chant marker). The
  *   result deliberately says nothing about it, which is still not absence: a
  *   declared resource that exists but is foreign must not classify as `create`.
+ * - `not-reached` — the read that would have answered never reported this
+ *   entity (#4451): a drift stream settled without a row for an address its
+ *   start line expected, or a read was never run for it at all. Says nothing
+ *   about the entity, only that no answer arrived.
  */
 export type UnobservedReason =
   | "read-failed"
   | "no-credentials"
   | "no-binding"
   | "unsupported-kind"
-  | "filtered";
+  | "filtered"
+  | "not-reached";
 
 /**
  * Every legal {@link UnobservedReason}, for validation and conformance checks.
@@ -79,6 +84,7 @@ const UNOBSERVED_REASON_WITNESS: Record<UnobservedReason, true> = {
   "no-binding": true,
   "unsupported-kind": true,
   filtered: true,
+  "not-reached": true,
 };
 
 export const UNOBSERVED_REASONS: readonly UnobservedReason[] = Object.keys(
@@ -377,6 +383,8 @@ export function unobservedReasonText(reason: UnobservedReason): string {
       return "no reader for this resource kind";
     case "filtered":
       return "withheld by the --owned filter";
+    case "not-reached":
+      return "the read never reported it";
   }
 }
 

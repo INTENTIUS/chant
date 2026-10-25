@@ -41,6 +41,7 @@ const JSON_FLAG: Record<ReadContractCommand, string[]> = {
   wip: ["--json"],
   search: ["--json"],
   "search --capabilities": ["--json"],
+  drift: [],
 };
 
 /** The smallest reader that conforms, with a hook to misbehave. */
@@ -133,7 +134,7 @@ describe("commands (#2679)", () => {
     expect(report.problems).toEqual([]);
     expect(read).toEqual(["ls", "status", "graph --composites"]);
     expect(report.checked).toEqual(["ls", "status", "graph --composites"]);
-    expect(report.skipped).toEqual(["graph", "check", "records", "records --uncommitted", "graph --intent", "runs", "wip", "search", "search --capabilities"]);
+    expect(report.skipped).toEqual(["graph", "check", "records", "records --uncommitted", "graph --intent", "runs", "wip", "search", "search --capabilities", "drift"]);
   }, 300_000);
 
   test("a name that is not a contract command, or an empty list, is refused", () => {

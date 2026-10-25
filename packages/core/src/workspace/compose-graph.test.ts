@@ -248,3 +248,15 @@ describe("collectors (#2559)", () => {
     }
   });
 });
+
+describe("rootReads (#4452)", () => {
+  test("a member's rootReads stay on its entry, keyed as its chant wrote them", () => {
+    const rootReads = { "terraform.roots.app": { depth: "plan", fellBackTo: "state" as const, reason: "no-credentials" } };
+    const doc = composeWorkspaceGraph({ name: "acme", root: "/w" }, [
+      { member: member("web", "web"), ir: structuredClone(web) },
+      { member: member("infra", "infra"), ir: { ...structuredClone(db), rootReads } },
+    ]);
+    expect(doc.members.find((m) => m.name === "infra")!.rootReads).toEqual(rootReads);
+    expect(doc.members.find((m) => m.name === "web")).not.toHaveProperty("rootReads");
+  });
+});

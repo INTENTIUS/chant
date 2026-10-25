@@ -329,8 +329,9 @@ function liveVerdictOf(address: string, plan: LivePlanIndex): LiveVerdict {
       kind: "unobserved",
       instances,
       // `no-credentials` is an observation reason and not a prediction one;
-      // the credential wording stays in the detail.
-      reason: unobserved.reason === "no-credentials" ? "read-failed" : unobserved.reason,
+      // the credential wording stays in the detail. `not-reached` is a
+      // stream's reason (#4451) and a live-plan omission never gives it.
+      reason: unobserved.reason === "no-credentials" || unobserved.reason === "not-reached" ? "read-failed" : unobserved.reason,
       detail: unobserved.detail,
     };
   }

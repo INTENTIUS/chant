@@ -105,6 +105,38 @@ describe("chant workspace promote (#3178)", () => {
     expect(git(root, "status", "--porcelain")).toBe("");
   });
 
+  test("the dry run carries live-import's report, one entry per resource with its status, and writes nothing (behold#999)", async () => {
+    const report = [
+      "",
+      'Ratifying /s/terraform.tfstate for estate "net" against the live system. This was read-only: nothing was written.',
+      "",
+      "VERIFIED (1) - verified against the live system:",
+      "  aws_s3_bucket.logs                         aws_s3_bucket            live id: net-logs",
+      "    every attribute matched",
+      "",
+      "UNTAGGABLE (1) - outside the taggable subset:",
+      "  aws_s3_bucket_versioning.logs              aws_s3_bucket_versioning live id: net-logs",
+      "    no tags argument",
+      "",
+      "1 of 2 resource instance(s) are eligible for stamping (VERIFIED or DRIFTED).",
+    ].join("\n");
+    const reporting: PromoteRunner = async (argv, cwd) => {
+      calls.push({ argv, cwd });
+      return { exitCode: 0, output: argv[1] === "live-import" ? report : "" };
+    };
+    const l = ledger();
+    const r = await promoteCommand({ root, member: "net", state: "/s/terraform.tfstate", runner: reporting, ledger: l, dryRun: true });
+    expect(r.outcome).toBe("dry-run");
+    expect(r.adoption?.entries.map((e) => [e.address, e.status, e.claimed])).toEqual([
+      ["aws_s3_bucket.logs", "VERIFIED", true],
+      ["aws_s3_bucket_versioning.logs", "UNTAGGABLE", false],
+    ]);
+    expect(calls.some((c) => c.argv.includes("-approve"))).toBe(false);
+    expect((await l.read("workspace-promote")).pending).toHaveLength(0);
+    expect(kind()).toBe("terraform");
+    expect(git(root, "status", "--porcelain")).toBe("");
+  });
+
   test("terraform needs --state, other needs --lexicon, chant is the top", async () => {
     await expect(promoteCommand({ root, member: "net", runner })).rejects.toThrow(/--state/);
     writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "w", schema: 1, members: [{ name: "net", dir: "net", kind: "other", because: "x" }] }, null, 2) + "\n");
