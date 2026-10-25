@@ -458,7 +458,7 @@ Seven kinds cover the files a platform repository holds besides Terraform ([#317
 | `helm-chart` | `@intentius/chant-lexicon-helm` | 330 | `Chart.yaml`, which the kind also checks (`apiVersion`, `name`, `version`) |
 | `cloudformation` | `@intentius/chant-lexicon-aws` | 320 | a `.yaml`, `.yml`, `.json` or `.template` file with `AWSTemplateFormatVersion` or `Resources` at its top. YAML short-form tags such as `!Ref` are allowed |
 | `cdk` | `@intentius/chant-lexicon-aws` | 315 | `cdk.json`, which the kind also checks (`app`) |
-| `pulumi` | `@intentius/chant-lexicon-terraform` | 310 | `Pulumi.yaml`, which the kind also checks (`name`, `runtime`). No lexicon knows Pulumi, so the kind rides with the one that supplies the other infrastructure engines' kinds |
+| `pulumi` | `@intentius/chant-lexicon-pulumi` | 310 | `Pulumi.yaml`, which the kind also checks (`name`, `runtime`). The kind was in `@intentius/chant-lexicon-terraform` until [#4453](https://github.com/INTENTIUS/chant/issues/4453); a workspace that reads Pulumi members pins the pulumi lexicon |
 
 [`chant workspace init`](/chant/cli/workspace-init/) proposes these kinds, and pins the packages, when the packages are installed at the root.
 
@@ -472,7 +472,7 @@ Seven kinds cover the files a platform repository holds besides Terraform ([#317
 | `kustomize` | the objects `kustomize build` renders, as nodes | `kustomize`, or `kubectl` |
 | `helm-chart` | the objects `helm template` renders, as nodes | `helm` |
 | `cdk` | the same as `cloudformation`, over the templates in the app's cloud assembly (`cdk.out`, or the `output` of `cdk.json`) | an assembly the app already synthesized. chant does not run the app |
-| `pulumi` | the resources of the `pulumi stack export` JSON checked in beside `Pulumi.yaml` as `stack-export.json`, as nodes; an edge per `dependencies` entry and `parent` between them. A node's id is `<member>/<qualified type>::<name>`, the URN without its stack and project, such as `web/aws:s3/bucket:Bucket::assets`; a change set or drift record over the same stack uses the same rule (`@intentius/chant/pulumi-urn`). Provider resources and the root `pulumi:pulumi:Stack` are left out, and inputs are not copied | an export the member has checked in. chant does not run the program |
+| `pulumi` | the resources of the `pulumi stack export` JSON checked in beside `Pulumi.yaml` as `stack-export.json`, as nodes; an edge per `dependencies` entry and `parent` between them. A node's id is `<member>/<qualified type>::<name>`, the URN without its stack and project, such as `web/aws:s3/bucket:Bucket::assets`; a change set or drift record over the same stack uses the same rule (`@intentius/chant/pulumi-urn`). Provider resources and the root `pulumi:pulumi:Stack` are left out, and inputs are not copied | an export the member has checked in. The graph read does not run the program or `pulumi`; the member's [change set](/chant/reference/change-set/#pulumi-plans) and drift run `pulumi preview` and `pulumi refresh --preview-only` |
 
 A node's id is `<member>/<kind><name>`, such as `web/deploymentWeb`. A member whose render or assembly is missing is still listed, with no nodes, and its graph says why under `meta`: `k8sMember` for kustomize (`rendered: false`), `helmMember` for helm (`rendered: false`), `awsMember` for cdk (`synthesized: false`), `pulumiMember` for pulumi (`exported: false`), each with a `reason`. A render the tool ran and refused, such as a broken overlay, fails the member with `command-failed`.
 

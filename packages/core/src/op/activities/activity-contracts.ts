@@ -309,7 +309,7 @@ export const lifecyclePlanChangeSetContract = activityContract(
 
 export const readChangeSetPartContract = activityContract(
   "readChangeSetPart",
-  z.strictObject({ member: z.string(), planner: z.enum(["chant", "warden", "sql"]), file: z.string(), lexicon: z.string().optional() }),
+  z.strictObject({ member: z.string(), planner: z.enum(["chant", "warden", "sql", "pulumi"]), file: z.string(), lexicon: z.string().optional() }),
   z.object({ part: changeSetPart }),
 );
 

@@ -2,12 +2,19 @@
  * Reading a pulumi workspace member into the graph (#3179).
  *
  * `chant workspace graph` writes a reader project for a member of kind
- * `pulumi`, with `terraform.pulumiMember` in its config (see
- * `workspace-kinds.json`). The plugin's `buildRoots` hook calls
- * {@link readPulumiMember}, which reads the `pulumi stack export` JSON the
- * member has checked in, at {@link PULUMI_EXPORT_FILE} in its directory. chant
- * never runs the program and never calls `pulumi`: with no export there are no
- * nodes, and `meta.pulumiMember` says `exported: false` and why.
+ * `pulumi`, with `pulumi.member` in its config (see `workspace-kinds.json`).
+ * The plugin's `buildRoots` hook calls {@link readPulumiMember}, which reads
+ * the `pulumi stack export` JSON the member has checked in, at
+ * {@link PULUMI_EXPORT_FILE} in its directory. The graph read never runs the
+ * program or `pulumi`: with no export there are no nodes, and
+ * `meta.pulumiMember` says `exported: false` and why.
+ *
+ * The kind lived in the terraform lexicon until #4453 moved it here. The
+ * ruling on #4450 lets chant run `pulumi preview` and `pulumi refresh
+ * --preview-only` for a Pulumi member, so the old "chant never calls
+ * `pulumi`" rule now covers this graph read only. The change set
+ * (`./change-set.ts`) and drift (`./drift-record.ts`) run those two
+ * commands, which change nothing, and no other.
  *
  * Nodes are the export's resources, keyed `<label>/<urn tail>`, where the tail
  * is the URN after its stack and project (`aws:s3/bucket:Bucket::assets`).
@@ -69,7 +76,7 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
 
   const file = join(member.dir, PULUMI_EXPORT_FILE);
   if (!existsSync(file)) {
-    return missing(`no ${PULUMI_EXPORT_FILE} in the member; run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in, and chant will read it (chant does not run the program)`);
+    return missing(`no ${PULUMI_EXPORT_FILE} in the member; run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in, and chant will read it (the graph read does not run the program)`);
   }
   let resources: ExportedResource[];
   try {
@@ -100,7 +107,7 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
     add(r.parent, "parent");
     for (const d of Array.isArray(r.dependencies) ? r.dependencies : []) add(d, "dependencies");
     entities.set(key, {
-      lexicon: "terraform",
+      lexicon: "pulumi",
       entityType: r.type as string,
       kind: "resource",
       props: {},

@@ -45,6 +45,7 @@
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-otel": "workspace:*",
     "@intentius/chant-lexicon-prometheus": "workspace:*",
+    "@intentius/chant-lexicon-pulumi": "workspace:*",
     "@intentius/chant-lexicon-render": "workspace:*",
     "@intentius/chant-lexicon-sql": "workspace:*",
     "@intentius/chant-lexicon-terraform": "workspace:*"

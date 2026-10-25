@@ -1,0 +1,84 @@
+{
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack"
+      }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+        "custom": true,
+        "type": "pulumi:providers:aws",
+        "id": "prov-1"
+      }
+    },
+    {
+      "op": "update",
+      "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "type": "aws:s3/bucket:Bucket",
+        "id": "assets-4f1c",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "bucket": "assets-4f1c",
+          "tags": {
+            "env": "dev"
+          }
+        },
+        "outputs": {
+          "bucket": "assets-4f1c",
+          "acl": "private",
+          "tags": {
+            "env": "dev",
+            "team": "web"
+          }
+        }
+      },
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "type": "aws:s3/bucket:Bucket",
+        "id": "assets-4f1c",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "bucket": "assets-4f1c",
+          "tags": {
+            "env": "dev"
+          }
+        },
+        "outputs": {
+          "bucket": "assets-4f1c",
+          "acl": "public-read",
+          "tags": {
+            "env": "prod-hotfix",
+            "team": "web"
+          }
+        }
+      },
+      "diffReasons": [
+        "acl",
+        "tags"
+      ],
+      "detailedDiff": {
+        "acl": {
+          "kind": "update"
+        },
+        "tags.env": {
+          "kind": "update"
+        }
+      }
+    }
+  ],
+  "diagnostics": [],
+  "duration": 900000000
+}

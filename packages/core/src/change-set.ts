@@ -11,8 +11,8 @@
  * Each planner reaches it through an adapter that returns a
  * {@link ChangeSetPart}: one member and its entries. The lifecycle and
  * reconcile adapters are here; the terraform-family ones live in the
- * terraform lexicon's `change-set` subpath and the SQL ones in the sql
- * lexicon's. A part another process wrote to a file reads back through
+ * terraform lexicon's `change-set` subpath, the SQL ones in the sql
+ * lexicon's and the Pulumi one in the pulumi lexicon's. A part another process wrote to a file reads back through
  * {@link readChangeSetPartFile}. {@link composeChangeSet} joins
  * the parts.
  *
@@ -61,16 +61,17 @@ export const CHANGE_SET_ACTIONS: readonly ChangeSetAction[] = ["create", "update
 /** How much applying one change hurts, in the vocabulary of `./lifecycle/disruption.ts`. */
 export type ChangeSetDisruption = "in-place" | "rolling" | "replace" | "destroy" | "unknown";
 
-/** Which tool produced a member's plan. */
 /**
  * Which tool produced a member's plan. `sql` is a SQL schema change: a
  * versioned plan (a product's migrations) or one of the sql lexicon's
  * migration Ops' plans, through `@intentius/chant-lexicon-sql/change-set`.
+ * `pulumi` is a `pulumi preview --json` of a Pulumi member, through
+ * `@intentius/chant-lexicon-pulumi/change-set` (#4453); its addresses are URNs.
  */
-export type ChangeSetPlanner = "terraform" | "tofu" | "choudoufu" | "chant" | "warden" | "sql";
+export type ChangeSetPlanner = "terraform" | "tofu" | "choudoufu" | "chant" | "warden" | "sql" | "pulumi";
 
 /** Every planner, in the order the schema lists them. */
-export const CHANGE_SET_PLANNERS: readonly ChangeSetPlanner[] = ["terraform", "tofu", "choudoufu", "chant", "warden", "sql"];
+export const CHANGE_SET_PLANNERS: readonly ChangeSetPlanner[] = ["terraform", "tofu", "choudoufu", "chant", "warden", "sql", "pulumi"];
 
 /** One attribute a change writes, at top-level granularity. */
 export interface ChangeSetAttribute {
@@ -109,6 +110,18 @@ export interface ChangeSetEntry {
   importing?: true;
   /** Set on update, replace and delete. `unknown` means nobody could say. */
   disruption?: ChangeSetDisruption;
+  /**
+   * The planner could not enumerate what this entry stands for (#4453). A
+   * Pulumi program can register resources inside an `apply()`, which does not
+   * run at preview while its input is unknown, so the preview never lists
+   * them. The pulumi adapter keeps them in the set rather than dropping them:
+   * one entry per component whose children may appear, at
+   * `pulumiMayAppearAddress` of the component, and an entry for each resource
+   * the last export holds under such a component that the preview did not
+   * list or plans to delete. An entry carrying it is never empty
+   * ({@link isEmptyChangeSet}). Part of the digest.
+   */
+  mayAppear?: true;
   region?: string;
   /** The estate, environment or org the change lands in. */
   scope?: string;
@@ -424,7 +437,8 @@ export function verifyChangeSetDigest(
 /**
  * Whether a change set changes nothing (ws-104 question 6, #4045): it has at
  * least one member, every member planned, none failed or provisional, no
- * member has a hole, and every entry is a `no-op` or a `read`. A release
+ * member has a hole, and every entry is a `no-op` or a `read` that no
+ * planner marked `mayAppear`. A release
  * gate over such a document passes without an approval.
  */
 export function isEmptyChangeSet(doc: Pick<ChangeSetDocument, "members" | "entries">): boolean {
@@ -432,7 +446,7 @@ export function isEmptyChangeSet(doc: Pick<ChangeSetDocument, "members" | "entri
   for (const m of doc.members) {
     if (m.status !== "planned" || m.provisional === true || m.holes.length > 0) return false;
   }
-  return doc.entries.every((e) => e.action === "no-op" || e.action === "read");
+  return doc.entries.every((e) => (e.action === "no-op" || e.action === "read") && e.mayAppear !== true);
 }
 
 // ── chant lifecycle plan ───────────────────────────────────────────────────────

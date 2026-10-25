@@ -1,7 +1,8 @@
 /**
  * The pulumi member kind's graph block (#3179): the reader project the kind's
  * graph config describes, run through chant graph over a checked-in
- * `pulumi stack export`. Nothing here runs Pulumi.
+ * `pulumi stack export`. The kind moved here from the terraform lexicon
+ * (#4453); the node ids are the ones it gave there. Nothing here runs Pulumi.
  */
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { dirname, join } from "node:path";
@@ -10,7 +11,7 @@ import { tmpdir } from "node:os";
 import type { GraphIR } from "@intentius/chant/graph-ir";
 import { runGraph } from "@intentius/chant/cli/handlers/graph";
 import { readPackageKinds, substituteGraphConfig } from "../../../packages/core/src/workspace/kinds";
-import { terraformPlugin } from "./plugin";
+import { pulumiPlugin } from "./plugin";
 
 const packageDir = join(import.meta.dirname, "..");
 const member = join(import.meta.dirname, "testdata", "pulumi-member");
@@ -23,11 +24,11 @@ afterEach(async () => {
 
 async function graphOf(dir: string): Promise<{ ir: GraphIR; err: string[]; exit: number }> {
   const graph = readPackageKinds(packageDir).kinds.find((k) => k.name === "pulumi")!.graph!;
-  expect(graph.lexicon).toBe("terraform");
+  expect(graph.lexicon).toBe("pulumi");
   const config = substituteGraphConfig(graph.config, { member: "infra", dir, workspace: dirname(dir) });
   const project = await mkdtemp(join(tmpdir(), "chant-pulumi-member-"));
   scratch.push(project);
-  await writeFile(join(project, "chant.config.json"), JSON.stringify({ lexicons: ["terraform"], terraform: config, graph: { lint: "report" } }));
+  await writeFile(join(project, "chant.config.json"), JSON.stringify({ lexicons: ["pulumi"], pulumi: config, graph: { lint: "report" } }));
   const out: string[] = [];
   const err: string[] = [];
   vi.spyOn(console, "log").mockImplementation((line: unknown) => void out.push(String(line)));
@@ -35,7 +36,7 @@ async function graphOf(dir: string): Promise<{ ir: GraphIR; err: string[]; exit:
   const cwd = process.cwd();
   process.chdir(project);
   try {
-    const exit = await runGraph({ args: { command: "graph", path: ".", format: "ir" } as never, plugins: [terraformPlugin], serializers: [] });
+    const exit = await runGraph({ args: { command: "graph", path: ".", format: "ir" } as never, plugins: [pulumiPlugin], serializers: [] });
     return { ir: exit === 0 ? (JSON.parse(out.join("\n")) as GraphIR) : { nodes: [], edges: [], groups: {} }, err, exit };
   } finally {
     process.chdir(cwd);

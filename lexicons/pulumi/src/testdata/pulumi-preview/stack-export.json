@@ -1,0 +1,78 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": {
+      "time": "2026-10-20T09:12:00Z",
+      "version": "v3.140.0"
+    },
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack",
+        "outputs": {
+          "bucketName": "site-logs-old",
+          "siteUrl": "https://d111.cloudfront.net",
+          "dbPassword": {
+            "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+            "ciphertext": "AAABAKz0example"
+          }
+        }
+      },
+      {
+        "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+        "custom": true,
+        "type": "pulumi:providers:aws",
+        "id": "prov-1"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:lambda/function:Function::handler",
+        "custom": true,
+        "type": "aws:lambda/function:Function",
+        "id": "handler-9a1",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site::site",
+        "custom": false,
+        "type": "my:web:Site",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site$aws:route53/record:Record::site-alias",
+        "custom": true,
+        "type": "aws:route53/record:Record",
+        "id": "Z123_site.example.com_A",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::my:web:Site$aws:s3/bucketObject:BucketObject::index",
+        "custom": true,
+        "type": "aws:s3/bucketObject:BucketObject",
+        "id": "index.html",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:ssm/parameter:Parameter::db-password",
+        "custom": true,
+        "type": "aws:ssm/parameter:Parameter",
+        "id": "/site/db-password",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+        "custom": true,
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-0abc",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:iam/role:Role::old-deployer",
+        "custom": true,
+        "type": "aws:iam/role:Role",
+        "id": "old-deployer",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      }
+    ]
+  }
+}

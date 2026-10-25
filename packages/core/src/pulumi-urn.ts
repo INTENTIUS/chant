@@ -88,14 +88,43 @@ export function pulumiNodeId(member: string, urn: string): string | null {
   return key === null ? null : `${member}/${key}`;
 }
 
+const MAY_APPEAR_TYPE = "$*";
+const MAY_APPEAR_NAME = "/*";
+
+/**
+ * The address of a change-set entry that stands for the resources a
+ * component may register inside an `apply()` that preview could not run
+ * (#4453): the component's URN with `$*` after its qualified type and `/*`
+ * after its name, `urn:pulumi:dev::site::my:web:Site$*::site/*`. It reads as
+ * any resource, of any type and name, whose parent chain is the component,
+ * and stays unique per component, since a component's URN is.
+ */
+export function pulumiMayAppearAddress(componentUrn: string): string {
+  const parsed = parsePulumiUrn(componentUrn);
+  if (!parsed) return `${componentUrn}${MAY_APPEAR_NAME}`;
+  return `${PREFIX}${parsed.stack}::${parsed.project}::${parsed.qualifiedType}${MAY_APPEAR_TYPE}::${parsed.name}${MAY_APPEAR_NAME}`;
+}
+
+/** The component URN a {@link pulumiMayAppearAddress} was made from, or undefined for any other address. */
+export function pulumiMayAppearParent(address: string): string | undefined {
+  const parsed = parsePulumiUrn(address);
+  if (!parsed || !parsed.qualifiedType.endsWith(MAY_APPEAR_TYPE) || !parsed.name.endsWith(MAY_APPEAR_NAME)) return undefined;
+  const qualifiedType = parsed.qualifiedType.slice(0, -MAY_APPEAR_TYPE.length);
+  const name = parsed.name.slice(0, -MAY_APPEAR_NAME.length);
+  if (!qualifiedType || !name) return undefined;
+  return `${PREFIX}${parsed.stack}::${parsed.project}::${qualifiedType}::${name}`;
+}
+
 /**
  * The ids, in the order tried, that a Pulumi change-set entry or drift
  * record can have in its member's graph IR, in the shape of
  * `changeSetNodeCandidates` (`./change-set-graph.ts`): `<member>/<key>`.
  * Empty for a provider or the root stack, so mapping leaves `node: null`.
+ * A may-appear entry ({@link pulumiMayAppearAddress}) is on its component's
+ * node, since nothing names the resources it stands for.
  */
 export function pulumiNodeCandidates(entry: { member: string; address: string }): string[] {
-  const id = pulumiNodeId(entry.member, entry.address);
+  const id = pulumiNodeId(entry.member, pulumiMayAppearParent(entry.address) ?? entry.address);
   return id === null ? [] : [id];
 }
 

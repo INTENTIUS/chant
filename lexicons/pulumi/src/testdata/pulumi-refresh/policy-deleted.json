@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack"
+      }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+        "custom": true,
+        "type": "pulumi:providers:aws",
+        "id": "prov-1"
+      }
+    },
+    {
+      "op": "delete",
+      "urn": "urn:pulumi:dev::site::aws:iam/rolePolicy:RolePolicy::webReadsAssets",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:iam/rolePolicy:RolePolicy::webReadsAssets",
+        "custom": true,
+        "type": "aws:iam/rolePolicy:RolePolicy",
+        "id": "web:webReadsAssets",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "outputs": {
+          "role": "web"
+        }
+      }
+    }
+  ],
+  "diagnostics": [],
+  "duration": 900000000
+}
