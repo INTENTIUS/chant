@@ -26,16 +26,16 @@
  *   plan's `prior_state` for estates.
  *
  * Each member's identity is `ci.identity.cloud` resolved for its root as
- * the target (`resolveTargetCloudIdentity`, #4332), compared by
+ * the target (`resolveTargetCloudIdentity`, #4332), by the root's key or its
+ * directory, whichever a rule's target glob matches, compared by
  * `identityKey`, so members that apply under different identities do not
  * compose (#4438's `identity`).
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
-import type { PipelineCloudIdentity } from "@intentius/chant/ci-identity";
 import type {
   CapabilityGroupOutcome,
   CapabilityGroupPlan,
@@ -51,13 +51,14 @@ import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { wiringReferencesAt } from "@intentius/chant/components/driver";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { declaredTargetCloudIdentity } from "@intentius/chant/workspace/ci-cloud-identity";
+import { declaredTargetCloudIdentity, type TargetCloudIdentityLookup } from "@intentius/chant/workspace/ci-cloud-identity";
 import { COMPOSE_STEP_KIND, composeOff, compositionFor, identityKey, type Composition } from "../compose";
 import type { TerraformConfig } from "../config";
 import { terraformBinary, terraformOutputs } from "../op/activities/terraform";
 import { runBinary, type BinaryExec } from "../state/exec";
 import { estateVersionFallback, EstateRun, type ComposedRunner } from "../compose/estate";
 import { ComposedRun } from "../compose/run";
+import { relPath } from "../compose/hcl";
 
 /** The step input as the group methods read it; `TerraformApplyStepInput` in ./capability-plugin.ts. */
 interface StepInput {
@@ -105,7 +106,7 @@ export interface ComposeGroupDeps {
    * #4332), or undefined when there is no workspace to read. Default:
    * `declaredTargetCloudIdentity` from the project root.
    */
-  identity?: (projectRoot: string, env: string) => Promise<((target: string) => PipelineCloudIdentity | undefined) | undefined>;
+  identity?: (projectRoot: string, env: string) => Promise<TargetCloudIdentityLookup | undefined>;
   /** How `choudoufu version` runs. Default `runBinary`. */
   exec?: BinaryExec;
   /** A root's outputs as its state holds them, for a member whose part of the working state could not be shown. Default `terraformOutputs`. */
@@ -161,15 +162,23 @@ export function memberComponents(members: readonly GroupMember<StepInput>[]): Dr
 
 /**
  * Each member's identity as `compositionFor` compares it: `identityKey` of
- * `lookup` for the member's root. Undefined without a lookup, so no member
- * falls back as `identity`.
+ * `lookup` for the member's root, which a rule's target globs match by the
+ * root's key in `terraform.roots` or by its directory relative to the
+ * project (the first declared rule that either matches wins). Undefined
+ * without a lookup, so no member falls back as `identity`.
  */
 export function memberIdentity(
+  project: ComposeProject,
   members: readonly GroupMember<StepInput>[],
-  lookup: ((target: string) => PipelineCloudIdentity | undefined) | undefined,
+  lookup: TargetCloudIdentityLookup | undefined,
 ): ((member: string) => string | undefined) | undefined {
   if (!lookup) return undefined;
-  const keys = new Map(members.map((m) => [m.component, identityKey(lookup(m.step.root as string))] as const));
+  const names = (root: string): string[] => {
+    const dir = project.terraform.roots[root]?.dir;
+    if (dir === undefined) return [root];
+    return [root, relPath(project.projectRoot, isAbsolute(dir) ? dir : resolve(project.projectRoot, dir))];
+  };
+  const keys = new Map(members.map((m) => [m.component, identityKey(lookup(names(m.step.root as string)))] as const));
   return (member) => keys.get(member);
 }
 
@@ -304,7 +313,7 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   /** The composition of `members` as `groupFallback` judges it, with each member's identity. */
   async function compositionOf(ctx: GroupContext, p: ComposeProject, members: readonly GroupMember<StepInput>[]): Promise<Composition> {
     const lookup = await identities(p.projectRoot, ctx.env);
-    return groupComposition(p, members, envOf(), memberIdentity(members, lookup));
+    return groupComposition(p, members, envOf(), memberIdentity(p, members, lookup));
   }
 
   /** The composition the group plans as, or throws when it does not compose. */
