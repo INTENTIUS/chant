@@ -22,15 +22,35 @@ export {
 } from "./drift-record";
 export {
   previewPulumiMember,
+  previewPulumiMemberRead,
   refreshPulumiMember,
+  pulumiMemberEngine,
+  pulumiMemberStackOutputs,
   pulumiPreviewArgs,
+  pulumiStackOutputArgs,
+  runAllowedPlunge,
   runAllowedPulumi,
   readMemberExport,
   defaultPulumiRunner,
   PULUMI_ALLOWED_COMMANDS,
   type PulumiRunner,
   type PreviewPulumiMemberOptions,
+  type PulumiMemberPreview,
+  type PulumiMemberEngine,
+  type PulumiMemberStackOutputsOptions,
   type RefreshPulumiMemberOptions,
 } from "./run";
 export { pulumiExportedStackOutputs, pulumiPlannedStackOutputs, type PulumiStackOutput } from "./stack-outputs";
 export { PULUMI_UNKNOWN, PULUMI_SIG_KEY, PULUMI_SECRET_SIG } from "./values";
+export {
+  pulumiOutputSource,
+  pulumiStackOutputSource,
+  pulumiMemberPlannedOutputs,
+  pulumiExportedOutputValues,
+  pulumiPartHasChanges,
+  PULUMI_APPLIED_OUTPUTS_ENV,
+  type PulumiAppliedFrom,
+  type PulumiOutputSourceOptions,
+} from "./member-outputs";
+export { pulumiCapabilityPlugin } from "./capability-plugin";
+export { readPulumiDrift, type PulumiDriftRunners } from "./drift-read";

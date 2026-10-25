@@ -109,7 +109,7 @@ export interface CapabilityPlugin {
    * Engine output sources this plugin contributes to core's `member-outputs`
    * verb (#4455): how another workspace member's outputs are read, applied
    * and planned, for the member kinds the source names (terraform:
-   * `choudoufu`). Like `registryBackends`, not capabilities, so several
+   * `choudoufu`; pulumi: `pulumi`). Like `registryBackends`, not capabilities, so several
    * engines may contribute.
    */
   engineOutputSources?(): EngineOutputSource[];

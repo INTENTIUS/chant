@@ -2,7 +2,10 @@
  * Running `pulumi` for a Pulumi member (#4453), under the ruling on #4450:
  * chant may run `pulumi preview` and `pulumi refresh --preview-only` for a
  * Pulumi member, and nothing else. Both read the provider and change no
- * stack. {@link PULUMI_ALLOWED_COMMANDS} is that list, and
+ * stack. #4455 adds one read of the backend, `pulumi stack output --json
+ * --show-secrets=false`, for the member's applied outputs: it reads the
+ * last deployment and calls no provider, and with secrets shown it is
+ * refused. {@link PULUMI_ALLOWED_COMMANDS} is that list, and
  * {@link runAllowedPulumi} refuses any argv outside it before it reaches the
  * runner, so no later caller can make this module apply.
  *
@@ -14,8 +17,13 @@
  *   --target <urn>` once per resource, as drift records
  *   (`./drift-record.ts`). The URNs default to the export's resources. With
  *   no export, one untargeted refresh. A member on plunge reads each
- *   resource with `plunge drift --resource <urn> --stream` instead, the one
- *   plunge command {@link runAllowedPlunge} lets through.
+ *   resource with `plunge drift --resource <urn> --stream` instead.
+ * - {@link pulumiMemberStackOutputs}: `pulumi stack output --json
+ *   --show-secrets=false`, the member's applied outputs (#4455).
+ *
+ * A member on plunge runs the same argv under `plunge` (a fork of the
+ * pulumi CLI) for its preview and stack outputs; {@link runAllowedPlunge}
+ * lets those and `plunge drift --resource <urn> --stream` through.
  *
  * ## Which members run on plunge
  *
@@ -55,20 +63,45 @@ export type PulumiRunner = (args: string[], opts: { cwd: string }) => Promise<{ 
 export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
   execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, PULUMI_SKIP_UPDATE_CHECK: "true" } });
 
-/** The only `pulumi` commands chant runs (ruling on #4450): each argv must start with one of these. */
-export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"]];
+/**
+ * The only `pulumi` commands chant runs (ruling on #4450, and #4455 for
+ * `stack output`): each argv must start with one of these.
+ */
+export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"]];
+
+/**
+ * A `stack output` argv that prints no secret: `--json`, and
+ * `--show-secrets` only as `--show-secrets=false`.
+ */
+function blindStackOutput(args: string[]): boolean {
+  return args.includes("--json") && args.every((a) => !a.startsWith("--show-secrets") || a === "--show-secrets=false");
+}
+
+function allowedRead(args: string[]): boolean {
+  if (!PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a))) return false;
+  if (args[0] === "refresh") return args.includes("--preview-only");
+  if (args[0] === "stack") return blindStackOutput(args);
+  return true;
+}
 
 /** Run `args` through `run`, refusing any argv that is not an allowed read. */
 export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
-  const allowed = PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a)) && (args[0] !== "refresh" || args.includes("--preview-only"));
-  if (!allowed) throw new Error(`chant runs only pulumi preview and pulumi refresh --preview-only for a Pulumi member, not pulumi ${args.join(" ")}`);
+  if (!allowedRead(args)) {
+    throw new Error(`chant runs only pulumi preview and pulumi refresh --preview-only, and pulumi stack output --json --show-secrets=false, for a Pulumi member, not pulumi ${args.join(" ")}`);
+  }
   return run(args, { cwd });
 }
 
-/** The one plunge command chant runs: a single resource's drift stream, which writes nothing. */
+/**
+ * The plunge commands chant runs: a single resource's drift stream, and the
+ * same preview and blind stack output it runs under `pulumi`. None writes.
+ */
 export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
-  const allowed = args[0] === "drift" && args.includes("--resource") && args.includes("--stream");
-  if (!allowed) throw new Error(`chant runs only plunge drift --resource <urn> --stream for a Pulumi member, not plunge ${args.join(" ")}`);
+  const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream");
+  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args));
+  if (!allowed) {
+    throw new Error(`chant runs only plunge drift --resource <urn> --stream, plunge preview and plunge stack output --json --show-secrets=false for a Pulumi member, not plunge ${args.join(" ")}`);
+  }
   return run(args, { cwd });
 }
 
@@ -92,6 +125,11 @@ export function pulumiMemberEngine(dir: string, configured?: PulumiMemberEngine)
     }
   }
   return { engine: "pulumi", because: "nothing names plunge" };
+}
+
+/** The argv chant runs for a member's applied outputs, after `pulumi` (#4455). Secrets stay blinded. */
+export function pulumiStackOutputArgs(opts: { stack?: string } = {}): string[] {
+  return ["stack", "output", "--json", "--show-secrets=false", ...(opts.stack ? ["--stack", opts.stack] : [])];
 }
 
 /** The argv chant runs for a member's preview, after `pulumi`. */
@@ -152,7 +190,47 @@ export interface PreviewPulumiMemberOptions {
   stack?: string;
   /** Narrow the preview to these URNs. A narrowed preview does not mark what it leaves out. */
   targets?: readonly string[];
+  /** The member's configured engine; see {@link pulumiMemberEngine}. A member on plunge previews with `plunge preview`. */
+  engine?: PulumiMemberEngine;
   run?: PulumiRunner;
+  /** Runs plunge, for a member on plunge. */
+  plunge?: PulumiRunner;
+}
+
+/** A member's preview: its change-set part, and the preview document it was read from (`{}` when none printed). */
+export interface PulumiMemberPreview {
+  part: ChangeSetPart;
+  preview: unknown;
+  /** The binary that ran. */
+  engine: PulumiMemberEngine;
+}
+
+/**
+ * The member's preview, kept beside its part, so a reader of the stack's
+ * planned outputs (`./stack-outputs.ts`, #4455) and the change set read the
+ * same run. Never throws for a run that failed: the part is failed.
+ */
+export async function previewPulumiMemberRead(opts: PreviewPulumiMemberOptions): Promise<PulumiMemberPreview> {
+  const args = pulumiPreviewArgs({ stack: opts.stack, targets: opts.targets });
+  const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
+  const prior = readMemberExport(opts.dir);
+  const common = { member: opts.member, ...(opts.stack ? { stack: opts.stack } : {}), ...(prior !== undefined ? { prior } : {}), ...(opts.targets?.length ? { targeted: true } : {}) };
+  try {
+    const { stdout } =
+      engine === "plunge"
+        ? await runAllowedPlunge(opts.plunge ?? defaultPlungeRunner, args, opts.dir)
+        : await runAllowedPulumi(opts.run ?? defaultPulumiRunner, args, opts.dir);
+    const preview = parseJson(stdout);
+    if (preview === undefined) return { part: pulumiPreviewPart({ ...common, preview: {}, error: `${engine} preview --json printed no JSON` }), preview: {}, engine };
+    return { part: pulumiPreviewPart({ ...common, preview }), preview, engine };
+  } catch (err) {
+    const f = failureOf(err);
+    const preview = parseJson(f.stdout) ?? {};
+    const error = f.missingBinary
+      ? `the ${engine} binary was not found on PATH; install ${engine} to plan this member`
+      : diagnosticError(preview) ?? (f.stderr?.trim() || f.message);
+    return { part: pulumiPreviewPart({ ...common, preview, error }), preview, engine };
+  }
 }
 
 /**
@@ -161,22 +239,43 @@ export interface PreviewPulumiMemberOptions {
  * is a failed member that says so. Never throws for a run that failed.
  */
 export async function previewPulumiMember(opts: PreviewPulumiMemberOptions): Promise<ChangeSetPart> {
-  const args = pulumiPreviewArgs({ stack: opts.stack, targets: opts.targets });
-  const prior = readMemberExport(opts.dir);
-  const common = { member: opts.member, ...(opts.stack ? { stack: opts.stack } : {}), ...(prior !== undefined ? { prior } : {}), ...(opts.targets?.length ? { targeted: true } : {}) };
+  return (await previewPulumiMemberRead(opts)).part;
+}
+
+export interface PulumiMemberStackOutputsOptions {
+  /** The member's directory, where Pulumi.yaml is. */
+  dir: string;
+  stack?: string;
+  /** The member's configured engine; see {@link pulumiMemberEngine}. */
+  engine?: PulumiMemberEngine;
+  run?: PulumiRunner;
+  plunge?: PulumiRunner;
+}
+
+/**
+ * `pulumi stack output --json --show-secrets=false` in the member's
+ * directory (`plunge stack output ...` for a member on plunge), parsed: the
+ * stack's applied outputs by name, a secret printed as `[secret]`. Throws
+ * when the command fails or prints no JSON object, naming the command.
+ */
+export async function pulumiMemberStackOutputs(opts: PulumiMemberStackOutputsOptions): Promise<Record<string, unknown>> {
+  const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
+  const args = pulumiStackOutputArgs({ stack: opts.stack });
+  const command = `${engine} ${args.join(" ")}`;
+  let stdout: string;
   try {
-    const { stdout } = await runAllowedPulumi(opts.run ?? defaultPulumiRunner, args, opts.dir);
-    const preview = parseJson(stdout);
-    if (preview === undefined) return pulumiPreviewPart({ ...common, preview: {}, error: "pulumi preview --json printed no JSON" });
-    return pulumiPreviewPart({ ...common, preview });
+    ({ stdout } =
+      engine === "plunge"
+        ? await runAllowedPlunge(opts.plunge ?? defaultPlungeRunner, args, opts.dir)
+        : await runAllowedPulumi(opts.run ?? defaultPulumiRunner, args, opts.dir));
   } catch (err) {
     const f = failureOf(err);
-    const preview = parseJson(f.stdout) ?? {};
-    const error = f.missingBinary
-      ? "the pulumi binary was not found on PATH; install pulumi to plan this member"
-      : diagnosticError(preview) ?? (f.stderr?.trim() || f.message);
-    return pulumiPreviewPart({ ...common, preview, error });
+    const why = f.missingBinary ? `the ${engine} binary was not found on PATH` : (f.stderr?.trim() || f.message).split("\n").slice(-3).join("\n");
+    throw new Error(`${command} in ${opts.dir} failed: ${why}`);
   }
+  const doc = parseJson(stdout);
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) throw new Error(`${command} in ${opts.dir} printed no JSON object`);
+  return doc as Record<string, unknown>;
 }
 
 export interface RefreshPulumiMemberOptions extends DriftAdapterBase {

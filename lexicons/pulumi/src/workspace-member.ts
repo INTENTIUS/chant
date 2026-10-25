@@ -14,7 +14,8 @@
  * --preview-only` for a Pulumi member, so the old "chant never calls
  * `pulumi`" rule now covers this graph read only. The change set
  * (`./change-set.ts`) and drift (`./drift-record.ts`) run those two
- * commands, which change nothing, and no other.
+ * commands, which change nothing, and the outputs read (`./member-outputs.ts`,
+ * #4455) adds `pulumi stack output --json --show-secrets=false`; nothing else.
  *
  * Nodes are the export's resources, keyed `<label>/<urn tail>`, where the tail
  * is the URN after its stack and project (`aws:s3/bucket:Bucket::assets`).

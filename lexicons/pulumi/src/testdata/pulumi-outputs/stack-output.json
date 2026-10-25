@@ -1,0 +1,4 @@
+{
+  "awsEndpoint": "web-old.execute-api.localhost.localstack.cloud",
+  "apiKey": "[secret]"
+}
