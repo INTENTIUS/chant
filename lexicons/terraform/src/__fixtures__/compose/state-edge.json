@@ -1,0 +1,40 @@
+{
+  "version": 4,
+  "terraform_version": "1.10.5",
+  "serial": 12,
+  "lineage": "c0ffee00-1234-4abc-8def-0123456789ab",
+  "outputs": {
+    "name": {
+      "value": "www",
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "dns",
+      "provider": "provider[\"terraform.io/builtin/terraform\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "1d9a0c55-77e2-4c1b-8f3a-5b6e2d4c7a10",
+            "input": {
+              "value": "www",
+              "type": "string"
+            },
+            "output": {
+              "value": "www",
+              "type": "string"
+            },
+            "triggers_replace": null
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}

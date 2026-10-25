@@ -33,6 +33,9 @@ import { dirname, join } from "node:path";
 import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetDocument, type ChangeSetAttribute, type ChangeSetEntry, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
+import { moduleChanges, stripModule, topModule } from "./compose/module-address";
+
+export { topModule } from "./compose/module-address";
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -139,36 +142,10 @@ export interface IndexRow {
 // Slicing the composed plan into one plan per module.
 // ---------------------------------------------------------------------------
 
-const TOP_MODULE = /^module\.([^.[\]]+)(?:\[(?:"(?:[^"\\]|\\.)*"|\d+)\])?(?:\.|$)/;
-
-/** The top-level module an address or module address is in, or undefined for the composed root's own. */
-export function topModule(address: string): string | undefined {
-  return TOP_MODULE.exec(address)?.[1];
-}
-
-/** `address` with its leading `module.<m>` (and index) taken off. */
-function unprefix(address: string): string {
-  const m = TOP_MODULE.exec(address);
-  return m ? address.slice(m[0].length) : address;
-}
-
 /** The plan's `resource_changes` that belong to module `m` (undefined: the root's own), each with the module taken off its address. */
 export function slicePlan(plan: unknown, m: string | undefined): Json {
   const p = isObject(plan) ? plan : {};
-  const list = Array.isArray(p.resource_changes) ? p.resource_changes : [];
-  const mine = list.filter((r) => isObject(r) && topModule(String(r.module_address ?? r.address ?? "")) === m);
-  const resource_changes = mine.map((r) => {
-    const rc = r as Json;
-    const out: Json = { ...rc, address: unprefix(String(rc.address)) };
-    if (typeof rc.previous_address === "string") out.previous_address = unprefix(rc.previous_address);
-    if (typeof rc.module_address === "string") {
-      const rest = unprefix(rc.module_address);
-      if (rest === "" || rest === rc.module_address) delete out.module_address;
-      else out.module_address = rest;
-    }
-    return out;
-  });
-  return { ...(p.errored === true ? { errored: true } : {}), resource_changes };
+  return { ...(p.errored === true ? { errored: true } : {}), resource_changes: moduleChanges(p.resource_changes, m) };
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +286,7 @@ function unknownOutputsOf(plan: Json, u: string): Set<string> {
       const data = parts[0] === "data";
       const [type, rname, attr] = data ? [parts[1], parts[2], parts[3]] : [parts[0], parts[1], parts[2]];
       if (!type || !rname) continue;
-      const unprefixed = (c: Json): string => unprefix(String(c.address)).replace(/\[[^\]]*\]$/, "");
+      const unprefixed = (c: Json): string => stripModule(String(c.address)).replace(/\[[^\]]*\]$/, "");
       for (const c of changes) {
         if (unprefixed(c) !== `${data ? "data." : ""}${type}.${rname}`) continue;
         const after = isObject(c.change) ? c.change.after_unknown : undefined;
