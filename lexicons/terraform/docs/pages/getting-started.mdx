@@ -60,7 +60,7 @@ The other keys of the namespace:
 
 With `compose.enabled`, the `terraform-apply` components a change reaches,
 and those they read, plan as one plan and apply as one apply. A component
-whose deploy has more than that one step, is given `--target`, runs another
+whose deploy has more than that one step (gates count), is given `--target`, runs another
 binary, identity or provider version, or sits after a component of another
 kind on a dependency path, plans wave by wave as before, and the run says
 why for each.

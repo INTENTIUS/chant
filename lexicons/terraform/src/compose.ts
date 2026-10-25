@@ -35,6 +35,7 @@
 
 import { isAbsolute, resolve } from "node:path";
 import type { PipelineCloudIdentity } from "@intentius/chant/ci-identity";
+import type { GroupFallback } from "@intentius/chant/components/capability";
 import { wiringReads, type DriverComponent, type DriverPhase, type DriverStep } from "@intentius/chant/components/driver";
 import type { TerraformConfig, TerraformRootConfig } from "./config";
 import {
@@ -61,8 +62,16 @@ export const DEFAULT_COMPOSE_MAX = 10;
 /** The step kind a member's deploy is. */
 export const COMPOSE_STEP_KIND = "terraform-apply";
 
-/** Why a member, or the whole change, applies in waves although `terraform.compose` is on. */
+/**
+ * Why a member, or the whole change, applies in waves. `steps` and `split`
+ * are the kinds core's own group pass uses for the same reasons (ws-107);
+ * `off` is what the capability answers core's `groupFallback` with when
+ * `terraform.compose` is not enabled. `plan-failed` is kept for a reader of
+ * terragucci's reports: under core, a group plan that throws makes every
+ * member plan-failed instead (ws-107).
+ */
 export type ComposeFallbackKind =
+  | "off"
   | "too-many-roots"
   | "one-root"
   | "binary"
@@ -77,11 +86,12 @@ export type ComposeFallbackKind =
   | "path"
   | "plan-failed"
   | "targets"
-  | "multi-step"
+  | "steps"
   | "same-root"
   | "split";
 
-export interface ComposeFallback {
+/** A fallback, in the shape of core's `GroupFallback` (ws-107) with the member it leaves out. */
+export interface ComposeFallback extends GroupFallback {
   kind: ComposeFallbackKind;
   /** The member left out. Absent when the reason is the whole change's. */
   member?: string;
@@ -300,6 +310,14 @@ const CLI_REFUSED = /(^|\s)-{1,2}(target|exclude|replace|var)(=|\s|$)/;
 const LOCKED_BACKENDS = ["s3", "gcs", "azurerm", "local"];
 
 /**
+ * The `off` fallback when `terraform.compose` is not enabled, else undefined:
+ * what `terraform-apply`'s `groupFallback` answers first (ws-107).
+ */
+export function composeOff(terraform: TerraformConfig): ComposeFallback | undefined {
+  return terraform.compose?.enabled === true ? undefined : { kind: "off", reason: "`terraform.compose` is not enabled" };
+}
+
+/**
  * The composition when `terraform.compose.enabled` is set, else undefined
  * without reading anything. The only caller of {@link compositionFor} a run
  * should use.
@@ -389,7 +407,7 @@ export function compositionFor(input: CompositionInput): Composition {
     return undefined;
   });
   each((m, rc) =>
-    rc.steps !== 1 ? ["multi-step", `\`${m}\`'s deploy has ${plural(rc.steps, "step")}, and only a component whose deploy is one terraform-apply step composes`] : undefined,
+    rc.steps !== 1 ? ["steps", `\`${m}\`'s deploy has ${plural(rc.steps, "step")}, and only a component whose deploy is one terraform-apply step composes`] : undefined,
   );
   each((m) => {
     const t = input.targets?.[m] ?? [];

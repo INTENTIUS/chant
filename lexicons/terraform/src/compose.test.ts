@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, test } from "vitest";
 import type { DriverComponent, DriverPhase } from "@intentius/chant/components/driver";
 import { stackOutput } from "@intentius/chant/components/component";
-import { compositionFor, compositionIfEnabled, fallbackLine, moduleNames, withPlanFailed, type CompositionInput } from "./compose";
+import { composeOff, compositionFor, compositionIfEnabled, fallbackLine, moduleNames, withPlanFailed, type CompositionInput } from "./compose";
 import type { TerraformConfig } from "./config";
 
 const made: string[] = [];
@@ -184,9 +184,9 @@ describe("compositionFor: each fallback", () => {
     expect(fallbackLine(c.fallbacks[0]!)).toBe("**`c` applies in waves** (`terraform.compose`): `c` is given 1 target (`--target`), and a composed run plans each member whole.");
   });
 
-  test("multi-step", () => {
+  test("steps: a deploy of more than the one step", () => {
     const c = compositionFor(input(threeRoots(), [tf("a"), tf("b"), tf("c", { before: [{ kind: "gate", gate: "ok" }] })]));
-    expect(c.fallbacks).toEqual([{ kind: "multi-step", member: "c", reason: "`c`'s deploy has 2 steps, and only a component whose deploy is one terraform-apply step composes" }]);
+    expect(c.fallbacks).toEqual([{ kind: "steps", member: "c", reason: "`c`'s deploy has 2 steps, and only a component whose deploy is one terraform-apply step composes" }]);
   });
 
   test("same-root", () => {
@@ -223,6 +223,12 @@ describe("terraform.compose is off by default", () => {
     expect(compositionIfEnabled({ ...base, terraform: { roots: base.terraform.roots } })).toBeUndefined();
     expect(compositionIfEnabled({ ...base, terraform: { roots: base.terraform.roots, compose: { enabled: false } } })).toBeUndefined();
     expect(compositionIfEnabled(base)?.members).toEqual(["a", "b", "c"]);
+  });
+
+  test("composeOff answers core's groupFallback with kind off until the setting is on", () => {
+    expect(composeOff({ roots: {} })).toEqual({ kind: "off", reason: "`terraform.compose` is not enabled" });
+    expect(composeOff({ roots: {}, compose: { enabled: false } })?.kind).toBe("off");
+    expect(composeOff({ roots: {}, compose: { enabled: true } })).toBeUndefined();
   });
 
   test("nothing in the lexicon calls compositionFor except through compositionIfEnabled", () => {

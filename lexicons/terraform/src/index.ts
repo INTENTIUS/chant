@@ -19,6 +19,7 @@ export {
 export {
   compositionFor,
   compositionIfEnabled,
+  composeOff,
   composeSet,
   readOrder,
   moduleNames,
