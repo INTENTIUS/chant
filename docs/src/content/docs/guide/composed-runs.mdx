@@ -1,0 +1,48 @@
+---
+title: Composed Runs
+description: How chant plans and applies the components a change reaches as one run, which lexicons do it as a group, a preview or a hole, and what a lexicon without a preview gets.
+diataxis: explanation
+---
+
+A composed run is how chant handles a pull request that changes a component and one that reads its output. chant names the components the change reaches, plans them together, binds one digest, takes one approval and applies in one run, passing each new value on to the components that read it. It belongs to chant, not to a lexicon. Each lexicon takes part in the way its own plan and API allow ([ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md)).
+
+A value another component creates in the same run has no value when the plan is made. A reader of it is planned in one of three ways.
+
+1. A group. The capability plans and applies several components in one call ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)). The value reaches its readers inside the same apply, with no later round.
+2. A preview. The capability plans the waiting component with stand-ins for the unknown values and keeps the plan's shape. After the upstream applies, the real plan is compared with that shape. If it matches, the round is covered by the first approval.
+3. A hole. The component is not planned until its upstream has applied. The note shows `inputs from <component>; re-checked on apply`, and the round needs an approval of its own.
+
+## Per lexicon
+
+| Capability | Lexicon | Composes as | Issue | What the API offers | Why |
+|---|---|---|---|---|---|
+| `terraform-apply` | terraform | group | [#4447](https://github.com/INTENTIUS/chant/issues/4447) | `terraform plan` over a root of module calls, where a value one module creates is known after apply in the modules that read it | One apply carries a value from one root to another. Outside a group a waiting root is a hole (`waitingRoot`); a preview outside a group is [#4463](https://github.com/INTENTIUS/chant/issues/4463), not built in this epic. |
+| `cfn-deploy` | aws | preview | [#4423](https://github.com/INTENTIUS/chant/issues/4423), [#4430](https://github.com/INTENTIUS/chant/issues/4430) | a change set per stack, created and deleted without executing | Built. `previewCfnDeploy` creates the change set with `cfnPlaceholder` stand-ins for the unknown parameters and returns `cfnPlanShape`. CloudFormation has no change set over several stacks, so a group would run change sets in order, as covered rounds do. |
+| `Fn::ImportValue` | aws | preview | [#4466](https://github.com/INTENTIUS/chant/issues/4466) | the same change set; an import resolves only when the change set is created, and fails when the export does not exist yet | The CDK shape. Core sees no read, since the import is inside the template, and `valueReads` treats it as opaque. The epic turns an import of an export another stack in the change declares into a read, and previews the importer with the import as a stand-in parameter. |
+| `arm-deploy` | azure | hole | none | ARM what-if (`deployments/whatIf`), for ARM deployments only | chant applies through `azApply`, one PUT per resource, and plans by reading each resource with a GET (`readPlan`). It makes no ARM deployment, so what-if has nothing to preview. `ArmDeployInput` takes no template parameters: an upstream output can only fill `resourceGroup`, `location`, `endpoint`, `subscriptionId` or `template`, and a stand-in there reads a different target. |
+| `gcp-apply` | gcp | hole | none | no preview on the REST APIs `gcpApply` writes to; Config Connector and Infrastructure Manager preview through their own controllers, which chant does not use | `planGcpResources` reads each resource and decides it with `decideResource`. `GcpApplyStepInput` takes no values into resources: an upstream output can only fill `manifest`, `project`, `endpoint` or `stack`, all of which name the target. |
+| `kubectl-apply` | k8s | hole | [#4467](https://github.com/INTENTIUS/chant/issues/4467) | server-side dry run (`dryRun=All`), which `plan` already uses against the live cluster | `KubectlApplyInput` takes no values into objects: an upstream output can only fill `manifest`, `stack`, `context` or `delete`, and a dry run needs a real cluster. `plan` does not read `unresolvedInputs` yet, so it plans against the missing value; #4467 makes it return a hole as the other two do. |
+
+A hole becomes a preview when a step takes values into its resources. Until then none of the three is a group, since their applies write resource by resource and pass no value between members inside one call.
+
+## A lexicon without a preview
+
+A component whose capability has no preview, or no group, gets a hole. Its plan shows what is known and no more: the member lists `inputs from <component>; re-checked on apply` and the note shows `?` for its counts. Nothing the approval saw covers it, so no later plan of it is covered.
+
+When the upstream has applied, the component is planned again against the real values. That plan needs an approval of its own, at the pull request's gate, or at `<gate>-round-<n>` in a promote. The first approval does not carry over. [Planned outputs and rounds](/chant/cli/components/#planned-outputs-and-rounds) states the round rule.
+
+The other components of the change still plan together. A change can group the components that are eligible and plan the rest wave by wave, all under one approval through the covered rounds. The report's `groups` and `fallbacks` say which grouped and why the others did not. Components of another kind on a dependency path between two group members split the group, and only single-step deploys join one. [Groups planned and applied as one](/chant/cli/components/#groups-planned-and-applied-as-one) lists the fields.
+
+A change set that looks empty while a group has reads it does not know yet is not passed without an approval.
+
+## Nothing is atomic
+
+A failure part way through a run leaves what applied, applied. chant rolls nothing back, and a lexicon's own locks stay the lexicon's. The report gives each member's outcome (`applied`, `partial`, `failed`, `not-started` or `no-changes`), and a resume plans only the members that did not apply, against the outputs the others applied with.
+
+## Where each lexicon says more
+
+- Terraform: [In a composed run](/chant/lexicons/terraform/ops/#in-a-composed-run), the `terraform.compose` setting, the files it writes to `.chant-compose/` and the reasons a group falls back.
+- AWS: [Stacks that read each other's outputs](/chant/lexicons/aws/cloudformation/#stacks-that-read-each-others-outputs), the preview and what the real change set is checked against.
+- The [pull-request CI guide](/chant/guide/pull-request-ci/#components-applied-as-one) shows a group in a plan note and what a resume does.
+- [Plan previews](/chant/components/plan-previews/) lists what the note shows for each capability.
+- [Capabilities](/chant/components/capabilities/) describes `PlanShape` and the conformance helper a lexicon runs on its own shapes.

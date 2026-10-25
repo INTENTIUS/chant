@@ -109,7 +109,7 @@ A capability that plans and applies a group ([ws-107](https://github.com/INTENTI
 
 A component that could have joined and did not is listed under `fallbacks` with the reason, and plans wave by wave as above. One approval covers the group. A change set that looks empty while the group has reads it does not know yet waits for a person.
 
-If the group's apply fails on `app` after `a` applied, `a` stays applied. The report lists `a` with `groupOutcome` `applied` and `app` with `failed`, and the note says `` `a` applied and stays applied; `app` failed``. Running the apply job again with the same `--resume` record plans only `app`, against the outputs `a` applied with. When its new plan does only what the approved plan showed, it applies under the first approval. When it does more, the apply plans everything again and waits for an approval of that plan. [Groups planned and applied as one](/chant/cli/components/#groups-planned-and-applied-as-one) lists the report's fields.
+If the group's apply fails on `app` after `a` applied, `a` stays applied. The report lists `a` with `groupOutcome` `applied` and `app` with `failed`, and the note says `` `a` applied and stays applied; `app` failed``. Running the apply job again with the same `--resume` record plans only `app`, against the outputs `a` applied with. When its new plan does only what the approved plan showed, it applies under the first approval. When it does more, the apply plans everything again and waits for an approval of that plan. [Groups planned and applied as one](/chant/cli/components/#groups-planned-and-applied-as-one) lists the report's fields, and [Composed runs](/chant/guide/composed-runs/) says what a capability without a group or a preview gets.
 
 ### CloudFormation stacks
 
