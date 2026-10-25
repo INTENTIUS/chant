@@ -22,6 +22,7 @@ import { terraformPlannedOutputs } from "../components/capability-plugin";
 import { terraformPlanShape } from "../plan-shape";
 import { rootTexts } from "./hcl";
 import { inModule, moduleChanges, stripModule, topModule } from "./module-address";
+import { READ_VAR_PREFIX } from "./root";
 
 type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
@@ -161,9 +162,15 @@ export function sliceText(text: string, m: string, counts: { add: number; change
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The names a root's files read off `data.<type>.<name>.<field>`, or undefined when they read the whole object. */
+/**
+ * The names a root's files read off `data.<type>.<name>.<field>`, or
+ * undefined when they read the whole object. While the root is composed
+ * (./root.ts) a `terraform_remote_state` read is `var.chant_read_<name>`,
+ * which counts the same.
+ */
 function fieldsRead(dir: string | undefined, type: string, name: string, field: string): Set<string> | undefined {
-  const re = new RegExp(`\\bdata\\.${type}\\.${escapeRe(name)}(?![\\w-])(\\.${field}(?:\\.([A-Za-z_][\\w-]*)|\\[\\s*"([^"]+)"\\s*\\])?)?`, "g");
+  const ref = type === "terraform_remote_state" ? `(?:data\\.${type}\\.|var\\.${READ_VAR_PREFIX})` : `data\\.${type}\\.`;
+  const re = new RegExp(`\\b${ref}${escapeRe(name)}(?![\\w-])(\\.${field}(?:\\.([A-Za-z_][\\w-]*)|\\[\\s*"([^"]+)"\\s*\\])?)?`, "g");
   const read = new Set<string>();
   for (const t of dir ? rootTexts(dir) : []) {
     for (const hit of t.text.matchAll(re)) {

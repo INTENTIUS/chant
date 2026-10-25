@@ -112,6 +112,16 @@ describe("an output one member creates and another reads", () => {
     expect(reads.get("worker")).toEqual([{ upstream: "queue", via: "remote-state", name: "q", outputs: ["queue_id"], unknown: ["queue_id"] }]);
     expect(reads.get("whole")).toEqual([{ upstream: "queue", via: "remote-state", name: "q", unknown: ["queue_id"] }]);
   });
+
+  test("a remote state read the composed root rewrote to var.chant_read_<label> names the same outputs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-compose-slice-"));
+    made.push(dir);
+    writeFileSync(join(dir, "main.tf"), 'resource "terraform_data" "consumer" { input = var.chant_read_q.outputs.queue_id }\n');
+    writeFileSync(join(dir, "chant_compose.tf"), 'variable "chant_read_q" {\n  type = any\n}\n');
+    const outputs = new Map([["queue", terraformPlannedOutputs(slicePlan(composed, "queue"))]]);
+    const reads = composedReads({ members: ["worker"], reads: new Map([["worker", [{ via: "remote-state", upstream: "queue", name: "q" } as ComposedRead]]]), dirs: new Map([["worker", dir]]) }, outputs);
+    expect(reads.get("worker")).toEqual([{ upstream: "queue", via: "remote-state", name: "q", outputs: ["queue_id"], unknown: ["queue_id"] }]);
+  });
 });
 
 describe("one strip function for the report and the slicer", () => {
