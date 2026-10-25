@@ -20,6 +20,14 @@
  * - `choudoufu` or `other` to `chant`: `chant import` writes TypeScript into
  *   the member's directory. The patch holds those files and the kind change.
  *
+ * The digest covers the member, the rung, what the staging changed outside
+ * the declaration, and (for `choudoufu`) the digest of the `live-import`
+ * report, so an approval is for the report the approver read. The kind change
+ * itself is written into the tree's declaration on apply rather than carried
+ * as a hunk, so promoting one member never conflicts with another member's
+ * uncommitted promotion (#4461: `--all` promotes a workspace in waves, see
+ * `./promote-waves.ts`).
+ *
  * Commands run through an injectable runner, so a test never starts a binary.
  */
 
@@ -29,6 +37,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
+import { contentDigest } from "../content-digest";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { LIFECYCLE_LOCAL_NOTE, isLifecycleLocalNote } from "../lifecycle/local-note";
 import { approveCommand, describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
@@ -39,7 +48,10 @@ import { workingTree } from "./tree";
 
 export const PROMOTE_PLAN_KIND = "workspace-promote";
 export const PROMOTE_GATED_EXIT = 3;
-const USAGE = "chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexicon>] [--dry-run] [--output <patch file>] [--json]";
+const USAGE = [
+  "chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexicon>] [--dry-run] [--output <patch file>] [--json]",
+  "chant workspace promote --all [--state-dir <dir>] [--state <member>=<terraform.tfstate>]... [--canary <member>] [--wave-size <n>] [--dry-run] [--json]",
+].join("\n");
 
 export class PromoteError extends Error {}
 
@@ -63,6 +75,8 @@ export interface CommandRun {
   argv: string[];
   /** Directory relative to the project root. */
   cwd: string;
+  /** The `live-import` ratification report: its output is digested into the gate. */
+  report?: boolean;
 }
 export type PromoteRunner = (argv: string[], cwd: string) => Promise<{ exitCode: number; output: string }>;
 
@@ -83,7 +97,7 @@ export function stagingRuns(rung: Rung, member: { name: string; dir: string }, o
     if (!opts.state) throw new PromoteError(`promoting ${member.name} to choudoufu reads its state for the adoption report: pass --state <terraform.tfstate>`);
     return [
       { label: "choudoufu live-check", argv: ["choudoufu", "live-check"], cwd: member.dir },
-      { label: "choudoufu live-import (report)", argv: ["choudoufu", "live-import", `-state=${opts.state}`, `-estate=${member.name}`], cwd: member.dir },
+      { label: "choudoufu live-import (report)", argv: ["choudoufu", "live-import", `-state=${opts.state}`, `-estate=${member.name}`], cwd: member.dir, report: true },
     ];
   }
   const lexicon = opts.lexicon ?? (rung.from === "choudoufu" ? "terraform" : undefined);
@@ -109,6 +123,8 @@ export interface PromoteOptions {
   dryRun?: boolean;
   output?: string;
   json?: boolean;
+  /** Run by `promote --all` (#4461): print no JSON of its own, the wave summary does. */
+  nested?: boolean;
   /** For tests. */
   runner?: PromoteRunner;
   ledger?: GateLedgerPort;
@@ -124,7 +140,17 @@ export interface PromoteResult {
   to?: string;
   digest?: string;
   patch?: string;
+  /** Digest of the `live-import` report the gate binds (terraform to choudoufu). */
+  reportDigest?: string;
+  /** The report's text, for the wave summary's eligible and unadmitted counts. */
+  reportOutput?: string;
   ran?: { label: string; exitCode: number }[];
+  /** The label of the follow-up that failed after the patch was applied. */
+  followUpFailed?: string;
+  /** The last output of the failed check or follow-up. */
+  failureOutput?: string;
+  /** The follow-up's output when it ran (the stamp report). */
+  followUpOutput?: string;
 }
 
 function declarationFile(root: string): string {
@@ -157,7 +183,10 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     return { outcome: "top-of-ladder", exitCode: 0, member: found.name, from: found.kind };
   }
   const member = { name: found.name, dir: found.dir === "." ? "" : found.dir };
-  const staging = stagingRuns(rung, member, opts);
+  // The staging runs in a worktree, so a relative --state would resolve there.
+  const state = opts.state ? resolve(opts.state) : undefined;
+  const staging = stagingRuns(rung, member, { ...opts, state });
+  const emitJson = opts.json && !opts.nested;
 
   let repo: string;
   let head: string;
@@ -169,7 +198,11 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
   }
   const projectRel = relative(repo, root).split(sep).join("/");
   const declFile = declarationFile(root);
-  const watched = [declFile, member.dir].filter(Boolean).map((p) => [projectRel, p].filter(Boolean).join("/"));
+  // The declaration is not watched: the kind change is written into the
+  // tree's declaration on apply, so another member's uncommitted promotion
+  // there does not block this one (#4461).
+  const inProject = (p: string): string => [projectRel, p].filter(Boolean).join("/") || ".";
+  const watched = [inProject(member.dir), `:(exclude)${inProject(declFile)}`];
   const dirty = git(repo, ["status", "--porcelain", "--untracked-files=all", "--", ...watched]).split("\n").filter(Boolean);
   if (dirty.length > 0) {
     throw new PromoteError(`${found.name} has uncommitted changes (${dirty.slice(0, 5).map((l) => l.slice(3)).join(", ")}). Commit them: promote stages from HEAD and applies its patch to the tree.`);
@@ -195,6 +228,7 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     git(repo, ["worktree", "add", "-q", "--detach", worktree, head]);
     const project = projectRel ? join(worktree, projectRel) : worktree;
     const ran: { label: string; exitCode: number }[] = [];
+    let reportOutput: string | undefined;
     for (const step of staging) {
       const cwd = join(project, step.cwd);
       mkdirSync(cwd, { recursive: true });
@@ -202,23 +236,47 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
       ran.push({ label: step.label, exitCode: result.exitCode });
       if (!opts.json) say(formatInfo(`${step.label}: exit ${result.exitCode}`));
       if (result.exitCode !== 0) {
-        say(formatError({ message: `${step.label} failed in the staging worktree`, hint: result.output.trimEnd().split("\n").slice(-20).join("\n") }));
+        const tail = result.output.trimEnd().split("\n").slice(-20).join("\n");
+        say(formatError({ message: `${step.label} failed in the staging worktree`, hint: tail }));
         say(formatError({ message: "the promotion was not gated: its checks must pass first. The tree is unchanged." }));
-        if (opts.json) console.log(JSON.stringify({ outcome: "checks-failed", member: found.name, ran }, null, 2));
-        return { outcome: "checks-failed", exitCode: 1, member: found.name, from: rung.from, to: rung.to, ran };
+        if (emitJson) console.log(JSON.stringify({ outcome: "checks-failed", member: found.name, ran }, null, 2));
+        return { outcome: "checks-failed", exitCode: 1, member: found.name, from: rung.from, to: rung.to, ran, failureOutput: tail };
       }
+      if (step.report) reportOutput = result.output;
     }
+    const reportDigest = reportOutput === undefined ? undefined : contentDigest(reportOutput.trimEnd());
+    const declRel = inProject(declFile);
+    // What the staging wrote outside the declaration: the hunks the apply
+    // carries. The kind change is described by from and to.
+    git(worktree, ["add", "-A"]);
+    const memberPatch = git(worktree, ["diff", "--cached", "--binary", "HEAD", "--", ".", `:(exclude)${declRel}`]);
     const declPath = join(project, declFile);
     writeFileSync(declPath, setMemberKind(readFileSync(declPath, "utf-8"), declFile, found.name, rung.to));
     git(worktree, ["add", "-A"]);
     const patch = git(worktree, ["diff", "--cached", "--binary", "HEAD"]);
-    const digest = computePlanDigest(PROMOTE_PLAN_KIND, { member: found.name, from: rung.from, to: rung.to, patch });
-    const base: PromoteResult = { outcome: "dry-run", exitCode: 0, member: found.name, from: rung.from, to: rung.to, digest, patch, ran };
-    const report = (outcome: PromoteOutcome, exitCode: number, extra: Record<string, unknown> = {}): PromoteResult => {
-      if (opts.json) console.log(JSON.stringify({ outcome, member: found.name, from: rung.from, to: rung.to, digest, ran, ...extra }, null, 2));
-      return { ...base, outcome, exitCode };
+    const digest = computePlanDigest(PROMOTE_PLAN_KIND, {
+      member: found.name,
+      from: rung.from,
+      to: rung.to,
+      patch: memberPatch,
+      ...(reportDigest ? { report: reportDigest } : {}),
+    });
+    const base: PromoteResult = {
+      outcome: "dry-run",
+      exitCode: 0,
+      member: found.name,
+      from: rung.from,
+      to: rung.to,
+      digest,
+      patch,
+      ran,
+      ...(reportDigest ? { reportDigest, reportOutput } : {}),
     };
-    say(formatInfo(`${found.name}: ${rung.from} to ${rung.to}, patch ${digest}`));
+    const report = (outcome: PromoteOutcome, exitCode: number, extra: Record<string, unknown> = {}): PromoteResult => {
+      if (emitJson) console.log(JSON.stringify({ outcome, member: found.name, from: rung.from, to: rung.to, digest, ...(reportDigest ? { reportDigest } : {}), ran, ...extra }, null, 2));
+      return { ...base, outcome, exitCode, ...extra };
+    };
+    say(formatInfo(`${found.name}: ${rung.from} to ${rung.to}, patch ${digest}${reportDigest ? `, live-import report ${reportDigest}` : ""}`));
     if (opts.output) writeFileSync(resolve(opts.output), patch);
     if (opts.dryRun) {
       say(formatInfo("--dry-run: staged and checked; no gate recorded, the tree is unchanged"));
@@ -228,7 +286,7 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     const check = await evaluateGate(opts.ledger ?? gitGateLedgerPort({ cwd: repo }), {
       op: WORKSPACE_PROMOTE_GATE_OP,
       gate: found.name,
-      description: `promote ${found.name} from ${rung.from} to ${rung.to}`,
+      description: `promote ${found.name} from ${rung.from} to ${rung.to}${reportDigest ? ` (live-import report ${reportDigest})` : ""}`,
       planDigest: digest,
       ...(opts.now ? { now: opts.now } : {}),
     });
@@ -247,29 +305,36 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
       return report("gated", PROMOTE_GATED_EXIT, { pending: check.pending });
     }
 
-    const patchDir = mkdtempSync(join(tmpdir(), "chant-promote-patch-"));
-    try {
-      const file = join(patchDir, "promote.patch");
-      writeFileSync(file, patch);
+    if (memberPatch.trim()) {
+      const patchDir = mkdtempSync(join(tmpdir(), "chant-promote-patch-"));
       try {
-        git(repo, ["apply", "--binary", "--whitespace=nowarn", file]);
-      } catch (err) {
-        const stderr = (err as { stderr?: Buffer | string }).stderr?.toString().trim();
-        throw new PromoteError(`the approved patch no longer applies to the tree${stderr ? `: ${stderr}` : ""}`);
+        const file = join(patchDir, "promote.patch");
+        writeFileSync(file, memberPatch);
+        try {
+          git(repo, ["apply", "--binary", "--whitespace=nowarn", file]);
+        } catch (err) {
+          const stderr = (err as { stderr?: Buffer | string }).stderr?.toString().trim();
+          throw new PromoteError(`the approved patch no longer applies to the tree${stderr ? `: ${stderr}` : ""}`);
+        }
+      } finally {
+        rmSync(patchDir, { recursive: true, force: true });
       }
-    } finally {
-      rmSync(patchDir, { recursive: true, force: true });
     }
-    for (const step of followUpRuns(rung, member, opts)) {
+    const treeDecl = join(root, declFile);
+    writeFileSync(treeDecl, setMemberKind(readFileSync(treeDecl, "utf-8"), declFile, found.name, rung.to));
+    let followUpOutput: string | undefined;
+    for (const step of followUpRuns(rung, member, { state })) {
       const result = await run(step.argv, join(root, step.cwd));
       ran.push({ label: step.label, exitCode: result.exitCode });
+      followUpOutput = result.output;
       if (result.exitCode !== 0) {
-        say(formatError({ message: `${step.label} failed after the patch was applied`, hint: result.output.trimEnd().split("\n").slice(-20).join("\n") }));
-        return report("applied", 1, { followUpFailed: step.label });
+        const tail = result.output.trimEnd().split("\n").slice(-20).join("\n");
+        say(formatError({ message: `${step.label} failed after the patch was applied`, hint: tail }));
+        return report("applied", 1, { followUpFailed: step.label, failureOutput: tail, followUpOutput });
       }
     }
     say(formatSuccess(`applied the approved promotion of "${found.name}" to ${rung.to} (${digest}). Review and commit it.`));
-    return report("applied", 0);
+    return report("applied", 0, followUpOutput === undefined ? {} : { followUpOutput });
   } finally {
     dispose();
   }
@@ -277,6 +342,38 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
 
 export async function runWorkspacePromote(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  const mapped = (args.statePaths ?? []).some((s) => s.includes("="));
+  if (args.all || args.stateDir || args.waveSize !== undefined || mapped) {
+    // #4461: a workspace of roots, in waves.
+    if (args.extraPositional) {
+      console.error(formatError({ message: "promote --all takes no member: name roots with --state <member>=<path>, the canary with --canary <member>", hint: USAGE }));
+      return 1;
+    }
+    if (args.output || args.lexicon) {
+      console.error(formatError({ message: "--output and --lexicon promote one member; promote --all adopts terraform roots into choudoufu and writes no patch file", hint: USAGE }));
+      return 1;
+    }
+    try {
+      const { parseStateMappings, promoteWavesCommand } = await import("./promote-waves");
+      const result = await promoteWavesCommand({
+        root: process.cwd(),
+        all: args.all,
+        states: parseStateMappings(args.statePaths ?? []),
+        stateDir: args.stateDir,
+        canary: args.canary,
+        waveSize: args.waveSize,
+        dryRun: args.dryRun,
+        json: args.json,
+      });
+      return result.exitCode;
+    } catch (err) {
+      if (err instanceof PromoteError) {
+        console.error(formatError({ message: err.message, hint: USAGE }));
+        return 1;
+      }
+      throw err;
+    }
+  }
   if (!args.extraPositional || args.extraPositional2) {
     console.error(formatError({ message: "promote takes exactly one member", hint: USAGE }));
     return 1;
