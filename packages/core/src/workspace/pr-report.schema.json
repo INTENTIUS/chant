@@ -198,7 +198,7 @@
           "member": { "type": "string", "description": "The member's name in the change set: the root, for a terraform-family step." },
           "component": { "type": "string" },
           "planDigest": { "type": ["string", "null"], "description": "What a gate on this member alone binds. null when it failed to plan." },
-          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked", "waiting"], "description": "waiting (#3999): held back because its plan read an upstream output that applied as another value, or was known only after apply; it waits on an approval of its plan in rounds." },
+          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked", "waiting", "not-started"], "description": "waiting (#3999): held back because its plan read an upstream output that applied as another value, or was known only after apply; it waits on an approval of its plan in rounds. not-started (ws-107, #4440, written by chant 0.124.53 and newer): a member of a group whose apply stopped before its part began." },
           "counts": {
             "type": "object",
             "required": ["create", "update", "replace", "delete"],

@@ -91,6 +91,9 @@ export const PR_REPORT_MIGRATIONS_FLOOR = "0.124.49";
 /** The first chant whose report can carry a member's `reads`, known at plan or not. */
 export const PR_REPORT_READS_FLOOR = "0.124.52";
 
+/** The first chant whose report can carry the `not-started` member status (ws-107, #4440). */
+export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.53";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -156,7 +159,13 @@ export type PrMemberStatus =
    * that applied as another value, or was known only after apply. It waits
    * on an approval of the plan the apply made for it afterwards (`rounds`).
    */
-  | "waiting";
+  | "waiting"
+  /**
+   * Apply stage (ws-107, #4440): a member of a group whose apply stopped
+   * before its part began. Written by chant {@link PR_REPORT_NOT_STARTED_FLOOR}
+   * and newer.
+   */
+  | "not-started";
 
 /** One upstream a member reads outputs of (`PrMember.reads`). */
 export interface PrMemberRead {
@@ -555,6 +564,7 @@ const STATUS_WORDS: Record<PrMemberStatus, string> = {
   failed: "apply failed",
   blocked: "blocked",
   waiting: "waiting on its new plan",
+  "not-started": "not started",
 };
 
 function headline(report: PrReport): string {

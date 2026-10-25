@@ -124,6 +124,30 @@ export interface FanOutPlan {
   indeterminate: string[];
   /** Identity of this derivation, for binding one approval to the whole fan-out (#2300's pattern). */
   digest: string;
+  /**
+   * The groups a pull request plans and applies as one (ws-107), each in
+   * one wave, set by `groupFanOut` (./groups.ts). `waves` are then the
+   * grouped waves. `digest` stays the derivation's. Absent when none formed.
+   */
+  groups?: FanOutGroup[];
+  /** The components that could have grouped and did not, each with why (ws-107, ruling 1). Absent when none. */
+  fallbacks?: FanOutGroupFallback[];
+}
+
+/** Components one capability plans and applies in one call (ws-107). */
+export interface FanOutGroup {
+  /** The kind of the capability every member's one step names. */
+  capability: string;
+  /** The members, upstreams first. */
+  components: string[];
+}
+
+/** A component that did not join a group (ws-107): its capability's `kind`, and the fallback's `kind` and `reason`. */
+export interface FanOutGroupFallback {
+  component: string;
+  capability: string;
+  kind: string;
+  reason: string;
 }
 
 /** Reverse the `dependsOn` edges: who has to re-run when this one moves. */

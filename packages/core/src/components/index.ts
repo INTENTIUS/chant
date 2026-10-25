@@ -135,6 +135,8 @@ export {
 export {
   type FanOutRequest,
   type FanOutPlan,
+  type FanOutGroup,
+  type FanOutGroupFallback,
   type FanOutSkip,
   type FanOutSkipReason,
   type ChangedUnits,
@@ -146,6 +148,19 @@ export {
   downstreamWithin,
   UnknownComponentError,
 } from "./fan-out";
+export {
+  type FindComponentGroupsOptions,
+  type FoundComponentGroups,
+  type ComponentGroupPlan,
+  type ComponentGroupRunResult,
+  findComponentGroups,
+  groupFanOut,
+  narrowGroups,
+  groupDigest,
+  bindGroup,
+  planComponentGroup,
+  runComponentGroup,
+} from "./groups";
 export {
   type FanOutGate,
   type FanOutRunOptions,
