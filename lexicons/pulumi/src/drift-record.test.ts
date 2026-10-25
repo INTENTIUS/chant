@@ -97,7 +97,8 @@ describe("pulumi refresh --preview-only --json to drift records (#4453)", () => 
   });
 
   test("a target the refresh printed nothing for is not-reached; a failed run carries its reason", () => {
-    const [none, failed] = pulumiRefreshDriftRecords({
+    // Records come back sorted by address, so the role (aws:iam) is first.
+    const [failed, none] = pulumiRefreshDriftRecords({
       member: "site",
       observedAt,
       reads: [
@@ -159,7 +160,8 @@ describe("a member on plunge: plunge drift --resource <urn> --stream through cha
   test("a stream that settles without the URN is not-reached; one that does not decode, or a failed run, is not-observed", () => {
     const [empty] = plungeDriftStreamRecords({ member: "site", observedAt, graph, reads: [{ urn: ROLE, stream: stream("settled-empty.ndjson") }] });
     expect(empty).toMatchObject({ address: ROLE, engine: "plunge", status: "not-observed", unobserved: { reason: "not-reached" }, node: "site/aws:iam/role:Role::web" });
-    const [garbled, failed] = plungeDriftStreamRecords({
+    // Sorted by address: the role (aws:iam) before the bucket (aws:s3).
+    const [failed, garbled] = plungeDriftStreamRecords({
       member: "site",
       observedAt,
       reads: [

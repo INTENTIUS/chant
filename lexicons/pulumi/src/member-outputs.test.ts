@@ -89,7 +89,7 @@ describe("pulumiOutputSource", () => {
     const cli = awsCli({ preview: "preview-settled.json" });
     const planned = await pulumiOutputSource({ run: cli.run }).planned(ctx, ref);
     expect(planned).toMatchObject({ known: { awsEndpoint: OLD }, unknown: [], changes: false });
-    expect(planned.planDigest).toMatch(/^sha256:/);
+    expect(planned.planDigest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
     expect(cli.calls).toEqual([["preview", "--json"]]);
   });
 

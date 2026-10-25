@@ -441,6 +441,12 @@
       ]
     },
     {
+      "name": "lexicon-pulumi",
+      "dir": "lexicons/pulumi",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
       "name": "lexicon-render",
       "dir": "lexicons/render",
       "kind": "other",
