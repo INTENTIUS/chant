@@ -49,6 +49,22 @@ rather than inside it. Each root also takes an optional `workspace`, a
 `binary` is `"terraform"` or `"tofu"`. The two are wire-compatible for
 everything this lexicon does, so the choice is recorded rather than guessed.
 
+The other keys of the namespace:
+
+| Key | Default | What it sets |
+|---|---|---|
+| `callModuleType` | `"local"` | How far a root's parse follows its `module` calls: `local`, `none`, or `all` (refused). |
+| `moduleRoot` | the project root | The directory local module sources may resolve within. |
+| `observe` | `"state"` | How deep each root is observed: `state` or `plan`. |
+| `compose` | off | Composed runs: `{ enabled: boolean, max?: number }`, `max` default 10. |
+
+With `compose.enabled`, the `terraform-apply` components a change reaches,
+and those they read, plan as one plan and apply as one apply. A component
+whose deploy has more than that one step, is given `--target`, runs another
+binary, identity or provider version, or sits after a component of another
+kind on a dependency path, plans wave by wave as before, and the run says
+why for each.
+
 ## Build
 
 ```bash

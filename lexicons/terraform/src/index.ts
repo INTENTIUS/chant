@@ -14,6 +14,27 @@ export {
   type TerraformApplyStepOutput,
 } from "./components/capability-plugin";
 
+// Composed runs (#4419, #4438): which roots compose, in what order, and why
+// the others fall back. Off unless `terraform.compose.enabled` is set.
+export {
+  compositionFor,
+  compositionIfEnabled,
+  composeSet,
+  readOrder,
+  moduleNames,
+  fallbackLine,
+  withPlanFailed,
+  identityKey,
+  DEFAULT_COMPOSE_MAX,
+  COMPOSE_STEP_KIND,
+  type Composition,
+  type CompositionInput,
+  type ComposedRead,
+  type ComposeFallback,
+  type ComposeFallbackKind,
+  type ExpectedBinary,
+} from "./compose";
+
 // Serializer
 export { terraformSerializer } from "./serializer";
 
