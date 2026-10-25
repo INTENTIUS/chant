@@ -1,0 +1,117 @@
+{
+  "opening": "This first act edits all three roots, with every value known at plan. A new subnet comes in the second.",
+  "pull-request": [
+    {
+      "prompt": "Port 8080 to 8090; add admin port 9000.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network changes the proxy port and adds an admin port, and app and edge follow both. Plan all three roots next.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "~ network  http_proxy_port  8080 -> 8090",
+        "+ network  admin_port  9000",
+        "+ app      admin_listener_port",
+        "+ edge     admin_upstream"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Planning all three roots as one",
+      "tips": [
+        {
+          "title": "One plan, three roots",
+          "body": "With terraform.compose on, chant writes one root that calls network, app and edge as modules and plans it once. It posts one note with one digest.",
+          "link": {
+            "label": "Generated CI for pull requests",
+            "url": "https://intentius.io/chant/guide/pull-request-ci/"
+          }
+        },
+        {
+          "title": "Every value known",
+          "body": "A port in the source is a plain value, so the plan knows what network will output before it applies. App and edge are planned on the new port in the same plan.",
+          "link": {
+            "label": "Generated CI for pull requests",
+            "url": "https://intentius.io/chant/guide/pull-request-ci/"
+          }
+        }
+      ]
+    }
+  ],
+  "planned": {
+    "prompt": null,
+    "action": null,
+    "reply": "One plan across 3 roots. Every value is known at plan. Each card shows its before and after. {creates} to create, {updates} to change.",
+    "light": [
+      "network/aws_ssm_parameter.http_proxy_port",
+      "network/aws_ssm_parameter.admin_port",
+      "app/aws_ssm_parameter.listener_port",
+      "app/aws_ssm_parameter.admin_listener_port",
+      "edge/aws_ssm_parameter.upstream",
+      "edge/aws_ssm_parameter.admin_upstream"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approval of the plan's digest",
+    "tips": [
+      {
+        "title": "One approval",
+        "body": "The approval binds the digest of the one plan. On merge chant plans the three roots again under their state locks and applies only if that plan has the same digest."
+      }
+    ]
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging; the apply job applies the three roots as one",
+    "tips": [
+      {
+        "title": "Variables, not remote state",
+        "body": "Each root reads the one before it through variables that chant fills from its outputs with stackOutput. In the composed run those become module outputs, so a new value reaches its readers inside the one apply."
+      }
+    ]
+  },
+  "applying": {
+    "status": "Applying the three roots as one",
+    "tips": [
+      {
+        "title": "Each root keeps its own state",
+        "body": "The composed apply works on a merged copy of the three states and writes each root's part back to its own state when it ends."
+      },
+      {
+        "title": "A stock chant project",
+        "body": "These are three Terraform roots in a chant project. The pull request pipeline is the one chant generates for the project. No other tool is in it.",
+        "link": {
+          "label": "chant on GitHub",
+          "url": "https://github.com/INTENTIUS/chant"
+        }
+      }
+    ]
+  },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Done. Both ports reached all three roots in one apply.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "closing": "3 roots, 1 plan, 1 approval, 1 apply."
+}

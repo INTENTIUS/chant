@@ -1,0 +1,144 @@
+{
+  "opening": "This second act adds a subnet to network. Its id is known only after apply.",
+  "pull-request": [
+    {
+      "prompt": "Add a second subnet to network; put a worker in it.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it. edge records the worker's subnet and allows the new range. Plan all three roots next.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "+ network  aws_subnet.b  10.0.2.0/24",
+        "+ app      aws_network_interface.worker",
+        "+ edge     worker_subnet",
+        "~ edge     allowlist  + 10.0.2.0/24"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Planning all three roots as one",
+      "tips": [
+        {
+          "title": "One plan, three roots",
+          "body": "With terraform.compose on, chant writes one root that calls network, app and edge as modules and plans it once. It posts one note with one digest.",
+          "link": {
+            "label": "Generated CI for pull requests",
+            "url": "https://intentius.io/chant/guide/pull-request-ci/"
+          }
+        }
+      ]
+    }
+  ],
+  "planned": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "One plan across 3 roots. One value is unknown: subnet b's id, which app's worker and edge read.",
+      "light": [
+        "network/aws_subnet.b"
+      ],
+      "paths": false,
+      "ghost": true
+    },
+    {
+      "prompt": "What depends on the new subnet?",
+      "action": null,
+      "reply": "Two roots read it. app puts its worker in it, and edge records the subnet the worker landed in. Both show it as known after apply.",
+      "light": [
+        "network/aws_subnet.b"
+      ],
+      "paths": true,
+      "ghost": false,
+      "status": "Tracing what reads subnet b",
+      "tips": [
+        {
+          "title": "Known after apply",
+          "body": "AWS gives a new subnet its id only when it creates it. In the composed plan app's subnet_id and edge's parameter read network's output, so the plan marks them known after apply instead of planning on a stand-in.",
+          "link": {
+            "label": "How a round is covered",
+            "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+          }
+        }
+      ]
+    }
+  ],
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approval of the plan's digest",
+    "tips": [
+      {
+        "title": "One approval",
+        "body": "The approval binds the one plan, unknown id included. The apply needs no second plan of app or edge: the id reaches them inside the same apply."
+      }
+    ]
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging; the apply job applies the three roots as one",
+    "tips": [
+      {
+        "title": "Variables, not remote state",
+        "body": "Each root reads the one before it through variables that chant fills from its outputs with stackOutput. In the composed run those become module outputs, so a new value reaches its readers inside the one apply."
+      }
+    ]
+  },
+  "applying": {
+    "status": "Applying the three roots as one",
+    "tips": [
+      {
+        "title": "Each root keeps its own state",
+        "body": "The composed apply works on a merged copy of the three states and writes each root's part back to its own state when it ends."
+      },
+      {
+        "title": "A stock chant project",
+        "body": "These are three Terraform roots in a chant project. The pull request pipeline is the one chant generates for the project. No other tool is in it.",
+        "link": {
+          "label": "chant on GitHub",
+          "url": "https://github.com/INTENTIUS/chant"
+        }
+      }
+    ]
+  },
+  "applied": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "Done. Subnet b was created, and app's worker and edge got its id in the same apply.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    },
+    {
+      "prompt": "Did anything stay locked?",
+      "action": null,
+      "reply": "No. chant took each root's state lock for the apply and let go of all three when the states were written back.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Checking the three states",
+      "tips": [
+        {
+          "title": "Locking",
+          "body": "chant holds each root's state lock from the plan it applies until that root's state is written back. A state it could not write is kept, and its lock stays held until a later run writes it."
+        }
+      ]
+    }
+  ],
+  "closing": "3 roots, 1 plan, 1 approval, 1 apply."
+}

@@ -1,0 +1,10 @@
+node_modules
+.terraform
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+chant.tfplan
+.chant/pr
+.chant/pr-resume
+.chant/compose
+.chant/fan-out.json
