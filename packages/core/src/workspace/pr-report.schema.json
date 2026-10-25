@@ -288,7 +288,7 @@
         "properties": {
           "component": { "type": "string" },
           "capability": { "type": "string", "description": "The kind of the capability its step names." },
-          "kind": { "type": "string", "description": "Why, as a kind: core's steps (its deploy has more than one step), split (a component outside the group lies on a dependency path between it and the rest), cycle (placing the group would order two groups each before the other) or error (the capability's groupFallback threw), or the capability's own. off: the capability's setting turns grouping off; the note does not print it." },
+          "kind": { "type": "string", "description": "Why, as a kind: core's steps (its deploy has more than one step), split (a component outside the group lies on a dependency path between it and the rest), alone (the capability dropped the other members of its group and a group of one is no group), cycle (placing the group would order two groups each before the other) or error (the capability's groupFallback threw), or the capability's own, for the whole group or for each member it drops. off: the capability's setting turns grouping off; the note does not print it." },
           "reason": { "type": "string", "description": "The reason as printed." }
         }
       }

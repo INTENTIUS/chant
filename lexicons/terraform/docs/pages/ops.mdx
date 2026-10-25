@@ -95,7 +95,7 @@ For roots with state, the run pulls each root's state, plans against the merged 
 
 What applied stays applied. The report gives each member's outcome (`applied`, `partial`, `failed`, `not-started`, `no-changes`), and components outside the group read each member's outputs as they read a root applied alone.
 
-A group composes whole. When any member cannot compose, every member of the group plans root by root as without the setting, and the report's `fallbacks` names the kind and the reason:
+A member that cannot compose leaves the group and plans root by root as without the setting; the others compose without it, and core forms their group again (two or more left, joined by reads, nothing applying between them). A member left on its own falls back with core's kind `alone`. A kind that judges the whole change (`off`, `cli-args`, `too-many-roots`) sends every member root by root. The report's `fallbacks` names each member's kind and reason:
 
 | Kind | When |
 |---|---|
@@ -105,6 +105,7 @@ A group composes whole. When any member cannot compose, every member of the grou
 | `steps` | The component's deploy has more than its one `terraform-apply` step, gates included. |
 | `targets` | The component is given `--target`. |
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
+| `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. |
 | `workspace` | The root plans in a workspace other than `default`. |
 | `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, or a root without a `live` block among estates. |
 | `provider-lock` | Two members lock one provider at different versions. |

@@ -212,8 +212,11 @@ export interface Capability<In = unknown, Out = unknown> {
    * Optional (#4435, ws-107): why this capability will not plan and apply
    * `members` as one group, or `undefined` when it will. Core asks before
    * anything is planned, so the answer must come from the declaration and
-   * the files alone, never from a plan. A capability with `planGroup` and
-   * no `groupFallback` takes every group core forms.
+   * the files alone, never from a plan. A fallback with
+   * {@link GroupFallback.drop} leaves only those members out: core forms
+   * the group again from the rest and asks again (#4419 ruling 1). A
+   * capability with `planGroup` and no `groupFallback` takes every group
+   * core forms.
    */
   groupFallback?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<GroupFallback | undefined>;
   /**
@@ -290,10 +293,28 @@ export interface GroupMember<In = unknown> {
  * short stable word the report keys on; `reason` is one line for a person.
  * Core's own kinds are `steps`, `split` and `cycle`; a capability names its
  * own. A capability's `off` is recorded and not printed in the note.
+ *
+ * Without `drop`, the fallback is every member's and the group dissolves.
+ * With `drop`, only the members it names leave, each with its own `kind`
+ * and `reason` or else the fallback's; core forms the group again from the
+ * rest by its own rules (`split`, `steps`, `cycle`, and a set of one is no
+ * group) and asks again for each set that changed (#4419 ruling 1). A
+ * `drop` that names no member of the group dissolves it.
  */
 export interface GroupFallback {
   kind: string;
   reason: string;
+  /** The members to leave out, when not the whole group. */
+  drop?: GroupDrop[];
+}
+
+/** A member a {@link GroupFallback} leaves out of its group (#4419 ruling 1). */
+export interface GroupDrop {
+  component: string;
+  /** Default: the fallback's `kind`. */
+  kind?: string;
+  /** Default: the fallback's `reason`. */
+  reason?: string;
 }
 
 /** What `planGroup` returns (ws-107). */
