@@ -75,6 +75,10 @@ Roots written this way run as a [`chant components fan-out`](/chant/cli/componen
 
 A live choudoufu root in a gated wave goes through choudoufu's own set commands, which need choudoufu v0.22.0 or later. `plan` runs `choudoufu live-plan-set -json` over the root, and the wave's gate binds the plan that document holds. `run` passes the document and choudoufu's set digest to `choudoufu live-wave-apply`, which plans the root again and applies nothing when the plan moved. The fan-out then exits 3, as it does when choudoufu's `apply` refuses a wave's plan file. choudoufu's resume file is kept in the fan-out's `--resume` record, so the next attempt hands it back to choudoufu. The files live under `.chant/choudoufu-waves/<root>/`. A choudoufu root whose step passes `vars`, or whose entry in `terraform.roots` has var files or backend config, keeps the `plan -out` and `apply` path, since `live-plan-set` takes none of them. An older choudoufu is refused on the wave path only; plain terraform and tofu roots do not need it.
 
+### In a composed run
+
+`terraform-apply` composes as a group ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md), [ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md)): roots that read each other plan and apply as one, and a value one root creates is known after apply in the roots that read it. [#4447](https://github.com/INTENTIUS/chant/issues/4447) builds it. Until then, and for a root outside a group, a root whose `vars` wait on an output not known yet is a hole and its round needs its own approval.
+
 ## TerraformApplyOp
 
 The composite that phases the four activities into Init, Plan, an optional approval Gate, then Apply:

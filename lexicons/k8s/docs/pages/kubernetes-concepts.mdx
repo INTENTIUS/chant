@@ -132,3 +132,7 @@ containers:
 The git revision and the release's digest are set by the deploy, not the build ([ws-081](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-081-release-attributes-at-deploy.md)). `OTEL_RESOURCE_ATTRIBUTES` ends with `$(CHANT_RELEASE_ATTRIBUTES)`, which reads the pod annotation `chant.intentius.io/release-attributes`. A `kubectl-apply` step in `chant run --components` sets that annotation on the pod template of each stamped workload in what it applies, adding `service.version` and `vcs.ref.head.revision`. Any other apply leaves it absent, which reads as empty, and the manifest does not change with a release.
 
 A project with no `chant.workspace.json` is unchanged. It can opt in with `telemetry.attribution: true` in `chant.config.ts`, which stamps the attributes that need no workspace, and inside a workspace `telemetry.attribution: false` turns it off.
+
+## In a composed run
+
+A `kubectl-apply` step is a hole in a composed run ([ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md)). Its plan is a server-side dry run against the live cluster, and the step takes no values into its objects, so an upstream output can only name the manifest, stack or context. After the upstream applies, that round needs its own approval. Until [#4467](https://github.com/INTENTIUS/chant/issues/4467) lands, the plan does not report the hole and plans against the missing value.
