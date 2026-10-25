@@ -46,13 +46,14 @@ import {
   type GateContext,
 } from "./driver";
 import type { ReleaseIdentity } from "../telemetry-attribution";
-import { downstreamWithin, remainingFanOut, type FanOutPlan, type FanOutProgress, type FanOutSkip } from "./fan-out";
+import { downstreamWithin, remainingFanOut, type FanOutGroup, type FanOutPlan, type FanOutProgress, type FanOutSkip } from "./fan-out";
 import { evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "../op/gate";
 import type { RunProgressEvent } from "./run-progress";
 import { emitGateStep, joinRunEventSinks, progressSinkOf, type RunEventSink } from "../run-event-stream";
-import type { CapabilityRegistry } from "./capability";
+import type { CapabilityRegistry, GroupRun } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
+import { groupsByComponent, runComponentGroup } from "./groups";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { decideWaveGate, runWaveLoop, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
@@ -247,6 +248,13 @@ export interface FanOutRunOptions {
    * before it applied.
    */
   hold?: (component: string, componentOutputs: Record<string, Record<string, unknown>>) => string | undefined;
+  /**
+   * The approved plan of each group in `plan.groups` (ws-107), by the
+   * group's first component. A group runs through `runGroup` in its wave,
+   * in place of its members' own runs, and is held and blocked as one: a
+   * member held or blocked holds or blocks the rest. Not with `waveGate`.
+   */
+  groupRuns?: Record<string, GroupRun>;
 }
 
 /** A component {@link FanOutRunOptions.hold} held back, or one downstream of it. */
@@ -276,6 +284,12 @@ export interface FanOutRunResult {
   waves?: WaveRecord[];
   /** What {@link FanOutRunOptions.hold} held back, in plan order. Absent when nothing was. */
   held?: FanOutHeld[];
+  /**
+   * Members of a group whose apply stopped before their part began (ws-107),
+   * sorted. Each has a `fail` result but is not in `failed`; what depends on
+   * it outside the group is blocked by it. Absent when none.
+   */
+  notStarted?: string[];
 }
 
 /**
@@ -306,6 +320,9 @@ export async function runFanOut(
   }
   if (options.waveGate && options.plans) {
     throw new Error("a gated-wave fan-out plans each wave itself, so it takes no plans made beforehand");
+  }
+  if (options.waveGate && plan.groups?.length) {
+    throw new Error("a gated-wave fan-out plans component by component, so it takes no groups");
   }
   if (options.waveGate) {
     return runGatedWaves(plan, active, components, registry, options, options.waveGate, gates, componentOutputs);
@@ -348,44 +365,78 @@ export async function runFanOut(
   const results: DriverComponentResult[] = [];
   const completed: string[] = [];
   const failed: string[] = [];
+  const notStarted: string[] = [];
   const blockedBy = new Map<string, string>();
   const held = new Map<string, FanOutHeld>();
   let gatedFact: PendingGateRecord | undefined;
 
   const inPlan = new Set(active.order);
   const waveOf = waveNumbers(active.waves);
-  /** Hold `root` and everything downstream of it that has not settled otherwise. */
-  const markHeld = (root: string, reason: string): void => {
-    held.set(root, { component: root, reason });
+  // ws-107: a group applies as one unit, so it is held and blocked as one.
+  const groupOf = groupsByComponent(active);
+  /** Hold `root` and everything downstream of it that has not settled otherwise. With `heldBy`, `root` is held for that component's reason. */
+  const markHeld = (root: string, reason: string, heldBy?: string): void => {
+    held.set(root, { component: root, reason, ...(heldBy ? { heldBy } : {}) });
     emit?.({ type: "component-settle", wave: waveOf.get(root)!, component: root, status: "waiting" });
     for (const [component] of downstreamWithin(components, inPlan, [root])) {
       if (held.has(component) || blockedBy.has(component) || failed.includes(component)) continue;
-      held.set(component, { component, reason, heldBy: root });
+      held.set(component, { component, reason, heldBy: heldBy ?? root });
       emit?.({ type: "component-settle", wave: waveOf.get(component)!, component, status: "waiting" });
     }
   };
-  /** Skip everything downstream of `root`, blaming `root` rather than the nearest edge. */
-  const markBlocked = (root: string): void => {
-    for (const [component, by] of downstreamWithin(components, inPlan, [root])) {
-      if (blockedBy.has(component) || failed.includes(component)) continue;
+  /** Skip everything downstream of `roots`, blaming a root rather than the nearest edge. */
+  const markBlocked = (...roots: string[]): void => {
+    for (const [component, by] of downstreamWithin(components, inPlan, roots)) {
+      if (blockedBy.has(component) || failed.includes(component) || completed.includes(component) || notStarted.includes(component)) continue;
       blockedBy.set(component, by);
     }
   };
 
   for (const [waveIndex, wave] of active.waves.entries()) {
     const waveNum = waveIndex + 1;
+    // A member blocked blocks its whole group, by the same failure.
+    for (const name of wave) {
+      const by = blockedBy.get(name);
+      if (by === undefined) continue;
+      for (const mate of groupOf.get(name)?.components ?? []) if (!blockedBy.has(mate) && mate !== by) blockedBy.set(mate, by);
+    }
     // A component whose upstream failed in an earlier wave is not dispatched.
     const candidates = wave.filter((name) => inPlan.has(name) && !blockedBy.has(name) && !held.has(name));
     for (const name of candidates) {
+      if (held.has(name)) continue;
       const reason = options.hold?.(name, componentOutputs);
-      if (reason !== undefined) markHeld(name, reason);
+      if (reason === undefined) continue;
+      markHeld(name, reason);
+      for (const mate of groupOf.get(name)?.components ?? []) if (!held.has(mate)) markHeld(mate, reason, name);
     }
     const runnable = candidates.filter((name) => !held.has(name));
     if (runnable.length === 0) continue;
 
     emit?.({ type: "wave-start", wave: waveNum, components: runnable });
+    const groupsHere = [...new Set(runnable.map((name) => groupOf.get(name)).filter((g): g is FanOutGroup => g !== undefined))];
+    // Groups and the wave's other components run side by side, as a wave's components do.
+    const groupRuns = Promise.all(
+      groupsHere.map(async (group) => {
+        for (const name of group.components) emit?.({ type: "component-start", wave: waveNum, component: name });
+        const ran = await runComponentGroup({
+          group,
+          components: byName,
+          registry,
+          env: options.env,
+          ...(options.vars ? { vars: options.vars } : {}),
+          ctxOf: (name) => fanOutContext(options, name),
+          run: options.groupRuns?.[group.components[0]!],
+          componentOutputs,
+        });
+        for (const result of ran.results) {
+          emit?.({ type: "component-settle", wave: waveNum, component: result.component, status: result.status === "fail" ? "failed" : result.status });
+          options.onComponentSettled?.(result, componentOutputs[result.component]);
+        }
+        return ran;
+      }),
+    );
     const waveResults = await Promise.all(
-      runnable.map(async (name) => {
+      runnable.filter((name) => !groupOf.has(name)).map(async (name) => {
         emit?.({ type: "component-start", wave: waveNum, component: name });
         const planned = options.plans?.[name];
         const result = await runComponentDeploy(
@@ -407,6 +458,7 @@ export async function runFanOut(
         return result;
       }),
     );
+    const groupResults = await groupRuns;
     results.push(...waveResults);
 
     for (const result of waveResults) {
@@ -425,8 +477,21 @@ export async function runFanOut(
       gatedFact ??= result.gate;
       markBlocked(result.component);
     }
+    // A group's members settle together; what depends on a member that failed
+    // or never started, outside the group, is blocked by that member.
+    for (const ran of groupResults) {
+      results.push(...ran.results);
+      const stopped: string[] = [];
+      for (const result of ran.results) {
+        if (result.status === "ok") completed.push(result.component);
+        else if (ran.notStarted.includes(result.component)) notStarted.push(result.component);
+        else failed.push(result.component);
+        if (result.status !== "ok") stopped.push(result.component);
+      }
+      if (stopped.length > 0) markBlocked(...stopped);
+    }
 
-    const waveFailed = waveResults.some((r) => r.status === "fail");
+    const waveFailed = waveResults.some((r) => r.status === "fail") || groupResults.some((ran) => ran.results.some((r) => r.status === "fail"));
     emit?.({
       type: "wave-settle",
       wave: waveNum,
@@ -442,7 +507,7 @@ export async function runFanOut(
 
   // A failure outranks a gate: something is actually broken, and reporting the
   // run as "waiting on a human" would hide it. Same precedence the driver uses.
-  const status: FanOutRunResult["status"] = failed.length > 0 ? "fail" : gatedFact ? "gated" : "ok";
+  const status: FanOutRunResult["status"] = failed.length > 0 || notStarted.length > 0 ? "fail" : gatedFact ? "gated" : "ok";
   emit?.({ type: "run-settle", status: status === "fail" ? "failed" : status, durationMs: null });
 
   return {
@@ -455,6 +520,7 @@ export async function runFanOut(
     componentOutputs,
     ...(gatedFact ? { gate: gatedFact } : {}),
     ...(held.size > 0 ? { held: active.order.filter((name) => held.has(name)).map((name) => held.get(name)!) } : {}),
+    ...(notStarted.length > 0 ? { notStarted: [...notStarted].sort() } : {}),
   };
 }
 

@@ -70,6 +70,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { resolveCommit, resolveMergeBase } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
+import { findComponentGroups, groupFanOut } from "../../components/groups";
 import {
   applyPrSet,
   approvalOf,
@@ -291,6 +292,15 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
   const registry = await fanOutRegistry(projectPath, config);
   const routedAway = member ? await routing(ctx, stage, projectPath, member, base, forge) : undefined;
   if (routedAway) console.error(formatInfo(routedAway));
+  // ws-107: the groups a capability plans and applies as one, placed in the waves every stage and wave job reads.
+  let plan = derived.plan;
+  if (!routedAway && plan.order.length > 0) {
+    try {
+      plan = groupFanOut(plan, derived.components, await findComponentGroups({ components: derived.components, plan, registry, env }));
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+  }
   return {
     config,
     env,
@@ -300,7 +310,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     gate: args.gate ?? PR_APPLY_GATE,
     ...(forge ? { forge } : {}),
     components: derived.components,
-    plan: routedAway ? { ...derived.plan, order: [], waves: [], seeds: [], indeterminate: [] } : derived.plan,
+    plan: routedAway ? { ...derived.plan, order: [], waves: [], seeds: [], indeterminate: [] } : plan,
     signal: derived.signal,
     ...(derived.sites ? { sites: derived.sites } : {}),
     registry,

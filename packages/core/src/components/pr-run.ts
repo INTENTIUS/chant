@@ -67,6 +67,14 @@
  * says whether the approved change set covers what it planned, by the same
  * test a resume uses ({@link planCoveredBy}). Covered, the wave applies under
  * the pull request's approval; not covered, it needs its own.
+ *
+ * ## Groups
+ *
+ * A fan-out with `groups` (ws-107, `./groups.ts`) plans each group with one
+ * `planGroup` call at its wave and applies it with one `runGroup` call
+ * there. A member's read of another member of its group is computed by that
+ * apply: it is no `unknownInputs` entry and holds nothing back. Each member's
+ * digest binds the group's, so the one approval binds the composition.
  */
 
 import { composeChangeSet, verifyChangeSetDigest, type ChangeSetDocument, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
@@ -96,13 +104,14 @@ import {
 } from "./driver";
 import { deployUnits } from "./deploy-units";
 import { runFanOut, type FanOutRunResult } from "./fan-out-run";
-import { remainingFanOut, type ComponentChangeSignal, type FanOutPlan } from "./fan-out";
+import { remainingFanOut, type ComponentChangeSignal, type FanOutGroup, type FanOutGroupFallback, type FanOutPlan } from "./fan-out";
 import { coveredRound, type PlanShape, type RoundCoverage } from "./covered-round";
 import type { PrApplyRecord } from "./fan-out-record";
-import type { CapabilityRegistry, PlannedOutputs } from "./capability";
+import type { CapabilityRegistry, GroupRun, PlannedOutputs } from "./capability";
+import { groupsByComponent, narrowGroups, planComponentGroup } from "./groups";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
-import { capabilitySteps, planWaveComponent, readDeployedOutputs } from "./wave-plan";
+import { capabilitySteps, planWaveComponent, readDeployedOutputs, type WaveComponentPlan } from "./wave-plan";
 import type { PrMigrationFile } from "../pr-migrations";
 
 export interface PrPlanSetOptions {
@@ -151,8 +160,22 @@ export interface PrPlanSet {
   plannedOutputs?: Record<string, string[]>;
   /** The shapes lexicons supplied with their plans (#4419), by member. */
   shapes?: Record<string, PlanShape>;
+  /** The groups planned as one (ws-107), in plan order of their first member. Absent when none. */
+  groups?: PrPlanGroup[];
+  /** The components that could have grouped and did not, with why (ws-107, ruling 1): the fan-out's `fallbacks`. */
+  fallbacks?: FanOutGroupFallback[];
   /** Whether any component failed to plan. */
   failed: boolean;
+}
+
+/** A group a pull request planned as one (ws-107). */
+export interface PrPlanGroup extends FanOutGroup {
+  /** The group digest folded into each member's `planDigest`; `null` when the group failed to plan. */
+  digest: string | null;
+  /** Why it failed to plan. Every member is then plan-failed with it. */
+  error?: string;
+  /** What `runGroup` gets back. Like `plans`, it lives in the process that planned. */
+  run?: GroupRun;
 }
 
 /** A failed component's members: the units its steps target, else the component itself. */
@@ -190,14 +213,19 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   let failed = false;
   const emit = options.onRunEvent;
   emit?.({ type: "phase-start", component: null, phase: PR_PLAN_PHASE });
+  // ws-107: each group plans once, in its wave, with one call.
+  const groupOf = groupsByComponent(options.plan);
+  const groups: PrPlanGroup[] = [];
 
   for (const wave of options.plan.waves) {
     // The dependencies' outputs first, each once. One the change plans is
     // read from its plan, which an earlier wave made (#3999). Any other is
     // read from the deployed estate (#4104). A dependency that cannot say
     // leaves its references unresolved, which its dependent's plan reports
-    // if it needs them.
-    const deps = [...new Set(wave.flatMap((name) => byName.get(name)?.dependsOn ?? []))].filter((dep) => !read.has(dep));
+    // if it needs them. A member of the dependent's own group plans with it.
+    const deps = [
+      ...new Set(wave.flatMap((name) => (byName.get(name)?.dependsOn ?? []).filter((dep) => !groupOf.get(name)?.components.includes(dep)))),
+    ].filter((dep) => !read.has(dep));
     const fromEstate: string[] = [];
     for (const dep of deps) {
       read.add(dep);
@@ -211,27 +239,59 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       planned[dep] = Object.keys(known).sort();
     }
     Object.assign(deployed, await readDeployedOutputs(fromEstate, byName, options.registry, (dep) => deployContext(options, dep), outputs));
-    const results = await Promise.all(
-      wave.map(async (name) => {
-        const at = { component: name, phase: PR_PLAN_PHASE, step: "plan" };
-        emit?.({ type: "step-start", ...at });
-        const start = Date.now();
-        const p = await planWaveComponent(byName.get(name)!, options.registry, deployContext(options, name), outputs);
-        emit?.({
-          type: "step-settle",
-          ...at,
-          status: "error" in p ? "failed" : "ok",
-          durationMs: Date.now() - start,
-          ...("error" in p ? { error: p.error } : {}),
-        });
-        return p;
-      }),
-    );
+    const settle = (name: string, start: number, p: WaveComponentPlan): void => {
+      emit?.({
+        type: "step-settle",
+        component: name,
+        phase: PR_PLAN_PHASE,
+        step: "plan",
+        status: "error" in p ? "failed" : "ok",
+        durationMs: Date.now() - start,
+        ...("error" in p ? { error: p.error } : {}),
+      });
+    };
+    const groupsHere = [...new Set(wave.map((name) => groupOf.get(name)).filter((g): g is FanOutGroup => g !== undefined))];
+    const results = (
+      await Promise.all([
+        ...wave
+          .filter((name) => !groupOf.has(name))
+          .map(async (name) => {
+            emit?.({ type: "step-start", component: name, phase: PR_PLAN_PHASE, step: "plan" });
+            const start = Date.now();
+            const p = await planWaveComponent(byName.get(name)!, options.registry, deployContext(options, name), outputs);
+            settle(name, start, p);
+            return [p];
+          }),
+        ...groupsHere.map(async (group) => {
+          for (const name of group.components) emit?.({ type: "step-start", component: name, phase: PR_PLAN_PHASE, step: "plan" });
+          const start = Date.now();
+          const g = await planComponentGroup({
+            group,
+            components: byName,
+            registry: options.registry,
+            env: options.env,
+            ...(options.vars ? { vars: options.vars } : {}),
+            ctxOf: (name) => deployContext(options, name),
+            outputs,
+          });
+          for (const p of g.plans) settle(p.component, start, p);
+          const error = g.plans.find((p): p is Extract<WaveComponentPlan, { error: string }> => "error" in p)?.error;
+          groups.push({ ...group, digest: g.digest ?? null, ...(error !== undefined ? { error } : {}), ...(g.run ? { run: g.run } : {}) });
+          return g.plans;
+        }),
+      ])
+    ).flat();
+    /** What each member of a group planned to expose, for its group-mates' reads. */
+    const plannedHere = new Map(results.map((p) => [p.component, "error" in p ? undefined : p.outputs?.known]));
     for (const p of results) {
       const component = byName.get(p.component)!;
-      const unknown = unknownInputsOf(component, outputs, inChange);
+      const group = groupOf.get(p.component);
+      const mates = group ? new Set(group.components) : undefined;
+      const unknown = unknownInputsOf(component, outputs, inChange, mates);
       if (unknown.unknown.length > 0 || unknown.build.length > 0) unknownOf.set(p.component, unknown);
-      const reads = readsOf(component, outputs);
+      // A read of a group-mate is known when that mate's plan knows it.
+      const readsView = group ? { ...outputs, ...Object.fromEntries(group.components.filter((c) => c !== p.component).map((c) => [c, { ...(plannedHere.get(c) ?? {}) }])) } : outputs;
+      const reads = readsOf(component, readsView);
       if (reads.length > 0) readsBy.set(p.component, reads);
       if ("error" in p) {
         failed = true;
@@ -273,12 +333,16 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const sorted = (r: Record<string, string[]>) => Object.fromEntries(Object.entries(r).sort(([a], [b]) => a.localeCompare(b)));
   const deployedOutputs = sorted(deployed);
   const plannedOutputs = sorted(planned);
+  const at = new Map(options.plan.order.map((name, i) => [name, i]));
+  groups.sort((a, b) => (at.get(a.components[0]!) ?? 0) - (at.get(b.components[0]!) ?? 0));
   return {
     doc,
     members,
     plans,
     outputs,
     failed,
+    ...(groups.length > 0 ? { groups } : {}),
+    ...(options.plan.fallbacks?.length ? { fallbacks: options.plan.fallbacks } : {}),
     ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
     ...(Object.keys(deployedOutputs).length > 0 ? { deployedOutputs } : {}),
     ...(Object.keys(plannedOutputs).length > 0 ? { plannedOutputs } : {}),
@@ -291,18 +355,21 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
  * that upstream applies, each sorted. `build` are the published artifact
  * identities a build in the change produces (`WiringReference.publish`):
  * the build's provenance binds those, so they are never approved again.
- * `unknown` are the rest.
+ * `unknown` are the rest. A reference to a member of `group`, the
+ * component's own group (ws-107), is neither: the group's apply computes it.
  */
 function unknownInputsOf(
   component: DriverComponent,
   outputs: Record<string, Record<string, unknown>>,
   inChange: ReadonlySet<string>,
+  group?: ReadonlySet<string>,
 ): { unknown: string[]; build: string[] } {
   const unknown = new Set<string>();
   const build = new Set<string>();
   for (const step of capabilitySteps(component.deploy)) {
     const { kind: _kind, ...rest } = step;
     for (const r of unresolvedWiringReferences(rest, outputs)) {
+      if (group?.has(r.source)) continue;
       if (inChange.has(r.source)) (r.publish ? build : unknown).add(r.ref);
     }
   }
@@ -339,18 +406,21 @@ function readsOf(component: DriverComponent, outputs: Record<string, Record<stri
  * stands (#3999): each reference its steps make that resolves to another
  * value, said once. `undefined` when every one resolves as it did. A
  * published artifact's identity from a build in `inChange` never holds a
- * member back: the build's provenance binds it, not this approval.
+ * member back: the build's provenance binds it, not this approval. Nor
+ * does a reference to a member of `group`, the component's own group
+ * (ws-107), whose apply computes it.
  */
 export function heldReason(
   component: DriverComponent,
   read: Record<string, Record<string, unknown>>,
   now: Record<string, Record<string, unknown>>,
   inChange: ReadonlySet<string> = new Set(),
+  group: ReadonlySet<string> = new Set(),
 ): string | undefined {
   const refs = new Set<string>();
   for (const step of capabilitySteps(component.deploy)) {
     const { kind: _kind, ...rest } = step;
-    for (const r of movedWiringReferences(rest, read, now)) if (!(r.publish && inChange.has(r.source))) refs.add(r.ref);
+    for (const r of movedWiringReferences(rest, read, now)) if (!(r.publish && inChange.has(r.source)) && !group.has(r.source)) refs.add(r.ref);
   }
   if (refs.size === 0) return undefined;
   return `its plan read ${[...refs].sort().join(", ")} before ${refs.size === 1 ? "that output" : "those outputs"} applied as another value`;
@@ -494,6 +564,9 @@ function roundCover(
   byName: ReadonlyMap<string, DriverComponent>,
 ): RoundCoverage {
   if (options.approval?.status !== "approved") return { covered: false, reason: "no approval of the first plan stands" };
+  // ws-107: a round's group is covered only when it has the approved group's members.
+  const moved = groupsMoved(options.set.groups ?? [], fresh.groups ?? [], plan.order);
+  if (moved) return { covered: false, reason: moved };
   // The values the round reads of a component it plans again are the ones
   // that plan says it will expose: it has not applied yet, so the outputs
   // standing say nothing of it. An output the first plan knew and the round's
@@ -520,6 +593,28 @@ function roundCover(
     changedKnown,
     attributes: (member) => memberAttributes(options.set.doc, fresh.doc, member, fresh.shapes?.[member] !== undefined),
   });
+}
+
+/**
+ * Why the groups `fresh` planned are not the `approved` ones over the
+ * components in `order` (ws-107), or `undefined` when each group the round
+ * plans has the members the approved group had.
+ */
+function groupsMoved(approved: readonly FanOutGroup[], fresh: readonly FanOutGroup[], order: readonly string[]): string | undefined {
+  const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((c) => b.includes(c));
+  const inRound = new Set(order);
+  for (const was of approved) {
+    const here = was.components.filter((c) => inRound.has(c));
+    if (here.length === 0) continue;
+    const now = fresh.find((g) => g.components.includes(here[0]!));
+    if (!now || !same(now.components, was.components)) {
+      return `the approved plan grouped ${was.components.join(", ")}, and the round ${now ? `groups ${now.components.join(", ")}` : `plans ${here.join(", ")} without that group`}`;
+    }
+  }
+  for (const now of fresh) {
+    if (!approved.some((was) => same(was.components, now.components))) return `the round groups ${now.components.join(", ")}, which the approved plan did not`;
+  }
+  return undefined;
 }
 
 /**
@@ -553,6 +648,7 @@ function joinRuns(a: FanOutRunResult, b: FanOutRunResult): FanOutRunResult {
     componentOutputs: b.componentOutputs,
     ...(gate ? { gate } : {}),
     ...(b.held ? { held: b.held } : {}),
+    ...(a.notStarted || b.notStarted ? { notStarted: [...new Set([...(a.notStarted ?? []), ...(b.notStarted ?? [])])].sort() } : {}),
   };
 }
 
@@ -576,20 +672,25 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
     ...Object.fromEntries(Object.entries(options.set.outputs).filter(([name]) => !toApply.has(name))),
     ...(options.resumed?.outputs ?? {}),
   };
-  const runRound = (plan: FanOutPlan, plans: Record<string, Record<string, unknown>>, read: Record<string, Record<string, unknown>>, outputs: Record<string, Record<string, unknown>>) =>
-    runFanOut(plan, options.components, options.registry, {
+  const runRound = (plan: FanOutPlan, set: Pick<PrPlanSet, "plans" | "groups">, read: Record<string, Record<string, unknown>>, outputs: Record<string, Record<string, unknown>>) => {
+    // ws-107: each group runs the plan its group planned, and a read of a group-mate holds nothing back.
+    const groupOf = groupsByComponent(plan);
+    const groupRuns = Object.fromEntries((set.groups ?? []).filter((g) => g.run).map((g) => [g.components[0]!, g.run!]));
+    return runFanOut(plan, options.components, options.registry, {
       env: options.env,
       ...(options.vars ? { vars: options.vars } : {}),
-      plans,
+      plans: set.plans,
+      ...(Object.keys(groupRuns).length > 0 ? { groupRuns } : {}),
       ...(options.targets ? { targets: options.targets } : {}),
       componentOutputs: outputs,
-      hold: (name, now) => heldReason(byName.get(name)!, read, now, inChange),
+      hold: (name, now) => heldReason(byName.get(name)!, read, now, inChange, new Set(groupOf.get(name)?.components ?? [])),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
       ...(options.onComponentSettled ? { onComponentSettled: options.onComponentSettled } : {}),
     });
+  };
 
-  let run = await runRound(options.plan, options.set.plans, options.set.outputs, { ...standing });
+  let run = await runRound(options.plan, options.set, options.set.outputs, { ...standing });
   const rounds: PrRound[] = [];
   /** Per component, the round that applied it or holds it, and that round's set, after the first. */
   const roundOf = new Map<string, { round: number; set: PrPlanSet }>();
@@ -598,7 +699,8 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
     const round = rounds.length + 2;
     const gate = prRoundGate(options.gate ?? PR_APPLY_GATE, round);
     const heldNames = new Set(run.held.map((h) => h.component));
-    const plan = remainingFanOut(options.plan, options.components, { completed: options.plan.order.filter((name) => !heldNames.has(name)) });
+    // A held group is planned again as the same group (ws-107).
+    const plan = narrowGroups(remainingFanOut(options.plan, options.components, { completed: options.plan.order.filter((name) => !heldNames.has(name)) }), options.components, options.plan.groups);
     const set = await planPrSet({
       components: options.components,
       plan,
@@ -638,18 +740,19 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
       stopped = "waiting";
       break;
     }
-    const next = await runRound(plan, set.plans, set.outputs, run.componentOutputs);
+    const next = await runRound(plan, set, set.outputs, run.componentOutputs);
     record(next.status === "fail" ? "failed" : "applied", decision.approval, undefined, decision.covered);
     run = joinRuns(run, next);
   }
 
   const completed = new Set(run.completed);
+  const notStarted = new Set(run.notStarted ?? []);
   const held = new Map((run.held ?? []).map((h) => [h.component, h]));
   const blocked = new Map(run.blocked.map((b) => [b.component, b.blockedBy]));
   const errorOf = (component: string): string | undefined => {
     const result = [...run.results].reverse().find((r) => r.component === component);
     if (result?.status === "gated") return `stopped at its own gate ${result.gate?.gate ?? ""}`.trim();
-    return result?.records.find((r) => r.status === "fail")?.error;
+    return result?.records.find((r) => r.status === "fail" || (notStarted.has(component) && r.status === "skipped"))?.error;
   };
   const members = options.set.members.map((m): PrMember => {
     if (priorCompleted.has(m.component)) return { ...m, status: "applied" };
@@ -657,6 +760,10 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
     const fresh = later?.set.members.find((x) => x.member === m.member);
     const asPlanned: PrMember = later && fresh ? { ...m, planDigest: fresh.planDigest, counts: fresh.counts, round: later.round } : m;
     if (completed.has(m.component)) return { ...asPlanned, status: "applied" };
+    if (notStarted.has(m.component)) {
+      const error = errorOf(m.component);
+      return { ...asPlanned, status: "not-started", ...(error ? { error } : {}) };
+    }
     const h = held.get(m.component);
     if (h) return { ...asPlanned, status: "waiting", held: h.heldBy ? `${h.heldBy} is held: ${h.reason}` : h.reason };
     if (fresh?.status === "plan-failed") return { ...asPlanned, status: "plan-failed", ...(fresh.error ? { error: fresh.error } : {}) };
@@ -843,7 +950,17 @@ export function prWavePlan(plan: FanOutPlan, components: DriverComponent[], wave
   const seeds = [
     ...new Set([...plan.seeds, ...order.flatMap((name) => (byName.get(name)?.dependsOn ?? []).filter((dep) => !inWave.has(dep)))]),
   ].sort();
-  return { order, waves: order.length > 0 ? [order] : [], skipped: [], seeds, indeterminate: plan.indeterminate, digest: plan.digest };
+  // ws-107: a group sits in one wave, so what is left of it plans and applies as one there.
+  const groups = (plan.groups ?? []).map((g) => ({ ...g, components: g.components.filter((c) => inWave.has(c)) })).filter((g) => g.components.length > 1);
+  return {
+    order,
+    waves: order.length > 0 ? [order] : [],
+    skipped: [],
+    seeds,
+    indeterminate: plan.indeterminate,
+    digest: plan.digest,
+    ...(groups.length > 0 ? { groups } : {}),
+  };
 }
 
 /**
