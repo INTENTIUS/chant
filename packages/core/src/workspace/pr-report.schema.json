@@ -225,6 +225,20 @@
             "items": { "type": "string" },
             "description": "#3999: the published artifact identities its plan read from a build in the same change, as <component>.publish.<field>, sorted. Known only after the build runs and never approved again: the build's provenance binds them, so the member applies without a later round."
           },
+          "reads": {
+            "type": "array",
+            "description": "Added within contract version 1, written by chant 0.124.52 and newer. Every other component's output its steps read, one entry per upstream: the output names, sorted, and under unknown the ones its plan had no value for. A read whose value the plan knew is listed too. Absent when it reads none.",
+            "items": {
+              "type": "object",
+              "required": ["upstream", "outputs"],
+              "additionalProperties": false,
+              "properties": {
+                "upstream": { "type": "string", "description": "The component (or stack) whose outputs it reads." },
+                "outputs": { "type": "array", "items": { "type": "string" }, "description": "The output names it reads, sorted. publish.<field> for a published artifact." },
+                "unknown": { "type": "array", "items": { "type": "string" }, "description": "The ones its plan had no value for, sorted: known only after the upstream applies. Absent when every one was known." }
+              }
+            }
+          },
           "round": { "type": "integer", "minimum": 2, "description": "Apply stage (#3999): the round whose plan it applied or waits on, when not the first. planDigest and counts are that round's." },
           "held": { "type": "string", "description": "Apply stage (#3999): why the first round's plan did not apply." }
         }

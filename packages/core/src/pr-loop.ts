@@ -88,6 +88,9 @@ export const PR_REPORT_BEFORE_MERGE_FLOOR = "0.124.42";
 /** The first chant whose plan report can carry `migrations` (#4407). */
 export const PR_REPORT_MIGRATIONS_FLOOR = "0.124.49";
 
+/** The first chant whose report can carry a member's `reads`, known at plan or not. */
+export const PR_REPORT_READS_FLOOR = "0.124.52";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -155,6 +158,16 @@ export type PrMemberStatus =
    */
   | "waiting";
 
+/** One upstream a member reads outputs of (`PrMember.reads`). */
+export interface PrMemberRead {
+  /** The component (or stack) whose outputs it reads. */
+  upstream: string;
+  /** The output names it reads, sorted. `publish.<field>` for a published artifact. */
+  outputs: string[];
+  /** The ones its plan had no value for, sorted: known only after the upstream applies. Absent when every one was known. */
+  unknown?: string[];
+}
+
 export interface PrMember {
   /** The member's name in the change set: a root, for a terraform-family step. */
   member: string;
@@ -189,6 +202,15 @@ export interface PrMember {
    * applies without a later round.
    */
   buildInputs?: string[];
+  /**
+   * Every other component's output its steps read, one entry per upstream,
+   * by upstream: the output names, sorted, and under `unknown` the ones its
+   * plan had no value for. A read whose value the plan knew is here too, so
+   * a reader of the report sees each read between components from the plan
+   * on, not only the ones `unknownInputs` names. Added within contract 1 by
+   * chant {@link PR_REPORT_READS_FLOOR}.
+   */
+  reads?: PrMemberRead[];
   /** Apply stage (#3999): the round whose plan it applied or waits on, when not the first. */
   round?: number;
   /** Apply stage (#3999): why the first round's plan did not apply. */
