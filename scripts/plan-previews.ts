@@ -25,6 +25,7 @@ import { gcpCapabilityPlugin } from "../lexicons/gcp/src/components/capability-p
 import { helmCapabilityPlugin } from "../lexicons/helm/src/components/capability-plugin";
 import { k8sCapabilityPlugin } from "../lexicons/k8s/src/components/capability-plugin";
 import { otelCapabilityPlugin } from "../lexicons/otel/src/build/capability-plugin";
+import { pulumiCapabilityPlugin } from "../lexicons/pulumi/src/capability-plugin";
 import { terraformCapabilityPlugin } from "../lexicons/terraform/src/components/capability-plugin";
 
 /**
@@ -41,6 +42,7 @@ export const PLUGINS: ReadonlyArray<{ lexicon: string; exportName: string; plugi
   { lexicon: "helm", exportName: "helmCapabilityPlugin", plugin: helmCapabilityPlugin },
   { lexicon: "k8s", exportName: "k8sCapabilityPlugin", plugin: k8sCapabilityPlugin },
   { lexicon: "otel", exportName: "otelCapabilityPlugin", plugin: otelCapabilityPlugin },
+  { lexicon: "pulumi", exportName: "pulumiCapabilityPlugin", plugin: pulumiCapabilityPlugin },
   { lexicon: "terraform", exportName: "terraformCapabilityPlugin", plugin: terraformCapabilityPlugin },
 ];
 
