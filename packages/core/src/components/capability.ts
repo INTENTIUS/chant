@@ -272,6 +272,12 @@ export interface GroupMember<In = unknown> {
   /** The member's reads of other members, sorted by `ref`. */
   reads: GroupRead[];
   /**
+   * The component's `dependsOn` as declared (#4447): an order with no read,
+   * which a capability that applies the group in one call has to keep or
+   * refuse.
+   */
+  dependsOn?: string[];
+  /**
    * The member's own context: `component`, `targets`, `carried` and `carry`
    * as for a single step. `unresolvedInputs` names only components outside
    * the group. In `runGroup`, `plans` holds this member's plan.

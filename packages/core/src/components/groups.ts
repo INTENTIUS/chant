@@ -257,13 +257,15 @@ function groupMembers(
     const base = ctxOf(name);
     assertTargetsAccepted(component, registry, base);
     const reads = groupReadsOf(step, inGroup, name);
-    if (!outside) return { component: name, step, reads, ctx: base };
+    const dependsOn = component.dependsOn?.length ? { dependsOn: [...component.dependsOn] } : {};
+    if (!outside) return { component: name, step, reads, ...dependsOn, ctx: base };
     const unresolved = unresolvedWiringSources(step, outside).filter((source) => !inGroup.has(source));
     return {
       component: name,
       step,
       input: resolveStepInput(step, {}, outside),
       reads,
+      ...dependsOn,
       ctx: unresolved.length > 0 ? { ...base, unresolvedInputs: unresolved } : base,
     };
   });
