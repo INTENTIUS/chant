@@ -276,6 +276,20 @@ export class RootStates {
     return file;
   }
 
+  /**
+   * Keep a root's lock held past {@link release}, as a kept state's is: for a
+   * root whose state the run could neither write nor keep, so no other run
+   * plans against a state that may not hold what applied.
+   */
+  hold(root: string): void {
+    if (this.lockOf(root)) this.heldOnPurpose.add(root);
+  }
+
+  /** The roots whose lock stays held past {@link release}. */
+  heldOnPurposeRoots(): string[] {
+    return [...this.heldOnPurpose].filter((r) => this.lockOf(r)).sort();
+  }
+
   /** Release a root's lock, or every lock but those held on purpose for a kept state. */
   async release(root?: string): Promise<void> {
     const which = root ? [root] : [...new Set(this.locks.map((l) => l.root))].filter((r) => !this.heldOnPurpose.has(r));

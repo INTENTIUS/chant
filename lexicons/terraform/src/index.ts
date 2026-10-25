@@ -45,6 +45,22 @@ export {
 } from "./compose/estate";
 export { priorStateValues, stateResources, stateOutputs, type StateResourceValues } from "./applied-state";
 
+// Composed runs over roots with state (#4444): one plan and one apply, each
+// state written back whatever happened. Implements `ComposedRunner` (#4445).
+export {
+  ComposedRun,
+  composedPlanDigest,
+  changesSomething,
+  type ComposedRunOptions,
+  type ComposedRunStage,
+  type StateRunPlan,
+  type StateRunApply,
+  type StateMemberOutcome,
+  type ComposedStateWrite,
+  type ComposeHook,
+  type ComposeHookMoment,
+} from "./compose/run";
+
 // The plan shape of a `show -json` plan (#4436), for core's `coveredRound`.
 export { terraformPlanShape, type TerraformPlanShapeOptions } from "./plan-shape";
 

@@ -28,13 +28,13 @@ type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** The outputs of module `m` among a composed root's, by their own names. */
-function moduleOutputs(outputs: unknown, m: string): Json {
+export function moduleOutputs(outputs: unknown, m: string): Json {
   if (!isObj(outputs)) return {};
   return Object.fromEntries(Object.entries(outputs).filter(([k]) => k.startsWith(`${m}__`)).map(([k, v]) => [k.slice(m.length + 2), v]));
 }
 
 /** A module's part of `planned_values` or `prior_state.values`: its child module as the root module, addresses unprefixed. */
-function moduleValues(values: unknown, m: string, outputs: Json): Json | undefined {
+export function moduleValues(values: unknown, m: string, outputs: Json): Json | undefined {
   if (!isObj(values)) return undefined;
   const root = isObj(values.root_module) ? values.root_module : {};
   const child = (Array.isArray(root.child_modules) ? root.child_modules : []).find((x) => isObj(x) && x.address === `module.${m}`) as Json | undefined;

@@ -53,6 +53,8 @@ export interface ComposedRunPlan extends CapabilityGroupPlan {
   fallback?: ComposeFallback;
   /** Why the composed plan failed: every member is plan-failed. */
   error?: string;
+  /** The member {@link error} is about, when it is about one (a hook, an init, a lock). */
+  member?: string;
   /** The composed plan's `show -json`. */
   plan?: unknown;
   /** The saved plan file `apply()` applies. */
