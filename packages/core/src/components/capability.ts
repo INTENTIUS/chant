@@ -220,6 +220,18 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   groupFallback?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<GroupFallback | undefined>;
   /**
+   * Optional (#4447): reads between this capability's components that core
+   * cannot see in their declarations, such as a Terraform root's
+   * `terraform_remote_state` block. Core asks once per capability, before
+   * groups form, with every component of the change whose step this
+   * capability takes (`ctx.components` in plan order, no `input`), and adds
+   * each read to the reads it joins, orders and splits groups by, and to
+   * the group reads the report names. The answer must come from the
+   * declaration and the files alone. A read naming a component outside
+   * `members` is ignored; a throw counts as no reads.
+   */
+  groupReads?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<ReportedGroupRead[]>;
+  /**
    * Optional (#4435, ws-107): plan `members` as one, in one call. Declared
    * together with `runGroup`; a capability with only one of the two never
    * gets a group. Throwing makes every member plan-failed.
@@ -259,6 +271,25 @@ export interface GroupRead {
   /** The member whose output it is. */
   component: string;
   output: string;
+}
+
+/**
+ * A read of one component by another that a capability reports through
+ * `groupReads` (#4447), with no place in the reader's step input.
+ */
+export interface ReportedGroupRead {
+  /** The component that reads. */
+  reader: string;
+  /** The component whose output it reads. */
+  upstream: string;
+  /** The read as the report names it, e.g. `data.terraform_remote_state.network`. */
+  ref: string;
+  /**
+   * The upstream output read, when the capability knows it. Without it the
+   * read counts as known at plan only when the upstream's plan knows every
+   * output it names.
+   */
+  output?: string;
 }
 
 /** One component of a group, as core hands it to the capability (ws-107). */

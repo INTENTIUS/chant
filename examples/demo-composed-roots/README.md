@@ -80,6 +80,7 @@ Each has `about.json` (the kiosk's card), `pull/` (the pull request) and
 scenarios through `pr-plan`, one approval and `pr-apply`: on `tofu` with local
 state against `CHANT_FLOCI_ENDPOINT`, and on `choudoufu` estates against
 `CHOUDOUFU_EMULATOR_ENDPOINT`. For estates the test gives each root a `live`
-block and reads each upstream through `terraform_estate_outputs`, keeping the
-variables the components fill. Each run skips, with the reason, when its
+block and reads each upstream through `terraform_estate_outputs` in place of
+the variables, and drops the components' `vars`; the group forms from those
+estate reads. Each run skips, with the reason, when its
 binary or emulator is missing.

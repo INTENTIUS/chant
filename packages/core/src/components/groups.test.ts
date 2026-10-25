@@ -8,9 +8,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { CapabilityRegistry, type GroupFallback, type GroupMember } from "./capability";
+import { CapabilityRegistry, type GroupFallback, type GroupMember, type ReportedGroupRead } from "./capability";
 import { planFanOut } from "./fan-out";
-import { findComponentGroups, groupFanOut, narrowGroups } from "./groups";
+import { findComponentGroups, groupFanOut, narrowGroups, planComponentGroup } from "./groups";
 import { prWavePlan } from "./pr-run";
 import type { DriverComponent } from "./driver";
 
@@ -202,6 +202,106 @@ describe("where a group sits (ws-107)", () => {
     expect(left.waves).toEqual([["a", "b"], []]);
     const wave = prWavePlan(g, components, 2, ["x"]);
     expect(wave).toMatchObject({ order: ["a", "b"], waves: [["a", "b"]], groups: g.groups, seeds: ["x"], digest: g.digest });
+  });
+});
+
+describe("reads a capability reports through groupReads (#4447)", () => {
+  /** A registry whose `fake-group` reports `reads` and records what it was asked. */
+  function reporting(reads: ReportedGroupRead[]) {
+    const asked: Array<{ components: string[]; members: string[] }> = [];
+    const r = new CapabilityRegistry();
+    const unused = async (): Promise<never> => {
+      throw new Error("not called here");
+    };
+    r.register({
+      kind: "fake-group",
+      run: unused,
+      plan: unused,
+      runGroup: unused,
+      async planGroup(_ctx: unknown, members: readonly GroupMember[]) {
+        // a knows nothing at plan; b's outputs are all known.
+        const plans = Object.fromEntries(
+          members.map((m) => [m.component, { member: m.component, planDigest: `d-${m.component}`, outputs: m.component === "a" ? { known: {}, unknown: ["id"] } : { known: { arn: "x" }, unknown: [] } }]),
+        );
+        return { members: plans, digest: "g" };
+      },
+      async groupReads(ctx: { components: string[] }, members: readonly GroupMember[]) {
+        asked.push({ components: [...ctx.components], members: members.map((m) => m.component) });
+        return reads;
+      },
+    } as never);
+    r.register({ kind: "fake-plain", run: unused, plan: unused } as never);
+    return { registry: r, asked };
+  }
+
+  test("a reported read joins two components with no stackOutput read, upstream first, and is kept as the group's reads", async () => {
+    // a reads b only in a file core cannot see, and declares no dependsOn.
+    const components = [grouped("a"), grouped("b")];
+    const r = reporting([
+      { reader: "a", upstream: "b", ref: "data.remote.b" },
+      { reader: "a", upstream: "a", ref: "self" },
+      { reader: "a", upstream: "elsewhere", ref: "not.a.component" },
+    ]);
+    const { found } = await groupsOf(components, ["a", "b"], r.registry);
+    expect(r.asked).toHaveLength(1);
+    expect([...r.asked[0]!.members].sort()).toEqual(["a", "b"]);
+    expect(found).toEqual({
+      groups: [{ capability: "fake-group", components: ["b", "a"], reads: [{ reader: "a", upstream: "b", ref: "data.remote.b" }] }],
+      fallbacks: [],
+    });
+  });
+
+  test("a reported read the upstream's plan does not know is one of the reader's group reads in its change-set part", async () => {
+    const components = [grouped("a"), grouped("b")];
+    const r = reporting([{ reader: "b", upstream: "a", ref: "data.remote.a" }]);
+    const planned = await planComponentGroup({
+      group: { capability: "fake-group", components: ["a", "b"], reads: [{ reader: "b", upstream: "a", ref: "data.remote.a" }] },
+      components: new Map(components.map((c) => [c.name, c])),
+      registry: r.registry,
+      env: "prod",
+      ctxOf: (component) => ({ env: "prod", component }),
+      outputs: {},
+    });
+    const reads = Object.fromEntries(planned.plans.map((p) => [p.component, "error" in p ? p.error : p.parts?.[0]?.member.group?.reads]));
+    expect(reads).toEqual({ a: [], b: ["data.remote.a"] });
+  });
+
+  test("a reported read on a dependency path through a component of another kind splits the group (ruling 2)", async () => {
+    // b reads a in a file; m, of another kind, depends on a and b depends on m.
+    const components = [grouped("a"), plain("m", ["a"]), grouped("b", ["m"])];
+    const r = reporting([{ reader: "b", upstream: "a", ref: "data.remote.a" }]);
+    const { found } = await groupsOf(components, ["a"], r.registry);
+    expect(found.groups).toEqual([]);
+    expect(found.fallbacks.map((f) => [f.component, f.kind])).toEqual([
+      ["a", "split"],
+      ["b", "split"],
+    ]);
+    expect(found.fallbacks[0]!.reason).toMatch(/^m lies on a dependency path between a/);
+  });
+
+  test("a capability whose groupReads throws reports no reads", async () => {
+    const r = new CapabilityRegistry();
+    const unused = async (): Promise<never> => {
+      throw new Error("not called here");
+    };
+    r.register({ kind: "fake-group", run: unused, plan: unused, planGroup: unused, runGroup: unused, groupReads: unused } as never);
+    const { found } = await groupsOf([grouped("a"), grouped("b")], ["a", "b"], r);
+    expect(found).toEqual({ groups: [], fallbacks: [] });
+  });
+
+  test("narrowing a group keeps only the reported reads between members left", async () => {
+    const components = [grouped("a"), grouped("b"), grouped("c")];
+    const r = reporting([
+      { reader: "b", upstream: "a", ref: "data.remote.a" },
+      { reader: "c", upstream: "b", ref: "data.remote.b" },
+    ]);
+    const { grouped: g } = await groupsOf(components, ["a", "b", "c"], r.registry);
+    expect(g.groups).toEqual([{ capability: "fake-group", components: ["a", "b", "c"], reads: [
+      { reader: "b", upstream: "a", ref: "data.remote.a" },
+      { reader: "c", upstream: "b", ref: "data.remote.b" },
+    ] }]);
+    const left = narrowGroups({ ...g, order: ["b", "c"], waves: [["b", "c"]], groups: undefined }, components, g.groups);
+    expect(left.groups).toEqual([{ capability: "fake-group", components: ["b", "c"], reads: [{ reader: "c", upstream: "b", ref: "data.remote.b" }] }]);
   });
 });
 

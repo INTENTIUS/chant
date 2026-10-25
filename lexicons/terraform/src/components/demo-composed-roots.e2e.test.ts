@@ -15,10 +15,11 @@
  * and `CHANT_FLOCI_ENDPOINT=http://localhost:4611`), and on `choudoufu`
  * estates against CHOUDOUFU_EMULATOR_ENDPOINT, as
  * `../compose/estate.choudoufu.e2e.test.ts` is gated. For estates each root
- * gets a `live` block, and each variable a component fills reads the same
- * output through `terraform_estate_outputs` instead: an estate's module call
- * takes no inputs (`writeEstateRoot`). The components keep their `vars`, so
- * core still joins the three into a group by those reads.
+ * gets a `live` block, each variable becomes a read of the same output
+ * through `terraform_estate_outputs`, and the components lose their `vars`:
+ * an estate's module call takes no inputs (`writeEstateRoot`). Core joins
+ * the three into a group by the estate reads `terraform-apply` reports
+ * (`groupReads`, #4447).
  *
  * Both need the `aws` CLI to read the emulator after the apply, and the
  * hashicorp/aws provider from the registry (CHANT_OFFLINE skips). Each suite
@@ -101,26 +102,29 @@ const VARIABLE = /variable "(\w+)" \{\n  type = string\n\}/g;
 
 /**
  * The root as an estate's: each variable read through `terraform_estate_outputs`
- * of its upstream's estate instead, and kept declared, with a null default, for
- * the `-var` a root applied alone is still given.
+ * of its upstream's estate instead, and no longer declared.
  */
 function estateRoot(id: string, root: string, text: string): string {
   const up = UPSTREAM[root];
   if (!up) return text;
   const names = [...text.matchAll(VARIABLE)].map((m) => m[1]!);
-  let out = text.replace(VARIABLE, 'variable "$1" {\n  type    = string\n  default = null\n}');
+  let out = text.replace(new RegExp(`${VARIABLE.source}\\n*`, "g"), "");
   for (const n of names) out = out.replaceAll(`var.${n}`, `data.terraform_estate_outputs.${up}.values.${n}`);
   const list = names.map((n) => `"${n}"`).join(", ");
   return `${out}\ndata "terraform_estate_outputs" "${up}" {\n  estate = "${id}-${up}"\n  names  = [${list}]\n}\n`;
 }
 
-/** Every copied file with the example's names made this run's own, and for estates the roots and config rewritten. */
+/** A component's step `vars`, which an estate's root no longer declares. */
+const VARS = /^[ \t]*vars: \{\n[\s\S]*?^[ \t]*\},\n/m;
+
+/** Every copied file with the example's names made this run's own, and for estates the roots, the components and the config rewritten. */
 function rewrite(mode: Mode, id: string) {
   return (rel: string, text: string): string => {
     let out = text.replaceAll("chant-compose", id);
     if (mode.estate && rel === "chant.config.ts") out = out.replace('binary: "tofu"', 'binary: "choudoufu"');
     const root = rel.match(/^roots\/(\w+)\/main\.tf$/)?.[1];
     if (mode.estate && root) out = estateRoot(id, root, out);
+    if (mode.estate && rel.endsWith(".component.ts")) out = out.replace(VARS, "");
     return out;
   };
 }
@@ -251,8 +255,11 @@ for (const mode of MODES) {
         ]),
       );
       const m = byComponent(plan);
-      expect(m.app!.reads?.find((r) => r.upstream === "network")?.unknown).toEqual(["subnet_b_id"]);
-      expect(m.edge!.reads?.find((r) => r.upstream === "app")?.unknown).toEqual(["worker_subnet_id"]);
+      // A member's reads are its `vars`; an estate's components have none.
+      if (!mode.estate) {
+        expect(m.app!.reads?.find((r) => r.upstream === "network")?.unknown).toEqual(["subnet_b_id"]);
+        expect(m.edge!.reads?.find((r) => r.upstream === "app")?.unknown).toEqual(["worker_subnet_id"]);
+      }
       // Inside the group they are no holes, and no member waits on a later round.
       for (const x of Object.values(m)) expect(x.unknownInputs).toBeUndefined();
       for (const member of plan.changeSet.members) expect(member.holes ?? []).toEqual([]);

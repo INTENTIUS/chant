@@ -78,8 +78,8 @@
  * With `terraform.compose.enabled`, a group core forms of `terraform-apply`
  * components that read each other (ws-107) plans as one plan and applies as
  * one apply of a composed root, and a member's read of another member's new
- * output is not a hole: the apply passes the value on. `groupFallback`,
- * `planGroup` and `runGroup` are in `./compose-group.ts`.
+ * output is not a hole: the apply passes the value on. `groupReads`,
+ * `groupFallback`, `planGroup` and `runGroup` are in `./compose-group.ts`.
  */
 
 import type { Capability, DeployContext, CapabilityPlan, PlannedOutputs } from "@intentius/chant/components/capability";
@@ -306,6 +306,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   },
   // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
   // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
+  groupReads: (ctx, members) => terraformComposeGroup.groupReads(ctx, members),
   groupFallback: (ctx, members) => terraformComposeGroup.groupFallback(ctx, members),
   planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
   runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),

@@ -51,6 +51,8 @@ import {
   type GroupMemberStatus,
   type GroupRead,
   type GroupRun,
+  type PlannedOutputs,
+  type ReportedGroupRead,
 } from "./capability";
 import type { FanOutGroup, FanOutGroupFallback, FanOutPlan } from "./fan-out";
 import { bindTargets, type WaveComponentPlan } from "./wave-plan";
@@ -122,15 +124,15 @@ function connected(names: readonly string[], joined: (a: string, b: string) => b
   return out;
 }
 
-/** Each component's transitive `dependsOn`, memoised. */
-function upstreamsOf(byName: ReadonlyMap<string, DriverComponent>): (name: string) => ReadonlySet<string> {
+/** Each component's transitive `dependsOn`, with the `extra` upstreams a capability reported (#4447), memoised. */
+function upstreamsOf(byName: ReadonlyMap<string, DriverComponent>, extra: ReadonlyMap<string, ReadonlySet<string>> = new Map()): (name: string) => ReadonlySet<string> {
   const memo = new Map<string, Set<string>>();
   const of = (name: string): Set<string> => {
     const known = memo.get(name);
     if (known) return known;
     const out = new Set<string>();
     memo.set(name, out);
-    for (const dep of byName.get(name)?.dependsOn ?? []) {
+    for (const dep of [...(byName.get(name)?.dependsOn ?? []), ...(extra.get(name) ?? [])]) {
       out.add(dep);
       for (const up of of(dep)) out.add(up);
     }
@@ -276,12 +278,69 @@ function groupContext(group: FanOutGroup, env: string, vars?: Record<string, unk
 }
 
 /**
+ * The reads each capability with `groupReads` reports among the change's
+ * components whose step it takes (#4447): only reads between two such
+ * components of one capability, never of a component by itself. A
+ * capability that throws reports none.
+ */
+async function reportedReads(
+  order: readonly string[],
+  kindOf: (name: string) => string | undefined,
+  byName: ReadonlyMap<string, DriverComponent>,
+  options: FindComponentGroupsOptions,
+  ctxOf: (component: string) => DeployContext,
+): Promise<ReportedGroupRead[]> {
+  const out: ReportedGroupRead[] = [];
+  const kinds = [...new Set(order.map(kindOf).filter((k): k is string => k !== undefined))];
+  for (const kind of kinds) {
+    const capability = options.registry.resolve(kind);
+    if (typeof capability.groupReads !== "function") continue;
+    const names = order.filter((name) => kindOf(name) === kind);
+    if (names.length < 2) continue;
+    const all: FanOutGroup = { capability: kind, components: names };
+    let reported: ReportedGroupRead[];
+    try {
+      reported = await capability.groupReads(groupContext(all, options.env, options.vars), groupMembers(all, byName, options.registry, ctxOf) as never);
+    } catch {
+      continue;
+    }
+    const inKind = new Set(names);
+    for (const r of reported ?? []) {
+      if (r.reader !== r.upstream && inKind.has(r.reader) && inKind.has(r.upstream)) out.push({ ...r });
+    }
+  }
+  return out.sort((a, b) => a.reader.localeCompare(b.reader) || a.ref.localeCompare(b.ref) || a.upstream.localeCompare(b.upstream));
+}
+
+/** `set` with each member after every member of it that it reads or depends on, else in the order of `set`. */
+function upstreamsFirst(set: readonly string[], upstreams: (name: string) => ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  const left = [...set];
+  while (left.length > 0) {
+    const i = left.findIndex((m) => left.every((o) => o === m || !upstreams(m).has(o)));
+    // A cycle among the members keeps the order of `set` for the rest.
+    const [next] = left.splice(i < 0 ? 0 : i, 1);
+    out.push(next!);
+  }
+  return out;
+}
+
+/** The reads of `reads` between two members of `components`. */
+function readsWithin(reads: readonly ReportedGroupRead[], components: readonly string[]): ReportedGroupRead[] {
+  const inGroup = new Set(components);
+  return reads.filter((r) => inGroup.has(r.reader) && inGroup.has(r.upstream));
+}
+
+/**
  * The groups among the components of the change (ws-107):
  *
  * 1. A component is eligible when its deploy is one step, gates counted
  *    (ruling 3), whose capability declares `planGroup` and `runGroup`.
  * 2. Eligible components of one capability joined by reads, in either
- *    direction, form a candidate set.
+ *    direction, form a candidate set. A read is a wiring reference in a
+ *    step, or one the capability reports through `groupReads` (#4447); a
+ *    reported read also counts as a dependency below, orders the members
+ *    and is kept on the group as its `reads`.
  * 3. While a component outside a set lies on a `dependsOn` path between two
  *    of its members, the members downstream of it leave the set, and both
  *    parts are joined by reads again (ruling 2). Outside components are
@@ -308,7 +367,14 @@ export async function findComponentGroups(options: FindComponentGroupsOptions): 
     const at = groupStepOf(byName.get(name)!, options.registry);
     if (at) steps.set(name, at);
   }
+  const ctxOf = (component: string): DeployContext => ({ env: options.env, component, ...(options.vars ? { vars: options.vars } : {}) });
+  const reported = await reportedReads(order, (name) => steps.get(name)?.kind, byName, options, ctxOf);
   const sources = new Map(order.map((name) => [name, readSources(byName.get(name)!)]));
+  const extra = new Map<string, Set<string>>();
+  for (const r of reported) {
+    sources.get(r.reader)!.add(r.upstream);
+    extra.set(r.reader, (extra.get(r.reader) ?? new Set()).add(r.upstream));
+  }
   const reads = (a: string, b: string): boolean => sources.get(a)!.has(b) || sources.get(b)!.has(a);
   const sameKind = (a: string, b: string): boolean => steps.get(a)?.kind === steps.get(b)?.kind;
   const withinOf = options.within ? groupsByComponent({ groups: [...options.within] }) : undefined;
@@ -328,7 +394,7 @@ export async function findComponentGroups(options: FindComponentGroupsOptions): 
     }
   }
 
-  const upstreams = upstreamsOf(byName);
+  const upstreams = upstreamsOf(byName, extra);
   const below = (name: string, of: string): boolean => upstreams(name).has(of);
   /** `start` split while a component outside a set lies on a `dependsOn` path between two of its members (ruling 2), and what split each member. */
   const split = (start: string[][]): { sets: string[][]; by: Map<string, string> } => {
@@ -370,13 +436,14 @@ export async function findComponentGroups(options: FindComponentGroupsOptions): 
     if (only !== undefined && partnered.has(only)) fallBack(only, "split", splitReason(only, first.by.get(only)));
   }
 
-  const ctxOf = (component: string): DeployContext => ({ env: options.env, component, ...(options.vars ? { vars: options.vars } : {}) });
   const taken: FanOutGroup[] = [];
   // Each set formed again after a drop goes to the front, so groups are still taken in plan order of their first member.
   const queue = [...candidates];
   while (queue.length > 0) {
     const set = queue.shift()!;
-    const group: FanOutGroup = { capability: steps.get(set[0]!)!.kind, components: set };
+    const components = upstreamsFirst(set, upstreams);
+    const within = readsWithin(reported, components);
+    const group: FanOutGroup = { capability: steps.get(set[0]!)!.kind, components, ...(within.length > 0 ? { reads: within } : {}) };
     const capability = options.registry.resolve(group.capability);
     let refused: GroupFallback | undefined;
     if (capability.groupFallback) {
@@ -438,6 +505,14 @@ export function groupFanOut(plan: FanOutPlan, components: DriverComponent[], fou
   return { ...bare, order: waves.flat(), waves, groups: found.groups, ...fallbacks };
 }
 
+/** `group` with only its members in `inPlan`, and the reported reads between them. */
+function keptOf(group: FanOutGroup, inPlan: ReadonlySet<string>): FanOutGroup {
+  const { reads, ...rest } = group;
+  const components = group.components.filter((c) => inPlan.has(c));
+  const within = readsWithin(reads ?? [], components);
+  return { ...rest, components, ...(within.length > 0 ? { reads: within } : {}) };
+}
+
 /**
  * `plan`, a narrowing of a grouped fan-out (`remainingFanOut`, a round),
  * with what is left of `groups` placed again: each group keeps its members
@@ -447,7 +522,7 @@ export function groupFanOut(plan: FanOutPlan, components: DriverComponent[], fou
 export function narrowGroups(plan: FanOutPlan, components: DriverComponent[], groups: readonly FanOutGroup[] | undefined): FanOutPlan {
   if (!groups || groups.length === 0) return plan;
   const inPlan = new Set(plan.order);
-  const kept = groups.map((g) => ({ ...g, components: g.components.filter((c) => inPlan.has(c)) })).filter((g) => g.components.length > 1);
+  const kept = groups.map((g) => keptOf(g, inPlan)).filter((g) => g.components.length > 1);
   const byName = new Map(components.map((c) => [c.name, c]));
   if (kept.length === 0 || placeUnits(plan, byName, kept) === undefined) return plan;
   return groupFanOut(plan, components, { groups: kept, fallbacks: plan.fallbacks ?? [] });
@@ -468,7 +543,7 @@ export async function regroupRemaining(
   options: Omit<FindComponentGroupsOptions, "within"> & { groups: readonly FanOutGroup[] | undefined; fallbacks?: readonly FanOutGroupFallback[] },
 ): Promise<FanOutPlan> {
   const inPlan = new Set(options.plan.order);
-  const left = (options.groups ?? []).map((g) => ({ ...g, components: g.components.filter((c) => inPlan.has(c)) })).filter((g) => g.components.length > 1);
+  const left = (options.groups ?? []).map((g) => keptOf(g, inPlan)).filter((g) => g.components.length > 1);
   const found: FoundComponentGroups =
     left.length > 0
       ? await findComponentGroups({
@@ -524,6 +599,17 @@ export function bindGroup(planned: CapabilityPlan, digest: string, reads: readon
 /** `value` at the dotted `path`. */
 function atPath(value: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((acc, key) => (acc == null ? acc : (acc as Record<string, unknown>)[key]), value);
+}
+
+/**
+ * Whether a reported read (#4447) is known at plan: its `output` in the
+ * upstream's planned outputs, or, without one, an upstream plan that names
+ * outputs and none of them unknown.
+ */
+function knownAtPlan(outputs: PlannedOutputs | undefined, output: string | undefined): boolean {
+  if (!outputs) return false;
+  if (output !== undefined) return atPath(outputs.known, output) !== undefined;
+  return outputs.unknown.length === 0;
 }
 
 /** What planning a group gave (ws-107). */
@@ -585,7 +671,10 @@ export async function planComponentGroup(options: PlanComponentGroupOptions): Pr
     for (const m of members) {
       const own = bound.get(m.component)!;
       // A read the upstream member's plan does not know is computed by the group's apply.
-      const unknown = m.reads.filter((r) => atPath(planned.members[r.component]?.outputs?.known, r.output) === undefined).map((r) => r.ref);
+      const unknown = [
+        ...m.reads.filter((r) => atPath(planned.members[r.component]?.outputs?.known, r.output) === undefined).map((r) => r.ref),
+        ...(group.reads ?? []).filter((r) => r.reader === m.component && !knownAtPlan(planned.members[r.upstream]?.outputs, r.output)).map((r) => r.ref),
+      ];
       const plan = bindGroup(own, digest, unknown);
       runPlans[m.component] = plan;
       const shapes: Record<string, PlanShape> | undefined = own.shape ? { [plan.member]: { ...own.shape, member: plan.member } } : undefined;
