@@ -18,11 +18,22 @@
  * a delete of a block the source no longer declares, or a warden or sql
  * change outside the graph.
  *
- * Like `./change-set.ts`, this imports nothing at run time, so it bundles
- * into one file with the change-set code.
+ * An instance of a `count` or `for_each` block gets its instance node
+ * (#4454): the block node's id followed by the instance key as the planner
+ * prints it, `<root>/module.app/terraform_data.instance[0]`, with
+ * `instanceOf` naming the block node. That holds whether or not the graph
+ * lists the instance node, since a graph read of the source lists only the
+ * instances a literal `count` or `for_each` gives (`./instance-nodes.ts`).
+ * {@link graphNodeFor} is the same rule for a single address, which a drift
+ * row uses.
+ *
+ * Like `./change-set.ts`, this imports nothing at run time but
+ * `./instance-nodes.ts`, which imports nothing either, so it bundles into
+ * one file with the change-set code.
  */
 
 import type { ChangeSetDocument, ChangeSetEntry } from "./change-set";
+import { instanceNodeId, terraformInstanceKey } from "./instance-nodes";
 
 /** The graph a document is mapped onto: the node ids of one member's own IR. */
 export interface ChangeSetGraphNodes {
@@ -118,24 +129,73 @@ export function changeSetNodeCandidates(entry: Pick<ChangeSetEntry, "member" | "
   }
 }
 
+/** Where one address sits on a graph: its node, and the block node when that node is an instance's. */
+export interface GraphNodePlacement {
+  /** The node id, with the member in front inside a workspace, or null when the graph holds none for the address. */
+  node: string | null;
+  /** The block node's id, set when `node` is an instance node (#4454). */
+  instanceOf?: string;
+  /** The source file of the node, or of its block node for an instance, from the graph's `sources`. */
+  source?: string;
+}
+
+/**
+ * The node an address of a member's planner is on, in `ids` (one member's
+ * node ids, without the member) with `prefix` in front: the first candidate
+ * ({@link changeSetNodeCandidates}) the graph holds, and for an instance of a
+ * terraform-family block that the graph holds, the instance node (#4454).
+ */
+function placeOn(
+  entry: Pick<ChangeSetEntry, "member" | "planner" | "address">,
+  ids: ReadonlySet<string>,
+  prefix: string,
+  sources: ReadonlyMap<string, string> | undefined,
+): GraphNodePlacement {
+  const id = changeSetNodeCandidates(entry).find((c) => ids.has(c));
+  if (id === undefined) return { node: null };
+
+  const key =
+    (entry.planner === "terraform" || entry.planner === "tofu" || entry.planner === "choudoufu") && id !== entry.address
+      ? terraformInstanceKey(entry.address)
+      : undefined;
+  if (key === undefined) {
+    const source = sources?.get(id);
+    return { node: `${prefix}${id}`, ...(source !== undefined ? { source } : {}) };
+  }
+  const instance = instanceNodeId(id, key);
+  const source = sources?.get(instance) ?? sources?.get(id);
+  return { node: `${prefix}${instance}`, instanceOf: `${prefix}${id}`, ...(source !== undefined ? { source } : {}) };
+}
+
+/**
+ * The node one engine address is on in `graph`, by the change set's mapping
+ * rules: what a drift row's `node` and `instanceOf` are (#4454), so a drift
+ * row and a change-set entry for the same instance name the same node. A null
+ * `graph` places nothing.
+ */
+export function graphNodeFor(
+  entry: Pick<ChangeSetEntry, "member" | "planner" | "address">,
+  graph: ChangeSetGraphNodes | null,
+): GraphNodePlacement {
+  if (graph === null) return { node: null };
+  return placeOn(entry, new Set(graph.ids), graph.member ? `${graph.member}/` : "", graph.sources);
+}
+
 /**
  * The document with each entry's `node` set from `graph`, and `graph`
  * recording which graph it was. A null `graph` (none could be read) gives
- * every entry `node: null`. The digest is unchanged: `node` is not hashed.
+ * every entry `node: null`. The digest is unchanged: `node`, `instanceOf` and
+ * `source` are not hashed.
  */
 export function mapChangeSetToGraph(doc: ChangeSetDocument, graph: ChangeSetGraphNodes | null): ChangeSetDocument {
   if (graph === null) {
-    return { ...doc, entries: doc.entries.map((e) => ({ ...e, node: null })), graph: null };
+    return { ...doc, entries: doc.entries.map(({ instanceOf: _i, ...e }) => ({ ...e, node: null })), graph: null };
   }
   const ids = new Set(graph.ids);
   const prefix = graph.member ? `${graph.member}/` : "";
   return {
     ...doc,
-    entries: doc.entries.map((e) => {
-      const id = changeSetNodeCandidates(e).find((c) => ids.has(c));
-      const source = id === undefined ? undefined : graph.sources?.get(id);
-      return { ...e, node: id === undefined ? null : `${prefix}${id}`, ...(source !== undefined ? { source } : {}) };
-    }),
+    entries: doc.entries.map(({ instanceOf: _i, ...e }) => ({ ...e, ...placeOn(e, ids, prefix, graph.sources) })),
     graph: { member: graph.member, at: graph.at },
   };
 }

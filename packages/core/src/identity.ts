@@ -369,6 +369,8 @@ export function unresolvedReasonText(reason: UnobservedReason | undefined): stri
       return "the substrate exposes no self-query";
     case "filtered":
       return "withheld";
+    case "not-reached":
+      return "the self-query never answered";
     default:
       return "no reason given";
   }

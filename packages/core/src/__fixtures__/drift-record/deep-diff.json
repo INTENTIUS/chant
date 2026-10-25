@@ -1,0 +1,21 @@
+{
+  "drifted": [
+    {
+      "name": "role",
+      "type": "AWS::IAM::Role",
+      "changes": [
+        { "path": "MaxSessionDuration", "kind": "changed", "declared": 3600, "live": 7200 },
+        { "path": "Tags[0].Value", "kind": "absent", "declared": "prod" },
+        { "path": "Policies[0].secretArn", "kind": "changed", "declared": "arn:a", "live": "arn:b" }
+      ]
+    }
+  ],
+  "accepted": [],
+  "unclaimed": [],
+  "held": [],
+  "unchanged": ["topic"],
+  "unobserved": [
+    { "name": "bucket", "type": "AWS::S3::Bucket", "reason": "read-failed", "detail": "GetBucketPolicy returned 500" }
+  ],
+  "undeclaredEntities": []
+}

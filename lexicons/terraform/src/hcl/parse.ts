@@ -40,6 +40,10 @@ export type BlockBody = Record<string, unknown>;
  * the instance count is a plan-time answer and often a state-time one, but it
  * is a shape a reader should be told rather than left to infer from a node
  * count that never grows.
+ *
+ * Since #4454 a literal expansion also gets its instance nodes, children of
+ * the block's node (`TerraformEntity.instanceKeys`). The block node stays,
+ * and the edges stay block to block.
  */
 export type TerraformExpansion = "count" | "for_each";
 
@@ -152,6 +156,16 @@ export interface TerraformEntity extends Declarable {
    */
   readonly stack: string;
   /**
+   * The instance keys a `resource` or `data` block's literal `count` or
+   * `for_each` expands to (#4454), as Terraform prints them: `[0]`, `[1]`
+   * for `count = 2`, `["a"]` for a `for_each` over a literal map or
+   * `toset([...])`. Core's `withInstanceNodes` reads this lexicon-neutral
+   * field, as `buildGraphIr` reads `stack`, and draws one instance node per
+   * key under the block's node. Absent when the block is not expanded or its
+   * expansion is not a literal (`count = var.n`): only a plan can count those.
+   */
+  readonly instanceKeys?: readonly string[];
+  /**
    * Every reference in this block, resolved to the entity keys it points at
    * (chant #2265), in core's lexicon-neutral {@link EntityReference} shape.
    *
@@ -214,6 +228,55 @@ function expansionOf(body: BlockBody): TerraformExpansion | undefined {
   return undefined;
 }
 
+/** The most instance keys read off one literal; past it the block draws as the block alone. */
+const MAX_LITERAL_INSTANCES = 256;
+
+/**
+ * The instance keys a literal expansion gives (#4454), as Terraform prints
+ * them, or undefined when the expansion is not a literal a read of the
+ * source can count. `count` as a number (`count = 3`), `for_each` as a
+ * literal map (`{ a = 1 }`, keys in Terraform's lexical order) or
+ * `toset([...])` over string literals. Anything holding a reference is a
+ * plan-time answer.
+ */
+export function literalInstanceKeys(body: BlockBody): string[] | undefined {
+  const keys = literalKeys(body);
+  if (keys === undefined || keys.length > MAX_LITERAL_INSTANCES) return undefined;
+  return keys;
+}
+
+function literalKeys(body: BlockBody): string[] | undefined {
+  if ("count" in body) {
+    const count = body.count;
+    const n = typeof count === "number" ? count
+      : typeof count === "string" && /^\$\{\s*\d+\s*\}$/.test(count.trim()) ? Number(count.trim().slice(2, -1))
+      : undefined;
+    if (n === undefined || !Number.isInteger(n) || n < 0) return undefined;
+    return Array.from({ length: n }, (_, i) => `[${i}]`);
+  }
+  if ("for_each" in body) {
+    const each = body.for_each;
+    if (typeof each === "object" && each !== null && !Array.isArray(each)) {
+      const names = Object.keys(each);
+      if (names.some((k) => k.includes("${"))) return undefined;
+      return names.sort().map((k) => `[${JSON.stringify(k)}]`);
+    }
+    if (typeof each === "string") {
+      const m = /^\$\{\s*toset\(\s*(\[[\s\S]*\])\s*\)\s*\}$/.exec(each.trim());
+      if (!m) return undefined;
+      let list: unknown;
+      try {
+        list = JSON.parse(m[1]!.replace(/,\s*\]$/, "]"));
+      } catch {
+        return undefined;
+      }
+      if (!Array.isArray(list) || !list.every((v) => typeof v === "string")) return undefined;
+      return [...new Set(list as string[])].sort().map((k) => `[${JSON.stringify(k)}]`);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Build one entity. Written out rather than run through `createResource`
  * from `@intentius/chant/runtime`: that factory is for generated resource
@@ -234,6 +297,7 @@ export function terraformEntity(
   suppressions?: readonly SuppressionDirective[],
 ): TerraformEntity {
   const expansion = expansionOf(body);
+  const instanceKeys = expansion && (entityType === RESOURCE_TYPE || entityType === DATA_TYPE) ? literalInstanceKeys(body) : undefined;
   const labels = entityType === RESOURCE_TYPE ? blockLabels(address)
     : entityType === DATA_TYPE && address.startsWith("data.") ? blockLabels(address.slice("data.".length))
     : undefined;
@@ -243,6 +307,7 @@ export function terraformEntity(
     entityType,
     kind: "resource",
     stack: root,
+    ...(instanceKeys ? { instanceKeys } : {}),
     props: {
       address,
       ...(labels ?? {}),

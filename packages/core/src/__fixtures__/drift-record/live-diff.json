@@ -1,0 +1,21 @@
+{
+  "missing": ["queue"],
+  "orphan": ["stray-bucket"],
+  "runtimeChildren": [{ "name": "web-7d9f-abcde", "type": "K8s::Core::Pod", "owner": "web" }],
+  "disappeared": ["cache"],
+  "newlyObserved": ["topic"],
+  "driftedSinceSnapshot": [
+    {
+      "name": "bucket",
+      "type": "AWS::S3::Bucket",
+      "changes": [
+        { "path": "attributes.tags.env", "oldValue": "prod", "newValue": "staging" },
+        { "path": "attributes.dbPassword", "oldValue": "hunter2", "newValue": "hunter3" }
+      ]
+    }
+  ],
+  "unchanged": ["role"],
+  "unobserved": [
+    { "name": "widget", "type": "K8s::X::Widget", "reason": "unsupported-kind", "detail": "no reader for this CRD", "queried": "/apis/x/v1/widgets/widget" }
+  ]
+}

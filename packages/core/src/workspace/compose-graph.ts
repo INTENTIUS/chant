@@ -8,7 +8,8 @@
  * - Every node id becomes `<member>/<id>`. Member names can't hold `/`, and
  *   `::` keeps its meaning for stacks inside a member (`app/web::Bucket`).
  *   Edge ends, `$ref` values in attributes, `compositeInstance`,
- *   `runtimeOwner` and export and import nodes are rewritten the same way.
+ *   `runtimeOwner`, `instanceOf` (#4454) and export and import nodes are
+ *   rewritten the same way.
  * - `groups.byMember` maps each member to its node ids. `byLexicon` and
  *   `byComposite` keep their keys (a lexicon or composite type is the same
  *   thing in every member) and merge the ids. `byStack`, `byContainer`,
@@ -42,6 +43,7 @@ import type { RecordLinkRow } from "./record-assets";
 import type { ReasonCode } from "./reason-codes";
 import { GRAPH_IR_VERSION, type GraphIR, type IRExport, type IRDanglingRef, type IRGroups, type IRImport, type IREdge, type IRNode } from "../graph-ir";
 import type { ViewDocument } from "../capabilities/view";
+import type { RootRead } from "../observation";
 
 /** The version of the composed document `chant workspace graph` writes. */
 export const WORKSPACE_GRAPH_VERSION = 1;
@@ -118,6 +120,13 @@ export interface ComposedMember {
    * when the member's chant predates the view and printed none.
    */
   capabilityView?: ViewDocument | null;
+  /**
+   * With `--live` (INTENTIUS/chant#4452): which read answered each of the
+   * member's roots, its IR's `rootReads` as the member's chant wrote it. Keys
+   * are the member's own root keys, unprefixed: they name roots, not nodes.
+   * Absent when the member's IR had none.
+   */
+  rootReads?: Record<string, RootRead>;
   /** Whole-read facts the member's IR carried (`meta`, `pipeline`), kept apart from the composed sections. */
   meta?: Record<string, unknown>;
   pipeline?: unknown;
@@ -365,6 +374,7 @@ export function composeWorkspaceGraph(
       const composed: ComposedNode = { ...node, id: prefix(m, node.id), member: m, attrs: prefixRefs(node.attrs ?? {}, m) as Record<string, unknown> };
       if (node.compositeInstance) composed.compositeInstance = prefix(m, node.compositeInstance);
       if (node.runtimeOwner) composed.runtimeOwner = prefix(m, node.runtimeOwner);
+      if (node.instanceOf) composed.instanceOf = prefix(m, node.instanceOf);
       nodes.push(composed);
       ids.push(composed.id);
     }
@@ -389,6 +399,7 @@ export function composeWorkspaceGraph(
       else if (Object.keys(rest).length > 0) member.meta = rest;
     }
     if (ir.pipeline) member.pipeline = ir.pipeline;
+    if (ir.rootReads && Object.keys(ir.rootReads).length > 0) member.rootReads = ir.rootReads;
   }
 
   nodes.sort((a, b) => a.id.localeCompare(b.id));

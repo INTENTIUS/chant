@@ -47,6 +47,19 @@ Edges are **reconstructed** from the live references: observed resources point a
 
 Edge reconstruction is only as rich as the observed node attributes. AWS's plain `describe-stack-resources` metadata is too thin, so the AWS lexicon enriches from the deployed CloudFormation template (its `{Ref}`/`{Fn::GetAtt}` references, resolved to node ids) before reconstruction, so a managed AWS stack produces its topology. A lexicon without that enrichment yields nodes with fewer edges.
 
+#### `rootReads`: which read answered each root
+
+A lexicon with more than one read path says which one answered each root on the IR's top-level `rootReads` ([#4452](https://github.com/INTENTIUS/chant/issues/4452)). The terraform lexicon is the one that does today. A stock root is read from state, or at the plan depth with `CHANT_TERRAFORM_OBSERVE=plan`, and a choudoufu live root is read with `live-plan` alone or with the plan beside it. Keys are the lexicon's root keys, `terraform.roots.<root>` for terraform. `depth` is the read asked for, `plan` or `live+plan`. `fellBackTo` and `reason` are set only when that read failed. `fellBackTo` is the read that answered instead (`state`, `live`, or `declared` when none did), and `reason` is a short machine-stable cause such as `no-credentials`, `needs-init`, `backend-unreachable` or `plan-failed`. The read that answered a root is `fellBackTo` when it is set, and `depth` otherwise.
+
+```json
+"rootReads": {
+  "terraform.roots.app": { "depth": "plan" },
+  "terraform.roots.edge": { "depth": "plan", "fellBackTo": "state", "reason": "no-credentials" }
+}
+```
+
+The same facts are on stderr as one note per root. The notes are prose and may be reworded, so a consumer reads `rootReads` and never matches note text. The field is additive and leaves `version` at `1`. It is absent when no lexicon reported a root read, on a source graph, on an `--at` replay, and on output from a chant before it.
+
 ### `--at <ref>`, a recorded snapshot
 
 `--format ir --at <ref> --env <name>` graphs a snapshot `chant lifecycle snapshot` recorded, instead of reading the estate now. `ref` is a commit on the `chant/lifecycle` orphan branch, or `latest`. It is the same projection `--live` produces, from a recorded observation, so it answers "what was deployed then" without credentials. `--live` and `--at` are two different observations with no rule for which wins, so passing both is refused.
@@ -177,6 +190,19 @@ Each `${Name}` or `${Name.Attr}` in a `$sub` template that names a node is an ed
 `--detail 0` has no `byPipeline`. A pipeline never spans lexicons, so every pipeline there would hold only its lexicon's stack node.
 
 A lens keeps the members it keeps.
+
+### Instance nodes: `count` and `for_each`
+
+A block that expands into instances is one node, and since [#4454](https://github.com/INTENTIUS/chant/issues/4454) each of its instances is a node too, a child of the block's node. The contract, which [behold](https://github.com/INTENTIUS/behold) and the change set share:
+
+- An instance node's id is its block node's id followed by the instance key exactly as Terraform prints it: `app/aws_eip.pool[0]`, `app/aws_eip.pool["a"]`. In `chant workspace graph` the member goes in front as for every node, `<member>/app/aws_eip.pool[0]`.
+- It has `instanceOf`, the block node's id, and `instanceKey`, the key alone. It has the block's `kind`, `lexicon` and `sourceLoc`, empty `attrs` and no edges: references in the source are block to block, so the edges stay on the block. It joins every group its block is in.
+- The block node stays and is the rollup. Its verdict is its instances' aggregate: on a terraform live root any instance not observed makes the block not observed, then foreign, then adoptable, then owned, and all absent is absent.
+- A stored change-set entry and a drift row for an instance carry the instance node's id as `node` and the block node's as `instanceOf`.
+
+The declared graph lists the instances the source gives: a literal `count = 3`, or a `for_each` over a literal map or `toset([...])` of strings. `count = var.n` has no instance nodes there, since only a plan can count it. Under `--live`, each present instance a read reports is a node, so the overlay paints instances one by one. A live instance of a declared block is managed even when the declared graph does not list it. A declared instance the live graph lacks is `accent` when its block's read reported instances, `neutral` when the block was not observed or reported none. An instance under an expanded module call (`module.app[0].aws_eip.pool[1]`) has no node of its own and rolls up to the block.
+
+`chant search` counts blocks: instance nodes are added to the graph `chant graph` prints, after the base graph `search` also reads is built.
 
 ### Edges from a lexicon that parses foreign source
 
