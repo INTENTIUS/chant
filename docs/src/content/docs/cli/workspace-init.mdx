@@ -99,6 +99,8 @@ chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexic
 
 A failing check stops before any gate is recorded, and the tree is unchanged. A member of kind `chant` has no rung above it.
 
+On the `terraform` to `choudoufu` rung the `live-import` report is printed, and with `--json` it is the `adoption` field: `{estate, state, entries, claimed, total}`, one entry per resource instance with its `address`, `type`, `status` (`VERIFIED`, `DRIFTED`, `MISSING`, `UNTAGGABLE` or `UNADMITTED_TYPE`), `liveId`, choudoufu's `detail`, and `claimed`, true for the two statuses `-approve` stamps. `--dry-run --json` is the read-only way to ask what adopting a root would claim: it stages and checks, records no gate, and leaves the tree as it was. Pass `--state` as an absolute path, since the staging worktree holds only what is committed.
+
 ## Ownership stacks
 
 Each `chant` member needs an `ownership.stack` of its own ([#2538](https://github.com/INTENTIUS/chant/issues/2538), ws-037). Ownership markers carry no member name, so the stack is what tells two members' resources and receipts apart, and the `WSP071` check fails when two members share one (see [Ledgers](/chant/reference/workspace-declaration/#ledgers)). Init prints one distinct stack per member after the directories that leave the root project:
