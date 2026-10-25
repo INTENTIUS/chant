@@ -1,0 +1,170 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
+  "contract": 1,
+  "digest": "jcs1-sha256:48ff3d6ad4d5cb31edd6cc22fd67bf02b3162687f75d21f6db3ef3ae411c7bbc",
+  "members": [
+    {
+      "member": "estates/app",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:035c64a8e2dbaa66d06b3dc73fcbb41d304e8e0c0b4678c393083cf8e5ae9fff",
+      "holes": []
+    },
+    {
+      "member": "estates/edge",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:5e22262b5c68660c37a3d547ae89d46c95c67c494dccff1c52f9873999a9adfd",
+      "holes": []
+    },
+    {
+      "member": "estates/network",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:2f5b9678160933175ce9772c423f2738c5b6b290f9027756c1b6c9e3c3fbab2d",
+      "holes": []
+    }
+  ],
+  "entries": [
+    {
+      "member": "estates/app",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "address": "aws_security_group.sg",
+      "type": "aws_security_group",
+      "name": "sg",
+      "action": "create",
+      "attributes": [
+        {
+          "path": "id",
+          "unknown": true
+        },
+        {
+          "path": "name",
+          "after": "demo-sg"
+        },
+        {
+          "path": "vpc_id",
+          "unknown": true
+        }
+      ]
+    },
+    {
+      "member": "estates/edge",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "address": "aws_route_table.rt",
+      "type": "aws_route_table",
+      "name": "rt",
+      "action": "create",
+      "attributes": [
+        {
+          "path": "id",
+          "unknown": true
+        },
+        {
+          "path": "tags",
+          "after": {
+            "Name": "edge"
+          }
+        },
+        {
+          "path": "vpc_id",
+          "unknown": true
+        }
+      ]
+    },
+    {
+      "member": "estates/network",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "address": "aws_subnet.new",
+      "type": "aws_subnet",
+      "name": "new",
+      "action": "create",
+      "attributes": [
+        {
+          "path": "arn",
+          "unknown": true
+        },
+        {
+          "path": "cidr_block",
+          "after": "10.0.9.0/24"
+        },
+        {
+          "path": "id",
+          "unknown": true
+        },
+        {
+          "path": "tags",
+          "after": {
+            "Name": "new"
+          }
+        }
+      ]
+    },
+    {
+      "member": "estates/network",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "address": "aws_vpc.main",
+      "type": "aws_vpc",
+      "name": "main",
+      "action": "update",
+      "disruption": "in-place",
+      "attributes": [
+        {
+          "path": "enable_dns_support",
+          "before": true,
+          "after": false
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "members": 3,
+    "entries": 4,
+    "actions": {
+      "create": 3,
+      "update": 1,
+      "replace": 0,
+      "delete": 0,
+      "read": 0,
+      "no-op": 0,
+      "forget": 0
+    },
+    "types": {
+      "aws_route_table": {
+        "create": 1
+      },
+      "aws_security_group": {
+        "create": 1
+      },
+      "aws_subnet": {
+        "create": 1
+      },
+      "aws_vpc": {
+        "update": 1
+      }
+    },
+    "byMember": {
+      "estates/app": {
+        "create": 1
+      },
+      "estates/edge": {
+        "create": 1
+      },
+      "estates/network": {
+        "create": 1,
+        "update": 1
+      }
+    },
+    "deletes": [],
+    "replacements": [],
+    "failed": [],
+    "holes": 0
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [],
+  "prior_state": {
+    "values": {
+      "root_module": {
+        "child_modules": [
+          {
+            "address": "module.network",
+            "resources": [
+              {
+                "address": "module.network.aws_subnet.new",
+                "values": {
+                  "id": "subnet-0a1b",
+                  "arn": "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-0a1b"
+                },
+                "sensitive_values": {}
+              }
+            ]
+          },
+          {
+            "address": "module.app",
+            "resources": [
+              {
+                "address": "module.app.aws_security_group.sg",
+                "values": {
+                  "id": "sg-0c2d",
+                  "vpc_id": "vpc-0e3f"
+                },
+                "sensitive_values": {}
+              }
+            ]
+          },
+          {
+            "address": "module.edge",
+            "resources": [
+              {
+                "address": "module.edge.aws_route_table.rt",
+                "values": {
+                  "id": "rtb-0f4a",
+                  "vpc_id": "vpc-0e3f"
+                },
+                "sensitive_values": {}
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

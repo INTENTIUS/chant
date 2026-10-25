@@ -186,6 +186,6 @@ export const terraformCommands: CommandGroup = {
   description: "Terraform and OpenTofu roots: roll a module version out as one pin-bump PR per wave; write a run report from a saved plan",
   commands: [
     { name: "pin-rollout", description: "Read a pin-bump rollout's state and open the next wave's PR when it is due", handler: runPinRolloutVerb },
-    { name: "report", description: "Write a terragucci.report/v1 run report and its index row from show -json of a composed plan", handler: runReportVerb },
+    { name: "report", description: "Write a terragucci.report/v1 run report, its change set and its index row from show -json of a composed plan", handler: runReportVerb },
   ],
 };
