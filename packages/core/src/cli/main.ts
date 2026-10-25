@@ -624,6 +624,12 @@ Workspace (level 1, #2524):
                         choudoufu runs live-check and the adoption report;
                         choudoufu or other to chant runs chant import), staged
                         in a worktree and gated on the patch digest like upgrade
+  workspace promote --all [--state-dir <dir>] [--state <member>=<tfstate>]... [--canary <member>] [--wave-size <n>] [--dry-run] [--json]
+                        Adopt every terraform member into choudoufu in waves:
+                        the canary first (default the first member), then
+                        --wave-size roots a wave (default 5), one gate per
+                        root bound to its live-import report digest. A wave
+                        that does not land stops the later ones (#4461)
   workspace ls [dir]    List the declaration's members and example groups.
                         A member that can't be read is listed with a reason
                         code and still exits 0. --at <rev> reads a commit's

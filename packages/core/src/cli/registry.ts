@@ -91,6 +91,14 @@ export interface ParsedArgs {
   parserOption?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
+  /** Every `--state` value in order (#4461): `chant workspace promote --all --state <member>=<path>`, repeatable. */
+  statePaths?: string[];
+  /** `chant workspace promote --all --state-dir <dir>` (#4461): a member's state is `<dir>/<member>.tfstate`. */
+  stateDir?: string;
+  /** `chant workspace promote --all --wave-size <n>` (#4461): roots per wave after the canary. */
+  waveSize?: number;
+  /** `chant workspace promote --all` (#4461): promote every terraform member, in waves. */
+  all?: boolean;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
   selectAddress?: string;
   /** `chant carve emit --live-name <logicalId>` — CFN logical ID for live adoption */

@@ -99,7 +99,37 @@ chant workspace promote <member> [--state <terraform.tfstate>] [--lexicon <lexic
 
 A failing check stops before any gate is recorded, and the tree is unchanged. A member of kind `chant` has no rung above it.
 
-On the `terraform` to `choudoufu` rung the `live-import` report is printed, and with `--json` it is the `adoption` field: `{estate, state, entries, claimed, total}`, one entry per resource instance with its `address`, `type`, `status` (`VERIFIED`, `DRIFTED`, `MISSING`, `UNTAGGABLE` or `UNADMITTED_TYPE`), `liveId`, choudoufu's `detail`, and `claimed`, true for the two statuses `-approve` stamps. `--dry-run --json` is the read-only way to ask what adopting a root would claim: it stages and checks, records no gate, and leaves the tree as it was. Pass `--state` as an absolute path, since the staging worktree holds only what is committed.
+On the `terraform` to `choudoufu` rung the `live-import` report is printed, and with `--json` it is the `adoption` field: `{estate, state, entries, claimed, total}`, one entry per resource instance with its `address`, `type`, `status` (`VERIFIED`, `DRIFTED`, `MISSING`, `UNTAGGABLE` or `UNADMITTED_TYPE`), `liveId`, choudoufu's `detail`, and `claimed`, true for the two statuses `-approve` stamps. `--dry-run --json` is the read-only way to ask what adopting a root would claim: it stages and checks, records no gate, and leaves the tree as it was. A relative `--state` is resolved against the current directory before the staging runs.
+
+The digest the gate binds covers the member, the rung, what the staging wrote outside the declaration and, for `choudoufu`, the digest of the `live-import` report, so the approval is for the report the approver read. A report that changes before the apply (a resource drifted, one went missing) is a new digest and waits for a new approval. On apply, the kind change is written into the declaration in the tree, so one member's uncommitted promotion does not block another's.
+
+### Promoting a workspace in waves
+
+```
+chant workspace promote --all [--state-dir <dir>] [--state <member>=<terraform.tfstate>]... [--canary <member>] [--wave-size <n>] [--dry-run] [--json]
+```
+
+`--all` adopts every `terraform` member into `choudoufu` ([#4461](https://github.com/INTENTIUS/chant/issues/4461)). Without `--all`, the members named by `--state <member>=<path>` are the set. Each root goes through the single-member promotion above, so each has its own gate, `workspace-promote/<member>`, bound to its own `live-import` report digest, and is approved with `chant approve workspace-promote <member>`.
+
+The canary, `--canary <member>` or else the first member in declaration order, is wave 1. The rest follow in declaration order, `--wave-size` roots a wave (default 5). Roots run one after another within a wave. A root that fails leaves the other roots and the tree as they were, and the rest of its wave is still tried. The next wave runs only when every root of the wave before it landed: applied, already promoted, or staged cleanly under `--dry-run`. So a failed canary stops every other wave, and a gated root holds the waves after it until it is approved and the command is run again.
+
+Each root's state is `--state <member>=<path>`, else `<state-dir>/<member>.tfstate`, else `terraform.tfstate` in the member's directory. `live-import` reads a local tfstate of format version 4. A root with a remote backend and no local state is refused by name with the `terraform state pull` to run first, and a state of another version is refused too. A state kept in the member's directory has to be ignored by git, since promote refuses a member with uncommitted changes. Only resources of admitted types are stamped: the report lists the rest under `UNADMITTED_TYPE` and the summary counts them per root.
+
+The command ends with one line per root naming its wave and outcome:
+
+| Outcome | Meaning |
+|---|---|
+| `applied` | approved, the kind is now `choudoufu`, and `live-import -approve` stamped the markers |
+| `already-promoted` | the member is already `choudoufu`; nothing was staged |
+| `gated` | a pending gate waits on this root's digest |
+| `dry-run` | staged and checked; no gate recorded |
+| `checks-failed` | `live-check` or the `live-import` report failed in staging |
+| `refused` | the state is not a local version 4 tfstate |
+| `stamp-failed` | the kind was written but `live-import -approve` failed; it is safe to re-run by hand |
+| `failed` | anything else that stopped the root, such as uncommitted changes in its directory |
+| `not-run` | an earlier wave did not land |
+
+The exit code is 1 when any root failed, else 3 when any root is gated, else 0. Re-running over a workspace that has landed reports every root `already-promoted`, stages nothing and exits 0. `--json` prints the summary as one document with the waves and each root's digest, report digest and counts.
 
 ## Ownership stacks
 
