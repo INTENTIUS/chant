@@ -72,6 +72,11 @@ export {
   type RoundCoverage,
   type ShapeReplacement,
 } from "./covered-round";
+export {
+  checkPlanShapeConformance,
+  planShapeProblems,
+  type PlanShapeConformanceConfig,
+} from "./plan-shape-conformance";
 export { createCapabilityRegistry, STARTER_VERB_FAMILIES } from "./registry";
 export {
   type CapabilityPlugin,
