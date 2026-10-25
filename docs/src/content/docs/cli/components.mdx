@@ -441,7 +441,7 @@ The record carries nothing when it was written for another pull request, gate or
 
 #### Groups planned and applied as one
 
-A capability that declares `planGroup` and `runGroup` can plan several components of a pull request in one call and apply them in one call ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)). A value one member creates then reaches the members that read it inside the same apply, with no round. Components join a group when each deploys in one step of that capability and reads join them. A component of another kind on a dependency path between two of them splits the group. The rest of the change plans wave by wave as above, under the same approval.
+[Composed runs](/chant/guide/composed-runs/) says how each lexicon takes part, as a group, a preview or a hole. A capability that declares `planGroup` and `runGroup` can plan several components of a pull request in one call and apply them in one call ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)). A value one member creates then reaches the members that read it inside the same apply, with no round. Components join a group when each deploys in one step of that capability and reads join them. A component of another kind on a dependency path between two of them splits the group. The rest of the change plans wave by wave as above, under the same approval.
 
 The report says what grouped (`packages/core/src/components/pr-run.ts`, `prReport`):
 

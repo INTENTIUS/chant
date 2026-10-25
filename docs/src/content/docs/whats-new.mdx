@@ -7,6 +7,10 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Composed runs
+
+A pull request that changes a component and one that reads its output is planned as one run: one digest, one approval, one apply, each new value passed on. `terraform-apply` plans and applies the components as a group with `terraform.compose`, `cfn-deploy` previews a waiting stack with stand-ins and checks the real change set against the preview, and `arm-deploy`, `gcp-apply` and `kubectl-apply` give a waiting component a hole that is re-checked on apply and needs its own approval. Nothing is atomic: what applied stays applied, and the report says which members did. [Composed runs](/chant/guide/composed-runs/) has the table and the rules, and the epic is [#4419](https://github.com/INTENTIUS/chant/issues/4419).
+
 ## The fountain lexicon follows Managoat's removals
 
 Managoat removed the team and persistent sandboxes, with the team's schedules and webhooks, and the fountain lexicon is now generated from Managoat v0.29.0, whose spec has none of them. [managoat/managoat#2793](https://github.com/managoat/managoat/issues/2793) tracks the change across both projects. A [steward](/chant/lexicons/fountain/steward/) is an `acp` Agent. `chant run <op> --on fountain` sends its runs to one long-lived conversation resumed by `channel_id`, and that conversation's sandbox keeps its disk across park and wake. Its cadences fire from a clock outside Managoat. `Teammate`, `Schedule` and `Webhook` are deprecated stubs that fail the build with FTN025, which names the replacement, and a profile's `team` is now `steward`. [Coming from Teammate, Schedule and Webhook](/chant/tutorials/fountain-steward/#coming-from-teammate-schedule-and-webhook) maps each removed construct to what replaced it.
