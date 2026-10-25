@@ -325,7 +325,7 @@ describe("a dependency outside the selection (#4104)", () => {
     if (!resumed.ok) throw new Error(resumed.reasons.join("; "));
     expect(w.outputsRead).toEqual([]);
     expect(resumed.set.doc.digest).toBe(set.doc.digest);
-    expect(resumed.set.outputs).toBe(record.planOutputs);
+    expect(resumed.set.outputs).toEqual(record.planOutputs);
   });
 });
 

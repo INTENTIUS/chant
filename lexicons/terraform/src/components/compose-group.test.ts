@@ -3,7 +3,7 @@
  * -> c, where b reads a's `id` and c reads b's through `stackOutput()` in
  * `vars`. The run is a fake `ComposedRunner`, so nothing here runs a binary;
  * the composition is real, read from roots written to a temporary project.
- * The real binary is `pr-loop.tofu.test.ts`.
+ * The real binary is `pr-loop-compose.tofu.e2e.test.ts`.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -477,7 +477,8 @@ describe("helpers (#4447)", () => {
   });
 
   test("groupComposition composes exactly the members, upstreams first", () => {
-    const c = groupComposition({ projectRoot: project(), terraform: terraform(true) }, members(false), {});
+    const c = groupComposition({ projectRoot: project(), terraform: terraform(true) }, members(false), {})!;
+    expect(groupComposition({ projectRoot: project(), terraform: terraform(false) }, members(false), {})).toBeUndefined();
     expect(c.fallback).toBeUndefined();
     expect(c.order).toEqual(["a", "b", "c"]);
     expect(c.reads.get("b")).toEqual([{ via: "vars", upstream: "a", variable: "a_id", output: "id" }]);

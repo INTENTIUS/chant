@@ -57,7 +57,7 @@ import type { DriverComponent } from "@intentius/chant/components/driver";
 import { wiringReferencesAt } from "@intentius/chant/components/driver";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { declaredTargetCloudIdentity, type TargetCloudIdentityLookup } from "@intentius/chant/workspace/ci-cloud-identity";
-import { COMPOSE_STEP_KIND, composeOff, compositionFor, identityKey, rootHclReads, type Composition } from "../compose";
+import { COMPOSE_STEP_KIND, composeOff, compositionIfEnabled, identityKey, rootHclReads, type Composition } from "../compose";
 import type { TerraformConfig } from "../config";
 import { terraformBinary, terraformOutputs } from "../op/activities/terraform";
 import { runBinary, type BinaryExec } from "../state/exec";
@@ -157,7 +157,7 @@ function defaultRunner(o: GroupRunnerOptions, log?: (line: string) => void): Com
   });
 }
 
-/** The members as components, each deploying its one step, for `compositionFor`. */
+/** The members as components, each deploying its one step, for `compositionIfEnabled`. */
 export function memberComponents(members: readonly GroupMember<StepInput>[]): DriverComponent[] {
   return members.map((m) => ({
     name: m.component,
@@ -188,15 +188,18 @@ export function memberIdentity(
   return (member) => keys.get(member);
 }
 
-/** The composition of exactly the group's members (core has already formed the group). */
+/**
+ * The composition of exactly the group's members (core has already formed the
+ * group), or undefined when `terraform.compose` is not enabled.
+ */
 export function groupComposition(
   project: ComposeProject,
   members: readonly GroupMember<StepInput>[],
   env: NodeJS.ProcessEnv,
   identity?: (member: string) => string | undefined,
-): Composition {
+): Composition | undefined {
   const targets = Object.fromEntries(members.flatMap((m) => (m.ctx.targets?.length ? [[m.component, m.ctx.targets] as const] : [])));
-  return compositionFor({
+  return compositionIfEnabled({
     projectRoot: project.projectRoot,
     terraform: project.terraform,
     components: memberComponents(members),
@@ -359,7 +362,9 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   /** The composition of `members` as `groupFallback` judges it, with each member's identity. */
   async function compositionOf(ctx: GroupContext, p: ComposeProject, members: readonly GroupMember<StepInput>[]): Promise<Composition> {
     const lookup = await identities(p.projectRoot, ctx.env);
-    return groupComposition(p, members, envOf(), memberIdentity(p, members, lookup));
+    const c = groupComposition(p, members, envOf(), memberIdentity(p, members, lookup));
+    if (!c) throw new Error(composeOff(p.terraform)?.reason ?? "`terraform.compose` is not enabled");
+    return c;
   }
 
   /** The composition the group plans as, or throws when it does not compose. */

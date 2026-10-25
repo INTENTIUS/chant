@@ -130,8 +130,8 @@ describe("a groupFallback that drops members (#4419 ruling 1)", () => {
     expect(found.groups).toEqual([{ capability: "fake-group", components: ["a", "b"] }]);
     expect(found.fallbacks).toEqual([{ component: "c", capability: "fake-group", kind: "lock", reason: "c holds no lock" }]);
     expect(plan.fallbacks).toEqual(found.fallbacks);
-    // c depends on the group, so it plans in the wave after it.
-    expect(plan.waves).toEqual([["a", "b"], ["c"], []]);
+    // c keeps its wave after the group; b's emptied wave stays so wave numbers keep their meaning (ws-107).
+    expect(plan.waves).toEqual([["a", "b"], [], ["c"]]);
   });
 
   test("a dropped member on a dependency path between the rest splits them, each as split", async () => {
