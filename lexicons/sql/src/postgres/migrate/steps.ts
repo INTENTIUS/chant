@@ -223,16 +223,18 @@ export function dualWriteBody(o: Pick<MigrationObservation, "names" | "expressio
   const src = `NEW.${col(n.source)}`;
   if (n.change === "rename" && o.reverse !== undefined) {
     // A rename with a type change: a writer of the old name has `expression` applied, a writer of the new name `reverse`, each over the row as it is.
+    // An update that sets the new column to what `expression` already gives (the backfill's own UPDATE) leaves the old one alone, so a
+    // lossy `reverse` never rewrites a row nobody wrote by its new name, and the verification still sees the old values to check it against.
     const fwd = `(SELECT ${o.expression} FROM (SELECT NEW.*) AS ${col(n.table)})`;
     const back = `(SELECT ${o.reverse} FROM (SELECT NEW.*) AS ${col(n.table)})`;
     return [
       `BEGIN`,
       `  IF TG_OP = 'INSERT' THEN`,
       `    IF ${nw} IS NULL THEN ${nw} := ${fwd}; ELSE ${src} := ${back}; END IF;`,
-      `  ELSIF ${nw} IS DISTINCT FROM OLD.${col(n.newColumn)} THEN`,
-      `    ${src} := ${back};`,
-      `  ELSE`,
+      `  ELSIF ${nw} IS NOT DISTINCT FROM OLD.${col(n.newColumn)} THEN`,
       `    ${nw} := ${fwd};`,
+      `  ELSIF ${nw} IS DISTINCT FROM ${fwd} THEN`,
+      `    ${src} := ${back};`,
       `  END IF;`,
       `  RETURN NEW;`,
       `END`,
@@ -487,7 +489,11 @@ function sequenceStatements(o: MigrationObservation, state: SequenceState | unde
   if (!seq || n.change !== (at === "switch" ? "type" : "rename")) return { before: [], after: [] };
   if (at === "contract" && seq.kind === "serial") {
     // The sequence goes to the new column before the old one is dropped, which would drop it; the default is set after.
-    return { before: [`ALTER SEQUENCE ${seq.ident} OWNED BY ${t}.${col(n.column)}`], after: [] };
+    // A sequence with the name Postgres gives a serial's (<table>_<old>_seq) then takes the new column's, which the declared
+    // `serial` names: under the old name the column reads back as an integer with a sequence of its own, and the plan drops it.
+    const renamed = `${n.table}_${n.column}_seq`;
+    const rename = seq.name === `${n.table}_${n.source}_seq` && Buffer.byteLength(renamed) <= 63 ? [`ALTER SEQUENCE ${seq.ident} RENAME TO ${col(renamed)}`] : [];
+    return { before: [`ALTER SEQUENCE ${seq.ident} OWNED BY ${t}.${col(n.column)}`], after: rename };
   }
   if (seq.kind === "identity") {
     if (!state) throw new Error(`${n.key}: the ${at} moves the identity of ${n.source} and needs its sequence's state, read under the switch's lock`);

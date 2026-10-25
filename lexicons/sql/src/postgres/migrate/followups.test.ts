@@ -52,8 +52,17 @@ describe("a rename with a type change", () => {
   test("a writer of the old name has the expression applied, a writer of the new name the reverse", () => {
     const body = dualWriteBody(o);
     expect(body).toContain("IF NEW.age IS NULL THEN NEW.age := (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users); ELSE NEW.age_text := (SELECT CAST(age AS text) FROM (SELECT NEW.*) AS users); END IF;");
-    expect(body).toContain("ELSIF NEW.age IS DISTINCT FROM OLD.age THEN\n    NEW.age_text := (SELECT CAST(age AS text) FROM (SELECT NEW.*) AS users);");
-    expect(body).toContain("ELSE\n    NEW.age := (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users);");
+    expect(body).toContain("ELSIF NEW.age IS NOT DISTINCT FROM OLD.age THEN\n    NEW.age := (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users);");
+    expect(body).toContain(
+      "ELSIF NEW.age IS DISTINCT FROM (SELECT CAST(age_text AS integer) FROM (SELECT NEW.*) AS users) THEN\n    NEW.age_text := (SELECT CAST(age AS text) FROM (SELECT NEW.*) AS users);\n  END IF;",
+    );
+  });
+
+  test("an update that sets the new column to what the expression gives (the backfill) leaves the old column alone", () => {
+    // Were the old column rewritten from reverse here, a lossy pair ('007' -> 7 -> '7') would change rows nobody wrote, and hide itself from the verification.
+    const body = dualWriteBody(o);
+    expect(body).not.toMatch(/ELSIF NEW\.age IS DISTINCT FROM OLD\.age THEN/);
+    expect(body.match(/NEW\.age_text :=/g)).toHaveLength(2);
   });
 
   test("a plain rename's body is unchanged", () => {
@@ -93,6 +102,19 @@ describe("the contract of a rename that kept its default", () => {
       "ALTER SEQUENCE app.users_seq_seq OWNED BY app.users.login",
       "ALTER TABLE app.users DROP COLUMN email",
       "ALTER TABLE app.users ALTER COLUMN login SET DEFAULT nextval('app.users_seq_seq'::regclass)",
+    ]);
+  });
+
+  test("a serial's sequence named as Postgres names it takes the new column's name, after the default is set", () => {
+    const o = observation({
+      column: { name: "login", type: "serial" },
+      old: { attnum: 2, name: "email", type: "integer", notNull: true, default: "nextval('app.users_email_seq'::regclass)", generated: false, identity: false },
+      sequence: { kind: "serial", schema: "app", name: "users_email_seq", ident: "app.users_email_seq" },
+    });
+    expect(contractStatements(o).slice(-3)).toEqual([
+      "ALTER TABLE app.users DROP COLUMN email",
+      "ALTER TABLE app.users ALTER COLUMN login SET DEFAULT nextval('app.users_email_seq'::regclass)",
+      "ALTER SEQUENCE app.users_email_seq RENAME TO users_login_seq",
     ]);
   });
 

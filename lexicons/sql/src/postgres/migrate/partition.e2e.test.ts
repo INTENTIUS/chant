@@ -79,7 +79,7 @@ describe.skipIf(!enabled)("a plain and a partial unique index on a partitioned t
 
   test("each partition's index is built and attached, and the partitioned index takes its declared name", async () => {
     await apply(writeBuild("pi-v1.json", objects("text", "amount")));
-    await admin!.query("INSERT INTO pi.events SELECT g, DATE '2025-01-01' + (g % 900), (g % 90) || '.5' FROM generate_series(1, 1500) g");
+    await admin!.query("INSERT INTO pi.events SELECT g, DATE '2025-01-01' + (g % 800), (g % 90) || '.5' FROM generate_series(1, 1500) g");
     writeBuild("pi-v2.json", objects("numeric(10,2)", "amount"));
 
     const ledger = new ApprovingLedger();
