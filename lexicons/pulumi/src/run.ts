@@ -13,7 +13,23 @@
  * - {@link refreshPulumiMember}: `pulumi refresh --preview-only --json
  *   --target <urn>` once per resource, as drift records
  *   (`./drift-record.ts`). The URNs default to the export's resources. With
- *   no export, one untargeted refresh.
+ *   no export, one untargeted refresh. A member on plunge reads each
+ *   resource with `plunge drift --resource <urn> --stream` instead, the one
+ *   plunge command {@link runAllowedPlunge} lets through.
+ *
+ * ## Which members run on plunge
+ *
+ * {@link pulumiMemberEngine} decides, first rule that answers:
+ *
+ * 1. the member's config says `engine: "pulumi"` or `"plunge"`;
+ * 2. `Pulumi.yaml` names a backend whose URL starts with `plunge`
+ *    (`backend: { url: "plunge+file:///..." }`, `plunge://...`), plunge's
+ *    backend scheme;
+ * 3. otherwise `pulumi`.
+ *
+ * Only `Pulumi.yaml` is read, never `PULUMI_BACKEND_URL` or the CLI's
+ * login state, so the answer is the same on every machine that checks the
+ * member out.
  *
  * The runner is injectable, so the tests run no binary.
  */
@@ -27,6 +43,8 @@ import type { UnobservedReason } from "@intentius/chant/observation";
 import { isPulumiNodeless } from "@intentius/chant/pulumi-urn";
 import { pulumiExportResources, pulumiPreviewPart } from "./change-set";
 import { pulumiRefreshArgs, pulumiRefreshDocumentRecords, pulumiRefreshDriftRecords, type PulumiRefreshRead } from "./drift-record";
+import { parseYAML } from "@intentius/chant/yaml";
+import { plungeDriftArgs, plungeDriftStreamRecords, type PlungeDriftRead } from "./drift-record";
 import { PULUMI_EXPORT_FILE } from "./workspace-member";
 
 const execFileAsync = promisify(execFile);
@@ -45,6 +63,35 @@ export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: s
   const allowed = PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a)) && (args[0] !== "refresh" || args.includes("--preview-only"));
   if (!allowed) throw new Error(`chant runs only pulumi preview and pulumi refresh --preview-only for a Pulumi member, not pulumi ${args.join(" ")}`);
   return run(args, { cwd });
+}
+
+/** The one plunge command chant runs: a single resource's drift stream, which writes nothing. */
+export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
+  const allowed = args[0] === "drift" && args.includes("--resource") && args.includes("--stream");
+  if (!allowed) throw new Error(`chant runs only plunge drift --resource <urn> --stream for a Pulumi member, not plunge ${args.join(" ")}`);
+  return run(args, { cwd });
+}
+
+export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024 });
+
+/** What runs a Pulumi member's stack. */
+export type PulumiMemberEngine = "pulumi" | "plunge";
+
+/** Which engine runs the member, and the rule that said so (see the module comment). */
+export function pulumiMemberEngine(dir: string, configured?: PulumiMemberEngine): { engine: PulumiMemberEngine; because: string } {
+  if (configured) return { engine: configured, because: `the member's config says engine: ${configured}` };
+  const file = join(dir, "Pulumi.yaml");
+  if (existsSync(file)) {
+    try {
+      const doc = parseYAML(readFileSync(file, "utf-8"));
+      const backend = doc.backend as { url?: unknown } | undefined;
+      const url = typeof backend?.url === "string" ? backend.url : undefined;
+      if (url && /^plunge[+:]/.test(url)) return { engine: "plunge", because: `Pulumi.yaml names the plunge backend ${url}` };
+    } catch {
+      // An unreadable Pulumi.yaml fails the member file check; here it just names no backend.
+    }
+  }
+  return { engine: "pulumi", because: "nothing names plunge" };
 }
 
 /** The argv chant runs for a member's preview, after `pulumi`. */
@@ -137,7 +184,11 @@ export interface RefreshPulumiMemberOptions extends DriftAdapterBase {
   stack?: string;
   /** The URNs to read. Default: the checked-in export's resources, providers and the stack left out. */
   urns?: readonly string[];
+  /** The member's configured engine; see {@link pulumiMemberEngine}. */
+  engine?: PulumiMemberEngine;
   run?: PulumiRunner;
+  /** Runs plunge, for a member on plunge. */
+  plunge?: PulumiRunner;
 }
 
 function unobservedFor(f: RunFailure): { reason: UnobservedReason; detail: string } {
@@ -172,6 +223,23 @@ export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Pro
     ...(opts.version !== undefined ? { version: opts.version } : {}),
     ...(opts.stack ? { stack: opts.stack } : {}),
   };
+
+  if (pulumiMemberEngine(opts.dir, opts.engine).engine === "plunge") {
+    // plunge drift reads one resource at a time, so it needs the URNs.
+    if (urns === undefined) throw new Error(`member ${opts.member} runs on plunge, whose drift reads one resource at a time, and has no ${PULUMI_EXPORT_FILE} to take the URNs from`);
+    const plunge = opts.plunge ?? defaultPlungeRunner;
+    const reads: PlungeDriftRead[] = [];
+    for (const urn of urns) {
+      try {
+        const { stdout } = await runAllowedPlunge(plunge, plungeDriftArgs({ urn, stack: opts.stack, member: opts.member }), opts.dir);
+        reads.push({ urn, stream: stdout });
+      } catch (err) {
+        const f = failureOf(err);
+        reads.push(f.stdout && !f.missingBinary ? { urn, stream: f.stdout } : { urn, failed: f.missingBinary ? { reason: "read-failed", detail: "the plunge binary was not found on PATH" } : unobservedFor(f) });
+      }
+    }
+    return plungeDriftStreamRecords({ ...base, reads });
+  }
 
   if (urns === undefined) {
     try {

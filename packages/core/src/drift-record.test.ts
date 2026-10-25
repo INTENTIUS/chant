@@ -278,6 +278,14 @@ describe("mapping onto a graph", () => {
     expect(at("urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets").node).toBe("site/aws:s3/bucket:Bucket::assets");
     expect(at("urn:pulumi:dev::site::pulumi:providers:aws::default").node).toBeNull();
   });
+
+  test("puts a plunge URN on the same node, by the pulumi rule (#4453)", () => {
+    const doc = driftDocument([
+      rec({ engine: "plunge", member: "site", address: "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets", read: "refresh", evidence: { tool: "plunge" } }),
+    ]);
+    const mapped = mapDriftToGraph(doc, { member: null, at: null, ids: ["site/aws:s3/bucket:Bucket::assets"] });
+    expect(mapped.records[0].node).toBe("site/aws:s3/bucket:Bucket::assets");
+  });
 });
 
 describe("the stream", () => {
