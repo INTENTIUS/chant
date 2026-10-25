@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./example-harness": "./src/example-harness.ts"
+    "./example-harness": "./src/example-harness.ts",
+    "./pr-loop-harness": "./src/pr-loop-harness.ts"
   }
 }
