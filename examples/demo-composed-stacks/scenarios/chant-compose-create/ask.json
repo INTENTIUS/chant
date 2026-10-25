@@ -4,13 +4,14 @@
     {
       "prompt": "Add a second subnet to network; put a worker in it.",
       "action": null,
-      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it. edge allows the new range. Plan all three stacks next.",
+      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it. edge allows the new range and records the worker's subnet. Plan all three stacks next.",
       "light": null,
       "paths": false,
       "ghost": false,
       "diff": [
         "+ network  subnetB  10.0.2.0/24",
         "+ app      workerInterface",
+        "+ edge     workerSubnet",
         "~ edge     allowlist  + 10.0.2.0/24"
       ]
     },
@@ -38,7 +39,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "One plan across 3 stacks. Only one value is unknown: subnet b's id, which app's worker needs.",
+      "reply": "One plan across 3 stacks. One value is unknown: subnet b's id, which app's worker and edge read.",
       "light": [
         "network/subnetB"
       ],
@@ -48,7 +49,7 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "One resource reads it: app's worker. Edge allows the subnet's range, but it never reads the id.",
+      "reply": "Two stacks read it. app puts its worker in it, and edge records the subnet the worker landed in. Both show it as known after apply.",
       "light": [
         "network/subnetB"
       ],
@@ -58,7 +59,7 @@
       "tips": [
         {
           "title": "Known after apply",
-          "body": "CloudFormation gives a new subnet its id only when it creates it. chant previews app's change set with a stand-in for that id and marks the worker's SubnetId as known after apply. Before it runs the real change set, it checks it against the preview.",
+          "body": "CloudFormation gives a new subnet its id only when it creates it. chant previews app's change set with a stand-in for that id and marks the worker's SubnetId and edge's parameter as known after apply. Before it runs the real change set, it checks it against the preview.",
           "link": {
             "label": "How a round is covered",
             "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
@@ -126,7 +127,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
+      "reply": "Done. Subnet b was created, and app's worker and edge got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false

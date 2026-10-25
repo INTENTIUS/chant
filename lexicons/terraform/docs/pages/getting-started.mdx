@@ -49,6 +49,20 @@ rather than inside it. Each root also takes an optional `workspace`, a
 `binary` is `"terraform"` or `"tofu"`. The two are wire-compatible for
 everything this lexicon does, so the choice is recorded rather than guessed.
 
+The other keys of the namespace:
+
+| Key | Default | What it sets |
+|---|---|---|
+| `callModuleType` | `"local"` | How far a root's parse follows its `module` calls: `local`, `none`, or `all` (refused). |
+| `moduleRoot` | the project root | The directory local module sources may resolve within. |
+| `observe` | `"state"` | How deep each root is observed: `state` or `plan`. |
+| `compose` | off | Composed runs: `{ enabled: boolean, max?: number }`, `max` default 10. |
+
+With `compose.enabled`, the `terraform-apply` components a pull request
+reaches that read each other plan as one plan and apply as one apply. A
+group with a member that cannot compose plans root by root as before, and
+the report says why. See [In a composed run](/chant/lexicons/terraform/ops/#in-a-composed-run).
+
 ## Build
 
 ```bash

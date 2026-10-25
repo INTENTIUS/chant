@@ -358,7 +358,7 @@ The gate is `pr-apply` under the op `pr-<n>`, so one pull request's approval nev
 
 A member that reads an output of another member is planned against what that member's plan says it will expose, and lists a value the plan cannot say under `unknownInputs` ([#3999](https://github.com/INTENTIUS/chant/issues/3999)). Before a member applies, `pr-apply` checks that each output it reads stands at the value its plan read. When one does not, it holds the member back and plans it again once the rest applied, by a round. The first approval covers the round when its plan touches only the components previewed, within each only the logical ids and actions previewed, and differs only in the inputs listed under `unknownInputs`; the report's round then carries `covered` with the approved digest and the inputs filled in, and nothing more is asked. Any other round is decided at the gate `<gate>-round-<n>`, with the reason in `notCovered`. Without an approval of that plan the report ends `waiting` and `pr-apply` exits 3. `pr-apply --resume` and `--wave-gate` ask the same question of a plan made after something applied ([#4422](https://github.com/INTENTIUS/chant/issues/4422)), so equivalent inputs give the same answer on a round, a resume and a wave. A member whose first plan was a hole with no preview has nothing the approval saw, so no later plan of it is covered. [A dependent of a member the change plans](/chant/guide/pull-request-ci/#a-dependent-of-a-member-the-change-plans) has the details and an example of a covered and an uncovered round.
 
-A failure part way leaves what applied, applied. `pr-apply` does not undo members that finished when a later one fails: the report marks each member `applied`, `failed` or `blocked`, and `--resume` carries on from there. The run is not all-or-nothing.
+A failure part way leaves what applied, applied. `pr-apply` does not undo members that finished when a later one fails: the report marks each member `applied`, `failed` or `blocked`, and `not-started` in a group. `--resume` carries on from there. The run is not all-or-nothing.
 
 Before it decides the gate, `pr-apply` stores the change set it planned on `chant/lifecycle` under its digest, each entry mapped onto the member's graph ([#4022](https://github.com/INTENTIUS/chant/issues/4022)). [`chant change-set show <digest>`](/chant/cli/change-set/#change-set-show) prints it after the job is gone, before an approval and after one. The mapping runs the member's `chant graph --format ir` once per new digest. Source that fails `chant lint` has no graph to read. The change set is then stored with no nodes, and `pr-apply` prints a warning.
 
@@ -438,6 +438,34 @@ The re-run skips the components that applied and plans the rest against the outp
 Progress carries the same way it does for `fan-out --resume`: a component the earlier attempt applied is skipped only when its input digest is the same now. One whose input moved prints `changed since the earlier attempt`, is planned again and has to be covered by the approved change set like any member left over. The approval stays bound to the change-set digest.
 
 The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when it keeps no input digests, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own. A record whose change set does not hash to the digest it names carries nothing either.
+
+#### Groups planned and applied as one
+
+[Composed runs](/chant/guide/composed-runs/) says how each lexicon takes part, as a group, a preview or a hole. A capability that declares `planGroup` and `runGroup` can plan several components of a pull request in one call and apply them in one call ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)). A value one member creates then reaches the members that read it inside the same apply, with no round. Components join a group when each deploys in one step of that capability and reads join them. A component of another kind on a dependency path between two of them splits the group. The rest of the change plans wave by wave as above, under the same approval.
+
+The report says what grouped (`packages/core/src/components/pr-run.ts`, `prReport`):
+
+- `groups` lists each group: `capability`, `components` in apply order, the `wave` it ran in, the group `digest` folded into each member's `planDigest`, and `reads`, the values the group's apply computes.
+- `fallbacks` lists each component that could have grouped and did not, with the capability's `kind` and `reason`, or core's `steps`, `split` or `cycle`.
+- A member in a group carries `group`, its index in `groups`, and after an apply `groupOutcome`: `applied`, `partial`, `failed`, `not-started` or `no-changes`.
+
+For `a`, `b` reading `a.id` and `c` reading `b.id`, a plan report holds:
+
+```json
+"groups": [
+  {
+    "capability": "terraform-apply",
+    "components": ["a", "b", "c"],
+    "wave": 1,
+    "digest": "jcs1-sha256:5d0e...",
+    "reads": [{ "component": "b", "ref": "a.id" }, { "component": "c", "ref": "b.id" }]
+  }
+]
+```
+
+and the note says `` `a`, `b` and `c` plan and apply as one (`terraform-apply`, wave 1); `b` reads `a.id` and `c` reads `b.id`, known when the group applies.`` A set the capability refused is printed as `` Planned one by one, not as a group: `a`, `b` (`backend`): <reason>.`` A fallback of kind `off`, the capability's own setting, is in the report and not in the note.
+
+When the group's apply stops part way, what applied stays applied. If `b` fails, the report lists `b` as `failed`. Member `a` is `applied` and `c` is `not-started`. The note says `` `a` applied and stays applied; `b` failed; `c` did not start``. `pr-apply --resume` counts `applied` and `no-changes` members as applied. It plans the `partial`, `failed` and `not-started` members again, grouped again over what is left: `b` and `c` plan as a smaller group, or one by one when they no longer join or the capability refuses. They plan against the outputs `a` applied with. The smaller group's digest differs from the approved one, so each member is checked by its entries and shape, as any resumed member is. Covered, they apply under the first approval. Not covered, the record does not carry and the new plan waits at the pull request's gate for an approval of its own.
 
 #### A gate per wave on merge
 
@@ -552,6 +580,8 @@ An environment whose change set is empty passes its gates without an approval. A
 #### Planned outputs and rounds
 
 A merge deploys nothing ([#4168](https://github.com/INTENTIUS/chant/issues/4168)), so the rule a pull request's apply follows for a dependent ([#3999](https://github.com/INTENTIUS/chant/issues/3999)) is the promote's. When a promote under a release deploys a component and one that reads its output through `stackOutput()`, the release's change set plans the dependent against the value the upstream's plan says it will expose, not the value it has now. A reference the upstream's plan can't say is printed before the run as known only once it applies. A dependency the promote does not deploy is read as it stands, as before.
+
+A promote plans each component on its own, even one a pull request's run plans in a group ([Groups planned and applied as one](#groups-planned-and-applied-as-one)).
 
 The promote then runs a wave at a time. Before a wave runs, a component whose plan read an upstream value that the run left as another value is planned again against what stands. If the approved change set already covers the new plan (the check a pull request's resume makes), nothing more is needed. If not, the promote stops with exit 3 at `<gate>-round-<n>`, numbered from 2, which only an approval of the new plan's digest passes:
 

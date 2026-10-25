@@ -437,6 +437,42 @@ function wiringReferences(input: Record<string, unknown>): Array<WiringReference
 }
 
 /**
+ * Every cross-component reference in `input` with where it sits, as a JSON
+ * Pointer into `input` (ws-107), and the output it names (`publish.<field>`
+ * for an artifact). A reference made twice is listed at each place. Sorted
+ * by `ref`, then by `at`.
+ */
+export function wiringReferencesAt(input: Record<string, unknown>): Array<WiringReference & { at: string; output: string }> {
+  const found: Array<WiringReference & { at: string; output: string }> = [];
+  const pointer = (path: readonly string[]): string => path.map((p) => "/" + p.replace(/~/g, "~0").replace(/\//g, "~1")).join("");
+  const walk = (value: unknown, path: string[]): void => {
+    if (typeof value === "string") {
+      if (PRIOR_STEP_REF.test(value)) return;
+      const ref = value.match(COMPONENT_ARTIFACT_REF);
+      if (ref) {
+        const [, source, field] = ref;
+        found.push({ source, ref: `${source}.publish.${field}`, publish: true, at: pointer(path), output: `publish.${field}` });
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, [...path, String(i)]));
+      return;
+    }
+    if (value && typeof value === "object") {
+      if ("stackOutput" in value) {
+        const { stack, name } = (value as { stackOutput: { stack: string; name: string } }).stackOutput;
+        found.push({ source: stack, ref: `${stack}.${name}`, publish: name === "publish" || name.startsWith("publish."), at: pointer(path), output: name });
+        return;
+      }
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) walk(v, [...path, k]);
+    }
+  };
+  walk(input, []);
+  return found.sort((a, b) => a.ref.localeCompare(b.ref) || a.at.localeCompare(b.at));
+}
+
+/**
  * The cross-component references in `input` that resolve to another value
  * against `now` than against `read`, sorted (#3999). A pull request's apply
  * holds back a member whose plan read `read` when its upstream applied and

@@ -8,9 +8,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { contract } from "../../../packages/core/src/workspace/__fixtures__/contract-repo";
 import { describe, expect, test } from "vitest";
+import { verifyChangeSetDigest } from "@intentius/chant/change-set";
 import { addToIndex, atmosOutputReads, atmosStackReads, dirStore, estateOfDir, httpStore, moduleEstates, runFactsFromEnv, slicePlan, terraformReport, topModule, writeReport } from "./report";
 import { parseReportArgs } from "./commands";
+import { generateReportFixture } from "./__fixtures__/report/generate";
+import { readdirSync } from "node:fs";
 
 const rc = (address: string, module: string, type: string, name: string, actions: string[], change: Record<string, unknown>) => ({
   address, module_address: module, mode: "managed", type, name, provider_name: "registry.terraform.io/hashicorp/aws", change: { actions, ...change },
@@ -287,7 +291,7 @@ describe("writing", () => {
     const store = dirStore(dir);
     const plan = terraformReport({ ...base, stage: "tf-plan" });
     const apply = terraformReport({ ...base, stage: "tf-apply", applied: AFTER, finished: "2026-10-24T10:05:00Z" });
-    expect(await writeReport(store, plan)).toEqual([`${RUN.project}/2026/10/abc123/tf-plan/report.json`, `${RUN.project}/index.json`, "index.json"]);
+    expect(await writeReport(store, plan)).toEqual([`${RUN.project}/2026/10/abc123/tf-plan/report.json`, `${RUN.project}/2026/10/abc123/tf-plan/change-set.json`, `${RUN.project}/index.json`, "index.json"]);
     await writeReport(store, apply);
     await writeReport(store, apply);
     const project = JSON.parse(readFileSync(join(dir, RUN.project, "index.json"), "utf8"));
@@ -319,6 +323,83 @@ describe("writing", () => {
     expect(seen[0]).toBe("PUT http://floci:4566/demo-reports/demo/forgejo%3A3000/admin/demo-terragrunt-choudoufu/2026/10/abc123/tf-plan/report.json");
     expect(seen).toContain("GET http://floci:4566/demo-reports/demo/index.json");
     expect(JSON.parse(objects.get("http://floci:4566/demo-reports/demo/index.json")!).reports).toHaveLength(1);
+  });
+});
+
+const SCHEMA_PATH = join(import.meta.dirname, "..", "..", "..", "packages", "core", "src", "workspace", "change-set.schema.json");
+const { validate: validateChangeSet } = contract(JSON.parse(readFileSync(SCHEMA_PATH, "utf8")));
+const FIXTURE_DIR = join(import.meta.dirname, "__fixtures__", "report");
+
+/** The change set must validate against chant's schema and be the document the report's digest names. */
+function expectChangeSet(doc: any, report: any): void {
+  expect(validateChangeSet(doc), JSON.stringify(validateChangeSet.errors, null, 2)).toBe(true);
+  expect(verifyChangeSetDigest(doc)).toBe(true);
+  expect(report.change_set).toBe(doc.digest);
+}
+
+describe("change-set.json beside the report", () => {
+  const apply = { ...base, stage: "tf-apply" as const, applied: AFTER, finished: "2026-10-24T10:05:00Z" };
+
+  test.each([["tf-plan", { ...base, stage: "tf-plan" as const }], ["tf-apply", apply]])("%s: the document validates and its digest is the report's", (_stage, input) => {
+    const r = terraformReport(input);
+    expectChangeSet(r.changeSet, r.report);
+  });
+
+  test("--out writes it next to report.json for both stages", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tf-report-cs-"));
+    const store = dirStore(dir);
+    for (const input of [{ ...base, stage: "tf-plan" as const }, apply]) {
+      const r = terraformReport(input);
+      await writeReport(store, r);
+      const at = join(dir, RUN.project, r.path);
+      expect(readdirSync(at).sort()).toEqual(["change-set.json", "report.json"]);
+      expectChangeSet(JSON.parse(readFileSync(join(at, "change-set.json"), "utf8")), JSON.parse(readFileSync(join(at, "report.json"), "utf8")));
+    }
+  });
+
+  test("--to puts it next to report.json for both stages", async () => {
+    const objects = new Map<string, string>();
+    const fake = (async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        objects.set(url, String(init.body));
+        return new Response("", { status: 200 });
+      }
+      return objects.has(url) ? new Response(objects.get(url)!) : new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+    const store = httpStore("http://floci:4566/demo-reports/demo", fake);
+    for (const input of [{ ...base, stage: "tf-plan" as const }, apply]) {
+      const r = terraformReport(input);
+      await writeReport(store, r);
+      const at = `http://floci:4566/demo-reports/demo/${encodeURIComponent("forgejo:3000").replace(/%3A/g, "%3A")}/admin/demo-terragrunt-choudoufu/${r.path}`;
+      expectChangeSet(JSON.parse(objects.get(`${at}/change-set.json`)!), JSON.parse(objects.get(`${at}/report.json`)!));
+    }
+  });
+});
+
+describe("the report fixture behold renders", () => {
+  const read = (name: string): any => JSON.parse(readFileSync(join(FIXTURE_DIR, name), "utf8"));
+
+  test("is what the generator writes now; regenerate with `npx tsx lexicons/terraform/src/__fixtures__/report/generate.ts`", async () => {
+    const files = await generateReportFixture();
+    expect(Object.keys(files).sort()).toEqual(["tf-apply/change-set.json", "tf-apply/report.json", "tf-plan/change-set.json", "tf-plan/report.json"]);
+    for (const [name, body] of Object.entries(files)) expect(readFileSync(join(FIXTURE_DIR, name), "utf8"), `${name} is stale`).toBe(body);
+  });
+
+  test("both stages validate, and each digest is its report's", () => {
+    for (const stage of ["tf-plan", "tf-apply"]) expectChangeSet(read(`${stage}/change-set.json`), read(`${stage}/report.json`));
+  });
+
+  test("three members, two composed reads", () => {
+    const plan = read("tf-plan/report.json");
+    expect(read("tf-plan/change-set.json").members.map((m: any) => m.member)).toEqual(["estates/app", "estates/edge", "estates/network"]);
+    const reads = plan.roots.flatMap((r: any) => r.reads ?? []);
+    expect(reads.filter((r: any) => r.composed === true).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("an attribute unknown at plan has its value after the apply", () => {
+    const attr = (stage: string) => read(`${stage}/report.json`).roots.find((r: any) => r.path === "estates/network").changes.find((c: any) => c.address === "aws_subnet.new").attributes.find((a: any) => a.path === "id");
+    expect(attr("tf-plan")).toEqual({ path: "id", unknown: true });
+    expect(attr("tf-apply")).toEqual({ path: "id", after: "subnet-0a1b" });
   });
 });
 

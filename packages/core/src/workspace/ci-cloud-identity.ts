@@ -6,8 +6,9 @@
  * A directory outside a workspace reads nothing.
  */
 
+import { relative, resolve, sep } from "node:path";
 import { findWorkspaceRoot } from "../project-root";
-import { resolveCloudIdentity, resolvePrEnvCloudIdentity, type CloudTradeSpec, type PipelineCloudIdentity } from "../ci-identity";
+import { resolveCloudIdentity, resolvePrEnvCloudIdentity, resolveTargetCloudIdentity, type CloudTradeSpec, type PipelineCloudIdentity, type TargetNames } from "../ci-identity";
 
 /** The plan and apply identities of the pipeline for `env` and `member`, or undefined. */
 export async function declaredCloudIdentity(cwd: string, env: string, member?: string): Promise<PipelineCloudIdentity | undefined> {
@@ -29,6 +30,35 @@ export async function declaredPrEnvCloudIdentity(cwd: string, member?: string): 
   const [{ readDeclaration, WorkspaceReadError }, { workingTree }] = await Promise.all([import("./declaration"), import("./tree")]);
   try {
     return resolvePrEnvCloudIdentity(readDeclaration(workingTree(found.dir)).ci?.identity?.cloud, member);
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    throw Object.assign(new Error(`${err.describe()} [${err.code}]`), { code: err.code });
+  }
+}
+
+/** A target-to-identity lookup, as {@link declaredTargetCloudIdentity} returns it. */
+export type TargetCloudIdentityLookup = (target: TargetNames) => PipelineCloudIdentity | undefined;
+
+/**
+ * The plan and apply identities of each target (#4332,
+ * `resolveTargetCloudIdentity`) for `env` and the member whose directory
+ * holds `cwd`, as one lookup that reads the declaration once. Undefined
+ * outside a workspace. A target is one name or several (a Terraform root's
+ * key and its directory): a rule covers it when any name matches, and the
+ * first rule that does wins. A lexicon that runs several targets in one process,
+ * such as `terraform-apply`'s group (#4447), compares them with it.
+ */
+export async function declaredTargetCloudIdentity(cwd: string, env: string): Promise<TargetCloudIdentityLookup | undefined> {
+  const found = findWorkspaceRoot(cwd);
+  if (!found) return undefined;
+  const [{ readDeclaration, WorkspaceReadError }, { workingTree }, { memberHolding }] = await Promise.all([import("./declaration"), import("./tree"), import("./record-assets")]);
+  try {
+    const declaration = readDeclaration(workingTree(found.dir));
+    const decl = declaration.ci?.identity?.cloud;
+    const rel = relative(found.dir, resolve(cwd));
+    const posix = sep === "/" ? rel : rel.split(sep).join("/");
+    const member = rel.startsWith("..") ? null : memberHolding(posix === "" ? "." : posix, declaration.members ?? []);
+    return (target) => resolveTargetCloudIdentity(decl, env, member ?? undefined, target);
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     throw Object.assign(new Error(`${err.describe()} [${err.code}]`), { code: err.code });

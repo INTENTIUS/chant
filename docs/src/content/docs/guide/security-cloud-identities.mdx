@@ -55,7 +55,7 @@ A workspace has one pull-request pipeline per member and environment. Each membe
 
 ## Give targets inside a member their own identities
 
-A member can hold several targets, such as Terraform roots or the runs of an Op wave. A rule with `targets` covers only the targets its globs match ([#4332](https://github.com/INTENTIUS/chant/issues/4332)). In a target glob `*` matches within one `/` segment, `**` across segments and `?` one character, as the terraform lexicon reads unit globs (`targetGlobMatch`, `ci-identity.ts:158`). A target takes the first rule that covers its environment, its member and the target (`ruleFor`, `ci-identity.ts:217`). Put the rules with `targets` before the member's own rule, since a rule with no `targets` covers every target.
+A member can hold several targets, such as Terraform roots or the runs of an Op wave. A rule with `targets` covers only the targets its globs match ([#4332](https://github.com/INTENTIUS/chant/issues/4332)). In a target glob `*` matches within one `/` segment, `**` across segments and `?` one character, as the terraform lexicon reads unit globs (`targetGlobMatch`, `ci-identity.ts:158`). A target takes the first rule that covers its environment, its member and the target (`ruleFor`, `ci-identity.ts:217`). Put the rules with `targets` before the member's own rule, since a rule with no `targets` covers every target. A Terraform root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either name matches wins.
 
 ```json
 "aws": {

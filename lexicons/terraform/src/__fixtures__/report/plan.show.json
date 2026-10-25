@@ -1,0 +1,200 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "module.network.aws_vpc.main",
+      "module_address": "module.network",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "cidr_block": "10.0.0.0/16",
+          "enable_dns_support": true
+        },
+        "after": {
+          "cidr_block": "10.0.0.0/16",
+          "enable_dns_support": false
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.network.aws_subnet.new",
+      "module_address": "module.network",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "new",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "cidr_block": "10.0.9.0/24",
+          "tags": {
+            "Name": "new"
+          }
+        },
+        "after_unknown": {
+          "id": true,
+          "arn": true
+        },
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.app.aws_security_group.sg",
+      "module_address": "module.app",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "sg",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "name": "demo-sg"
+        },
+        "after_unknown": {
+          "id": true,
+          "vpc_id": true
+        },
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.edge.aws_route_table.rt",
+      "module_address": "module.edge",
+      "mode": "managed",
+      "type": "aws_route_table",
+      "name": "rt",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "tags": {
+            "Name": "edge"
+          }
+        },
+        "after_unknown": {
+          "id": true,
+          "vpc_id": true
+        },
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "network": {
+          "module": {
+            "outputs": {
+              "subnet_id": {
+                "expression": {
+                  "references": [
+                    "aws_subnet.new.id",
+                    "aws_subnet.new"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "app": {
+          "module": {
+            "resources": [
+              {
+                "mode": "data",
+                "type": "terraform_estate_outputs",
+                "name": "net",
+                "expressions": {
+                  "estate": {
+                    "constant_value": "demo-network"
+                  },
+                  "names": {
+                    "constant_value": [
+                      "subnet_id"
+                    ]
+                  }
+                }
+              },
+              {
+                "mode": "managed",
+                "type": "aws_security_group",
+                "name": "sg",
+                "expressions": {
+                  "vpc_id": {
+                    "references": [
+                      "data.terraform_estate_outputs.net.values.subnet_id",
+                      "data.terraform_estate_outputs.net.values",
+                      "data.terraform_estate_outputs.net"
+                    ]
+                  }
+                }
+              }
+            ],
+            "outputs": {
+              "sg": {
+                "expression": {
+                  "references": [
+                    "aws_security_group.sg.id",
+                    "aws_security_group.sg"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "edge": {
+          "module": {
+            "resources": [
+              {
+                "mode": "data",
+                "type": "terraform_estate_outputs",
+                "name": "app",
+                "expressions": {
+                  "estate": {
+                    "constant_value": "demo-app"
+                  },
+                  "names": {
+                    "constant_value": [
+                      "sg"
+                    ]
+                  }
+                }
+              },
+              {
+                "mode": "managed",
+                "type": "aws_route_table",
+                "name": "rt",
+                "expressions": {
+                  "vpc_id": {
+                    "references": [
+                      "data.terraform_estate_outputs.app.values.sg",
+                      "data.terraform_estate_outputs.app.values",
+                      "data.terraform_estate_outputs.app"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

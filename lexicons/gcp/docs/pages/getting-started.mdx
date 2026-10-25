@@ -83,6 +83,10 @@ export const reader = new IAMPolicyMember({
 });
 ```
 
+## In a composed run
+
+A `gcp-apply` step is a hole in a composed run ([ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md)). When its input reads another component's output that has no value yet, the plan reads nothing and the member's hole says `inputs from <component>; re-checked on apply`. After the upstream applies, that round needs its own approval. The step takes no values into its resources, so an upstream value can only name the manifest, project or endpoint.
+
 ## Next steps
 
 - [Config Connector Concepts](/chant/lexicons/gcp/config-connector-concepts/) — resource structure, references, project binding

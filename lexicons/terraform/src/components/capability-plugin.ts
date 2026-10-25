@@ -42,6 +42,15 @@
  * naming the roots it waits on and no artifact, and the run that applies it
  * plans it once their outputs are known.
  *
+ * ## The plan's shape (#4436)
+ *
+ * `plan` also answers `shape`, `terraformPlanShape` over `show -json`: each
+ * resource the plan changes with its action, type, replacement, the
+ * attributes that differ and the ones unknown after apply. Core's
+ * `coveredRound` compares it with the shape of a later plan of the root. A
+ * root waiting on outputs not known yet has no plan, so no shape, and stays
+ * uncovered.
+ *
  * ## choudoufu roots in a gated wave (#3459)
  *
  * A live choudoufu root that `live-plan-set` can plan as chant would (no
@@ -63,6 +72,14 @@
  *
  * chant's waves stay the order. Each root is its own one-root set, so
  * choudoufu's wave over it is always wave 1.
+ *
+ * ## Composed runs (#4447)
+ *
+ * With `terraform.compose.enabled`, a group core forms of `terraform-apply`
+ * components that read each other (ws-107) plans as one plan and applies as
+ * one apply of a composed root, and a member's read of another member's new
+ * output is not a hole: the apply passes the value on. `groupReads`,
+ * `groupFallback`, `planGroup` and `runGroup` are in `./compose-group.ts`.
  *
  * ## A choudoufu member's outputs, for another member (#4455)
  *
@@ -92,6 +109,8 @@ import {
   terraformOutputs,
   terraformPlan,
 } from "../op/activities/terraform";
+import { terraformPlanShape } from "../plan-shape";
+import { terraformComposeGroup } from "./compose-group";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -302,7 +321,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
         planDigest: set.planDigest,
         choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
       };
-      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json) };
+      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
     }
     const { changeSet, json, ...planned } = await planRoot(input, targets);
     return {
@@ -311,6 +330,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       artifact: planned,
       ...(changeSet ? { changeSet } : {}),
       outputs: terraformPlannedOutputs(json),
+      shape: terraformPlanShape(json, input.root),
       ...(targets ? { targets } : {}),
     };
   },
@@ -321,6 +341,12 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     await terraformInit(rootArgs(input));
     return terraformOutputs(rootArgs(input));
   },
+  // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
+  // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
+  groupReads: (ctx, members) => terraformComposeGroup.groupReads(ctx, members),
+  groupFallback: (ctx, members) => terraformComposeGroup.groupFallback(ctx, members),
+  planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
+  runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
     if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);

@@ -1,9 +1,9 @@
 /**
- * edge: the ranges it lets through, and the upstream it routes to, which is app
- * on the port app listens on.
+ * edge: the ranges it lets through, the upstream it routes to, which is app
+ * on the port app listens on, and the subnet app's worker is in.
  */
 import { Sub, Ref, SsmParameter } from "@intentius/chant-lexicon-aws";
-import { edgeListenerPort } from "./params";
+import { edgeListenerPort, edgeWorkerSubnetId } from "./params";
 
 export const allowlist = new SsmParameter({
   Name: "/chant-compose/allowlist",
@@ -15,4 +15,10 @@ export const upstream = new SsmParameter({
   Name: "/chant-compose/upstream",
   Type: "String",
   Value: Sub`http://app:${Ref(edgeListenerPort)}`,
+});
+
+export const workerSubnet = new SsmParameter({
+  Name: "/chant-compose/worker-subnet",
+  Type: "String",
+  Value: Ref(edgeWorkerSubnetId),
 });

@@ -489,3 +489,46 @@ describe("new migration files in the plan note (#4407)", () => {
     expect(note).toContain("- not read: bad # heading `x`");
   });
 });
+
+describe("groups and fallbacks in the report and the note (#4446)", () => {
+  const groupDigest = `jcs1-sha256:${hex(7)}`;
+  const grouped: PrReport = {
+    ...planReport,
+    groups: [{ capability: "terraform-apply", components: ["a", "app"], wave: 1, digest: groupDigest, reads: [{ component: "app", ref: "a.id" }] }],
+    fallbacks: [{ component: "net", capability: "terraform-apply", kind: "backend", reason: "net keeps its state in another backend" }],
+    members: planReport.members.map((m) => ({ ...m, group: 0 })),
+  };
+
+  test("a report with a group and a fallback validates, and one without them still does", () => {
+    expect(schema.required).not.toContain("groups");
+    expect(schema.required).not.toContain("fallbacks");
+    expectValid(grouped);
+    expectValid(planReport);
+    expectValid({ ...grouped, groups: [{ ...grouped.groups![0]!, digest: null, error: "cannot compose" }] });
+  });
+
+  test("the note names the group and the reads its apply computes, and why a component fell back", () => {
+    const note = renderPrNote(grouped);
+    expect(note).toContain("`a` and `app` plan and apply as one (`terraform-apply`, wave 1); `app` reads `a.id`, known when the group applies.");
+    expect(note).toContain("Planned one by one, not as a group: `net` (`backend`): net keeps its state in another backend.");
+    expect(renderPrNote({ ...grouped, fallbacks: [{ ...grouped.fallbacks![0]!, kind: "off" }] })).not.toContain("not as a group");
+  });
+
+  test("an apply that stopped part way validates with each member's group outcome, and the note says what stays applied", () => {
+    const stopped: PrReport = {
+      ...grouped,
+      stage: "apply",
+      status: "failed",
+      approval: { status: "approved", approvedBy: ["github:alice"] },
+      members: [
+        { ...grouped.members[0]!, status: "applied", groupOutcome: "applied" },
+        { ...grouped.members[1]!, status: "failed", groupOutcome: "partial", error: "app: quota exceeded" },
+      ],
+    };
+    expectValid(stopped);
+    expectValid({ ...stopped, members: [stopped.members[0]!, { ...stopped.members[1]!, status: "not-started", groupOutcome: "not-started" }] });
+    const note = renderPrNote(stopped);
+    expect(note).toContain("The group's apply stopped part way: `a` applied and stays applied; `app` applied in part, and what applied stays. Nothing that applied is undone.");
+    expect(note).toContain("`pr-apply --resume` plans `app` again");
+  });
+});
