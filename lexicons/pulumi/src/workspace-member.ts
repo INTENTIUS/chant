@@ -41,6 +41,8 @@ export interface PulumiMemberConfig {
   dir: string;
   /** Names the entities (`<label>/...`): the member's name. */
   label?: string;
+  /** What runs the stack, when the config says; see `./run.ts`'s `pulumiMemberEngine`. The graph read ignores it. */
+  engine?: "pulumi" | "plunge";
 }
 
 /** What the read found, carried on the graph's `meta.pulumiMember`. */

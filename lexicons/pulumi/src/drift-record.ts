@@ -36,12 +36,27 @@
  * documented `--json` shape, not recorded from a real run, and the shape
  * still wants checking against one.
  *
+ * ## A member on plunge
+ *
+ * A Pulumi member whose stack runs on plunge reads drift with `plunge drift
+ * --resource <urn> --stream`, which prints chant's own drift-record v1
+ * NDJSON (engine `plunge`, read `refresh`, the URN as `address`, `node`
+ * null, a settle line with plunge's `reads`). {@link plungeDriftStreamRecords}
+ * passes each stream through chant's decoder (`decodeDriftLines`,
+ * `foldDriftLines`), keeps the records for the URN asked about, and fills
+ * `node` by the URN rule, which `placeDriftRecord` applies to plunge as to
+ * pulumi. Which members run on plunge is `./run.ts`'s
+ * `pulumiMemberEngine`. The fixtures in `testdata/plunge-drift` are
+ * hand-written to the layout plunge's P-L5 prints, not recorded from a run.
+ *
  * Imports chant's `drift-record` and `pulumi-urn` subpaths and `./values`,
  * never the lexicon's entry point, so it bundles small (#3421).
  */
 
 import {
+  decodeDriftLines,
   driftRecord,
+  foldDriftLines,
   placeDriftRecord,
   type DriftAdapterBase,
   type DriftAttribute,
@@ -222,4 +237,78 @@ export function pulumiRefreshDocumentRecords(input: PulumiRefreshDocumentInput):
     byUrn.set(s.urn!, [...(byUrn.get(s.urn!) ?? []), s]);
   }
   return [...byUrn].map(([urn, list]) => recordFor(input, urn, list, false)).sort((a, b) => byString(a.address, b.address));
+}
+
+// ── a member on plunge ─────────────────────────────────────────────────────────
+
+/** The argv chant runs for one resource's drift read on plunge, after `plunge`. */
+export function plungeDriftArgs(opts: { urn: string; stack?: string; member?: string }): string[] {
+  return ["drift", "--resource", opts.urn, "--stream", ...(opts.stack ? ["--stack", opts.stack] : []), ...(opts.member ? ["--member", opts.member] : [])];
+}
+
+/** One `plunge drift --resource <urn> --stream` read: the URN asked for, and its NDJSON or why there is none. */
+export interface PlungeDriftRead {
+  urn: string;
+  /** The stream plunge printed. */
+  stream?: string;
+  failed?: { reason: UnobservedReason; detail?: string };
+}
+
+export interface PlungeDriftInput extends DriftAdapterBase {
+  reads: readonly PlungeDriftRead[];
+  stack?: string;
+}
+
+/**
+ * One record per plunge read, from its stream decoded by chant's own
+ * decoder. The stream's record for the URN keeps plunge's status,
+ * attributes and evidence; its `member` becomes this member and its `node`
+ * the URN rule's. A stream that does not decode, names another engine, or
+ * reports nothing for the URN gives a not-observed record. Sorted by address.
+ */
+export function plungeDriftStreamRecords(input: PlungeDriftInput): DriftRecord[] {
+  const out: DriftRecord[] = [];
+  for (const read of input.reads) {
+    const evidence: DriftEvidence = {
+      tool: "plunge",
+      ...(input.version ? { version: input.version } : {}),
+      command: `plunge ${plungeDriftArgs({ urn: read.urn, stack: input.stack, member: input.member }).join(" ")}`,
+    };
+    const base = {
+      member: input.member,
+      engine: "plunge" as const,
+      address: read.urn,
+      ...(parsePulumiUrn(read.urn) ? { resourceType: parsePulumiUrn(read.urn)!.type } : {}),
+      ...placeDriftRecord(input, "plunge", read.urn),
+      observedAt: input.observedAt,
+      read: "refresh" as const,
+      ...(input.fellBackFrom !== undefined ? { fellBackFrom: input.fellBackFrom } : {}),
+    };
+    const unobserved = (reason: UnobservedReason, detail: string) =>
+      driftRecord({ ...base, status: "not-observed", unobserved: { reason, detail, queried: read.urn }, evidence });
+    if (read.failed) {
+      out.push(unobserved(read.failed.reason, read.failed.detail ?? "plunge drift failed"));
+      continue;
+    }
+    let records: DriftRecord[];
+    try {
+      records = foldDriftLines(decodeDriftLines(read.stream ?? "")).document.records;
+    } catch (err) {
+      out.push(unobserved("read-failed", `the plunge drift stream did not decode: ${(err as Error).message}`));
+      continue;
+    }
+    const mine = records.filter((r) => r.address === read.urn);
+    if (mine.length === 0) {
+      out.push(unobserved("not-reached", "the plunge drift stream reported nothing for the URN"));
+      continue;
+    }
+    for (const { instanceOf: _i, ...r } of mine) {
+      if (r.engine !== "plunge") {
+        out.push(unobserved("read-failed", `the plunge drift stream names engine ${r.engine}, not plunge`));
+        continue;
+      }
+      out.push(driftRecord({ ...r, member: input.member, ...placeDriftRecord(input, "plunge", read.urn) }));
+    }
+  }
+  return out.sort((a, b) => byString(a.address, b.address) || byString(a.read, b.read));
 }

@@ -13,6 +13,12 @@ import type { ChantConfig } from "@intentius/chant/config";
 export const pulumiMemberConfigSchema = z.strictObject({
   dir: z.string().min(1),
   label: z.string().optional(),
+  /**
+   * What runs the member's stack (#4453): `pulumi`, or `plunge`, whose
+   * `plunge drift` reads drift in its place. Omit to take it from the
+   * backend URL in `Pulumi.yaml` (`./run.ts`, `pulumiMemberEngine`).
+   */
+  engine: z.enum(["pulumi", "plunge"]).optional(),
 });
 
 export const pulumiConfigSchema = z.strictObject({

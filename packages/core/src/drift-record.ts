@@ -81,8 +81,18 @@ export const DRIFT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/dri
 /** The document's version. */
 export const DRIFT_VERSION = "v1";
 
-/** Which engine read the resource: a change-set planner (`pulumi` among them since #4453), or plunge, which has no planner of its own yet. */
+/**
+ * Which engine read the resource: a change-set planner (`pulumi` among them
+ * since #4453), or plunge, which has no planner of its own. A plunge
+ * address is a Pulumi URN, so a plunge record is placed on the graph by the
+ * `pulumi` planner's rule ({@link driftPlanner}).
+ */
 export type DriftEngine = ChangeSetPlanner | "plunge";
+
+/** The planner whose node rule places an engine's records: plunge's URNs go by `pulumi`'s (#4453). */
+export function driftPlanner(engine: DriftEngine): ChangeSetPlanner {
+  return engine === "plunge" ? "pulumi" : engine;
+}
 
 const DRIFT_ENGINE_WITNESS: Record<DriftEngine, true> = {
   terraform: true,
@@ -230,7 +240,7 @@ export interface DriftRecord {
    * `count` or `for_each` block the instance node, `<blockNode>[0]` or
    * `<blockNode>["a"]`, and the block node otherwise. Null when the graph
    * holds none. A Pulumi URN's node is `<member>/<key>` by the URN rule
-   * (#4456); a plunge URN's is always null for now.
+   * (#4456), and a plunge URN's by the same rule (#4453).
    */
   node: string | null;
   /** On a record whose `node` is an instance node (#4454): the block node it is an instance of, the rollup. */
@@ -618,15 +628,15 @@ export function rollupDriftByBlock(records: Iterable<DriftRecord>): DriftBlockRo
  * `<blockNode>[0]` with `instanceOf` the block node, and an instance under
  * an expanded module call is on the block node. A Pulumi URN is on
  * `<member>/<key>` by the URN rule (`./pulumi-urn.ts`, #4456), through the
- * `pulumi` planner's case; a plunge URN stays null until plunge has a
- * planner of its own. A null `graph` gives every record `node: null`.
+ * `pulumi` planner's case, and so is a plunge URN ({@link driftPlanner}).
+ * A null `graph` gives every record `node: null`.
  */
 export function mapDriftToGraph(doc: DriftDocument, graph: ChangeSetGraphNodes | null): DriftDocument {
   return {
     ...doc,
     records: doc.records.map(({ instanceOf: _i, ...r }) => {
-      if (graph === null || r.engine === "plunge") return { ...r, node: null };
-      const placed = graphNodeFor({ member: r.member, planner: r.engine, address: r.address }, graph);
+      if (graph === null) return { ...r, node: null };
+      const placed = graphNodeFor({ member: r.member, planner: driftPlanner(r.engine), address: r.address }, graph);
       return { ...r, node: placed.node, ...(placed.instanceOf !== undefined ? { instanceOf: placed.instanceOf } : {}) };
     }),
   };
@@ -957,7 +967,7 @@ export interface DriftAdapterBase {
 
 /**
  * Where an adapter's record for `address` sits: `graphNodeFor` on the
- * input's graph, and null for plunge, which has no node rule yet. Exported
+ * input's graph, plunge's by the `pulumi` rule ({@link driftPlanner}). Exported
  * for the lexicons' adapters.
  */
 export function placeDriftRecord(
@@ -965,8 +975,8 @@ export function placeDriftRecord(
   engine: DriftEngine,
   address: string,
 ): { node: string | null; instanceOf?: string } {
-  if (!input.graph || engine === "plunge") return { node: null };
-  const placed = graphNodeFor({ member: input.member, planner: engine, address }, input.graph);
+  if (!input.graph) return { node: null };
+  const placed = graphNodeFor({ member: input.member, planner: driftPlanner(engine), address }, input.graph);
   return { node: placed.node, ...(placed.instanceOf !== undefined ? { instanceOf: placed.instanceOf } : {}) };
 }
 

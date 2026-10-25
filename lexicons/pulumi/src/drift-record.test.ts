@@ -14,7 +14,7 @@ import { describe, expect, test } from "vitest";
 import { driftDocument } from "@intentius/chant/drift-record";
 import { contract } from "../../../packages/core/src/workspace/__fixtures__/contract-repo";
 import schema from "../../../packages/core/src/workspace/drift.schema.json";
-import { pulumiRefreshArgs, pulumiRefreshDocumentRecords, pulumiRefreshDriftRecords } from "./drift-record";
+import { plungeDriftArgs, plungeDriftStreamRecords, pulumiRefreshArgs, pulumiRefreshDocumentRecords, pulumiRefreshDriftRecords } from "./drift-record";
 import { readPulumiMember } from "./workspace-member";
 
 const dir = join(import.meta.dirname, "testdata", "pulumi-refresh");
@@ -123,5 +123,51 @@ describe("pulumi refresh --preview-only --json to drift records (#4453)", () => 
     expect(list.map((r) => [r.address, r.status])).toEqual([[ASSETS, "drifted"]]);
     expect(list[0].evidence.command).toBe("pulumi refresh --preview-only --json");
     expect(() => pulumiRefreshDocumentRecords({ member: "site", observedAt, refresh: {} })).toThrow(/no top-level "steps"/);
+  });
+});
+
+describe("a member on plunge: plunge drift --resource <urn> --stream through chant's decoder (#4453)", () => {
+  // Hand-written to the layout plunge P-L5 prints: drift-start, one drift-record, drift-settle with plunge's reads.
+  const stream = (name: string) => readFileSync(join(import.meta.dirname, "testdata", "plunge-drift", name), "utf-8");
+
+  test("the argv: one resource, streamed", () => {
+    expect(plungeDriftArgs({ urn: ASSETS, stack: "dev", member: "site" })).toEqual(["drift", "--resource", ASSETS, "--stream", "--stack", "dev", "--member", "site"]);
+  });
+
+  test("the stream's records keep plunge's verdict and get their node from the URN rule", () => {
+    const list = plungeDriftStreamRecords({
+      member: "site",
+      observedAt,
+      graph,
+      reads: [
+        { urn: ASSETS, stream: stream("assets-drifted.ndjson") },
+        { urn: ROLE, stream: stream("role-in-sync.ndjson") },
+      ],
+    });
+    expect(list.map((r) => [r.address, r.engine, r.read, r.status, r.node])).toEqual([
+      [ROLE, "plunge", "refresh", "in-sync", "site/aws:iam/role:Role::web"],
+      [ASSETS, "plunge", "refresh", "drifted", "site/aws:s3/bucket:Bucket::assets"],
+    ]);
+    expect(list.find((r) => r.address === ASSETS)!.attributes).toEqual([
+      { path: "acl", before: "private", after: "public-read" },
+      { path: "tags.env", before: "dev", after: "prod-hotfix" },
+    ]);
+    expect(list.find((r) => r.address === ASSETS)!.evidence).toMatchObject({ tool: "plunge", engineCode: "update" });
+    expectValid(driftDocument(list));
+  });
+
+  test("a stream that settles without the URN is not-reached; one that does not decode, or a failed run, is not-observed", () => {
+    const [empty] = plungeDriftStreamRecords({ member: "site", observedAt, graph, reads: [{ urn: ROLE, stream: stream("settled-empty.ndjson") }] });
+    expect(empty).toMatchObject({ address: ROLE, engine: "plunge", status: "not-observed", unobserved: { reason: "not-reached" }, node: "site/aws:iam/role:Role::web" });
+    const [garbled, failed] = plungeDriftStreamRecords({
+      member: "site",
+      observedAt,
+      reads: [
+        { urn: ASSETS, stream: "not json\n" },
+        { urn: ROLE, failed: { reason: "read-failed", detail: "plunge: no state backend" } },
+      ],
+    });
+    expect(garbled).toMatchObject({ address: ASSETS, status: "not-observed", unobserved: { reason: "read-failed", detail: expect.stringMatching(/did not decode/) } });
+    expect(failed).toMatchObject({ address: ROLE, status: "not-observed", unobserved: { reason: "read-failed", detail: "plunge: no state backend" } });
   });
 });

@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { previewPulumiMember, pulumiPreviewArgs, refreshPulumiMember, runAllowedPulumi, type PulumiRunner } from "./run";
+import { previewPulumiMember, pulumiMemberEngine, pulumiPreviewArgs, refreshPulumiMember, runAllowedPlunge, runAllowedPulumi, type PulumiRunner } from "./run";
 
 const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
@@ -117,5 +117,38 @@ describe("refreshPulumiMember", () => {
     const records = await refreshPulumiMember({ member: "site", dir: join(testdata, "pulumi-unexported"), observedAt: "2026-10-25T12:00:00Z", run });
     expect(calls.map((c) => c.args)).toEqual([["refresh", "--preview-only", "--json"]]);
     expect(records.map((r) => r.status)).toEqual(["drifted"]);
+  });
+});
+
+describe("a member on plunge (#4453)", () => {
+  const dir = join(testdata, "plunge-member");
+
+  test("the engine: the config first, then a plunge backend URL in Pulumi.yaml, else pulumi", () => {
+    expect(pulumiMemberEngine(dir)).toEqual({ engine: "plunge", because: "Pulumi.yaml names the plunge backend plunge+file:///var/lib/plunge/site" });
+    expect(pulumiMemberEngine(dir, "pulumi").engine).toBe("pulumi");
+    expect(pulumiMemberEngine(join(testdata, "pulumi-member")).engine).toBe("pulumi");
+    expect(pulumiMemberEngine(join(testdata, "pulumi-member"), "plunge").engine).toBe("plunge");
+  });
+
+  test("only plunge drift --resource <urn> --stream reaches the plunge runner", async () => {
+    const { run, calls } = fake(() => "");
+    for (const args of [["up"], ["drift", "--resource", "x"], ["state", "delete", "x"]]) {
+      await expect(runAllowedPlunge(run, args, dir)).rejects.toThrow(/only plunge drift --resource <urn> --stream/);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("refresh reads each resource with plunge drift, never pulumi", async () => {
+    const pulumi = fake(() => failure("pulumi must not run for a plunge member", {}));
+    const plunge = fake((args) => text("plunge-drift", args[2].endsWith("::assets") ? "assets-drifted.ndjson" : "role-in-sync.ndjson"));
+    const records = await refreshPulumiMember({ member: "site", dir, stack: "dev", observedAt: "2026-10-25T12:00:00Z", run: pulumi.run, plunge: plunge.run });
+    expect(pulumi.calls).toEqual([]);
+    expect(plunge.calls.map((c) => c.args)).toEqual(
+      ["urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets", "urn:pulumi:dev::site::aws:iam/role:Role::web"].map((u) => ["drift", "--resource", u, "--stream", "--stack", "dev", "--member", "site"]),
+    );
+    expect(records.map((r) => [r.engine, r.status])).toEqual([
+      ["plunge", "in-sync"],
+      ["plunge", "drifted"],
+    ]);
   });
 });
