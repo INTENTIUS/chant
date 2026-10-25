@@ -34,6 +34,7 @@ import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSet
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
 import { moduleChanges, stripModule, topModule } from "./compose/module-address";
+import { stateResources } from "./applied-state";
 
 export { topModule } from "./compose/module-address";
 
@@ -149,7 +150,8 @@ export function slicePlan(plan: unknown, m: string | undefined): Json {
 }
 
 // ---------------------------------------------------------------------------
-// Applied values: the state after the apply gives the values the plan left unknown.
+// Applied values: the state after the apply gives the values the plan left unknown,
+// read through `./applied-state`, as the composed estate run reads them.
 // ---------------------------------------------------------------------------
 
 /** Whether a sensitivity map marks anything under it `true`. */
@@ -158,25 +160,6 @@ function marks(v: unknown): boolean {
   if (Array.isArray(v)) return v.some(marks);
   if (isObject(v)) return Object.values(v).some(marks);
   return false;
-}
-
-/** Every resource of a `show -json` state, by address. A deposed object is left out. */
-function stateResources(show: unknown): Map<string, { values: Json; sensitive: Json }> {
-  const out = new Map<string, { values: Json; sensitive: Json }>();
-  const walk = (mod: unknown): void => {
-    if (!isObject(mod)) return;
-    for (const r of Array.isArray(mod.resources) ? mod.resources : []) {
-      if (!isObject(r) || typeof r.address !== "string" || r.deposed_key !== undefined) continue;
-      out.set(r.address, { values: isObject(r.values) ? r.values : {}, sensitive: isObject(r.sensitive_values) ? r.sensitive_values : {} });
-    }
-    for (const c of Array.isArray(mod.child_modules) ? mod.child_modules : []) walk(c);
-  };
-  const root = isObject(show) ? show : {};
-  // A plan's `prior_state` is the state; a `show -json` of state has `values` itself.
-  const state = isObject(root.prior_state) ? root.prior_state : root;
-  const values = isObject(state.values) ? state.values : {};
-  walk(values.root_module);
-  return out;
 }
 
 /** Each unknown attribute given the value the state holds. One the state lacks stays unknown; a sensitive one stays `sensitive`. */

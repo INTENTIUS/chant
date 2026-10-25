@@ -31,6 +31,20 @@ export {
 export { readApplyEvents, memberApply, composedApplyOutcomes, type ApplyEvents, type MemberApply, type MemberApplyOutcome } from "./compose/apply-events";
 export { topModule, stripModule, stripChange, moduleChanges } from "./compose/module-address";
 
+// Composed runs of choudoufu estates (#4445): one plan and one apply, values read from a post-apply plan.
+export {
+  EstateRun,
+  estateVersionFallback,
+  estateOutcomes,
+  readEstateApplyText,
+  type ComposedRunner,
+  type ComposedRunPlan,
+  type ComposedRunApply,
+  type ComposedMemberOutcome,
+  type EstateRunOptions,
+} from "./compose/estate";
+export { priorStateValues, stateResources, stateOutputs, type StateResourceValues } from "./applied-state";
+
 // The plan shape of a `show -json` plan (#4436), for core's `coveredRound`.
 export { terraformPlanShape, type TerraformPlanShapeOptions } from "./plan-shape";
 
