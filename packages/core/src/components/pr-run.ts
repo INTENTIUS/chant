@@ -86,6 +86,7 @@ import {
   PR_REPORT_CONTRACT,
   PR_REPORT_SCHEMA_ID,
   type PrApproval,
+  type PrGroup,
   type PrMember,
   type PrMemberRead,
   type PrRefusal,
@@ -108,7 +109,7 @@ import { remainingFanOut, type ComponentChangeSignal, type FanOutGroup, type Fan
 import { coveredRound, type PlanShape, type RoundCoverage } from "./covered-round";
 import type { PrApplyRecord } from "./fan-out-record";
 import type { CapabilityRegistry, GroupRun, PlannedOutputs } from "./capability";
-import { groupsByComponent, narrowGroups, planComponentGroup } from "./groups";
+import { groupsByComponent, narrowGroups, planComponentGroup, regroupRemaining } from "./groups";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
 import { capabilitySteps, planWaveComponent, readDeployedOutputs, type WaveComponentPlan } from "./wave-plan";
@@ -649,6 +650,7 @@ function joinRuns(a: FanOutRunResult, b: FanOutRunResult): FanOutRunResult {
     ...(gate ? { gate } : {}),
     ...(b.held ? { held: b.held } : {}),
     ...(a.notStarted || b.notStarted ? { notStarted: [...new Set([...(a.notStarted ?? []), ...(b.notStarted ?? [])])].sort() } : {}),
+    ...(a.groupOutcomes || b.groupOutcomes ? { groupOutcomes: { ...(a.groupOutcomes ?? {}), ...(b.groupOutcomes ?? {}) } } : {}),
   };
 }
 
@@ -758,7 +760,10 @@ export async function applyPrSet(options: PrApplyOptions): Promise<PrApplyResult
     if (priorCompleted.has(m.component)) return { ...m, status: "applied" };
     const later = roundOf.get(m.component);
     const fresh = later?.set.members.find((x) => x.member === m.member);
-    const asPlanned: PrMember = later && fresh ? { ...m, planDigest: fresh.planDigest, counts: fresh.counts, round: later.round } : m;
+    const planned: PrMember = later && fresh ? { ...m, planDigest: fresh.planDigest, counts: fresh.counts, round: later.round } : m;
+    // #4446: how its part of a group's apply ended, as the capability said.
+    const groupOutcome = run.groupOutcomes?.[m.component];
+    const asPlanned: PrMember = groupOutcome ? { ...planned, groupOutcome } : planned;
     if (completed.has(m.component)) return { ...asPlanned, status: "applied" };
     if (notStarted.has(m.component)) {
       const error = errorOf(m.component);
@@ -870,6 +875,12 @@ export interface PrResumeOptions {
   record: PrApplyRecord;
   /** Components an earlier attempt applied. */
   completed: string[];
+  /**
+   * The outputs the components in `completed` left (#4446). A member left
+   * of an approved group plans against the outputs its group-mates applied
+   * with, which the group's apply computed and the approved plan did not know.
+   */
+  applied?: Record<string, Record<string, unknown>>;
 }
 
 export type PrResume =
@@ -903,20 +914,44 @@ export type PrResume =
  * is `record.digest`, and the document gives that digest. The digest binds
  * the entries, holes and side effects {@link planCoveredBy} reads (#3555),
  * so a record cannot widen what a re-planned member may do.
+ *
+ * A group that failed part way (ws-107, "Resume"; #4446) leaves its
+ * `partial`, `failed` and `not-started` members; `applied` and `no-changes`
+ * ones are in `completed`. What is left of each approved group is grouped
+ * again ({@link regroupRemaining}), so it plans as a smaller group, or one
+ * by one when the rule or the capability says so. The smaller group's
+ * digest differs from the approved one, so coverage rests on entries and
+ * shapes, as for any resumed member.
  */
 export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
   const { record } = options;
   if (record.changeSet.digest !== record.digest || !verifyChangeSetDigest(record.changeSet)) {
     return { ok: false, reasons: [`the record's change set is not the one its digest ${record.digest} names`] };
   }
-  const plan = remainingFanOut(options.plan, options.components, { completed: options.completed });
+  const plan = await regroupRemaining({
+    components: options.components,
+    plan: remainingFanOut(options.plan, options.components, { completed: options.completed }),
+    registry: options.registry,
+    env: options.env,
+    ...(options.vars ? { vars: options.vars } : {}),
+    groups: options.plan.groups,
+    ...(options.plan.fallbacks ? { fallbacks: options.plan.fallbacks } : {}),
+  });
+  // The outputs of the applied members of a group with members left: the values the group's apply computed.
+  const left = new Set(plan.order);
+  const fromGroup = Object.fromEntries(
+    (options.plan.groups ?? [])
+      .filter((g) => g.components.some((c) => left.has(c)))
+      .flatMap((g) => g.components.filter((c) => !left.has(c) && options.applied?.[c] !== undefined))
+      .map((c) => [c, options.applied![c]!]),
+  );
   const fresh = await planPrSet({
     components: options.components,
     plan,
     registry: options.registry,
     env: options.env,
     ...(options.vars ? { vars: options.vars } : {}),
-    seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs },
+    seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs, ...fromGroup },
     ...(options.targets ? { targets: options.targets } : {}),
   });
   // #4422: decided as a round decides (`coveredRound`), by the same function a wave uses.
@@ -930,7 +965,9 @@ export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
       doc: options.record.changeSet,
       members: options.record.members.map((m) => ({ ...m, status: "planned" as const })),
       plans: fresh.plans,
-      outputs: options.record.planOutputs,
+      outputs: { ...options.record.planOutputs, ...fromGroup },
+      ...(fresh.groups ? { groups: fresh.groups } : {}),
+      ...(fresh.fallbacks ? { fallbacks: fresh.fallbacks } : {}),
       failed: false,
     },
   };
@@ -1045,9 +1082,36 @@ export interface PrReportInput {
   migrations?: PrMigrationFile[];
 }
 
+/**
+ * The report's `groups` (#4446): each group the set planned, with the wave
+ * of `waves` its members sit in and the reads of group-mates its members'
+ * change-set parts name, which the group's apply computes.
+ */
+function reportGroups(set: PrPlanSet, waves: readonly string[][]): PrGroup[] {
+  const componentOf = new Map(set.members.map((m) => [m.member, m.component]));
+  return (set.groups ?? []).map((g) => {
+    const wave = waves.findIndex((w) => g.components.some((c) => w.includes(c))) + 1;
+    const reads = set.doc.members
+      .filter((m) => g.components.includes(componentOf.get(m.member) ?? m.member))
+      .flatMap((m) => (m.group?.reads ?? []).map((ref) => ({ component: componentOf.get(m.member) ?? m.member, ref })))
+      .sort((a, b) => a.component.localeCompare(b.component) || a.ref.localeCompare(b.ref));
+    return {
+      capability: g.capability,
+      components: [...g.components],
+      wave: wave > 0 ? wave : 1,
+      digest: g.digest,
+      ...(g.error !== undefined ? { error: g.error } : {}),
+      ...(reads.length > 0 ? { reads } : {}),
+    };
+  });
+}
+
 /** The report a stage writes. */
 export function prReport(input: PrReportInput): PrReport {
   const changed = new Set(input.signal.changed);
+  const groups = reportGroups(input.set, input.plan.waves);
+  const groupOf = new Map(groups.flatMap((g, i) => g.components.map((c) => [c, i] as const)));
+  const members = (input.members ?? input.set.members).map((m) => (groupOf.has(m.component) ? { ...m, group: groupOf.get(m.component)! } : m));
   return {
     $schema: PR_REPORT_SCHEMA_ID,
     contract: PR_REPORT_CONTRACT,
@@ -1078,7 +1142,9 @@ export function prReport(input: PrReportInput): PrReport {
       indeterminate: input.plan.indeterminate,
       waves: input.plan.waves,
     },
-    members: input.members ?? input.set.members,
+    ...(groups.length > 0 ? { groups } : {}),
+    ...(input.set.fallbacks?.length ? { fallbacks: input.set.fallbacks.map((f) => ({ ...f })) } : {}),
+    members,
     changeSet: input.set.doc,
   };
 }

@@ -48,6 +48,7 @@ import {
   type GroupContext,
   type GroupFallback,
   type GroupMember,
+  type GroupMemberStatus,
   type GroupRead,
   type GroupRun,
 } from "./capability";
@@ -205,6 +206,12 @@ export interface FindComponentGroupsOptions {
   registry: CapabilityRegistry;
   env: string;
   vars?: Record<string, unknown>;
+  /**
+   * Only components that share one of these groups may join (#4446): a
+   * resume forms groups again over what is left of the approved ones
+   * ({@link regroupRemaining}), never new ones.
+   */
+  within?: readonly FanOutGroup[];
 }
 
 /** What {@link findComponentGroups} found, for {@link groupFanOut}. */
@@ -297,7 +304,9 @@ export async function findComponentGroups(options: FindComponentGroupsOptions): 
   const sources = new Map(order.map((name) => [name, readSources(byName.get(name)!)]));
   const reads = (a: string, b: string): boolean => sources.get(a)!.has(b) || sources.get(b)!.has(a);
   const sameKind = (a: string, b: string): boolean => steps.get(a)?.kind === steps.get(b)?.kind;
-  const joined = (a: string, b: string): boolean => sameKind(a, b) && reads(a, b);
+  const withinOf = options.within ? groupsByComponent({ groups: [...options.within] }) : undefined;
+  const together = (a: string, b: string): boolean => !withinOf || (withinOf.get(a) !== undefined && withinOf.get(a) === withinOf.get(b));
+  const joined = (a: string, b: string): boolean => sameKind(a, b) && reads(a, b) && together(a, b);
   const fallbacks = new Map<string, FanOutGroupFallback>();
   const fallBack = (component: string, kind: string, reason: string): void => {
     if (!fallbacks.has(component)) fallbacks.set(component, { component, capability: steps.get(component)!.kind, kind, reason });
@@ -410,6 +419,38 @@ export function narrowGroups(plan: FanOutPlan, components: DriverComponent[], gr
   const byName = new Map(components.map((c) => [c.name, c]));
   if (kept.length === 0 || placeUnits(plan, byName, kept) === undefined) return plan;
   return groupFanOut(plan, components, { groups: kept, fallbacks: plan.fallbacks ?? [] });
+}
+
+/**
+ * `plan`, what a resume left of a grouped fan-out (`remainingFanOut`), with
+ * groups formed again over it (ws-107, "Resume"; #4446). Only members left
+ * of one of `groups` group again, by the same rule and the same
+ * `groupFallback`, so what is left of a group plans as a smaller group, or
+ * one by one when fewer than two are left, when they no longer join by
+ * reads, or when the capability refuses. The fallbacks are the ones this
+ * pass found, then those of `fallbacks` for components still in `plan`.
+ */
+export async function regroupRemaining(
+  options: Omit<FindComponentGroupsOptions, "within"> & { groups: readonly FanOutGroup[] | undefined; fallbacks?: readonly FanOutGroupFallback[] },
+): Promise<FanOutPlan> {
+  const inPlan = new Set(options.plan.order);
+  const left = (options.groups ?? []).map((g) => ({ ...g, components: g.components.filter((c) => inPlan.has(c)) })).filter((g) => g.components.length > 1);
+  const found: FoundComponentGroups =
+    left.length > 0
+      ? await findComponentGroups({
+          components: options.components,
+          plan: options.plan,
+          registry: options.registry,
+          env: options.env,
+          ...(options.vars ? { vars: options.vars } : {}),
+          within: left,
+        })
+      : { groups: [], fallbacks: [] };
+  const named = new Set(found.fallbacks.map((f) => f.component));
+  const fallbacks = [...found.fallbacks, ...(options.fallbacks ?? []).filter((f) => inPlan.has(f.component) && !named.has(f.component))].sort((a, b) =>
+    a.component.localeCompare(b.component),
+  );
+  return groupFanOut(options.plan, options.components, { groups: found.groups, fallbacks });
 }
 
 /** The group each component of `plan` is a member of. */
@@ -548,6 +589,12 @@ export interface ComponentGroupRunResult {
   results: DriverComponentResult[];
   /** The members whose part never began, in the group's order. */
   notStarted: string[];
+  /**
+   * How each member's part ended, as the capability said (#4446): the
+   * report's `groupOutcome`. A throw gives every member `failed`, or
+   * `not-started` for a moved plan.
+   */
+  outcomes: Record<string, GroupMemberStatus>;
 }
 
 /**
@@ -580,6 +627,7 @@ export async function runComponentGroup(options: RunComponentGroupOptions): Prom
       records: [record(name, { status: status === "failed" ? "fail" : "skipped", error, ...(planMoved ? { planMoved: true as const } : {}) })],
     })),
     notStarted: status === "not-started" ? [...group.components] : [],
+    outcomes: Object.fromEntries(group.components.map((name) => [name, status])),
   });
 
   let outcome: CapabilityGroupOutcome;
@@ -601,8 +649,10 @@ export async function runComponentGroup(options: RunComponentGroupOptions): Prom
 
   const results: DriverComponentResult[] = [];
   const notStarted: string[] = [];
+  const outcomes: Record<string, GroupMemberStatus> = {};
   for (const name of group.components) {
     const o = outcome.members[name] ?? { status: "failed" as const, error: outcome.error ?? `${group.capability} said nothing of ${name}'s part` };
+    outcomes[name] = o.status;
     if (o.status === "applied" || o.status === "no-changes") {
       if (o.outputs) accumulateComponentOutputs(options.componentOutputs, name, { [phaseOf(name)]: { outputs: o.outputs } });
       results.push({ component: name, ok: true, status: "ok", records: [record(name, { status: "ok", output: o })] });
@@ -616,5 +666,5 @@ export async function runComponentGroup(options: RunComponentGroupOptions): Prom
     const error = o.error ?? outcome.error ?? `${name}'s part of the group ${o.status === "partial" ? "applied in part" : "failed"}`;
     results.push({ component: name, ok: false, status: "fail", records: [record(name, { status: "fail", error })] });
   }
-  return { results, notStarted };
+  return { results, notStarted, outcomes };
 }

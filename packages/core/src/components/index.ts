@@ -156,6 +156,7 @@ export {
   findComponentGroups,
   groupFanOut,
   narrowGroups,
+  regroupRemaining,
   groupDigest,
   bindGroup,
   planComponentGroup,

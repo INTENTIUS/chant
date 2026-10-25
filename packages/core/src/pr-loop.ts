@@ -94,6 +94,9 @@ export const PR_REPORT_READS_FLOOR = "0.124.52";
 /** The first chant whose report can carry the `not-started` member status (ws-107, #4440). */
 export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.53";
 
+/** The first chant whose report can carry `groups`, `fallbacks`, and a member's `group` and `groupOutcome` (ws-107, #4446). */
+export const PR_REPORT_GROUPS_FLOOR = "0.124.53";
+
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
@@ -177,6 +180,38 @@ export interface PrMemberRead {
   unknown?: string[];
 }
 
+/** How a member's part of a group apply ended, as its capability said (ws-107): `PrMember.groupOutcome`. */
+export type PrGroupOutcome = "applied" | "partial" | "failed" | "not-started" | "no-changes";
+
+/** Components one capability planned and applied as one (ws-107, #4446): the report's `groups`. */
+export interface PrGroup {
+  /** The kind of the capability every member's one step names. */
+  capability: string;
+  /** The members, by component, in apply order: upstreams first. */
+  components: string[];
+  /** The 1-based wave of `selection.waves` it ran in. */
+  wave: number;
+  /** The group digest folded into each member's `planDigest`. `null` when the group failed to plan. */
+  digest: string | null;
+  /** Why the group failed to plan. Every member is then `plan-failed`. */
+  error?: string;
+  /** Each read of another member its plan did not know, which the group's apply computes, sorted. Absent when none. */
+  reads?: Array<{ component: string; ref: string }>;
+}
+
+/**
+ * A component that could have joined a group and did not (ws-107, ruling 1,
+ * #4446): the report's `fallbacks`. `kind` is core's `steps`, `split` or
+ * `cycle`, or the capability's own; `off` means the capability's setting
+ * turns grouping off, and the note does not print it.
+ */
+export interface PrGroupFallback {
+  component: string;
+  capability: string;
+  kind: string;
+  reason: string;
+}
+
 export interface PrMember {
   /** The member's name in the change set: a root, for a terraform-family step. */
   member: string;
@@ -226,6 +261,10 @@ export interface PrMember {
   held?: string;
   /** A blocked member's (#4291): the component whose failure held it, past any component blocked in between. */
   blockedBy?: string;
+  /** The index in the report's `groups` of the group it planned and applied with (#4446). Added within contract 1 by chant {@link PR_REPORT_GROUPS_FLOOR}. */
+  group?: number;
+  /** Apply stage (#4446): how its part of the group's apply ended. Absent when the group did not run. */
+  groupOutcome?: PrGroupOutcome;
 }
 
 /** A round of plans an apply made after an upstream applied (#3999), the report's `rounds`. */
@@ -489,6 +528,15 @@ export interface PrReport {
    * {@link PR_REPORT_MIGRATIONS_FLOOR}.
    */
   migrations?: PrMigrationFile[];
+  /**
+   * The groups a capability planned and applied as one (ws-107, #4446), in
+   * plan order of their first member. On a resume, what is left of a group,
+   * grouped again. Absent when none formed. Added within contract 1 by chant
+   * {@link PR_REPORT_GROUPS_FLOOR}.
+   */
+  groups?: PrGroup[];
+  /** The components that could have grouped and did not, with why (#4446), sorted. Absent when none. Since {@link PR_REPORT_GROUPS_FLOOR}. */
+  fallbacks?: PrGroupFallback[];
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
     changed: string[];
@@ -584,7 +632,8 @@ function headline(report: PrReport): string {
       return `Applied ${members}.`;
     case "failed": {
       const blocked = report.members.filter((m) => m.status === "blocked").length;
-      return `The apply failed: ${report.members.filter((m) => m.status === "failed").length} failed, ${blocked > 0 ? `${blocked} blocked, ` : ""}${report.members.filter((m) => m.status === "applied").length} applied.`;
+      const notStarted = report.members.filter((m) => m.status === "not-started").length;
+      return `The apply failed: ${report.members.filter((m) => m.status === "failed").length} failed, ${blocked > 0 ? `${blocked} blocked, ` : ""}${notStarted > 0 ? `${notStarted} not started, ` : ""}${report.members.filter((m) => m.status === "applied").length} applied.`;
     }
     case "wave-applied": {
       const applied = (report.waves ?? []).filter((w) => w.status === "applied").map((w) => w.wave);
@@ -617,6 +666,50 @@ function blockedLine(members: readonly PrMember[]): string | undefined {
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([by, names]) => `${[...names].sort().map(code).join(", ")} (blocked by ${by === "a dependency" ? by : code(by)})`);
   return `Blocked, so not applied: ${groups.join("; ")}. A failure blocks only the members that depend on it, so the rest went on.`;
+}
+
+/** `a`, `b` and `c`. */
+const listed = (items: string[]): string => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : (items[0] ?? ""));
+
+const GROUP_OUTCOME_WORDS: Record<PrGroupOutcome, string> = {
+  applied: "applied and stays applied",
+  "no-changes": "had no changes",
+  partial: "applied in part, and what applied stays",
+  failed: "failed",
+  "not-started": "did not start",
+};
+
+/**
+ * The groups and fallbacks (#4446): a line per group naming its members and
+ * the reads its apply computes, how a group that stopped part way left each
+ * member, and why the components that could have grouped did not.
+ */
+function groupLines(report: PrReport): string[] {
+  const out: string[] = [];
+  for (const g of report.groups ?? []) {
+    const reads = (g.reads ?? []).map((r) => `${code(r.component)} reads ${code(r.ref)}`);
+    out.push(
+      "",
+      `${listed(g.components.map(code))} plan and apply as one (${code(g.capability)}, wave ${g.wave})` +
+        (g.error ? `; the group failed to plan, so nothing applies: ${g.error}.` : reads.length > 0 ? `; ${listed(reads)}, known when the group applies.` : "."),
+    );
+    const outcome = new Map(report.members.filter((m) => m.groupOutcome && g.components.includes(m.component)).map((m) => [m.component, m.groupOutcome!]));
+    const left = g.components.filter((c) => outcome.has(c) && outcome.get(c) !== "applied" && outcome.get(c) !== "no-changes");
+    if (left.length === 0) continue;
+    out.push(
+      "",
+      `The group's apply stopped part way: ${g.components.filter((c) => outcome.has(c)).map((c) => `${code(c)} ${GROUP_OUTCOME_WORDS[outcome.get(c)!]}`).join("; ")}. ` +
+        `Nothing that applied is undone. \`pr-apply --resume\` plans ${listed(left.map(code))} again, as one group where they still join, and applies them under this approval when the new plans are covered.`,
+    );
+  }
+  const byWhy = new Map<string, string[]>();
+  for (const f of report.fallbacks ?? []) {
+    if (f.kind === "off") continue;
+    const why = `(${code(f.kind)}): ${f.reason}`;
+    byWhy.set(why, [...(byWhy.get(why) ?? []), code(f.component)]);
+  }
+  if (byWhy.size > 0) out.push("", `Planned one by one, not as a group: ${[...byWhy].map(([why, names]) => `${names.join(", ")} ${why}`).join("; ")}.`);
+  return out;
 }
 
 /** The policy's lines in the note (#4294): what denied or held the plan, and how a denial is overridden. */
@@ -721,6 +814,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
       const status =
         STATUS_WORDS[m.status] +
         (m.status === "blocked" && m.blockedBy ? ` by ${code(m.blockedBy)}` : "") +
+        (m.groupOutcome === "partial" ? ", applied in part" : m.groupOutcome === "no-changes" ? ", no changes" : "") +
         (m.inputsMoved?.length ? `, inputs from ${m.inputsMoved.join(", ")} moved` : "") +
         (holes.length > 0 ? `; ${holes.length > 2 ? `${holes[0]}; and ${holes.length - 1} more, listed under Holes` : holes.join("; ")}` : "");
       // A member whose plan has holes and no entries says nothing about what
@@ -735,6 +829,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   }
   const blocked = blockedLine(report.members);
   if (blocked) out.push("", blocked);
+  out.push(...groupLines(report));
   out.push(...waveLines(report, options.approver ?? "<you>"));
   // #4288: the hooks that did not pass, by name; a passed hook is a count.
   const hooks = report.hooks ?? [];
