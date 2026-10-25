@@ -117,6 +117,17 @@ export const MIN_CHOUDOUFU_VERSION = "0.15.0";
 export const MIN_CHOUDOUFU_WAVES_VERSION = "0.22.0";
 
 /**
+ * The choudoufu release a composed run of estates needs (#4445): a root with
+ * no `live` block that calls estate directories as modules, planned and
+ * applied as one walk, with a `terraform_estate_outputs` read of another
+ * estate in the run answered inside it (choudoufu#2059, first released in
+ * v0.31.0). Only the composed estate run (`compose/estate.ts`) checks it;
+ * below it the members plan wave by wave. A dev build names no release and
+ * passes, as for the other floors.
+ */
+export const MIN_CHOUDOUFU_ESTATES_VERSION = "0.31.0";
+
+/**
  * Where a choudoufu root's wave files live, relative to the project root:
  * `<root>/plan-set.json` (the set plan document chant planned and the
  * approver approved), `<root>/resume-<digest>.json` (choudoufu's resume
