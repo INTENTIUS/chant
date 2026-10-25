@@ -9,7 +9,7 @@ For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecyc
 
 ## Composed runs
 
-A pull request that changes a component and one that reads its output is planned as one run: one digest, one approval, one apply, each new value passed on. `terraform-apply` plans and applies the components as a group with `terraform.compose`, `cfn-deploy` previews a waiting stack with stand-ins and checks the real change set against the preview, and `arm-deploy`, `gcp-apply` and `kubectl-apply` give a waiting component a hole that is re-checked on apply and needs its own approval. Nothing is atomic: what applied stays applied, and the report says which members did. [Composed runs](/chant/guide/composed-runs/) has the table and the rules, and the epic is [#4419](https://github.com/INTENTIUS/chant/issues/4419).
+A pull request that changes a component and one that reads its output is planned as one run: one digest, one approval, one apply, each new value passed on. `terraform-apply` plans and applies the components as a group with `terraform.compose`, `cfn-deploy` previews a waiting stack with stand-ins and checks the real change set against the preview, and `arm-deploy`, `gcp-apply` and `kubectl-apply` give a waiting component a hole that is re-checked on apply and needs its own approval. Nothing is atomic, so what applied stays applied, and the report says which members did. [Composed runs](/chant/guide/composed-runs/) has the table and the rules, and the epic is [#4419](https://github.com/INTENTIUS/chant/issues/4419).
 
 ## The fountain lexicon follows Managoat's removals
 
