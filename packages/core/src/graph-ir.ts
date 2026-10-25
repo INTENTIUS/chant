@@ -95,6 +95,15 @@ export interface IRNode {
    * unaffected.
    */
   runtimeOwner?: string;
+  /**
+   * On an instance node of a `count` or `for_each` block (#4454): the block
+   * node's id. The node's own id is that id followed by {@link instanceKey},
+   * `aws_eip.pool[0]` under `aws_eip.pool`, and the block node stays in the
+   * graph as the rollup. Absent on every other node. See `./instance-nodes.ts`.
+   */
+  instanceOf?: string;
+  /** With {@link instanceOf}: the instance key as the engine prints it, `[0]` or `["a"]`. */
+  instanceKey?: string;
 }
 
 /**
@@ -327,6 +336,18 @@ export function entityReferences(entity: Declarable): readonly EntityReference[]
 export function entityStack(entity: Declarable): string | undefined {
   const stack = (entity as unknown as { stack?: unknown }).stack;
   return typeof stack === "string" && stack.length > 0 ? stack : undefined;
+}
+
+/**
+ * The instance keys an entity says its source expands to (#4454), as the
+ * engine prints them (`[0]`, `["a"]`), or an empty list. Duck-typed like
+ * {@link entityStack}: the terraform lexicon sets `instanceKeys` on a block
+ * whose `count` or `for_each` is a literal.
+ */
+export function entityInstanceKeys(entity: Declarable): readonly string[] {
+  const keys = (entity as unknown as { instanceKeys?: unknown }).instanceKeys;
+  if (!Array.isArray(keys)) return [];
+  return keys.filter((k): k is string => typeof k === "string" && k.startsWith("[") && k.endsWith("]"));
 }
 
 /** Grouping metadata for cluster/subgraph rendering. Maps group name -> node ids. */
@@ -983,6 +1004,53 @@ export function buildGraphIr(
 }
 
 /**
+ * Add an instance node (#4454) under each node whose entity names its
+ * instance keys ({@link entityInstanceKeys}): id `<block id><key>`, the
+ * block's kind, lexicon and source location, `instanceOf` and `instanceKey`,
+ * no attrs and no edges. Each instance joins every group its block is in, so
+ * a renderer draws it in the block's box. Pure. Returns `ir` itself when no
+ * entity has instance keys, so a graph with none prints what it did before.
+ *
+ * Called by `chant graph` and the declared half of `--live`, not by
+ * {@link buildGraphIr}, so `chant search`, which reads the base IR, still
+ * counts blocks.
+ */
+export function withInstanceNodes(ir: GraphIR, entities: ReadonlyMap<string, Declarable>): GraphIR {
+  const byId = new Map(ir.nodes.map((n) => [n.id, n]));
+  const added: IRNode[] = [];
+  const childrenOf = new Map<string, string[]>();
+  for (const [name, entity] of entities) {
+    const block = byId.get(name);
+    if (!block || block.instanceOf) continue;
+    for (const key of entityInstanceKeys(entity)) {
+      const id = `${name}${key}`;
+      if (byId.has(id)) continue;
+      const node: IRNode = { id, kind: block.kind, lexicon: block.lexicon, attrs: {}, instanceOf: name, instanceKey: key };
+      if (block.sourceLoc) node.sourceLoc = { ...block.sourceLoc };
+      if (block.compositeParent) node.compositeParent = block.compositeParent;
+      if (block.compositeInstance) node.compositeInstance = block.compositeInstance;
+      added.push(node);
+      byId.set(id, node);
+      (childrenOf.get(name) ?? childrenOf.set(name, []).get(name)!).push(id);
+    }
+  }
+  if (added.length === 0) return ir;
+  const nodes = [...ir.nodes, ...added].sort((a, b) => a.id.localeCompare(b.id));
+  const withChildren = (rec: Record<string, string[]> | undefined): Record<string, string[]> | undefined => {
+    if (!rec) return rec;
+    const out: Record<string, string[]> = {};
+    for (const [k, ids] of Object.entries(rec)) out[k] = [...ids, ...ids.flatMap((id) => childrenOf.get(id) ?? [])].sort();
+    return out;
+  };
+  const groups: IRGroups = { ...ir.groups };
+  for (const key of ["byLexicon", "byComposite", "byStack"] as const) {
+    const grown = withChildren(ir.groups[key]);
+    if (grown) groups[key] = grown;
+  }
+  return { ...ir, nodes, groups };
+}
+
+/**
  * Add what the lexicons' `graphEdges` hooks reported (#3910) to a built IR.
  *
  * A resolved reference between two nodes becomes an edge. When it lands on
@@ -1156,6 +1224,27 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
       (byStack[lexicon] ??= []).push(name);
+      // Each present instance of a `count` or `for_each` block is a node of
+      // its own under the block's (#4454), so the overlay paints it alone.
+      // The block node above is the rollup. An absent or not-observed
+      // instance is no live node: the overlay reads that off `instances`.
+      for (const inst of meta.instances ?? []) {
+        if (inst.verdict !== "present") continue;
+        const id = `${name}${inst.key}`;
+        const child: IRNode = {
+          id,
+          kind: meta.type,
+          lexicon,
+          attrs: { address: inst.address, ...(inst.status ? { status: inst.status } : {}) },
+          instanceOf: name,
+          instanceKey: inst.key,
+        };
+        if (inst.physicalId) child.physicalId = inst.physicalId;
+        if (inst.ownership === "owned" || inst.ownership === "foreign") child.ownership = inst.ownership;
+        nodes.push(child);
+        (byLexicon[lexicon] ??= []).push(id);
+        (byStack[lexicon] ??= []).push(id);
+      }
     }
   }
 
@@ -1238,6 +1327,27 @@ function tagStatus(n: IRNode, status: OverlayNodeStatus, unobserved?: Unobserved
 }
 
 /**
+ * The paint for a declared instance node (#4454) the live graph has no node
+ * for. Its block not observed: `neutral` with the block's reason, since the
+ * rollup put the whole block there. Its block live with instances read: the
+ * instance is not among them, so `accent`, pending. Its block live with no
+ * instance read at all: `neutral`, since nothing said either way. Its block
+ * absent: `accent`, like the block.
+ */
+function missingInstance(n: IRNode, live: ReadonlySet<string>, read: ReadonlySet<string>, unobserved: Record<string, UnobservedEntity>): IRNode {
+  const block = n.instanceOf!;
+  const u = unobserved[n.id] ?? unobserved[block];
+  if (u) return tagStatus(n, "neutral", u);
+  if (live.has(block) && !read.has(block)) return tagStatus(n, "neutral");
+  return tagStatus(n, "accent");
+}
+
+/** The block ids some live instance node names (#4454): the blocks whose read reported instances. */
+function blocksWithInstances(live: GraphIR): Set<string> {
+  return new Set(live.nodes.map((n) => n.instanceOf).filter((b): b is string => b !== undefined));
+}
+
+/**
  * Overlay the declared graph on the provisioned one (#780, `chant graph --live
  * --overlay`) and classify each resource, tagging a `_status` a renderer colours:
  *   - **managed** (declared + provisioned) → `good`
@@ -1256,8 +1366,13 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
   const liveIds = new Set(live.nodes.map((n) => n.id));
   const unobserved = opts?.unobserved ?? {};
 
+  const read = blocksWithInstances(live);
+
   const nodes: IRNode[] = live.nodes.map((n) => {
     const d = declaredById.get(n.id);
+    // A live instance of a declared block whose expansion the source could
+    // not count (`count = var.n`) is managed, never foreign (#4454).
+    if (!d && n.instanceOf && declaredById.has(n.instanceOf)) return tagStatus(n, "good");
     if (!d) return tagStatus(n, n.runtimeOwner ? "runtime" : "warn");
     // A managed node keeps the composite it was declared in, so `--detail 1`
     // collapses it with its siblings and rolls their status up (#4227).
@@ -1269,6 +1384,10 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
   });
   for (const n of declared.nodes) {
     if (liveIds.has(n.id)) continue;
+    if (n.instanceOf) {
+      nodes.push(missingInstance(n, liveIds, read, unobserved));
+      continue;
+    }
     const u = unobserved[n.id];
     nodes.push(u ? tagStatus(n, "neutral", u) : tagStatus(n, "accent"));
   }
@@ -1302,12 +1421,19 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
  */
 export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: OverlayOptions): GraphIR {
   const liveById = new Map(live.nodes.map((n) => [n.id, n]));
+  const liveIds = new Set(liveById.keys());
   const declaredIds = new Set(declared.nodes.map((n) => n.id));
-  const foreignIds = new Set(live.nodes.filter((n) => !declaredIds.has(n.id)).map((n) => n.id));
+  // A live instance of a declared block (#4454) the source could not count
+  // is managed: appended `good`, and never foreign.
+  const managedInstances = live.nodes.filter((n) => !declaredIds.has(n.id) && n.instanceOf !== undefined && declaredIds.has(n.instanceOf));
+  const managedInstanceIds = new Set(managedInstances.map((n) => n.id));
+  const foreignIds = new Set(live.nodes.filter((n) => !declaredIds.has(n.id) && !managedInstanceIds.has(n.id)).map((n) => n.id));
   const unobserved = opts?.unobserved ?? {};
+  const read = blocksWithInstances(live);
 
   const nodes: IRNode[] = declared.nodes.map((n) => {
     const obs = liveById.get(n.id);
+    if (!obs && n.instanceOf) return missingInstance(n, liveIds, read, unobserved);
     if (!obs) {
       const u = unobserved[n.id];
       // unobserved — declared, and nobody looked; not "pending"
@@ -1334,6 +1460,7 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
     if (!foreignIds.has(n.id)) continue;
     nodes.push(tagStatus(n, n.runtimeOwner ? "runtime" : "warn")); // runtime child or foreign
   }
+  for (const n of managedInstances) nodes.push(tagStatus(n, "good"));
   nodes.sort((a, b) => a.id.localeCompare(b.id));
 
   // Declared edges are the canvas (the cross-substrate topology). Add only the

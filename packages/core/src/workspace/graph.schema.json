@@ -548,6 +548,14 @@
         "runtimeOwner": {
           "type": "string"
         },
+        "instanceOf": {
+          "type": "string",
+          "description": "Added in contract 1 by #4454. On an instance node of a count or for_each block: the block node's id, prefixed like the ids. The instance node's id is that id followed by instanceKey (<member>/<block>[0]); the block node stays and is the rollup."
+        },
+        "instanceKey": {
+          "type": "string",
+          "description": "Added in contract 1 by #4454. With instanceOf: the instance key as the engine prints it, [0] or [\"a\"]."
+        },
         "nested": {
           "type": "string",
           "description": "For a node read through a nested workspace (#2551): the nested workspace's member it belongs to. `member` is then the outer member, and the id is `<member>/<nested>/<id>`."
