@@ -62,6 +62,7 @@ export {
   type GroupMemberStatus,
   type GroupRead,
   type GroupRun,
+  type ReportedGroupRead,
   CapabilityRegistry,
   CapabilityNotImplementedError,
 } from "./capability";

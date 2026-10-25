@@ -111,6 +111,7 @@ Three optional methods on `Capability`, beside `plan`, `run` and `outputs`:
 
 | Method | Called by | When | Returns |
 |---|---|---|---|
+| `groupReads(ctx, members)` | core's group pass | once per capability, before groups form, with every component of the change whose step it takes | `ReportedGroupRead[]`: reads core cannot see in a step (`reader`, `upstream`, `ref`, optional `output`), which then join, order and split groups like a wiring read and appear in the group's `reads` (#4447) |
 | `groupFallback(ctx, members)` | core's group pass | once per candidate group, before anything plans | a `GroupFallback` (`kind`, `reason`, and `drop` to leave out only some members), or `undefined` to take the group |
 | `planGroup(ctx, members)` | `planPrSet` | at the group's wave, in place of `plan` for each member | `CapabilityGroupPlan`: one `CapabilityPlan` per member by component, the capability's `digest`, an opaque `artifact` |
 | `runGroup(ctx, run, members)` | `applyPrSet`, through `runFanOut` | at the group's wave, in place of each member's `run` | `CapabilityGroupOutcome`: per member a `GroupMemberStatus` (`applied`, `partial`, `failed`, `not-started`, `no-changes`), its `outputs` and `error` |

@@ -299,6 +299,40 @@ function hclReads(rcs: readonly RootComponent[]): Map<string, ComposedRead[]> {
   return out;
 }
 
+/** Every component of `input` that deploys a root, its files read once. */
+function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform" | "components">): RootComponent[] {
+  const tf = input.terraform;
+  const projectRoot = resolve(input.projectRoot);
+  const rcs: RootComponent[] = [];
+  for (const c of input.components) {
+    const steps = leafSteps(c.deploy);
+    const step = steps.find((s) => s.kind === COMPOSE_STEP_KIND);
+    if (!step) continue;
+    const root = typeof step.root === "string" ? step.root : undefined;
+    const config = root !== undefined ? tf.roots[root] : undefined;
+    const rc: RootComponent = { name: c.name, step, steps: steps.length, live: false, ...(root !== undefined ? { root } : {}) };
+    if (config && step.cwd === undefined) {
+      const dir = isAbsolute(config.dir) ? config.dir : resolve(projectRoot, config.dir);
+      const rel = relPath(projectRoot, dir);
+      const live = liveEstate(dir);
+      const estate = config.estate ?? live.estate;
+      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, config.backendConfig), live: live.live, ...(estate ? { estate } : {}) });
+    }
+    rcs.push(rc);
+  }
+  return rcs;
+}
+
+/**
+ * Each component's `terraform_remote_state` and `terraform_estate_outputs`
+ * reads of another component of `input` that deploys a root, as the
+ * composition finds them (#4447): what `terraform-apply`'s `groupReads`
+ * reports to core. Components with no such read are left out.
+ */
+export function rootHclReads(input: Pick<CompositionInput, "projectRoot" | "terraform" | "components">): Map<string, ComposedRead[]> {
+  return new Map([...hclReads(rootComponents(input))].filter(([, reads]) => reads.length > 0));
+}
+
 const readKey = (r: ComposedRead): string => `${r.upstream}\0${r.via}\0${r.via === "vars" ? `${r.variable}\0${r.output}` : r.name}`;
 
 // ── the composition ───────────────────────────────────────────────────────
@@ -340,25 +374,7 @@ export function compositionFor(input: CompositionInput): Composition {
   const max = tf.compose?.max ?? DEFAULT_COMPOSE_MAX;
   const projectRoot = resolve(input.projectRoot);
   const byName = new Map(input.components.map((c) => [c.name, c]));
-
-  // Every component that deploys a root, read once.
-  const rcs: RootComponent[] = [];
-  for (const c of input.components) {
-    const steps = leafSteps(c.deploy);
-    const step = steps.find((s) => s.kind === COMPOSE_STEP_KIND);
-    if (!step) continue;
-    const root = typeof step.root === "string" ? step.root : undefined;
-    const config = root !== undefined ? tf.roots[root] : undefined;
-    const rc: RootComponent = { name: c.name, step, steps: steps.length, live: false, ...(root !== undefined ? { root } : {}) };
-    if (config && step.cwd === undefined) {
-      const dir = isAbsolute(config.dir) ? config.dir : resolve(projectRoot, config.dir);
-      const rel = relPath(projectRoot, dir);
-      const live = liveEstate(dir);
-      const estate = config.estate ?? live.estate;
-      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, config.backendConfig), live: live.live, ...(estate ? { estate } : {}) });
-    }
-    rcs.push(rc);
-  }
+  const rcs = rootComponents(input);
   const rcOf = new Map(rcs.map((r) => [r.name, r]));
   const hcl = hclReads(rcs);
   const graph = dependencyGraph(input.components, hcl);

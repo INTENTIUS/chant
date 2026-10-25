@@ -37,6 +37,7 @@ import { resolveComponentGraph, type DriverComponent } from "./driver";
 import { deployUnits } from "./deploy-units";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { layerWaves } from "../gated-waves";
+import type { ReportedGroupRead } from "./capability";
 
 /** Thrown when `changed` or `indeterminate` names a component the project does not have. */
 export class UnknownComponentError extends Error {
@@ -140,6 +141,11 @@ export interface FanOutGroup {
   capability: string;
   /** The members, upstreams first. */
   components: string[];
+  /**
+   * The reads between members the capability reported through `groupReads`
+   * (#4447), which no member's step input shows. Absent when none.
+   */
+  reads?: ReportedGroupRead[];
 }
 
 /** A component that did not join a group (ws-107): its capability's `kind`, and the fallback's `kind` and `reason`. */

@@ -4,6 +4,10 @@
  * as one plan and apply it as one apply of a composed root, so a value one
  * root creates reaches its readers inside that apply.
  *
+ * - `groupReads` reports to core each member's `terraform_remote_state` and
+ *   `terraform_estate_outputs` reads of another, as the composition finds
+ *   them, so roots wired in HCL alone form a group. Nothing while
+ *   `terraform.compose.enabled` is unset.
  * - `groupFallback` answers `off` while `terraform.compose.enabled` is unset,
  *   else builds the {@link Composition} (#4438) from the files, the config
  *   and each member's cloud identity, and answers its fallback, if any. A
@@ -46,19 +50,20 @@ import type {
   GroupMember,
   GroupMemberOutcome,
   GroupRun,
+  ReportedGroupRead,
 } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { wiringReferencesAt } from "@intentius/chant/components/driver";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { declaredTargetCloudIdentity, type TargetCloudIdentityLookup } from "@intentius/chant/workspace/ci-cloud-identity";
-import { COMPOSE_STEP_KIND, composeOff, compositionFor, identityKey, type Composition } from "../compose";
+import { COMPOSE_STEP_KIND, composeOff, compositionFor, identityKey, rootHclReads, type Composition } from "../compose";
 import type { TerraformConfig } from "../config";
 import { terraformBinary, terraformOutputs } from "../op/activities/terraform";
 import { runBinary, type BinaryExec } from "../state/exec";
 import { estateVersionFallback, EstateRun, type ComposedRunner } from "../compose/estate";
 import { ComposedRun } from "../compose/run";
-import { relPath } from "../compose/hcl";
+import { relPath, rootTexts } from "../compose/hcl";
 
 /** The step input as the group methods read it; `TerraformApplyStepInput` in ./capability-plugin.ts. */
 interface StepInput {
@@ -117,6 +122,7 @@ export interface ComposeGroupDeps {
 
 /** The group methods `terraform-apply` declares. */
 export interface ComposeGroupMethods {
+  groupReads(ctx: GroupContext, members: readonly GroupMember<StepInput>[]): Promise<ReportedGroupRead[]>;
   groupFallback(ctx: GroupContext, members: readonly GroupMember<StepInput>[]): Promise<GroupFallback | undefined>;
   planGroup(ctx: GroupContext, members: readonly GroupMember<StepInput>[]): Promise<CapabilityGroupPlan>;
   runGroup(ctx: GroupContext, run: GroupRun, members: readonly GroupMember<StepInput>[]): Promise<CapabilityGroupOutcome>;
@@ -199,6 +205,46 @@ export function groupComposition(
     targets,
     ...(identity ? { identity } : {}),
   });
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The data source and the attribute that holds its outputs, for each kind of HCL read. */
+const HCL_READ = { "remote-state": ["terraform_remote_state", "outputs"], "estate-outputs": ["terraform_estate_outputs", "values"] } as const;
+
+/** The outputs the texts read off `data.<type>.<name>.<field>`, by attribute or by index, sorted. */
+function outputsRead(texts: readonly string[], type: string, name: string, field: string): string[] {
+  const re = new RegExp(`\\bdata\\.${type}\\.${escapeRe(name)}\\.${field}(?:\\.([A-Za-z_][\\w-]*)|\\[\\s*\\\\?"([^"\\\\]+)\\\\?"\\s*\\])`, "g");
+  const out = new Set<string>();
+  for (const text of texts) for (const m of text.matchAll(re)) out.add((m[1] ?? m[2])!);
+  return [...out].sort();
+}
+
+/**
+ * The members' HCL reads of each other (#4447): each `terraform_remote_state`
+ * block whose state is another member's backend, and each
+ * `terraform_estate_outputs` block naming another member's estate, as the
+ * composition finds them. Each output the reader's code takes off the block
+ * is one read, `<upstream>.<output>` as a `stackOutput()` read is named; a
+ * block whose outputs the code does not name one by one is one read with
+ * the block's address as `ref`. Core cannot see these in the step's `vars`.
+ */
+export function hclGroupReads(project: ComposeProject, members: readonly GroupMember<StepInput>[]): ReportedGroupRead[] {
+  const reads = rootHclReads({ projectRoot: project.projectRoot, terraform: project.terraform, components: memberComponents(members) });
+  const out: ReportedGroupRead[] = [];
+  for (const [reader, rs] of reads) {
+    const m = members.find((x) => x.component === reader);
+    const dir = m ? project.terraform.roots[m.step.root as string]?.dir : undefined;
+    const texts = dir === undefined ? [] : rootTexts(isAbsolute(dir) ? dir : resolve(project.projectRoot, dir)).map((t) => t.text);
+    for (const r of rs) {
+      if (r.via === "vars") continue;
+      const [type, field] = HCL_READ[r.via];
+      const named = outputsRead(texts, type, r.name, field);
+      if (named.length === 0) out.push({ reader, upstream: r.upstream, ref: `data.${type}.${r.name}` });
+      for (const output of named) out.push({ reader, upstream: r.upstream, ref: `${r.upstream}.${output}`, output });
+    }
+  }
+  return out;
 }
 
 /**
@@ -352,6 +398,12 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   }
 
   return {
+    async groupReads(_ctx, members) {
+      const p = await project();
+      if (composeOff(p.terraform)) return [];
+      return hclGroupReads(p, members);
+    },
+
     async groupFallback(ctx, members) {
       const p = await project();
       const off = composeOff(p.terraform);

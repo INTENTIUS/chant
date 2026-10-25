@@ -380,13 +380,14 @@ describe("through core's group calls (#4447, ws-107)", () => {
   const byName = new Map([...components, d].map((c) => [c.name, c]));
   const group = { capability: "terraform-apply", components: ["a", "b", "c"] };
 
-  function registry(dir: string): CapabilityRegistry {
-    const g = composeGroup(deps(dir));
+  function registry(dir: string, compose = true): CapabilityRegistry {
+    const g = composeGroup(deps(dir, compose));
     const cap: Capability<never, unknown> = {
       kind: "terraform-apply",
       run: async () => {
         throw new Error("a group member is never run alone");
       },
+      groupReads: g.groupReads as never,
       groupFallback: g.groupFallback as never,
       planGroup: g.planGroup as never,
       runGroup: g.runGroup as never,
@@ -402,6 +403,30 @@ describe("through core's group calls (#4447, ws-107)", () => {
     const found = await findComponentGroups({ components: all, plan, registry: registry(dir), env: "test" });
     expect(found.groups).toEqual([{ capability: "terraform-apply", components: ["a", "b"] }]);
     expect(found.fallbacks).toEqual([{ component: "c", capability: "terraform-apply", kind: "path", reason: expect.stringContaining("`c` uses `path.root` or `path.cwd`") }]);
+  });
+
+  describe("roots wired only through terraform_remote_state (#4447)", () => {
+    const REMOTE_B =
+      'data "terraform_remote_state" "net" {\n  backend = "local"\n  config = {\n    path = "../a/terraform.tfstate"\n  }\n}\n\nresource "terraform_data" "x" {\n  input = data.terraform_remote_state.net.outputs.id\n}\n';
+    // No stackOutput in vars and no dependsOn: core sees no read of its own.
+    const wired: DriverComponent[] = ["a", "b"].map((name) => ({ name, deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: name }] }] }));
+
+    test("form a group, with each output b takes off the block as one of the group's reads", async () => {
+      const dir = project({ "roots/b/main.tf": REMOTE_B });
+      const plan = planFanOut({ components: wired, changed: ["a", "b"] });
+      const found = await findComponentGroups({ components: wired, plan, registry: registry(dir), env: "test" });
+      expect(found).toEqual({
+        groups: [{ capability: "terraform-apply", components: ["a", "b"], reads: [{ reader: "b", upstream: "a", ref: "a.id", output: "id" }] }],
+        fallbacks: [],
+      });
+    });
+
+    test("report nothing while terraform.compose is unset, so no group forms", async () => {
+      const dir = project({ "roots/b/main.tf": REMOTE_B });
+      const plan = planFanOut({ components: wired, changed: ["a", "b"] });
+      const found = await findComponentGroups({ components: wired, plan, registry: registry(dir, false), env: "test" });
+      expect(found).toEqual({ groups: [], fallbacks: [] });
+    });
   });
 
   test("b's read of a's unknown id is not a hole, and the change set does not look empty though b changes nothing (ruling 4)", async () => {
