@@ -65,6 +65,7 @@ import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadErr
 import { prepareKindReaders } from "./kind-readers";
 import { loadKindRegistry } from "./kinds";
 import { emitDocument, executePlan, planMembers, type UnitResult } from "./member-commands";
+import type { ReasonCode } from "./reason-codes";
 import { handToRootChant, locateWorkspace } from "./which-chant";
 
 /** The version of the read contract the document is written under. */
@@ -85,7 +86,7 @@ export const DRIFT_ERROR_CODES = [
   "env-required",
   /** The member's command failed, or printed something that is not drift. */
   "command-failed",
-] as const;
+] as const satisfies readonly ReasonCode[];
 export type DriftErrorCode = (typeof DRIFT_ERROR_CODES)[number];
 
 /** The reads each member kind answers, the first its default. A kind not here has no drift read. */

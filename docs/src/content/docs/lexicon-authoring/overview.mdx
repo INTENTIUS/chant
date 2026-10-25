@@ -120,6 +120,7 @@ best-known readers.
 |--------|---------|-------------|
 | `describeResources()` | `DescribeResourcesResult` | What this estate manages, keyed by chant entity name. The thin read |
 | `observeResourcesDeep()` | `DeepObservationResult` | The full live property tree per entity, for property-level drift |
+| `readDrift(options)` | `Promise<ReadDriftResult>` | The drift of what this lexicon reads, as [drift record](/chant/reference/drift-record/) stream lines: a `drift-start`, one record per resource instance and a `drift-settle` per root or stack. `chant lifecycle drift` prints them, and `chant workspace drift` runs that command for a terraform or choudoufu member ([behold#995](https://github.com/INTENTIUS/behold/issues/995)). A read the engine does not have is a `refused` answer; a read that ran and failed is `not-observed` records, never a throw. The terraform lexicon implements it |
 | `deepNormalizationHooks` | `DeepNormalizationHooks` | Which fields are server-populated or order-insensitive, applied to both the live and declared trees |
 | `healthTypes` | `readonly string[]` | The entity types `observeHealth()` reads, as data, so core picks the entities without calling it ([chant #4177](https://github.com/INTENTIUS/chant/issues/4177)) |
 | `observeHealth()` | `HealthReadResult` | Whether each declared service of those types is up, for `chant lifecycle health`. A failed read is `unobserved`, never `unhealthy` |

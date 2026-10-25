@@ -460,6 +460,11 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `chant-dependency` | error, `exit` | The member's `package.json` still has a chant dependency, or a script that calls chant. |
 | `chant-in-ci` | error, `exit` | A CI file of the exited member still calls chant. |
 | `declaration-not-other` | error, `exit` | The declaration still gives the exited member a kind other than `other`. |
+| `member-required` | error, `drift` | `workspace drift` was given no `--member`, or more than one: it reads one member. |
+| `no-drift-read` | error, `drift` | The member's kind has no drift read, such as `other`, `app` or a nested workspace. |
+| `read-unsupported` | error, `drift` | `--read` names a read the member's engine does not answer, such as `state` on a chant member. |
+| `resource-unsupported` | error, `drift` | `--resource` was given for an engine that cannot read one resource on its own. |
+| `env-required` | error, `drift` | A chant member's live drift read needs an environment, and `--env` was not given. |
 | `listing-cover-invalid` | error, `box listing set` | The cover can't be read, isn't a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's. |
 
 `graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.

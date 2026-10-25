@@ -8,6 +8,7 @@ import { describe, expect, test } from "vitest";
 import { driftRecord, driftRecordLine, driftSettle, driftStart, type DriftRecord } from "../drift-record";
 import { readContractSchema } from "./conformance";
 import { DRIFT_CONTRACT_VERSION, DRIFT_ERROR_CODES, DRIFT_READS_BY_KIND, driftReadDocument } from "./drift-cli";
+import driftSchema from "./drift.schema.json";
 
 const at = "2026-10-25T09:00:00Z";
 
@@ -50,6 +51,7 @@ describe("chant workspace drift's document", () => {
     expect(Object.values(doc.counts).every((n) => n === 0)).toBe(true);
     const { validate } = readContractSchema("drift");
     expect(validate(doc), JSON.stringify(validate.errors)).toBe(true);
+    expect(driftSchema.properties.error.properties.code.enum).toEqual([...DRIFT_ERROR_CODES]);
   });
 
   test("each kind's reads, the first its default; state is never a chant member's", () => {

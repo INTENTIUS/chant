@@ -48,8 +48,24 @@
       ],
       "properties": {
         "code": {
-          "type": "string",
-          "description": "Why the read could not run: a declaration code, or member-required, no-drift-read, read-unsupported, resource-unsupported, env-required, command-failed."
+          "enum": [
+            "declaration-missing",
+            "declaration-ambiguous",
+            "declaration-unparseable",
+            "declaration-invalid",
+            "placement-invalid",
+            "reader-too-old",
+            "root-chant-required",
+            "not-a-git-repository",
+            "revision-unknown",
+            "member-required",
+            "no-drift-read",
+            "read-unsupported",
+            "resource-unsupported",
+            "env-required",
+            "command-failed"
+          ],
+          "description": "Why the read could not run: a declaration code, or one of the read's own (DRIFT_ERROR_CODES in drift-cli.ts)."
         },
         "message": {
           "type": "string"
@@ -201,13 +217,16 @@
           "then": {
             "required": [
               "unobserved"
-            ]
+            ],
+            "properties": {
+              "unobserved": {
+                "$ref": "#/$defs/unobserved"
+              }
+            }
           },
           "else": {
-            "not": {
-              "required": [
-                "unobserved"
-              ]
+            "properties": {
+              "unobserved": false
             }
           }
         },
@@ -222,10 +241,8 @@
             }
           },
           "then": {
-            "not": {
-              "required": [
-                "attributes"
-              ]
+            "properties": {
+              "attributes": false
             }
           }
         },
@@ -243,10 +260,8 @@
             }
           },
           "then": {
-            "not": {
-              "required": [
-                "attributesUnobserved"
-              ]
+            "properties": {
+              "attributesUnobserved": false
             }
           }
         }
@@ -272,22 +287,17 @@
       "if": {
         "required": [
           "sensitive"
-        ]
+        ],
+        "properties": {
+          "sensitive": {
+            "const": true
+          }
+        }
       },
       "then": {
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "before"
-              ]
-            },
-            {
-              "required": [
-                "after"
-              ]
-            }
-          ]
+        "properties": {
+          "before": false,
+          "after": false
         }
       }
     },
@@ -525,6 +535,7 @@
       }
     },
     "recordLine": {
+      "type": "object",
       "description": "One record as its read finishes: the record's fields beside type. A later line for the same (member, address, read) replaces it.",
       "allOf": [
         {
