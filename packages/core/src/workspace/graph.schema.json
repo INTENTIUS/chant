@@ -394,6 +394,13 @@
           ],
           "description": "What the per-member cache keys this read on (#2876): sha256 over the member's files and install state, or over the commit id with --at. Present on composed members; null for a live read or when no stamp could be taken. Two reads of a member with equal stamps read the same source."
         },
+        "rootReads": {
+          "type": "object",
+          "description": "Added in contract 1 by #4452. With --live: which read answered each of the member's roots, the member IR's rootReads as its chant wrote it, keyed by the lexicon's root key (terraform uses terraform.roots.<root>), unprefixed. The read that answered is fellBackTo when set, else depth. Absent when the member's IR had none, including a member read by a chant before #4452.",
+          "additionalProperties": {
+            "$ref": "#/$defs/rootRead"
+          }
+        },
         "meta": {
           "type": "object",
           "description": "The member IR's whole-read facts."
@@ -1618,6 +1625,28 @@
               }
             }
           }
+        }
+      }
+    },
+    "rootRead": {
+      "type": "object",
+      "description": "Which read answered one root (#4452), as packages/core/src/observation.ts RootRead. depth is the read asked for (plan for a plan-depth root, live+plan for a live root at the plan depth). fellBackTo is set only when that read failed: the read that answered instead (live is live-plan alone, for a live root), or declared when none did. reason is a short machine-stable cause such as no-credentials, needs-init, backend-unreachable or plan-failed, not prose to match on.",
+      "required": [
+        "depth"
+      ],
+      "properties": {
+        "depth": {
+          "type": "string"
+        },
+        "fellBackTo": {
+          "enum": [
+            "state",
+            "live",
+            "declared"
+          ]
+        },
+        "reason": {
+          "type": "string"
         }
       }
     }

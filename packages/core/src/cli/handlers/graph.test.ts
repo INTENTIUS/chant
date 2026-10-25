@@ -963,6 +963,48 @@ describe("runGraph", () => {
       expect(node?.physicalId).toBeUndefined();
     });
 
+    // #4452 — which read answered each root reaches the IR as the lexicon's
+    // structured report, so behold reads `rootReads` instead of matching the
+    // stderr notes. Asked the way behold asks for a plan read: `--overlay
+    // --detail 3`, whose overlay and detail passes each build a fresh IR.
+    test("a plan read's IR carries rootReads, a fallback with its reason", async () => {
+      resolveLexMock.mockResolvedValue(["terraform"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "terraform", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      discoverMock.mockResolvedValue({ entities: new Map(), errors: [], sourceFiles: [] });
+      const rootReads = {
+        "terraform.roots.app": { depth: "plan" },
+        "terraform.roots.edge": { depth: "plan", fellBackTo: "state", reason: "no-credentials" },
+      };
+      observeMock.mockResolvedValue({
+        observations: [{ lexicon: "terraform", resources: { "app/aws_s3_bucket.logs": { type: "aws_s3_bucket", status: "OK" } } }],
+        errors: [],
+        warnings: [],
+        sources: { "app/aws_s3_bucket.logs": "plan" },
+        rootReads,
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, overlay: true, env: "prod", detail: 3 }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n")) as { version: number; rootReads?: unknown };
+      expect(ir.version).toBe(GRAPH_IR_VERSION);
+      expect(ir.rootReads).toEqual(rootReads);
+    });
+
+    test("an IR whose read reported no root reads has no rootReads", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, emulator: awsEmulatorStub, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({
+        observations: [{ lexicon: "aws", resources: { "web-vpc": { type: "AWS::EC2::VPC", status: "OK" } } }],
+        errors: [],
+        warnings: [],
+      });
+      expect(await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] })).toBe(0);
+      expect(JSON.parse(stdoutBuf.join("\n"))).not.toHaveProperty("rootReads");
+    });
+
     // #2377 — the overlay carries the prediction. behold's reader takes
     // `attrs._behaviour` per node and `meta._behaviour` on the graph, and
     // reads the absence of both as "not looked" rather than as a refusal, so
