@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
+import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, withInstanceNodes, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
@@ -431,7 +431,12 @@ async function runGraphLive(
         console.error(formatWarning({ message: "overlay: a build root failed to render — showing the provisioned graph without the declared overlay" }));
       } else {
         await mergeGraphOps(declared.entities, declared.sourceFiles, projectPath);
-        const declaredIr = withLexiconEdges(buildGraphIr(declared.entities, projectPath), plugins, declared.entities);
+        // Instance nodes (#4454) on the declared side too, so a live instance
+        // meets its declared node and an unread one is painted alone.
+        const declaredIr = withInstanceNodes(
+          withLexiconEdges(buildGraphIr(declared.entities, projectPath), plugins, declared.entities),
+          declared.entities,
+        );
         ir =
           args.overlayAnchor === "live"
             ? overlayGraphs(ir, declaredIr, overlayOpts)
@@ -947,7 +952,9 @@ async function runGraphView(
 
   // Build the base IR, focus with a lens (declarable-level, most precise), then
   // apply the detail tier — so e.g. blast:<resource> works before any collapse.
-  let ir: GraphIR = buildGraphIr(result.entities, projectPath);
+  // Instance nodes (#4454) go on here, not in `buildGraphIr`, so search and
+  // the other readers of the base IR still count one node per block.
+  let ir: GraphIR = withInstanceNodes(buildGraphIr(result.entities, projectPath), result.entities);
 
   // The declared half of the epic's delta (#2355): this path predicts the
   // file, the live path predicts the account. Same helper, so the two shapes

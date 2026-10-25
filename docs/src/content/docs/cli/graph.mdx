@@ -191,6 +191,19 @@ Each `${Name}` or `${Name.Attr}` in a `$sub` template that names a node is an ed
 
 A lens keeps the members it keeps.
 
+### Instance nodes: `count` and `for_each`
+
+A block that expands into instances is one node, and since [#4454](https://github.com/INTENTIUS/chant/issues/4454) each of its instances is a node too, a child of the block's node. The contract, which [behold](https://github.com/INTENTIUS/behold) and the change set share:
+
+- An instance node's id is its block node's id followed by the instance key exactly as Terraform prints it: `app/aws_eip.pool[0]`, `app/aws_eip.pool["a"]`. In `chant workspace graph` the member goes in front as for every node, `<member>/app/aws_eip.pool[0]`.
+- It has `instanceOf`, the block node's id, and `instanceKey`, the key alone. It has the block's `kind`, `lexicon` and `sourceLoc`, empty `attrs` and no edges: references in the source are block to block, so the edges stay on the block. It joins every group its block is in.
+- The block node stays and is the rollup. Its verdict is its instances' aggregate: on a terraform live root any instance not observed makes the block not observed, then foreign, then adoptable, then owned, and all absent is absent.
+- A stored change-set entry and a drift row for an instance carry the instance node's id as `node` and the block node's as `instanceOf`.
+
+The declared graph lists the instances the source gives: a literal `count = 3`, or a `for_each` over a literal map or `toset([...])` of strings. `count = var.n` has no instance nodes there, since only a plan can count it. Under `--live`, each present instance a read reports is a node, so the overlay paints instances one by one. A live instance of a declared block is managed even when the declared graph does not list it. A declared instance the live graph lacks is `accent` when its block's read reported instances, `neutral` when the block was not observed or reported none. An instance under an expanded module call (`module.app[0].aws_eip.pool[1]`) has no node of its own and rolls up to the block.
+
+`chant search` counts blocks: instance nodes are added to the graph `chant graph` prints, after the base graph `search` also reads is built.
+
 ### Edges from a lexicon that parses foreign source
 
 Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. A consumer sees the same edge whichever way it was found.

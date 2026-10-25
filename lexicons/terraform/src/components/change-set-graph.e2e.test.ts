@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { composeChangeSet } from "@intentius/chant/change-set";
-import { buildGraphIr } from "@intentius/chant/graph-ir";
+import { buildGraphIr, withInstanceNodes } from "@intentius/chant/graph-ir";
 import { readGraphIds, storeGateChangeSet } from "@intentius/chant/lifecycle/gate-change-set";
 import { readStoredChangeSet } from "@intentius/chant/lifecycle/change-set-store";
 import { terraformChangeSetPart } from "../change-set";
@@ -59,10 +59,11 @@ describe("a terraform change set mapped onto the spawned chant graph", () => {
     const spawned = await readGraphIds(dir);
     if ("error" in spawned) throw new Error(spawned.error);
     const rendered = await renderTerraformRoots({ projectRoot: dir, roots: { estate: { dir: "estate" } } });
-    expect(buildGraphIr(rendered.entities).nodes.map((n) => n.id).sort()).toEqual([...spawned.ids].sort());
+    // `chant graph` adds the instance nodes of `count = 2` (#4454).
+    expect(withInstanceNodes(buildGraphIr(rendered.entities), rendered.entities).nodes.map((n) => n.id).sort()).toEqual([...spawned.ids].sort());
   }, TIMEOUT);
 
-  test("each entry is stored on the block the graph names, and a deleted block has no node", async () => {
+  test("each entry is stored on the node the graph names, an instance on its instance node, and a deleted block has no node", async () => {
     const plan = JSON.parse(readFileSync(join(FIXTURES, "terraform.plan.json"), "utf8"));
     const doc = composeChangeSet([terraformChangeSetPart({ member: "estate", plan })]);
     const head = git("rev-parse", "HEAD");
@@ -72,13 +73,18 @@ describe("a terraform change set mapped onto the spawned chant graph", () => {
     const read = await readStoredChangeSet(doc.digest, { cwd: dir });
     if (read.status !== "found") throw new Error(read.status);
     expect(read.document.entries.map((e) => [e.address, e.node])).toEqual([
-      ["module.app.terraform_data.instance[0]", "estate/module.app/terraform_data.instance"],
-      ["module.app.terraform_data.instance[1]", "estate/module.app/terraform_data.instance"],
+      ["module.app.terraform_data.instance[0]", "estate/module.app/terraform_data.instance[0]"],
+      ["module.app.terraform_data.instance[1]", "estate/module.app/terraform_data.instance[1]"],
       ["terraform_data.config", "estate/terraform_data.config"],
       ["terraform_data.keep", "estate/terraform_data.keep"],
       ["terraform_data.old", null],
       ["terraform_data.secret", "estate/terraform_data.secret"],
       ["terraform_data.worker", "estate/terraform_data.worker"],
+    ]);
+    // The instances name their block node, the rollup (#4454).
+    expect(read.document.entries.filter((e) => e.instanceOf).map((e) => e.instanceOf)).toEqual([
+      "estate/module.app/terraform_data.instance",
+      "estate/module.app/terraform_data.instance",
     ]);
   }, TIMEOUT);
 });

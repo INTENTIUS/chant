@@ -1,3 +1,4 @@
+import type { InstanceObservation } from "./instance-nodes";
 import type { CapabilityPack } from "./capabilities/view";
 import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
@@ -2509,6 +2510,15 @@ export interface ResourceMetadata {
    * undeclared live resource stays `orphan`.
    */
   ownerChain?: OwnerChainVerdict;
+  /**
+   * The instances of a `count` or `for_each` block (#4454), each with its own
+   * verdict, keyed as the engine prints them (`[0]`, `["a"]`). The rest of
+   * this metadata is the block's rollup over them. `buildLiveGraphIr` draws
+   * each present instance as a node `<name><key>` under this one, and the
+   * overlay paints a declared instance from it. Absent when the lexicon reads
+   * no instances, or the block is not expanded.
+   */
+  instances?: InstanceObservation[];
   /**
    * The declared node ids that reference this resource (#1273), set on an
    * undeclared resource observed only because something declared points at it —

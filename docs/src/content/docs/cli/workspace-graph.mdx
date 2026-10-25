@@ -28,7 +28,7 @@ The document is part of the workspace [read contract](/chant/reference/workspace
 
 ## Composition
 
-Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` keeps its meaning for stacks inside a member, as in `app/web::Bucket`. Edge ends and `$ref` values in attributes are rewritten the same way, as are `compositeInstance`, `runtimeOwner` and the nodes of exports and imports. Each node and edge also gains a `member` field.
+Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` keeps its meaning for stacks inside a member, as in `app/web::Bucket`. Edge ends and `$ref` values in attributes are rewritten the same way, as are `compositeInstance`, `runtimeOwner`, `instanceOf` and the nodes of exports and imports. Each node and edge also gains a `member` field.
 
 `groups.byMember` maps each member to its node ids. A lexicon or a composite type means the same thing in every member, so `byLexicon` and `byComposite` keep their keys and merge the ids across members. The keys of `byStack`, `byContainer`, `byWave` and `byPipeline` name things inside one member, and they are prefixed with the member too.
 
