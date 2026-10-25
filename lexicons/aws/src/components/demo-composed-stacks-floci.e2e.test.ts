@@ -9,8 +9,8 @@
  * - The create act: app's read of network's new `SubnetBId` is known after
  *   apply, one approval, pr-apply exits 0, the round that plans app again is
  *   `covered` with `filledInputs` naming the id, and app's parameter holds
- *   network's real subnet id. In this demo edge reads only app's port, so the
- *   id reaches app alone (the scenario's `ask.json` says so).
+ *   network's real subnet id, and so does edge's, through app's
+ *   `WorkerSubnetId` output.
  *
  * Each act copies the example with its stack names and SSM names made the
  * run's own, builds the templates with the example's `npm run build`, and
@@ -147,20 +147,21 @@ actSuite("chant-compose-edit", ({ loop, id }) => {
 });
 
 actSuite("chant-compose-create", ({ loop, id }) => {
-  test("one pr-plan digest, app's read of the new subnet id known after apply", async () => {
+  test("one pr-plan digest, app's and edge's reads of the new subnet id known after apply", async () => {
     const { code, report: plan } = await loop().open(1, "chant-compose-create");
     expect(code).toBe(0);
     expect(plan.status).toBe("planned");
     const m = byComponent(plan);
     expect(m.app!.unknownInputs).toEqual(["network.SubnetBId"]);
     expect(m.app!.reads?.find((r) => r.upstream === "network")?.unknown).toEqual(["SubnetBId"]);
-    // edge reads app's ListenerPort, which the preview knows.
-    expect(m.edge!.unknownInputs).toBeUndefined();
-    expect([total(plan, "create"), total(plan, "update"), total(plan, "delete")]).toEqual([2, 1, 0]);
+    // edge reads app's ListenerPort, which the preview knows, and app's WorkerSubnetId, which it does not.
+    expect(m.edge!.unknownInputs).toEqual(["app.WorkerSubnetId"]);
+    expect(m.edge!.reads?.find((r) => r.upstream === "app")?.unknown).toEqual(["WorkerSubnetId"]);
+    expect([total(plan, "create"), total(plan, "update"), total(plan, "delete")]).toEqual([3, 1, 0]);
     expect(plan.approval).toEqual({ status: "pending" });
   }, TIMEOUT);
 
-  test("one approval, and pr-apply exits 0: the round is covered with filledInputs, and app holds the real id", async () => {
+  test("one approval, and pr-apply exits 0: the round is covered with filledInputs, and app and edge hold the real id", async () => {
     const plan = loop().report("plan");
     await loop().approve(1, "pr-apply", plan.digest);
     expect(await loop().merge(1)).toBe(0);
@@ -173,10 +174,15 @@ actSuite("chant-compose-create", ({ loop, id }) => {
     expect(filled?.covered?.digest).toBe(plan.digest);
     expect(filled?.covered?.filledInputs).toContain("network.SubnetBId");
     expect(filled?.notCovered).toBeUndefined();
+    const edgeRound = rounds.find((r) => r.components.includes("edge"));
+    expect(edgeRound?.covered?.digest).toBe(plan.digest);
+    expect(edgeRound?.covered?.filledInputs).toContain("app.WorkerSubnetId");
 
     const subnetB = stack(`${id}-network`).Outputs?.find((o) => o.OutputKey === "SubnetBId")?.OutputValue;
     expect(subnetB).toMatch(/^subnet-/);
     expect(stack(`${id}-app`).Parameters?.find((p) => p.ParameterKey === "appSubnetBId")?.ParameterValue).toBe(subnetB);
+    expect(stack(`${id}-edge`).Parameters?.find((p) => p.ParameterKey === "edgeWorkerSubnetId")?.ParameterValue).toBe(subnetB);
+    expect(ssm(`/${id}/worker-subnet`)).toBe(subnetB);
     expect(ssm(`/${id}/allowlist`)).toBe("10.0.1.0/24,10.0.2.0/24");
   }, TIMEOUT);
 });
