@@ -1,0 +1,32 @@
+{
+  "version": 3,
+  "deployment": {
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default",
+        "custom": true,
+        "type": "pulumi:providers:aws",
+        "id": "prov-1"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "type": "aws:s3/bucket:Bucket",
+        "id": "assets-4f1c",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      },
+      {
+        "urn": "urn:pulumi:dev::site::aws:iam/role:Role::web",
+        "custom": true,
+        "type": "aws:iam/role:Role",
+        "id": "web",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      }
+    ]
+  }
+}

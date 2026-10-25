@@ -28,12 +28,13 @@
  * row uses.
  *
  * Like `./change-set.ts`, this imports nothing at run time but
- * `./instance-nodes.ts`, which imports nothing either, so it bundles into
- * one file with the change-set code.
+ * `./instance-nodes.ts` and `./pulumi-urn.ts`, which import nothing either,
+ * so it bundles into one file with the change-set code.
  */
 
 import type { ChangeSetDocument, ChangeSetEntry } from "./change-set";
 import { instanceNodeId, terraformInstanceKey } from "./instance-nodes";
+import { pulumiNodeCandidates } from "./pulumi-urn";
 
 /** The graph a document is mapped onto: the node ids of one member's own IR. */
 export interface ChangeSetGraphNodes {
@@ -115,9 +116,14 @@ export function terraformBlockKey(address: string): string | undefined {
  * - `terraform`, `tofu`, `choudoufu`: `<root>/<block key>`, the root being
  *   the change-set member (`terraformBlockKey`), then the address.
  * - `warden`, `sql`: the address.
+ * - `pulumi`: the address is a URN, and the id is `<member>/<key>` by the
+ *   one URN rule (`pulumiNodeCandidates`, `./pulumi-urn.ts`, #4456); none
+ *   for a provider or the root stack.
  */
 export function changeSetNodeCandidates(entry: Pick<ChangeSetEntry, "member" | "planner" | "address">): string[] {
   switch (entry.planner) {
+    case "pulumi":
+      return pulumiNodeCandidates(entry);
     case "terraform":
     case "tofu":
     case "choudoufu": {

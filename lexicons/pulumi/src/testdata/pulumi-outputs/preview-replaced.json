@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+      "newState": {
+        "urn": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack",
+        "outputs": {
+          "awsEndpoint": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+          "apiKey": { "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270", "ciphertext": "[secret]" }
+        }
+      }
+    },
+    {
+      "op": "create-replacement",
+      "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+      "oldState": {
+        "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+        "custom": true,
+        "id": "web-old",
+        "type": "aws:apigatewayv2/api:Api",
+        "inputs": { "name": "web", "protocolType": "HTTP" }
+      },
+      "newState": {
+        "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+        "custom": true,
+        "type": "aws:apigatewayv2/api:Api",
+        "parent": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+        "inputs": { "name": "web-v2", "protocolType": "HTTP" }
+      },
+      "replaceReasons": ["name"]
+    },
+    {
+      "op": "replace",
+      "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+      "oldState": { "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web", "custom": true, "id": "web-old", "type": "aws:apigatewayv2/api:Api" },
+      "newState": { "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web", "custom": true, "type": "aws:apigatewayv2/api:Api" }
+    },
+    {
+      "op": "delete-replaced",
+      "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+      "oldState": { "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web", "custom": true, "id": "web-old", "type": "aws:apigatewayv2/api:Api" }
+    }
+  ],
+  "changeSummary": { "same": 1, "replace": 1 }
+}

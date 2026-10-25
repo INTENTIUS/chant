@@ -1,0 +1,4 @@
+name: site
+runtime: nodejs
+backend:
+  url: plunge+file:///var/lib/plunge/site

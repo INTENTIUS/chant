@@ -92,10 +92,47 @@ describe("the change-set bundle", () => {
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/observation.ts",
+      "packages/core/src/pulumi-urn.ts",
       "packages/core/src/sensitive-key.ts",
     ]);
     // About 66 KB today: each entry point carries its own copy of the shared modules.
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
     expect(bytes).toBeLessThan(96 * 1024);
+  });
+
+  test("the pulumi lexicon's change-set and drift-record adapters (#4453) bundle the same way", async () => {
+    const result = await build({
+      entryPoints: [
+        join(REPO, "lexicons", "pulumi", "src", "change-set.ts"),
+        join(REPO, "lexicons", "pulumi", "src", "drift-record.ts"),
+      ],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      write: false,
+      metafile: true,
+      outdir: "out",
+      logLevel: "silent",
+    });
+    const inputs = Object.keys(result.metafile.inputs);
+    for (const pattern of FORBIDDEN) {
+      expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
+    }
+    expect(inputs.map((i) => i.replace(/^.*?(packages|lexicons)\//, "$1/")).sort()).toEqual([
+      "lexicons/pulumi/src/change-set.ts",
+      "lexicons/pulumi/src/drift-record.ts",
+      "lexicons/pulumi/src/values.ts",
+      "packages/core/src/change-set-graph.ts",
+      "packages/core/src/content-digest.ts",
+      "packages/core/src/declarable.ts",
+      "packages/core/src/drift-record.ts",
+      "packages/core/src/effect-receipt.ts",
+      "packages/core/src/instance-nodes.ts",
+      "packages/core/src/intrinsic.ts",
+      "packages/core/src/lifecycle/plan-digest.ts",
+      "packages/core/src/observation.ts",
+      "packages/core/src/pulumi-urn.ts",
+      "packages/core/src/sensitive-key.ts",
+    ]);
   });
 });

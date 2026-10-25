@@ -29,7 +29,7 @@ The document is part of the [workspace read contract](/chant/reference/workspace
 |---|---|
 | `member` | the workspace member, or the root a choudoufu set plan names |
 | `lexicon` | the lexicon its entries belong to |
-| `planner` | `terraform`, `tofu`, `choudoufu`, `chant`, `warden` or `sql` |
+| `planner` | `terraform`, `tofu`, `choudoufu`, `chant`, `warden`, `sql` or `pulumi` |
 | `scope` | the estate, environment or org it plans into |
 | `status` | `planned`, or `failed` with `error` |
 | `planDigest` | what a gate on this member alone binds, or `null` when it failed |
@@ -61,6 +61,7 @@ A change set in which any member has `group.reads` is never treated as empty, so
 | `attributes` | the top-level attributes the change writes |
 | `node` | on a stored change set, the graph node the change is made to, or `null` when the graph has none for the address. An instance of a `count` or `for_each` block gets its instance node, `<block node>[0]` ([#4454](https://github.com/INTENTIUS/chant/issues/4454)) |
 | `instanceOf` | on a stored change set, when `node` is an instance node: the block node it is an instance of, which is the rollup |
+| `mayAppear` | `true` when the planner could not enumerate what the entry stands for: a Pulumi resource registered inside an `apply()` that preview could not run. See [Pulumi plans](#pulumi-plans). Part of the digest, and a change set with one is never empty |
 
 Each attribute is `{ path, before, after }`. `unknown: true` replaces `after` when the value is known only after apply. `sensitive: true` replaces both values when the planner marked either side sensitive. `forcesReplacement: true` marks the attributes that force a replace. Redaction follows the planner's marks. A value the planner leaves unmarked is carried as the plan JSON carries it.
 
@@ -90,6 +91,7 @@ Each member carries the value a gate on that member alone binds ([#2300](https:/
 | `sql`, versioned plan | the product's own gate digest when the plan carries `digest` (SQL Yodeler's), else `computePlanDigest("sql-versioned-plan", …)` over the dialect, environment and pending steps |
 | `sql`, migration Op | the Op's plan step `planDigest`, taken before the verification (not the swap or switch gate's value); a swapped or finished Op gets `computePlanDigest("sql-op-plan", …)` over its state |
 | `chant`, a component with no step that has `plan` | `componentPlanDigest` over the environment, the composition and its vars, plus `inputs`, the content digest of each local file its steps deploy from ([#4155](https://github.com/INTENTIUS/chant/issues/4155)), when any exists |
+| `pulumi` | `computePlanDigest("pulumi-preview", …)` over each step's op, URN, provider, id, inputs before and after, `diffReasons`, `replaceReasons` and `detailedDiff`, sorted by URN and op |
 | `chant`, `<component>#inputs` | `computePlanDigest("component-inputs", …)` over the environment, the component and the content digests of the files its steps without `plan` deploy from |
 | any, a member of a group | `computePlanDigest("capability-group-member", { plan, group })` over the member's own digest and the group digest, which is `computePlanDigest("capability-group", { kind, members, composition })` over the capability's kind, each member's component, member and own digest, and the capability's digest of the composition |
 
@@ -116,11 +118,26 @@ A gate that binds the document's `digest` stores the document on `chant/lifecycl
 | sql, versioned plan | `sqlVersionedPlanPart` in `@intentius/chant-lexicon-sql/change-set` | a versioned plan, [below](#sql-plans); SQL Yodeler's `VersionedPlan` as it stands |
 | sql, `ClickHouseRebuildOp` | `clickhouseRebuildPart` in the same module | `clickhouseRebuildPlan`'s result; the step also returns the part as `part` |
 | sql, `PostgresMigrationOp` | `postgresMigrationPart` in the same module | `postgresMigrationPlan`'s result; the step also returns the part as `part` |
-| any part written as JSON | `readChangeSetPartFile` in `@intentius/chant/change-set` | a part another process wrote; `readChangeSetPart` with `planner: "sql"` uses it |
+| pulumi | `pulumiPreviewPart` in `@intentius/chant-lexicon-pulumi/change-set`; `previewPulumiMember` in `@intentius/chant-lexicon-pulumi/run` runs the preview | `pulumi preview --json`, with the member's checked-in `pulumi stack export` as the last deployment |
+| any part written as JSON | `readChangeSetPartFile` in `@intentius/chant/change-set` | a part another process wrote; `readChangeSetPart` with `planner: "sql"` or `"pulumi"` uses it |
 
 Each adapter returns a part: `{ member, entries }`. `composeChangeSet(parts)` joins them. It refuses two parts for one member.
 
 The chant adapter maps `create`, `update`, `delete` and `noop` across. An `update` whose lexicon classifies it `replace` or `destroy` becomes a `replace`. An `effect` entry becomes the receipt write its effect step makes: a `create` when the receipt is absent, else an `update`. An `unobserved` entry becomes a hole. `adopt` and `runtime` entries propose nothing and are left out.
+
+### Pulumi plans
+
+The pulumi adapter ([#4453](https://github.com/INTENTIUS/chant/issues/4453)) keeps one entry per URN, at the URN. A replace, which the preview prints as up to three steps on one URN, is one `replace` entry, with disruption `destroy` when the delete comes first. `same` is `no-op`, `read` and `refresh` are `read`, `import` is a `no-op` that is `importing`, and `discard` is `forget`. An op outside that list is a hole. An input that holds Pulumi's unknown value is `unknown: true`, so a resource that reads an output of one being created shows that input as unknown. A secret is `sensitive: true`. Each entry is on its graph node by the URN rule of `@intentius/chant/pulumi-urn`.
+
+At preview, an `apply()` whose input is unknown does not run, so resources the program registers inside it are not in the steps. The adapter marks them `mayAppear` instead of leaving them out:
+
+- A component whose subtree holds an unknown value, a create or a replace gets one entry at its URN with `$*` after its type and `/*` after its name, such as `urn:pulumi:dev::site::my:web:Site$*::site/*`. Its action is `create` and its type `unknown`, and it is on the component's node.
+- With the member's stack export, a resource the export holds and the preview has no step for gets an `update` entry with disruption `unknown`. A preview narrowed with `--target`, or one that failed, does not do this.
+- A delete under a component the first rule marks keeps its `delete` and is marked too, since the `apply()` may register the resource again.
+
+A resource registered inside an `apply()` directly under the stack, which no export holds yet, has no component to stand under and is not detected.
+
+The fixtures behind the adapter's tests were written by hand from Pulumi's documented `--json` shape, not recorded from a real run.
 
 ### SQL plans
 

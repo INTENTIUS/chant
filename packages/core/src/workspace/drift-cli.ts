@@ -11,6 +11,7 @@
  * | `chant` | `live-read` | the member's `chant lifecycle diff <env> --live --json`, through `liveDiffDriftRecords` and, when a lexicon has a deep reader, `mergeDeepDrift`. `--components` adds `chant components status <env> --live --json` through `componentStatusDriftRecords`. Needs `--env` |
  * | `terraform` | `state` | `chant lifecycle drift` in the member's reader project: the terraform lexicon's `readDrift`, `terraform show -json` over state, or `--read plan` for a saved plan's `show -json` |
  * | `choudoufu` | `ownership` | the same, through `choudoufu live-plan -json` (and `live-ls`), or `--read plan` for live-plan with a plan beside it; `--resource <addr>` passes `choudoufu live-plan -resource=<addr>`'s stream through |
+ * | `pulumi` | `refresh` | `chant lifecycle drift` in the member's reader project: the pulumi lexicon's `readDrift`, `pulumi refresh --preview-only --json --target <urn>` per resource in the checked-in export, or `plunge drift --resource <urn> --stream` for a member on plunge; `--resource <urn>` reads that URN alone (#4455) |
  *
  * Any other kind has no drift read and answers `no-drift-read`. A member of
  * a package's kind runs in the reader project `workspace graph` writes for it
@@ -46,6 +47,7 @@ import {
   DRIFT_SCHEMA_ID,
   DRIFT_VERSION,
   driftExpected,
+  driftPlanner,
   driftRecordLine,
   driftSettle,
   driftStart,
@@ -94,7 +96,11 @@ export const DRIFT_READS_BY_KIND: Record<string, readonly DriftRead[]> = {
   chant: ["live-read"],
   terraform: ["state", "plan"],
   choudoufu: ["ownership", "plan"],
+  pulumi: ["refresh"],
 };
+
+/** The kinds whose engine reads one resource on its own, for `--resource`. */
+export const DRIFT_RESOURCE_KINDS: readonly string[] = ["choudoufu", "pulumi"];
 
 /** The exit status `chant lifecycle drift` gives a refused read (`../cli/handlers/lifecycle-drift.ts`). */
 const MEMBER_REFUSED_EXIT = 3;
@@ -151,12 +157,11 @@ async function memberGraph(cwd: string, member: string): Promise<ChangeSetGraphN
   }
 }
 
-/** A record placed on the member's graph by the change set's rule; a URN stays null. */
+/** A record placed on the member's graph by the change set's rule; a URN by the pulumi planner's (`driftPlanner`, plunge included). */
 function place(record: DriftRecord, graph: ChangeSetGraphNodes | null): DriftRecord {
-  const engine = record.engine;
-  if (graph === null || engine === "pulumi" || engine === "plunge") return record;
+  if (graph === null) return record;
   const { instanceOf: _i, ...r } = record;
-  const placed = graphNodeFor({ member: r.member, planner: engine, address: r.address }, graph);
+  const placed = graphNodeFor({ member: r.member, planner: driftPlanner(record.engine), address: r.address }, graph);
   return { ...r, node: placed.node, ...(placed.instanceOf !== undefined ? { instanceOf: placed.instanceOf } : {}) };
 }
 
@@ -170,8 +175,8 @@ function placeLines(lines: DriftLine[], member: string, graph: ChangeSetGraphNod
     if (line.type === "drift-start") {
       const engine = line.engine;
       const expected = driftExpected(line).map((e) => {
-        if (graph === null || engine === "pulumi" || engine === "plunge") return e;
-        const placed = graphNodeFor({ member, planner: engine, address: e.address }, graph);
+        if (graph === null) return e;
+        const placed = graphNodeFor({ member, planner: driftPlanner(engine), address: e.address }, graph);
         return { ...e, node: placed.node, ...(placed.instanceOf !== undefined ? { instanceOf: placed.instanceOf } : {}) };
       });
       return { ...line, member, expected };
@@ -242,8 +247,8 @@ export async function readWorkspaceDrift(query: DriftQuery): Promise<DriftReadRe
     }
     const read = (query.read ?? reads[0]) as DriftRead;
     if (!reads.includes(read)) throw new DriftReadFailure("read-unsupported", `a ${entry.kind} member answers ${reads.join(" or ")}, not --read ${read}`);
-    if (query.resource !== undefined && entry.kind !== "choudoufu") {
-      throw new DriftReadFailure("resource-unsupported", `--resource reads one resource through choudoufu live-plan -resource; ${query.member} is kind ${entry.kind}`);
+    if (query.resource !== undefined && !DRIFT_RESOURCE_KINDS.includes(entry.kind)) {
+      throw new DriftReadFailure("resource-unsupported", `--resource reads one resource through choudoufu live-plan -resource, pulumi refresh --target or plunge drift --resource; ${query.member} is kind ${entry.kind}`);
     }
     if (entry.kind === "chant" && !query.env) throw new DriftReadFailure("env-required", `${query.member} is a chant member, read live through chant lifecycle diff <env> --live: add --env <env>`);
 

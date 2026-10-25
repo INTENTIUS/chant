@@ -1,0 +1,76 @@
+{
+  "config": { "aws:region": "us-east-1" },
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+      "oldState": { "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev", "custom": false, "type": "pulumi:pulumi:Stack" },
+      "newState": { "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev", "custom": false, "type": "pulumi:pulumi:Stack" }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+      "newState": { "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0", "custom": true, "id": "prov-1", "type": "pulumi:providers:aws" }
+    },
+    {
+      "op": "update",
+      "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": { "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets", "custom": true, "id": "assets-4f1c", "type": "aws:s3/bucket:Bucket", "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev", "inputs": { "acl": "private" } },
+      "newState": { "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets", "custom": true, "id": "assets-4f1c", "type": "aws:s3/bucket:Bucket", "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev", "inputs": { "acl": "public-read" } },
+      "diffReasons": ["acl"],
+      "detailedDiff": { "acl": { "kind": "update", "inputDiff": true } }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::my:web:Site::site",
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site::site", "custom": false, "type": "my:web:Site", "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev" }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::my:web:Site$pulumi:providers:aws::site-east",
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site$pulumi:providers:aws::site-east", "custom": true, "id": "prov-2", "type": "pulumi:providers:aws", "parent": "urn:pulumi:dev::site::my:web:Site::site" }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::my:web:Site$aws:s3/bucketPolicy:BucketPolicy::site-policy",
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site$aws:s3/bucketPolicy:BucketPolicy::site-policy", "custom": true, "id": "assets-4f1c", "type": "aws:s3/bucketPolicy:BucketPolicy", "parent": "urn:pulumi:dev::site::my:web:Site::site" }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn",
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn", "custom": false, "type": "my:web:Cdn", "parent": "urn:pulumi:dev::site::my:web:Site::site" }
+    },
+    {
+      "op": "create-replacement",
+      "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn", "custom": true, "type": "aws:cloudfront/distribution:Distribution", "parent": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn" },
+      "diffReasons": ["origins"],
+      "replaceReasons": ["origins"]
+    },
+    {
+      "op": "replace",
+      "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
+      "oldState": { "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn", "custom": true, "id": "E2EXAMPLE", "type": "aws:cloudfront/distribution:Distribution", "parent": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn" },
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn", "custom": true, "type": "aws:cloudfront/distribution:Distribution", "parent": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn" }
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::site::my:web:Site$aws:route53/record:Record::site-alias",
+      "newState": { "urn": "urn:pulumi:dev::site::my:web:Site$aws:route53/record:Record::site-alias", "custom": true, "type": "aws:route53/record:Record", "parent": "urn:pulumi:dev::site::my:web:Site::site" }
+    },
+    {
+      "op": "delete-replaced",
+      "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
+      "oldState": { "urn": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn", "custom": true, "id": "E2EXAMPLE", "type": "aws:cloudfront/distribution:Distribution", "parent": "urn:pulumi:dev::site::my:web:Site$my:web:Cdn::site-cdn" }
+    },
+    {
+      "op": "delete",
+      "urn": "urn:pulumi:dev::site::aws:iam/role:Role::old-deployer",
+      "oldState": { "urn": "urn:pulumi:dev::site::aws:iam/role:Role::old-deployer", "custom": true, "id": "old-deployer", "type": "aws:iam/role:Role", "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev" }
+    }
+  ],
+  "diagnostics": [],
+  "duration": 1830000000,
+  "changeSummary": { "create": 1, "delete": 1, "replace": 1, "same": 6, "update": 1 }
+}

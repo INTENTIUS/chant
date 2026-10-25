@@ -1,0 +1,25 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": { "time": "2026-10-20T10:00:00Z", "magic": "", "version": "v3.140.0" },
+    "resources": [
+      {
+        "urn": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack",
+        "outputs": {
+          "awsEndpoint": "web-old.execute-api.localhost.localstack.cloud",
+          "apiKey": { "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270", "ciphertext": "v1:abc" }
+        }
+      },
+      {
+        "urn": "urn:pulumi:local::aws::aws:apigatewayv2/api:Api::web",
+        "custom": true,
+        "id": "web-old",
+        "type": "aws:apigatewayv2/api:Api",
+        "parent": "urn:pulumi:local::aws::pulumi:pulumi:Stack::aws-local",
+        "inputs": { "name": "web", "protocolType": "HTTP" }
+      }
+    ]
+  }
+}

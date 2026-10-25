@@ -2,24 +2,37 @@
  * Reading a pulumi workspace member into the graph (#3179).
  *
  * `chant workspace graph` writes a reader project for a member of kind
- * `pulumi`, with `terraform.pulumiMember` in its config (see
- * `workspace-kinds.json`). The plugin's `buildRoots` hook calls
- * {@link readPulumiMember}, which reads the `pulumi stack export` JSON the
- * member has checked in, at {@link PULUMI_EXPORT_FILE} in its directory. chant
- * never runs the program and never calls `pulumi`: with no export there are no
- * nodes, and `meta.pulumiMember` says `exported: false` and why.
+ * `pulumi`, with `pulumi.member` in its config (see `workspace-kinds.json`).
+ * The plugin's `buildRoots` hook calls {@link readPulumiMember}, which reads
+ * the `pulumi stack export` JSON the member has checked in, at
+ * {@link PULUMI_EXPORT_FILE} in its directory. The graph read never runs the
+ * program or `pulumi`: with no export there are no nodes, and
+ * `meta.pulumiMember` says `exported: false` and why.
+ *
+ * The kind lived in the terraform lexicon until #4453 moved it here. The
+ * ruling on #4450 lets chant run `pulumi preview` and `pulumi refresh
+ * --preview-only` for a Pulumi member, so the old "chant never calls
+ * `pulumi`" rule now covers this graph read only. The change set
+ * (`./change-set.ts`) and drift (`./drift-record.ts`) run those two
+ * commands, which change nothing, and the outputs read (`./member-outputs.ts`,
+ * #4455) adds `pulumi stack output --json --show-secrets=false`; nothing else.
  *
  * Nodes are the export's resources, keyed `<label>/<urn tail>`, where the tail
  * is the URN after its stack and project (`aws:s3/bucket:Bucket::assets`).
- * Provider resources (`pulumi:providers:*`) are left out; the resources that
- * name them are not edged to them. Edges come from each resource's
- * `dependencies` and `parent`, kept only when the target is a node. Inputs and
- * outputs are not copied into the node, since an export can hold secrets.
+ * That is the rule in `@intentius/chant/pulumi-urn` (#4456), which a
+ * change set over `pulumi preview --json` and a drift record use too, so all
+ * three put a resource on the same node. Provider resources
+ * (`pulumi:providers:*`) and the root `pulumi:pulumi:Stack` are left out; the
+ * resources that name them are not edged to them. Edges come from each
+ * resource's `dependencies` and `parent`, kept only when the target is a node.
+ * Inputs and outputs are not copied into the node, since an export can hold
+ * secrets.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
+import { isPulumiNodeless, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 
 /** The conventional place of the export, in the member's directory. */
 export const PULUMI_EXPORT_FILE = "stack-export.json";
@@ -29,6 +42,8 @@ export interface PulumiMemberConfig {
   dir: string;
   /** Names the entities (`<label>/...`): the member's name. */
   label?: string;
+  /** What runs the stack, when the config says; see `./run.ts`'s `pulumiMemberEngine`. The graph read ignores it. */
+  engine?: "pulumi" | "plunge";
 }
 
 /** What the read found, carried on the graph's `meta.pulumiMember`. */
@@ -49,14 +64,6 @@ interface ExportedResource {
   dependencies?: unknown;
 }
 
-const PROVIDER = /^pulumi:providers:/;
-
-/** `urn:pulumi:<stack>::<project>::<tail>`: the tail, or the whole URN when it has another shape. */
-function urnTail(urn: string): string {
-  const parts = urn.split("::");
-  return urn.startsWith("urn:pulumi:") && parts.length >= 4 ? parts.slice(2).join("::") : urn;
-}
-
 export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
   entities: Map<string, Declarable>;
   warnings: string[];
@@ -72,7 +79,7 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
 
   const file = join(member.dir, PULUMI_EXPORT_FILE);
   if (!existsSync(file)) {
-    return missing(`no ${PULUMI_EXPORT_FILE} in the member; run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in, and chant will read it (chant does not run the program)`);
+    return missing(`no ${PULUMI_EXPORT_FILE} in the member; run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in, and chant will read it (the graph read does not run the program)`);
   }
   let resources: ExportedResource[];
   try {
@@ -86,8 +93,9 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
 
   const keyOf = new Map<string, string>();
   for (const r of resources) {
-    if (typeof r?.urn !== "string" || typeof r.type !== "string" || PROVIDER.test(r.type)) continue;
-    keyOf.set(r.urn, `${label}/${urnTail(r.urn)}`);
+    if (typeof r?.urn !== "string" || typeof r.type !== "string" || isPulumiNodeless(r.type)) continue;
+    const tail = pulumiNodeKey(r.urn);
+    if (tail !== null) keyOf.set(r.urn, `${label}/${tail}`);
   }
 
   const entities = new Map<string, Declarable>();
@@ -102,7 +110,7 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
     add(r.parent, "parent");
     for (const d of Array.isArray(r.dependencies) ? r.dependencies : []) add(d, "dependencies");
     entities.set(key, {
-      lexicon: "terraform",
+      lexicon: "pulumi",
       entityType: r.type as string,
       kind: "resource",
       props: {},

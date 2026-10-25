@@ -5,7 +5,6 @@
   "files": [
     "src/",
     "dist/",
-    "schemas/",
     "workspace-kinds.json"
   ],
   "exports": {

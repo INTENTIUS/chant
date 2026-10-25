@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest";
 import { driftRecord, driftRecordLine, driftSettle, driftStart, type DriftRecord } from "../drift-record";
 import { readContractSchema } from "./conformance";
-import { DRIFT_CONTRACT_VERSION, DRIFT_ERROR_CODES, DRIFT_READS_BY_KIND, driftReadDocument } from "./drift-cli";
+import { DRIFT_CONTRACT_VERSION, DRIFT_ERROR_CODES, DRIFT_READS_BY_KIND, DRIFT_RESOURCE_KINDS, driftReadDocument } from "./drift-cli";
 import driftSchema from "./drift.schema.json";
 
 const at = "2026-10-25T09:00:00Z";
@@ -58,7 +58,8 @@ describe("chant workspace drift's document", () => {
     expect(DRIFT_READS_BY_KIND.chant).toEqual(["live-read"]);
     expect(DRIFT_READS_BY_KIND.terraform).toEqual(["state", "plan"]);
     expect(DRIFT_READS_BY_KIND.choudoufu).toEqual(["ownership", "plan"]);
-    expect(DRIFT_READS_BY_KIND.pulumi).toBeUndefined();
+    expect(DRIFT_READS_BY_KIND.pulumi).toEqual(["refresh"]);
+    expect(DRIFT_RESOURCE_KINDS).toEqual(["choudoufu", "pulumi"]);
     expect(DRIFT_ERROR_CODES).toContain("no-drift-read");
   });
 });

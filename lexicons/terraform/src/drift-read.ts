@@ -234,9 +234,6 @@ function unobservedOne(ctx: RootContext, address: string, detail: string, comman
 /** `LexiconPlugin.readDrift` for the terraform lexicon. */
 export async function readTerraformDrift(options: ReadDriftOptions): Promise<ReadDriftResult> {
   const namespace = (options.config as { terraform?: TerraformConfig }).terraform;
-  if (namespace?.pulumiMember) {
-    return { refused: { code: "read-unsupported", message: "a pulumi member is read here from its checked-in stack export only; its drift is the pulumi lexicon's (chant#4453)" } };
-  }
   const roots = Object.entries(namespace?.roots ?? {});
   if (roots.length === 0) return { refused: { code: "no-drift-read", message: "terraform.roots declares no root" } };
   const binary = terraformBinary(namespace);
