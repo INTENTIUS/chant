@@ -201,13 +201,16 @@
           "then": {
             "required": [
               "unobserved"
-            ]
+            ],
+            "properties": {
+              "unobserved": {
+                "$ref": "#/$defs/unobserved"
+              }
+            }
           },
           "else": {
-            "not": {
-              "required": [
-                "unobserved"
-              ]
+            "properties": {
+              "unobserved": false
             }
           }
         },
@@ -222,10 +225,8 @@
             }
           },
           "then": {
-            "not": {
-              "required": [
-                "attributes"
-              ]
+            "properties": {
+              "attributes": false
             }
           }
         },
@@ -243,10 +244,8 @@
             }
           },
           "then": {
-            "not": {
-              "required": [
-                "attributesUnobserved"
-              ]
+            "properties": {
+              "attributesUnobserved": false
             }
           }
         }
@@ -272,22 +271,17 @@
       "if": {
         "required": [
           "sensitive"
-        ]
+        ],
+        "properties": {
+          "sensitive": {
+            "const": true
+          }
+        }
       },
       "then": {
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "before"
-              ]
-            },
-            {
-              "required": [
-                "after"
-              ]
-            }
-          ]
+        "properties": {
+          "before": false,
+          "after": false
         }
       }
     },
@@ -525,6 +519,7 @@
       }
     },
     "recordLine": {
+      "type": "object",
       "description": "One record as its read finishes: the record's fields beside type. A later line for the same (member, address, read) replaces it.",
       "allOf": [
         {
