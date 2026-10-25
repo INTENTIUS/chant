@@ -58,7 +58,7 @@ export const emrJob: Component = {
 
 ## Another member's outputs
 
-A member of a workspace can read another member's outputs as its parameters when that member runs on another engine, such as a choudoufu estate ([#4455](https://github.com/INTENTIUS/chant/issues/4455)). The consumer adds a component named after the member, whose one step is `member-outputs`, and reads it with `stackOutput()` like any upstream component. In the three-cloud demo, `dns` reads the `azureEndpoint` the Azure site publishes:
+A member of a workspace can read another member's outputs as its parameters when that member runs on another engine, such as a choudoufu estate or a Pulumi stack ([#4455](https://github.com/INTENTIUS/chant/issues/4455)). The consumer adds a component named after the member, whose one step is `member-outputs`, and reads it with `stackOutput()` like any upstream component. In the three-cloud demo, `dns` reads the `azureEndpoint` the Azure site publishes:
 
 ```ts
 import { memberOutputsComponent } from "@intentius/chant/components/verbs/member-outputs";
@@ -75,12 +75,19 @@ export const records: Component = {
 };
 ```
 
-The member's `kind` in `chant.workspace.json` picks how its outputs are read. A lexicon that drives an engine contributes a source for it through `CapabilityPlugin.engineOutputSources()`. The terraform lexicon contributes the one for `choudoufu` members, so the consumer lists `terraform` among its lexicons. A Pulumi source, for `pulumi` members, is still to come. It plugs in behind the same verb, so the consumer's components stay as they are.
+The member's `kind` in `chant.workspace.json` picks how its outputs are read. A lexicon that drives an engine contributes a source for it through `CapabilityPlugin.engineOutputSources()`, and the consumer lists that lexicon among its own. A member that moves between engines keeps the consumer's components as they are.
+
+| Member kind | Consumer lists | Applied values | Planned values, unknowns named |
+|---|---|---|---|
+| `choudoufu` | `terraform` | `choudoufu output -json` in the member's directory | `live-plan-set -json`: the plan's `planned_values.outputs`, an output unknown when its `output_changes` entry marks any part `after_unknown` |
+| `pulumi` | `pulumi` | `pulumi stack output --json --show-secrets=false` in the member's directory, or its checked-in `stack-export.json` with `CHANT_PULUMI_APPLIED_OUTPUTS=export` | `pulumi preview --json`: the stack's outputs, an output unknown when it holds Pulumi's unknown sentinel |
+
+A Pulumi member on plunge (a `plunge` backend URL in `Pulumi.yaml`, or `engine: "plunge"` in its config) runs the same two commands under `plunge`. A Pulumi output that is a secret is left out of both reads, so chant never carries its value. A parameter that reads one gets nothing; pass secrets through the engine's own secret store.
 
 The values are read the way a pull request reads any upstream ([plan previews](/chant/components/plan-previews/)):
 
 - When the change does not touch the member, the consumer is planned against the outputs it has now.
-- When the change touches it, the consumer is planned against the outputs the member's own plan says it will have. An output known only after the member applies has no value yet. The consumer's step is planned without it, the pull request's report lists `azure.azureEndpoint` under the consumer's `unknownInputs`, and the change set has a hole on `azure#outputs` that names the output. On merge, the consumer is held back until the member applied, then planned again against the value it applied as. That round is gated like any other.
+- When the change touches it, the consumer is planned against the outputs the member's own plan says it will have. An output known only after the member applies has no value yet. The consumer's step is planned without it, the pull request's report lists the output (`azure.azureEndpoint`, or `aws.awsEndpoint` for a Pulumi `aws` member) under the consumer's `unknownInputs`, and the change set has a hole on `azure#outputs` that names the output. On merge, the consumer is held back until the member applied, then planned again against the value it applied as. That round is gated like any other.
 
 The member applies through its own pipeline, never through the consumer's. The step only reads. While the member's plan still has changes to apply, the step refuses, and the consumer is blocked behind it. The member's component is in a change when the change signal names the member as a changed unit. The terraform lexicon does this for a `terraform.roots` entry of the same name. `--from-affected` can name it too.
 
