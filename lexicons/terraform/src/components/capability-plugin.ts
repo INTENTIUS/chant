@@ -72,6 +72,14 @@
  *
  * chant's waves stay the order. Each root is its own one-root set, so
  * choudoufu's wave over it is always wave 1.
+ *
+ * ## Composed runs (#4447)
+ *
+ * With `terraform.compose.enabled`, a group core forms of `terraform-apply`
+ * components that read each other (ws-107) plans as one plan and applies as
+ * one apply of a composed root, and a member's read of another member's new
+ * output is not a hole: the apply passes the value on. `groupFallback`,
+ * `planGroup` and `runGroup` are in `./compose-group.ts`.
  */
 
 import type { Capability, DeployContext, CapabilityPlan, PlannedOutputs } from "@intentius/chant/components/capability";
@@ -88,6 +96,7 @@ import {
   terraformPlan,
 } from "../op/activities/terraform";
 import { terraformPlanShape } from "../plan-shape";
+import { terraformComposeGroup } from "./compose-group";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -295,6 +304,11 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
     await terraformInit(rootArgs(input));
     return terraformOutputs(rootArgs(input));
   },
+  // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
+  // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
+  groupFallback: (ctx, members) => terraformComposeGroup.groupFallback(ctx, members),
+  planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
+  runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
     if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
