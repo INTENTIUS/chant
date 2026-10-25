@@ -1,0 +1,339 @@
+{
+  "config": {
+    "aws:region": "us-east-1"
+  },
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack",
+        "outputs": {
+          "bucketName": "site-logs",
+          "siteUrl": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+          "dbPassword": {
+            "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+            "ciphertext": "[secret]"
+          }
+        }
+      }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
+        "custom": true,
+        "type": "pulumi:providers:aws",
+        "id": "prov-1",
+        "inputs": {
+          "region": "us-east-1"
+        }
+      }
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs",
+        "custom": true,
+        "type": "aws:s3/bucket:Bucket",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "__defaults": [
+            "forceDestroy"
+          ],
+          "bucket": "site-logs",
+          "acl": "private",
+          "tags": {
+            "env": "dev"
+          },
+          "forceDestroy": false
+        }
+      }
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::site::aws:iam/policy:Policy::logs-writer",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:iam/policy:Policy::logs-writer",
+        "custom": true,
+        "type": "aws:iam/policy:Policy",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "name": "logs-writer",
+          "policy": "04da6b54-80e4-46f7-96ec-b56ff0331ba9"
+        },
+        "dependencies": [
+          "urn:pulumi:dev::site::aws:s3/bucket:Bucket::logs"
+        ]
+      }
+    },
+    {
+      "op": "update",
+      "urn": "urn:pulumi:dev::site::aws:lambda/function:Function::handler",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:lambda/function:Function::handler",
+        "custom": true,
+        "type": "aws:lambda/function:Function",
+        "id": "handler-9a1",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "__defaults": [],
+          "role": "arn:aws:iam::123456789012:role/handler",
+          "runtime": "nodejs20.x",
+          "timeout": 3,
+          "environment": {
+            "variables": {
+              "LOG_BUCKET_ARN": "arn:aws:s3:::site-logs-old"
+            }
+          }
+        },
+        "outputs": {
+          "arn": "arn:aws:lambda:us-east-1:123456789012:function:handler-9a1"
+        }
+      },
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:lambda/function:Function::handler",
+        "custom": true,
+        "type": "aws:lambda/function:Function",
+        "id": "handler-9a1",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "__defaults": [],
+          "role": "arn:aws:iam::123456789012:role/handler",
+          "runtime": "nodejs20.x",
+          "timeout": 3,
+          "environment": {
+            "variables": {
+              "LOG_BUCKET_ARN": "04da6b54-80e4-46f7-96ec-b56ff0331ba9"
+            }
+          }
+        },
+        "outputs": {
+          "arn": "arn:aws:lambda:us-east-1:123456789012:function:handler-9a1"
+        }
+      },
+      "diffReasons": [
+        "environment"
+      ],
+      "detailedDiff": {
+        "environment.variables.LOG_BUCKET_ARN": {
+          "kind": "update",
+          "inputDiff": true
+        }
+      }
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::site::my:web:Site::site",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::my:web:Site::site",
+        "custom": false,
+        "type": "my:web:Site",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev"
+      }
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::site::my:web:Site$aws:cloudfront/originAccessIdentity:OriginAccessIdentity::site-oai",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::my:web:Site$aws:cloudfront/originAccessIdentity:OriginAccessIdentity::site-oai",
+        "custom": true,
+        "type": "aws:cloudfront/originAccessIdentity:OriginAccessIdentity",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site",
+        "inputs": {
+          "comment": "site"
+        }
+      }
+    },
+    {
+      "op": "delete",
+      "urn": "urn:pulumi:dev::site::my:web:Site$aws:s3/bucketObject:BucketObject::index",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::my:web:Site$aws:s3/bucketObject:BucketObject::index",
+        "custom": true,
+        "type": "aws:s3/bucketObject:BucketObject",
+        "id": "index.html",
+        "parent": "urn:pulumi:dev::site::my:web:Site::site",
+        "inputs": {
+          "key": "index.html",
+          "bucket": "site-assets"
+        }
+      }
+    },
+    {
+      "op": "update",
+      "urn": "urn:pulumi:dev::site::aws:ssm/parameter:Parameter::db-password",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:ssm/parameter:Parameter::db-password",
+        "custom": true,
+        "type": "aws:ssm/parameter:Parameter",
+        "id": "/site/db-password",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "name": "/site/db-password",
+          "type": "SecureString",
+          "value": {
+            "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+            "ciphertext": "[secret]"
+          }
+        }
+      },
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:ssm/parameter:Parameter::db-password",
+        "custom": true,
+        "type": "aws:ssm/parameter:Parameter",
+        "id": "/site/db-password",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "name": "/site/db-password",
+          "type": "SecureString",
+          "value": {
+            "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+            "ciphertext": "[secret]"
+          }
+        }
+      },
+      "diffReasons": [
+        "value"
+      ],
+      "detailedDiff": {
+        "value": {
+          "kind": "update",
+          "inputDiff": true
+        }
+      }
+    },
+    {
+      "op": "delete-replaced",
+      "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+        "custom": true,
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-0abc",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "ami": "ami-111",
+          "instanceType": "t3.micro"
+        },
+        "outputs": {
+          "id": "i-0abc",
+          "publicIp": "203.0.113.7"
+        }
+      }
+    },
+    {
+      "op": "replace",
+      "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+        "custom": true,
+        "type": "aws:ec2/instance:Instance",
+        "id": "i-0abc",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "ami": "ami-111",
+          "instanceType": "t3.micro"
+        },
+        "outputs": {
+          "id": "i-0abc",
+          "publicIp": "203.0.113.7"
+        }
+      },
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+        "custom": true,
+        "type": "aws:ec2/instance:Instance",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "ami": "ami-222",
+          "instanceType": "t3.micro"
+        },
+        "outputs": {
+          "id": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+          "publicIp": "04da6b54-80e4-46f7-96ec-b56ff0331ba9"
+        }
+      },
+      "diffReasons": [
+        "ami"
+      ],
+      "replaceReasons": [
+        "ami"
+      ],
+      "detailedDiff": {
+        "ami": {
+          "kind": "update-replace",
+          "inputDiff": true
+        }
+      }
+    },
+    {
+      "op": "create-replacement",
+      "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "newState": {
+        "urn": "urn:pulumi:dev::site::aws:ec2/instance:Instance::worker",
+        "custom": true,
+        "type": "aws:ec2/instance:Instance",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "ami": "ami-222",
+          "instanceType": "t3.micro"
+        },
+        "outputs": {
+          "id": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+          "publicIp": "04da6b54-80e4-46f7-96ec-b56ff0331ba9"
+        }
+      },
+      "diffReasons": [
+        "ami"
+      ],
+      "replaceReasons": [
+        "ami"
+      ],
+      "detailedDiff": {
+        "ami": {
+          "kind": "update-replace",
+          "inputDiff": true
+        }
+      }
+    },
+    {
+      "op": "delete",
+      "urn": "urn:pulumi:dev::site::aws:iam/role:Role::old-deployer",
+      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
+      "oldState": {
+        "urn": "urn:pulumi:dev::site::aws:iam/role:Role::old-deployer",
+        "custom": true,
+        "type": "aws:iam/role:Role",
+        "id": "old-deployer",
+        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
+        "inputs": {
+          "name": "old-deployer"
+        }
+      }
+    }
+  ],
+  "diagnostics": [],
+  "duration": 2410000000,
+  "changeSummary": {
+    "create": 3,
+    "delete": 2,
+    "replace": 1,
+    "same": 3,
+    "update": 2
+  }
+}

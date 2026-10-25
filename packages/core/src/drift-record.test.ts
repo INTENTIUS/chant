@@ -249,7 +249,7 @@ describe("the block rollup", () => {
 });
 
 describe("mapping onto a graph", () => {
-  test("uses graphNodeFor, the change set's rule, and leaves a Pulumi URN null", () => {
+  test("uses graphNodeFor, the change set's rule, and leaves a Pulumi URN the graph lacks null", () => {
     const doc = driftDocument([
       rec({ address: "aws_eip.pool[0]" }),
       rec({ address: "module.app[0].aws_eip.pool[1]" }),
@@ -266,6 +266,17 @@ describe("mapping onto a graph", () => {
     expect(at("urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets").node).toBeNull();
     expect(mapDriftToGraph(doc, null).records.every((r) => r.node === null && r.instanceOf === undefined)).toBe(true);
     roundTrip(mapped.records);
+  });
+
+  test("puts a Pulumi URN on <member>/<key> by the URN rule (#4453, #4456), and a provider on none", () => {
+    const doc = driftDocument([
+      rec({ engine: "pulumi", member: "site", address: "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets", evidence: { tool: "pulumi" } }),
+      rec({ engine: "pulumi", member: "site", address: "urn:pulumi:dev::site::pulumi:providers:aws::default", evidence: { tool: "pulumi" } }),
+    ]);
+    const mapped = mapDriftToGraph(doc, { member: null, at: null, ids: ["site/aws:s3/bucket:Bucket::assets"] });
+    const at = (address: string) => mapped.records.find((r) => r.address === address)!;
+    expect(at("urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets").node).toBe("site/aws:s3/bucket:Bucket::assets");
+    expect(at("urn:pulumi:dev::site::pulumi:providers:aws::default").node).toBeNull();
   });
 });
 

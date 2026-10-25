@@ -61,6 +61,18 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
+  // The pulumi lexicon declares no resource types (#4453); these checks assume one that does.
+  pulumi: {
+    "lintRules() returns at least 1 rule": "#4468 a lexicon with no declarable kinds",
+    "postSynthChecks() returns at least 1 check": "#4468 a lexicon with no declarable kinds",
+    "The plugin registers completionProvider": "#4468 a lexicon with no declarable kinds",
+    "The plugin registers hoverProvider": "#4468 a lexicon with no declarable kinds",
+    "The plugin registers docs()": "#4468 no docs pipeline yet",
+    "dist/manifest.json exists": "#4468 no package step yet",
+    "dist/manifest.json declares a chantVersion": "#4468 no package step yet",
+    "At least 1 example in examples/": "#4468 no example workspace yet",
+    "At least 1 .mdx doc page": "#4468 no docs page yet",
+  },
 };
 
 /**

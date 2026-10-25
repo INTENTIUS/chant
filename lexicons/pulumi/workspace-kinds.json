@@ -1,0 +1,29 @@
+{
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#2545). chant reads this file as data and never imports the lexicon. The pulumi kind (#3179) moved here from the terraform lexicon (#4453) and keeps its name, which behold keys on. Its graph block reads the pulumi stack export checked in beside Pulumi.yaml as stack-export.json (src/workspace-member.ts); with no export the member has no nodes and meta.pulumiMember says why. The graph read never runs pulumi. The change set (src/change-set.ts) and drift (src/drift-record.ts) run pulumi preview and pulumi refresh --preview-only, which the ruling on #4450 allows, and nothing else.",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "pulumi",
+      "description": "a Pulumi program, with a Pulumi.yaml in its directory",
+      "precedence": 310,
+      "probe": {
+        "anyFile": [
+          "Pulumi.yaml"
+        ]
+      },
+      "memberFile": {
+        "path": "Pulumi.yaml",
+        "schema": "schemas/pulumi.schema.json"
+      },
+      "graph": {
+        "lexicon": "pulumi",
+        "config": {
+          "member": {
+            "dir": "{dir}",
+            "label": "{member}"
+          }
+        }
+      }
+    }
+  ]
+}

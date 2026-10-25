@@ -6,7 +6,7 @@ diataxis: reference
 
 A drift record says what one read found for one resource instance ([#4451](https://github.com/INTENTIUS/chant/issues/4451)). Chant's live diff, deep observe, component status, a stock terraform root's state and plan, and a choudoufu root's `live-plan`, `live-ls` and plan each become the same records, so a renderer colours a card from one pair, `(status, read)`, with no per-engine branches.
 
-The module is `@intentius/chant/drift-record`, and the terraform family's adapters are `@intentius/chant-lexicon-terraform/drift-record`. Both bundle with the change-set code, under the same guard, described [below](#bundling). The schema ships at `src/workspace/drift.schema.json`, `$id` `https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json`. The document is versioned by its `drift: "v1"` field rather than `contract`. Within the version, fields are only added.
+The module is `@intentius/chant/drift-record`, the terraform family's adapters are `@intentius/chant-lexicon-terraform/drift-record`, and the Pulumi one is `@intentius/chant-lexicon-pulumi/drift-record`. Both bundle with the change-set code, under the same guard, described [below](#bundling). The schema ships at `src/workspace/drift.schema.json`, `$id` `https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json`. The document is versioned by its `drift: "v1"` field rather than `contract`. Within the version, fields are only added.
 
 Change sets keep holding planned changes only. A drift record authorizes nothing and is bound to no gate.
 
@@ -18,7 +18,7 @@ Change sets keep holding planned changes only. A drift record authorizes nothing
 | `engine` | `terraform`, `tofu`, `choudoufu`, `chant`, `warden`, `sql`, `pulumi` or `plunge` |
 | `address` | the engine's own address, at instance level: `aws_eip.pool[0]`, a Pulumi URN, a chant entity name |
 | `resourceType` | the resource type, when the read reports one |
-| `node` | the graph node, by the change set's rule (`graphNodeFor`): an instance of a `count` or `for_each` block is on `<blockNode>[0]` or `<blockNode>["a"]`, an instance under an expanded module call is on its block node. `null` when the graph holds none, and for a Pulumi URN until a URN-to-graph rule exists |
+| `node` | the graph node, by the change set's rule (`graphNodeFor`): an instance of a `count` or `for_each` block is on `<blockNode>[0]` or `<blockNode>["a"]`, an instance under an expanded module call is on its block node. `null` when the graph holds none. A Pulumi URN is on `<member>/<qualified type>::<name>`, the URN rule of `@intentius/chant/pulumi-urn`, and a provider or the root stack on none ([#4453](https://github.com/INTENTIUS/chant/issues/4453)); a plunge URN is always `null` for now |
 | `instanceOf` | on a record whose `node` is an instance node, the block node |
 | `observedAt` | RFC 3339, per record |
 | `read` | `state`, `plan`, `refresh`, `live-read` or `ownership` |
@@ -78,6 +78,9 @@ In an attribute, `before` is what was expected (the record, the snapshot, the de
 | `choudoufu live-plan -json` | `choudoufuLivePlanDriftRecords` | `ownership` | bound: in-sync, owned by its source. Unowned and adoptable: unclaimed. `ABSENT`: pending. Any other omission: not-observed, `VERIFIED_NOT_IMPORTABLE` as `read-failed` and `OUT_OF_SCOPE` as `filtered`. Foreign: undeclared. Controller held: runtime |
 | `choudoufu live-ls -json` | `choudoufuLiveLsDriftRecords`, `choudoufuLiveDriftRecords` | `ownership` | `declared: false`: undeclared. A gap live-plan did not answer: not-observed |
 | live-plan with a plan | `choudoufuLivePlusPlanDriftRecords` | `plan` | bound with a planned update or replace: drifted with paths, live-plan's ownership kept |
+| `pulumi refresh --preview-only --json --target <urn>` | `pulumiRefreshDriftRecords`, one read per URN; `pulumiRefreshDocumentRecords` for an untargeted refresh | `refresh` | `same`: in-sync. `update`: drifted, a path per `detailedDiff` key. `delete`: missing. A `refresh` step: missing with no new state, drifted when its outputs differ, else in-sync. No step for the target: not-observed, `not-reached`. A secret-wrapped value is `sensitive` |
+
+`refreshPulumiMember` in `@intentius/chant-lexicon-pulumi/run` runs the refresh once per resource of the member's checked-in stack export, so one failing resource holds back only its own record. The Pulumi shapes were written from Pulumi's documented `--json` output and still want checking against a real run ([#4453](https://github.com/INTENTIUS/chant/issues/4453)).
 
 An `UNOWNED` omission with no `unowned[]` row is not-observed, `read-failed`, with `engineCode: "UNOWNED"`: nothing in the document says what holds the identity.
 

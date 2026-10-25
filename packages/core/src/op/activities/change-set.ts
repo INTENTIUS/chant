@@ -90,10 +90,11 @@ export interface ReadChangeSetPartArgs {
   member: string;
   /**
    * Which planner wrote the file: `chant` (`lifecycle plan --json`), `warden`
-   * (its reconcile change sets), or `sql` (a part the sql lexicon's
-   * `change-set` adapters produced, written as JSON).
+   * (its reconcile change sets), `sql` (a part the sql lexicon's
+   * `change-set` adapters produced, written as JSON), or `pulumi` (a part
+   * the pulumi lexicon's `pulumiPreviewPart` produced, written as JSON).
    */
-  planner: "chant" | "warden" | "sql";
+  planner: "chant" | "warden" | "sql" | "pulumi";
   /** The plan file, relative to the current directory. */
   file: string;
   /** The lexicon the entries belong to, when the plan does not say. */
@@ -104,7 +105,8 @@ export interface ReadChangeSetPartArgs {
  * A plan another step or job wrote to a file, as a member's part. A warden
  * plan is the reconcile `ChangeSet` (`@intentius/chant/reconcile`), or an
  * array of them, one per cycle and org. A sql plan is already a part
- * (`@intentius/chant-lexicon-sql/change-set`), renamed to `member` here.
+ * (`@intentius/chant-lexicon-sql/change-set`), renamed to `member` here,
+ * and so is a pulumi one (`@intentius/chant-lexicon-pulumi/change-set`).
  */
 export async function readChangeSetPart(args: ReadChangeSetPartArgs): Promise<ChangeSetPartResult> {
   const plan: unknown = JSON.parse(readFileSync(resolve(args.file), "utf-8"));
@@ -115,7 +117,8 @@ export async function readChangeSetPart(args: ReadChangeSetPartArgs): Promise<Ch
     case "warden":
       return { part: reconcilePlanPart({ member: args.member, plan: plan as ReconcileChangeSet | ReconcileChangeSet[], ...lexicon }) };
     case "sql":
-      return { part: readChangeSetPartFile(plan, "sql", args.member, args.lexicon) };
+    case "pulumi":
+      return { part: readChangeSetPartFile(plan, args.planner, args.member, args.lexicon) };
     default:
       throw new Error(`readChangeSetPart: no adapter for planner ${String(args.planner)}; terraform-family plans come from terraformPlan's changeSet`);
   }

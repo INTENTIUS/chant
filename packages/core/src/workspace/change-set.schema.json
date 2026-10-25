@@ -111,7 +111,8 @@
             "choudoufu",
             "chant",
             "warden",
-            "sql"
+            "sql",
+            "pulumi"
           ]
         },
         "scope": {
@@ -196,7 +197,8 @@
             "choudoufu",
             "chant",
             "warden",
-            "sql"
+            "sql",
+            "pulumi"
           ]
         },
         "address": {
@@ -255,6 +257,10 @@
             "unknown"
           ],
           "description": "Set on update, replace and delete."
+        },
+        "mayAppear": {
+          "const": true,
+          "description": "Added in contract 1 by #4453. The planner could not enumerate what the entry stands for: a Pulumi resource registered inside an apply() whose input is unknown at preview. One entry per component whose children may appear, at <component URN with $* after its type and /* after its name>, and one per resource the last stack export holds under such a component that the preview did not list or plans to delete. Never dropped; a change set with one is never empty. Part of digest."
         },
         "region": {
           "type": "string"
