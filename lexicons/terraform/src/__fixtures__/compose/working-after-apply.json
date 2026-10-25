@@ -1,0 +1,145 @@
+{
+  "version": 4,
+  "terraform_version": "1.10.5",
+  "serial": 2,
+  "lineage": "set-by-test",
+  "outputs": {
+    "net__vpc_id": {
+      "value": "6f2b6c1e-0c55-4f0b-9d4e-3a1c2b7d9e01",
+      "type": "string"
+    },
+    "app__service_id": {
+      "value": "0b7e4a2c-93d1-4f6e-a5b8-2c1d9e3f4a77",
+      "type": "string"
+    },
+    "edge__name": {
+      "value": "www",
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "module": "module.net",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "vpc",
+      "provider": "provider[\"terraform.io/builtin/terraform\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "6f2b6c1e-0c55-4f0b-9d4e-3a1c2b7d9e01",
+            "input": {
+              "value": {
+                "cidr": "10.0.0.0/16",
+                "name": "core-v2"
+              },
+              "type": [
+                "object",
+                {
+                  "cidr": "string",
+                  "name": "string"
+                }
+              ]
+            },
+            "output": {
+              "value": {
+                "cidr": "10.0.0.0/16",
+                "name": "core-v2"
+              },
+              "type": [
+                "object",
+                {
+                  "cidr": "string",
+                  "name": "string"
+                }
+              ]
+            },
+            "triggers_replace": null
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0
+        }
+      ]
+    },
+    {
+      "module": "module.app.module.logs",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "group",
+      "provider": "provider[\"terraform.io/builtin/terraform\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "a3c5e7f9-1b2d-4c6e-8a0b-3d5f7a9c1e2f",
+            "input": {
+              "value": "app-logs",
+              "type": "string"
+            },
+            "output": {
+              "value": "app-logs",
+              "type": "string"
+            },
+            "triggers_replace": null
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0
+        }
+      ]
+    },
+    {
+      "module": "module.app",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "service",
+      "provider": "provider[\"terraform.io/builtin/terraform\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "0b7e4a2c-93d1-4f6e-a5b8-2c1d9e3f4a77",
+            "input": {
+              "value": "6f2b6c1e-0c55-4f0b-9d4e-3a1c2b7d9e01",
+              "type": "string"
+            },
+            "output": {
+              "value": "6f2b6c1e-0c55-4f0b-9d4e-3a1c2b7d9e01",
+              "type": "string"
+            },
+            "triggers_replace": null
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0
+        }
+      ]
+    },
+    {
+      "module": "module.edge",
+      "mode": "managed",
+      "type": "terraform_data",
+      "name": "dns",
+      "provider": "provider[\"terraform.io/builtin/terraform\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "id": "1d9a0c55-77e2-4c1b-8f3a-5b6e2d4c7a10",
+            "input": {
+              "value": "www",
+              "type": "string"
+            },
+            "output": {
+              "value": "www",
+              "type": "string"
+            },
+            "triggers_replace": null
+          },
+          "sensitive_attributes": [],
+          "identity_schema_version": 0
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}

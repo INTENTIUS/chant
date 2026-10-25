@@ -14,6 +14,23 @@ export {
   type TerraformApplyStepOutput,
 } from "./components/capability-plugin";
 
+// Composed runs (#4442): the working state merged and split, the composed
+// plan cut into one plan per member, and each member's apply outcome.
+export { mergeStates, splitState, splitStates, derivedLineage, COMPOSE_LINEAGE, type SplitState } from "./compose/state-merge";
+export {
+  slicePlan as sliceComposedPlan,
+  sliceText,
+  planCounts,
+  composedReads,
+  composedMemberPlans,
+  type PlanCounts,
+  type ComposedMemberRead,
+  type ComposedMemberPlan,
+  type ComposedMemberPlansOptions,
+} from "./compose/slice";
+export { readApplyEvents, memberApply, composedApplyOutcomes, type ApplyEvents, type MemberApply, type MemberApplyOutcome } from "./compose/apply-events";
+export { topModule, stripModule, stripChange, moduleChanges } from "./compose/module-address";
+
 // The plan shape of a `show -json` plan (#4436), for core's `coveredRound`.
 export { terraformPlanShape, type TerraformPlanShapeOptions } from "./plan-shape";
 
