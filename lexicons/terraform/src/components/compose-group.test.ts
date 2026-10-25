@@ -185,7 +185,7 @@ describe("groupFallback (#4447)", () => {
         identity: async (projectRoot, env) => {
           asked.push(env);
           expect(projectRoot).toBeTruthy();
-          return (target) => (target === "c" ? id("role/other") : id("role/apply"));
+          return (target) => ((target as readonly string[]).includes("c") ? id("role/other") : id("role/apply"));
         },
       }),
     );
@@ -194,6 +194,53 @@ describe("groupFallback (#4447)", () => {
     expect(refused?.drop).toEqual([
       { component: "c", kind: "identity", reason: "`c` applies under another cloud identity (`ci.identity.cloud`) than `a`, `b`, and one run has one set of credentials" },
     ]);
+  });
+
+  describe("a root matches a target glob by its key or its directory (#4332)", () => {
+    const id = (role: string) => ({ plan: { aws: { role: `${role}-plan`, region: "us-east-1", audience: "sts.amazonaws.com" } }, apply: { aws: { role, region: "us-east-1", audience: "sts.amazonaws.com" } } }) as never;
+    /** The lookup a declaration with these rules gives, in declared order, matching a glob exactly against any name. */
+    const lookupOf = (rules: Array<{ glob: string; role: string }>) => (target: string | readonly string[]) => {
+      const names = typeof target === "string" ? [target] : target;
+      const rule = rules.find((r) => names.includes(r.glob));
+      return rule ? id(rule.role) : undefined;
+    };
+    const asked = async (rules: Array<{ glob: string; role: string }>) => {
+      const seen: Array<string | readonly string[]> = [];
+      const lookup = lookupOf(rules);
+      const g = composeGroup(deps(project(), true, { identity: async () => (t) => (seen.push(t), lookup(t)) }));
+      const refused = await g.groupFallback({ env: "test", components: ["a", "b", "c"] }, members(false));
+      return { refused, seen };
+    };
+
+    test("the lookup gets each root's key and its directory relative to the project", async () => {
+      const { seen } = await asked([]);
+      expect(seen).toEqual([
+        ["a", "roots/a"],
+        ["b", "roots/b"],
+        ["c", "roots/c"],
+      ]);
+    });
+
+    test("a glob on the root's key covers it", async () => {
+      const { refused } = await asked([{ glob: "c", role: "role/other" }, { glob: "a", role: "role/apply" }, { glob: "b", role: "role/apply" }]);
+      expect(refused?.drop?.map((d) => d.component)).toEqual(["c"]);
+    });
+
+    test("a glob on the root's directory covers it", async () => {
+      const { refused } = await asked([{ glob: "roots/c", role: "role/other" }, { glob: "roots/a", role: "role/apply" }, { glob: "roots/b", role: "role/apply" }]);
+      expect(refused?.drop?.map((d) => d.component)).toEqual(["c"]);
+    });
+
+    test("when the key and the directory match different rules, the first declared rule wins", async () => {
+      // c's key matches the second rule and its directory the first, so the first rule's identity applies to c, the same as a and b.
+      const { refused } = await asked([{ glob: "roots/c", role: "role/apply" }, { glob: "c", role: "role/other" }, { glob: "a", role: "role/apply" }, { glob: "b", role: "role/apply" }]);
+      expect(refused).toBeUndefined();
+    });
+
+    test("a root neither name matches takes no identity, as before", async () => {
+      const { refused } = await asked([{ glob: "elsewhere", role: "role/other" }]);
+      expect(refused).toBeUndefined();
+    });
   });
 
   test("members under one cloud identity compose", async () => {

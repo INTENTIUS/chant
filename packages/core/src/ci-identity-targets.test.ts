@@ -62,6 +62,29 @@ const DECL: CloudIdentityDeclaration = {
 
 const ROOTS = ["envs/prod/net", "envs/staging/net", "shared/dns", "envs/prod/app"];
 
+describe("a target with several names takes the first rule any name matches (#4332)", () => {
+  // A Terraform root's key in `terraform.roots`, then its directory relative to the project.
+  const decl: CloudIdentityDeclaration = {
+    aws: {
+      rules: [
+        { targets: ["envs/prod/**"], plan: role("dir-plan"), apply: role("dir-apply") },
+        { targets: ["network"], plan: role("key-plan"), apply: role("key-apply") },
+        { plan: role("own-plan"), apply: role("own-apply") },
+      ],
+    },
+  };
+  const apply = (...names: string[]) => resolveTargetCloudIdentity(decl, "prod", undefined, names)!.apply.aws!.role;
+
+  test("the key matches", () => expect(apply("network", "infra/net")).toBe(role("key-apply")));
+  test("the directory matches", () => expect(apply("prod-net", "envs/prod/net")).toBe(role("dir-apply")));
+  test("both match different rules: the first declared rule wins", () => {
+    expect(apply("network", "envs/prod/net")).toBe(role("dir-apply"));
+    expect(apply("envs/prod/net", "network")).toBe(role("dir-apply"));
+  });
+  test("neither matches: the member's own rule", () => expect(apply("dns", "shared/dns")).toBe(role("own-apply")));
+  test("a single name resolves as before", () => expect(resolveTargetCloudIdentity(decl, "prod", undefined, "network")).toEqual(resolveTargetCloudIdentity(decl, "prod", undefined, ["network"])));
+});
+
 describe("which identity a target takes (#4332)", () => {
   test("the first rule that covers the environment, the member and the target wins, per cloud", () => {
     const prod = resolveTargetCloudIdentity(DECL, "prod", "infra", "envs/prod/net")!;

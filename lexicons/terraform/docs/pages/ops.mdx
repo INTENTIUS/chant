@@ -105,7 +105,7 @@ A member that cannot compose leaves the group and plans root by root as without 
 | `steps` | The component's deploy has more than its one `terraform-apply` step, gates included. |
 | `targets` | The component is given `--target`. |
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
-| `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. |
+| `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. A root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either matches wins. |
 | `workspace` | The root plans in a workspace other than `default`. |
 | `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, or a root without a `live` block among estates. |
 | `provider-lock` | Two members lock one provider at different versions. |
