@@ -11,15 +11,20 @@
  *
  * Nodes are the export's resources, keyed `<label>/<urn tail>`, where the tail
  * is the URN after its stack and project (`aws:s3/bucket:Bucket::assets`).
- * Provider resources (`pulumi:providers:*`) are left out; the resources that
- * name them are not edged to them. Edges come from each resource's
- * `dependencies` and `parent`, kept only when the target is a node. Inputs and
- * outputs are not copied into the node, since an export can hold secrets.
+ * That is the rule in `@intentius/chant/pulumi-urn` (#4456), which a
+ * change set over `pulumi preview --json` and a drift record use too, so all
+ * three put a resource on the same node. Provider resources
+ * (`pulumi:providers:*`) and the root `pulumi:pulumi:Stack` are left out; the
+ * resources that name them are not edged to them. Edges come from each
+ * resource's `dependencies` and `parent`, kept only when the target is a node.
+ * Inputs and outputs are not copied into the node, since an export can hold
+ * secrets.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
+import { isPulumiNodeless, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 
 /** The conventional place of the export, in the member's directory. */
 export const PULUMI_EXPORT_FILE = "stack-export.json";
@@ -47,14 +52,6 @@ interface ExportedResource {
   type?: unknown;
   parent?: unknown;
   dependencies?: unknown;
-}
-
-const PROVIDER = /^pulumi:providers:/;
-
-/** `urn:pulumi:<stack>::<project>::<tail>`: the tail, or the whole URN when it has another shape. */
-function urnTail(urn: string): string {
-  const parts = urn.split("::");
-  return urn.startsWith("urn:pulumi:") && parts.length >= 4 ? parts.slice(2).join("::") : urn;
 }
 
 export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
@@ -86,8 +83,9 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
 
   const keyOf = new Map<string, string>();
   for (const r of resources) {
-    if (typeof r?.urn !== "string" || typeof r.type !== "string" || PROVIDER.test(r.type)) continue;
-    keyOf.set(r.urn, `${label}/${urnTail(r.urn)}`);
+    if (typeof r?.urn !== "string" || typeof r.type !== "string" || isPulumiNodeless(r.type)) continue;
+    const tail = pulumiNodeKey(r.urn);
+    if (tail !== null) keyOf.set(r.urn, `${label}/${tail}`);
   }
 
   const entities = new Map<string, Declarable>();
