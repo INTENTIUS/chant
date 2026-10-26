@@ -931,7 +931,17 @@ async function exportsInUse(
       else if ((typeof next === "string" ? next : JSON.stringify(next)) !== value) change = `changes {export} from ${value} to ${typeof next === "string" ? next : JSON.stringify(next)}`;
     }
     if (change === undefined && maybe === undefined) continue;
-    const importers = (await listImports(exportName)).filter((s) => s !== stack);
+    let importers: string[];
+    try {
+      importers = (await listImports(exportName)).filter((s) => s !== stack);
+    } catch (err) {
+      // A backend without ListImports (an emulator, say) cannot say who imports it; the plan says so instead of failing.
+      holes.push({
+        address: `Outputs.${at ?? output}`,
+        reason: `the plan ${change?.replace("{export}", `export ${exportName}`) ?? maybe}, and the stacks that import it could not be listed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      continue;
+    }
     if (importers.length === 0) continue;
     if (change !== undefined) refused.push({ exportName, change, importers });
     else {

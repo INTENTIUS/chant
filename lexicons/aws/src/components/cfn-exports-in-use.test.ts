@@ -127,3 +127,20 @@ describe("in a pull request's plan (#4466c)", () => {
     expect(member.error).toContain("it removes export network-VpcId, which stack app still imports");
   });
 });
+
+describe("a backend that cannot list imports (#4466d)", () => {
+  it("is a hole on the export at stake, not a failed plan", async () => {
+    write({ Resources: { Topic: { Type: "AWS::SNS::Topic" } } });
+    const mock = createMockCloudExecutor({ stacks: { network: network() } });
+    mock.executor.cloudformation.listImports = async () => {
+      throw new Error("UnknownAction: ListImports");
+    };
+    const result = await createCfnDeployCapability(mock.executor).plan!({ env: "local", component: "network" }, { stack: "network", template });
+    expect(result.changeSet!.member.holes).toEqual([
+      {
+        address: "Outputs.VpcId",
+        reason: "the plan removes export network-VpcId, and the stacks that import it could not be listed: UnknownAction: ListImports",
+      },
+    ]);
+  });
+});

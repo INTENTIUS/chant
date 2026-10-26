@@ -1,0 +1,5 @@
+{
+  "changes": "Network creates a subnet and exports its id. App imports it for a network interface and exports the interface's id. Edge imports that and records it.",
+  "watch": "No component file names these reads. chant finds each Fn::ImportValue in the templates, orders the stacks by it, and previews app and edge with a stand-in for each export that does not exist yet. The driver approves once.",
+  "shows": "Stacks wired only by CloudFormation exports and imports, the way a CDK app wires them, are planned together and applied under one approval."
+}

@@ -12,7 +12,8 @@ network  <-  app  <-  edge
 Each stack reads the one before it through CloudFormation parameters. A
 component names the edge twice: `dependsOn` orders the run, and a
 `stackOutput` input fills the parameter the stack's `params.ts` declares from
-the other stack's output. There are no exports (floci gets those wrong).
+the other stack's output. The base has no exports; only the
+`chant-compose-imports` scenario adds them.
 
 The base is a running set of stacks. network holds a VPC, `subnetA`
 (10.0.1.0/24) and the SSM parameter `httpProxyPort` (8080), and publishes
@@ -78,6 +79,19 @@ objects with a title, a body and an optional link).
   create, 1 to change and 0 to delete. Two values are known after apply: the
   worker's `SubnetId` and edge's `WorkerSubnetId`. After network applies, the apply plans app and edge again, and
   the first approval covers that round.
+- `chant-compose-imports` (#4466): the three stacks are wired only by
+  CloudFormation exports and imports, the way a CDK app wires them. network
+  adds `subnetC` (10.0.3.0/24) and exports its id as
+  `chant-compose-subnet-c-id`. app adds `importsInterface`, whose `SubnetId`
+  is `Fn::ImportValue` of that name, and exports the interface's id as
+  `chant-compose-imports-interface`. edge records that in the SSM parameter
+  `imports-interface`, also through `Fn::ImportValue`. No component file
+  changes: chant finds both reads in the built templates, orders app after
+  network and edge after app, and lists `network.SubnetCId` and
+  `app.ImportsInterfaceId` as known after apply. app and edge are previewed
+  from template copies with a stand-in parameter for each import. The plan is
+  3 to create, 0 to change and 0 to delete, and one approval covers both
+  rounds.
 
 ## The base and the reset
 
@@ -86,3 +100,8 @@ image, outside the pipeline, and pushes it with `[skip ci]`. Each reset applies
 the base tree's templates again, which brings every stack back to its base
 template (`stacks_back`). Nothing in CloudFormation is left locked: each
 stack's update has ended before the next step starts.
+
+After `chant-compose-imports` the reset has to go importers first: edge, then
+app, then network. CloudFormation refuses to remove an export while another
+stack imports it, so network's base template applies only once app no longer
+imports `chant-compose-subnet-c-id`.
