@@ -25,14 +25,14 @@ It runs no project code. It reads file names, `package.json` files, and the text
 |---|---|
 | a `chant.config.ts` or `chant.config.json` at the root | a `chant` member with directory `"."`, named `root` |
 | any other outermost chant project | a `chant` member |
-| a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at |
+| a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at. One under an examples-style directory is a `workspace` member too, with a `because` naming the examples directory it sits in ([#4499](https://github.com/INTENTIUS/chant/issues/4499)). When that directory sits inside another package or project, the declaration stays an example of its group, since only the root member contains other members |
 | a directory that a [kind from an installed package](/chant/reference/workspace-kinds/#platform-kinds) claims, outside any other member (a chart, a kustomize overlay, an Argo app) | a member of that kind, with the package added to `pins`. It replaces the `other` member the same directory would get |
 | an npm workspace package, or any other `package.json` outside those, with no chant project | an `other` member, with a `because` |
 | chant projects under an `examples`, `example`, `samples`, `test`, `tests` or `fixtures` directory | an [example group](/chant/reference/workspace-declaration/#example-groups) |
 
 Projects inside a test runner's directory, such as `__fixtures__`, stay with the package around them.
 
-An example tree whose subdirectories are mostly projects gets one glob, such as `examples/*`. Trees that differ in one path segment merge, as `lexicons/aws/examples/*` and `lexicons/gcp/examples/*` become `lexicons/*/examples/*`, when the merged glob claims no member. A tree that is mostly something else lists its projects one by one. Groups are named after the tree: `examples`, `fixtures`, or with a prefix such as `lexicon-examples`.
+An example tree whose subdirectories are mostly projects gets one glob, such as `examples/*`. Trees that differ in one path segment merge, as `lexicons/aws/examples/*` and `lexicons/gcp/examples/*` become `lexicons/*/examples/*`, when the merged glob claims no member. When the only thing in the way is a member in that last segment, such as a workspace shipped as an example, the glob leaves that directory out by name: `examples/!(kit)`. A tree that is mostly something else lists its projects one by one. Groups are named after the tree: `examples`, `fixtures`, or with a prefix such as `lexicon-examples`.
 
 Member names come from `package.json` without the npm scope and without a leading `<workspace>-`, so `@intentius/chant-lexicon-aws` in the `chant` workspace becomes `lexicon-aws`. Without a usable package name, the directory's name is used. The workspace's name is `--name`, else the repository name from the `origin` remote, else the root package's name, else the directory's name.
 
