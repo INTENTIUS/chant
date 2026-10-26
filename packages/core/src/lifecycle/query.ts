@@ -51,8 +51,14 @@ export const QUERY_TABLES = {
   resources: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["name", "TEXT"], ["type", "TEXT"], ["physical_id", "TEXT"], ["status", "TEXT"], ["last_updated", "TEXT"], ["ownership", "TEXT"], ["attributes", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"]],
   /** One row per snapshot file: what was observed, when, and how many resources it holds. */
   snapshots: [["member", "TEXT"], ["env", "TEXT"], ["stack", "TEXT"], ["lexicon", "TEXT"], ["git_sha", "TEXT"], ["observed_at", "TEXT"], ["depth", "TEXT"], ["resources", "INTEGER"], ["unobserved", "INTEGER"]],
-  /** One row per Op run record. `labels` and `outcomes` are JSON. */
-  runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"]],
+  /**
+   * One row per Op run record. `labels` and `outcomes` are JSON. `root_member`
+   * (#4482) is the workspace member whose directory holds the terraform root
+   * a TerraformApplyOp run applied, read off its `TerraformRootPath` outcome,
+   * or NULL for any other run, outside a workspace, or for a run whose Init
+   * step never finished.
+   */
+  runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"], ["root_member", "TEXT"]],
   /** One row per gate ledger line: `kind` is `pending` or `resolution`. `signed` is 1 for a sealed approval. */
   gates: [["member", "TEXT"], ["op", "TEXT"], ["gate", "TEXT"], ["kind", "TEXT"], ["timestamp", "TEXT"], ["resolved_by", "TEXT"], ["relayed_by", "TEXT"], ["approver_kind", "TEXT"], ["plan_digest", "TEXT"], ["environment", "TEXT"], ["release_digest", "TEXT"], ["git_sha", "TEXT"], ["run_id", "TEXT"], ["url", "TEXT"], ["note", "TEXT"], ["expires_at", "TEXT"], ["origin", "TEXT"], ["empty", "INTEGER"], ["signed", "INTEGER"]],
   /** One row per deploy record in `<env>/releases.jsonl`. `promoted_from`, `restores` and `redeploys` are JSON. */
@@ -78,6 +84,11 @@ export type QueryData = Record<QueryTable, QueryRow[]>;
 export interface QueryLedger {
   member: string | null;
   port: LedgerReadPort;
+  /**
+   * The member whose directory holds a workspace-relative path, or null
+   * (#4482). Given in a workspace; without it `root_member` is NULL.
+   */
+  ownerOfPath?: (path: string) => string | null;
 }
 
 export interface QueryLoad {
@@ -151,6 +162,19 @@ function gateRow(member: string | null, r: GateResolutionRecord | PendingGateRec
 }
 
 /**
+ * The member a run's `TerraformRootPath` outcome falls in (#4482): the
+ * workspace-relative directory of the root a TerraformApplyOp's Init step
+ * resolved. A local `chant run` records under the member that declares the
+ * Op, so this is what names the member whose root it applied when the two
+ * differ, as for a choudoufu member applied from a chant one.
+ */
+function rootMemberOf(outcomes: Record<string, unknown> | undefined, ownerOfPath: ((path: string) => string | null) | undefined): string | null {
+  const path = outcomes?.TerraformRootPath;
+  if (typeof path !== "string" || !ownerOfPath) return null;
+  return ownerOfPath(path);
+}
+
+/**
  * Read every table's rows from the ledgers, in the order given. A ledger
  * whose branch is absent reads as no rows. A line or file that is not its
  * kind is counted in `malformed` and left out, as each ledger's own reader
@@ -159,7 +183,7 @@ function gateRow(member: string | null, r: GateResolutionRecord | PendingGateRec
 export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<QueryLoad> {
   const data = empty<QueryRow[]>(() => []) as QueryData;
   const malformed = empty(() => 0);
-  for (const { member, port } of ledgers) {
+  for (const { member, port, ownerOfPath } of ledgers) {
     const trees = (await port.trees()).sort();
     for (const env of trees.filter((t) => !t.startsWith("_"))) {
       for (const file of (await port.list(env)).sort()) {
@@ -189,7 +213,7 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
           const { records, malformed: bad } = parseRunLedger(text);
           malformed.runs += bad;
           for (const r of records) {
-            data.runs.push({ member, id: r.id, op: r.op, env: r.env, started: r.started, ended: r.ended, status: r.status, git_sha: str(r.gitSha), forge: str(r.runOrigin?.forge), run_url: str(r.runOrigin?.url), failure_code: str(r.failure?.code), failure_reason: str(r.failure?.reason), failed_phase: str(r.failure?.phase), gate: str(r.gate?.name), steward: str(r.steward), labels: json(r.labels ?? {}), outcomes: json(r.outcomes ?? {}) });
+            data.runs.push({ member, id: r.id, op: r.op, env: r.env, started: r.started, ended: r.ended, status: r.status, git_sha: str(r.gitSha), forge: str(r.runOrigin?.forge), run_url: str(r.runOrigin?.url), failure_code: str(r.failure?.code), failure_reason: str(r.failure?.reason), failed_phase: str(r.failure?.phase), gate: str(r.gate?.name), steward: str(r.steward), labels: json(r.labels ?? {}), outcomes: json(r.outcomes ?? {}), root_member: rootMemberOf(r.outcomes, ownerOfPath) });
           }
         }
       }

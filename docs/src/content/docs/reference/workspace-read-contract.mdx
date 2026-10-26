@@ -559,6 +559,18 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 
 `totals` holds `all`, `byUnit`, `byDecision` and `byPrincipal`, each with `runs`, `running`, `tokens`, `cost` (one sum per currency), `unpriced`, the runs that report no cost, and `unreported`, the runs that report no usage. A run without a cost is listed, never counted as zero. A metering reader sums `cost` per currency and shows `unpriced` beside it, and a reader that trusts only signed figures counts the runs whose `attestation.status` is `signed`. `trust` names the base the statements were judged at (`--base`, else `origin/HEAD`, `main` or `master`), the runner principals listed there with their class, and any `problems` reading it, in which case nothing is signed. `reasons` holds `runs-no-ledger`, `runs-ledger-malformed`, `kind-unreadable` when a work kind can't be read to find what its items implement, and `squash-unfollowed` when `--follow-squash` can't read a pull request's ref. `chant serve mcp` serves the document as `workspace-runs`.
 
+## Op runs per member
+
+`chant ledger runs --json` reads every member's Op run ledger, `<env>/runs__<op>.jsonl` on `chant/lifecycle`, into one table ([#4363](https://github.com/INTENTIUS/chant/issues/4363)). A local `chant run` records under the member that declares the Op, and that member is the row's `member`.
+
+| Read | Rows |
+|---|---|
+| `chant ledger runs --member <name> --json` | the runs of the Ops `<name>` declares |
+| `chant ledger runs --where root_member=<name> --json` | the TerraformApplyOp runs that applied a root in `<name>`'s directory, whichever member declares the Op ([#4482](https://github.com/INTENTIUS/chant/issues/4482)) |
+| `chant ledger runs --where labels.Apply=true --json` | every TerraformApplyOp run; its `labels.TerraformRoot` names the root |
+
+`root_member` comes from the `TerraformRootPath` outcome that a TerraformApplyOp's Init step publishes: the root's directory relative to the workspace root. The member whose directory holds that path is `root_member`. It is `null` for any other run, for a run whose Init step did not finish, and for a run recorded by a chant older than the outcome. A reader that shows a choudoufu or terraform member's last apply takes the newest `root_member` row with `status` `ok`, and the newest row after it that is not `ok`. The rows are as fresh as the local branch: `chant ledger` never fetches.
+
 ## Run events
 
 An Op run, a component run and a CI pipeline run all report progress as one stream of events, one JSON object per line ([#4019](https://github.com/INTENTIUS/chant/issues/4019)). Each line follows `run-event.schema.json`, whose contract version 1 is written by chant `0.124.28` and newer. behold, terragucci and a CI log read the same fields wherever the run happened, and a step's state is in the event, so nobody parses log text for it.

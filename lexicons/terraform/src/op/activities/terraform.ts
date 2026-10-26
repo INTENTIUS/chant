@@ -45,6 +45,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { resolve, dirname, join, relative, sep } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
+import { findWorkspaceRoot } from "@intentius/chant/project-root";
 import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
 import { terraformPlanDigest } from "../../plan-digest";
 import { choudoufuSetPlanParts, plannerForBinary, terraformChangeSetPart } from "../../change-set";
@@ -291,6 +292,13 @@ export interface TerraformInitResult {
   dir: string;
   /** Workspace the run selected via `TF_WORKSPACE`, when the root names one. */
   workspace?: string;
+  /**
+   * The root module directory relative to the chant workspace root, with `/`
+   * separators (chant#4482), when the root sits inside a workspace. A
+   * TerraformApplyOp publishes it as the `TerraformRootPath` run outcome, so a
+   * ledger read can name the member whose directory holds the root it applied.
+   */
+  rootPath?: string;
 }
 
 /** Counts projected out of a plan's `resource_changes`. */
@@ -947,7 +955,21 @@ export async function terraformInit(
   const { stdout, stderr } = await run(cmd, dir, terraformEnvironment(root), signal);
   report(stdout, stderr);
 
-  return { dir, ...(root.workspace ? { workspace: root.workspace } : {}) };
+  const rootPath = workspaceRelativePath(dir);
+  return { dir, ...(root.workspace ? { workspace: root.workspace } : {}), ...(rootPath !== undefined ? { rootPath } : {}) };
+}
+
+/**
+ * `dir` relative to the chant workspace that holds it, `/`-separated, or
+ * undefined outside a workspace or outside its root (chant#4482). The
+ * workspace root `"."` stands for itself.
+ */
+export function workspaceRelativePath(dir: string): string | undefined {
+  const found = findWorkspaceRoot(dir);
+  if (!found) return undefined;
+  const rel = relative(found.dir, dir);
+  if (rel.startsWith("..")) return undefined;
+  return rel === "" ? "." : rel.split(sep).join("/");
 }
 
 /**
