@@ -182,6 +182,28 @@ export const choudoufuAdoptContract = activityContract(
   rootEntity,
 );
 
+/**
+ * `choudoufuPlanSet` (#4483): one live choudoufu root planned as a one-root
+ * set. `changeSet` is the root's part, the field an Op hands to
+ * `composeChangeSet`; `planDigest` is what a gate binds; `planSetFile` and
+ * `setDigest` are what a later `live-wave-apply` takes.
+ */
+export const choudoufuPlanSetContract = activityContract(
+  "choudoufuPlanSet",
+  z.strictObject({ ...rootArgs }),
+  z.object({
+    setDigest: z.string(),
+    rootDigest: z.string(),
+    planDigest: z.string(),
+    changed: z.boolean(),
+    json: z.unknown(),
+    changeSet: z.object({ member: z.object({ member: z.string(), planDigest: z.string().nullable() }).passthrough(), entries: z.array(z.unknown()) }),
+    planSetFile: z.string(),
+    root: z.string(),
+  }),
+  rootEntity,
+);
+
 /** One root of a pin-bump rollout ({@link PinRoot} in `../pin/waves.ts`). */
 const pinRoot = z.strictObject({ root: z.string(), dependsOn: z.array(z.string()).optional(), tsSource: z.string().optional() });
 
