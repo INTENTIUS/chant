@@ -9,7 +9,7 @@ import { findInfraFiles, detectLexicons } from "../../index";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
 import { loadCoreRules } from "../../lint/rules/index";
-import { loadComponentChecks } from "../../lint/rules/comp/index";
+import { loadComponentChecks, signalOnlyRootsOf } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
 import type { RollbackPolicy } from "../../components/capability";
@@ -464,7 +464,9 @@ async function runComponentCheckDiagnostics(
   const allCheckIds = new Set(checks.map((c) => c.id));
 
   const registryContext = await resolveRegistryContext(infraPath);
-  const raw = await runComponentChecks(infraPath, checks, registryContext, sandbox, buildParams);
+  // COMP008 (#4490) reads the project's signalOnly terraform roots.
+  const signalOnlyRoots = await signalOnlyRootsOf(findProjectRoot(infraPath));
+  const raw = await runComponentChecks(infraPath, checks, { ...registryContext, signalOnlyRoots }, sandbox, buildParams);
 
   const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
   const fileLevelDisable = (

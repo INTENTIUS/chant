@@ -277,6 +277,32 @@ export const inventoryTable: Component = {
 
 ---
 
+## COMP008: Applies A signalOnly Root
+
+Flags a component whose `terraform-apply` step deploys a root that the project's `terraform.roots` marks `signalOnly: true` ([#4484](https://github.com/INTENTIUS/chant/issues/4484)). A signalOnly root belongs to another workspace member. This project declares it only so that a change to it brings the project into the change, and the build and live reads skip it. A component that applies it applies a root this project's graph does not draw. The warning names the root and the workspace member whose directory holds it ([#4490](https://github.com/INTENTIUS/chant/issues/4490)).
+
+| | |
+|---|---|
+| **Severity** | Warning |
+| **Category** | Correctness |
+
+```typescript
+// chant.config.ts of the dns member
+terraform: {
+  roots: {
+    dns: { dir: "./estate" },
+    azure: { dir: "../azure", signalOnly: true },
+  },
+},
+
+// ⚠ Triggers COMP008: azure is signalOnly here, and member "azure" owns it
+deploy: [phase("Apply", [{ kind: "terraform-apply", root: "azure" }])],
+```
+
+**Fix:** deploy the root from the member that owns it, or drop `signalOnly` if this project does own the root.
+
+---
+
 ## Auto-fix
 
 No COMP* rule has an automatic fix yet (see [#562](https://github.com/INTENTIUS/chant/issues/562)). COMP007 is the likeliest first one. A fix could scaffold the shared preset call, but the author still picks the preset's name and parameter shape.
