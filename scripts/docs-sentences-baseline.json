@@ -90,7 +90,8 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/cli/ci.mdx": {
-  "claude/colon-reveal": 2
+  "claude/colon-reveal": 2,
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/cli/components.mdx": {
   "claude/colon-reveal": 2
@@ -124,10 +125,10 @@
  "docs/src/content/docs/cli/graph.mdx": {
   "formatting/em-dash-density": 23,
   "claude/sounds-like-claude": 1,
-  "claude/colon-reveal": 4,
-  "anaphora/repeated-opening": 1,
+  "claude/colon-reveal": 5,
+  "anaphora/repeated-opening": 3,
   "formatting/bold-first-bullet": 2,
-  "tricolon/comma-series": 5,
+  "tricolon/comma-series": 7,
   "claude/contrast-tail": 3,
   "claude-assistant-voice": 1,
   "repetition/near-duplicate": 2
@@ -143,6 +144,12 @@
  },
  "docs/src/content/docs/cli/init.mdx": {
   "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/ledger.mdx": {
+  "formatting/em-dash-density": 5,
+  "claude/colon-reveal": 2,
+  "tricolon/comma-series": 1,
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/cli/lifecycle.mdx": {
   "claude/colon-reveal": 7,
@@ -247,7 +254,8 @@
   "formatting/em-dash-density": 2
  },
  "docs/src/content/docs/cli/workspace-check.mdx": {
-  "claude/colon-reveal": 2
+  "claude/colon-reveal": 2,
+  "tricolon/comma-series": 2
  },
  "docs/src/content/docs/cli/workspace-evidence.mdx": {
   "formatting/em-dash-density": 2,
@@ -256,8 +264,13 @@
  "docs/src/content/docs/cli/workspace-export.mdx": {
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-graph.mdx": {
+  "claude/colon-reveal": 2,
+  "tricolon/comma-series": 1
+ },
  "docs/src/content/docs/cli/workspace-init.mdx": {
-  "claude/colon-reveal": 2
+  "claude/colon-reveal": 2,
+  "tricolon/comma-series": 4
  },
  "docs/src/content/docs/cli/workspace-lineage.mdx": {
   "formatting/em-dash-density": 2,
@@ -294,6 +307,11 @@
  "docs/src/content/docs/cli/workspace-records.mdx": {
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-run.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2,
+  "tricolon/comma-series": 1
+ },
  "docs/src/content/docs/cli/workspace-runs.mdx": {
   "claude/colon-reveal": 2
  },
@@ -302,6 +320,10 @@
   "dead-metaphor/rare-lemma": 2
  },
  "docs/src/content/docs/cli/workspace-status.mdx": {
+  "claude/colon-reveal": 3
+ },
+ "docs/src/content/docs/cli/workspace-train.mdx": {
+  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-trust.mdx": {
@@ -355,7 +377,7 @@
   "formatting/em-dash-density": 16,
   "discourse/punchy-fragments": 2,
   "claude/colon-reveal": 3,
-  "tricolon/comma-series": 1,
+  "tricolon/comma-series": 2,
   "formatting/bold-first-bullet": 1,
   "claude-technical-vocabulary": 1
  },
@@ -402,7 +424,9 @@
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/components/plan-previews.mdx": {
-  "claude/colon-reveal": 3
+  "claude/colon-reveal": 3,
+  "repetition/near-duplicate": 2,
+  "tricolon/comma-series": 3
  },
  "docs/src/content/docs/components/supply-chain.mdx": {
   "formatting/em-dash-density": 20,
@@ -411,7 +435,9 @@
   "claude/colon-reveal": 4
  },
  "docs/src/content/docs/components/wiring-howto.mdx": {
-  "formatting/em-dash-density": 11
+  "formatting/em-dash-density": 11,
+  "claude/contrast-tail": 3,
+  "repetition/near-duplicate": 1
  },
  "docs/src/content/docs/concepts/build-time-parameters.mdx": {
   "formatting/em-dash-density": 14,
@@ -544,7 +570,7 @@
   "discourse/punchy-fragments": 3,
   "claude/colon-reveal": 3,
   "anaphora/repeated-opening": 4,
-  "repetition/near-duplicate": 3,
+  "repetition/near-duplicate": 4,
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/configuration/tsconfig.mdx": {
@@ -613,10 +639,14 @@
   "tricolon/comma-series": 2
  },
  "docs/src/content/docs/guide/apply-on-merge.mdx": {
-  "dead-metaphor/rare-lemma": 1
+  "dead-metaphor/rare-lemma": 1,
+  "tricolon/comma-series": 1
  },
  "docs/src/content/docs/guide/building.mdx": {
   "discourse/punchy-fragments": 1
+ },
+ "docs/src/content/docs/guide/composed-runs.mdx": {
+  "dead-metaphor/rare-lemma": 1
  },
  "docs/src/content/docs/guide/composite-resources.mdx": {
   "anaphora/repeated-opening": 4,
@@ -688,6 +718,10 @@
   "discourse/punchy-fragments": 2,
   "repetition/near-duplicate": 2
  },
+ "docs/src/content/docs/guide/pull-request-ci.mdx": {
+  "claude/figurative-suffixes": 1,
+  "serves-as-dodge": 1
+ },
  "docs/src/content/docs/guide/pull-request-hooks.mdx": {
   "dead-metaphor/rare-lemma": 1
  },
@@ -701,8 +735,12 @@
   "repetition/near-duplicate": 1,
   "formatting/em-dash-density": 5
  },
+ "docs/src/content/docs/guide/security-forge-token-handover.mdx": {
+  "tricolon/comma-series": 1
+ },
  "docs/src/content/docs/guide/target-locks.mdx": {
-  "dead-metaphor/rare-lemma": 2
+  "dead-metaphor/rare-lemma": 2,
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/guide/trunk-curated-setup.mdx": {
   "anaphora/repeated-opening": 2
@@ -802,8 +840,8 @@
   "formatting/em-dash-density": 3
  },
  "docs/src/content/docs/lexicon-authoring/post-synth-checks.mdx": {
-  "claude/colon-reveal": 3,
-  "tricolon/comma-series": 3
+  "claude/colon-reveal": 4,
+  "tricolon/comma-series": 4
  },
  "docs/src/content/docs/lexicon-authoring/scaffold.mdx": {
   "anaphora/repeated-opening": 1,
@@ -861,7 +899,7 @@
  },
  "docs/src/content/docs/lint-rules/correctness.mdx": {
   "formatting/em-dash-density": 14,
-  "discourse/punchy-fragments": 8,
+  "discourse/punchy-fragments": 9,
   "claude/colon-reveal": 6,
   "repetition/near-duplicate": 3,
   "tricolon/comma-series": 1
@@ -946,7 +984,9 @@
  },
  "docs/src/content/docs/reference/change-set.mdx": {
   "discourse/punchy-fragments": 1,
-  "claude/colon-reveal": 3
+  "claude/colon-reveal": 3,
+  "tricolon/comma-series": 2,
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/reference/ci-workflows.mdx": {
   "formatting/em-dash-density": 2,
@@ -966,6 +1006,10 @@
   "claude/colon-reveal": 3,
   "anaphora/repeated-opening": 2
  },
+ "docs/src/content/docs/reference/drift-record.mdx": {
+  "claude/colon-reveal": 4,
+  "tricolon/comma-series": 5
+ },
  "docs/src/content/docs/reference/level-0-exceptions.mdx": {
   "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
@@ -977,8 +1021,9 @@
  },
  "docs/src/content/docs/reference/network-egress.mdx": {
   "formatting/em-dash-density": 6,
-  "claude/colon-reveal": 5,
+  "claude/colon-reveal": 6,
   "tricolon/comma-series": 2,
+  "repetition/near-duplicate": 1,
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/reference/security-features.mdx": {
@@ -993,14 +1038,21 @@
  "docs/src/content/docs/reference/workspace-declaration.mdx": {
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
+  "tricolon/comma-series": 1,
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/reference/workspace-kinds.mdx": {
   "discourse/punchy-fragments": 1,
-  "claude/colon-reveal": 3
+  "claude/colon-reveal": 3,
+  "tricolon/comma-series": 2,
+  "repetition/near-duplicate": 1,
+  "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/reference/workspace-read-contract.mdx": {
-  "claude/colon-reveal": 3
+  "claude/colon-reveal": 3,
+  "discourse/punchy-fragments": 1,
+  "tricolon/comma-series": 3,
+  "anaphora/repeated-opening": 3
  },
  "docs/src/content/docs/reference/workspace-writer-conformance.mdx": {
   "discourse/punchy-fragments": 1,
