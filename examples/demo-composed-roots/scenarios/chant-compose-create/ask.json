@@ -4,7 +4,7 @@
     {
       "prompt": "Add a second subnet to network; put a worker in it.",
       "action": null,
-      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it. edge records the worker's subnet and allows the new range. Plan all three roots next.",
+      "reply": "Opened pull request {pull}. network adds subnet b, app adds a worker in it, edge allows its range. Next: plan all three.",
       "light": null,
       "paths": false,
       "ghost": false,
@@ -22,7 +22,7 @@
       "light": null,
       "paths": false,
       "ghost": false,
-      "status": "Planning all three roots as one",
+      "status": "Planning network, app and edge together",
       "tips": [
         {
           "title": "One plan, three roots",
@@ -39,7 +39,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "One plan across 3 roots. One value is unknown: subnet b's id, which app's worker and edge read.",
+      "reply": "One plan across 3 roots. Only one value is unknown: subnet b's id, which app's worker needs.",
       "light": [
         "network/aws_subnet.b"
       ],
@@ -49,7 +49,7 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "Two roots read it. app puts its worker in it, and edge records the subnet the worker landed in. Both show it as known after apply.",
+      "reply": "{dependents} resources: app's worker and edge's allowlist.",
       "light": [
         "network/aws_subnet.b"
       ],
@@ -75,7 +75,7 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Recording your approval of the plan's digest",
+    "status": "Recording your approval on the pull request",
     "tips": [
       {
         "title": "One approval",
@@ -90,7 +90,7 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Merging; the apply job applies the three roots as one",
+    "status": "Merging and applying network, app and edge in one pass",
     "tips": [
       {
         "title": "Variables, not remote state",
@@ -99,7 +99,7 @@
     ]
   },
   "applying": {
-    "status": "Applying the three roots as one",
+    "status": "Applying network, app and edge together",
     "tips": [
       {
         "title": "Each root keeps its own state",
@@ -119,7 +119,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. Subnet b was created, and app's worker and edge got its id in the same apply.",
+      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false
@@ -140,5 +140,5 @@
       ]
     }
   ],
-  "closing": "3 roots, 1 plan, 1 approval, 1 apply."
+  "closing": "3 roots. 1 plan. 1 approval. 1 apply."
 }
