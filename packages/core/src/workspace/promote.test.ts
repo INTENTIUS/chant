@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { GateLedgerPort } from "../op/gate";
-import { nextRung, promoteCommand, setMemberKind, type PromoteRunner } from "./promote";
+import { PENDING_STAMP_SCHEMA, nextRung, promoteCommand, readPendingStamp, setMemberKind, type PromoteRunner } from "./promote";
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf-8" });
 
@@ -162,5 +162,107 @@ describe("chant workspace promote (#3178)", () => {
     writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "w", schema: 1, members: [{ name: "net", dir: "net", kind: "other", because: "x" }] }, null, 2) + "\n");
     git(root, "commit", "-qam", "other");
     await expect(promoteCommand({ root, member: "net", runner })).rejects.toThrow(/--lexicon/);
+  });
+  describe("the single-member stamp retry (#4485, chant#4509)", () => {
+    const record = () => join(root, ".chant", "workspace-promote", "net.stamp.json");
+    /** A fake choudoufu whose `live-import -approve` fails while `failStamp` is set, and whose init fails while `failInit` is set. */
+    let failStamp: boolean;
+    let failInit: boolean;
+    const choudoufu: PromoteRunner = async (argv, cwd) => {
+      calls.push({ argv, cwd });
+      if (argv[0] === "chant") return { exitCode: 0, output: "" };
+      if (argv[1] === "init" && failInit) return { exitCode: 1, output: "Error: Failed to query available provider packages" };
+      if (argv.includes("-approve")) return failStamp ? { exitCode: 1, output: "Error: the live system refused the stamp write" } : { exitCode: 0, output: "2 resource(s) newly stamped, 0 already stamped, 0 failed.\n" };
+      return { exitCode: 0, output: "" };
+    };
+    /** Promote net to choudoufu with its stamp failing: the kind is written and the stamp is left pending. */
+    const promoteWithFailedStamp = async (l: ReturnType<typeof ledger>) => {
+      const first = await promoteCommand({ root, member: "net", state: "/s/terraform.tfstate", runner: choudoufu, ledger: l });
+      expect(first.outcome).toBe("gated");
+      l.approve(first.digest!);
+      failStamp = true;
+      const second = await promoteCommand({ root, member: "net", state: "/s/terraform.tfstate", runner: choudoufu, ledger: l });
+      failStamp = false;
+      return second;
+    };
+    beforeEach(() => {
+      failStamp = false;
+      failInit = false;
+    });
+
+    test("a failed stamp leaves a pending record; the same command retries only the stamp, in a staging of its own", async () => {
+      const l = ledger();
+      const failed = await promoteWithFailedStamp(l);
+      expect(failed.outcome).toBe("applied");
+      expect(failed.exitCode).toBe(1);
+      expect(failed.followUpFailed).toBe("choudoufu live-import -approve");
+      expect(kind()).toBe("choudoufu");
+      expect(existsSync(record())).toBe(true);
+      expect(readPendingStamp(realpathSync(root), "net")).toMatchObject({ schema: PENDING_STAMP_SCHEMA, member: "net", dir: "net", state: "/s/terraform.tfstate", failed: "choudoufu live-import -approve" });
+
+      // --dry-run never retries the stamp.
+      calls = [];
+      const dry = await promoteCommand({ root, member: "net", runner: choudoufu, ledger: l, dryRun: true });
+      expect(dry.retriedStamp).toBeUndefined();
+      expect(calls.some((c) => c.argv.includes("-approve"))).toBe(false);
+      expect(existsSync(record())).toBe(true);
+
+      // No --state: the retry reads the state the record names.
+      calls = [];
+      const retried = await promoteCommand({ root, member: "net", runner: choudoufu, ledger: l });
+      expect(retried).toMatchObject({ outcome: "applied", exitCode: 0, member: "net", from: "terraform", to: "choudoufu", retriedStamp: true });
+      expect(retried.followUpFailed).toBeUndefined();
+      // Only the staging's init and the stamp ran, in one staging directory that is not the tree's (chant#4492):
+      // no live-check, no report, no chant import for the next rung.
+      expect(calls.map((c) => c.argv)).toEqual([
+        ["choudoufu", "init", "-input=false", "-backend=false", "-no-color"],
+        ["choudoufu", "live-import", "-state=/s/terraform.tfstate", "-estate=net", "-approve"],
+      ]);
+      expect(calls[1]!.cwd).toBe(calls[0]!.cwd);
+      expect(calls[0]!.cwd).not.toBe(join(realpathSync(root), "net"));
+      expect(existsSync(calls[0]!.cwd)).toBe(false);
+      expect(retried.ran).toEqual([
+        { label: "choudoufu init", exitCode: 0 },
+        { label: "choudoufu live-import -approve", exitCode: 0 },
+      ]);
+      expect(existsSync(record())).toBe(false);
+      expect(kind()).toBe("choudoufu");
+
+      // Once stamped, the next promote moves on to the next rung instead of retrying.
+      calls = [];
+      const next = await promoteCommand({ root, member: "net", runner: choudoufu, ledger: l, dryRun: true });
+      expect(next.retriedStamp).toBeUndefined();
+      expect(next.to).toBe("chant");
+      expect(calls.map((c) => c.argv[0])).toEqual(["chant"]);
+    });
+
+    test("--state on the retry wins over the state the record names", async () => {
+      const l = ledger();
+      await promoteWithFailedStamp(l);
+      calls = [];
+      const retried = await promoteCommand({ root, member: "net", state: "/other/terraform.tfstate", runner: choudoufu, ledger: l });
+      expect(retried.exitCode).toBe(0);
+      expect(calls.at(-1)?.argv).toContain("-state=/other/terraform.tfstate");
+    });
+
+    test("a stamp that fails again stays pending and exits 1; a failing staging init keeps it pending without stamping", async () => {
+      const l = ledger();
+      await promoteWithFailedStamp(l);
+
+      failStamp = true;
+      calls = [];
+      const again = await promoteCommand({ root, member: "net", runner: choudoufu, ledger: l });
+      expect(again).toMatchObject({ outcome: "applied", exitCode: 1, retriedStamp: true, followUpFailed: "choudoufu live-import -approve" });
+      expect(existsSync(record())).toBe(true);
+      failStamp = false;
+
+      failInit = true;
+      calls = [];
+      const noInit = await promoteCommand({ root, member: "net", runner: choudoufu, ledger: l });
+      expect(noInit).toMatchObject({ outcome: "applied", exitCode: 1, retriedStamp: true, followUpFailed: "choudoufu init" });
+      expect(calls.some((c) => c.argv.includes("-approve"))).toBe(false);
+      expect(existsSync(record())).toBe(true);
+      expect(kind()).toBe("choudoufu");
+    });
   });
 });
