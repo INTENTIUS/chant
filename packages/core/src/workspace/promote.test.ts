@@ -81,7 +81,10 @@ describe("chant workspace promote (#3178)", () => {
     expect(second.digest).toBe(first.digest);
     expect(kind()).toBe("choudoufu");
     expect(calls.at(-1)?.argv).toContain("-approve");
-    expect(calls.at(-1)?.cwd).toBe(join(realpathSync(root), "net"));
+    // The stamp runs where the staging's choudoufu init installed the providers, not in the tree (chant#4492).
+    expect(calls[0]!.argv.slice(0, 2)).toEqual(["choudoufu", "init"]);
+    expect(calls.at(-1)?.cwd).toBe(calls[0]!.cwd);
+    expect(calls.at(-1)?.cwd).not.toBe(join(realpathSync(root), "net"));
   });
 
   test("the staging installs providers with choudoufu init, and nothing it writes under .terraform/ reaches the patch (#4461)", async () => {
