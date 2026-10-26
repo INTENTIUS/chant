@@ -125,11 +125,11 @@ The command ends with one line per root naming its wave and outcome:
 | `dry-run` | staged and checked; no gate recorded |
 | `checks-failed` | `live-check` or the `live-import` report failed in staging |
 | `refused` | the state is not a local version 4 tfstate |
-| `stamp-failed` | the kind was written but `live-import -approve` failed; it is safe to re-run by hand |
+| `stamp-failed` | the kind was written but `live-import -approve` failed. The promote keeps the stamp as pending in `.chant/workspace-promote/<member>.stamp.json`, and the same command run again retries only the stamp; the line also prints the `live-import -approve` command, which is safe to run by hand |
 | `failed` | anything else that stopped the root, such as uncommitted changes in its directory |
 | `not-run` | an earlier wave did not land |
 
-The exit code is 1 when any root failed, else 3 when any root is gated, else 0. Re-running over a workspace that has landed reports every root `already-promoted`, stages nothing and exits 0. `--json` prints the summary as one document with the waves and each root's digest, report digest and counts.
+The exit code is 1 when any root failed, else 3 when any root is gated, else 0. Re-running over a workspace that has landed reports every root `already-promoted`, stages nothing and exits 0. A root with a pending stamp is retried instead, and lands as `applied` once the stamp passes. `--json` prints the summary as one document with the waves and each root's digest, report digest and counts.
 
 ## Ownership stacks
 
