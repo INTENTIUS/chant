@@ -11,8 +11,15 @@
  * The roots use `terraform_data`, which is built into `tofu` and `terraform`,
  * with local state, so nothing downloads a provider or reaches a cloud. The
  * estate is net -> a, b and a -> app, with dns on its own; a and b read net's
- * output and app reads a's, through `stackOutput()`. Skipped when neither
- * binary is on the PATH.
+ * output and app reads a's, through `stackOutput()`. It lives in
+ * `../__fixtures__/pr-loop`, whose README also gives chant#4463's recorded
+ * run over it. Skipped when neither binary is on the PATH.
+ *
+ * app is previewed with a placeholder for `var.subnet` (#4463). A pull
+ * request that makes a's id end in `-v2` stays within that preview, so one
+ * approval applies both roots. One that makes it end in `-wide` adds
+ * `terraform_data.wide[0]` to app's real plan through a count the preview
+ * does not follow, so app's round 2 waits on its own gate (#4487).
  *
  * Composed runs over three roots are `pr-loop-compose.tofu.e2e.test.ts`.
  */
@@ -40,13 +47,10 @@ function which(bin: string): boolean {
 }
 const BINARY = which("tofu") ? "tofu" : which("terraform") ? "terraform" : undefined;
 
-const ROOTS: Record<string, string> = {
-  net: 'resource "terraform_data" "vpc" {\n  input = "10.0.0.0/16"\n}\n\noutput "cidr" {\n  value = terraform_data.vpc.output\n}\n',
-  a: 'variable "cidr" {\n  type = string\n}\n\nresource "terraform_data" "subnet" {\n  input = "${var.cidr}/a-v1"\n}\n\noutput "id" {\n  value = terraform_data.subnet.output\n}\n',
-  b: 'variable "cidr" {\n  type = string\n}\n\nresource "terraform_data" "subnet" {\n  input = "${var.cidr}/b-v1"\n}\n',
-  app: 'variable "subnet" {\n  type = string\n}\n\nresource "terraform_data" "app" {\n  input = "app on ${var.subnet}"\n}\n',
-  dns: 'resource "terraform_data" "zone" {\n  input = "example.test"\n}\n',
-};
+/** The workspace, `../__fixtures__/pr-loop` (its README says what each pull request below exercises). */
+const FIXTURE = join(import.meta.dirname, "..", "__fixtures__", "pr-loop");
+const ROOT_NAMES = ["net", "a", "b", "app", "dns"];
+const ROOTS: Record<string, string> = Object.fromEntries(ROOT_NAMES.map((r) => [r, readFileSync(join(FIXTURE, "roots", r, "main.tf"), "utf8")]));
 
 // The source passes `chant lint`, since `chant graph --format ir`, which maps
 // the stored change set onto nodes (#4022), refuses source that does not.
@@ -63,17 +67,7 @@ async function estateGraphIds(projectRoot: string): Promise<{ ids: string[] }> {
   return { ids: withInstanceNodes(buildGraphIr(rendered.entities), rendered.entities).nodes.map((n) => n.id) };
 }
 
-const COMPONENTS = `import { phase, stackOutput, type Component } from "@intentius/chant/components";
-
-const apply = (root: string, vars?: Record<string, unknown>) =>
-  [phase("Apply", [{ kind: "terraform-apply", root, noRollback: "test roots with local state", vars: vars ?? {} }])];
-
-export const net: Component = { name: "net", dependsOn: [], deploy: apply("net") };
-export const a: Component = { name: "a", dependsOn: ["net"], deploy: apply("a", { cidr: stackOutput("net", "cidr") }) };
-export const b: Component = { name: "b", dependsOn: ["net"], deploy: apply("b", { cidr: stackOutput("net", "cidr") }) };
-export const app: Component = { name: "app", dependsOn: ["a"], deploy: apply("app", { subnet: stackOutput("a", "id") }) };
-export const dns: Component = { name: "dns", dependsOn: [], deploy: apply("dns") };
-`;
+const COMPONENTS = readFileSync(join(FIXTURE, "estate.component.ts"), "utf8");
 
 /** GitHub as far as the loop uses it: comments, statuses, reviews and the merged pull request of a commit. */
 class FakeGithub {
@@ -320,5 +314,71 @@ describe.skipIf(!BINARY)(`the pull-request loop over five ${BINARY ?? "terraform
     const { gates } = await readMemberGates("_gates", "flat", git("rev-parse", "chant/lifecycle"), [], dir, new Date().toISOString());
     const gate = gates.find((g) => g.component === "pr-2")!;
     expect(gate).toMatchObject({ state: "pending", planDigest: refused.digest, changeSet: refused.digest });
+  }, 240_000);
+
+  // A round the first approval does not cover, over real tofu (#4487). app's
+  // `wide` count reads var.subnet through a local, so the preview's stand-in
+  // plans no wide instance; a's real id ends in `-wide`, so app's real plan
+  // creates one, which is more than the preview showed.
+  test("a dependent whose real plan exceeds its placeholder preview waits on its own round-2 gate (#4487)", async () => {
+    const plan = await openPullRequest(3, "a-wide");
+    expect(plan.status).toBe("planned");
+    expect(plan.members.map((m) => [m.member, m.counts.create, m.counts.update, m.unknownInputs])).toEqual([
+      ["a", 0, 1, undefined],
+      ["app", 0, 1, ["a.id"]],
+    ]);
+    expect(plan.changeSet.members.find((m) => m.member === "app")?.placeholders).toEqual(["var.subnet"]);
+    expect(plan.changeSet.entries.map((e) => [e.member, e.address, e.action])).toEqual([
+      ["a", "terraform_data.subnet", "update"],
+      ["app", "terraform_data.app", "update"],
+    ]);
+    github.reviews[3] = [{ user: { login: "alice" }, state: "APPROVED" }];
+    expect((await recordGateApproval("pr-3", "pr-apply", { actor: "github:alice", plan: plan.digest })).ok).toBe(true);
+
+    // a applies; app, planned now against the id a applied as, goes beyond the preview and waits on its own gate.
+    expect(await merge(3)).toBe(3);
+    const waiting = report("apply");
+    expect(waiting.digest).toBe(plan.digest);
+    expect(waiting.status).toBe("waiting");
+    expect(waiting.members.map((m) => [m.member, m.status, m.round])).toEqual([
+      ["a", "applied", undefined],
+      ["app", "waiting", 2],
+    ]);
+    const round = waiting.rounds![0]!;
+    expect(round).toMatchObject({ round: 2, gate: "pr-apply-round-2", components: ["app"], status: "waiting", approval: { status: "pending" } });
+    expect(round.changeSet.entries.map((e) => [e.member, e.address, e.action])).toEqual([
+      ["app", "terraform_data.app", "update"],
+      ["app", "terraform_data.wide[0]", "create"],
+    ]);
+    // The fresh plan's shape adds a resource the preview did not show, so the first approval does not cover it, and the reason names it.
+    expect(round.covered).toBeUndefined();
+    expect(round.notCovered).toContain("terraform_data.wide");
+    expect(state("a")).toContain("10.0.0.0/16/a-wide");
+    expect(state("app")).not.toContain("a-wide");
+    expect(github.statuses.at(-1)).toMatchObject({ context: "chant/apply", state: "pending" });
+    expect(github.comments.find((c) => c.pr === 3)!.body).toContain(`chant approve pr-3 pr-apply-round-2 --plan ${round.digest}`);
+  }, 240_000);
+
+  test("once the reviewer approves the round's plan, the same apply carries on from its record and applies the dependent (#4487)", async () => {
+    const plan = report("plan");
+    const round = report("apply").rounds![0]!;
+    expect((await recordGateApproval("pr-3", "pr-apply-round-2", { actor: "github:alice", plan: round.digest })).ok).toBe(true);
+    expect(await handlers.runComponentsPrApply(ctx({ base: mergedFrom, forge: "github", requireReview: true, resume: RESUME }) as never)).toBe(0);
+    const applied = report("apply");
+    expect(applied.digest).toBe(plan.digest);
+    expect(applied.status).toBe("applied");
+    expect(applied.approval).toEqual({ status: "approved", approvedBy: ["github:alice"] });
+    expect(applied.resumed).toEqual({ applied: ["a"] });
+    expect(applied.members.map((m) => [m.member, m.status, m.round])).toEqual([
+      ["a", "applied", undefined],
+      ["app", "applied", 2],
+    ]);
+    expect(applied.rounds?.map((r) => [r.digest, r.status, r.approval.approvedBy])).toEqual([[round.digest, "applied", ["github:alice"]]]);
+    expect(state("app")).toContain("app on 10.0.0.0/16/a-wide");
+    expect(state("app")).toContain("wide on 10.0.0.0/16/a-wide");
+    // The same note, now with the apply's outcome.
+    expect(github.comments.filter((c) => c.pr === 3)).toHaveLength(1);
+    expect(github.comments.find((c) => c.pr === 3)!.body).toContain("### chant apply for `local`");
+    expect(github.statuses.at(-1)).toMatchObject({ context: "chant/apply", state: "success", sha: applied.head });
   }, 240_000);
 });

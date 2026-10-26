@@ -1,0 +1,13 @@
+{
+  "lexicons": ["terraform"],
+  "terraform": {
+    "binary": "tofu",
+    "roots": {
+      "net": { "dir": "roots/net" },
+      "a": { "dir": "roots/a" },
+      "b": { "dir": "roots/b" },
+      "app": { "dir": "roots/app" },
+      "dns": { "dir": "roots/dns" }
+    }
+  }
+}
