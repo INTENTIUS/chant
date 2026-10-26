@@ -107,10 +107,10 @@ A member that cannot compose leaves the group and plans root by root as without 
 
 | Kind | When |
 |---|---|
-| `off` | `terraform.compose` is not enabled. Recorded, not printed in the note. |
+| `off` | `terraform.compose` is not enabled. Recorded, not printed in the note (ruling 3 on #4481). |
 | `path` | The step names no root in `terraform.roots`, sets `cwd`, or the root uses `path.root` or `path.cwd`. |
 | `same-root` | Two members deploy the same root. |
-| `steps` | The component's deploy has more than its one `terraform-apply` step, gates included. |
+| `steps` | The component's deploy has more than its one `terraform-apply` step, gates included (ruling 5 on #4481). |
 | `targets` | The component is given `--target`. |
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
 | `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. A root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either matches wins. |
@@ -122,9 +122,25 @@ A member that cannot compose leaves the group and plans root by root as without 
 | `order-only` | A member `dependsOn` another with no read between them. |
 | `split` | A component outside the group applies between two members. |
 | `cli-args` | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` carries `-target`, `-exclude`, `-replace` or `-var`. |
-| `too-many-roots` | The group has more roots than `compose.max`. |
+| `too-many-roots` | The group has more roots than `compose.max`. Nothing composes then, not even `max` of them (ruling 6 on #4481). |
 
-A composed plan that fails makes every member plan-failed with its error, and nothing applies. Outside a group, a root whose `vars` wait on an output not known yet is a hole and its round needs its own approval.
+A composed plan that fails makes every member plan-failed with its error, and nothing applies. Outside a group, a root whose `vars` wait on an output not known yet is previewed with typed placeholders ([#4463](https://github.com/INTENTIUS/chant/issues/4463), [plan previews](/chant/components/plan-previews/#terraform-apply)), and stays a hole only when no preview is possible.
+
+#### What was ruled on the shipped behaviour
+
+The composed runs shipped with a first answer to twelve questions, and the maintainer ruled on them on 2026-10-25 ([#4481](https://github.com/INTENTIUS/chant/issues/4481)). These keep what shipped:
+
+- A `planGroup` that throws makes every member of the group plan-failed with the same error (ruling 2). Core does not re-plan the members one by one.
+- The `off` fallback is recorded in the report and not printed in the note (ruling 3), so a workspace that has not opted in sees no line about it.
+- A root with a local backend is locked with chant's own `<path>.tflock` beside the state (ruling 4). It keeps another chant run out. A bare `terraform apply` on the same checkout at the same time is not kept out, since the run writes with `-lock=false` while it holds the lock.
+- A gate step counts as a step (ruling 5), so a component with a gate never joins a group (`steps`).
+- When a change reaches more roots than `compose.max`, nothing composes (ruling 6). The whole change falls back to waves with `too-many-roots`, rather than a cut of `max` roots that would move with unrelated changes.
+- [ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md) stays `decided` (ruling 8).
+- The composed estate root keeps re-exporting each estate's outputs as `<module>__<name>` (ruling 10), which the post-apply reads and `report.ts`'s unknown-output check read.
+- When the post-apply plan's state carries no root outputs for an estate, its outputs fall back to that plan's planned outputs (ruling 11), so a state choudoufu builds from records does not leave a downstream read unknown after a successful apply.
+- The `pr-loop` bundle ceiling stays 110 KB (ruling 12, `pr-loop-bundle.test.ts`).
+
+Ruling 7, one backend reader in place of the two in `compose/hcl.ts` and `state/backend.ts`, is [#4478](https://github.com/INTENTIUS/chant/issues/4478).
 
 ### A choudoufu member's outputs, read by another member
 
