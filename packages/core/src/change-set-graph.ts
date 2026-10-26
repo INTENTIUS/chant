@@ -23,7 +23,9 @@
  * prints it, `<root>/module.app/terraform_data.instance[0]`, with
  * `instanceOf` naming the block node. That holds whether or not the graph
  * lists the instance node, since a graph read of the source lists only the
- * instances a literal `count` or `for_each` gives (`./instance-nodes.ts`).
+ * instances it can count (`./instance-nodes.ts`). Under an expanded module
+ * call the module key sits on the call's segment (#4486):
+ * `module.app[0].aws_eip.pool[1]` is `<root>/module.app[0]/aws_eip.pool[1]`.
  * {@link graphNodeFor} is the same rule for a single address, which a drift
  * row uses.
  *
@@ -33,7 +35,7 @@
  */
 
 import type { ChangeSetDocument, ChangeSetEntry } from "./change-set";
-import { instanceNodeId, terraformInstanceKey } from "./instance-nodes";
+import { terraformInstancePath } from "./instance-nodes";
 import { pulumiNodeCandidates } from "./pulumi-urn";
 
 /** The graph a document is mapped onto: the node ids of one member's own IR. */
@@ -160,15 +162,18 @@ function placeOn(
   const id = changeSetNodeCandidates(entry).find((c) => ids.has(c));
   if (id === undefined) return { node: null };
 
-  const key =
+  const path =
     (entry.planner === "terraform" || entry.planner === "tofu" || entry.planner === "choudoufu") && id !== entry.address
-      ? terraformInstanceKey(entry.address)
+      ? terraformInstancePath(entry.address)
       : undefined;
-  if (key === undefined) {
+  // The block node the graph holds is `<root>/<block>`; its instance is
+  // `<root>/<instance>`, the module key on its call segment (#4486).
+  const root = path !== undefined && id.endsWith(`/${path.block}`) ? id.slice(0, id.length - path.block.length) : undefined;
+  if (path === undefined || root === undefined) {
     const source = sources?.get(id);
     return { node: `${prefix}${id}`, ...(source !== undefined ? { source } : {}) };
   }
-  const instance = instanceNodeId(id, key);
+  const instance = `${root}${path.instance}`;
   const source = sources?.get(instance) ?? sources?.get(id);
   return { node: `${prefix}${instance}`, instanceOf: `${prefix}${id}`, ...(source !== undefined ? { source } : {}) };
 }

@@ -21,14 +21,22 @@
  *   node's id as `node`, and the block node's id as `instanceOf`.
  *
  * The graph lists the instances a read of the source can count: a literal
- * `count` or a literal `for_each`. An expansion that only a plan can count
- * (`count = var.n`) has no instance nodes in the declared graph, and an entry
+ * `count` or a literal `for_each`, or (#4486) one that reads a variable whose
+ * value the root's files give. An expansion that only a plan can count has
+ * no instance nodes in the declared graph, and an entry
  * for one of its instances still names the instance id by the rule above,
  * with `instanceOf` saying which block node to hang it under.
  *
- * An address under a module call that is itself expanded
- * (`module.app[0].aws_eip.pool[1]`) has no instance node: the block node id
- * has no place for the module's key, so it rolls up to the block.
+ * Under a module call that is itself expanded (#4486), the module key goes
+ * on the call segment it belongs to, as Terraform prints it, and the
+ * block's own key stays at the end: `module.app[0].aws_eip.pool[1]` in root
+ * `estate` is `estate/module.app[0]/aws_eip.pool[1]`, under the block node
+ * `estate/module.app/aws_eip.pool`. The node also carries `instanceScope`,
+ * the expanded module path as Terraform prints it (`module.app[0]`), and its
+ * `instanceKey` is the block's own key, absent when only the module call is
+ * expanded. With no module call expanded the rule is the one above. The
+ * module call's own node gets instance nodes by the first rule,
+ * `estate/module.app[0]`.
  *
  * Imports nothing at run time, so it bundles with `./change-set.ts`.
  */
@@ -58,6 +66,105 @@ export function terraformInstanceKey(address: string): string | undefined {
   const head = address.slice(0, m.index);
   if (head.includes("[")) return undefined;
   return m[1];
+}
+
+/** One part of a terraform address: a name and the `[...]` key that follows it, if any. */
+interface AddressPart {
+  name: string;
+  key?: string;
+}
+
+/** Split a terraform address on its dots, keeping each part's `[...]` key. Quoted keys may hold `.` or `]`. */
+function addressParts(address: string): AddressPart[] {
+  const parts: AddressPart[] = [];
+  let name = "";
+  let key = "";
+  let depth = 0;
+  let quoted = false;
+  const flush = (): void => {
+    if (name.length > 0) parts.push({ name, ...(key ? { key } : {}) });
+    name = "";
+    key = "";
+  };
+  for (let i = 0; i < address.length; i++) {
+    const c = address[i]!;
+    if (depth > 0) {
+      key += c;
+      if (quoted) {
+        if (c === "\\") key += address[++i] ?? "";
+        else if (c === '"') quoted = false;
+      } else if (c === '"') quoted = true;
+      else if (c === "]") depth--;
+      continue;
+    }
+    if (c === "[") {
+      depth++;
+      key += c;
+    } else if (c === ".") flush();
+    else name += c;
+  }
+  flush();
+  return parts;
+}
+
+/** Where one terraform-family instance address sits, relative to its root (#4486). */
+export interface TerraformInstancePath {
+  /** The block's key in its root: `module.app/aws_eip.pool`. */
+  block: string;
+  /** The instance node's key in its root: `module.app[0]/aws_eip.pool[1]`. */
+  instance: string;
+  /** The block's own instance key, `[1]`, absent when the block itself is not expanded. */
+  key?: string;
+  /** The expanded module path, `module.app[0]`, absent when no module call on the way is expanded. */
+  scope?: string;
+}
+
+/**
+ * The block key and instance node key a terraform-family address names, or
+ * undefined when nothing on it is expanded (no `[...]` anywhere) or the
+ * address is not a block's. `module.app[0].aws_eip.pool[1]` is block
+ * `module.app/aws_eip.pool`, instance `module.app[0]/aws_eip.pool[1]`, key
+ * `[1]`, scope `module.app[0]`.
+ */
+export function terraformInstancePath(address: string): TerraformInstancePath | undefined {
+  const parts = addressParts(address);
+  const blockScope: string[] = [];
+  const instanceScope: string[] = [];
+  let expandedScope = false;
+  let i = 0;
+  while (parts[i]?.name === "module" && i + 1 < parts.length) {
+    const call = parts[i + 1]!;
+    blockScope.push(`module.${call.name}`);
+    instanceScope.push(`module.${call.name}${call.key ?? ""}`);
+    if (call.key) expandedScope = true;
+    i += 2;
+  }
+  const rest = parts.slice(i);
+  let block: string;
+  let key: string | undefined;
+  if (rest.length === 0) {
+    // The module call itself, a block of its caller.
+    if (blockScope.length === 0) return undefined;
+    const call = blockScope.pop()!;
+    const inst = instanceScope.pop()!;
+    block = call;
+    key = inst.length > call.length ? inst.slice(call.length) : undefined;
+    expandedScope = instanceScope.some((s, n) => s !== blockScope[n]);
+  } else if (rest[0]!.name === "data" && rest.length >= 3) {
+    block = `data.${rest[1]!.name}.${rest[2]!.name}`;
+    key = rest[2]!.key;
+  } else if (rest.length >= 2) {
+    block = `${rest[0]!.name}.${rest[1]!.name}`;
+    key = rest[1]!.key;
+  } else return undefined;
+  if (key === undefined && !expandedScope) return undefined;
+  const scope = expandedScope ? instanceScope.join(".") : undefined;
+  return {
+    block: [...blockScope, block].join("/"),
+    instance: [...(expandedScope ? instanceScope : blockScope), `${block}${key ?? ""}`].join("/"),
+    ...(key !== undefined ? { key } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+  };
 }
 
 /**
