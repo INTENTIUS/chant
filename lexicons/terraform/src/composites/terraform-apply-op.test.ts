@@ -119,6 +119,15 @@ describe("TerraformApplyOp gate (#2086)", () => {
   });
 });
 
+describe("TerraformApplyOp root path outcome (#4482)", () => {
+  test("Init publishes the root's workspace path as TerraformRootPath", () => {
+    const op = props({ name: "app-apply", root: "app", gate: "never" });
+    const init = op.phases.find((p) => p.name === "Init")!.steps[0] as ActivityStep;
+    expect(init.fn).toBe("terraformInit");
+    expect(init.outcomeAttribute).toEqual({ name: "TerraformRootPath", from: "rootPath" });
+  });
+});
+
 describe("TerraformApplyOp plan-to-apply reference (#2086)", () => {
   test("Plan surfaces `changed`, and Apply applies that step's own plan file", () => {
     const op = props({ name: "app-apply", root: "app", gate: "never" });

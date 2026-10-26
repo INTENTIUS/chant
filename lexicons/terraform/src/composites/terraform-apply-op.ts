@@ -225,9 +225,13 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
     }
   }
 
-  const phases = [
-    phase("Init", [initStep(config.root, { ...where, ...(config.upgrade ? { upgrade: true } : {}) })]),
-  ];
+  // The Init step names the root's directory in the workspace (chant#4482),
+  // so a read of the run ledger can tell which member's root this run applied
+  // when the Op is declared in another member: `chant ledger runs`'s
+  // `root_member` column comes from this outcome.
+  const init = initStep(config.root, { ...where, ...(config.upgrade ? { upgrade: true } : {}) });
+  init.outcomeAttribute = { name: "TerraformRootPath", from: "rootPath" };
+  const phases = [phase("Init", [init])];
 
   // `id` is what makes `plan.out` legal, and `plan.out.planFile` is how the
   // Apply step below names this step's saved plan. On a live root that file
