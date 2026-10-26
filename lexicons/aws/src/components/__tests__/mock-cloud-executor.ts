@@ -82,6 +82,10 @@ export interface FakeStackConfig {
   missing?: boolean;
   /** Set by the mock: the empty `REVIEW_IN_PROGRESS` stack a CREATE change set made for a missing stack. */
   shell?: boolean;
+  /** The stack's exports (#4466c), export name to the output it is; the value is the output's. */
+  exports?: Record<string, string>;
+  /** The stacks that import each of this stack's exports now, by export name (#4466c). */
+  importedBy?: Record<string, string[]>;
 }
 
 export interface FakeDeploymentConfig {
@@ -171,7 +175,10 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
 
   function stackStatus(name: string): CfnStackStatus {
     const config = stacks.get(name);
-    return { stackStatus: config?.terminalStatus ?? "UPDATE_COMPLETE", outputs: config?.outputs ?? {} };
+    const exports = config?.exports
+      ? Object.fromEntries(Object.entries(config.exports).map(([exportName, output]) => [exportName, { output, value: config.outputs?.[output] ?? "" }]))
+      : undefined;
+    return { stackStatus: config?.terminalStatus ?? "UPDATE_COMPLETE", outputs: config?.outputs ?? {}, ...(exports ? { exports } : {}) };
   }
 
   const docker: CloudExecutor["docker"] = {
@@ -260,6 +267,18 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
       stacks.set(stackName, { ...config, shell: false, missing: true });
       return true;
     },
+    // Only a mock some stack's `importedBy` was given has ListImports, so the
+    // plans of every other test make the calls they always made (#4466c).
+    ...(Object.values(options.stacks ?? {}).some((c) => c.importedBy !== undefined)
+      ? {
+          async listImports(exportName: string) {
+            record("cloudformation", "listImports", exportName);
+            const out = new Set<string>();
+            for (const config of stacks.values()) for (const s of config.importedBy?.[exportName] ?? []) out.add(s);
+            return [...out].sort();
+          },
+        }
+      : {}),
     async waitForStack(stackName: string) {
       record("cloudformation", "waitForStack", stackName);
       return stackStatus(stackName);

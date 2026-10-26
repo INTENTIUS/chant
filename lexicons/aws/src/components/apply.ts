@@ -36,7 +36,7 @@ import {
   type PlanShapeEntry,
   type ShapeReplacement,
 } from "@intentius/chant/components/covered-round";
-import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
+import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CfnStackStatus, type CloudExecutor } from "./cloud-executor";
 import { cfnExports, cfnImportPointer, cfnImports, cfnKnownValues, cfnTemplateWithStandIns, readCfnTemplate, resolveCfnName } from "./cfn-imports";
 
 /** CloudFormation's wording when a change set has nothing to apply — the stack
@@ -255,14 +255,17 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
   let planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved);
   // #4466: an import whose name the plan cannot resolve is a hole that says why.
   const importHoles = unresolvedImportHoles(stack, input, knownParameters(parameters));
+  // #4466c: an export another stack imports that the plan may change, said where it cannot tell.
+  const exportHoles: ChangeSetHole[] = [];
   const member = (holes: ChangeSetHole[]): ChangeSetPart["member"] => ({
     member: stack,
     lexicon: "aws",
     planner: "chant",
     status: "planned",
     planDigest,
-    holes: [...holes, ...importHoles],
+    holes: [...holes, ...importHoles, ...exportHoles],
   });
+  const standing = standingReader(executor, stack);
 
   if (unresolved.length > 0 || missing.length > 0) {
     const hole = (why: string): CapabilityPlan => ({
@@ -292,6 +295,7 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     }
     if (typeof preview === "string") return hole(`${fallback}; no preview: ${preview}`);
     const { entries, shape, outputs } = preview;
+    exportHoles.push(...(await exportsInUse(executor, stack, input, knownParameters(parameters), outputs, standing)));
     const artifact: CfnShapeArtifact = { kind: "cfn-deploy-shape", member: stack, shape, digest: planShapeDigest(shape) };
     // The preview's shape enters the digest (#4423); `member` reads it when called below.
     planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved, artifact.digest);
@@ -307,8 +311,8 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     if (isNoopChangeSet(changeSet)) {
       const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
       // Nothing to apply, so the outputs the stack has are the ones it will have (#3999).
-      const standing = await standingOutputs(executor, stack);
-      const outputs = standing ? { known: { ...standing }, unknown: [] } : undefined;
+      const now = await standing();
+      const outputs = now ? { known: { ...now.outputs }, unknown: [] } : undefined;
       return { member: stack, planDigest, artifact, changeSet: { member: member([]), entries: [] }, ...(outputs ? { outputs } : {}) };
     }
     if (changeSet.status === "FAILED") {
@@ -322,7 +326,9 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
     const outputs = changeSet.stackCreated
       ? undefined
-      : await plannedStackOutputs(executor, stack, input.template, changeSet.changes, knownParameters(parameters), importValues(input.imports ?? {}));
+      : await plannedStackOutputs(standing, input.template, changeSet.changes, knownParameters(parameters), importValues(input.imports ?? {}));
+    // #4466c: CloudFormation refuses to change or remove an export another stack imports; say so now, not at apply.
+    if (!changeSet.stackCreated) exportHoles.push(...(await exportsInUse(executor, stack, input, knownParameters(parameters), outputs, standing)));
     // The real change set's shape, with the replacement CloudFormation reports,
     // for a round that checks it against a preview (#4419).
     const shape = cfnPlanShape(stack, changeSet, []);
@@ -500,7 +506,7 @@ async function previewCfnDeploy(
     // output that reads one of the unknown parameters is unknown, one that
     // reads a known parameter or states its value is not (#4419).
     const given = Object.fromEntries(Object.entries(parameters).filter(([k]) => !unknown.includes(k)));
-    const outputs = noop || changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes, given);
+    const outputs = noop || changeSet.stackCreated ? undefined : await plannedStackOutputs(standingReader(executor, stack), input.template, changeSet.changes, given);
     return { entries, shape: cfnPlanShape(stack, changeSet, unknown, input.template, refs), ...(outputs ? { outputs } : {}) };
   } finally {
     await cleanUpPlanChangeSet(executor, changeSet);
@@ -528,13 +534,14 @@ async function cleanUpPlanChangeSet(executor: CloudExecutor, changeSet: CfnChang
   }
 }
 
-/** The stack's outputs as they stand, or `undefined` when they cannot be read. */
-async function standingOutputs(executor: CloudExecutor, stack: string): Promise<Record<string, string> | undefined> {
-  try {
-    return { ...(await executor.cloudformation.describeStack(stack)).outputs };
-  } catch {
-    return undefined;
-  }
+/** The stack as it stands, read once however often it is asked for, or `undefined` when it cannot be read. */
+function standingReader(executor: CloudExecutor, stack: string): () => Promise<CfnStackStatus | undefined> {
+  let read: Promise<CfnStackStatus | undefined> | undefined;
+  return () =>
+    (read ??= executor.cloudformation.describeStack(stack).then(
+      (s) => s,
+      () => undefined,
+    ));
 }
 
 /**
@@ -542,8 +549,7 @@ async function standingOutputs(executor: CloudExecutor, stack: string): Promise<
  * say for a template with no `Outputs`, which needs no `DescribeStacks`.
  */
 async function plannedStackOutputs(
-  executor: CloudExecutor,
-  stack: string,
+  standing: () => Promise<CfnStackStatus | undefined>,
   templatePath: string,
   changes: readonly CfnChange[],
   parameters: Record<string, string> = {},
@@ -552,7 +558,8 @@ async function plannedStackOutputs(
   const template = readTemplate(templatePath) as { Outputs?: Record<string, unknown> } | undefined;
   if (!template || typeof template !== "object") return undefined;
   if (Object.keys(template.Outputs ?? {}).length === 0) return { known: {}, unknown: [] };
-  return cfnPlannedOutputs(template, changes, await standingOutputs(executor, stack), parameters, imports);
+  const now = await standing();
+  return cfnPlannedOutputs(template, changes, now ? { ...now.outputs } : undefined, parameters, imports);
 }
 
 /** The template at `path` as JSON, or `undefined` when it cannot be read or parsed here. */
@@ -849,6 +856,93 @@ export interface CfnDeployOutput {
   outputs: Record<string, string>;
   /** Snapshot id captured before an `onReplace: "snapshot-first"` replacement, if one was taken. */
   snapshotId?: string;
+}
+
+/** One export a plan changes or removes while other stacks import it (#4466c). */
+export interface CfnExportInUse {
+  exportName: string;
+  /** What the plan does to it, as the refusal says it: "removes", or "changes ... from A to B". */
+  change: string;
+  /** The stacks that import it now, sorted. */
+  importers: string[];
+}
+
+/**
+ * Thrown at plan time when a change set would change or remove an export
+ * that another stack still imports (#4466c). CloudFormation refuses that
+ * update at apply; the plan refuses it first, naming both stacks.
+ */
+export class CfnExportInUseError extends Error {
+  constructor(
+    public readonly stack: string,
+    public readonly uses: CfnExportInUse[],
+  ) {
+    const importers = [...new Set(uses.flatMap((u) => u.importers))].sort();
+    super(
+      `cfn-deploy "${stack}": refusing the plan: ` +
+        uses
+          .map((u) => `it ${u.change.replace("{export}", `export ${u.exportName}`)}, which ${u.importers.length === 1 ? "stack" : "stacks"} ${u.importers.join(", ")} still ${u.importers.length === 1 ? "imports" : "import"}`)
+          .join("; ") +
+        `. CloudFormation refuses to change or remove an export another stack imports. Change ${importers.join(", ")} to stop importing it first, then change ${stack}.`,
+    );
+    this.name = "CfnExportInUseError";
+  }
+}
+
+/**
+ * The exports `stack` has now that this plan changes or removes while
+ * another stack imports them (#4466c). An export the new template no longer
+ * declares is removed; one whose planned value differs from the value it
+ * has is changed: both throw {@link CfnExportInUseError}. One the plan
+ * cannot say about (its output's value is known only after apply, or an
+ * export name in the new template does not resolve) is a hole naming the
+ * importers. Asks `ListImports` only for exports at stake, and nothing at
+ * all when the executor cannot list imports or the stack exports nothing.
+ */
+async function exportsInUse(
+  executor: CloudExecutor,
+  stack: string,
+  input: CfnDeployInput,
+  parameters: Record<string, string>,
+  planned: PlannedOutputs | undefined,
+  standing: () => Promise<CfnStackStatus | undefined>,
+): Promise<ChangeSetHole[]> {
+  const listImports = executor.cloudformation.listImports?.bind(executor.cloudformation);
+  if (!listImports) return [];
+  const was = (await standing())?.exports;
+  if (!was || Object.keys(was).length === 0) return [];
+  const template = readCfnTemplate(input.template);
+  if (!template) return [];
+  const declared = cfnExports(template, cfnKnownValues(template, stack, parameters));
+  const now = new Map(declared.filter((e): e is { output: string; name: string } => "name" in e).map((e) => [e.name, e.output]));
+  const unresolvedNow = declared.some((e) => "unresolved" in e);
+  const refused: CfnExportInUse[] = [];
+  const holes: ChangeSetHole[] = [];
+  for (const [exportName, { output, value }] of Object.entries(was).sort(([a], [b]) => a.localeCompare(b))) {
+    const at = now.get(exportName);
+    let change: string | undefined;
+    let maybe: string | undefined;
+    if (at === undefined) {
+      if (unresolvedNow) maybe = `may remove export ${exportName}: an export name the template declares does not resolve at plan`;
+      else change = "removes {export}";
+    } else {
+      const next = planned?.known[at];
+      if (next === undefined) maybe = `may change export ${exportName}: the value of output ${at} is known only after apply`;
+      else if ((typeof next === "string" ? next : JSON.stringify(next)) !== value) change = `changes {export} from ${value} to ${typeof next === "string" ? next : JSON.stringify(next)}`;
+    }
+    if (change === undefined && maybe === undefined) continue;
+    const importers = (await listImports(exportName)).filter((s) => s !== stack);
+    if (importers.length === 0) continue;
+    if (change !== undefined) refused.push({ exportName, change, importers });
+    else {
+      holes.push({
+        address: `Outputs.${at ?? output}`,
+        reason: `the plan ${maybe}, and ${importers.join(", ")} still ${importers.length === 1 ? "imports" : "import"} it; CloudFormation refuses the apply if it changes`,
+      });
+    }
+  }
+  if (refused.length > 0) throw new CfnExportInUseError(stack, refused);
+  return holes;
 }
 
 /**
