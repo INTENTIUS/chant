@@ -197,7 +197,9 @@ export default defineConfig({
           include: UNIT_INCLUDE,
           exclude: [...configDefaults.exclude, "**/*.e2e.test.ts"],
           // The per-test budget (chant #2817). CHANT_UNIT_TEST_BUDGET_MS
-          // overrides the 15s default; 0 turns it off, for a debugger.
+          // overrides the 5s default; 0 turns it off, for a debugger. The
+          // named slow git/signing files in packages/core get 15s (#4472,
+          // SLOW_UNIT_TEST_FILES in test/unit-test-budget.ts).
           // The AWS isolation setup (chant #3958) keeps the developer's
           // ~/.aws and AWS_* credentials away from the read transport's
           // credential chain.
