@@ -70,6 +70,8 @@ import { approveCommand, gateIsSealed } from "../../op/gate";
 import { getHeadCommit } from "../../lifecycle/git";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { readDeployedOutputs } from "../../components/wave-plan";
+import { formRunGroups } from "../../components/groups";
+import { renderRunGroups, runGroupsReport } from "../../components/run-groups";
 import { deployContext, failedRunExitCode } from "../../components/driver";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
@@ -450,10 +452,15 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   const release = autoReleaseRun(`fan-out-${Date.now()}`);
   const events = await openCliRunEvents(args, { kind: "component", name: `fan-out ${derived.plan.order.join(",")}`, runId: release.runId, cwd: projectPath });
 
+  // ws-107 (#4465): the components a capability takes as one plan in their
+  // wave and apply as one group; under --wave-gate none forms (ruling 1).
+  const runPlan = await formRunGroups({ components: derived.components, plan: derived.plan, registry, env, ...(waveGate ? { waveGate: true } : {}) });
+
   let result;
   try {
-    result = await runFanOut(derived.plan, derived.components, registry, {
+    result = await runFanOut(runPlan, derived.components, registry, {
       env,
+      ...(runPlan.groups?.length ? { planGroupsAtWave: true } : {}),
       releaseIdentity: () => (revision ? { revision } : {}),
       componentOutputs,
       ...(targets ? { targets } : {}),
@@ -524,7 +531,12 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   recordAttempt();
 
   if (args.json) renderFanOutJson(result);
-  else renderFanOutHuman(result, { ...(gate ? { gate } : {}), ...(waveGate ? { waveGate } : {}) });
+  else {
+    renderFanOutHuman(result, { ...(gate ? { gate } : {}), ...(waveGate ? { waveGate } : {}) });
+    // #4465: the groups applied as one, and how each member ended.
+    const report = runGroupsReport({ grouped: result.plan.groups?.length || result.plan.fallbacks?.length ? result.plan : runPlan, ...(result.groupOutcomes ? { outcomes: result.groupOutcomes } : {}) });
+    for (const line of renderRunGroups(report, "the same fan-out with --resume")) console.error(formatInfo(line));
+  }
 
   // A wave whose set moved after its approval stops with both digests named
   // (#3049), the #2300 refusal on a set. Printed on stderr even under --json,

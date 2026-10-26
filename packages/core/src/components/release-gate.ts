@@ -60,7 +60,9 @@
  * recorded since (#4035): its record names what ran before that run.
  */
 
-import type { CapabilityRegistry, PlannedOutputs } from "./capability";
+import type { CapabilityRegistry, GroupRun, PlannedOutputs } from "./capability";
+import type { FanOutGroup, FanOutGroupFallback, FanOutPlan } from "./fan-out";
+import { groupsByComponent, planComponentGroup } from "./groups";
 import { deployContext, resolveComponentGraph, resolveStepInput, unresolvedWiringReferences, type DriverComponent, type DriverGate, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { gateName, RELEASE_GATE_OP } from "../op/gate-name";
@@ -137,6 +139,24 @@ export interface ReleaseChangeSetInput {
    * `seededOutputs`, which then holds what the run left. Default: every one.
    */
   only?: ReadonlySet<string>;
+  /**
+   * The promote's grouped fan-out (ws-107, #4465, `formRunGroups`). Each of
+   * its groups plans with one `planGroup` call in the wave it places it in,
+   * and the group digest is folded into each member's part, so the release
+   * gate's digest binds the composition. Absent, or without `groups`: every
+   * component plans by itself, wave by wave.
+   */
+  grouped?: FanOutPlan;
+}
+
+/** A group the release gate's plan planned as one (ws-107, #4465). */
+export interface ReleasePlanGroup extends FanOutGroup {
+  /** The group digest folded into each member's `planDigest`; `null` when the group failed to plan. */
+  digest: string | null;
+  /** Why the group failed to plan. Every member is then a failed member. */
+  error?: string;
+  /** What `runGroup` gets back. It lives in the process that planned, as the promote that applies it is. */
+  run?: GroupRun;
 }
 
 /** A release's change set for an environment, and what each component was planned against. */
@@ -148,6 +168,10 @@ export interface ReleasePlan {
   plannedOutputs?: Record<string, string[]>;
   /** Per component, the references to a promoted upstream that no value stands for until it applies, sorted. Absent when none. */
   unknownInputs?: Record<string, string[]>;
+  /** The groups planned as one (#4465), in the order they planned. Absent when none. */
+  groups?: ReleasePlanGroup[];
+  /** The components that could have grouped and did not, with why: `grouped.fallbacks`. Absent when none. */
+  fallbacks?: FanOutGroupFallback[];
 }
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -287,10 +311,94 @@ export async function planReleaseSet(input: ReleaseChangeSetInput): Promise<Rele
   const inPlan = (name: string): boolean => input.only === undefined || input.only.has(name);
   const isPlannable = (c: DriverComponent): boolean =>
     capabilitySteps(c.deploy).some((s) => registry.has(s.kind) && registry.resolve(s.kind).plan !== undefined);
-  const { waves } = resolveComponentGraph(components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => byName.has(d)) })));
+  const failedPart = (member: string, err: unknown): ChangeSetPart => ({
+    member: {
+      member,
+      lexicon: "chant",
+      planner: "chant",
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
+      planDigest: null,
+      holes: [],
+    },
+    entries: [],
+  });
+  /** Read each dependency of `component` once, leaving out `mates`, its own group (#4465), and keep what it read. */
+  const readDependencies = async (component: DriverComponent, mates: ReadonlySet<string>): Promise<void> => {
+    for (const dep of component.dependsOn ?? []) {
+      if (mates.has(dep) || read.has(dep) || !byName.has(dep)) continue;
+      read.add(dep);
+      // A dependency this promote plans exposes what its plan says (#3999).
+      if (plannedBy.has(dep) && isPlannable(byName.get(dep)!)) {
+        const known = plannedBy.get(dep)?.known ?? {};
+        outputs[dep] = { ...known };
+        planned[dep] = Object.keys(known).sort();
+        continue;
+      }
+      const found = await readComponentOutputs(byName.get(dep)!, registry, deployContext({ env }, dep), outputs);
+      if (found) outputs[dep] = found;
+    }
+    reads[component.name] = Object.fromEntries(
+      (component.dependsOn ?? []).filter((d) => !mates.has(d) && d in outputs).map((d) => [d, structuredClone(outputs[d])]),
+    );
+  };
+  /** The references of `component`'s plannable steps to a promoted upstream outside `mates` that its plan can't say yet. */
+  const unknownOf = (component: DriverComponent, mates: ReadonlySet<string>): Set<string> => {
+    const unknown = new Set<string>();
+    for (const step of capabilitySteps(component.deploy)) {
+      if (!registry.has(step.kind) || registry.resolve(step.kind).plan === undefined) continue;
+      const { kind: _kind, ...rest } = step;
+      for (const r of unresolvedWiringReferences(rest, outputs)) if (plannedBy.has(r.source) && !r.publish && !mates.has(r.source)) unknown.add(r.ref);
+    }
+    return unknown;
+  };
+
+  // ws-107 (#4465): a group plans once, in the wave the grouped fan-out places it in.
+  const grouped = input.grouped?.groups?.length ? input.grouped : undefined;
+  const groupOf = grouped ? groupsByComponent(grouped) : new Map<string, FanOutGroup>();
+  const groups: ReleasePlanGroup[] = [];
+  const planGroupAt = async (group: FanOutGroup): Promise<void> => {
+    const mates = new Set(group.components);
+    try {
+      for (const name of group.components) await readDependencies(byName.get(name)!, mates);
+    } catch (err) {
+      for (const name of group.components) {
+        plannedBy.set(name, undefined);
+        parts.push(failedPart(name, err));
+      }
+      groups.push({ ...group, digest: null, error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    const g = await planComponentGroup({ group, components: byName, registry, env, ctxOf: (name) => deployContext({ env }, name), outputs });
+    const error = g.plans.find((p): p is Extract<typeof p, { error: string }> => "error" in p)?.error;
+    groups.push({ ...group, digest: g.digest ?? null, ...(error !== undefined ? { error } : {}), ...(g.run ? { run: g.run } : {}) });
+    for (const p of g.plans) {
+      if ("error" in p) {
+        plannedBy.set(p.component, undefined);
+        parts.push(failedPart(p.component, p.error));
+        continue;
+      }
+      plannedBy.set(p.component, p.outputs);
+      parts.push(...p.parts);
+      const unknown = unknownOf(byName.get(p.component)!, mates);
+      if (unknown.size > 0) unknownInputs[p.component] = [...unknown].sort();
+    }
+  };
+
+  const waves = grouped
+    ? grouped.waves.map((w) => w.filter((name) => byName.has(name)))
+    : resolveComponentGraph(components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => byName.has(d)) }))).waves;
   for (const wave of waves) {
     const planning = wave.filter(inPlan);
+    const inWave = new Set(planning);
+    // What is left of a group in this plan; one member alone plans by itself.
+    const groupsHere = [...new Set(planning.map((name) => groupOf.get(name)).filter((g): g is FanOutGroup => g !== undefined))]
+      .map((g) => ({ ...g, components: g.components.filter((c) => inWave.has(c)) }))
+      .filter((g) => g.components.length > 1);
+    const grouping = new Set(groupsHere.flatMap((g) => g.components));
+    for (const group of groupsHere) await planGroupAt(group);
     for (const name of planning) {
+      if (grouping.has(name)) continue;
       const component = byName.get(name)!;
       const digest = input.digests.get(name) ?? "";
       const plannable = capabilitySteps(component.deploy).filter((s) => registry.has(s.kind) && registry.resolve(s.kind).plan !== undefined);
@@ -300,25 +408,11 @@ export async function planReleaseSet(input: ReleaseChangeSetInput): Promise<Rele
       }
       const ctx = deployContext({ env }, name);
       try {
-        for (const dep of component.dependsOn ?? []) {
-          if (read.has(dep) || !byName.has(dep)) continue;
-          read.add(dep);
-          // A dependency this promote plans exposes what its plan says (#3999).
-          if (plannedBy.has(dep) && isPlannable(byName.get(dep)!)) {
-            const known = plannedBy.get(dep)?.known ?? {};
-            outputs[dep] = { ...known };
-            planned[dep] = Object.keys(known).sort();
-            continue;
-          }
-          const found = await readComponentOutputs(byName.get(dep)!, registry, deployContext({ env }, dep), outputs);
-          if (found) outputs[dep] = found;
-        }
-        reads[name] = Object.fromEntries((component.dependsOn ?? []).filter((d) => d in outputs).map((d) => [d, structuredClone(outputs[d])]));
-        const unknown = new Set<string>();
+        await readDependencies(component, new Set());
+        const unknown = unknownOf(component, new Set());
         let exposes: PlannedOutputs | undefined;
         for (const step of plannable) {
           const { kind, ...rest } = step;
-          for (const r of unresolvedWiringReferences(rest, outputs)) if (plannedBy.has(r.source) && !r.publish) unknown.add(r.ref);
           const result = await registry.resolve(kind).plan!(planContext(ctx, rest, outputs), resolveStepInput(rest, {}, outputs) as never);
           if (result.outputs) exposes = { known: { ...(exposes?.known ?? {}), ...result.outputs.known }, unknown: [...new Set([...(exposes?.unknown ?? []), ...result.outputs.unknown])].sort() };
           parts.push(
@@ -339,18 +433,7 @@ export async function planReleaseSet(input: ReleaseChangeSetInput): Promise<Rele
         if (unknown.size > 0) unknownInputs[name] = [...unknown].sort();
       } catch (err) {
         plannedBy.set(name, undefined);
-        parts.push({
-          member: {
-            member: name,
-            lexicon: "chant",
-            planner: "chant",
-            status: "failed",
-            error: err instanceof Error ? err.message : String(err),
-            planDigest: null,
-            holes: [],
-          },
-          entries: [],
-        });
+        parts.push(failedPart(name, err));
       }
     }
   }
@@ -363,6 +446,8 @@ export async function planReleaseSet(input: ReleaseChangeSetInput): Promise<Rele
     reads,
     ...(Object.keys(planned).length > 0 ? { plannedOutputs: planned } : {}),
     ...(Object.keys(unknownInputs).length > 0 ? { unknownInputs } : {}),
+    ...(groups.length > 0 ? { groups } : {}),
+    ...(input.grouped?.fallbacks?.length ? { fallbacks: input.grouped.fallbacks } : {}),
   };
 }
 

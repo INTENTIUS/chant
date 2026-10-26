@@ -39,6 +39,7 @@ import {
   type DriverGate,
   type DriverPhase,
   type DriverRunResult,
+  type InterpretGroups,
 } from "./driver";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { GateDigestMismatch, GateLedgerPort } from "../op/gate";
@@ -51,6 +52,8 @@ import { existsSync, statSync } from "node:fs";
 import { getHeadCommit } from "../lifecycle/git";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
+import type { FanOutPlan } from "./fan-out";
+import { componentSetFanOut, formRunGroups, planAndRunComponentGroup } from "./groups";
 import { applyConfigDefaults } from "./config-defaults";
 import { loadChantConfig, type ChantConfig } from "../config";
 
@@ -510,6 +513,8 @@ export interface RunComponentsResult {
   };
   /** This run's resolved build-time parameters (chant #1108) — the component-driver counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Present only once the run actually reached dispatch (mirrors `BuildResult.buildParams`, which is likewise absent on an early-error return). */
   buildParams?: BuildParamProvenance[];
+  /** The grouped fan-out the run applied (ws-107, #4465), when a group formed or a component fell back from one. */
+  grouped?: FanOutPlan;
 }
 
 /**
@@ -719,16 +724,35 @@ export async function runComponents(
 
   try {
     if (selector === "all" || isComponentList(selector)) {
+      // ws-107 (#4465): the components a capability takes as one plan in their
+      // wave and apply as one group, by the rule the pull-request run uses.
+      // A cycle or unknown dependency throws here the error the driver would.
+      const grouped = await formRunGroups({ components: resolvedTargets, plan: componentSetFanOut(resolvedTargets), registry, env });
       if (isComponentList(selector) && options.onPlan) {
         // Resolved here, before dispatch, so the order is printed before any
-        // component runs. A cycle or unknown dependency throws the same error
-        // `runInterpretDriver` would, caught below.
-        const graph = resolveComponentGraph(resolvedTargets);
-        options.onPlan({ order: graph.order, waves: graph.waves, added: resolved.added ?? [] });
+        // component runs.
+        options.onPlan({ order: grouped.order, waves: grouped.waves.filter((w) => w.length > 0), added: resolved.added ?? [] });
       }
+      const byName = new Map(resolvedTargets.map((c) => [c.name, c]));
+      const groups: InterpretGroups | undefined = grouped.groups?.length
+        ? {
+            waves: grouped.waves,
+            groups: grouped.groups,
+            run: (group, componentOutputs) =>
+              planAndRunComponentGroup({
+                group,
+                components: byName,
+                registry,
+                env,
+                ctxOf: (name) => deployContext({ env, releaseIdentity, ...targeted }, name),
+                componentOutputs,
+              }),
+          }
+        : undefined;
       const run = await runInterpretDriver(resolvedTargets, registry, {
         env,
         releaseIdentity,
+        ...(groups ? { groups } : {}),
         ...targeted,
         componentOutputs: seedOutputs,
         ...(emit ? { onRunEvent: emit } : {}),
@@ -740,6 +764,7 @@ export async function runComponents(
         selected,
         components: resolvedTargets,
         buildParams: options.buildParams,
+        ...(grouped.groups?.length || grouped.fallbacks?.length ? { grouped } : {}),
         ...(run.status === "gated" && run.gate
           ? {
               gated: {

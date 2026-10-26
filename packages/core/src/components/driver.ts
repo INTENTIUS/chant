@@ -54,7 +54,8 @@ import { GateNotRecordableError } from "../lifecycle/no-record";
 import { componentPlanDigest } from "./gate-plan";
 import { componentDeployInputs } from "./deploy-inputs";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
-import type { CapabilityRegistry, DeployContext } from "./capability";
+import type { CapabilityRegistry, DeployContext, GroupMemberStatus } from "./capability";
+import type { FanOutGroup } from "./fan-out";
 import { isPlanMovedError, PLAN_MOVED_EXIT_CODE, TargetsRefusedError, targetRefusal } from "./capability";
 import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
@@ -222,6 +223,8 @@ export interface DriverRunResult {
    * component that ran in an earlier job.
    */
   componentOutputs: Record<string, Record<string, unknown>>;
+  /** How each member of a group that ran ended, as its capability said (ws-107, #4465), by component. Absent when no group ran. */
+  groupOutcomes?: Record<string, GroupMemberStatus>;
 }
 
 // ── Graph: order + parallel-safe waves from `dependsOn` ──────────────────────
@@ -1184,6 +1187,27 @@ export interface InterpretRunOptions {
   releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
   /** The addresses each component narrows to (#4300), by component: its `DeployContext.targets`. */
   targets?: Readonly<Record<string, readonly string[]>>;
+  /** Groups applied as one (ws-107, #4465). See {@link InterpretGroups}. Absent: every component runs its own deploy. */
+  groups?: InterpretGroups;
+}
+
+/**
+ * Groups a run applies as one (ws-107, #4465): a promote under a release and
+ * `run --components` hand them over, already placed by `groupFanOut`. Each
+ * group runs once, through `run`, in the wave its members sit in and in place
+ * of their own deploys. A member that does not end `ok` stops the run after
+ * its wave, as a failed component does.
+ */
+export interface InterpretGroups {
+  /** The grouped waves, which replace the ones `dependsOn` gives. Every component of the run is in one; an empty wave is passed over. */
+  waves: string[][];
+  /** Each group's members are components of the run, in one wave. */
+  groups: readonly FanOutGroup[];
+  /** Apply one group with the outputs standing, adding each applied member's own: one result per member, and how each ended. */
+  run: (
+    group: FanOutGroup,
+    componentOutputs: Record<string, Record<string, unknown>>,
+  ) => Promise<{ results: DriverComponentResult[]; outcomes: Record<string, GroupMemberStatus> }>;
 }
 
 /**
@@ -1255,8 +1279,20 @@ export async function runInterpretDriver(
   registry: CapabilityRegistry,
   options: InterpretRunOptions,
 ): Promise<DriverRunResult> {
-  const { order, waves } = resolveComponentGraph(components);
+  const graph = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
+  // ws-107 (#4465): the grouped waves, and each member's group.
+  const waves = options.groups ? options.groups.waves.map((w) => w.filter((name) => byName.has(name))).filter((w) => w.length > 0) : graph.waves;
+  const order = options.groups ? waves.flat() : graph.order;
+  const placed = new Set(order);
+  const unplaced = components.filter((c) => !placed.has(c.name)).map((c) => c.name);
+  if (unplaced.length > 0) throw new Error(`the grouped waves leave out ${unplaced.join(", ")}, which this run runs`);
+  // A group keeps its members in this run; one left with fewer than two is no group, and its member runs its own deploy.
+  const runGroups = (options.groups?.groups ?? [])
+    .map((g) => ({ ...g, components: g.components.filter((c) => byName.has(c)) }))
+    .filter((g) => g.components.length > 1);
+  const groupOf = new Map(runGroups.flatMap((g) => g.components.map((c) => [c, g] as const)));
+  const groupOutcomes: Record<string, GroupMemberStatus> = {};
   const componentOutputs: Record<string, Record<string, unknown>> = { ...(options.componentOutputs ?? {}) };
   const emit = joinRunEventSinks(options.onRunEvent, progressSinkOf(options.onProgress));
   const gates: GateContext = {
@@ -1275,8 +1311,19 @@ export async function runInterpretDriver(
   waveLoop: for (const [waveIndex, wave] of waves.entries()) {
     const waveNum = waveIndex + 1;
     emit?.({ type: "wave-start", wave: waveNum, components: wave });
-    const waveComponents = wave.map((name) => byName.get(name)!);
-    const waveResults = await Promise.all(
+    const waveComponents = wave.filter((name) => !groupOf.has(name)).map((name) => byName.get(name)!);
+    const groupsHere = [...new Set(wave.map((name) => groupOf.get(name)).filter((g): g is FanOutGroup => g !== undefined))];
+    // Groups and the wave's other components run side by side, as a wave's components do.
+    const groupResults = Promise.all(
+      groupsHere.map(async (group) => {
+        for (const name of group.components) emit?.({ type: "component-start", wave: waveNum, component: name });
+        const ran = await options.groups!.run(group, componentOutputs);
+        Object.assign(groupOutcomes, ran.outcomes);
+        for (const result of ran.results) emit?.({ type: "component-settle", wave: waveNum, component: result.component, status: progressStatus(result.status) });
+        return ran.results;
+      }),
+    );
+    const ownResults = await Promise.all(
       waveComponents.map(async (component) => {
         emit?.({ type: "component-start", wave: waveNum, component: component.name });
         const result = await runComponentDeploy(
@@ -1292,6 +1339,7 @@ export async function runInterpretDriver(
         return result;
       }),
     );
+    const waveResults = [...ownResults, ...(await groupResults).flat()];
     results.push(...waveResults);
     const stopped = waveResults.find((r) => r.status !== "ok");
     emit?.({ type: "wave-settle", wave: waveNum, status: progressStatus(stopped?.status ?? "ok") });
@@ -1310,6 +1358,7 @@ export async function runInterpretDriver(
   emit?.({ type: "run-settle", status: progressStatus(status), durationMs: null });
   const result: DriverRunResult = {
     order, waves, results, ok, status, failedComponent, componentOutputs,
+    ...(Object.keys(groupOutcomes).length > 0 ? { groupOutcomes } : {}),
     ...(gated
       ? {
           gatedComponent: gated.component,
