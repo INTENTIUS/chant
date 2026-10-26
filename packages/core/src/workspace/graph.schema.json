@@ -561,7 +561,11 @@
         },
         "instanceKey": {
           "type": "string",
-          "description": "Added in contract 1 by #4454. With instanceOf: the instance key as the engine prints it, [0] or [\"a\"]."
+          "description": "Added in contract 1 by #4454. With instanceOf: the block's own instance key as the engine prints it, [0] or [\"a\"]. Absent on an instance only an expanded module call makes (#4486)."
+        },
+        "instanceScope": {
+          "type": "string",
+          "description": "Added in contract 1 by #4486. With instanceOf, under an expanded module call: the module path as the engine prints it, module.app[0]. The id then carries the key on the call's segment, <member>/<root>/module.app[0]/aws_eip.pool[1]."
         },
         "nested": {
           "type": "string",

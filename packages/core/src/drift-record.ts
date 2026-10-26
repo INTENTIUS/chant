@@ -626,7 +626,8 @@ export function rollupDriftByBlock(records: Iterable<DriftRecord>): DriftBlockRo
  * uses, so a drift row and a change-set entry for one instance name the
  * same node: an instance of a `count` or `for_each` block is on
  * `<blockNode>[0]` with `instanceOf` the block node, and an instance under
- * an expanded module call is on the block node. A Pulumi URN is on
+ * an expanded module call is on `<root>/module.app[0]/<block>[1]` with the
+ * same `instanceOf` (#4486). A Pulumi URN is on
  * `<member>/<key>` by the URN rule (`./pulumi-urn.ts`, #4456), through the
  * `pulumi` planner's case, and so is a plunge URN ({@link driftPlanner}).
  * A null `graph` gives every record `node: null`.

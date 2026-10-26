@@ -102,8 +102,19 @@ export interface IRNode {
    * graph as the rollup. Absent on every other node. See `./instance-nodes.ts`.
    */
   instanceOf?: string;
-  /** With {@link instanceOf}: the instance key as the engine prints it, `[0]` or `["a"]`. */
+  /**
+   * With {@link instanceOf}: the block's own instance key as the engine
+   * prints it, `[0]` or `["a"]`. Absent on an instance that only an
+   * expanded enclosing scope makes (#4486), a block without `count` under
+   * `module "app" { count = 2 }`.
+   */
   instanceKey?: string;
+  /**
+   * With {@link instanceOf}, under an expanded enclosing scope (#4486): that
+   * scope's path as the engine prints it, `module.app[0]`. The node id then
+   * carries the key on the scope's segment, `estate/module.app[0]/aws_eip.pool[1]`.
+   */
+  instanceScope?: string;
 }
 
 /**
@@ -348,6 +359,34 @@ export function entityInstanceKeys(entity: Declarable): readonly string[] {
   const keys = (entity as unknown as { instanceKeys?: unknown }).instanceKeys;
   if (!Array.isArray(keys)) return [];
   return keys.filter((k): k is string => typeof k === "string" && k.startsWith("[") && k.endsWith("]"));
+}
+
+/** One instance node an entity names (#4486): its full id, and the key and scope it carries. */
+export interface EntityInstance {
+  id: string;
+  key?: string;
+  scope?: string;
+}
+
+/**
+ * The instance nodes an entity names, given its own key `name`: the
+ * duck-typed `instances` list when it carries one (full ids, which an
+ * instance under an expanded module call needs, #4486), else one per
+ * {@link entityInstanceKeys} key, id `<name><key>`.
+ */
+export function entityInstances(name: string, entity: Declarable): EntityInstance[] {
+  const listed = (entity as unknown as { instances?: unknown }).instances;
+  if (Array.isArray(listed)) {
+    const out: EntityInstance[] = [];
+    for (const item of listed) {
+      if (typeof item !== "object" || item === null) continue;
+      const { id, key, scope } = item as { id?: unknown; key?: unknown; scope?: unknown };
+      if (typeof id !== "string" || id.length === 0 || id === name) continue;
+      out.push({ id, ...(typeof key === "string" ? { key } : {}), ...(typeof scope === "string" ? { scope } : {}) });
+    }
+    return out;
+  }
+  return entityInstanceKeys(entity).map((key) => ({ id: `${name}${key}`, key }));
 }
 
 /** Grouping metadata for cluster/subgraph rendering. Maps group name -> node ids. */
@@ -1017,7 +1056,8 @@ export function buildGraphIr(
 
 /**
  * Add an instance node (#4454) under each node whose entity names its
- * instance keys ({@link entityInstanceKeys}): id `<block id><key>`, the
+ * instances ({@link entityInstances}): id `<block id><key>`, or the full id
+ * the entity lists under an expanded module call (#4486), the
  * block's kind, lexicon and source location, `instanceOf` and `instanceKey`,
  * no attrs and no edges. Each instance joins every group its block is in, so
  * a renderer draws it in the block's box. Pure. Returns `ir` itself when no
@@ -1034,10 +1074,17 @@ export function withInstanceNodes(ir: GraphIR, entities: ReadonlyMap<string, Dec
   for (const [name, entity] of entities) {
     const block = byId.get(name);
     if (!block || block.instanceOf) continue;
-    for (const key of entityInstanceKeys(entity)) {
-      const id = `${name}${key}`;
+    for (const { id, key, scope } of entityInstances(name, entity)) {
       if (byId.has(id)) continue;
-      const node: IRNode = { id, kind: block.kind, lexicon: block.lexicon, attrs: {}, instanceOf: name, instanceKey: key };
+      const node: IRNode = {
+        id,
+        kind: block.kind,
+        lexicon: block.lexicon,
+        attrs: {},
+        instanceOf: name,
+        ...(key !== undefined ? { instanceKey: key } : {}),
+        ...(scope !== undefined ? { instanceScope: scope } : {}),
+      };
       if (block.sourceLoc) node.sourceLoc = { ...block.sourceLoc };
       if (block.compositeParent) node.compositeParent = block.compositeParent;
       if (block.compositeInstance) node.compositeInstance = block.compositeInstance;

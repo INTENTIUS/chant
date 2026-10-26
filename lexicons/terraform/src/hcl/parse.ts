@@ -162,9 +162,20 @@ export interface TerraformEntity extends Declarable {
    * `toset([...])`. Core's `withInstanceNodes` reads this lexicon-neutral
    * field, as `buildGraphIr` reads `stack`, and draws one instance node per
    * key under the block's node. Absent when the block is not expanded or its
-   * expansion is not a literal (`count = var.n`): only a plan can count those.
+   * expansion is not a literal. Since #4486 `./instances.ts` also sets it
+   * for an expansion it can count from the root's variables (`count = var.n`
+   * with `n` known), and for a `module` call.
    */
   readonly instanceKeys?: readonly string[];
+  /**
+   * The instance nodes of a block under an expanded module call (#4486), by
+   * full node id: `estate/module.app[0]/aws_eip.pool[1]`, with `key` the
+   * block's own key (`[1]`, absent when the block is not expanded itself)
+   * and `scope` the module path as Terraform prints it (`module.app[0]`).
+   * Core's `entityInstances` reads this in place of `instanceKeys`, which
+   * such a block never carries. Set by `./instances.ts`.
+   */
+  readonly instances?: ReadonlyArray<{ readonly id: string; readonly key?: string; readonly scope?: string }>;
   /**
    * Every reference in this block, resolved to the entity keys it points at
    * (chant #2265), in core's lexicon-neutral {@link EntityReference} shape.

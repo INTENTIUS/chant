@@ -259,9 +259,11 @@ describe("mapping onto a graph", () => {
     const mapped = mapDriftToGraph(doc, { member: "infra", at: null, ids: ["estate/aws_eip.pool", "estate/module.app/aws_eip.pool", "zone"] });
     const at = (address: string) => mapped.records.find((r) => r.address === address)!;
     expect(at("aws_eip.pool[0]")).toMatchObject({ node: "infra/estate/aws_eip.pool[0]", instanceOf: "infra/estate/aws_eip.pool" });
-    // Under an expanded module call the instance keeps the block node.
-    expect(at("module.app[0].aws_eip.pool[1]").node).toBe("infra/estate/module.app/aws_eip.pool");
-    expect(at("module.app[0].aws_eip.pool[1]").instanceOf).toBeUndefined();
+    // Under an expanded module call the module key sits on the call's segment (#4486).
+    expect(at("module.app[0].aws_eip.pool[1]")).toMatchObject({
+      node: "infra/estate/module.app[0]/aws_eip.pool[1]",
+      instanceOf: "infra/estate/module.app/aws_eip.pool",
+    });
     expect(at("zone").node).toBe("infra/zone");
     expect(at("urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets").node).toBeNull();
     expect(mapDriftToGraph(doc, null).records.every((r) => r.node === null && r.instanceOf === undefined)).toBe(true);

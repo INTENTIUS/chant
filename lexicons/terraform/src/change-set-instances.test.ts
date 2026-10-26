@@ -89,9 +89,10 @@ describe("instance nodes for a count block", () => {
       node: "estate/aws_eip.pool[1]",
       instanceOf: "estate/aws_eip.pool",
     });
-    // Under an expanded module call the instance rolls up to its block.
+    // Under an expanded module call the module key sits on the call's segment (#4486).
     expect(graphNodeFor({ member: "estate", planner: "terraform", address: "module.app[0].aws_eip.pool[1]" }, { ...graph, ids: ["estate/module.app/aws_eip.pool"] })).toEqual({
-      node: "estate/module.app/aws_eip.pool",
+      node: "estate/module.app[0]/aws_eip.pool[1]",
+      instanceOf: "estate/module.app/aws_eip.pool",
     });
   });
 });
