@@ -28,7 +28,9 @@ trap restore EXIT
 release_apply_version "$version"
 # Every contract floor names a released version or this one (#4480). The
 # stamp above is what lets NEXT_RELEASE pass at the release's own label.
-npx tsx scripts/release-floors.ts
+# --npm: a CI checkout may lack a tag the maintainer's checkout has (#4503),
+# and npm is what says a version was published.
+npx tsx scripts/release-floors.ts --npm
 
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chant-release-pack.XXXXXX")
 DRY_RUN=1 PACK_ALL=1 CHANT_PUBLISH_WORK="$work" bash scripts/publish-packages.sh
