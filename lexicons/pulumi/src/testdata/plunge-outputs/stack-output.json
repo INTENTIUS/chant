@@ -1,0 +1,19 @@
+{
+  "appRoleArn": "arn:aws:iam::000000000000:role/rec-pl-app",
+  "dbPasswordParameter": "/rec-pl/db-password",
+  "dbPasswordValue": "[secret]",
+  "docsBucketName": "rec-pl-docs-assets",
+  "docsTopicArn": "arn:aws:sns:us-east-1:000000000000:docs-notify-313a6f6",
+  "eventsQueueUrl": "https://sqs.us-east-1.amazonaws.com/000000000000/events-76012a7",
+  "securityGroupId": "sg-da81cce71ddba2dc7",
+  "siteBucketName": "rec-pl-site",
+  "sitePolicyBucket": "rec-pl-site",
+  "vpcId": "vpc-ba868f5b",
+  "vpcParameterName": "/rec-pl/vpc/vpc-ba868f5b",
+  "westAlertsArn": "arn:aws:sns:us-west-2:000000000000:rec-pl-alerts-west",
+  "workerQueueUrls": [
+    "https://sqs.us-east-1.amazonaws.com/000000000000/worker-0-c8f235a",
+    "https://sqs.us-east-1.amazonaws.com/000000000000/worker-1-312dbe7",
+    "https://sqs.us-east-1.amazonaws.com/000000000000/worker-2-34e8acf"
+  ]
+}

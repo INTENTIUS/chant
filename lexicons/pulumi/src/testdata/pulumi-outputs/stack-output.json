@@ -1,4 +1,19 @@
 {
-  "awsEndpoint": "web-old.execute-api.localhost.localstack.cloud",
-  "apiKey": "[secret]"
+  "appRoleArn": "arn:aws:iam::000000000000:role/rec-ts-app",
+  "dbPasswordParameter": "/rec-ts/db-password",
+  "dbPasswordValue": "[secret]",
+  "docsBucketName": "rec-ts-docs-assets",
+  "docsTopicArn": "arn:aws:sns:us-east-1:000000000000:docs-notify-019c2a9",
+  "eventsQueueUrl": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+  "securityGroupId": "sg-68951e51c2f001baa",
+  "siteBucketName": "rec-ts-site",
+  "sitePolicyBucket": "rec-ts-site",
+  "vpcId": "vpc-05097b38",
+  "vpcParameterName": "/rec-ts/vpc/vpc-05097b38",
+  "westAlertsArn": "arn:aws:sns:us-west-2:000000000000:rec-ts-alerts-west",
+  "workerQueueUrls": [
+    "https://sqs.us-east-1.amazonaws.com/000000000000/worker-0-8f65751",
+    "https://sqs.us-east-1.amazonaws.com/000000000000/worker-1-ef44137",
+    "https://sqs.us-east-1.amazonaws.com/000000000000/worker-2-b6daa97"
+  ]
 }

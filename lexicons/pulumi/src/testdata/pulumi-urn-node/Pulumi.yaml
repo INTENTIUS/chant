@@ -1,3 +1,7 @@
-name: site
-runtime: nodejs
-description: The program behind the URN-to-node fixtures (#4456); never run.
+name: corpus-aws-ts
+description: plunge corpus, TypeScript program against the floci AWS emulator (INTENTIUS/plunge#4)
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+    packagemanager: npm

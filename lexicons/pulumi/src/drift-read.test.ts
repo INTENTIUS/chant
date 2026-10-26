@@ -4,8 +4,10 @@
  * member's reader project: it dispatches to #4453's runner and adapters,
  * `pulumi refresh --preview-only --target` per resource on a stock member
  * and `plunge drift --resource --stream` on a member on plunge, and wraps
- * the records in one stream. The runners are fakes over the hand-written
- * fixtures; no binary runs here.
+ * the records in one stream. The runners are fakes over the fixtures recorded
+ * for #4475 (pulumi 3.272.0 and plunge on floci, see testdata's READMEs);
+ * `plunge-member`'s export is a cut of the recorded plunge stack's. No binary
+ * runs here.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,8 +20,9 @@ import type { PulumiRunner } from "./run";
 const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
 const AT = "2026-10-25T12:00:00Z";
-const assets = "urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets";
-const role = "urn:pulumi:dev::site::aws:iam/role:Role::web";
+const bucket = "urn:pulumi:floci::corpus-aws-ts::aws:s3/bucket:Bucket::site-bucket";
+const assets = "urn:pulumi:floci::corpus-aws-ts::corpus:index:Site$aws:s3/bucket:Bucket::docs-assets";
+const role = "urn:pulumi:floci::corpus-aws-ts::aws:iam/role:Role::app-role";
 
 function fake(answer: (args: string[]) => string): { run: PulumiRunner; calls: string[][] } {
   const calls: string[][] = [];
@@ -48,25 +51,29 @@ describe("readPulumiDrift", () => {
   test("--resource on a stock member: one refresh --preview-only --target, as one stream", async () => {
     const pulumi = fake(() => text("pulumi-refresh", "bucket-edited.json"));
     const dir = join(testdata, "pulumi-preview");
-    const answer = await readPulumiDrift(options(dir, { resource: assets }), { run: pulumi.run, plunge: never.run });
+    const answer = await readPulumiDrift(options(dir, { resource: bucket }), { run: pulumi.run, plunge: never.run });
     if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
-    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--target", assets]]);
+    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--target", bucket]]);
     expect(answer.lines.map((l) => l.type)).toEqual(["drift-start", "drift-record", "drift-settle"]);
-    expect(answer.lines[0]).toMatchObject({ member: "site", engine: "pulumi", read: "refresh", resource: assets, expected: [assets] });
+    expect(answer.lines[0]).toMatchObject({ member: "site", engine: "pulumi", read: "refresh", resource: bucket, expected: [bucket] });
     const { document } = foldDriftLines(answer.lines);
-    expect(document.records.map((r) => [r.address, r.status])).toEqual([[assets, "drifted"]]);
+    expect(document.records.map((r) => [r.address, r.status])).toEqual([[bucket, "drifted"]]);
   });
 
   test("a member on plunge reads each resource in its export with plunge drift --resource --stream, never pulumi", async () => {
-    const plunge = fake((args) => text("plunge-drift", args[2] === assets ? "assets-drifted.ndjson" : "role-in-sync.ndjson"));
+    const docs = "urn:pulumi:floci::corpus-aws-ts::corpus:index:Site::docs";
+    const answers: Record<string, string> = { [assets]: "assets-drifted.ndjson", [role]: "role-in-sync.ndjson", [docs]: "component-unsupported.ndjson" };
+    const plunge = fake((args) => text("plunge-drift", answers[args[2]]));
     const dir = join(testdata, "plunge-member");
     const answer = await readPulumiDrift(options(dir), { run: never.run, plunge: plunge.run });
     if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
-    expect(plunge.calls).toEqual([assets, role].map((u) => ["drift", "--resource", u, "--stream", "--member", "site"]));
+    expect(plunge.calls).toEqual([role, docs, assets].map((u) => ["drift", "--resource", u, "--stream", "--member", "site"]));
     expect(answer.lines[0]).toMatchObject({ engine: "plunge", read: "refresh" });
     const { document } = foldDriftLines(answer.lines);
+    // plunge answers a component, which no provider reads, with not-observed (recorded).
     expect(document.records.map((r) => [r.address, r.status]).sort()).toEqual([
       [role, "in-sync"],
+      [docs, "not-observed"],
       [assets, "drifted"],
     ].sort());
   });

@@ -1,0 +1,250 @@
+{
+    "config": {
+        "aws:accessKey": "test",
+        "aws:endpoints": "[{\"ec2\":\"http://localhost:4566\",\"iam\":\"http://localhost:4566\",\"s3\":\"http://localhost:4566\",\"sns\":\"http://localhost:4566\",\"sqs\":\"http://localhost:4566\",\"ssm\":\"http://localhost:4566\",\"sts\":\"http://localhost:4566\"}]",
+        "aws:region": "us-east-1",
+        "aws:s3UsePathStyle": "true",
+        "aws:secretKey": "test",
+        "aws:skipCredentialsValidation": "true",
+        "aws:skipMetadataApiCheck": "true",
+        "aws:skipRegionValidation": "true",
+        "aws:skipRequestingAccountId": "true",
+        "corpus:flociEndpoint": "http://localhost:4566",
+        "corpus:prefix": "rec-ts",
+        "corpus:workerCount": "3"
+    },
+    "steps": [
+        {
+            "op": "update",
+            "urn": "urn:pulumi:floci::corpus-aws-ts::aws:sqs/queue:Queue::events",
+            "provider": "urn:pulumi:floci::corpus-aws-ts::pulumi:providers:aws::default_7_51_1::6f538b4e-9183-48c8-88fe-2bddfa67e309",
+            "oldState": {
+                "urn": "urn:pulumi:floci::corpus-aws-ts::aws:sqs/queue:Queue::events",
+                "custom": true,
+                "id": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+                "type": "aws:sqs/queue:Queue",
+                "inputs": {
+                    "__defaults": [
+                        "maxMessageSize",
+                        "name",
+                        "visibilityTimeoutSeconds"
+                    ],
+                    "maxMessageSize": 262144,
+                    "messageRetentionSeconds": 3600,
+                    "name": "events-787f4fa",
+                    "region": "us-east-1",
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "visibilityTimeoutSeconds": 30
+                },
+                "outputs": {
+                    "__meta": "{\"e2bfb730-ecaa-11e6-8f88-34363bc7c4c0\":{\"create\":180000000000,\"delete\":180000000000,\"update\":180000000000}}",
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                }
+                            }
+                        }
+                    },
+                    "arn": "arn:aws:sqs:us-east-1:000000000000:events-787f4fa",
+                    "contentBasedDeduplication": false,
+                    "deduplicationScope": "",
+                    "delaySeconds": 0,
+                    "fifoQueue": false,
+                    "fifoThroughputLimit": "",
+                    "id": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+                    "kmsDataKeyReusePeriodSeconds": 300,
+                    "kmsMasterKeyId": "",
+                    "maxMessageSize": 262144,
+                    "messageRetentionSeconds": 3600,
+                    "name": "events-787f4fa",
+                    "namePrefix": "",
+                    "policy": "",
+                    "receiveWaitTimeSeconds": 0,
+                    "redriveAllowPolicy": "",
+                    "redrivePolicy": "",
+                    "region": "us-east-1",
+                    "sqsManagedSseEnabled": false,
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "url": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+                    "visibilityTimeoutSeconds": 30
+                },
+                "parent": "urn:pulumi:floci::corpus-aws-ts::pulumi:pulumi:Stack::corpus-aws-ts-floci",
+                "provider": "urn:pulumi:floci::corpus-aws-ts::pulumi:providers:aws::default_7_51_1::6f538b4e-9183-48c8-88fe-2bddfa67e309",
+                "propertyDependencies": {
+                    "messageRetentionSeconds": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T05:23:03.607856Z",
+                "modified": "2026-10-26T05:23:03.607856Z",
+                "sourcePosition": "project:///index.ts#68,21",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.ts#68,21"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3009,23"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3011,12"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            "newState": {
+                "urn": "urn:pulumi:floci::corpus-aws-ts::aws:sqs/queue:Queue::events",
+                "custom": true,
+                "id": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+                "type": "aws:sqs/queue:Queue",
+                "inputs": {
+                    "__defaults": [
+                        "maxMessageSize",
+                        "name",
+                        "visibilityTimeoutSeconds"
+                    ],
+                    "maxMessageSize": 262144,
+                    "messageRetentionSeconds": 600,
+                    "name": "events-787f4fa",
+                    "region": "us-east-1",
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "visibilityTimeoutSeconds": 30
+                },
+                "outputs": {
+                    "__meta": "{\"e2bfb730-ecaa-11e6-8f88-34363bc7c4c0\":{\"create\":180000000000,\"delete\":180000000000,\"update\":180000000000}}",
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                }
+                            }
+                        }
+                    },
+                    "arn": "arn:aws:sqs:us-east-1:000000000000:events-787f4fa",
+                    "contentBasedDeduplication": false,
+                    "deduplicationScope": "",
+                    "delaySeconds": 0,
+                    "fifoQueue": false,
+                    "fifoThroughputLimit": "",
+                    "id": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+                    "kmsDataKeyReusePeriodSeconds": 300,
+                    "kmsMasterKeyId": "",
+                    "maxMessageSize": 262144,
+                    "messageRetentionSeconds": 600,
+                    "name": "events-787f4fa",
+                    "namePrefix": "",
+                    "policy": "",
+                    "receiveWaitTimeSeconds": 0,
+                    "redriveAllowPolicy": "",
+                    "redrivePolicy": "",
+                    "region": "us-east-1",
+                    "sqsManagedSseEnabled": false,
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "url": "https://sqs.us-east-1.amazonaws.com/000000000000/events-787f4fa",
+                    "visibilityTimeoutSeconds": 30
+                },
+                "parent": "urn:pulumi:floci::corpus-aws-ts::pulumi:pulumi:Stack::corpus-aws-ts-floci",
+                "provider": "urn:pulumi:floci::corpus-aws-ts::pulumi:providers:aws::default_7_51_1::6f538b4e-9183-48c8-88fe-2bddfa67e309",
+                "propertyDependencies": {
+                    "messageRetentionSeconds": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T05:23:03.607856Z",
+                "modified": "2026-10-26T05:24:13.373846Z",
+                "sourcePosition": "project:///index.ts#68,21",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.ts#68,21"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3009,23"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3011,12"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            "diffReasons": [
+                "messageRetentionSeconds"
+            ],
+            "detailedDiff": {
+                "messageRetentionSeconds": {
+                    "kind": "update",
+                    "inputDiff": false
+                }
+            }
+        }
+    ],
+    "duration": 189583542,
+    "changeSummary": {
+        "update": 1
+    }
+}

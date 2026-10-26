@@ -72,8 +72,18 @@ const execFileAsync = promisify(execFile);
 /** Runs the pulumi binary with these arguments in `cwd`. Injectable so tests need no binary. */
 export type PulumiRunner = (args: string[], opts: { cwd: string }) => Promise<{ stdout: string }>;
 
+/**
+ * The engine's environment: no update check, and no PULUMI_SKIP_CONFIRMATIONS, which stands for `--yes` and
+ * makes `refresh --preview-only` refuse ("--yes and --preview-only cannot be used together", recorded, #4475).
+ */
+export function engineEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, PULUMI_SKIP_UPDATE_CHECK: "true" };
+  delete out.PULUMI_SKIP_CONFIRMATIONS;
+  return out;
+}
+
 export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
-  execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, PULUMI_SKIP_UPDATE_CHECK: "true" } });
+  execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
 
 /**
  * The only `pulumi` commands chant runs (ruling on #4450, widened by the
@@ -118,7 +128,7 @@ export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: s
   return run(args, { cwd });
 }
 
-export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024 });
+export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
 
 /** What runs a Pulumi member's stack. */
 export type PulumiMemberEngine = "pulumi" | "plunge";
@@ -147,7 +157,9 @@ export function pulumiStackOutputArgs(opts: { stack?: string } = {}): string[] {
 
 /** The argv chant runs for a member's preview, after `pulumi`. */
 export function pulumiPreviewArgs(opts: { stack?: string; targets?: readonly string[] } = {}): string[] {
-  return ["preview", "--json", ...(opts.stack ? ["--stack", opts.stack] : []), ...(opts.targets ?? []).flatMap((t) => ["--target", t])];
+  // --show-sames: without it `preview --json` lists no unchanged resource but the stack (recorded, #4475), and the
+  // change-set adapter reads a resource the export holds and the preview never lists as one an apply() may register.
+  return ["preview", "--json", "--show-sames", ...(opts.stack ? ["--stack", opts.stack] : []), ...(opts.targets ?? []).flatMap((t) => ["--target", t])];
 }
 
 /** The checked-in `pulumi stack export`, parsed, or undefined when there is none or it does not read. */

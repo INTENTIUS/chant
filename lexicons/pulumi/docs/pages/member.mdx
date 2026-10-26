@@ -93,9 +93,11 @@ The consumer lists `pulumi` among its lexicons.
 | Outputs | Source |
 |---|---|
 | applied | `pulumi stack output --json --show-secrets=false`, or the checked-in export with `CHANT_PULUMI_APPLIED_OUTPUTS=export` |
-| planned | the `pulumi:pulumi:Stack` step of `pulumi preview --json` |
+| planned | `pulumi preview --json --show-sames`: the export's outputs when it plans nothing to apply, every output unknown when it plans a change |
 
-A planned output that holds the unknown value is unknown: the consumer is
+A real preview prints the stack's step with no outputs (recorded against the
+plunge corpus, #4475), so chant cannot read a planned value off it. A
+planned output that is unknown leaves the consumer
 planned without it, the change set has a hole on `<member>#outputs` naming
 it, and on merge the consumer waits for the member's apply and is planned
 again. The member part's `pulumi-preview` digest is the plan digest, so a
