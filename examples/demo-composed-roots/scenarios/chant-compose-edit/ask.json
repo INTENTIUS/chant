@@ -4,7 +4,7 @@
     {
       "prompt": "Port 8080 to 8090; add admin port 9000.",
       "action": null,
-      "reply": "Opened pull request {pull}. network changes the proxy port and adds an admin port, and app and edge follow both. Plan all three roots next.",
+      "reply": "Opened pull request {pull}. network changes the proxy port and adds an admin port; app and edge follow both. Next: plan all three.",
       "light": null,
       "paths": false,
       "ghost": false,
@@ -22,7 +22,7 @@
       "light": null,
       "paths": false,
       "ghost": false,
-      "status": "Planning all three roots as one",
+      "status": "Planning network, app and edge together",
       "tips": [
         {
           "title": "One plan, three roots",
@@ -46,7 +46,7 @@
   "planned": {
     "prompt": null,
     "action": null,
-    "reply": "One plan across 3 roots. Every value is known at plan. Each card shows its before and after. {creates} to create, {updates} to change.",
+    "reply": "One plan across 3 roots. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change.",
     "light": [
       "network/aws_ssm_parameter.http_proxy_port",
       "network/aws_ssm_parameter.admin_port",
@@ -65,7 +65,7 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Recording your approval of the plan's digest",
+    "status": "Recording your approval on the pull request",
     "tips": [
       {
         "title": "One approval",
@@ -80,7 +80,7 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Merging; the apply job applies the three roots as one",
+    "status": "Merging and applying network, app and edge in one pass",
     "tips": [
       {
         "title": "Variables, not remote state",
@@ -89,7 +89,7 @@
     ]
   },
   "applying": {
-    "status": "Applying the three roots as one",
+    "status": "Applying network, app and edge together",
     "tips": [
       {
         "title": "Each root keeps its own state",
@@ -108,10 +108,10 @@
   "applied": {
     "prompt": null,
     "action": null,
-    "reply": "Done. Both ports reached all three roots in one apply.",
+    "reply": "Done. Both ports changed in network, app and edge in the same apply.",
     "light": null,
     "paths": false,
     "ghost": false
   },
-  "closing": "3 roots, 1 plan, 1 approval, 1 apply."
+  "closing": "3 roots. 1 plan. 1 approval. 1 apply."
 }
