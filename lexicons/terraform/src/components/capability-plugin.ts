@@ -149,10 +149,14 @@ function requireRoot(input: TerraformApplyStepInput): void {
 async function planRoot(input: TerraformApplyStepInput, targets?: string[]): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
   requireRoot(input);
   await terraformInit(rootArgs(input));
+  // One `show -json` per plan (#4479): its document is the digest, the change
+  // set, the planned outputs and the shape. Nothing here reads the
+  // `-no-color` render, so the plan skips it.
   const planned = await terraformPlan({
     ...rootArgs(input),
     ...(input.vars ? { vars: input.vars } : {}),
     ...(targets && targets.length > 0 ? { targets } : {}),
+    text: false,
   });
   return {
     planFile: planned.planFile,

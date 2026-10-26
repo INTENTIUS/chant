@@ -429,6 +429,19 @@ describe("terraformPlan — the -detailed-exitcode mapping (#2086)", () => {
     ]);
   });
 
+  test("text: false runs show -json alone, and the result's text is empty (#4479)", async () => {
+    const dir = project({ roots: { app: { dir: "./infra" } } });
+    showReplies();
+    const result = await terraformPlan({ root: "app", cwd: dir, text: false });
+    expect(result.text).toBe("");
+    expect(result.json).toEqual(JSON.parse(PLAN_JSON));
+    expect(result.planDigest).toBe(terraformPlanDigest(JSON.parse(PLAN_JSON)));
+    expect(execCalls.map((c) => c.cmd)).toEqual([
+      "terraform plan -input=false -detailed-exitcode -out=chant.tfplan",
+      "terraform show -json chant.tfplan",
+    ]);
+  });
+
   // #2300 — the Plan phase is where the plan gets its identity, so the
   // activity's own result carries it and the Gate step references it from
   // there rather than re-reading the file.
