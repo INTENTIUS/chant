@@ -14,6 +14,10 @@
  *   intent-decision-contested on the server, which still fires), W-004
  *   (done, from intent-pin-drifted on the spec, which does not fire) and
  *   W-005 (open, implements dec-002 and dec-003, no gap source).
+ *
+ * Kept fast (#4502): a walk reads the repository through git, so the tests
+ * that only read a region share one walk of it. The one test that edits the
+ * working tree walks afresh.
  */
 
 import { readFileSync } from "node:fs";
@@ -106,11 +110,23 @@ const intent = contract(intentSchema);
 const records = contract(recordsSchema);
 type Result = Exclude<IntentDocument, { error: unknown }>;
 
-async function walk(region: string): Promise<Result> {
+async function freshWalk(region: string): Promise<Result> {
   const { doc } = await intentGraph({ cwd: root, region, kinds: ["decisions/decision.kind.mjs", "work/work.kind.mjs"].map((k) => join(root, k)) });
   intent.expectValid(doc);
   if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
   return doc;
+}
+
+const walks = new Map<string, Promise<Result>>();
+
+/** The walk of `region` over the committed fixture, made once and shared by the tests that only read it. */
+function walk(region: string): Promise<Result> {
+  let w = walks.get(region);
+  if (!w) {
+    w = freshWalk(region);
+    walks.set(region, w);
+  }
+  return w;
 }
 
 const findingsOf = (doc: Result, code: string) => doc.nodes.filter((n): n is FindingNode => n.kind === "finding" && n.code === code);
@@ -166,7 +182,7 @@ describe("intent-decision-contested (#2686)", () => {
   test("a decision whose dissents are all addressed or withdrawn is not contested", async () => {
     writeFiles(root, { "decisions/dec-003-server.md": DEC_003.replace(`"note": "The port is wrong.",`, `"note": "The port is wrong.", "addressed_by": "acme/studio#8",`) });
     try {
-      const doc = await walk("app/server.mjs");
+      const doc = await freshWalk("app/server.mjs");
       expect(findingsOf(doc, "intent-decision-contested")).toEqual([]);
     } finally {
       writeFiles(root, { "decisions/dec-003-server.md": DEC_003 });
