@@ -60,8 +60,15 @@ URN: `create`, `update` (in place), `delete`, a replace as one `replace`
 entry, `same` as `no-op`, `read` and `refresh` as `read`. An input that holds
 Pulumi's unknown value is `unknown: true`, and a secret is `sensitive: true`
 with neither value. Resources a program registers inside an `apply()` the
-preview could not run are marked `mayAppear` rather than left out. The full
-table is under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
+preview could not run are marked `mayAppear` when they sit under a component,
+or when the checked-in export holds them and the preview has no step for
+them. A resource registered inside an `apply()` directly under the stack is
+not marked: with no export holding it, it is not in the change set, and when
+the export holds it and its input is unknown, the preview prints a `delete`
+that the change set keeps as a plain delete. Nothing in a Pulumi preview tells
+that apart from a real removal
+([#4497](https://github.com/INTENTIUS/chant/issues/4497)). The full table is
+under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
 
 ## Drift
 
