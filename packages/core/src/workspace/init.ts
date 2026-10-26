@@ -8,7 +8,8 @@
  *
  * - each outermost chant project (a chant.config.ts or .json) becomes a
  *   `chant` member, and the root's own config makes a root member `"."`;
- * - each nested declaration becomes a `workspace` member;
+ * - each nested declaration becomes a `workspace` member, unless it sits
+ *   under an examples-style directory, where it is an example like any other;
  * - each other npm package, from the npm workspaces or any other
  *   package.json, becomes an `other` member with a `because`;
  * - projects under an `examples`, `test` or `fixtures`-style directory become
@@ -422,7 +423,9 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
   const declDirs = dirsWith((n) => (DECLARATION_FILES as readonly string[]).includes(n));
   const pkgDirs = dirsWith((n) => n === "package.json");
 
-  const nested = outermost([...declDirs].filter((d) => d !== ""));
+  // A declaration under an examples-style directory is an example (a lexicon
+  // can ship a whole workspace as one, chant#4468), so its group covers it.
+  const nested = outermost([...declDirs].filter((d) => d !== "" && !exampleMatch(d)));
   const notNested = (d: string) => !nested.some((n) => isInside(d, n));
 
   const projects = outermost([...configDirs].filter((d) => d !== "" && notNested(d)));
