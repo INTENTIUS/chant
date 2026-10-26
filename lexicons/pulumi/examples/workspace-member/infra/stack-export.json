@@ -1,0 +1,40 @@
+{
+  "version": 3,
+  "deployment": {
+    "manifest": { "time": "2026-10-25T12:00:00Z", "magic": "example", "version": "v3.200.0" },
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::shop::pulumi:pulumi:Stack::shop-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack",
+        "outputs": { "assetsBucket": "shop-assets-dev-20261025" }
+      },
+      {
+        "urn": "urn:pulumi:dev::shop::pulumi:providers:aws::default_6_0_0",
+        "custom": true,
+        "id": "provider-1",
+        "type": "pulumi:providers:aws",
+        "inputs": { "region": "us-east-1" }
+      },
+      {
+        "urn": "urn:pulumi:dev::shop::aws:s3/bucketV2:BucketV2::assets",
+        "custom": true,
+        "id": "shop-assets-dev-20261025",
+        "type": "aws:s3/bucketV2:BucketV2",
+        "parent": "urn:pulumi:dev::shop::pulumi:pulumi:Stack::shop-dev",
+        "provider": "urn:pulumi:dev::shop::pulumi:providers:aws::default_6_0_0::provider-1",
+        "inputs": { "bucketPrefix": "shop-assets-dev" }
+      },
+      {
+        "urn": "urn:pulumi:dev::shop::aws:s3/bucketVersioningV2:BucketVersioningV2::assetsVersioning",
+        "custom": true,
+        "id": "shop-assets-dev-20261025",
+        "type": "aws:s3/bucketVersioningV2:BucketVersioningV2",
+        "parent": "urn:pulumi:dev::shop::pulumi:pulumi:Stack::shop-dev",
+        "provider": "urn:pulumi:dev::shop::pulumi:providers:aws::default_6_0_0::provider-1",
+        "dependencies": ["urn:pulumi:dev::shop::aws:s3/bucketV2:BucketV2::assets"],
+        "inputs": { "bucket": "shop-assets-dev-20261025" }
+      }
+    ]
+  }
+}

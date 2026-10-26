@@ -1,0 +1,88 @@
+---
+title: Getting Started
+description: Add a Pulumi program to a chant workspace as a member
+diataxis: tutorial
+prompt: |
+  Read https://intentius.io/chant/lexicons/pulumi/getting-started/.
+  Install `@intentius/chant-lexicon-pulumi`, pin it in `chant.workspace.json`, and declare this repository's Pulumi program as a member of kind `pulumi`.
+  Export its selected stack to `stack-export.json` beside `Pulumi.yaml` with `pulumi stack export --file stack-export.json`, then run `npx chant workspace graph` and report the member's nodes, or the reason under `meta.pulumiMember` when there are none.
+  Do not run `pulumi up`, `pulumi destroy`, `pulumi import` or `pulumi refresh` without `--preview-only`. Open a pull request with the declaration and the export.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A Pulumi program joins a chant workspace as it is. You declare its directory
+as a member of kind `pulumi`, check in an export of its stack, and chant reads
+the export for the graph. `pulumi up` still applies the program; chant runs
+only commands that change nothing.
+
+The finished layout is the `workspace-member` example in
+`lexicons/pulumi/examples/`.
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-pulumi
+```
+
+## Declare the member
+
+Member kinds come from pinned packages, so pin the lexicon and name the
+program's directory in `chant.workspace.json`:
+
+```json
+{
+  "name": "shop",
+  "schema": 1,
+  "pins": [
+    { "package": "@intentius/chant-lexicon-pulumi", "version": "0.124.34" }
+  ],
+  "members": [
+    { "name": "infra", "dir": "infra", "kind": "pulumi" }
+  ]
+}
+```
+
+Use the version you installed. The kind probes for `Pulumi.yaml` and checks
+that it has a `name` and a `runtime`.
+
+## Check in the stack export
+
+The graph read never runs the program, so it needs the stack's last
+deployment on disk. In the member's directory, with the stack selected:
+
+```bash
+pulumi stack export --file stack-export.json
+git add stack-export.json
+```
+
+Run this again after each `pulumi up`. An export holds the stack's inputs and
+outputs; Pulumi encrypts the secret ones, and chant copies neither into the
+graph.
+
+## Read the graph
+
+```bash
+npx chant workspace graph
+```
+
+Each resource in the export is a node, named by its URN without the stack
+and project: `infra/aws:s3/bucketV2:BucketV2::assets`. A resource's
+`dependencies` and `parent` are its edges. Providers and the root
+`pulumi:pulumi:Stack` are left out.
+
+A member with no export has no nodes, and `meta.pulumiMember` says why. The
+build check PUL001 reports the same thing when a project reads the member
+itself (see [The pulumi member](../member/#reading-the-member-into-a-build)).
+
+## Editor support
+
+With the chant language server running, `Pulumi.yaml`, `Pulumi.<stack>.yaml`,
+`chant.workspace.json` and `chant.config.ts` get completion and hover for the
+keys chant reads: the project keys and `runtime` values, the project's config
+namespace in a stack file, `"kind": "pulumi"` in a member entry, and
+`pulumi.member` in the project config.
+
+## Next
+
+[The pulumi member](../member/) covers what chant runs for the change set,
+drift and outputs.
