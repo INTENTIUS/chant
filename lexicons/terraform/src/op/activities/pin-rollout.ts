@@ -41,6 +41,8 @@ export interface TerraformPinRolloutArgs {
   appliedCheck?: string;
   /** A directory in the repository. Default: the working directory. */
   cwd?: string;
+  /** The binary the roots run, which says whether their `.tofu` files are read (chant#4457). Default `terraform`. */
+  binary?: string;
 }
 
 export type TerraformPinRolloutResult = PinRolloutResult;
@@ -73,5 +75,6 @@ export async function readPinRollout(args: TerraformPinRolloutArgs): Promise<Ter
     ...(args.base ? { base: args.base } : {}),
     ...(args.remote ? { remote: args.remote } : {}),
     ...(args.appliedCheck ? { appliedCheck: args.appliedCheck } : {}),
+    ...(args.binary ? { binary: args.binary } : {}),
   });
 }
