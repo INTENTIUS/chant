@@ -12,6 +12,7 @@ import type { DriverComponent, DriverPhase } from "@intentius/chant/components/d
 import { stackOutput } from "@intentius/chant/components/component";
 import { composeOff, compositionFor, compositionIfEnabled, fallbackLine, moduleNames, withPlanFailed, type CompositionInput } from "./compose";
 import type { TerraformConfig } from "./config";
+import { LOCKS } from "./state/backend";
 
 const made: string[] = [];
 afterAll(() => {
@@ -124,12 +125,12 @@ describe("compositionFor: each fallback", () => {
 
   test("backend: a type chant does not lock", () => {
     const c = compositionFor(input(threeRoots({ "roots/c/main.tf": 'terraform {\n  backend "consul" {\n    path = "c"\n  }\n}\n' }), [tf("a"), tf("b"), tf("c")]));
-    expect(c.fallbacks).toEqual([{ kind: "backend", member: "c", reason: "`c`'s backend is consul, and chant locks only s3 (with use_lockfile), gcs, azurerm and local states itself" }]);
+    expect(c.fallbacks).toEqual([{ kind: "backend", member: "c", reason: `\`c\`: the root's backend is consul; ${LOCKS}` }]);
   });
 
   test("backend: s3 with no lock file", () => {
     const c = compositionFor(input(threeRoots({ "roots/c/main.tf": 'terraform {\n  backend "s3" {\n    bucket = "b"\n    key = "c"\n  }\n}\n' }), [tf("a"), tf("b"), tf("c")]));
-    expect(c.fallbacks).toEqual([{ kind: "backend", member: "c", reason: "`c`'s s3 backend takes no lock file (`use_lockfile = true`), so chant cannot hold its lock" }]);
+    expect(c.fallbacks).toEqual([{ kind: "backend", member: "c", reason: `\`c\`: the s3 backend takes no lock file (use_lockfile = true is unset), so chant cannot hold its lock; ${LOCKS}` }]);
   });
 
   test("provider-lock", () => {

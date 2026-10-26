@@ -38,8 +38,8 @@ import type { PipelineCloudIdentity } from "@intentius/chant/ci-identity";
 import type { GroupFallback } from "@intentius/chant/components/capability";
 import { wiringReads, type DriverComponent, type DriverPhase, type DriverStep } from "@intentius/chant/components/driver";
 import type { TerraformConfig, TerraformRootConfig } from "./config";
+import { lockRefusal, readBackend } from "./state/backend";
 import {
-  backendBlock,
   estateOutputReads,
   importLiteral,
   jsonImportRefused,
@@ -345,8 +345,6 @@ const readKey = (r: ComposedRead): string => `${r.upstream}\0${r.via}\0${r.via =
 /** `TF_CLI_ARGS*` flags a composed run cannot take: their addresses name a root's resources without the module in front, and `-var` names no root. */
 const CLI_REFUSED = /(^|\s)-{1,2}(target|exclude|replace|var)(=|\s|$)/;
 
-/** The backend types whose lock chant takes itself (#4437). */
-const LOCKED_BACKENDS = ["s3", "gcs", "azurerm", "local"];
 
 /**
  * The `off` fallback when `terraform.compose` is not enabled, else undefined:
@@ -450,18 +448,11 @@ export function compositionFor(input: CompositionInput): Composition {
     if (estate) return rc.live ? undefined : ["backend", `\`${m}\` has no \`live\` block, and a composed run of estates calls only directories that carry one`];
     const ws = rc.config!.workspace;
     if (ws && ws !== "default") return ["workspace", `\`${m}\` plans in workspace ${ws}, and a composed run plans in default`];
-    const b = backendBlock(rc.dir!, rc.binary);
-    if (b && "cloud" in b) return ["backend", `\`${m}\` has a \`cloud\` block, whose state chant does not lock itself`];
-    const type = b?.type ?? "local";
-    if (!LOCKED_BACKENDS.includes(type)) return ["backend", `\`${m}\`'s backend is ${type}, and chant locks only s3 (with use_lockfile), gcs, azurerm and local states itself`];
-    if (type === "s3") {
-      const initArgs = `${input.env.TF_CLI_ARGS ?? ""} ${input.env.TF_CLI_ARGS_init ?? ""}`;
-      const said =
-        rootTexts(rc.dir!, rc.binary).some((t) => /\buse_lockfile\s*=\s*true\b/.test(t.text) || /"use_lockfile"\s*:\s*true/.test(t.text)) ||
-        rc.config!.backendConfig?.use_lockfile === "true" ||
-        /use_lockfile=true/.test(initArgs);
-      if (!said) return ["backend", `\`${m}\`'s s3 backend takes no lock file (\`use_lockfile = true\`), so chant cannot hold its lock`];
-    }
+    // The one backend verdict (chant#4478): the code and flags before init, compared with what init recorded after.
+    const refusal = lockRefusal(
+      readBackend(rc.dir!, { env: input.env, ...(rc.binary ? { binary: rc.binary } : {}), ...(rc.config!.backendConfig ? { backendConfig: rc.config!.backendConfig } : {}) }),
+    );
+    if (refusal) return ["backend", `\`${m}\`: ${refusal.reason}`];
     return undefined;
   });
 

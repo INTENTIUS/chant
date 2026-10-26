@@ -96,8 +96,11 @@ describe("a state chant does not lock", () => {
     const json = write(tmp(), { "cdk.tf.json": JSON.stringify({ terraform: [{ required_version: ">= 1.10" }, { cloud: { organization: "acme" } }] }) });
     expect(stateObject(json, ENV)).toMatchObject({ refused: "cloud" });
     expect(stateObject(initialised("cloud", { organization: "acme" }), ENV)).toMatchObject({ backend: "cloud", refused: "cloud" });
-    // A cloud block wins over the backend init recorded before it was added.
-    expect(stateObject(initialised("s3", S3_CONFIG, { "main.tf": "terraform {\n  cloud {}\n}\n" }), ENV)).toMatchObject({ refused: "cloud" });
+    // A cloud block added after init recorded s3: the code and the record disagree, and the refusal names both (chant#4478).
+    expect(stateObject(initialised("s3", S3_CONFIG, { "main.tf": "terraform {\n  cloud {}\n}\n" }), ENV)).toMatchObject({
+      refused: "disagree",
+      reason: expect.stringContaining("names the cloud backend and init recorded s3"),
+    });
   });
 
   it("is any other backend, named by its type", () => {

@@ -115,7 +115,7 @@ A member that cannot compose leaves the group and plans root by root as without 
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
 | `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. A root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either matches wins. |
 | `workspace` | The root plans in a workspace other than `default`. |
-| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, or a root without a `live` block among estates. |
+| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, a root whose code and `-backend-config` flags disagree with what `init` last recorded, or a root without a `live` block among estates. The backend is read once, for this and for the state locks: the code with `TF_CLI_ARGS`, `TF_CLI_ARGS_init` and `backendConfig` over it, compared with `.terraform/terraform.tfstate` when init has run, and a disagreement names both. |
 | `provider-lock` | Two members lock one provider at different versions. |
 | `read` | A member reads another through a `terraform_remote_state` with `count` or `for_each`, or from inside a module. |
 | `import` | An `import` block takes no literal string `id`. |
