@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -77,12 +77,15 @@ describe("chant workspace promote --all (#4461)", () => {
   let calls: { argv: string[]; cwd: string }[];
   let failCheck: Set<string>;
   let reportExtra: Map<string, string>;
+  /** Members whose next `live-import -approve` fails, once each. */
+  let failStampOnce: Set<string>;
 
   const memberOf = (argv: string[], cwd: string): string => argv.find((a) => a.startsWith("-estate="))?.slice("-estate=".length) ?? basename(cwd);
   const runner: PromoteRunner = async (argv, cwd) => {
     calls.push({ argv, cwd });
     const member = memberOf(argv, cwd);
     if (argv[1] === "live-check") return failCheck.has(member) ? { exitCode: 2, output: "unsupported construct: provisioner" } : { exitCode: 0, output: "" };
+    if (argv.includes("-approve") && failStampOnce.delete(member)) return { exitCode: 1, output: "Error: the live system refused the stamp write" };
     if (argv.includes("-approve")) return { exitCode: 0, output: "2 resource(s) newly stamped, 0 already stamped, 0 newly recorded, 0 re-recorded for sensitivity only, 0 already recorded, 0 failed, 1 skipped.\n" };
     return { exitCode: 0, output: reportFor(member, reportExtra.get(member)) };
   };
@@ -96,6 +99,7 @@ describe("chant workspace promote --all (#4461)", () => {
     calls = [];
     failCheck = new Set();
     reportExtra = new Map();
+    failStampOnce = new Set();
     root = mkdtempSync(join(tmpdir(), "chant-promote-waves-"));
     states = mkdtempSync(join(tmpdir(), "chant-promote-waves-states-"));
     git(root, "init", "-q", "-b", "main");
@@ -208,6 +212,55 @@ describe("chant workspace promote --all (#4461)", () => {
     expect(again.outcome).toBe("landed");
     expect(calls).toHaveLength(0);
     expect(l.pending).toHaveLength(pendingBefore);
+  });
+
+  test("a re-run after a failed live-import -approve retries the stamp instead of reporting already-promoted (#4485)", async () => {
+    const l = ledger();
+    await promote(l);
+    l.approve("b");
+    failStampOnce.add("b");
+    const failed = await promote(l);
+    const row = (s: WavesSummary, m: string) => s.roots.find((r) => r.member === m)!;
+    expect(row(failed, "b").outcome).toBe("stamp-failed");
+    expect(row(failed, "b").reason).toContain(`choudoufu live-import -state=${join(states, "b.tfstate")} -estate=b -approve`);
+    expect(failed.exitCode).toBe(1);
+    // The kind was written; the stamp is kept as pending.
+    expect(kinds()).toMatchObject({ b: "choudoufu" });
+    expect(existsSync(join(root, ".chant", "workspace-promote", "b.stamp.json"))).toBe(true);
+
+    calls = [];
+    const retried = await promote(l);
+    expect(row(retried, "b").outcome).toBe("applied");
+    expect(row(retried, "b").stamped).toEqual({ newly: 2, already: 0, failed: 0 });
+    // Only the stamp ran for b: no live-check, no report, no new gate.
+    expect(calls.filter((c) => memberOf(c.argv, c.cwd) === "b").map((c) => c.argv.slice(1))).toEqual([
+      ["live-import", `-state=${join(states, "b.tfstate")}`, "-estate=b", "-approve"],
+    ]);
+    expect(l.pending.filter((p) => p.gate === "b")).toHaveLength(1);
+    expect(existsSync(join(root, ".chant", "workspace-promote", "b.stamp.json"))).toBe(false);
+    // The canary landed, so wave 2 ran.
+    expect(outcomes(retried)).toMatchObject({ a: "gated", c: "gated" });
+
+    // Once stamped, a re-run reports it promoted and runs nothing for it.
+    calls = [];
+    const again = await promote(l);
+    expect(row(again, "b").outcome).toBe("already-promoted");
+    expect(calls.some((c) => memberOf(c.argv, c.cwd) === "b")).toBe(false);
+  });
+
+  test("a stamp that fails again stays stamp-failed with the command, and the later waves wait (#4485)", async () => {
+    const l = ledger();
+    await promote(l);
+    l.approve("b");
+    failStampOnce.add("b");
+    await promote(l);
+    failStampOnce.add("b");
+    const s = await promote(l);
+    const b = s.roots.find((r) => r.member === "b")!;
+    expect(b.outcome).toBe("stamp-failed");
+    expect(b.reason).toMatch(/failed again; live-import is safe to re-run: `choudoufu live-import -state=.* -estate=b -approve` in b/);
+    expect(outcomes(s)).toEqual({ b: "stamp-failed", a: "not-run", c: "not-run", d: "not-run" });
+    expect(existsSync(join(root, ".chant", "workspace-promote", "b.stamp.json"))).toBe(true);
   });
 
   test("a root without a local v4 state is refused by name and stages nothing", async () => {

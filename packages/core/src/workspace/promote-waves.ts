@@ -19,19 +19,22 @@
  * `--dry-run`) staged cleanly. A gated root has not landed: approve its gate
  * and run the same command again. Roots already of kind `choudoufu` report
  * `already-promoted` and are not staged again, so a re-run over a workspace
- * that has landed is a no-op.
+ * that has landed is a no-op. A root whose kind was written but whose
+ * `live-import -approve` failed is kind `choudoufu` with a pending stamp
+ * (#4485): a re-run retries the stamp, and the root lands once it passes or
+ * stays `stamp-failed` with the command to run.
  *
  * Before a root is staged its state is checked: `live-import` reads a local
  * tfstate of format version 4, so a missing state under a remote backend, or
  * a state of another version, refuses that root by name.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/format";
 import type { GateLedgerPort } from "../op/gate";
 import { readDeclaration } from "./declaration";
-import { PROMOTE_GATED_EXIT, PromoteError, promoteCommand, type PromoteResult, type PromoteRunner } from "./promote";
+import { PROMOTE_GATED_EXIT, PromoteError, promoteCommand, readPendingStamp, retryPendingStamp, stampCommand, type PromoteResult, type PromoteRunner } from "./promote";
 import { workingTree } from "./tree";
 
 export const DEFAULT_WAVE_SIZE = 5;
@@ -238,7 +241,29 @@ export async function promoteWavesCommand(opts: PromoteWavesOptions): Promise<Wa
       const member = byName.get(name)!;
       const state = stateFor(name);
       if (member.kind !== "terraform") {
-        results.push({ member: name, wave: n, canary, outcome: "already-promoted", kind: member.kind, reason: `already kind ${member.kind}; nothing staged` });
+        const pending = member.kind === "choudoufu" ? readPendingStamp(realpathSync(root), name) : undefined;
+        if (!pending || opts.dryRun) {
+          const why = pending ? `already kind ${member.kind}; its stamp is pending and --dry-run does not retry it` : `already kind ${member.kind}; nothing staged`;
+          results.push({ member: name, wave: n, canary, outcome: pending ? "stamp-failed" : "already-promoted", kind: member.kind, reason: why });
+          continue;
+        }
+        // #4485: the kind was written and the stamp failed; retry the stamp, against the state this run names if it names one.
+        const explicit = states[name] !== undefined || opts.stateDir !== undefined ? stateFor(name) : undefined;
+        const row: WaveRootResult = { member: name, wave: n, canary, outcome: "stamp-failed", kind: member.kind, state: explicit ?? pending.state };
+        try {
+          const r = (await retryPendingStamp({ root, member: name, ...(explicit ? { state: explicit } : {}), ...(opts.json !== undefined ? { json: opts.json } : {}), ...(opts.runner ? { runner: opts.runner } : {}) }))!;
+          row.outcome = rootOutcome(r);
+          const stamped = stampCounts(r.followUpOutput);
+          if (stamped) row.stamped = stamped;
+          row.reason = row.outcome === "applied"
+            ? `kind written by an earlier run; its failed stamp was retried and passed`
+            : `kind written, but ${r.followUpFailed} failed again; live-import is safe to re-run: ${stampCommand({ name, dir: member.dir }, row.state!)}`;
+        } catch (err) {
+          if (!(err instanceof PromoteError)) throw err;
+          row.reason = err.message;
+          say(formatError({ message: `${name}: ${err.message}` }));
+        }
+        results.push(row);
         continue;
       }
       const row: WaveRootResult = { member: name, wave: n, canary, outcome: "failed", kind: member.kind, state };
@@ -270,7 +295,7 @@ export async function promoteWavesCommand(opts: PromoteWavesOptions): Promise<Wa
         if (stamped) row.stamped = stamped;
         if (row.outcome === "checks-failed") row.reason = r.failureOutput?.split("\n").at(-1) || "a staging check failed";
         if (row.outcome === "stamp-failed") {
-          row.reason = `kind written, but ${r.followUpFailed} failed; live-import is safe to re-run: \`choudoufu live-import -state=${state} -estate=${name} -approve\` in ${member.dir}`;
+          row.reason = `kind written, but ${r.followUpFailed} failed; run this again to retry the stamp, or run it by hand (live-import is safe to re-run): ${stampCommand({ name, dir: member.dir }, state)}`;
         }
         if (row.outcome === "gated") row.reason = `approve with \`chant approve workspace-promote ${name}\`, then run this again`;
       } catch (err) {

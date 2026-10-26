@@ -31,6 +31,12 @@
  * uncommitted promotion (#4461: `--all` promotes a workspace in waves, see
  * `./promote-waves.ts`).
  *
+ * When `live-import -approve` fails after the kind change is written, the
+ * promote leaves a stamp record under `.chant/workspace-promote/` (#4485). A
+ * re-run finds the member already of kind `choudoufu` and the record, and
+ * retries the stamp ({@link retryPendingStamp}) rather than reporting it
+ * promoted or starting the next rung. The record goes once a stamp passes.
+ *
  * Commands run through an injectable runner, so a test never starts a binary.
  */
 
@@ -115,6 +121,123 @@ export function followUpRuns(rung: Rung, member: { name: string; dir: string }, 
   return [{ label: "choudoufu live-import -approve", argv: ["choudoufu", "live-import", `-state=${opts.state}`, `-estate=${member.name}`, "-approve"], cwd: member.dir }];
 }
 
+/** Where a promote keeps what a re-run needs, relative to the project root. */
+export const PROMOTE_RECORD_DIR = ".chant/workspace-promote";
+export const PENDING_STAMP_SCHEMA = "chant-workspace-promote-stamp/v1";
+
+/** A stamp the kind change was written for and that did not pass (#4485). */
+export interface PendingStamp {
+  schema: typeof PENDING_STAMP_SCHEMA;
+  member: string;
+  /** The member's directory, relative to the project root. */
+  dir: string;
+  /** The state `live-import -approve` read, absolute. */
+  state: string;
+  /** The follow-up that failed. */
+  failed: string;
+  /** ISO 8601. */
+  at: string;
+}
+
+function pendingStampPath(root: string, member: string): string {
+  return join(root, PROMOTE_RECORD_DIR, `${member}.stamp.json`);
+}
+
+/** The stamp a promote of `member` left failed, or undefined when none is pending. */
+export function readPendingStamp(root: string, member: string): PendingStamp | undefined {
+  const file = pendingStampPath(root, member);
+  if (!existsSync(file)) return undefined;
+  try {
+    const record = JSON.parse(readFileSync(file, "utf-8")) as PendingStamp;
+    return record.schema === PENDING_STAMP_SCHEMA && record.member === member ? record : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writePendingStamp(root: string, record: PendingStamp): void {
+  mkdirSync(join(root, PROMOTE_RECORD_DIR), { recursive: true });
+  writeFileSync(pendingStampPath(root, record.member), `${JSON.stringify(record, null, 2)}\n`);
+}
+
+function clearPendingStamp(root: string, member: string): void {
+  rmSync(pendingStampPath(root, member), { force: true });
+}
+
+/** The `live-import -approve` line to run by hand for a pending stamp. */
+export function stampCommand(member: { name: string; dir: string }, state: string): string {
+  return `\`choudoufu live-import -state=${state} -estate=${member.name} -approve\` in ${member.dir || "."}`;
+}
+
+/**
+ * Run the stamps of the `choudoufu` rung's follow-up in the tree, keep a
+ * {@link PendingStamp} when one fails and drop it when they pass. The result
+ * is `applied`, exit 0 when every stamp passed, else exit 1 with the failed
+ * follow-up named.
+ */
+async function stampInTree(input: {
+  root: string;
+  member: { name: string; dir: string };
+  state: string | undefined;
+  run: PromoteRunner;
+  ran: { label: string; exitCode: number }[];
+  say: (m: string) => void;
+}): Promise<{ exitCode: number; followUpFailed?: string; failureOutput?: string; followUpOutput?: string }> {
+  const rung: Rung = { from: "terraform", to: "choudoufu" };
+  let followUpOutput: string | undefined;
+  for (const step of followUpRuns(rung, input.member, { state: input.state })) {
+    const result = await input.run(step.argv, join(input.root, step.cwd));
+    input.ran.push({ label: step.label, exitCode: result.exitCode });
+    followUpOutput = result.output;
+    if (result.exitCode !== 0) {
+      const tail = result.output.trimEnd().split("\n").slice(-20).join("\n");
+      input.say(formatError({ message: `${step.label} failed after the patch was applied`, hint: tail }));
+      writePendingStamp(input.root, {
+        schema: PENDING_STAMP_SCHEMA,
+        member: input.member.name,
+        dir: input.member.dir,
+        state: input.state ?? "",
+        failed: step.label,
+        at: new Date().toISOString(),
+      });
+      input.say(formatInfo(`the stamp is kept as pending in ${join(PROMOTE_RECORD_DIR, `${input.member.name}.stamp.json`)}: run the same promote again to retry it, or ${stampCommand(input.member, input.state ?? "<terraform.tfstate>")}`));
+      return { exitCode: 1, followUpFailed: step.label, failureOutput: tail, followUpOutput };
+    }
+  }
+  clearPendingStamp(input.root, input.member.name);
+  return { exitCode: 0, ...(followUpOutput !== undefined ? { followUpOutput } : {}) };
+}
+
+/**
+ * Retry the stamp an earlier promote of `member` left failed (#4485), or
+ * undefined when none is pending. The member is already of kind
+ * `choudoufu`: its kind change was written, so only the stamp runs, against
+ * `state` when given, else the state the record names. The result is
+ * `applied`: exit 0 once the stamp passed, exit 1 with the failed follow-up
+ * when it failed again.
+ */
+export async function retryPendingStamp(opts: {
+  root: string;
+  member: string;
+  state?: string;
+  json?: boolean;
+  runner?: PromoteRunner;
+}): Promise<PromoteResult | undefined> {
+  const root = realpathSync(resolve(opts.root));
+  const pending = readPendingStamp(root, opts.member);
+  if (!pending) return undefined;
+  const say = (m: string): void => {
+    if (!opts.json) console.error(m);
+  };
+  const state = opts.state ? resolve(opts.state) : pending.state || undefined;
+  if (!state) throw new PromoteError(`${opts.member}'s stamp is pending and its record names no state: pass --state <terraform.tfstate>`);
+  say(formatInfo(`${opts.member}: kind choudoufu, but the stamp ${pending.at} failed (${pending.failed}); retrying it`));
+  const ran: { label: string; exitCode: number }[] = [];
+  const stamped = await stampInTree({ root, member: { name: opts.member, dir: pending.dir }, state, run: opts.runner ?? spawnRunner, ran, say });
+  if (stamped.exitCode === 0) say(formatSuccess(`stamped "${opts.member}"; its promotion to choudoufu is complete`));
+  return { outcome: "applied", member: opts.member, from: "terraform", to: "choudoufu", ran, retriedStamp: true, ...stamped };
+}
+
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024 });
 }
@@ -155,6 +278,8 @@ export interface PromoteResult {
   failureOutput?: string;
   /** The follow-up's output when it ran (the stamp report). */
   followUpOutput?: string;
+  /** Set when this run only retried the stamp an earlier one left failed (#4485). */
+  retriedStamp?: true;
 }
 
 /** The staging step whose output is the adoption report. */
@@ -184,6 +309,14 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
   const say = (m: string): void => {
     if (!opts.json) console.error(m);
   };
+  // #4485: the choudoufu rung is not done until its stamp passed; retry that before any next rung.
+  if (found.kind === "choudoufu" && !opts.dryRun) {
+    const retried = await retryPendingStamp({ root, member: found.name, ...(opts.state ? { state: opts.state } : {}), ...(opts.json !== undefined ? { json: opts.json } : {}), ...(opts.runner ? { runner: opts.runner } : {}) });
+    if (retried) {
+      if (opts.json && !opts.nested) console.log(JSON.stringify(retried, null, 2));
+      return retried;
+    }
+  }
   const rung = nextRung(found.kind);
   if (!rung) {
     say(formatInfo(`${found.name} is kind ${found.kind}, which has no rung above it on the ladder (terraform or other, choudoufu, chant)`));
@@ -337,15 +470,12 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     const treeDecl = join(root, declFile);
     writeFileSync(treeDecl, setMemberKind(readFileSync(treeDecl, "utf-8"), declFile, found.name, rung.to));
     let followUpOutput: string | undefined;
-    for (const step of followUpRuns(rung, member, { state })) {
-      const result = await run(step.argv, join(root, step.cwd));
-      ran.push({ label: step.label, exitCode: result.exitCode });
-      followUpOutput = result.output;
-      if (result.exitCode !== 0) {
-        const tail = result.output.trimEnd().split("\n").slice(-20).join("\n");
-        say(formatError({ message: `${step.label} failed after the patch was applied`, hint: tail }));
-        return report("applied", 1, { followUpFailed: step.label, failureOutput: tail, followUpOutput });
+    if (rung.to === "choudoufu") {
+      const stamped = await stampInTree({ root, member, state, run, ran, say });
+      if (stamped.exitCode !== 0) {
+        return report("applied", 1, { followUpFailed: stamped.followUpFailed, failureOutput: stamped.failureOutput, followUpOutput: stamped.followUpOutput });
       }
+      followUpOutput = stamped.followUpOutput;
     }
     say(formatSuccess(`applied the approved promotion of "${found.name}" to ${rung.to} (${digest}). Review and commit it.`));
     return report("applied", 0, followUpOutput === undefined ? {} : { followUpOutput });
