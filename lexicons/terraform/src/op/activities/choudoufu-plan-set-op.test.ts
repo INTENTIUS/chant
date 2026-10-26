@@ -105,7 +105,7 @@ describe("choudoufuPlanSet as an Op activity (#4483)", () => {
     expect(result.status).toBe("ok");
     expect(result.records.filter((r) => r.fn === "choudoufuPlanSet").map((r) => r.status)).toEqual(["ok", "ok"]);
     expect(documents).toHaveLength(1);
-    expect(documents[0]!.digest).toMatch(/^sha256:/);
+    expect(documents[0]!.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
     expect((documents[0]!.document.members ?? []).map((m) => m.member).sort()).toEqual(["aws", "azure"]);
   });
 });
