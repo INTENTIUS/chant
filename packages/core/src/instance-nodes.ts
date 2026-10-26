@@ -41,6 +41,48 @@
  * Imports nothing at run time, so it bundles with `./change-set.ts`.
  */
 
+/**
+ * Why the declared graph leaves an expanded block as one node (#4489): the
+ * codes of a block node's `instanceRollup`. Each is in the read contract's
+ * closed list (`workspace/reason-codes.ts`).
+ */
+export const INSTANCE_ROLLUP_CODES = [
+  "instances-each-value",
+  "instances-merge",
+  "instances-value-unknown",
+  "instances-form-unread",
+  "instances-over-limit",
+  "instances-module-uncounted",
+] as const;
+export type InstanceRollupCode = (typeof INSTANCE_ROLLUP_CODES)[number];
+
+/**
+ * On a block node whose `count` or `for_each` the declared graph cannot
+ * count (#4489): why, and the expression it could not count. `argument` and
+ * `expression` are the block's own, or with `call` those of the enclosing
+ * module call that could not be counted.
+ */
+export interface InstanceRollup {
+  code: InstanceRollupCode;
+  /** `count` or `for_each`. */
+  argument: "count" | "for_each";
+  /** The expression as written, without the `${ }` around it. */
+  expression: string;
+  /** With `instances-module-uncounted`: the module call, `module.app` or `module.app.module.db`. */
+  call?: string;
+}
+
+/** An entity's duck-typed `instanceRollup`, when it is one (#4489). */
+export function entityInstanceRollup(entity: unknown): InstanceRollup | undefined {
+  const r = (entity as { instanceRollup?: unknown } | null)?.instanceRollup;
+  if (typeof r !== "object" || r === null) return undefined;
+  const { code, argument, expression, call } = r as Record<string, unknown>;
+  if (!(INSTANCE_ROLLUP_CODES as readonly unknown[]).includes(code)) return undefined;
+  if (argument !== "count" && argument !== "for_each") return undefined;
+  if (typeof expression !== "string") return undefined;
+  return { code: code as InstanceRollupCode, argument, expression, ...(typeof call === "string" ? { call } : {}) };
+}
+
 /** A `[...]` instance key, a number or a quoted string with escapes. */
 const KEY = /\[(?:"(?:[^"\\]|\\.)*"|\d+)\]/;
 const TRAILING_KEY = new RegExp(`(${KEY.source})$`);

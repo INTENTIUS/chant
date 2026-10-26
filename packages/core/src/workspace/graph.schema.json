@@ -567,6 +567,29 @@
           "type": "string",
           "description": "Added in contract 1 by #4486. With instanceOf, under an expanded module call: the module path as the engine prints it, module.app[0]. The id then carries the key on the call's segment, <member>/<root>/module.app[0]/aws_eip.pool[1]."
         },
+        "instanceRollup": {
+          "type": "object",
+          "description": "Added in contract 1 by #4489, written by chant 0.124.53 and newer. On a block node whose count or for_each the declared graph cannot count: why it stays one node, with no instance nodes under it. Absent on a block that is not expanded and on one whose instances are listed. The read contract lists every form that is rolled up and its code.",
+          "required": ["code", "argument", "expression"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": ["instances-each-value", "instances-merge", "instances-value-unknown", "instances-form-unread", "instances-over-limit", "instances-module-uncounted"]
+            },
+            "argument": {
+              "type": "string",
+              "enum": ["count", "for_each"]
+            },
+            "expression": {
+              "type": "string",
+              "description": "The count or for_each expression as written, without the ${ } around it. With call, the module call's."
+            },
+            "call": {
+              "type": "string",
+              "description": "With instances-module-uncounted: the module call that could not be counted, module.app or module.app.module.db."
+            }
+          }
+        },
         "nested": {
           "type": "string",
           "description": "For a node read through a nested workspace (#2551): the nested workspace's member it belongs to. `member` is then the outer member, and the id is `<member>/<nested>/<id>`."

@@ -29,6 +29,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
+import { INSTANCE_ROLLUP_CODES } from "../instance-nodes";
+import type { ReasonCode } from "./reason-codes";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composedId, composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
@@ -58,6 +60,9 @@ export const GRAPH_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/worksp
  */
 export const GRAPH_ERROR_CODES = [...WORKSPACE_ERROR_CODES, "live-at-revision"] as const;
 export type GraphErrorCode = (typeof GRAPH_ERROR_CODES)[number];
+
+/** Why a block node of an expanded terraform block stays one node: `nodes[].instanceRollup.code` (#4489). */
+export const GRAPH_INSTANCE_ROLLUP_CODES = INSTANCE_ROLLUP_CODES satisfies readonly ReasonCode[];
 
 /** Why `--live` and `--at` don't go together (#2875). */
 const LIVE_AT_REVISION = "--live reads the account as it stands now, and --at reads the source at a revision; chant workspace graph takes one of them";
