@@ -15,8 +15,10 @@ applied by \`pulumi up\` as before. chant reads it four ways.
 | its drift records | \`pulumi refresh --preview-only --json\`, one resource at a time, or \`plunge drift --stream\` |
 | its outputs, for another member's parameters | \`pulumi stack output --json --show-secrets=false\` (applied) and the preview (planned) |
 
-The graph read never runs \`pulumi\`, and the other reads run only those
-commands, so chant never changes a stack.
+The graph read never runs \`pulumi\`. The other reads run those commands, or
+\`plunge preview\`, \`plunge stack output\` and \`plunge drift\` for a member on
+plunge, as ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476).
+Nothing else runs, so chant never changes a stack.
 
 See [Getting Started](getting-started/) to add a Pulumi member to a
 workspace, and [The pulumi member](member/) for what each read returns.
