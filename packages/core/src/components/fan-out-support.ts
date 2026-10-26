@@ -19,6 +19,7 @@ import { applyConfigDefaults } from "./config-defaults";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import { componentsForUnits, planFanOut, type ChangedUnits, type ComponentChangeSignal, type FanOutPlan } from "./fan-out";
 import type { CapabilityRegistry } from "./capability";
+import { withDeclaredReads } from "./declared-reads";
 import type { DriverComponent } from "./driver";
 import type { ComponentEnvironmentDeclaration } from "./component";
 import type { BuildParamProvenance } from "../provenance";
@@ -36,6 +37,12 @@ export interface DeriveFanOutOptions {
   config?: ChantConfig;
   /** Components that form wave 1 (#3049). See `FanOutRequest.canary`. */
   canary?: string[];
+  /**
+   * The registry whose capabilities' `declaredReads` (#4466) are written into
+   * the components before the order is derived. Absent, the project's own
+   * (`fanOutRegistry`) is built for it.
+   */
+  registry?: CapabilityRegistry;
 }
 
 export interface DerivedFanOut {
@@ -78,7 +85,9 @@ export async function deriveFanOut(options: DeriveFanOutOptions): Promise<Derive
   }
 
   const { config } = options.config ? { config: options.config } : await loadChantConfig(options.path);
-  const components = resolved.targets.map((component) => applyConfigDefaults(component, config));
+  const defaulted = resolved.targets.map((component) => applyConfigDefaults(component, config));
+  // #4466: the reads a capability finds in its steps' files, such as a template's Fn::ImportValue, order and hold like declared ones.
+  const components = await withDeclaredReads(defaulted, options.registry ?? (await fanOutRegistry(options.path, config)), options.path);
 
   const signal = componentsForUnits(components, options.units);
   const plan = planFanOut({

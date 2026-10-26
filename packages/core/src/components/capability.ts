@@ -232,6 +232,21 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   groupReads?(ctx: GroupContext, members: readonly GroupMember<In>[]): Promise<ReportedGroupRead[]>;
   /**
+   * Optional (#4466): reads between this capability's steps that sit in the
+   * files a step names rather than in its wiring, such as a CloudFormation
+   * template's `Fn::ImportValue` of an export another stack's template
+   * declares. Core asks once, after discovery and before the order is
+   * derived, with every step of this kind in the project. Each read becomes
+   * a `stackOutput()` reference at {@link DeclaredRead.at} in the reader's
+   * step and a `dependsOn` on the upstream, so it orders the reader after
+   * the upstream, is listed under `unknownInputs` while the upstream's plan
+   * cannot say the value, and holds the reader for a round, like a read the
+   * declaration states. A place the declaration already fills is left as it
+   * is. The answer must come from the declaration and the files alone; a
+   * throw counts as no reads.
+   */
+  declaredReads?(ctx: DeclaredReadsContext, members: readonly DeclaredReadMember[]): Promise<DeclaredRead[]> | DeclaredRead[];
+  /**
    * Optional (#4435, ws-107): plan `members` as one, in one call. Declared
    * together with `runGroup`; a capability with only one of the two never
    * gets a group. Throwing makes every member plan-failed.
@@ -290,6 +305,37 @@ export interface ReportedGroupRead {
    * output it names.
    */
   output?: string;
+}
+
+/** What `declaredReads` is asked with (#4466). */
+export interface DeclaredReadsContext {
+  /** The project root, which a step's relative file paths are read against. */
+  root: string;
+}
+
+/** One step a capability's `declaredReads` is asked about (#4466). */
+export interface DeclaredReadMember {
+  component: string;
+  /** Which of the component's steps of this kind, counting from 0 in declaration order. */
+  index: number;
+  /** The step as declared, without `kind`, wiring unresolved. */
+  step: Record<string, unknown>;
+}
+
+/**
+ * A read `declaredReads` found (#4466): `reader`'s step `index` reads
+ * `upstream`'s output `output`. Core puts `{ stackOutput: { stack:
+ * upstream, name: output } }` at `at` in that step, so the read is named
+ * `<upstream>.<output>` wherever reads are.
+ */
+export interface DeclaredRead {
+  reader: string;
+  /** The reader's step, as {@link DeclaredReadMember.index}. Default 0. */
+  index?: number;
+  upstream: string;
+  output: string;
+  /** Where in the reader's step the reference goes, as a JSON Pointer. */
+  at: string;
 }
 
 /** One component of a group, as core hands it to the capability (ws-107). */

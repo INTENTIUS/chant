@@ -21,7 +21,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { Capability, CapabilityPlan, DeployContext, PlannedOutputs } from "@intentius/chant/components/capability";
+import type { Capability, CapabilityPlan, DeclaredRead, DeployContext, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import {
@@ -35,6 +35,7 @@ import {
   type ShapeReplacement,
 } from "@intentius/chant/components/covered-round";
 import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
+import { cfnExports, cfnImportPointer, cfnImports, cfnKnownValues, readCfnTemplate, resolveCfnName } from "./cfn-imports";
 
 /** CloudFormation's wording when a change set has nothing to apply — the stack
  * is already current. AWS phrases it "The submitted information didn't contain
@@ -200,6 +201,8 @@ function cfnPlanDigest(
     templateDigest: templateDigest(input.template),
     parameters,
     unresolved,
+    // #4466: the exports the template imports from stacks in the change, as resolved.
+    ...(input.imports && Object.keys(input.imports).length > 0 ? { imports: importValues(input.imports) } : {}),
     ...(preview ? { preview } : {}),
   });
 }
@@ -244,13 +247,15 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
   }
   const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
   let planDigest = cfnPlanDigest(ctx, stack, input, parameters, unresolved);
+  // #4466: an import whose name the plan cannot resolve is a hole that says why.
+  const importHoles = unresolvedImportHoles(stack, input, knownParameters(parameters));
   const member = (holes: ChangeSetHole[]): ChangeSetPart["member"] => ({
     member: stack,
     lexicon: "aws",
     planner: "chant",
     status: "planned",
     planDigest,
-    holes,
+    holes: [...holes, ...importHoles],
   });
 
   if (unresolved.length > 0 || missing.length > 0) {
@@ -259,9 +264,12 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
       planDigest,
       changeSet: { member: member([{ address: stack, type: "AWS::CloudFormation::Stack", reason: why }]), entries: [] },
     });
+    const waiting = unknownImports(input);
     const fallback =
       unresolved.length > 0
-        ? `inputs from ${unresolved.join(", ")}; re-checked on apply`
+        ? missing.length === 0 && waiting.length > 0
+          ? `imports ${waiting.join(", ")}, exported by ${unresolved.join(", ")}, which apply first; re-checked on apply`
+          : `inputs from ${unresolved.join(", ")}; re-checked on apply`
         : `inputs ${[...missing].sort().join(", ")} are known only at apply; re-checked on apply`;
     // Which parameters are unknown: the inputs that hold nothing yet. When the
     // upstream is unresolved but no input says which, nothing can be previewed.
@@ -297,7 +305,9 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
     if (blocked.length > 0 && (input.onReplace ?? "block") === "block") throw new CfnReplacementBlockedError(stack, blocked);
     const entries = changeSet.changes.map((c) => cfnChangeEntry(stack, c));
     const artifact: CfnPlanArtifact = { kind: "cfn-deploy-plan", stack, changesDigest: cfnChangesDigest(stack, changeSet) };
-    const outputs = changeSet.stackCreated ? undefined : await plannedStackOutputs(executor, stack, input.template, changeSet.changes, knownParameters(parameters));
+    const outputs = changeSet.stackCreated
+      ? undefined
+      : await plannedStackOutputs(executor, stack, input.template, changeSet.changes, knownParameters(parameters), importValues(input.imports ?? {}));
     // The real change set's shape, with the replacement CloudFormation reports,
     // for a round that checks it against a preview (#4419).
     const shape = cfnPlanShape(stack, changeSet, []);
@@ -520,11 +530,12 @@ async function plannedStackOutputs(
   templatePath: string,
   changes: readonly CfnChange[],
   parameters: Record<string, string> = {},
+  imports: Record<string, string> = {},
 ): Promise<PlannedOutputs | undefined> {
   const template = readTemplate(templatePath) as { Outputs?: Record<string, unknown> } | undefined;
   if (!template || typeof template !== "object") return undefined;
   if (Object.keys(template.Outputs ?? {}).length === 0) return { known: {}, unknown: [] };
-  return cfnPlannedOutputs(template, changes, await standingOutputs(executor, stack), parameters);
+  return cfnPlannedOutputs(template, changes, await standingOutputs(executor, stack), parameters, imports);
 }
 
 /** The template at `path` as JSON, or `undefined` when it cannot be read or parsed here. */
@@ -601,6 +612,10 @@ function valueReads(value: unknown): { ids: Set<string>; opaque: boolean } {
  * known at that value (`given`, the inputs of this plan). Both are what
  * the stack's outputs will be, whatever they are now.
  *
+ * An output that passes an import through (`Fn::ImportValue` of a name
+ * `imports` holds, #4466) is known at the value the exporting stack's plan
+ * gave it, which is the value core read for the import.
+ *
  * `undefined` when there is no template or no standing stack to read from.
  */
 export function cfnPlannedOutputs(
@@ -608,6 +623,7 @@ export function cfnPlannedOutputs(
   changes: readonly CfnChange[],
   standing: Record<string, string> | undefined,
   given: Record<string, string> = {},
+  imports: Record<string, string> = {},
 ): PlannedOutputs | undefined {
   if (!standing || template === null || typeof template !== "object") return undefined;
   const t = template as { Outputs?: Record<string, { Value?: unknown; Condition?: unknown }>; Parameters?: Record<string, unknown> };
@@ -621,7 +637,7 @@ export function cfnPlannedOutputs(
   const known: Record<string, unknown> = {};
   const unknown: string[] = [];
   for (const [name, output] of Object.entries(t.Outputs ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
-    const stated = statedOutput(output, given, t.Parameters);
+    const stated = statedOutput(output, given, t.Parameters, imports);
     if (stated !== undefined) {
       known[name] = stated;
       continue;
@@ -650,6 +666,7 @@ function statedOutput(
   output: { Value?: unknown; Condition?: unknown } | undefined,
   parameters: Record<string, string>,
   declared: Record<string, unknown> | undefined,
+  imports: Record<string, string> = {},
 ): string | undefined {
   if (output?.Condition !== undefined) return undefined;
   const value = output?.Value;
@@ -658,8 +675,90 @@ function statedOutput(
     const entries = Object.entries(value as Record<string, unknown>);
     const [key, arg] = entries[0] ?? [];
     if (entries.length === 1 && key === "Ref" && typeof arg === "string" && declared && arg in declared && arg in parameters) return parameters[arg];
+    if (entries.length === 1 && key === "Fn::ImportValue") {
+      const name = resolveCfnName(arg, parameters);
+      if ("name" in name && name.name in imports) return imports[name.name];
+    }
   }
   return undefined;
+}
+
+// ── Fn::ImportValue between stacks (#4466) ──────────────────────────────────
+
+/** The imports core read a value for, as strings; one still unknown is left out. */
+function importValues(imports: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, v] of Object.entries(imports).sort(([a], [b]) => a.localeCompare(b))) {
+    if (v === undefined || v === null) continue;
+    out[name] = typeof v === "string" ? v : JSON.stringify(v);
+  }
+  return out;
+}
+
+/** The export names the step imports from a stack in the change whose value is not known yet, sorted. */
+function unknownImports(input: CfnDeployInput): string[] {
+  return Object.entries(input.imports ?? {})
+    .filter(([, v]) => v === undefined || v === null)
+    .map(([name]) => name)
+    .sort();
+}
+
+/**
+ * A hole for each `Fn::ImportValue` in the template whose name the plan
+ * cannot resolve (#4466): it may name an export of a stack in this change,
+ * and then nothing orders the two, so the plan says it cannot tell.
+ */
+function unresolvedImportHoles(stack: string, input: CfnDeployInput, parameters: Record<string, string>): ChangeSetHole[] {
+  const template = readCfnTemplate(input.template);
+  if (!template) return [];
+  const resources = (template.Resources ?? {}) as Record<string, { Type?: unknown } | undefined>;
+  const holes: ChangeSetHole[] = [];
+  for (const i of cfnImports(template, cfnKnownValues(template, stack, parameters))) {
+    if (!("unresolved" in i)) continue;
+    const type = typeof resources[i.logicalId]?.Type === "string" ? (resources[i.logicalId]!.Type as string) : undefined;
+    holes.push({
+      address: i.logicalId,
+      ...(type ? { type } : {}),
+      reason: `the Fn::ImportValue at ${i.at} ${i.unresolved}, so the plan cannot say which export it reads or whether a stack in this change exports it`,
+    });
+  }
+  return holes;
+}
+
+/**
+ * `cfn-deploy`'s `declaredReads` (#4466): each `Fn::ImportValue` of a name
+ * exactly one other `cfn-deploy` step's template exports is a read of that
+ * component's output, placed under the step's `imports`. A name two steps
+ * export is left alone (CloudFormation refuses the second export), and so
+ * is a name no step in the project exports: it reads a stack outside it.
+ */
+export function cfnDeclaredReads(root: string, members: readonly { component: string; index: number; step: Record<string, unknown> }[]): DeclaredRead[] {
+  const seen = members.map((m) => {
+    const template = readCfnTemplate(m.step.template, root);
+    const stack = typeof m.step.stack === "string" ? m.step.stack : m.component;
+    const inputs = (m.step.inputs ?? {}) as Record<string, unknown>;
+    const known = cfnKnownValues(template, stack, typeof m.step.imageRef === "string" ? { ...inputs, ImageRef: m.step.imageRef } : inputs);
+    return { member: m, template, known };
+  });
+  const exporters = new Map<string, Array<{ component: string; output: string }>>();
+  for (const { member, template, known } of seen) {
+    for (const e of cfnExports(template, known)) {
+      if (!("name" in e)) continue;
+      (exporters.get(e.name) ?? exporters.set(e.name, []).get(e.name)!).push({ component: member.component, output: e.output });
+    }
+  }
+  const out: DeclaredRead[] = [];
+  for (const { member, template, known } of seen) {
+    const done = new Set<string>();
+    for (const i of cfnImports(template, known)) {
+      if (!("name" in i) || done.has(i.name)) continue;
+      done.add(i.name);
+      const owners = (exporters.get(i.name) ?? []).filter((o) => o.component !== member.component);
+      if (owners.length !== 1 || (exporters.get(i.name) ?? []).length !== 1) continue;
+      out.push({ reader: member.component, index: member.index, upstream: owners[0]!.component, output: owners[0]!.output, at: cfnImportPointer(i.name) });
+    }
+  }
+  return out;
 }
 
 /** Whether a CloudFormation error says the stack does not exist. */
@@ -694,6 +793,14 @@ export interface CfnDeployInput {
   onReplace?: CfnReplacePolicy;
   /** Stage DynamoDB GSI changes (add-then-backfill-then-remove) instead of an in-place replace. Default: false. */
   stageGsi?: boolean;
+  /**
+   * The exports the template imports (`Fn::ImportValue`) from another
+   * `cfn-deploy` step of the project, by export name (#4466). Core fills it
+   * from `declaredReads` with a `stackOutput()` of the exporting component's
+   * output, so a value is `undefined` while that stack's plan cannot say it.
+   * Never passed to CloudFormation: the template imports the export itself.
+   */
+  imports?: Record<string, string | undefined>;
 }
 
 export interface CfnDeployOutput {
@@ -757,6 +864,9 @@ export function createCfnDeployCapability(
     targets: { refuse: "a CloudFormation change set covers the whole stack, so cfn-deploy can't narrow to some of its resources" },
     plan(ctx, input) {
       return planCfnDeploy(executor, ctx, input);
+    },
+    declaredReads(ctx, members) {
+      return cfnDeclaredReads(ctx.root, members);
     },
     async outputs(ctx, input) {
       // The outputs the stack has now, for a dependent planned before it
