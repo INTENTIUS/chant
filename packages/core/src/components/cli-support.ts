@@ -726,7 +726,10 @@ export async function runComponents(
     if (selector === "all" || isComponentList(selector)) {
       // ws-107 (#4465): the components a capability takes as one plan in their
       // wave and apply as one group, by the rule the pull-request run uses.
-      // A cycle or unknown dependency throws here the error the driver would.
+      // A cycle or unknown dependency throws here the error the driver would:
+      // `componentSetFanOut` drops a dependency outside the set, so the full
+      // graph is resolved first.
+      resolveComponentGraph(resolvedTargets);
       const grouped = await formRunGroups({ components: resolvedTargets, plan: componentSetFanOut(resolvedTargets), registry, env });
       if (isComponentList(selector) && options.onPlan) {
         // Resolved here, before dispatch, so the order is printed before any

@@ -146,7 +146,7 @@ describe("promote --release plans a group as one (#4465)", () => {
     expect(w.planGroupCalls).toEqual([["a", "b", "c"]]);
     expect(w.planned).toEqual([]);
     const digest = set.groups?.[0]?.digest;
-    expect(digest).toEqual(expect.stringMatching(/^sha256:/));
+    expect(digest).toEqual(expect.stringMatching(/^jcs1-sha256:[0-9a-f]{64}$/));
     expect(set.groups?.[0]?.run?.digest).toBe(digest);
     // The release gate's change set names the group (its digest) on each of its members, and what each reads inside it.
     expect(set.doc.members.map((m) => [m.member, m.status, m.group])).toEqual([
