@@ -1,0 +1,128 @@
+{
+  "opening": "This act wires the three stacks through CloudFormation exports and imports, the way a CDK app does. No component file names the new reads.",
+  "pull-request": [
+    {
+      "prompt": "Add a third subnet to network and export it; have app import it for a worker, and edge import that.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network adds subnet c and exports its id, app imports it, edge imports app's export. Next: plan all three.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "+ network  subnetC  10.0.3.0/24  export chant-compose-subnet-c-id",
+        "+ app      importsInterface  export chant-compose-imports-interface",
+        "+ edge     importsInterfaceRecord"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Planning network, app and edge together",
+      "tips": [
+        {
+          "title": "Reads found in the templates",
+          "body": "An Fn::ImportValue of a name another stack in the project exports is a read of that stack's output. chant orders the importer after the exporter and lists the read like one a component file states.",
+          "link": {
+            "label": "CloudFormation in chant",
+            "url": "https://intentius.io/chant/lexicons/aws/cloudformation/"
+          }
+        }
+      ]
+    }
+  ],
+  "planned": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "One plan across 3 stacks. Two values are unknown: subnet c's id, which app imports, and the interface's id, which edge imports.",
+      "light": [
+        "network/subnetC"
+      ],
+      "paths": false,
+      "ghost": true
+    },
+    {
+      "prompt": "How can app be planned before the export exists?",
+      "action": null,
+      "reply": "CloudFormation refuses a change set that imports an export that does not exist yet, so chant plans app from a copy of its template in which the import is a stand-in parameter.",
+      "light": [
+        "network/subnetC"
+      ],
+      "paths": true,
+      "ghost": false,
+      "status": "Tracing what imports subnet c",
+      "tips": [
+        {
+          "title": "A stand-in for the import",
+          "body": "The preview marks the worker's SubnetId as known after apply. Before it runs the real change set, chant checks it against the preview.",
+          "link": {
+            "label": "How a round is covered",
+            "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+          }
+        }
+      ]
+    }
+  ],
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approval on the pull request",
+    "tips": [
+      {
+        "title": "One approval",
+        "body": "Once network applies, chant plans app again with the real export. The approval already given covers that plan if it only fills in what the preview marked unknown.",
+        "link": {
+          "label": "How a round is covered",
+          "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+        }
+      }
+    ]
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging and applying network, app and edge in one pass",
+    "tips": [
+      {
+        "title": "An export in use",
+        "body": "CloudFormation refuses to change or remove an export another stack imports. chant refuses such a plan before anything applies, and names both stacks."
+      }
+    ]
+  },
+  "applying": {
+    "status": "Applying network, app and edge together",
+    "tips": [
+      {
+        "title": "One approval",
+        "body": "Once network applies, chant plans app again with the real export, then edge once app applies. The approval already given covers both rounds.",
+        "link": {
+          "label": "How a round is covered",
+          "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+        }
+      }
+    ]
+  },
+  "applied": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "Done. Subnet c was created, app's worker imported its id, and edge recorded the worker's id, all in the same apply.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    }
+  ],
+  "closing": "3 stacks. 2 imports. 1 plan. 1 approval. 1 apply."
+}
