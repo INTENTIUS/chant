@@ -163,7 +163,13 @@ export {
   bindGroup,
   planComponentGroup,
   runComponentGroup,
+  type FormRunGroupsOptions,
+  formRunGroups,
+  componentSetFanOut,
+  planAndRunComponentGroup,
+  WAVE_GATE_FALLBACK,
 } from "./groups";
+export { type RunGroupReport, type RunGroupsReport, runGroupsReport, renderRunGroups } from "./run-groups";
 export {
   type FanOutGate,
   type FanOutRunOptions,
