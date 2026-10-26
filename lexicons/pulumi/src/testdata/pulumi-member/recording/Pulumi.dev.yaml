@@ -1,0 +1,19 @@
+# Stack "dev": every AWS call goes to the floci emulator on localhost:4566,
+# never to AWS. The fake key pair and the skip flags keep the provider off
+# STS and the metadata API.
+config:
+  aws:region: us-east-1
+  aws:accessKey: test
+  aws:secretKey: test
+  aws:skipCredentialsValidation: "true"
+  aws:skipRequestingAccountId: "true"
+  aws:skipRegionValidation: "true"
+  aws:skipMetadataApiCheck: "true"
+  aws:s3UsePathStyle: "true"
+  aws:endpoints:
+    - iam: http://localhost:4566
+      lambda: http://localhost:4566
+      s3: http://localhost:4566
+      sts: http://localhost:4566
+  app:prefix: rec-r2-4507
+encryptionsalt: v1:Y/YWurRa9Mo=:v1:cjCIZyL6ibZHCdGz:txjo2VYqashu2EUZuQqkL5yY43jnvw==
