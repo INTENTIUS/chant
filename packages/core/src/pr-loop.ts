@@ -51,6 +51,7 @@ import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The schema a pull-request report names in `$schema`. */
 export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json";
@@ -92,10 +93,10 @@ export const PR_REPORT_MIGRATIONS_FLOOR = "0.124.49";
 export const PR_REPORT_READS_FLOOR = "0.124.52";
 
 /** The first chant whose report can carry the `not-started` member status (ws-107, #4440). */
-export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.53";
+export const PR_REPORT_NOT_STARTED_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose report can carry `groups`, `fallbacks`, and a member's `group` and `groupOutcome` (ws-107, #4446). */
-export const PR_REPORT_GROUPS_FLOOR = "0.124.53";
+export const PR_REPORT_GROUPS_FLOOR = NEXT_RELEASE;
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
