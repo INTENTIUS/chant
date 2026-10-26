@@ -19,7 +19,7 @@ list is the whole of what chant runs for a Pulumi member:
 |---|---|---|---|
 | graph | none; the checked-in `stack-export.json` | the same | no |
 | change set | `pulumi preview --json` | `plunge preview --json` | no |
-| drift | `pulumi refresh --preview-only --json --target <urn>` | `plunge drift --resource <urn> --stream` | no |
+| drift | `pulumi refresh --preview-only --json --stack <name> --target <urn>` | `plunge drift --resource <urn> --stream --stack <name>` | no |
 | applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
 | planned outputs | the change set's preview | the same | no |
 
@@ -27,7 +27,11 @@ list is the whole of what chant runs for a Pulumi member:
 reaches the binary, and `stack output` with secrets shown is refused too.
 With `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
 source), the applied outputs are read from the checked-in export and nothing
-runs. Each command runs in the member's directory against its selected stack.
+runs. Each command runs in the member's directory against its selected stack,
+except the drift read, which names the stack with `--stack` ([#4496](https://github.com/INTENTIUS/chant/issues/4496)):
+`pulumi.member.stack` when the config sets it, else the stack the checked-in
+export's URNs name. A checked-in member with no selected stack can still be
+refreshed.
 
 ## The member kind
 
@@ -124,7 +128,8 @@ export default {
 ```
 
 `dir` is resolved against the project root. `engine` is `pulumi` or `plunge`
-and defaults to what `Pulumi.yaml` says. The build runs these checks:
+and defaults to what `Pulumi.yaml` says. `stack` is the stack the drift read
+passes as `--stack`, and defaults to the one the export's URNs name. The build runs these checks:
 
 | Id | Kind | Reports |
 |---|---|---|

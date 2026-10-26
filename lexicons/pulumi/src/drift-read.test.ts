@@ -53,7 +53,7 @@ describe("readPulumiDrift", () => {
     const dir = join(testdata, "pulumi-preview");
     const answer = await readPulumiDrift(options(dir, { resource: bucket }), { run: pulumi.run, plunge: never.run });
     if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
-    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--target", bucket]]);
+    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--stack", "floci", "--target", bucket]]);
     expect(answer.lines.map((l) => l.type)).toEqual(["drift-start", "drift-record", "drift-settle"]);
     expect(answer.lines[0]).toMatchObject({ member: "site", engine: "pulumi", read: "refresh", resource: bucket, expected: [bucket] });
     const { document } = foldDriftLines(answer.lines);
@@ -67,7 +67,7 @@ describe("readPulumiDrift", () => {
     const dir = join(testdata, "plunge-member");
     const answer = await readPulumiDrift(options(dir), { run: never.run, plunge: plunge.run });
     if (!("lines" in answer)) throw new Error(JSON.stringify(answer));
-    expect(plunge.calls).toEqual([role, docs, assets].map((u) => ["drift", "--resource", u, "--stream", "--member", "site"]));
+    expect(plunge.calls).toEqual([role, docs, assets].map((u) => ["drift", "--resource", u, "--stream", "--stack", "floci", "--member", "site"]));
     expect(answer.lines[0]).toMatchObject({ engine: "plunge", read: "refresh" });
     const { document } = foldDriftLines(answer.lines);
     // plunge answers a component, which no provider reads, with not-observed (recorded).
@@ -82,7 +82,16 @@ describe("readPulumiDrift", () => {
     const plunge = fake(() => text("plunge-drift", "assets-drifted.ndjson"));
     const answer = await readPulumiDrift(options(join(testdata, "plunge-member"), { resource: assets }), { run: never.run, plunge: plunge.run });
     expect("lines" in answer).toBe(true);
-    expect(plunge.calls).toEqual([["drift", "--resource", assets, "--stream", "--member", "site"]]);
+    expect(plunge.calls).toEqual([["drift", "--resource", assets, "--stream", "--stack", "floci", "--member", "site"]]);
+  });
+
+  test("--stack is the member's declared stack, over the one its export names (#4496)", async () => {
+    const pulumi = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    const dir = join(testdata, "pulumi-preview");
+    const config = { pulumi: { member: { dir, label: "site", stack: "staging" } } };
+    const answer = await readPulumiDrift({ ...options(dir, { resource: bucket }), config }, { run: pulumi.run, plunge: never.run });
+    expect("lines" in answer).toBe(true);
+    expect(pulumi.calls).toEqual([["refresh", "--preview-only", "--json", "--stack", "staging", "--target", bucket]]);
   });
 
   test("a read other than refresh is refused, and so is a project with no pulumi member", async () => {
