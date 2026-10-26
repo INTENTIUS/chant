@@ -1,14 +1,17 @@
 # What the gated acceptance suites have actually run against
 
-Eight `describe` blocks across five files run this lexicon against a real
+Eleven `describe` blocks across eight files run this lexicon against a real
 binary rather than a fixture, and every one of them skips rather than fails
 when its dependency is absent. A skip is silent by design, so without this
 file nothing in the tree says which of them has ever passed, against what, or
 when. The evidence had been living in PR prose (`#2157` for the live apply
 pair), which no reader of the suite can see.
 
-One row per gated block below: what it proves, what gates it, the command,
-and the last binary and emulator it is known to have passed against.
+Ten sections below cover the eleven blocks, one section per block except
+section 6, where `plan-read.acceptance.test.ts`'s per-binary loop makes two
+blocks of one body. Each section says what the block proves, what gates it,
+the command, and the last binary and emulator it is known to have passed
+against, or "not recorded" when no run has been written down yet.
 
 `live-estate/README.md` next door is the sibling record for the two recorded
 documents (`../live-plan.json`, `../live-ls.json`) rather than for a suite,
@@ -31,7 +34,7 @@ same recipe one tag back
 `live/smoke/docker-compose.yml` and exported as
 `CHOUDOUFU_EMULATOR_ENDPOINT=http://localhost:<mapped port>`.
 
-## The four blocks
+## The eleven blocks
 
 ### 1. `TerraformApplyOp applies a real root`
 
@@ -52,7 +55,7 @@ npx vitest run lexicons/terraform/src/composites/terraform-apply-op.acceptance.t
 Last passed: 2026-09-08, `Terraform v1.15.8` on `darwin_arm64`, with
 `hashicorp/null` resolved from the public registry for the fixture's `~> 3.2`
 constraint. No emulator is involved. Re-run by chant #2241 alongside every
-other block in this file, so all four rows come from one run; #2168 had run it
+other block this file held then, so those four rows come from one run; #2168 had run it
 on 2026-09-07 the same way.
 
 ### 2. `TerraformApplyOp applies a live root against choudoufu's emulator`
@@ -172,7 +175,7 @@ path, which is the only thing it exists to prove.
 
 ### 5. `TerraformAdoptOp reaches its gate on a checkout that has never run init`
 
-Same file, third block (#2302). One test: build `TerraformAdoptOp` and drive
+Same file, second block (#2302). One test: build `TerraformAdoptOp` and drive
 it through `runOpLocally`, exactly as the apply Op's own acceptance suite
 does, over a project this test creates fresh and never initializes by hand —
 no `terraformInit` call anywhere in the block. The Op's own Init phase is what
@@ -215,7 +218,8 @@ With the Init phase back, the same run reaches its gate:
 
 `../plan-read.acceptance.test.ts`, one block per binary, three tests each, over
 the `plan-read/` fixture (built-in `terraform_data`, `local` backend, so no
-registry, no network and no credentials). The first reads the plan depth
+registry, no network and no credentials). Four tests each now; the run recorded
+below had three, before #4372 added the planned-create test. The first reads the plan depth
 through `describeResources` and checks the IR attributes, `sources` reading
 `"plan"`, no secret in the result, nothing new or changed in the root, and no
 `chant-terraform-plan-*` directory left in the temp dir. The second holds the
@@ -262,6 +266,64 @@ Last passed: 2026-10-23, choudoufu v0.30.0 (release binary, verified against
 by chant #4371. Proved red the same day: with `plan-observation.ts`'s
 redaction put back to flagging each side by its own marks, the old secret
 came through as `tags.token`'s `before`.
+
+### 8. `Terragrunt units against a real terragrunt`
+
+`terragrunt/terragrunt.acceptance.test.ts` (#3414), four tests over the
+`terragrunt/five-units/` fixture (implicit stacks, `terraform_data` only,
+local state under the copied fixture, so no provider download and no cloud).
+It checks that `terragrunt` is 1.1 or later, that `discoverTerragruntUnits`
+lists what `terragrunt find` lists less the catalog template, that each of the
+three waves plans and applies exactly its own units and that the run report's
+per-unit results reach the change set with no input carrying a mock, and that
+a wave keeps to its units when a `.terragrunt-filters` file selects more.
+
+Gated on `terragrunt` and `tofu` on PATH.
+
+```
+npx vitest run lexicons/terraform/src/terragrunt/terragrunt.acceptance.test.ts
+```
+
+Last passed: not recorded. No run of this block has been written down; the
+maintainer records the first one here (maintainer run).
+
+### 9. `mock outputs in Terragrunt waves against a real terragrunt`
+
+`terragrunt/mocks.acceptance.test.ts` (#3416), one test over the same
+`five-units/` fixture. Wave 2 is refused until wave 1 has applied, naming each
+upstream and planning nothing. A provisional plan of wave 2 made before that
+reads the mocks, is marked provisional, matches Terragrunt's own mock warning,
+and is refused at apply. Once wave 1 applies, wave 2 plans on the real
+upstream values and applies.
+
+Gated on `terragrunt` and `tofu` on PATH.
+
+```
+npx vitest run lexicons/terraform/src/terragrunt/mocks.acceptance.test.ts
+```
+
+Last passed: not recorded. No run of this block has been written down; the
+maintainer records the first one here (maintainer run).
+
+### 10. `affected Terragrunt units against a real terragrunt`
+
+`terragrunt/affected.acceptance.test.ts` (#3415), over a git copy of the
+`terragrunt/affected/` fixture. One test checks discovery against
+`recorded/affected-find.json`; then one test per case in
+`__fixtures__/terragrunt/affected-cases.ts`, each made as a commit, checks that
+Terragrunt's own `[HEAD~1...HEAD]` filter selects exactly the case's
+`terragrunt` column (nothing, for the three supplements) and that
+`findTerragruntAffected` returns the case's expected units and reasons. Nothing
+is planned.
+
+Gated on `terragrunt` and `git` on PATH. It does not need `tofu`.
+
+```
+npx vitest run lexicons/terraform/src/terragrunt/affected.acceptance.test.ts
+```
+
+Last passed: not recorded. No run of this block has been written down; the
+maintainer records the first one here (maintainer run).
 
 ## Running everything that can run on a machine with no choudoufu
 

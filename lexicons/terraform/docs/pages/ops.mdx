@@ -23,6 +23,12 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 | `terraformApply` | `terraform apply <planFile>` | A saved plan, on either kind of root: there is no bare-apply mode here, and a missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. On a live root (see "choudoufu" below) that file is the approval artifact, and an apply that disagrees with it comes back as a named refusal rather than a thrown error. |
 | `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
 
+The ninth activity acts across many roots and names no `terraform.roots` entry:
+
+| Activity | Runs | Notes |
+|---|---|---|
+| `terraformPinRollout` | one step of a pin-bump rollout | Finds the roots that call a module, splits them into waves, and opens at most the next wave's pull request. Throws, naming the cause, when a root failed or a wave's PR closed without merging. The HCL parser loads on first call. See [TerraformPinRolloutOp](#terraformpinrolloutop). |
+
 ## The builders
 
 `terraformInit`, `terraformPlan`, `terraformApply`, `terraformShow` also exist as typed step-builder wrappers (`import { terraformPlan } from "@intentius/chant-lexicon-terraform"`), the fully-typed twins of the activities above: `opts` *is* the activity's own args interface, minus the positional `root`, so a field rename there is a compile error at the call site rather than a silent drop. `root` is positional because every terraform step needs one.
@@ -190,7 +196,7 @@ estate = "prod-networking"
 
 Declaring `binary: "choudoufu"` with no estate anywhere runs the root stock, exactly as `"terraform"`/`"tofu"` do; declaring an estate under any other binary parses fine but is inert, and `chant dev check-lexicon`/`buildRoots()` warns about it.
 
-Four more activities exist for a live root, alongside the four above:
+Four more activities exist for a live root, alongside the four stock ones:
 
 | Activity | Runs | Notes |
 |---|---|---|
@@ -203,7 +209,7 @@ Four more activities exist for a live root, alongside the four above:
 
 **The adoption ledger.** `choudoufuLivePlan` with `adoptionOnly` reads two sections of the document into one ledger. `unowned[]` is a live resource found at an identity the configuration itself declares, and `adoptable[]` is one the estate-wide sweep matched to a declaration by comparing arguments, for a declaration that names no identity at all (a VPC's id is assigned by EC2, so nothing in the block determines it). The second section is populated only when the run asks the account-bounded question, so `adoptionOnly` puts `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the `-json` invocation and no other run pays for the sweep. Each `adoptable[]` row carries its own tagging command; an `unowned[]` row does not, and its command is still read out of the human `-adoption-only` render, which is the one thing on this path that still parses text.
 
-**Which acceptance suites have actually run.** All four of this lexicon's acceptance blocks skip rather than fail when their binary or emulator is absent, so a green test run says nothing about whether any of them has ever passed. `lexicons/terraform/src/__fixtures__/ACCEPTANCE.md` records the answer per block: what it proves, what gates it, the command to run it, and the last binary and emulator it passed against with the date. All four passed on 2026-09-08 against the choudoufu v0.15.0 release binary with the pinned floci emulator up, which is the first pass the adopt block (`composites/terraform-adopt-op.acceptance.test.ts`) has ever had: until v0.15.0 the content match that finds the fixture's unmarked `aws_vpc` was printed only in the human `-adoption-only` render, which choudoufu refuses alongside `-json`, and the document reported the instance under `omissions` as `NEEDS_DISCOVERY` with `unowned` empty. That was filed upstream as [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962) and fixed by its PR 963. There is no `TerraformWatchOp` acceptance suite; the watch Op's live evidence is the `live-plan` block it shares with the adopt Op.
+**Which acceptance suites have actually run.** All eleven of this lexicon's acceptance blocks (eight files, including the three Terragrunt suites) skip rather than fail when their binary or emulator is absent, so a green test run says nothing about whether any of them has ever passed. `lexicons/terraform/src/__fixtures__/ACCEPTANCE.md` records the answer per block: what it proves, what gates it, the command to run it, and the last binary and emulator it passed against with the date. The dates live there and are not repeated here. The adopt block (`composites/terraform-adopt-op.acceptance.test.ts`) first passed against the choudoufu v0.15.0 release binary: until v0.15.0 the content match that finds the fixture's unmarked `aws_vpc` was printed only in the human `-adoption-only` render, which choudoufu refuses alongside `-json`, and the document reported the instance under `omissions` as `NEEDS_DISCOVERY` with `unowned` empty. That was filed upstream as [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962) and fixed by its PR 963. There is no `TerraformWatchOp` acceptance suite; the watch Op's live evidence is the `live-plan` block it shares with the adopt Op.
 
 `choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck` and `choudoufuAdopt` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource.
 
