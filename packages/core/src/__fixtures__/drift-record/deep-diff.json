@@ -1,21 +1,259 @@
 {
   "drifted": [
     {
-      "name": "role",
+      "name": "appRole",
       "type": "AWS::IAM::Role",
       "changes": [
-        { "path": "MaxSessionDuration", "kind": "changed", "declared": 3600, "live": 7200 },
-        { "path": "Tags[0].Value", "kind": "absent", "declared": "prod" },
-        { "path": "Policies[0].secretArn", "kind": "changed", "declared": "arn:a", "live": "arn:b" }
+        {
+          "path": "AssumeRolePolicyDocument.Statement[0].Action",
+          "kind": "absent",
+          "declared": "sts:AssumeRole",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "AssumeRolePolicyDocument.Statement[0].Effect",
+          "kind": "absent",
+          "declared": "Allow",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "AssumeRolePolicyDocument.Statement[0].Principal.Service",
+          "kind": "absent",
+          "declared": "lambda.amazonaws.com",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "AssumeRolePolicyDocument.Version",
+          "kind": "absent",
+          "declared": "2012-10-17",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "MaxSessionDuration",
+          "kind": "absent",
+          "declared": 3600,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#api-token-owner].Key",
+          "kind": "absent",
+          "declared": "api-token-owner",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#api-token-owner].Value",
+          "kind": "absent",
+          "declared": "platform",
+          "origin": {
+            "kind": "authored"
+          }
+        }
+      ]
+    },
+    {
+      "name": "dataBucket",
+      "type": "AWS::S3::Bucket",
+      "changes": [
+        {
+          "path": "PublicAccessBlockConfiguration.BlockPublicAcls",
+          "kind": "absent",
+          "declared": true,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "PublicAccessBlockConfiguration.BlockPublicPolicy",
+          "kind": "absent",
+          "declared": true,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "PublicAccessBlockConfiguration.IgnorePublicAcls",
+          "kind": "absent",
+          "declared": true,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "PublicAccessBlockConfiguration.RestrictPublicBuckets",
+          "kind": "absent",
+          "declared": true,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#demo].Key",
+          "kind": "absent",
+          "declared": "demo",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#demo].Value",
+          "kind": "absent",
+          "declared": "rec-4475y",
+          "origin": {
+            "kind": "authored"
+          }
+        }
+      ]
+    },
+    {
+      "name": "quietSg",
+      "type": "AWS::EC2::SecurityGroup",
+      "changes": [
+        {
+          "path": "Tags[#demo].Key",
+          "kind": "absent",
+          "declared": "demo",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#demo].Value",
+          "kind": "absent",
+          "declared": "rec-4475y",
+          "origin": {
+            "kind": "authored"
+          }
+        }
+      ]
+    },
+    {
+      "name": "webSg",
+      "type": "AWS::EC2::SecurityGroup",
+      "changes": [
+        {
+          "path": "GroupDescription",
+          "kind": "changed",
+          "declared": "rx web tier, v2",
+          "live": "rx web tier",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].CidrIp",
+          "kind": "absent",
+          "declared": "10.0.0.0/16",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].FromPort",
+          "kind": "absent",
+          "declared": 443,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].IpProtocol",
+          "kind": "absent",
+          "declared": "tcp",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].ToPort",
+          "kind": "absent",
+          "declared": 443,
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#demo].Key",
+          "kind": "absent",
+          "declared": "demo",
+          "origin": {
+            "kind": "authored"
+          }
+        },
+        {
+          "path": "Tags[#demo].Value",
+          "kind": "absent",
+          "declared": "rec-4475y",
+          "origin": {
+            "kind": "authored"
+          }
+        }
       ]
     }
   ],
   "accepted": [],
-  "unclaimed": [],
+  "unclaimed": [
+    {
+      "name": "quietSg",
+      "type": "AWS::EC2::SecurityGroup",
+      "fields": [
+        {
+          "path": "VpcId",
+          "live": "vpc-default",
+          "source": "claimed-fields"
+        }
+      ]
+    },
+    {
+      "name": "webSg",
+      "type": "AWS::EC2::SecurityGroup",
+      "fields": [
+        {
+          "path": "VpcId",
+          "live": "vpc-default",
+          "source": "claimed-fields"
+        }
+      ]
+    }
+  ],
   "held": [],
-  "unchanged": ["topic"],
+  "unchanged": [],
   "unobserved": [
-    { "name": "bucket", "type": "AWS::S3::Bucket", "reason": "read-failed", "detail": "GetBucketPolicy returned 500" }
+    {
+      "name": "alertsTopic",
+      "type": "AWS::SNS::Topic",
+      "reason": "unsupported-kind",
+      "detail": "no deep reader for AWS::SNS::Topic \u2014 coverage is opt-in per type"
+    },
+    {
+      "name": "dataBucketPolicy",
+      "type": "AWS::S3::BucketPolicy",
+      "reason": "unsupported-kind",
+      "detail": "no deep reader for AWS::S3::BucketPolicy \u2014 coverage is opt-in per type"
+    },
+    {
+      "name": "eventsTopic",
+      "type": "AWS::SNS::Topic",
+      "reason": "unsupported-kind",
+      "detail": "no deep reader for AWS::SNS::Topic \u2014 coverage is opt-in per type"
+    },
+    {
+      "name": "taskQueue",
+      "type": "AWS::SQS::Queue",
+      "reason": "unsupported-kind",
+      "detail": "no deep reader for AWS::SQS::Queue \u2014 coverage is opt-in per type"
+    }
   ],
   "undeclaredEntities": []
 }

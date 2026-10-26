@@ -1,0 +1,65 @@
+[
+  {
+    "component": "api",
+    "env": "recy",
+    "recorded": {
+      "digest": "jcs1-sha256:7a8b3f47cd6c729c15efb2324f7b9ebc26037752155832e60ca2b5770f78c835",
+      "gitSha": "baaa6bb09bc4ff7fe22e559af62e1d32256b7392",
+      "runId": "local-1792996303605",
+      "timestamp": "2026-10-26T06:31:45.462Z",
+      "actor": "alex"
+    },
+    "build": null,
+    "componentBom": null,
+    "reconciliation": "unknown",
+    "detail": "recorded; live status not queried (pass --live to reconcile)"
+  },
+  {
+    "component": "demo-infra",
+    "env": "recy",
+    "recorded": {
+      "digest": "jcs1-sha256:32a05af0532a86b9ec5b8693f6c7a5b5e1ff8c41c65fb1cc1a9bf5d3064a2a98",
+      "gitSha": "e2014e95f134d2273a2b5b7c56bf085b36ddae6a",
+      "runId": "local-1792996318960",
+      "timestamp": "2026-10-26T06:32:00.401Z",
+      "actor": "alex"
+    },
+    "build": null,
+    "componentBom": null,
+    "reconciliation": "unknown",
+    "detail": "recorded; live status not queried (pass --live to reconcile)"
+  },
+  {
+    "component": "docs",
+    "env": "recy",
+    "recorded": null,
+    "build": null,
+    "componentBom": null,
+    "reconciliation": "unrecorded",
+    "detail": "no release record found"
+  },
+  {
+    "component": "edge",
+    "env": "recy",
+    "recorded": null,
+    "build": null,
+    "componentBom": null,
+    "reconciliation": "unrecorded",
+    "detail": "no release record found"
+  },
+  {
+    "component": "jobs",
+    "env": "recy",
+    "recorded": {
+      "digest": "jcs1-sha256:829ac8939f9b487e82c1488dc31f5d1fe832ba7d292f28bfad1ca48a60e0c4dd",
+      "gitSha": "baaa6bb09bc4ff7fe22e559af62e1d32256b7392",
+      "runId": "local-1792996303605",
+      "timestamp": "2026-10-26T06:31:45.723Z",
+      "actor": "alex"
+    },
+    "build": null,
+    "componentBom": null,
+    "reconciliation": "unknown",
+    "detail": "recorded; live status not queried (pass --live to reconcile)"
+  }
+]
