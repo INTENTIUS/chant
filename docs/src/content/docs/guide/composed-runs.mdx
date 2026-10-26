@@ -25,7 +25,7 @@ Groups form in the pull-request run (`pr-plan`, `pr-apply`, `pr-env`), and at pr
 
 Under `--wave-gate` no group forms, at promote or in a fan-out. Each wave is planned component by component, so every component that would have joined a group falls back with kind `wave-gate` and the run goes wave by wave as before.
 
-A member of a group has one step, gates counted, so it has no gate of its own. At promote, the release gate is decided at the gates of the other components the promote deploys.
+A member of a group has one step, gates counted, so it has no gate of its own. A component with a gated step has more than one step and never joins a group ([#4481](https://github.com/INTENTIUS/chant/issues/4481), ruling 5), so a group has no gate to wait at. At promote, a group applies at `promote --release` without waiting at the release gate, the same as an ungated component, and this is working as ruled ([#4491](https://github.com/INTENTIUS/chant/issues/4491)). The release gate is decided at the gates of the other components the promote deploys.
 
 ## Per lexicon
 
