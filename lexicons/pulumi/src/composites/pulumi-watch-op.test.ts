@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { validateActivitySteps, type ActivityStep, type OpConfig } from "@intentius/chant/op";
+import { validateActivitySteps, type ActivityContract, type ActivityStep, type OpConfig } from "@intentius/chant/op";
 import { PulumiWatchOp } from "./pulumi-watch-op";
 import { pulumiDriftContract, pulumiPreviewContract } from "../op/activity-contracts";
 import * as activities from "../op/activities";
@@ -9,7 +9,7 @@ function props(config: Parameters<typeof PulumiWatchOp>[0]): OpConfig {
 }
 
 const BASE = { name: "infra-watch", member: "infra", dir: "./infra" };
-const contracts = new Map([
+const contracts = new Map<string, ActivityContract>([
   ["pulumiPreview", pulumiPreviewContract],
   ["pulumiDrift", pulumiDriftContract],
 ]);
