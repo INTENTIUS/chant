@@ -67,6 +67,8 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`entries[].instanceOf` | {v} |", count: 1, floor: "instance nodes (#4454)" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].instanceOf`, `nodes[].instanceKey` | {v} |", count: 1, floor: "instance nodes (#4454)" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`nodes[].instanceScope` | {v} |", count: 1, floor: "instance nodes under a module call (#4486)" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "the `root_member` column of `chant query`'s `runs` | {v} |", count: 1, floor: "LEDGER_ROOT_MEMBER_FLOOR" },
+  { file: "packages/core/src/workspace/ledger.schema.json", text: "by #4500, written by chant {v} and newer", count: 1, floor: "LEDGER_ROOT_MEMBER_FLOOR" },
 ];
 
 interface Args {
