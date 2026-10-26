@@ -128,13 +128,23 @@ The chant adapter maps `create`, `update`, `delete` and `noop` across. An `updat
 
 ### Pulumi plans
 
-The pulumi adapter ([#4453](https://github.com/INTENTIUS/chant/issues/4453)) keeps one entry per URN, at the URN. A replace is one `replace` entry, with disruption `destroy` when the delete comes first. The recorded previews print a replace as one `replace` step; the adapter also folds `create-replacement` and `delete-replaced` steps on the same URN into that entry, should a preview print them. `same` is `no-op`, `read` and `refresh` are `read`, `import` is a `no-op` that is `importing`, and `discard` is `forget`. An op outside that list is a hole. An input that holds Pulumi's unknown value is `unknown: true`, so a resource that reads an output of one being created shows that input as unknown. A secret is `sensitive: true`. Each entry is on its graph node by the URN rule of `@intentius/chant/pulumi-urn`.
+The pulumi adapter ([#4453](https://github.com/INTENTIUS/chant/issues/4453)) keeps one entry per URN, at the URN. A replace is one `replace` entry, with disruption `destroy` when the delete comes first. The recorded previews print a replace as one `replace` step; the adapter also folds `create-replacement` and `delete-replaced` steps on the same URN into that entry, should a preview print them. The other ops map as follows, and an op outside this table is a hole.
 
-At preview, an `apply()` whose input is unknown does not run, so resources the program registers inside it are not in the steps. The adapter marks them `mayAppear` in the cases below, and the next paragraph gives the two it cannot detect:
+| Pulumi op | Entry |
+| --- | --- |
+| `same` | `no-op` |
+| `read`, `refresh` | `read` |
+| `import` | `no-op` that is `importing` |
+| `discard` | `forget` |
+
+An input that holds Pulumi's unknown value is `unknown: true`, so a resource that reads an output of one being created shows that input as unknown. A secret is `sensitive: true`. Each entry is on its graph node by the URN rule of `@intentius/chant/pulumi-urn`.
+
+At preview, an `apply()` whose input is unknown does not run, so resources the program registers inside it are not in the steps. The adapter marks them `mayAppear` in the cases below. The paragraph after them gives the two it cannot detect.
 
 - A component whose subtree holds an unknown value, a create or a replace gets one entry at its URN with `$*` after its type and `/*` after its name, such as `urn:pulumi:dev::site::my:web:Site$*::site/*`. Its action is `create` and its type `unknown`, and it is on the component's node.
 - With the member's stack export, a resource the export holds and the preview has no step for gets an `update` entry with disruption `unknown`. A preview narrowed with `--target`, or one that failed, does not do this.
-- A delete under a component the first rule marks keeps its `delete` and is marked too, since the `apply()` may register the resource again.
+
+A delete under a component the first rule marks keeps its `delete` and is marked too, since the `apply()` may register the resource again.
 
 A resource registered inside an `apply()` directly under the stack has no component to stand under. When no export holds it yet, it is not in the change set at all. When the export holds it and its `apply()` waits on an unknown value, the preview prints a `delete` for it, and the entry is a plain `delete` with no `mayAppear`, although the apply may register the resource again. Nothing in a Pulumi preview tells that case apart from a real removal, so this is a documented limitation ([#4497](https://github.com/INTENTIUS/chant/issues/4497)). The recorded fixtures hold one: the plunge corpus's `vpc-id` SSM parameter.
 
