@@ -82,6 +82,10 @@ Every block of every configured root becomes one entity, keyed
 | `variable "region" {}` | `Terraform::Variable` | `app/var.region` |
 | `output "url" {}` | `Terraform::Output` | `app/output.url` |
 | `locals { ... }` | `Terraform::Locals` | `app/locals` |
+| `moved { ... }` | `Terraform::Moved` | `app/moved` (`app/moved~2` for a second one) |
+| `import { ... }` | `Terraform::Import` | `app/import` |
+| `removed { ... }` | `Terraform::Removed` | `app/removed` |
+| `check "health" {}` | `Terraform::Check` | `app/check.health` |
 
 Each entity carries `props.address`, `props.body` (the block, verbatim from the
 parser), `props.file` and `props.root`.

@@ -27,9 +27,9 @@
 import type { SuppressionDirective, SuppressionIds } from "@intentius/chant/lint/suppressions";
 
 /** A block header keyword with zero labels (`terraform {`, `locals {`). */
-const BARE_RE = /^\s*(terraform|locals|remote_state)\s*\{/;
+const BARE_RE = /^\s*(terraform|locals|remote_state|moved|import|removed)\s*\{/;
 /** One label (`provider "aws" {`, `module "vpc" {`, `variable "x" {`, `output "x" {`). */
-const ONE_LABEL_RE = /^\s*(provider|module|variable|output|dependency|generate)\s+"([^"]*)"\s*\{/;
+const ONE_LABEL_RE = /^\s*(provider|module|variable|output|check|dependency|generate)\s+"([^"]*)"\s*\{/;
 /** Two labels (`resource "aws_s3_bucket" "assets" {`, `data "aws_ami" "x" {`). */
 const TWO_LABEL_RE = /^\s*(resource|data)\s+"([^"]*)"\s+"([^"]*)"\s*\{/;
 
@@ -45,6 +45,12 @@ function addressFor(keyword: string, labels: string[]): string {
       return "locals";
     case "remote_state":
       return "remote_state";
+    case "moved":
+    case "import":
+    case "removed":
+      return keyword;
+    case "check":
+      return `check.${labels[0]}`;
     case "dependency":
       return `dependency.${labels[0]}`;
     case "generate":

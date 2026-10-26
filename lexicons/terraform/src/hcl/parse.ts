@@ -197,6 +197,23 @@ export const OUTPUT_TYPE = "Terraform::Output";
 export const LOCALS_TYPE = "Terraform::Locals";
 /** A `live { estate = "..." }` block, or an `estate.chdf.hcl` sidecar's content (#2103). */
 export const LIVE_TYPE = "Terraform::Live";
+/**
+ * The four configuration blocks that change how a plan treats addresses
+ * rather than declaring anything (#4458): `moved`, `import`, `removed` and
+ * `check`. The first three carry no label and key as `moved`, `import`,
+ * `removed` (numbered `~2`, `~3` when a root holds several, as `locals` is);
+ * a `check` keys as `check.<name>`. Their references are edges like any other
+ * block's: a `moved` block's `from` and `to`, an `import` block's `to`, a
+ * `removed` block's `from`, and everything a `check` block's assertions and
+ * scoped `data` blocks read. A `from` usually names an address that is no
+ * longer declared, which resolves to no entity and so draws no edge, and
+ * that is all that happens: an unresolved reference is dropped, never
+ * reported (`./edges.ts`).
+ */
+export const MOVED_TYPE = "Terraform::Moved";
+export const IMPORT_TYPE = "Terraform::Import";
+export const REMOVED_TYPE = "Terraform::Removed";
+export const CHECK_TYPE = "Terraform::Check";
 
 /**
  * Terragrunt config entities (#3417). A `terragrunt.hcl` or `root.hcl` is not
@@ -568,6 +585,10 @@ export async function blocksToEntities(
     oneLabel(tree, "output", OUTPUT_TYPE, (n) => `output.${n}`, file, scan);
     twoLabels(tree, "resource", RESOURCE_TYPE, (t, n) => `${t}.${n}`, file, scan);
     twoLabels(tree, "data", DATA_TYPE, (t, n) => `data.${t}.${n}`, file, scan);
+    unlabelled(tree, "moved", MOVED_TYPE, file, scan);
+    unlabelled(tree, "import", IMPORT_TYPE, file, scan);
+    unlabelled(tree, "removed", REMOVED_TYPE, file, scan);
+    oneLabel(tree, "check", CHECK_TYPE, (n) => `check.${n}`, file, scan);
   }
 
   if (sidecar) {
