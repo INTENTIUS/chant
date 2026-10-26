@@ -309,7 +309,10 @@ const RFC3339 = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d
 
 /**
  * The key segments of an attribute path, indexes left out:
- * `spec.env[0]["db_password"]` is `spec`, `env`, `db_password`.
+ * `spec.env[0]["db_password"]` is `spec`, `env`, `db_password`. A keyed
+ * element (`Tags[#api-token-owner].Value`, the deep read's address for an
+ * array it can key) is a key too: it names the element the way a map key
+ * does, so an environment list keyed by `DB_PASSWORD` redacts like a map's.
  */
 export function attributePathKeys(path: string): string[] {
   const keys: string[] = [];
@@ -332,6 +335,11 @@ export function attributePathKeys(path: string): string[] {
         keys.push(key);
         i = path.indexOf("]", j);
         if (i < 0) break;
+      } else if (path[i + 1] === "#") {
+        const close = path.indexOf("]", i);
+        if (close < 0) break;
+        keys.push(path.slice(i + 2, close));
+        i = close;
       } else {
         const close = path.indexOf("]", i);
         if (close < 0) break;
