@@ -172,10 +172,14 @@ function requireRoot(input: TerraformApplyStepInput): void {
 async function planRoot(input: TerraformApplyStepInput, targets?: string[]): Promise<PlannedRoot & { changeSet?: ChangeSetPart; json?: unknown }> {
   requireRoot(input);
   await terraformInit(rootArgs(input));
+  // One `show -json` per plan (#4479): its document is the digest, the change
+  // set, the planned outputs and the shape. Nothing here reads the
+  // `-no-color` render, so the plan skips it.
   const planned = await terraformPlan({
     ...rootArgs(input),
     ...(input.vars ? { vars: input.vars } : {}),
     ...(targets && targets.length > 0 ? { targets } : {}),
+    text: false,
   });
   return {
     planFile: planned.planFile,
@@ -281,12 +285,14 @@ function isShapeArtifact(value: unknown): value is TerraformShapeArtifact {
   return v?.kind === "terraform-apply-shape" && typeof v.digest === "string" && typeof v.shape === "object" && v.shape !== null;
 }
 
-/** The root's directory, as `terraform.roots` names it from the nearest `chant.config.*`. */
-async function rootDir(input: TerraformApplyStepInput): Promise<string | undefined> {
+/** The root's directory, as `terraform.roots` names it from the nearest `chant.config.*`, and the configured binary. */
+async function rootDir(input: TerraformApplyStepInput): Promise<{ dir: string; binary?: string } | undefined> {
   const start = resolve(input.cwd ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
-  const dir = (config as { terraform?: TerraformConfig }).terraform?.roots?.[input.root]?.dir;
-  return dir === undefined ? undefined : resolve(configPath ? dirname(configPath) : start, dir);
+  const terraform = (config as { terraform?: TerraformConfig }).terraform;
+  const dir = terraform?.roots?.[input.root]?.dir;
+  if (dir === undefined) return undefined;
+  return { dir: resolve(configPath ? dirname(configPath) : start, dir), ...(terraform?.binary ? { binary: terraform.binary } : {}) };
 }
 
 const firstLines = (err: unknown): string => {
@@ -303,9 +309,11 @@ const firstLines = (err: unknown): string => {
  * no preview can be made, the member stays a hole saying why.
  */
 async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresolved: string[], targets?: string[]): Promise<CapabilityPlan> {
-  const dir = await rootDir(input);
-  if (dir === undefined) return waitingRoot(ctx, input, unresolved, `no root named "${input.root}" in terraform.roots to read its variables from`);
-  const stand = placeholderVars(input.vars, declaredVariables(rootTexts(dir)));
+  const root = await rootDir(input);
+  if (root === undefined) return waitingRoot(ctx, input, unresolved, `no root named "${input.root}" in terraform.roots to read its variables from`);
+  const { dir } = root;
+  // #4457: the same files the binary reads (`.tofu` only for tofu and choudoufu).
+  const stand = placeholderVars(input.vars, declaredVariables(rootTexts(dir, root.binary)));
   if (typeof stand === "string") return waitingRoot(ctx, input, unresolved, stand);
   let planned: Awaited<ReturnType<typeof terraformPlan>>;
   try {
@@ -315,6 +323,7 @@ async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, u
       vars: stand.vars,
       planFile: PREVIEW_PLAN_FILE,
       ...(targets ? { targets } : {}),
+      text: false,
     });
   } catch (err) {
     return waitingRoot(ctx, input, unresolved, `the plan with stand-in values failed: ${firstLines(err)}`);

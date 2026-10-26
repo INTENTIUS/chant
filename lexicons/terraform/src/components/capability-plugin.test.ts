@@ -18,6 +18,8 @@ let waveApply: Record<string, unknown> = { exitCode: 0, landed: true, message: "
 const waveApplyArgs: Array<Record<string, unknown>> = [];
 // #4300: the targets each plan was asked for.
 const planTargets: Array<string[] | undefined> = [];
+// #4479: the `text` each plan was asked for.
+const planTexts: Array<boolean | undefined> = [];
 // #4463: a plan that fails, as one with a stand-in a validation block rejects does.
 let planError: Error | undefined;
 
@@ -45,9 +47,10 @@ vi.mock("../op/activities/terraform", () => ({
     calls.push(`init ${args.root}`);
     return { dir: `/x/${args.root}` };
   }),
-  terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown>; targets?: string[] }) => {
+  terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown>; targets?: string[]; text?: boolean }) => {
     calls.push(`plan ${args.root} ${JSON.stringify(args.vars ?? {})}`);
     planTargets.push(args.targets);
+    planTexts.push(args.text);
     if (planError) throw planError;
     return { planFile: "chant.tfplan", planDigest: `jcs1-sha256:${args.root}`, json: planJson, ...(changeSet ? { changeSet } : {}) };
   }),
@@ -73,7 +76,19 @@ beforeEach(() => {
   waveApply = { exitCode: 0, landed: true, message: "landed" };
   waveApplyArgs.length = 0;
   planTargets.length = 0;
+  planTexts.length = 0;
   planError = undefined;
+});
+
+describe("terraform-apply plans with one show -json (#4479)", () => {
+  test("plan and run ask terraformPlan to skip the -no-color render, and plan takes outputs and shape off the one json", async () => {
+    planJson = { planned_values: { outputs: { id: { value: "x" } } }, resource_changes: [] };
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "e01" }, { root: "e01" });
+    await terraformApplyCapability.run({ env: "test", component: "e01" }, { root: "e01" });
+    expect(planTexts).toEqual([false, false]);
+    expect(planned.outputs).toEqual({ known: { id: "x" }, unknown: [] });
+    expect(planned.shape).toBeDefined();
+  });
 });
 
 describe("terraform-apply targets (#4300)", () => {

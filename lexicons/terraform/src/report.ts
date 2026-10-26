@@ -35,6 +35,7 @@ import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
 import { moduleChanges, stripModule, topModule } from "./compose/module-address";
 import { stateResources } from "./applied-state";
+import { listConfigFiles } from "./hcl/files";
 
 export { topModule } from "./compose/module-address";
 
@@ -190,11 +191,16 @@ export interface ReportRead {
   composed: true;
 }
 
-/** The estate named by the first `live { estate = "..." }` block in a directory's `.tf` files, or undefined. */
-export function estateOfDir(dir: string): string | undefined {
+/**
+ * The estate named by the first `live { estate = "..." }` block in a
+ * directory's HCL configuration files, or undefined. A `live` block takes
+ * effect only under choudoufu, so the files are the ones choudoufu reads
+ * (`.tf` and `.tofu`, chant#4457) unless `binary` names another.
+ */
+export function estateOfDir(dir: string, binary = "choudoufu"): string | undefined {
   let files: string[];
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".tf")).sort();
+    files = listConfigFiles(dir, binary).filter((f) => !f.endsWith(".json"));
   } catch {
     return undefined;
   }

@@ -129,7 +129,7 @@ export class RootStates {
     let o = this.objects.get(root);
     if (!o) {
       const r = this.rootOf(root);
-      o = r.object ?? stateObject(r.dir, r.env);
+      o = r.object ?? stateObject(r.dir, r.env, undefined, this.o.binary);
       this.objects.set(root, o);
     }
     return o;

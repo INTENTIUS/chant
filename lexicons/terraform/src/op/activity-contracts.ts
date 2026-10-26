@@ -66,7 +66,8 @@ export const terraformInitContract = activityContract(
     upgrade: z.boolean().optional(),
     reconfigure: z.boolean().optional(),
   }),
-  z.object({ dir: z.string(), workspace: z.string().optional() }),
+  // `rootPath` (#4482) is what TerraformApplyOp's Init step publishes as `TerraformRootPath`; OPS012 checks it here.
+  z.object({ dir: z.string(), workspace: z.string().optional(), rootPath: z.string().optional() }),
   rootEntity,
 );
 
@@ -177,6 +178,28 @@ export const choudoufuAdoptContract = activityContract(
     refused: z.array(z.object({ addr: z.string(), identity: z.string(), reason: z.string() })),
     ambiguous: z.number(),
     dir: z.string(),
+  }),
+  rootEntity,
+);
+
+/**
+ * `choudoufuPlanSet` (#4483): one live choudoufu root planned as a one-root
+ * set. `changeSet` is the root's part, the field an Op hands to
+ * `composeChangeSet`; `planDigest` is what a gate binds; `planSetFile` and
+ * `setDigest` are what a later `live-wave-apply` takes.
+ */
+export const choudoufuPlanSetContract = activityContract(
+  "choudoufuPlanSet",
+  z.strictObject({ ...rootArgs }),
+  z.object({
+    setDigest: z.string(),
+    rootDigest: z.string(),
+    planDigest: z.string(),
+    changed: z.boolean(),
+    json: z.unknown(),
+    changeSet: z.object({ member: z.object({ member: z.string(), planDigest: z.string().nullable() }).passthrough(), entries: z.array(z.unknown()) }),
+    planSetFile: z.string(),
+    root: z.string(),
   }),
   rootEntity,
 );

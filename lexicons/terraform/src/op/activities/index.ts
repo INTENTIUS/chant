@@ -16,6 +16,10 @@
  *   - choudoufuLiveLs: `live-ls -estate=<estate> -json [-consistent]` (#2103).
  *   - choudoufuLiveCheck: `live-check -json`, no cloud calls (#2103).
  *   - choudoufuAdopt: the tag writes that claim an adoption ledger's matches (#2105).
+ *   - choudoufuPlanSet: `live-plan-set -json` over one live root, as a
+ *     one-root set (#3459). Its `changeSet` is the root's part, so an Op can
+ *     plan several clouds' roots and hand the parts to `composeChangeSet`
+ *     (#4483).
  *   - terraformPinRollout: one run of a pin-bump rollout, opening at most one
  *     wave's pull request (#3189). It loads the HCL parser on first call.
  *
@@ -34,6 +38,8 @@ export {
   choudoufuLiveLs,
   choudoufuLiveCheck,
   choudoufuAdopt,
+  choudoufuPlanSet,
+  choudoufuPlanSetCommand,
   terraformInitCommand,
   terraformPlanCommand,
   terraformApplyCommand,
@@ -79,6 +85,8 @@ export type {
   ChoudoufuLiveLsResult,
   ChoudoufuLiveCheckResult,
   ChoudoufuAdoptResult,
+  ChoudoufuPlanSet,
+  ChoudoufuPlanSetResult,
   AdoptionRefusal,
   PlanChangeCounts,
   LivePlanUnownedCounts,

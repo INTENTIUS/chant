@@ -122,6 +122,8 @@ export interface Composition {
   roots: Map<string, string>;
   /** Each candidate's root directory, absolute. */
   dirs: Map<string, string>;
+  /** `terraform.binary`, which says which of each root's files are read (chant#4457). Unset is `terraform`. */
+  binary?: string;
   /** Each member's module name in the composed root: a valid HCL identifier, stable across runs. */
   modules: Map<string, string>;
   /** Each member's reads of another member, sorted. */
@@ -251,6 +253,8 @@ interface RootComponent {
   state?: RootState;
   estate?: string;
   live: boolean;
+  /** `terraform.binary`, which says which of the root's files it reads (chant#4457). */
+  binary?: string;
 }
 
 /** A component's kind, for a reason: its first step's kind. */
@@ -290,7 +294,7 @@ function hclReads(rcs: readonly RootComponent[]): Map<string, ComposedRead[]> {
       for (const read of r.state.reads) {
         for (const o of rcs) if (o.name !== r.name && o.state?.own && sameState(o.state.own, read)) reads.push({ via: "remote-state", upstream: o.name, name: read.name });
       }
-      for (const read of estateOutputReads(r.dir)) {
+      for (const read of estateOutputReads(r.dir, r.binary)) {
         for (const o of rcs) if (o.name !== r.name && o.estate === read.estate) reads.push({ via: "estate-outputs", upstream: o.name, name: read.name });
       }
     }
@@ -314,9 +318,10 @@ function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform
     if (config && step.cwd === undefined) {
       const dir = isAbsolute(config.dir) ? config.dir : resolve(projectRoot, config.dir);
       const rel = relPath(projectRoot, dir);
-      const live = liveEstate(dir);
+      const binary = tf.binary;
+      const live = liveEstate(dir, binary ?? "terraform");
       const estate = config.estate ?? live.estate;
-      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, config.backendConfig), live: live.live, ...(estate ? { estate } : {}) });
+      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, config.backendConfig, binary), live: live.live, ...(estate ? { estate } : {}), ...(binary ? { binary } : {}) });
     }
     rcs.push(rc);
   }
@@ -445,14 +450,14 @@ export function compositionFor(input: CompositionInput): Composition {
     if (estate) return rc.live ? undefined : ["backend", `\`${m}\` has no \`live\` block, and a composed run of estates calls only directories that carry one`];
     const ws = rc.config!.workspace;
     if (ws && ws !== "default") return ["workspace", `\`${m}\` plans in workspace ${ws}, and a composed run plans in default`];
-    const b = backendBlock(rc.dir!);
+    const b = backendBlock(rc.dir!, rc.binary);
     if (b && "cloud" in b) return ["backend", `\`${m}\` has a \`cloud\` block, whose state chant does not lock itself`];
     const type = b?.type ?? "local";
     if (!LOCKED_BACKENDS.includes(type)) return ["backend", `\`${m}\`'s backend is ${type}, and chant locks only s3 (with use_lockfile), gcs, azurerm and local states itself`];
     if (type === "s3") {
       const initArgs = `${input.env.TF_CLI_ARGS ?? ""} ${input.env.TF_CLI_ARGS_init ?? ""}`;
       const said =
-        rootTexts(rc.dir!).some((t) => /\buse_lockfile\s*=\s*true\b/.test(t.text) || /"use_lockfile"\s*:\s*true/.test(t.text)) ||
+        rootTexts(rc.dir!, rc.binary).some((t) => /\buse_lockfile\s*=\s*true\b/.test(t.text) || /"use_lockfile"\s*:\s*true/.test(t.text)) ||
         rc.config!.backendConfig?.use_lockfile === "true" ||
         /use_lockfile=true/.test(initArgs);
       if (!said) return ["backend", `\`${m}\`'s s3 backend takes no lock file (\`use_lockfile = true\`), so chant cannot hold its lock`];
@@ -491,9 +496,9 @@ export function compositionFor(input: CompositionInput): Composition {
         return ["read", `\`${m}\` reads \`${r.upstream}\` through a block with count or for_each (\`data.terraform_remote_state.${r.name}\`)`];
       }
     }
-    for (const mod of localModules(rc.dir!)) {
+    for (const mod of localModules(rc.dir!, rc.binary)) {
       const modRel = relPath(projectRoot, mod);
-      for (const read of rootState(mod, modRel).reads) {
+      for (const read of rootState(mod, modRel, {}, rc.binary).reads) {
         const up = members.find((o) => o !== m && rcOf.get(o)!.state?.own && sameState(rcOf.get(o)!.state!.own!, read));
         if (up) return ["read", `\`${m}\` reads \`${up}\` from its module \`${modRel}\`, and a composed run rewrites only a root's own reads`];
       }
@@ -503,7 +508,7 @@ export function compositionFor(input: CompositionInput): Composition {
 
   // What a module call cannot carry.
   each((m, rc) => {
-    for (const t of rootTexts(rc.dir!)) {
+    for (const t of rootTexts(rc.dir!, rc.binary)) {
       if (t.json) {
         if (jsonImportRefused(t.text)) return ["import", `an \`import\` block of \`${m}\` takes no literal string \`id\`, so it cannot be lifted into the composed root`];
         continue;
@@ -540,7 +545,7 @@ export function compositionFor(input: CompositionInput): Composition {
   }
 
   const fallbacks = candidates.flatMap((m) => (left.has(m) ? [left.get(m)!] : []));
-  const base = { candidates, max, roots, dirs, fallbacks };
+  const base = { candidates, max, roots, dirs, fallbacks, ...(tf.binary ? { binary: tf.binary } : {}) };
   const none = (fallback: ComposeFallback): Composition => ({ ...base, members: [], order: [], modules: new Map(), reads: new Map(), fallback });
 
   if (members.length >= 2) {

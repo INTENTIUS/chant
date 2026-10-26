@@ -23,6 +23,7 @@ const ACTIVITY_NAMES = [
   "choudoufuLiveLs",
   "choudoufuLiveCheck",
   "choudoufuAdopt",
+  "choudoufuPlanSet",
   "terraformPinRollout",
 ];
 

@@ -14,11 +14,12 @@
  * `dataDir`, `workspaceOf`, `s3StateKey`, `stateObject`, `isStored`,
  * `stateLocation`, and the cloud block check of `migrate.ts`'s `refusal`.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { AZURE_AUTHORITY, type AzureOidc } from "./azure-blob";
 import { GCS_ENDPOINT, type GcsTarget } from "./gcs";
 import { s3FromEnv, type S3Target } from "./s3";
+import { isJsonConfigFile, listConfigFilesSafe } from "../hcl/files";
 
 /** The backend `init` recorded: its type and configuration. */
 export interface InitialisedBackend {
@@ -142,18 +143,20 @@ function jsonCloud(doc: unknown): boolean {
   return blocks.some((b) => b && typeof b === "object" && "cloud" in (b as object));
 }
 
-/** Whether the root's code (`.tf` or `.tf.json`) has a `cloud` block. */
-export function hasCloudBlock(dir: string): boolean {
-  if (!existsSync(dir)) return false;
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".tf") && !f.endsWith(".tf.json")) continue;
+/**
+ * Whether the root's code has a `cloud` block, over the configuration files
+ * `binary` reads: `.tf` and `.tf.json`, plus `.tofu` and `.tofu.json` for a
+ * tofu or choudoufu root, from the lexicon's one lister (chant#4457).
+ */
+export function hasCloudBlock(dir: string, binary?: string): boolean {
+  for (const f of listConfigFilesSafe(dir, binary)) {
     let text: string;
     try {
       text = readFileSync(join(dir, f), "utf-8");
     } catch {
       continue;
     }
-    if (f.endsWith(".tf")) {
+    if (!isJsonConfigFile(f)) {
       if (/^\s*cloud\s*\{/m.test(text)) return true;
       continue;
     }
@@ -173,8 +176,13 @@ const CLOUD_REASON = "the root has a cloud block, whose state HCP Terraform keep
  * does not lock it. No backend recorded reads as a local one. `backend`
  * stands in for the one `init` recorded.
  */
-export function stateObject(dir: string, env: NodeJS.ProcessEnv = process.env, backend: InitialisedBackend | undefined = initialisedBackend(dir, env)): StateObject {
-  if (backend?.type === "cloud" || hasCloudBlock(dir)) return { backend: backend?.type ?? "cloud", refused: "cloud", reason: `${CLOUD_REASON}; ${LOCKS}` };
+export function stateObject(
+  dir: string,
+  env: NodeJS.ProcessEnv = process.env,
+  backend: InitialisedBackend | undefined = initialisedBackend(dir, env),
+  binary?: string,
+): StateObject {
+  if (backend?.type === "cloud" || hasCloudBlock(dir, binary)) return { backend: backend?.type ?? "cloud", refused: "cloud", reason: `${CLOUD_REASON}; ${LOCKS}` };
   const ws = workspaceOf(dir, env);
   if (!backend || backend.type === "local") {
     const c = backend?.config ?? {};

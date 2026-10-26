@@ -51,9 +51,22 @@ export async function queryLedgers(cwd: string, members?: readonly string[], at?
     const unknown = [...wanted].filter((n) => !declaration.members.some((m) => m.name === n));
     if (unknown.length > 0) throw new QueryError(`--member ${unknown.join(", ")} names no member of the workspace`);
   }
+  // #4482: a TerraformApplyOp run names its root's directory; the member that holds it is `root_member`.
+  const { ownerOf, resolveGroups } = await import("../../workspace/declaration");
+  const groups = (() => {
+    try {
+      return resolveGroups(declaration, workingTree(found.dir));
+    } catch {
+      return [];
+    }
+  })();
+  const ownerOfPath = (path: string): string | null => {
+    const owner = ownerOf(declaration, groups, path);
+    return owner && "member" in owner ? owner.member.name : null;
+  };
   return declaration.members
     .filter((m) => !wanted || wanted.has(m.name))
-    .map((m) => ({ member: m.name, port: atPort ? atPort(m.dir === "." ? null : m.name) : gitLedgerReadPort({ cwd: found.dir, member: m.dir === "." ? "." : m.name }) }));
+    .map((m) => ({ member: m.name, port: atPort ? atPort(m.dir === "." ? null : m.name) : gitLedgerReadPort({ cwd: found.dir, member: m.dir === "." ? "." : m.name }), ownerOfPath }));
 }
 
 export async function runQueryCommand(ctx: CommandContext): Promise<number> {

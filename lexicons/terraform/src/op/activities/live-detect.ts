@@ -17,8 +17,20 @@
  * reason.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { listConfigFiles } from "../../hcl/files";
+
+/**
+ * The HCL configuration files of `dir` a live check reads, in filename order.
+ * A `live` block takes effect only under choudoufu, so the set is the one
+ * choudoufu reads (`.tf` and `.tofu`, `x.tofu` over `x.tf`) from the
+ * lexicon's one lister (chant#4457), which reads the directory and nothing
+ * else. The JSON syntax is left to the AST parse.
+ */
+function liveFiles(dir: string, binary: string): string[] {
+  return listConfigFiles(dir, binary).filter((f) => !f.endsWith(".json"));
+}
 
 /** Kept in sync with `LIVE_SIDECAR_FILENAME` in `../../hcl/parse.ts`. */
 const LIVE_SIDECAR_FILENAME = "estate.chdf.hcl";
@@ -69,7 +81,7 @@ function extractQuotedAttr(body: string, key: string): string | undefined {
  * no sidecar (or one this function cannot read) yields `undefined` rather
  * than throwing, since this is a best-effort check, not the authoritative parse.
  */
-export function detectLiveEstate(dir: string): string | undefined {
+export function detectLiveEstate(dir: string, binary = "choudoufu"): string | undefined {
   const sidecarPath = join(dir, LIVE_SIDECAR_FILENAME);
   if (existsSync(sidecarPath)) {
     try {
@@ -82,9 +94,7 @@ export function detectLiveEstate(dir: string): string | undefined {
 
   let names: string[];
   try {
-    names = readdirSync(dir)
-      .filter((f) => f.endsWith(".tf"))
-      .sort();
+    names = liveFiles(dir, binary);
   } catch {
     return undefined;
   }
@@ -129,12 +139,10 @@ export interface LivePolicyVerbs {
   undeclaredUntagged?: string;
 }
 
-export function detectLivePolicyVerbs(dir: string): LivePolicyVerbs | undefined {
+export function detectLivePolicyVerbs(dir: string, binary = "choudoufu"): LivePolicyVerbs | undefined {
   let names: string[];
   try {
-    names = readdirSync(dir)
-      .filter((f) => f.endsWith(".tf"))
-      .sort();
+    names = liveFiles(dir, binary);
   } catch {
     return undefined;
   }

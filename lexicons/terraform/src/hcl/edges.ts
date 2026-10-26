@@ -88,7 +88,7 @@ import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarab
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { refFromAccessor } from "@intentius/chant/terraform/graph";
-import { LOCALS_TYPE, scopeOfKey, type BlockBody, type TerraformEntity } from "./parse";
+import { CHECK_TYPE, LOCALS_TYPE, scopeOfKey, type BlockBody, type TerraformEntity } from "./parse";
 
 /** An identifier as Terraform's grammar allows it. Same as `./references.ts`. */
 const NAME = "[A-Za-z_][A-Za-z0-9_-]*";
@@ -244,8 +244,12 @@ export function referencesOfEntity(
   const index = scopes.get(scopeOfKey(key));
   if (!index) return [];
 
+  const shadowed = entity.entityType === CHECK_TYPE ? scopedDataAddresses(bodyOf(entity)) : undefined;
   const grouped = new Map<string, { to: string; viaAttr: string; attrs: Set<string> }>();
   for (const raw of rawReferences(bodyOf(entity), accessors)) {
+    // An assertion reading the check's own scoped `data` block reads that
+    // block, never a root-level data source of the same address (#4458).
+    if (shadowed?.has(raw.address)) continue;
     const to = resolveAddress(raw.address, index);
     if (!to || to === key) continue;
     const groupKey = `${to} ${raw.via}`;
@@ -268,6 +272,22 @@ export function referencesOfEntity(
     });
   }
   return out.sort((a, b) => cmp(a.to, b.to) || cmp(a.viaAttr ?? "", b.viaAttr ?? ""));
+}
+
+/**
+ * The `data.<type>.<name>` addresses a `check` block declares in its own
+ * scope (#4458). hcl2json gives them as `data: { <type>: { <name>: [...] } }`
+ * inside the check's body.
+ */
+function scopedDataAddresses(body: BlockBody): Set<string> {
+  const out = new Set<string>();
+  const data = body["data"];
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return out;
+  for (const [type, named] of Object.entries(data as Record<string, unknown>)) {
+    if (typeof named !== "object" || named === null || Array.isArray(named)) continue;
+    for (const name of Object.keys(named as Record<string, unknown>)) out.add(`data.${type}.${name}`);
+  }
+  return out;
 }
 
 /** Code-point ordering, so output does not depend on the machine's locale. */

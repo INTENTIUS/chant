@@ -24,6 +24,7 @@
 
 import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { movePin, type PinMove } from "./source";
+import { isJsonConfigFile, jsonConfigTree } from "../hcl/files";
 import { escapeHcl, scanBlocks, unescapeHcl, type ScannedAttribute, type ScannedBlock } from "./scan";
 
 /** What to move: a module, named by its source without the pin, from one pin to another. */
@@ -99,6 +100,7 @@ interface Splice {
  * is reported with its reason and left as it was.
  */
 export async function editPins(text: string, file: string, request: PinRequest, parser: Hcl2Json): Promise<PinEditResult> {
+  if (isJsonConfigFile(file)) return jsonPins(text, file, request);
   const terragrunt = isTerragruntFile(file);
   const tree = (await parser.parse(file, text)) as Tree;
   const blocks = scanBlocks(text, file);
@@ -154,4 +156,32 @@ export async function editPins(text: string, file: string, request: PinRequest, 
  */
 function rewriteLiteral(raw: string, was: string, value: string): string {
   return raw === was ? value : escapeHcl(value);
+}
+
+/**
+ * The calls of the module in a `.tf.json` or `.tofu.json` file (chant#4457).
+ * The pin edit splices HCL text and has no splice for JSON syntax, so a call
+ * that would move is refused by name and the file is left as it is; a call
+ * already at the new pin, or at another one, reads as it does in HCL.
+ */
+function jsonPins(text: string, file: string, request: PinRequest): PinEditResult {
+  const calls: PinCallResult[] = [];
+  let tree: Record<string, unknown>;
+  try {
+    tree = jsonConfigTree(text);
+  } catch (err) {
+    return { content: text, calls: [{ outcome: "refused", reason: `not JSON the binary reads: ${err instanceof Error ? err.message : String(err)}`, file, call: "(file)" }] };
+  }
+  const modules = (tree.module && typeof tree.module === "object" ? tree.module : {}) as Record<string, unknown>;
+  for (const [name, bodies] of Object.entries(modules)) {
+    for (const body of Array.isArray(bodies) ? (bodies as Record<string, unknown>[]) : []) {
+      if (typeof body.source !== "string") continue;
+      const move = movePin(body.source, typeof body.version === "string" ? body.version : undefined, request);
+      if (!move) continue;
+      const at = { file, call: `module.${name}` };
+      if (move.outcome === "moved") calls.push({ outcome: "refused", reason: "the call is in Terraform's JSON syntax, which the pin edit does not write; move its pin by hand", ...at });
+      else calls.push({ ...move, ...at });
+    }
+  }
+  return { content: text, calls };
 }

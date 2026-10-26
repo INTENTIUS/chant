@@ -18,7 +18,7 @@ Change sets keep holding planned changes only. A drift record authorizes nothing
 | `engine` | `terraform`, `tofu`, `choudoufu`, `chant`, `warden`, `sql`, `pulumi` or `plunge` |
 | `address` | the engine's own address, at instance level: `aws_eip.pool[0]`, a Pulumi URN, a chant entity name |
 | `resourceType` | the resource type, when the read reports one |
-| `node` | the graph node, by the change set's rule (`graphNodeFor`): an instance of a `count` or `for_each` block is on `<blockNode>[0]` or `<blockNode>["a"]`, an instance under an expanded module call is on its block node. `null` when the graph holds none. A Pulumi URN is on `<member>/<qualified type>::<name>`, the URN rule of `@intentius/chant/pulumi-urn`, and a provider or the root stack on none ([#4453](https://github.com/INTENTIUS/chant/issues/4453)), and a plunge URN, also a Pulumi URN, by the same rule |
+| `node` | the graph node, by the change set's rule (`graphNodeFor`): an instance of a `count` or `for_each` block is on `<blockNode>[0]` or `<blockNode>["a"]`, an instance under an expanded module call is on `<root>/module.app[0]/<block>[1]`, the module key on the call's segment ([#4486](https://github.com/INTENTIUS/chant/issues/4486)). `null` when the graph holds none. A Pulumi URN is on `<member>/<qualified type>::<name>`, the URN rule of `@intentius/chant/pulumi-urn`, and a provider or the root stack on none ([#4453](https://github.com/INTENTIUS/chant/issues/4453)), and a plunge URN, also a Pulumi URN, by the same rule |
 | `instanceOf` | on a record whose `node` is an instance node, the block node |
 | `observedAt` | RFC 3339, per record |
 | `read` | `state`, `plan`, `refresh`, `live-read` or `ownership` |

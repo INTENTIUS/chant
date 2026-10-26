@@ -55,7 +55,7 @@ oci://registry.example.com/modules/vpc pin 1.3.0 -> 1.4.0 on main: would-open
     roots: live/prod/vpc, live/stage/vpc
 ```
 
-`--root <dir>` limits the rollout to the directories named. `--json` prints the whole result.
+`--root <dir>` limits the rollout to the directories named. `--binary tofu` (or `choudoufu`) reads each root's `.tofu` files as well, with `x.tofu` in place of `x.tf`. A call in a `.tf.json` file that would move is refused by name, since the edit writes HCL only. `--json` prints the whole result.
 
 ## Choose the waves
 
