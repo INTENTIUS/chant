@@ -20,6 +20,7 @@
  * unresolved, and the plan says so in a hole.
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
@@ -192,4 +193,54 @@ export function cfnImports(template: Record<string, unknown> | undefined, known:
 /** The JSON Pointer `CfnDeployInput.imports[name]` sits at in a `cfn-deploy` step. */
 export function cfnImportPointer(name: string): string {
   return "/imports/" + name.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/** The stand-in parameter that takes an import's place in a preview: `ChantImport`, the name's letters and digits, and a short digest so two names never share one. */
+export function cfnStandInParameter(name: string): string {
+  return `ChantImport${name.replace(/[^A-Za-z0-9]/g, "").slice(0, 200)}${createHash("sha256").update(name).digest("hex").slice(0, 8)}`;
+}
+
+/**
+ * A copy of `template` for a preview (#4466b): each `Fn::ImportValue` of a
+ * name in `names` is a `Ref` to a stand-in `String` parameter, which the
+ * preview fills with `cfnPlaceholder`. CloudFormation refuses a change set
+ * that imports an export that does not exist yet, so the importer of a stack
+ * the same change creates is planned against this copy. `standIns` maps each
+ * stand-in parameter to the export it stands for; a name the template never
+ * imports gets none.
+ */
+export function cfnTemplateWithStandIns(
+  template: Record<string, unknown>,
+  names: readonly string[],
+  known: Record<string, string>,
+): { template: Record<string, unknown>; standIns: Record<string, string> } {
+  const wanted = new Set(names);
+  const standIns: Record<string, string> = {};
+  const swap = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(swap);
+    if (v === null || typeof v !== "object") return v;
+    const entries = Object.entries(v as Record<string, unknown>);
+    if (entries.length === 1 && entries[0]![0] === "Fn::ImportValue") {
+      const r = resolveCfnName(entries[0]![1], known);
+      if ("name" in r && wanted.has(r.name)) {
+        const param = cfnStandInParameter(r.name);
+        standIns[param] = r.name;
+        return { Ref: param };
+      }
+      return v;
+    }
+    return Object.fromEntries(entries.map(([k, x]) => [k, swap(x)]));
+  };
+  const out: Record<string, unknown> = { ...template };
+  for (const section of ["Resources", "Outputs", "Conditions"] as const) {
+    if (template[section] !== undefined) out[section] = swap(template[section]);
+  }
+  if (Object.keys(standIns).length > 0) {
+    const params = { ...((template.Parameters ?? {}) as Record<string, unknown>) };
+    for (const [param, name] of Object.entries(standIns).sort(([a], [b]) => a.localeCompare(b))) {
+      params[param] = { Type: "String", Description: `chant preview: stands in for Fn::ImportValue ${name}, known after its stack applies` };
+    }
+    out.Parameters = params;
+  }
+  return { template: out, standIns };
 }

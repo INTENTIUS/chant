@@ -20,7 +20,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Capability, CapabilityPlan, DeclaredRead, DeployContext, PlannedOutputs } from "@intentius/chant/components/capability";
 import type { ChangeSetEntry, ChangeSetHole, ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
@@ -35,7 +37,7 @@ import {
   type ShapeReplacement,
 } from "@intentius/chant/components/covered-round";
 import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
-import { cfnExports, cfnImportPointer, cfnImports, cfnKnownValues, readCfnTemplate, resolveCfnName } from "./cfn-imports";
+import { cfnExports, cfnImportPointer, cfnImports, cfnKnownValues, cfnTemplateWithStandIns, readCfnTemplate, resolveCfnName } from "./cfn-imports";
 
 /** CloudFormation's wording when a change set has nothing to apply — the stack
  * is already current. AWS phrases it "The submitted information didn't contain
@@ -214,10 +216,14 @@ function cfnPlanDigest(
  * exist yet gets a CREATE change set, so every resource reads as a create,
  * and the empty `REVIEW_IN_PROGRESS` stack CloudFormation made to hold it is
  * deleted too. A change set with nothing to apply (`isNoopChangeSet`) gives
- * a member with no entries. A step whose parameters read outputs that are
- * not known yet, from a stack the same run applies first, creates no change
- * set: its member gets a hole saying whose outputs it waits on, and no
- * artifact, so `run` plans it afresh.
+ * a member with no entries. A step whose parameters or imports read outputs
+ * that are not known yet, from a stack the same run applies first, is
+ * previewed: its change set is made against a stand-in for each unknown
+ * value (#4423), an import standing in as a parameter of a template copy
+ * (#4466b), and `run` checks the real change set's shape against the
+ * preview's before it executes. When no preview can be made, its member gets
+ * a hole saying whose outputs it waits on, and no artifact, so `run` plans
+ * it afresh.
  *
  * With `onReplace: "block"` (the default), a change set that replaces a
  * resource fails the plan with {@link CfnReplacementBlockedError}, so the
@@ -271,10 +277,19 @@ async function planCfnDeploy(executor: CloudExecutor, ctx: DeployContext, input:
           ? `imports ${waiting.join(", ")}, exported by ${unresolved.join(", ")}, which apply first; re-checked on apply`
           : `inputs from ${unresolved.join(", ")}; re-checked on apply`
         : `inputs ${[...missing].sort().join(", ")} are known only at apply; re-checked on apply`;
-    // Which parameters are unknown: the inputs that hold nothing yet. When the
-    // upstream is unresolved but no input says which, nothing can be previewed.
-    if (missing.length === 0) return hole(fallback);
-    const preview = await previewCfnDeploy(executor, stack, input, [...missing].sort(), unresolved.length > 0 ? unresolved : undefined);
+    // Which parameters are unknown: the inputs that hold nothing yet, and a
+    // stand-in for each import of an export not known yet (#4466b). When the
+    // upstream is unresolved but neither says which, nothing can be previewed.
+    if (missing.length === 0 && waiting.length === 0) return hole(fallback);
+    const copy = waiting.length > 0 ? standInTemplate(stack, input, waiting, knownParameters(parameters)) : undefined;
+    if (typeof copy === "string") return hole(`${fallback}; no preview: ${copy}`);
+    let preview: Awaited<ReturnType<typeof previewCfnDeploy>>;
+    try {
+      const previewed = copy ? { ...input, template: copy.path } : input;
+      preview = await previewCfnDeploy(executor, stack, previewed, [...missing, ...(copy?.parameters ?? [])].sort(), unresolved.length > 0 ? unresolved : undefined);
+    } finally {
+      copy?.remove();
+    }
     if (typeof preview === "string") return hole(`${fallback}; no preview: ${preview}`);
     const { entries, shape, outputs } = preview;
     const artifact: CfnShapeArtifact = { kind: "cfn-deploy-shape", member: stack, shape, digest: planShapeDigest(shape) };
@@ -453,7 +468,9 @@ export function cfnPlanShape(stack: string, changeSet: CfnChangeSet, unknown: st
  * Floci accepts a change set that real CloudFormation refuses (a missing
  * export, an id that does not exist), reports `Parameters: null`, and says
  * `Replacement: False` for a change that replaces. So a cross-stack value
- * goes through a parameter here, never an export, and the replacement a
+ * goes through a parameter here, never an export: an import of an export
+ * not known yet is planned from a copy of the template in which it is a
+ * stand-in parameter (#4466b, `cfnTemplateWithStandIns`). The replacement a
  * preview reports is whatever the backend says; the shape check at apply
  * compares like with like.
  */
@@ -723,6 +740,28 @@ function unresolvedImportHoles(stack: string, input: CfnDeployInput, parameters:
     });
   }
   return holes;
+}
+
+/**
+ * The importer's template with each import of `names` as a stand-in
+ * parameter (#4466b), written to a scratch file the preview creates its
+ * change set from; or why there is none. `remove` deletes the file.
+ */
+function standInTemplate(
+  stack: string,
+  input: CfnDeployInput,
+  names: readonly string[],
+  parameters: Record<string, string>,
+): { path: string; parameters: string[]; remove: () => void } | string {
+  const template = readCfnTemplate(input.template);
+  if (!template) return "the template could not be read as JSON to stand in for its imports";
+  const { template: copy, standIns } = cfnTemplateWithStandIns(template, names, cfnKnownValues(template, stack, parameters));
+  const params = Object.keys(standIns).sort();
+  if (params.length === 0) return `the template imports none of ${names.join(", ")} by a name the plan resolves`;
+  const dir = mkdtempSync(join(tmpdir(), "chant-cfn-preview-"));
+  const path = join(dir, `${stack}.preview.template.json`);
+  writeFileSync(path, JSON.stringify(copy, null, 2));
+  return { path, parameters: params, remove: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 /**

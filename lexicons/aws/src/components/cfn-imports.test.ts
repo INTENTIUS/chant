@@ -165,15 +165,31 @@ describe("a pull request's plan over stacks wired only by imports (#4466a)", () 
     expect(capabilitySteps(app.deploy)[0]).toMatchObject({ imports: { "network-VpcId": { stackOutput: { stack: "network", name: "VpcId" } } } });
   });
 
-  it("lists the import under unknownInputs and reads, and plans the importer as waiting on the exporter", async () => {
+  it("lists the import under unknownInputs and reads, while network's plan cannot say the value", async () => {
     const { set } = await planned();
     const app = set.members.find((m) => m.component === "app")!;
     expect(app.unknownInputs).toEqual(["network.VpcId"]);
     expect(app.reads).toEqual([{ upstream: "network", outputs: ["VpcId"], unknown: ["VpcId"] }]);
-    const member = set.doc.members.find((m) => m.member === "app")!;
-    expect(member.holes).toEqual([
-      { address: "app", type: "AWS::CloudFormation::Stack", reason: "imports network-VpcId, exported by network, which apply first; re-checked on apply" },
+  });
+
+  it("an importer whose template cannot be read as JSON plans as waiting on the exporter (no preview, #4466b)", async () => {
+    const { set, components } = await planned();
+    const app = components.find((c) => c.name === "app")!;
+    const step = capabilitySteps(app.deploy)[0]! as Record<string, unknown>;
+    writeFileSync(step.template as string, "not json");
+    const mock = createMockCloudExecutor({ stacks: { app: { missing: true } } });
+    const planned2 = await createCfnDeployCapability(mock.executor).plan!(
+      { env: "local", component: "app", unresolvedInputs: ["network"] },
+      { stack: "app", template: step.template as string, imports: { "network-VpcId": undefined } },
+    );
+    expect(planned2.changeSet!.member.holes).toEqual([
+      {
+        address: "app",
+        type: "AWS::CloudFormation::Stack",
+        reason: "imports network-VpcId, exported by network, which apply first; re-checked on apply; no preview: the template could not be read as JSON to stand in for its imports",
+      },
     ]);
+    expect(set.doc.members.find((m) => m.member === "app")).toBeDefined();
   });
 });
 
