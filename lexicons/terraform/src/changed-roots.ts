@@ -9,16 +9,19 @@
  * in a local module it calls (followed through modules that call modules),
  * or is one of its var files.
  *
- * The module calls are read with a regex over the root's `.tf` and `.tofu`
+ * The module calls are read with a regex over the root's HCL configuration
  * files, the way `./op/activities/live-detect.ts` reads a live block, so
- * this stays out of the HCL parser's dependency graph. Only a `source` that
+ * this stays out of the HCL parser's dependency graph. Which files those are
+ * follows the root's binary through the lexicon's one lister (chant#4457):
+ * `.tf`, plus `.tofu` for a tofu or choudoufu root. Only a `source` that
  * starts with `./` or `../` is followed; a registry or git source is a
  * version pin in the root's own files, which a change to it already touches.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, posix, relative, resolve, sep } from "node:path";
 import type { TerraformRootConfig } from "./config";
+import { isJsonConfigFile, listConfigFilesSafe } from "./hcl/files";
 
 /** `source = "./..."` or `"../..."` inside a module block. Other sources are not on disk here. */
 const LOCAL_SOURCE = /\bsource\s*=\s*"(\.{1,2}\/[^"]*)"/g;
@@ -31,17 +34,11 @@ function projectRelative(projectRoot: string, dir: string): string {
   return rel === "" ? "." : posix.normalize(rel).replace(/\/+$/, "");
 }
 
-/** Local module directories `dir` calls, read from its HCL files. */
-function localModuleDirs(dir: string): string[] {
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
+/** Local module directories `dir` calls, read from the HCL configuration files `binary` reads. */
+function localModuleDirs(dir: string, binary?: string): string[] {
   const out: string[] = [];
-  for (const name of names) {
-    if (!name.endsWith(".tf") && !name.endsWith(".tofu")) continue;
+  for (const name of listConfigFilesSafe(dir, binary)) {
+    if (isJsonConfigFile(name)) continue;
     let text: string;
     try {
       text = readFileSync(join(dir, name), "utf8");
@@ -61,7 +58,7 @@ function localModuleDirs(dir: string): string[] {
  * Every path, relative to `projectRoot`, whose change touches `root`: its
  * directory, each local module it reaches, and its var files.
  */
-export function rootWatchPaths(projectRoot: string, root: Pick<TerraformRootConfig, "dir" | "varFiles">): string[] {
+export function rootWatchPaths(projectRoot: string, root: Pick<TerraformRootConfig, "dir" | "varFiles">, binary?: string): string[] {
   const rootDir = resolve(projectRoot, root.dir);
   const seen = new Set<string>();
   const queue = [rootDir];
@@ -69,7 +66,7 @@ export function rootWatchPaths(projectRoot: string, root: Pick<TerraformRootConf
     const dir = queue.shift()!;
     if (seen.has(dir)) continue;
     seen.add(dir);
-    queue.push(...localModuleDirs(dir));
+    queue.push(...localModuleDirs(dir, binary));
   }
   const paths = [...seen].map((d) => projectRelative(projectRoot, d));
   for (const file of root.varFiles ?? []) paths.push(projectRelative(projectRoot, resolve(rootDir, file)));
@@ -91,11 +88,12 @@ export function changedRoots(
   projectRoot: string,
   roots: Record<string, Pick<TerraformRootConfig, "dir" | "varFiles">>,
   changedFiles: readonly string[],
+  binary?: string,
 ): string[] {
   const files = changedFiles.map((f) => posix.normalize(f));
   const touched: string[] = [];
   for (const [name, root] of Object.entries(roots)) {
-    const watch = rootWatchPaths(projectRoot, root);
+    const watch = rootWatchPaths(projectRoot, root, binary);
     if (files.some((f) => watch.some((p) => covers(p, f)))) touched.push(name);
   }
   return touched.sort();

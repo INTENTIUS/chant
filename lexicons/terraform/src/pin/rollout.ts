@@ -48,6 +48,7 @@ import { editPins, type PinCallResult, type PinEditResult, type PinRequest } fro
 import { checkPinRequest, moduleOf } from "./source";
 import { planPinWaves, restrictWaves, terragruntDependencies, type PinRoot, type PinWave } from "./waves";
 import { ghPinForge, type PinForge } from "./forge";
+import { isConfigFileFor, listConfigFilesSafe } from "../hcl/files";
 
 const execFileAsync = /* @__PURE__ */ promisify(execFile);
 
@@ -83,6 +84,8 @@ export interface PinRolloutOptions extends PinRequest {
   editTs?: TsPinEditor;
   /** Markdown appended to a wave's PR body, such as the grouped plan summary of #3188 once a caller has the wave's plans. */
   planSummary?: (wave: PinWave) => Promise<string | undefined>;
+  /** The binary the roots run: `tofu` or `choudoufu` reads `.tofu` files too (chant#4457). Default `terraform`. */
+  binary?: string;
 }
 
 /** Where one root's pin stood on the base branch. */
@@ -169,22 +172,24 @@ export function pinWaveBranch(request: PinRequest, wave: number): string {
   return `chant/pin/${slug(request.module)}/${slug(request.to)}/wave-${wave}`;
 }
 
-/** The files the pin edit reads in a root directory: its `.tf` files and its `terragrunt.hcl`. */
-function rootFiles(worktree: string, root: string): string[] {
+/**
+ * The files the pin edit reads in a root directory: the configuration files
+ * the root's binary reads (the lexicon's one lister, chant#4457) and its
+ * `terragrunt.hcl`.
+ */
+function rootFiles(worktree: string, root: string, binary?: string): string[] {
   const dir = join(worktree, root);
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".tf") || f === "terragrunt.hcl")
-    .sort()
-    .map((f) => posix.join(root, f));
+  const names = [...listConfigFilesSafe(dir, binary), ...(existsSync(join(dir, "terragrunt.hcl")) ? ["terragrunt.hcl"] : [])];
+  return names.sort().map((f) => posix.join(root, f));
 }
 
-/** Every directory under the worktree with a `.tf` file or a `terragrunt.hcl`. */
-function candidateRoots(worktree: string): string[] {
+/** Every directory under the worktree with a configuration file the binary reads, or a `terragrunt.hcl`. */
+function candidateRoots(worktree: string, binary?: string): string[] {
   const out: string[] = [];
   const walk = (rel: string) => {
     const entries = readdirSync(join(worktree, rel), { withFileTypes: true });
-    if (entries.some((e) => e.isFile() && (e.name.endsWith(".tf") || e.name === "terragrunt.hcl"))) out.push(rel || ".");
+    if (entries.some((e) => e.isFile() && (isConfigFileFor(e.name, binary) || e.name === "terragrunt.hcl"))) out.push(rel || ".");
     for (const e of entries) if (e.isDirectory() && !SKIP_DIRS.has(e.name)) walk(rel ? posix.join(rel, e.name) : e.name);
   };
   walk("");
@@ -201,7 +206,7 @@ async function editRoot(worktree: string, root: PinRoot, request: PinRequest, op
       return { state: { root: root.root, state: "refused", files, calls, reason: `generated from ${root.tsSource}, and this caller has no TypeScript editor` }, edits };
     }
   } else {
-    files = rootFiles(worktree, root.root);
+    files = rootFiles(worktree, root.root, options.binary);
   }
   for (const file of files) {
     const path = join(worktree, file);
@@ -302,7 +307,7 @@ export async function runPinRollout(options: PinRolloutOptions): Promise<PinRoll
   await run("git", ["worktree", "add", "--quiet", "--detach", worktree, baseRef], repo);
   try {
     // 1. Every root's pin on the base branch.
-    const declared = (options.roots ?? candidateRoots(worktree).map((root): PinRoot => ({ root }))).map((r) => ({
+    const declared = (options.roots ?? candidateRoots(worktree, options.binary).map((root): PinRoot => ({ root }))).map((r) => ({
       ...r,
       root: dirOf(r.root),
       ...(r.dependsOn ? { dependsOn: r.dependsOn.map(dirOf) } : {}),

@@ -33,9 +33,9 @@ export function derivedLineage(...parts: string[]): string {
 }
 
 /** Whether a root's own files configure the provider of type `type` (a `provider "<type>"` block): its resources then name the module's configuration. */
-function ownsProvider(dir: string | undefined, type: string): boolean {
+function ownsProvider(dir: string | undefined, binary: string | undefined, type: string): boolean {
   if (!dir) return false;
-  return rootTexts(dir).some((t) => (t.json ? new RegExp(`"provider"\\s*:\\s*\\{[^]*"${type}"`).test(t.text) : new RegExp(`\\bprovider\\s+"${type}"\\s*\\{`).test(t.text)));
+  return rootTexts(dir, binary).some((t) => (t.json ? new RegExp(`"provider"\\s*:\\s*\\{[^]*"${type}"`).test(t.text) : new RegExp(`\\bprovider\\s+"${type}"\\s*\\{`).test(t.text)));
 }
 
 function versionAbove(a: string, b: string): boolean {
@@ -46,7 +46,7 @@ function versionAbove(a: string, b: string): boolean {
 }
 
 /** The members whose state the working state holds, in apply order. */
-type StateComposition = Pick<Composition, "order" | "modules" | "dirs"> & Partial<Pick<Composition, "roots">>;
+type StateComposition = Pick<Composition, "order" | "modules" | "dirs"> & Partial<Pick<Composition, "roots" | "binary">>;
 
 /**
  * The working state: each member's resources with `module.<m>` in front of
@@ -68,7 +68,7 @@ export function mergeStates(c: StateComposition, pulled: ReadonlyMap<string, Sta
     for (const res of s.resources) {
       const provider = typeof res.provider === "string" ? res.provider : undefined;
       const type = provider?.match(/provider\["([^"]+)"\]/)?.[1]?.split("/").pop();
-      const own = provider && type && !provider.startsWith("module.") && ownsProvider(c.dirs.get(member), type);
+      const own = provider && type && !provider.startsWith("module.") && ownsProvider(c.dirs.get(member), c.binary, type);
       resources.push({
         ...structuredClone(res),
         module: res.module ? `module.${m}.${res.module}` : `module.${m}`,

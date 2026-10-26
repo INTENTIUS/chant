@@ -215,10 +215,11 @@ export const terraformPlugin: LexiconPlugin = {
    * See `./changed-roots.ts`.
    */
   async changedUnits(ctx) {
-    const roots = (ctx.config as { terraform?: TerraformConfig }).terraform?.roots ?? {};
+    const tf = (ctx.config as { terraform?: TerraformConfig }).terraform;
+    const roots = tf?.roots ?? {};
     if (Object.keys(roots).length === 0) return [];
     const { changedRoots } = await import("./changed-roots");
-    return changedRoots(ctx.projectRoot, roots, ctx.changedFiles);
+    return changedRoots(ctx.projectRoot, roots, ctx.changedFiles, tf?.binary);
   },
 
   lintRules() {
@@ -293,12 +294,21 @@ export const terraformPlugin: LexiconPlugin = {
       // A local audit knows the root's directory, so it can say whether the
       // lock file is beside the `.tf` files (TF040); a fetched one cannot.
       const lockFile = input?.dir !== undefined ? existsSync(join(input.dir, LOCK_FILENAME)) : undefined;
-      const entities = await parseTerraformRootContent(content, root, undefined, lockFile === undefined ? undefined : { lockFile });
+      // An audit has no `terraform.binary` to follow (chant#4457). A root
+      // that carries a `.tofu` file is written for OpenTofu, so it is read
+      // as a tofu root; any other is read as terraform, the config default.
+      const binary = /^# file: .*\.tofu(\.json)?\s*$/m.test(content) ? "tofu" : undefined;
+      const modeOptions = {
+        ...(binary !== undefined ? { binary } : {}),
+        ...(lockFile !== undefined ? { lockFile } : {}),
+      };
+      const entities = await parseTerraformRootContent(content, root, undefined, Object.keys(modeOptions).length > 0 ? modeOptions : undefined);
       if (input?.dir === undefined) return entities;
       const { entities: children } = await descendModules(entities, {
         dir: input.dir,
         root,
         projectRoot: input.baseDir ?? input.dir,
+        ...(binary !== undefined ? { modeOptions: { binary } } : {}),
       });
       for (const [key, entity] of children) entities.set(key, entity);
       return entities;

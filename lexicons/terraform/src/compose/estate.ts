@@ -260,7 +260,7 @@ export class EstateRun implements ComposedRunner {
   /** The estate each member's records go to: its root's `estate`, else its `live` block's. */
   private estateOf(member: string): string | undefined {
     const key = this.c.roots.get(member);
-    return (key !== undefined ? this.o.terraform.roots[key]?.estate : undefined) ?? liveEstate(this.c.dirs.get(member)!).estate;
+    return (key !== undefined ? this.o.terraform.roots[key]?.estate : undefined) ?? liveEstate(this.c.dirs.get(member)!, this.binary).estate;
   }
 
   private notPlanned(extra: { fallback?: ComposeFallback; error?: string }): ComposedRunPlan {

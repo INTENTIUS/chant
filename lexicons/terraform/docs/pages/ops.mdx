@@ -440,7 +440,7 @@ chant does not wrap it in an Op, on purpose. It reads a state file, once, and ch
 
 ## TerraformPinRolloutOp
 
-`terraformPinRollout` runs one step of a pin-bump rollout ([#3189](https://github.com/INTENTIUS/chant/issues/3189)). It names no `terraform.roots` entry. It finds the roots that call a module, in `.tf` files and `terragrunt.hcl`, splits them into waves, and opens at most the next wave's pull request. `TerraformPinRolloutOp` wraps it in one `Rollout` phase, whose run outcome is the rollout's status. `chant terraform pin-rollout` runs the same step from the command line.
+`terraformPinRollout` runs one step of a pin-bump rollout ([#3189](https://github.com/INTENTIUS/chant/issues/3189)). It names no `terraform.roots` entry. It finds the roots that call a module, in `.tf` files and `terragrunt.hcl` (and `.tofu` files when its `binary` is `tofu` or `choudoufu`), splits them into waves, and opens at most the next wave's pull request. `TerraformPinRolloutOp` wraps it in one `Rollout` phase, whose run outcome is the rollout's status. `chant terraform pin-rollout` runs the same step from the command line.
 
 ```typescript
 import { TerraformPinRolloutOp } from "@intentius/chant-lexicon-terraform";

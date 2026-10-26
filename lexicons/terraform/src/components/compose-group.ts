@@ -238,7 +238,7 @@ export function hclGroupReads(project: ComposeProject, members: readonly GroupMe
   for (const [reader, rs] of reads) {
     const m = members.find((x) => x.component === reader);
     const dir = m ? project.terraform.roots[m.step.root as string]?.dir : undefined;
-    const texts = dir === undefined ? [] : rootTexts(isAbsolute(dir) ? dir : resolve(project.projectRoot, dir)).map((t) => t.text);
+    const texts = dir === undefined ? [] : rootTexts(isAbsolute(dir) ? dir : resolve(project.projectRoot, dir), project.terraform.binary).map((t) => t.text);
     for (const r of rs) {
       if (r.via === "vars") continue;
       const [type, field] = HCL_READ[r.via];

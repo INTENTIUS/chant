@@ -245,7 +245,8 @@ export function terragruntAffected(input: TerragruntAffectedInput): TerragruntAf
     const moduleDirs = terragruntModuleDirs(unit);
     const called = new Map<string, string>();
     for (const m of moduleDirs) {
-      for (const d of rootWatchPaths(input.dir, { dir: m })) if (!moduleDirs.includes(d) && !called.has(d)) called.set(d, m);
+      // Terragrunt runs tofu when it is installed, so a module's `.tofu` files count (chant#4457).
+      for (const d of rootWatchPaths(input.dir, { dir: m }, "tofu")) if (!moduleDirs.includes(d) && !called.has(d)) called.set(d, m);
     }
     const viaFile = new Map<string, string[]>();
     const viaCall = new Map<string, string[]>();
