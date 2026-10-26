@@ -1,0 +1,9 @@
+{
+  "name": "app",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "@pulumi/aws": "7.51.1",
+    "@pulumi/pulumi": "3.272.0"
+  }
+}
