@@ -25,14 +25,14 @@ It runs no project code. It reads file names, `package.json` files, and the text
 |---|---|
 | a `chant.config.ts` or `chant.config.json` at the root | a `chant` member with directory `"."`, named `root` |
 | any other outermost chant project | a `chant` member |
-| a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at |
+| a directory with its own `chant.workspace.json` | a `workspace` member; nothing inside it is looked at. One under an examples-style directory is a `workspace` member too, with a `because` naming the examples directory it sits in ([#4499](https://github.com/INTENTIUS/chant/issues/4499)). When that directory sits inside another package or project, the declaration stays an example of its group, since only the root member contains other members |
 | a directory that a [kind from an installed package](/chant/reference/workspace-kinds/#platform-kinds) claims, outside any other member (a chart, a kustomize overlay, an Argo app) | a member of that kind, with the package added to `pins`. It replaces the `other` member the same directory would get |
 | an npm workspace package, or any other `package.json` outside those, with no chant project | an `other` member, with a `because` |
 | chant projects under an `examples`, `example`, `samples`, `test`, `tests` or `fixtures` directory | an [example group](/chant/reference/workspace-declaration/#example-groups) |
 
 Projects inside a test runner's directory, such as `__fixtures__`, stay with the package around them.
 
-An example tree whose subdirectories are mostly projects gets one glob, such as `examples/*`. Trees that differ in one path segment merge, as `lexicons/aws/examples/*` and `lexicons/gcp/examples/*` become `lexicons/*/examples/*`, when the merged glob claims no member. A tree that is mostly something else lists its projects one by one. Groups are named after the tree: `examples`, `fixtures`, or with a prefix such as `lexicon-examples`.
+An example tree whose subdirectories are mostly projects gets one glob, such as `examples/*`. Trees that differ in one path segment merge, as `lexicons/aws/examples/*` and `lexicons/gcp/examples/*` become `lexicons/*/examples/*`, when the merged glob claims no member. When the only thing in the way is a member in that last segment, such as a workspace shipped as an example, the glob leaves that directory out by name: `examples/!(kit)`. A tree that is mostly something else lists its projects one by one. Groups are named after the tree: `examples`, `fixtures`, or with a prefix such as `lexicon-examples`.
 
 Member names come from `package.json` without the npm scope and without a leading `<workspace>-`, so `@intentius/chant-lexicon-aws` in the `chant` workspace becomes `lexicon-aws`. Without a usable package name, the directory's name is used. The workspace's name is `--name`, else the repository name from the `origin` remote, else the root package's name, else the directory's name.
 
@@ -65,7 +65,7 @@ Once the file is written, root-level `chant build`, `lint`, `run` and `audit` st
 
 [`chant init --from`](/chant/cli/init/) copies the profile from `reference-workspace/profiles/<profile>` in the chant repository at the tag of the chant you run (`chant-v<version>`). The copy has a lineage lock, so [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) takes later versions of it. `--from` reads the profiles from another `<repo>@<ref>`, or from a chant checkout on disk. `--param name=<display name>` sets the name the stub app shows, and `--name` sets the declaration's `name`. Each profile passes [`chant workspace check`](/chant/cli/workspace-check/) as it is copied.
 
-## Importing from Terraform Cloud, Spacelift or Backstage
+## Importing from another tool
 
 ```
 chant workspace init --from tfc --org <organization> [--input <export.json>] [--token <token>] [dir] [--yes]
@@ -73,7 +73,7 @@ chant workspace init --from spacelift --endpoint <https://acme.app.spacelift.io/
 chant workspace init --from backstage [dir] [--name <name>] [--yes]
 ```
 
-`--from tfc|spacelift|backstage` ([#3178](https://github.com/INTENTIUS/chant/issues/3178)) proposes members, links, environments and constraint records from structure a repository does not hold. Like plain `init`, it prints the proposal and what it left out, and writes only on confirmation. Confirming writes `chant.workspace.json` and `chant-import.<source>.json`, which holds the environments, the constraint records and the left-out list.
+`--from tfc|spacelift|backstage` ([#3178](https://github.com/INTENTIUS/chant/issues/3178)) reads structure a repository does not hold and proposes members and links from it, with environments and constraint records. Like plain `init`, it prints the proposal and what it left out, and writes only on confirmation. Confirming writes `chant.workspace.json` and `chant-import.<source>.json`. The second file holds the environments and constraint records, and the list of what was left out.
 
 | Source | Read from | Becomes |
 |---|---|---|
@@ -81,7 +81,7 @@ chant workspace init --from backstage [dir] [--name <name>] [--yes]
 | Spacelift | the GraphQL API (`--endpoint`, token in `--token` or `SPACELIFT_API_TOKEN`) or `--input` | a Terraform or OpenTofu stack is a `terraform` member, any other vendor an `other` member; a dependency is a link on the output it references, else `applied`; an `env:` label is an environment; a policy is a constraint record |
 | Backstage | the `catalog-info.yaml` files under `dir` | a Component or Resource is an `other` member; `dependsOn` and `consumesApis` are links to a `catalog` output; `spec.lifecycle` is an environment |
 
-A member is one directory, so workspaces or stacks that share a working directory fold into the first, and the output says so. Variable values, VCS connections, contexts, state and Backstage groups, users and systems are left out, each listed with a count and a reason. The `terraform` kind comes from `@intentius/chant-lexicon-terraform`, so pin that package before `chant workspace check` reads the members. The API readers only read, and are listed under "Importing structure from another tool" in the [network egress](/chant/reference/network-egress/) page.
+A member is one directory, so workspaces or stacks that share a working directory fold into the first, and the output says so. Some structure is left out, each kind listed with a count and a reason. From the IaC tools that is variable values and VCS connections, contexts and state. From Backstage it is groups and users and systems. The `terraform` kind comes from `@intentius/chant-lexicon-terraform`, so pin that package before `chant workspace check` reads the members. The API readers only read, and are listed under "Importing structure from another tool" in the [network egress](/chant/reference/network-egress/) page.
 
 ## Promoting a member
 
@@ -113,7 +113,7 @@ chant workspace promote --all [--state-dir <dir>] [--state <member>=<terraform.t
 
 The canary, `--canary <member>` or else the first member in declaration order, is wave 1. The rest follow in declaration order, `--wave-size` roots a wave (default 5). Roots run one after another within a wave. A root that fails leaves the other roots and the tree as they were, and the rest of its wave is still tried. The next wave runs only when every root of the wave before it landed: applied, already promoted, or staged cleanly under `--dry-run`. So a failed canary stops every other wave, and a gated root holds the waves after it until it is approved and the command is run again.
 
-The staging worktree has no `.terraform/` of its own, so each root's staging runs `choudoufu init -backend=false` before `live-check` and the report, and nothing it installs goes into the patch. The stamp after approval runs in the member's own directory, so that directory needs its providers installed already (`tofu init` or `choudoufu init`). `TF_PLUGIN_CACHE_DIR` saves a download per root.
+The staging worktree has no `.terraform/` of its own, so each root's staging runs `choudoufu init -backend=false` before `live-check` and the report, and nothing it installs goes into the patch. The stamp after approval runs in the same staging worktree, so it reads each resource through the providers that `init` installed there, and the member's own directory needs none. A retry of a pending stamp stages a worktree of its own first (HEAD plus the tree's changes to the member) and runs `choudoufu init -backend=false` in it before the stamp. `TF_PLUGIN_CACHE_DIR` saves a download per root.
 
 Each root's state is `--state <member>=<path>`, else `<state-dir>/<member>.tfstate`, else `terraform.tfstate` in the member's directory. `live-import` reads a local tfstate of format version 4. A root with a remote backend and no local state is refused by name with the `terraform state pull` to run first, and a state of another version is refused too. A state kept in the member's directory has to be ignored by git, since promote refuses a member with uncommitted changes. Only resources of admitted types are stamped: the report lists the rest under `UNADMITTED_TYPE` and the summary counts them per root.
 
@@ -127,7 +127,7 @@ The command ends with one line per root naming its wave and outcome:
 | `dry-run` | staged and checked; no gate recorded |
 | `checks-failed` | `live-check` or the `live-import` report failed in staging |
 | `refused` | the state is not a local version 4 tfstate |
-| `stamp-failed` | the kind was written but `live-import -approve` failed. The promote keeps the stamp as pending in `.chant/workspace-promote/<member>.stamp.json`, and the same command run again retries only the stamp; the line also prints the `live-import -approve` command, which is safe to run by hand |
+| `stamp-failed` | the kind was written but `live-import -approve` failed. The promote keeps the stamp as pending in `.chant/workspace-promote/<member>.stamp.json`, and the same command run again retries only the stamp; the line also prints the `live-import -approve` command, which is safe to run by hand in a directory where the member's providers are installed |
 | `failed` | anything else that stopped the root, such as uncommitted changes in its directory |
 | `not-run` | an earlier wave did not land |
 

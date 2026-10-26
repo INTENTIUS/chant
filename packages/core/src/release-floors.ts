@@ -13,8 +13,10 @@
  * cut a version when any floor names a version that is neither a published
  * release nor the one being cut.
  *
- * After the cut, a floor stays at the value it was released with: write the
- * released version into it as a literal and point the next release's new
- * floors here.
+ * After the cut, a floor stays at the value it was released with. Once the
+ * release is published, `just release-floors --freeze <version>` writes the
+ * version into every floor that names this constant as a literal, and moves
+ * this constant to the next patch (#4501). The check fails while a floor
+ * still names this constant after its version shipped.
  */
 export const NEXT_RELEASE = "0.124.53";

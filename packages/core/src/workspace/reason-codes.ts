@@ -63,6 +63,13 @@ export const REASONS = {
   "lexicon-has-no-mapping": "The lexicon ships no capability mapping, so no capability rule can read its resources.",
   "capability-not-derivable": "The lexicon's capability mapping labels none of the kinds the capability's rule needs.",
   "lexicon-not-loaded": "The lexicon isn't installed where the chant that wrote the catalog runs, so its mapping wasn't read.",
+  // Why the graph leaves an expanded terraform block as one node (graph, #4489): nodes[].instanceRollup.code.
+  "instances-each-value": "The block's count or for_each reads each.value or each.key, which only a plan can count.",
+  "instances-merge": "The block's count or for_each calls merge(), which the declared graph does not evaluate.",
+  "instances-value-unknown": "The block's count or for_each is a form the graph reads, and the files a plan reads give it no value, or one that keys no instances.",
+  "instances-form-unread": "The block's count or for_each is an expression the graph does not read: another function, a for expression, another conditional, arithmetic, or a resource, data or module attribute.",
+  "instances-over-limit": "The block would have more than 256 instance nodes, so it is drawn alone.",
+  "instances-module-uncounted": "The block is under an expanded module call whose count or for_each the graph cannot count, so none of its instance ids is known.",
   // A ledger status can't fully read.
   "ledger-unreadable": "Reading the ledger failed, so nothing from it is listed.",
   "ledger-malformed": "Some lines of the ledger aren't release records; the rest are listed.",

@@ -155,6 +155,10 @@ export const MEMBER_CONFIG_KEYS: KeyDoc[] = [
       { value: "plunge", doc: "run the same reads under `plunge`, and drift with `plunge drift --stream`" },
     ],
   },
+  {
+    key: "stack",
+    doc: "The stack the drift read passes as `--stack`. Omit it to take the stack the checked-in `stack-export.json` names in its URNs.",
+  },
 ];
 
 export const CONFIG_NAMESPACE_KEYS: KeyDoc[] = [

@@ -333,3 +333,95 @@ describe("observed edges (#1271)", () => {
     expect(ir.edges?.map((e) => e.from)).toEqual(["app-subnet", "web-vpc"]);
   });
 });
+
+// #4488: the live graph builds instance ids with the planned graph's rule
+// (#4486), so a live instance under an expanded module call lands on the
+// node the declared graph lists for it.
+describe("buildLiveGraphIr: instances under an expanded module call (#4488)", () => {
+  const block = "estate/module.app/aws_eip.pool";
+  const call = "estate/module.app";
+  const live = buildLiveGraphIr([
+    {
+      lexicon: "terraform",
+      resources: {
+        [block]: {
+          type: "resource",
+          status: "bound",
+          ownership: "owned",
+          instances: [
+            { key: "[0]", scope: "module.app[0]", address: "module.app[0].aws_eip.pool[0]", verdict: "present", ownership: "owned", status: "bound" },
+            { key: "[1]", scope: "module.app[1]", address: "module.app[1].aws_eip.pool[1]", verdict: "present", ownership: "owned", status: "bound" },
+            { key: "[0]", scope: "module.app[1]", address: "module.app[1].aws_eip.pool[0]", verdict: "absent" },
+          ],
+        },
+        "estate/module.app/aws_eip.single": {
+          type: "resource",
+          status: "bound",
+          ownership: "owned",
+          instances: [{ scope: "module.app[0]", address: "module.app[0].aws_eip.single", verdict: "present", ownership: "owned" }],
+        },
+        [call]: {
+          type: "module",
+          status: "bound",
+          ownership: "owned",
+          instances: [{ key: "[0]", address: "module.app[0]", verdict: "present", ownership: "owned" }],
+        },
+      },
+    },
+  ]);
+  const byId = new Map(live.nodes.map((n) => [n.id, n]));
+
+  it("puts the module key on the call segment and the block's own key at the end", () => {
+    const n = byId.get("estate/module.app[0]/aws_eip.pool[0]");
+    expect(n).toMatchObject({ instanceOf: block, instanceKey: "[0]", instanceScope: "module.app[0]", ownership: "owned" });
+    expect(byId.get("estate/module.app[1]/aws_eip.pool[1]")).toMatchObject({ instanceOf: block, instanceScope: "module.app[1]" });
+    expect(byId.has(`${block}[0]`)).toBe(false);
+  });
+
+  it("draws no node for an absent instance", () => {
+    expect(byId.has("estate/module.app[1]/aws_eip.pool[0]")).toBe(false);
+  });
+
+  it("leaves instanceKey off an instance only the module call expands", () => {
+    const n = byId.get("estate/module.app[0]/aws_eip.single")!;
+    expect(n.instanceOf).toBe("estate/module.app/aws_eip.single");
+    expect(n.instanceScope).toBe("module.app[0]");
+    expect(n.instanceKey).toBeUndefined();
+  });
+
+  it("keeps the <block><key> rule with no module call expanded", () => {
+    expect(byId.get("estate/module.app[0]")).toMatchObject({ instanceOf: call, instanceKey: "[0]" });
+    expect(byId.get("estate/module.app[0]")!.instanceScope).toBeUndefined();
+  });
+
+  it("matches the declared instance node in the overlay", () => {
+    const declared: GraphIR = {
+      nodes: [
+        { id: block, kind: "resource", lexicon: "terraform", attrs: {} },
+        { id: "estate/module.app[0]/aws_eip.pool[0]", kind: "resource", lexicon: "terraform", attrs: {}, instanceOf: block, instanceKey: "[0]", instanceScope: "module.app[0]" },
+        { id: "estate/module.app[1]/aws_eip.pool[0]", kind: "resource", lexicon: "terraform", attrs: {}, instanceOf: block, instanceKey: "[0]", instanceScope: "module.app[1]" },
+      ],
+      edges: [],
+      groups: {},
+    };
+    const out = new Map(overlayGraphs(live, declared).nodes.map((n) => [n.id, n.attrs._status]));
+    expect(out.get("estate/module.app[0]/aws_eip.pool[0]")).toBe("good");
+    expect(out.get("estate/module.app[1]/aws_eip.pool[0]")).toBe("accent");
+  });
+
+  it("keeps the member prefix in a workspace", () => {
+    const ws = buildLiveGraphIr([
+      {
+        lexicon: "terraform",
+        resources: {
+          [`net/${block}`]: {
+            type: "resource",
+            status: "bound",
+            instances: [{ key: "[2]", scope: "module.app[\"x\"]", address: "module.app[\"x\"].aws_eip.pool[2]", verdict: "present" }],
+          },
+        },
+      },
+    ]);
+    expect(ws.nodes.map((n) => n.id)).toContain('net/estate/module.app["x"]/aws_eip.pool[2]');
+  });
+});

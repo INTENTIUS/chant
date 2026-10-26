@@ -20,6 +20,16 @@
       "types": "./dist/lint/post-synth/index.d.ts",
       "default": "./dist/lint/post-synth/index.js"
     },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./dist/op/activities/index.js"
+    },
+    "./op/activity-contracts": {
+      "development": "./src/op/activity-contracts.ts",
+      "types": "./dist/op/activity-contracts.d.ts",
+      "default": "./dist/op/activity-contracts.js"
+    },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",

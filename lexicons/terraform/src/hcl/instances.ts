@@ -24,19 +24,26 @@
  *   instance nodes of its own, `estate/module.app[0]`.
  *
  * The forms read are `var.n`, `length(var.x)`, `var.m` (a map, or a set
- * variable) for `for_each`, and `toset(var.l)`. Anything else, or any value
- * that is unknown, leaves the block as one node, which is what it was. A
- * block under an expanded call whose own expansion or whose call's expansion
- * cannot be counted gets no instances at all, since a partial list would
- * name ids the plan never prints.
+ * variable) for `for_each`, and `toset(var.l)`; since #4489 the same with
+ * `local.<x>` in place of `var.<x>`, where the local's value is a literal or
+ * one of the `var` forms in its scope, and `var.on ? 1 : 0` (any two whole
+ * numbers, and `local.on` too) over a known bool. Anything else, or any
+ * value that is unknown, leaves the block as one node, which is what it
+ * was, and the entity gets an `instanceRollup` saying why (#4489, the codes
+ * in `@intentius/chant/instance-nodes`). `each.value` and `merge()` stay
+ * rolled up by ruling. A block under an expanded call whose own expansion
+ * or whose call's expansion cannot be counted gets no instances at all,
+ * since a partial list would name ids the plan never prints.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
+import type { InstanceRollup, InstanceRollupCode } from "@intentius/chant/instance-nodes";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import {
   DATA_TYPE,
+  LOCALS_TYPE,
   MODULE_TYPE,
   RESOURCE_TYPE,
   VARIABLE_TYPE,
@@ -52,9 +59,15 @@ const MAX_INSTANCES = 256;
 
 const NAME = "[A-Za-z_][A-Za-z0-9_-]*";
 const INTERPOLATION_RE = /^\$\{\s*([\s\S]*?)\s*\}$/;
-const VAR_RE = new RegExp(`^var\\.(${NAME})$`);
-const LENGTH_RE = new RegExp(`^length\\(\\s*var\\.(${NAME})\\s*\\)$`);
-const TOSET_RE = new RegExp(`^toset\\(\\s*var\\.(${NAME})\\s*\\)$`);
+/** `var.<x>` or `local.<x>` (#4489): the kind and the name. */
+const REF = `(var|local)\\.(${NAME})`;
+const REF_RE = new RegExp(`^${REF}$`);
+const LENGTH_RE = new RegExp(`^length\\(\\s*${REF}\\s*\\)$`);
+const TOSET_RE = new RegExp(`^toset\\(\\s*${REF}\\s*\\)$`);
+/** `var.on ? 1 : 0` (#4489): a bool reference choosing between two whole numbers. */
+const COND_RE = new RegExp(`^${REF}\\s*\\?\\s*(\\d+)\\s*:\\s*(\\d+)$`);
+const EACH_RE = /\beach\.(?:value|key)\b/;
+const MERGE_RE = /\bmerge\s*\(/;
 
 /** A variable's known value, and whether it is declared as a set. */
 interface VarValue {
@@ -64,6 +77,14 @@ interface VarValue {
 
 /** Variable name to known value, for one module scope. A name that is absent is unknown. */
 type ScopeVars = Map<string, VarValue>;
+
+/** A scope's known `var` and `local` values (#4489). */
+interface Scope {
+  vars: ScopeVars;
+  locals: ScopeVars;
+}
+
+const NO_LOCALS: ScopeVars = new Map();
 
 /** An instance node an entity lists: full id, its own key and its scope, as core's `entityInstances` reads them. */
 interface ListedInstance {
@@ -96,10 +117,11 @@ function literal(value: unknown): unknown {
 }
 
 /**
- * Evaluate an argument in a scope: a literal, a bare `var.x`, `length(var.x)`
- * or `toset(var.x)`. Undefined when unknown.
+ * Evaluate an argument in a scope: a literal, a bare `var.x` or `local.x`,
+ * `length(...)` or `toset(...)` of one, or `var.on ? 1 : 0`. Undefined when
+ * unknown.
  */
-function evaluate(value: unknown, vars: ScopeVars): VarValue | undefined {
+function evaluate(value: unknown, vars: ScopeVars, locals: ScopeVars = NO_LOCALS): VarValue | undefined {
   if (typeof value !== "string" || !value.includes("${")) {
     const v = literal(value);
     return v === undefined ? undefined : { value: v, set: false };
@@ -108,37 +130,61 @@ function evaluate(value: unknown, vars: ScopeVars): VarValue | undefined {
   if (!m) return undefined;
   const inner = m[1]!;
   if (/^\d+$/.test(inner)) return { value: Number(inner), set: false };
+  const ref = (kind: string, name: string): VarValue | undefined => (kind === "var" ? vars : locals).get(name);
   let r: RegExpExecArray | null;
-  if ((r = VAR_RE.exec(inner))) return vars.get(r[1]!);
+  if ((r = REF_RE.exec(inner))) return ref(r[1]!, r[2]!);
+  if ((r = COND_RE.exec(inner))) {
+    const on = ref(r[1]!, r[2]!)?.value;
+    return typeof on === "boolean" ? { value: Number(on ? r[3] : r[4]), set: false } : undefined;
+  }
   if ((r = LENGTH_RE.exec(inner))) {
-    const v = vars.get(r[1]!)?.value;
+    const v = ref(r[1]!, r[2]!)?.value;
     if (Array.isArray(v)) return { value: v.length, set: false };
     if (typeof v === "object" && v !== null) return { value: Object.keys(v).length, set: false };
     if (typeof v === "string") return { value: [...v].length, set: false };
     return undefined;
   }
   if ((r = TOSET_RE.exec(inner))) {
-    const v = vars.get(r[1]!)?.value;
+    const v = ref(r[1]!, r[2]!)?.value;
     return Array.isArray(v) ? { value: v, set: true } : undefined;
   }
   return undefined;
 }
 
+/** The expression a `count` or `for_each` holds, as written, without the `${ }` around it. */
+function expressionText(value: unknown): string {
+  if (typeof value === "string") return (INTERPOLATION_RE.exec(value.trim())?.[1] ?? value).trim();
+  return JSON.stringify(value) ?? String(value);
+}
+
+/** Why an expansion the graph could not count stays rolled up (#4489). */
+function rollupCodeOf(value: unknown): InstanceRollupCode {
+  if (typeof value !== "string" || !value.includes("${")) return "instances-value-unknown";
+  const text = expressionText(value);
+  if (EACH_RE.test(text)) return "instances-each-value";
+  if (MERGE_RE.test(text)) return "instances-merge";
+  const m = INTERPOLATION_RE.exec(value.trim());
+  if (m && [/^\d+$/, REF_RE, LENGTH_RE, TOSET_RE, COND_RE].some((re) => re.test(m[1]!))) return "instances-value-unknown";
+  return "instances-form-unread";
+}
+
 /**
- * The instance keys a block's `count` or `for_each` gives in `vars`, as
- * Terraform prints them. `null` when the block is not expanded, undefined
- * when it is and the keys are not known.
+ * A block's expansion in a scope: its instance keys as Terraform prints them,
+ * `null` when the block is not expanded, or why the keys are not known.
  */
-export function instanceKeysIn(body: BlockBody, vars: ScopeVars): string[] | null | undefined {
+export function expansionIn(body: BlockBody, scope: Scope): { keys: string[] } | { rollup: InstanceRollup } | null {
   if (!("count" in body) && !("for_each" in body)) return null;
+  const argument = "count" in body ? "count" : "for_each";
+  const expr = body[argument];
+  const rolled = (code: InstanceRollupCode): { rollup: InstanceRollup } => ({ rollup: { code, argument, expression: expressionText(expr) } });
   const lit = literalInstanceKeys(body);
-  if (lit) return lit;
+  if (lit) return { keys: lit };
   let keys: string[] | undefined;
-  if ("count" in body) {
-    const v = evaluate(body.count, vars)?.value;
+  if (argument === "count") {
+    const v = evaluate(expr, scope.vars, scope.locals)?.value;
     if (typeof v === "number" && Number.isInteger(v) && v >= 0) keys = Array.from({ length: v }, (_, i) => `[${i}]`);
   } else {
-    const v = evaluate(body.for_each, vars);
+    const v = evaluate(expr, scope.vars, scope.locals);
     if (v && Array.isArray(v.value)) {
       if (v.set && v.value.every((s) => typeof s === "string")) {
         keys = [...new Set(v.value as string[])].sort().map((k) => `[${JSON.stringify(k)}]`);
@@ -147,7 +193,19 @@ export function instanceKeysIn(body: BlockBody, vars: ScopeVars): string[] | nul
       keys = Object.keys(v.value).sort().map((k) => `[${JSON.stringify(k)}]`);
     }
   }
-  return keys === undefined || keys.length > MAX_INSTANCES ? undefined : keys;
+  if (keys === undefined) return rolled(rollupCodeOf(expr));
+  if (keys.length > MAX_INSTANCES) return rolled("instances-over-limit");
+  return { keys };
+}
+
+/**
+ * The instance keys a block's `count` or `for_each` gives in `vars`, as
+ * Terraform prints them. `null` when the block is not expanded, undefined
+ * when it is and the keys are not known.
+ */
+export function instanceKeysIn(body: BlockBody, vars: ScopeVars, locals: ScopeVars = NO_LOCALS): string[] | null | undefined {
+  const e = expansionIn(body, { vars, locals });
+  return e === null ? null : "keys" in e ? e.keys : undefined;
 }
 
 /** A root's tfvars files, in the order a plan reads them, later over earlier. */
@@ -224,8 +282,35 @@ export async function resolveInstanceNodes(
     (declared.get(scope) ?? declared.set(scope, new Map()).get(scope)!).set(address.slice(4), e);
   }
 
+  // Local values per scope (#4489): every `locals` block's names.
+  const localBodies = new Map<string, Map<string, unknown>>();
+  for (const [key, e] of own) {
+    if (e.entityType !== LOCALS_TYPE) continue;
+    const scope = scopeOfKey(key);
+    const into = localBodies.get(scope) ?? localBodies.set(scope, new Map()).get(scope)!;
+    for (const [name, value] of Object.entries(bodyOf(e))) into.set(name, value);
+  }
+
   const tfvars = await rootTfvars(opts);
   const scopes = new Map<string, ScopeVars>();
+  const localScopes = new Map<string, ScopeVars>();
+
+  /**
+   * A scope's known local values: a literal, or a `var` form over the
+   * scope's variables. A local that reads another local is unknown.
+   */
+  const localsOf = (scope: string): ScopeVars => {
+    const cached = localScopes.get(scope);
+    if (cached) return cached;
+    const out: ScopeVars = new Map();
+    localScopes.set(scope, out);
+    for (const [name, value] of localBodies.get(scope) ?? []) {
+      const v = evaluate(value, varsOf(scope));
+      if (v !== undefined) out.set(name, v);
+    }
+    return out;
+  };
+  const scopeOf = (scope: string): Scope => ({ vars: varsOf(scope), locals: localsOf(scope) });
 
   /** A scope's known variable values, computed once, outermost first. */
   const varsOf = (scope: string): ScopeVars => {
@@ -251,7 +336,7 @@ export async function resolveInstanceNodes(
       const body = bodyOf(decl);
       const set = isSetType(body);
       if (name in callBody) {
-        const v = evaluate(callBody[name], parentVars);
+        const v = evaluate(callBody[name], parentVars, localsOf(parent));
         if (v !== undefined) vars.set(name, { value: v.value, set: set || v.set });
       } else {
         const v = literal(body.default);
@@ -261,22 +346,28 @@ export async function resolveInstanceNodes(
     return vars;
   };
 
-  /** A module call's keys, by the call entity's key: null when not expanded, undefined when not known. */
-  const callKeys = (callKey: string): string[] | null | undefined => {
+  /** A module call's expansion, by the call entity's key; a call that is not a module call is not known. */
+  const callExpansion = (callKey: string): ReturnType<typeof expansionIn> | undefined => {
     const call = entities.get(callKey) as TerraformEntity | undefined;
     if (!call || call.entityType !== MODULE_TYPE) return undefined;
-    return instanceKeysIn(bodyOf(call), varsOf(scopeOfKey(callKey)));
+    return expansionIn(bodyOf(call), scopeOf(scopeOfKey(callKey)));
   };
+  const keysOf = (e: ReturnType<typeof expansionIn> | undefined): string[] | null | undefined =>
+    e === undefined ? undefined : e === null ? null : "keys" in e ? e.keys : undefined;
 
   for (const [key, entity] of own) {
     if (entity.entityType !== RESOURCE_TYPE && entity.entityType !== DATA_TYPE && entity.entityType !== MODULE_TYPE) continue;
     const callers = callersOfKey(key);
-    const chain: Array<string[] | null | undefined> = callers.map((_, i) => callKeys(`${root}/${callers.slice(0, i + 1).join("/")}`));
-    const ownKeys = instanceKeysIn(bodyOf(entity), varsOf(scopeOfKey(key)));
+    const calls = callers.map((_, i) => callExpansion(`${root}/${callers.slice(0, i + 1).join("/")}`));
+    const chain: Array<string[] | null | undefined> = calls.map(keysOf);
+    const own = expansionIn(bodyOf(entity), scopeOf(scopeOfKey(key)));
+    const ownKeys = keysOf(own);
+    const ownRollup = own !== null && "rollup" in own ? own.rollup : undefined;
     const expandedChain = chain.some((k) => k !== null);
 
     if (!expandedChain) {
       if (ownKeys && !entity.instanceKeys) entities.set(key, { ...entity, instanceKeys: ownKeys } as TerraformEntity);
+      else if (ownRollup) entities.set(key, { ...entity, instanceRollup: ownRollup } as TerraformEntity);
       continue;
     }
 
@@ -285,14 +376,32 @@ export async function resolveInstanceNodes(
     // replace them, or nothing does.
     const { instanceKeys: _dropped, ...rest } = entity;
     if (chain.some((k) => k === undefined) || ownKeys === undefined) {
-      entities.set(key, rest as TerraformEntity);
+      // The block's own reason first, else the first call on the way that could not be counted.
+      const at = chain.findIndex((k) => k === undefined);
+      const callRollup = at === -1 ? undefined : calls[at];
+      const rollup: InstanceRollup | undefined = ownRollup
+        ?? (callRollup && "rollup" in callRollup
+          ? { ...callRollup.rollup, code: "instances-module-uncounted", call: callers.slice(0, at + 1).join(".") }
+          : undefined);
+      entities.set(key, (rollup ? { ...rest, instanceRollup: rollup } : rest) as TerraformEntity);
       continue;
     }
     let combos: string[][] = [[]];
     for (const keys of chain) combos = combos.flatMap((c) => (keys ?? [""]).map((k) => [...c, k]));
     const tails = ownKeys ?? [""];
     if (combos.length * tails.length > MAX_INSTANCES) {
-      entities.set(key, rest as TerraformEntity);
+      // Named on the block's own expansion, or on the first expanded call when the block has none.
+      const body = bodyOf(entity);
+      const at = chain.findIndex((k) => k !== null);
+      const on = ownKeys !== null || at === -1 ? body : bodyOf(entities.get(`${root}/${callers.slice(0, at + 1).join("/")}`) as TerraformEntity);
+      const argument = "count" in on ? "count" : "for_each";
+      const rollup: InstanceRollup = {
+        code: "instances-over-limit",
+        argument,
+        expression: expressionText(on[argument]),
+        ...(on === body ? {} : { call: callers.slice(0, at + 1).join(".") }),
+      };
+      entities.set(key, { ...rest, instanceRollup: rollup } as TerraformEntity);
       continue;
     }
     const address = entity.props.address;

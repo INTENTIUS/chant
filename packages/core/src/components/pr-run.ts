@@ -586,11 +586,18 @@ function roundCover(
     }
     changedKnown[name] = [...refs].sort();
   }
+  // A member whose round plan still reads only outputs of components this
+  // round plans and has not applied (a chain of imports, #4466d) cannot apply
+  // in this round: it is held again once those apply, and its own round
+  // checks its coverage. Only the members this round can apply are checked.
+  const inRound = plan.order;
+  const fromRound = (ref: string): boolean => inRound.some((c) => ref === c || ref.startsWith(`${c}.`));
+  const waits = (m: { unknownInputs?: string[] }): boolean => (m.unknownInputs?.length ?? 0) > 0 && m.unknownInputs!.every(fromRound);
   const approved = { doc: options.set.doc, members: options.set.members, ...(options.set.shapes ? { shapes: options.set.shapes } : {}) };
   return coveredRound({
     approved,
     approvedDigest: options.set.doc.digest,
-    fresh: { doc: fresh.doc, members: fresh.members, ...(fresh.shapes ? { shapes: fresh.shapes } : {}) },
+    fresh: { doc: fresh.doc, members: fresh.members.filter((m) => !waits(m)), ...(fresh.shapes ? { shapes: fresh.shapes } : {}) },
     changedKnown,
     attributes: (member) => memberAttributes(options.set.doc, fresh.doc, member, fresh.shapes?.[member] !== undefined),
   });

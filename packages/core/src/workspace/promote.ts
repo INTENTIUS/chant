@@ -34,19 +34,26 @@
  * uncommitted promotion (#4461: `--all` promotes a workspace in waves, see
  * `./promote-waves.ts`).
  *
+ * The stamp (`live-import -approve`) runs in the staging worktree's member
+ * directory, where `choudoufu init -backend=false` already installed the
+ * providers, so the member's own directory needs none (chant#4492).
+ *
  * When `live-import -approve` fails after the kind change is written, the
  * promote leaves a stamp record under `.chant/workspace-promote/` (#4485). A
  * re-run finds the member already of kind `choudoufu` and the record, and
  * retries the stamp ({@link retryPendingStamp}) rather than reporting it
- * promoted or starting the next rung. The record goes once a stamp passes.
+ * promoted or starting the next rung. The retry has no staging of its own to
+ * reuse, so it stages one first: a worktree at HEAD with the tree's changes to
+ * the member, and `choudoufu init -backend=false` in it. The record goes once
+ * a stamp passes.
  *
  * Commands run through an injectable runner, so a test never starts a binary.
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, realpathSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { contentDigest } from "../content-digest";
@@ -104,12 +111,17 @@ export const spawnRunner: PromoteRunner = (argv, cwd) =>
     child.on("close", (code) => done({ exitCode: code ?? 1, output: Buffer.concat(out).toString("utf-8") }));
   });
 
+/** `choudoufu init -backend=false` in the member's staging directory: the providers `live-import` reads each resource through (#4461). */
+function stagingInit(member: { dir: string }): CommandRun {
+  return { label: "choudoufu init", argv: ["choudoufu", "init", "-input=false", "-backend=false", "-no-color"], cwd: member.dir };
+}
+
 /** The commands the rung runs in the staging worktree. */
 export function stagingRuns(rung: Rung, member: { name: string; dir: string }, opts: { state?: string; lexicon?: string }): CommandRun[] {
   if (rung.to === "choudoufu") {
     if (!opts.state) throw new PromoteError(`promoting ${member.name} to choudoufu reads its state for the adoption report: pass --state <terraform.tfstate>`);
     return [
-      { label: "choudoufu init", argv: ["choudoufu", "init", "-input=false", "-backend=false", "-no-color"], cwd: member.dir },
+      stagingInit(member),
       { label: "choudoufu live-check", argv: ["choudoufu", "live-check"], cwd: member.dir },
       { label: "choudoufu live-import (report)", argv: ["choudoufu", "live-import", `-state=${opts.state}`, `-estate=${member.name}`], cwd: member.dir, report: true },
     ];
@@ -174,13 +186,16 @@ export function stampCommand(member: { name: string; dir: string }, state: strin
 }
 
 /**
- * Run the stamps of the `choudoufu` rung's follow-up in the tree, keep a
- * {@link PendingStamp} when one fails and drop it when they pass. The result
- * is `applied`, exit 0 when every stamp passed, else exit 1 with the failed
- * follow-up named.
+ * Run the stamps of the `choudoufu` rung's follow-up in `cwd`, the member's
+ * directory in a staging worktree whose `choudoufu init` installed the
+ * providers (chant#4492). Keep a {@link PendingStamp} in the tree when one
+ * fails and drop it when they pass. The result is `applied`, exit 0 when
+ * every stamp passed, else exit 1 with the failed follow-up named.
  */
-async function stampInTree(input: {
+async function stampMember(input: {
   root: string;
+  /** The member's directory in the staging worktree, absolute. */
+  cwd: string;
   member: { name: string; dir: string };
   state: string | undefined;
   run: PromoteRunner;
@@ -190,7 +205,7 @@ async function stampInTree(input: {
   const rung: Rung = { from: "terraform", to: "choudoufu" };
   let followUpOutput: string | undefined;
   for (const step of followUpRuns(rung, input.member, { state: input.state })) {
-    const result = await input.run(step.argv, join(input.root, step.cwd));
+    const result = await input.run(step.argv, input.cwd);
     input.ran.push({ label: step.label, exitCode: result.exitCode });
     followUpOutput = result.output;
     if (result.exitCode !== 0) {
@@ -236,10 +251,103 @@ export async function retryPendingStamp(opts: {
   const state = opts.state ? resolve(opts.state) : pending.state || undefined;
   if (!state) throw new PromoteError(`${opts.member}'s stamp is pending and its record names no state: pass --state <terraform.tfstate>`);
   say(formatInfo(`${opts.member}: kind choudoufu, but the stamp ${pending.at} failed (${pending.failed}); retrying it`));
+  const run = opts.runner ?? spawnRunner;
+  const member = { name: opts.member, dir: pending.dir };
   const ran: { label: string; exitCode: number }[] = [];
-  const stamped = await stampInTree({ root, member: { name: opts.member, dir: pending.dir }, state, run: opts.runner ?? spawnRunner, ran, say });
-  if (stamped.exitCode === 0) say(formatSuccess(`stamped "${opts.member}"; its promotion to choudoufu is complete`));
-  return { outcome: "applied", member: opts.member, from: "terraform", to: "choudoufu", ran, retriedStamp: true, ...stamped };
+  const done = { outcome: "applied", member: opts.member, from: "terraform", to: "choudoufu", ran, retriedStamp: true } as const;
+  // No staging is left from the promote that wrote the record, so stage one (chant#4492): the stamp reads
+  // each resource through its provider, and the member's own directory need not have them installed.
+  const staging = openStaging(root);
+  try {
+    const cwd = join(staging.project, member.dir);
+    mirrorMember(staging, member.dir);
+    mkdirSync(cwd, { recursive: true });
+    const init = stagingInit(member);
+    const installed = await run(init.argv, cwd);
+    ran.push({ label: init.label, exitCode: installed.exitCode });
+    if (installed.exitCode !== 0) {
+      const tail = installed.output.trimEnd().split("\n").slice(-20).join("\n");
+      say(formatError({ message: `${init.label} failed in the staging worktree, so the stamp was not retried`, hint: tail }));
+      say(formatInfo(`the stamp stays pending in ${join(PROMOTE_RECORD_DIR, `${member.name}.stamp.json`)}: run the same promote again to retry it`));
+      return { ...done, exitCode: 1, followUpFailed: init.label, failureOutput: tail };
+    }
+    const stamped = await stampMember({ root, cwd, member, state, run, ran, say });
+    if (stamped.exitCode === 0) say(formatSuccess(`stamped "${opts.member}"; its promotion to choudoufu is complete`));
+    return { ...done, ...stamped };
+  } finally {
+    staging.dispose();
+  }
+}
+
+/** A git worktree at HEAD to stage a promote in, and the project's directory inside it. */
+interface Staging {
+  repo: string;
+  head: string;
+  /** The project root relative to the repo, `/` between parts; empty when they are one. */
+  projectRel: string;
+  worktree: string;
+  /** The project root inside the worktree. */
+  project: string;
+  dispose(): void;
+}
+
+function openStaging(root: string): Staging {
+  let repo: string;
+  let head: string;
+  try {
+    repo = git(root, ["rev-parse", "--show-toplevel"]).trim();
+    head = git(root, ["rev-parse", "HEAD"]).trim();
+  } catch {
+    throw new PromoteError("chant workspace promote stages its change in a git worktree, so the project must be in a git repository with at least one commit");
+  }
+  const projectRel = relative(repo, root).split(sep).join("/");
+  const holder = mkdtempSync(join(tmpdir(), "chant-promote-"));
+  const worktree = join(holder, "wt");
+  const dispose = (): void => {
+    try {
+      git(repo, ["worktree", "remove", "--force", worktree]);
+    } catch {
+      // Fall through to the directory removal and a prune.
+    }
+    rmSync(holder, { recursive: true, force: true });
+    try {
+      git(repo, ["worktree", "prune"]);
+    } catch {
+      // Nothing to prune.
+    }
+  };
+  try {
+    git(repo, ["worktree", "add", "-q", "--detach", worktree, head]);
+  } catch (err) {
+    dispose();
+    throw err;
+  }
+  return { repo, head, projectRel, worktree, project: projectRel ? join(worktree, projectRel) : worktree, dispose };
+}
+
+/**
+ * Bring the tree's uncommitted changes to the member's directory into the
+ * staging worktree: a promote applied but not yet committed (the lock file
+ * `init` wrote, say) is what the stamp should read. Ignored files stay out.
+ */
+function mirrorMember(staging: Staging, dir: string): void {
+  const path = [staging.projectRel, dir].filter(Boolean).join("/") || ".";
+  const diff = git(staging.repo, ["diff", "--binary", "HEAD", "--", path]);
+  if (diff.trim()) {
+    const patchDir = mkdtempSync(join(tmpdir(), "chant-promote-patch-"));
+    try {
+      const file = join(patchDir, "member.patch");
+      writeFileSync(file, diff);
+      git(staging.worktree, ["apply", "--binary", "--whitespace=nowarn", file]);
+    } finally {
+      rmSync(patchDir, { recursive: true, force: true });
+    }
+  }
+  for (const f of git(staging.repo, ["ls-files", "--others", "--exclude-standard", "-z", "--", path]).split("\0").filter(Boolean)) {
+    const to = join(staging.worktree, f);
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(join(staging.repo, f), to);
+  }
 }
 
 function git(cwd: string, args: string[]): string {
@@ -332,14 +440,13 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
   const member = { name: found.name, dir: found.dir === "." ? "" : found.dir };
   // The staging runs in a worktree, so a relative --state would resolve there.
   const state = opts.state ? resolve(opts.state) : undefined;
-  const staging = stagingRuns(rung, member, { ...opts, state });
+  const steps = stagingRuns(rung, member, { ...opts, state });
   const emitJson = opts.json && !opts.nested;
 
   let repo: string;
-  let head: string;
   try {
     repo = git(root, ["rev-parse", "--show-toplevel"]).trim();
-    head = git(root, ["rev-parse", "HEAD"]).trim();
+    git(root, ["rev-parse", "HEAD"]);
   } catch {
     throw new PromoteError("chant workspace promote stages its change in a git worktree, so the project must be in a git repository with at least one commit");
   }
@@ -355,29 +462,13 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     throw new PromoteError(`${found.name} has uncommitted changes (${dirty.slice(0, 5).map((l) => l.slice(3)).join(", ")}). Commit them: promote stages from HEAD and applies its patch to the tree.`);
   }
 
-  const holder = mkdtempSync(join(tmpdir(), "chant-promote-"));
-  const worktree = join(holder, "wt");
-  const dispose = (): void => {
-    try {
-      git(repo, ["worktree", "remove", "--force", worktree]);
-    } catch {
-      // Fall through to the directory removal and a prune.
-    }
-    rmSync(holder, { recursive: true, force: true });
-    try {
-      git(repo, ["worktree", "prune"]);
-    } catch {
-      // Nothing to prune.
-    }
-  };
-
+  const staging = openStaging(root);
+  const { worktree, project } = staging;
   try {
-    git(repo, ["worktree", "add", "-q", "--detach", worktree, head]);
-    const project = projectRel ? join(worktree, projectRel) : worktree;
     const ran: { label: string; exitCode: number }[] = [];
     let adoption: AdoptionReport | undefined;
     let reportOutput: string | undefined;
-    for (const step of staging) {
+    for (const step of steps) {
       const cwd = join(project, step.cwd);
       mkdirSync(cwd, { recursive: true });
       const result = await run(step.argv, cwd);
@@ -479,7 +570,8 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     writeFileSync(treeDecl, setMemberKind(readFileSync(treeDecl, "utf-8"), declFile, found.name, rung.to));
     let followUpOutput: string | undefined;
     if (rung.to === "choudoufu") {
-      const stamped = await stampInTree({ root, member, state, run, ran, say });
+      // In the staging's member directory, where `choudoufu init` installed the providers (chant#4492).
+      const stamped = await stampMember({ root, cwd: join(project, member.dir), member, state, run, ran, say });
       if (stamped.exitCode !== 0) {
         return report("applied", 1, { followUpFailed: stamped.followUpFailed, failureOutput: stamped.failureOutput, followUpOutput: stamped.followUpOutput });
       }
@@ -488,7 +580,7 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     say(formatSuccess(`applied the approved promotion of "${found.name}" to ${rung.to} (${digest}). Review and commit it.`));
     return report("applied", 0, followUpOutput === undefined ? {} : { followUpOutput });
   } finally {
-    dispose();
+    staging.dispose();
   }
 }
 

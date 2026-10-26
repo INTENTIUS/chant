@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { dirname, join } from "node:path";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { GraphIR } from "@intentius/chant/graph-ir";
 import { runGraph } from "@intentius/chant/cli/handlers/graph";
@@ -58,15 +58,33 @@ describe("pulumi member graph block (#3179)", () => {
     expect(ir.meta?.pulumiMember).toEqual({ export: "stack-export.json", objects: 5, exported: true });
   });
 
-  test("dependencies and parent are edges; a dependency outside the export, or the root stack, is not", async () => {
+  const recordedEdges = [
+    "aws:iam/rolePolicy:RolePolicy::webReadsAssets -> aws:iam/role:Role::web via dependencies",
+    "aws:iam/rolePolicy:RolePolicy::webReadsAssets -> aws:s3/bucket:Bucket::assets via dependencies",
+    "my:mod:Web$aws:lambda/function:Function::handler -> aws:iam/role:Role::web via dependencies",
+    "my:mod:Web$aws:lambda/function:Function::handler -> my:mod:Web::web-app via parent",
+  ];
+  const edgesOf = (ir: GraphIR) => ir.edges.map((e) => `${e.from.slice(6)} -> ${e.to.slice(6)} via ${e.viaAttr}`).sort();
+
+  test("dependencies and parent are edges; the root stack is not", async () => {
     const { ir } = await graphOf(member);
-    const edges = ir.edges.map((e) => `${e.from.slice(6)} -> ${e.to.slice(6)} via ${e.viaAttr}`).sort();
-    expect(edges).toEqual([
-      "aws:iam/rolePolicy:RolePolicy::webReadsAssets -> aws:iam/role:Role::web via dependencies",
-      "aws:iam/rolePolicy:RolePolicy::webReadsAssets -> aws:s3/bucket:Bucket::assets via dependencies",
-      "my:mod:Web$aws:lambda/function:Function::handler -> aws:iam/role:Role::web via dependencies",
-      "my:mod:Web$aws:lambda/function:Function::handler -> my:mod:Web::web-app via parent",
-    ]);
+    expect(edgesOf(ir)).toEqual(recordedEdges);
+  });
+
+  test("a dependency outside the export is not an edge", async () => {
+    // A real export never names a dependency it does not hold, so the case is
+    // built from a copy of the recorded one (#4507).
+    const doc = JSON.parse(await readFile(join(member, "stack-export.json"), "utf-8")) as {
+      deployment: { resources: { urn: string; dependencies?: string[] }[] };
+    };
+    const policy = doc.deployment.resources.find((r) => r.urn.endsWith("::webReadsAssets"))!;
+    policy.dependencies = [...(policy.dependencies ?? []), "urn:pulumi:dev::app::aws:s3/bucket:Bucket::elsewhere"];
+    const dir = await mkdtemp(join(tmpdir(), "chant-pulumi-dangling-"));
+    scratch.push(dir);
+    await writeFile(join(dir, "stack-export.json"), JSON.stringify(doc));
+    const { ir, err, exit } = await graphOf(dir);
+    expect(exit, err.join("\n")).toBe(0);
+    expect(edgesOf(ir)).toEqual(recordedEdges);
   });
 
   test("inputs are not copied into the graph", async () => {

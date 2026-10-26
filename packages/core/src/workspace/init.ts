@@ -8,8 +8,11 @@
  *
  * - each outermost chant project (a chant.config.ts or .json) becomes a
  *   `chant` member, and the root's own config makes a root member `"."`;
- * - each nested declaration becomes a `workspace` member, unless it sits
- *   under an examples-style directory, where it is an example like any other;
+ * - each nested declaration becomes a `workspace` member; one under an
+ *   examples-style directory does too, with a `because` saying where it sits
+ *   (#4499), and the example group's glob leaves its directory out, unless
+ *   it sits inside another package or project, where it stays an example
+ *   since only the root member contains other members;
  * - each other npm package, from the npm workspaces or any other
  *   package.json, becomes an `other` member with a `because`;
  * - projects under an `examples`, `test` or `fixtures`-style directory become
@@ -343,8 +346,24 @@ function exampleGlobs(tree: WorkspaceTree, matches: string[], memberDirs: string
     if (ms.length * 2 >= subdirs) wide.push(parent);
     else explicit.push(...ms);
   }
-  const safe = (glob: string): boolean =>
-    expandGlob(tree, glob).every((d) => !memberDirs.some((m) => m !== "" && isInside(m, d)) && (matches.includes(d) || !holdsChantProject(tree, d)));
+  const blocked = (d: string): boolean => memberDirs.some((m) => m !== "" && isInside(m, d)) || (!matches.includes(d) && holdsChantProject(tree, d));
+  const safe = (glob: string): boolean => expandGlob(tree, glob).every((d) => !blocked(d));
+  /**
+   * `<prefix>/*` when it is safe, else `<prefix>/!(a|b)` leaving out the
+   * directories that block it (a workspace member under an examples
+   * directory, #4499), when that is safe and still covers every match the
+   * prefix's parents hold. Undefined when neither works.
+   */
+  const lastSegment = (prefix: string, parents: readonly string[]): string | undefined => {
+    const all = `${prefix}/*`;
+    if (safe(all)) return all;
+    const names = [...new Set(expandGlob(tree, all).filter(blocked).map((d) => d.slice(d.lastIndexOf("/") + 1)))].sort();
+    if (names.length === 0 || names.some((n) => /[*?[\]{}()!+@|]/.test(n))) return undefined;
+    const glob = `${prefix}/!(${names.join("|")})`;
+    if (!safe(glob)) return undefined;
+    const reached = new Set(expandGlob(tree, glob));
+    return matches.every((m) => !parents.includes(dirOf(m)) || reached.has(m)) ? glob : undefined;
+  };
 
   const globs: string[] = [];
   const left = new Set(wide);
@@ -359,11 +378,17 @@ function exampleGlobs(tree: WorkspaceTree, matches: string[], memberDirs: string
   }
   for (const [pattern, parents] of [...candidates].sort((a, b) => b[1].length - a[1].length)) {
     const open = parents.filter((p) => left.has(p));
-    if (open.length < 2 || !safe(`${pattern}/*`)) continue;
-    globs.push(`${pattern}/*`);
+    if (open.length < 2) continue;
+    const glob = lastSegment(pattern, open);
+    if (glob === undefined) continue;
+    globs.push(glob);
     for (const p of open) left.delete(p);
   }
-  for (const p of left) globs.push(`${p}/*`);
+  for (const p of left) {
+    const glob = lastSegment(p, [p]);
+    if (glob !== undefined) globs.push(glob);
+    else explicit.push(...(byParent.get(p) ?? []));
+  }
   // Explicit matches a glob already covers need no entry of their own.
   const covered = new Set(globs.flatMap((g) => expandGlob(tree, g)));
   for (const m of explicit) if (!covered.has(m)) globs.push(m);
@@ -423,9 +448,14 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
   const declDirs = dirsWith((n) => (DECLARATION_FILES as readonly string[]).includes(n));
   const pkgDirs = dirsWith((n) => n === "package.json");
 
-  // A declaration under an examples-style directory is an example (a lexicon
-  // can ship a whole workspace as one, chant#4468), so its group covers it.
-  const nested = outermost([...declDirs].filter((d) => d !== "" && !exampleMatch(d)));
+  // A declaration under an examples-style directory is a `workspace` member
+  // too (#4499, ruled), with a note saying where it sits. Plain projects
+  // there stay examples. Only the root member contains other members, so one
+  // that sits inside another package or project (a lexicon shipping a whole
+  // workspace as an example, chant#4468) stays an example of its group.
+  const insideAnother = (d: string): boolean =>
+    [...pkgDirs, ...configDirs, ...declDirs].some((o) => o !== "" && o !== d && isInside(d, o));
+  const nested = outermost([...declDirs].filter((d) => d !== "" && !(exampleMatch(d) && insideAnother(d))));
   const notNested = (d: string) => !nested.some((n) => isInside(d, n));
 
   const projects = outermost([...configDirs].filter((d) => d !== "" && notNested(d)));
@@ -479,7 +509,16 @@ export function proposeWorkspace(root: string, options: { name?: string } = {}):
   const taken = new Set<string>([name]);
   const entries: (ProposedEntry & { sort: string })[] = [];
   if (configDirs.has("")) entries.push({ sort: "", name: uniqueName(memberName(tree, "", name), taken), dir: ".", kind: "chant" });
-  for (const d of nested) entries.push({ sort: d, name: uniqueName(memberName(tree, d, name), taken), dir: d, kind: "workspace" });
+  for (const d of nested) {
+    const ex = exampleMatch(d);
+    entries.push({
+      sort: d,
+      name: uniqueName(memberName(tree, d, name), taken),
+      dir: d,
+      kind: "workspace",
+      ...(ex ? { because: `a workspace of its own under ${ex.parent}, an examples directory; a workspace is a member, never an example` } : {}),
+    });
+  }
   for (const d of chantMembers) entries.push({ sort: d, name: uniqueName(memberName(tree, d, name), taken), dir: d, kind: "chant" });
   for (const d of packages) {
     entries.push({

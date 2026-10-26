@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { ActivityFn, ActivityProfile } from "../../op/activity-registry";
-import { runOpLocally } from "../../op/local-executor";
+import { OpRunFailure, runOpLocally } from "../../op/local-executor";
 import type { OpConfig } from "../../op/types";
 import { clearMemberLedgerCache } from "../../lifecycle/member-ledger";
 import { readLedgerTable } from "../../lifecycle/ledger-read";
@@ -101,5 +101,29 @@ describe("chant ledger runs: root_member (#4482)", () => {
     const doc = await readLedgerTable("runs", () => queryLedgers(root), {});
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.rows.map((r) => [r.op, r.root_member])).toEqual([["plain", null]]);
+  });
+
+  it("leaves root_member null, meaning unknown, when Init fails, with the declared root key in labels (#4508)", async () => {
+    const root = workspace();
+    const activities = new Map<string, ActivityFn>([
+      ["terraformInit", async () => {
+        throw new Error("terraform init: backend unreachable");
+      }],
+      ["terraformPlan", async () => ({ changed: true })],
+      ["terraformApply", async () => ({ applied: true })],
+    ]);
+    // A failed run throws OpRunFailure, carrying the result; the ledger row is written first.
+    const failure = await runOpLocally(config, activities, PROFILES, undefined, { ledger: { cwd: join(root, "app") } }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(OpRunFailure);
+    expect((failure as OpRunFailure).result.status).not.toBe("ok");
+
+    const doc = await readLedgerTable("runs", () => queryLedgers(root), {});
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.rows).toHaveLength(1);
+    expect(doc.rows[0]).toMatchObject({ member: "app", op: "aws-apply", root_member: null, labels: { Apply: "true", TerraformRoot: "aws" } });
+    expect(doc.rows[0].outcomes).not.toHaveProperty("TerraformRootPath");
   });
 });

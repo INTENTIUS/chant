@@ -376,7 +376,7 @@ release bump="patch" *args:
     # Refuse a cut whose floors name a version that is neither released nor
     # $next (#4480): set NEXT_RELEASE on main first with
     # `npx tsx scripts/release-floors.ts --set <version>`.
-    npx tsx scripts/release-floors.ts --rev "$sha" --release "$next"
+    npx tsx scripts/release-floors.ts --npm --rev "$sha" --release "$next"
     echo "Release $next from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
     yes=()
     [ "$RELEASE_DRY_RUN" = 1 ] || yes=(--yes)
@@ -394,8 +394,10 @@ release bump="patch" *args:
     echo "Released $next: publish.yml runs on release/npm/$next"
 
 # Check that every contract floor names a released version or a local build
-# stamp, or set the next release's number (#4480)
-# (just release-floors [--npm] [--release <v>] [--rev <sha>] | just release-floors --set <v>)
+# stamp, or set the next release's number (#4480), or after <v> is published
+# turn its floors into literals and move NEXT_RELEASE on (#4501)
+# (just release-floors [--npm] [--release <v>] [--rev <sha>] | just release-floors --set <v>
+#  | just release-floors --freeze <v> [--next <n>])
 release-floors *args:
     npx tsx scripts/release-floors.ts {{args}}
 

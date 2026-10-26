@@ -1,53 +1,746 @@
 {
-  "version": 3,
-  "deployment": {
-    "manifest": { "time": "2026-10-20T12:00:00Z", "magic": "x", "version": "v3.100.0" },
-    "resources": [
-      { "urn": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev", "custom": false, "type": "pulumi:pulumi:Stack" },
-      { "urn": "urn:pulumi:dev::app::pulumi:providers:aws::default", "custom": true, "id": "p1", "type": "pulumi:providers:aws" },
-      {
-        "urn": "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets",
-        "custom": true,
-        "id": "assets-1",
-        "type": "aws:s3/bucket:Bucket",
-        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
-        "provider": "urn:pulumi:dev::app::pulumi:providers:aws::default::p1",
-        "inputs": { "acl": "private" }
-      },
-      {
-        "urn": "urn:pulumi:dev::app::aws:iam/role:Role::web",
-        "custom": true,
-        "id": "web-1",
-        "type": "aws:iam/role:Role",
-        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev"
-      },
-      {
-        "urn": "urn:pulumi:dev::app::aws:iam/rolePolicy:RolePolicy::webReadsAssets",
-        "custom": true,
-        "id": "web-1:read",
-        "type": "aws:iam/rolePolicy:RolePolicy",
-        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
-        "dependencies": [
-          "urn:pulumi:dev::app::aws:iam/role:Role::web",
-          "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets",
-          "urn:pulumi:dev::app::aws:s3/bucket:Bucket::elsewhere"
+    "version": 3,
+    "deployment": {
+        "manifest": {
+            "time": "2026-10-26T14:59:20.649122-06:00",
+            "magic": "9a15a292a881dbeb77a86955b3246fa29aae8b7d695358eee7c9e474a33b8927",
+            "version": "v3.272.0"
+        },
+        "secrets_providers": {
+            "type": "passphrase",
+            "state": {
+                "salt": "v1:Y/YWurRa9Mo=:v1:cjCIZyL6ibZHCdGz:txjo2VYqashu2EUZuQqkL5yY43jnvw=="
+            }
+        },
+        "resources": [
+            {
+                "urn": "urn:pulumi:dev::app::pulumi:providers:aws::default_7_51_1",
+                "custom": true,
+                "id": "6388aa09-4e08-5485-b3b8-914f3c0a35b0",
+                "type": "pulumi:providers:aws",
+                "inputs": {
+                    "__internal": {},
+                    "accessKey": {
+                        "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+                        "ciphertext": "v1:ru41rI+xKGfbCre0:anNKFB45ulF7cgzEn30kF0u0cpD0Pw=="
+                    },
+                    "endpoints": "[{\"iam\":\"http://localhost:4566\",\"lambda\":\"http://localhost:4566\",\"s3\":\"http://localhost:4566\",\"sts\":\"http://localhost:4566\"}]",
+                    "region": "us-east-1",
+                    "s3UsePathStyle": "true",
+                    "secretKey": {
+                        "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+                        "ciphertext": "v1:5KO+8swftpiyZDur:+YL1EYLsl+FICh0fY7Tr0rZmMrd1mg=="
+                    },
+                    "skipCredentialsValidation": "true",
+                    "skipMetadataApiCheck": "true",
+                    "skipRegionValidation": "true",
+                    "skipRequestingAccountId": "true",
+                    "version": "7.51.1"
+                },
+                "outputs": {
+                    "accessKey": {
+                        "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+                        "ciphertext": "v1:KBk2Ct+7mxEMYdYh:Ve6zALFhT+ijR7jhCDXPTGNkqcYc+w=="
+                    },
+                    "endpoints": "[{\"iam\":\"http://localhost:4566\",\"lambda\":\"http://localhost:4566\",\"s3\":\"http://localhost:4566\",\"sts\":\"http://localhost:4566\"}]",
+                    "region": "us-east-1",
+                    "s3UsePathStyle": "true",
+                    "secretKey": {
+                        "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+                        "ciphertext": "v1:f5I30FNbAgE95/3l:4lthWhHvHVGm5GG8A0qLyTLNSKFmeA=="
+                    },
+                    "skipCredentialsValidation": "true",
+                    "skipMetadataApiCheck": "true",
+                    "skipRegionValidation": "true",
+                    "skipRequestingAccountId": "true",
+                    "version": "7.51.1"
+                },
+                "created": "2026-10-26T20:59:15.28568Z",
+                "modified": "2026-10-26T20:59:15.28568Z"
+            },
+            {
+                "urn": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+                "custom": false,
+                "type": "pulumi:pulumi:Stack",
+                "created": "2026-10-26T20:59:14.58872Z",
+                "modified": "2026-10-26T20:59:14.58872Z",
+                "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#38,19",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#38,19"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#601,38"
+                    }
+                ]
+            },
+            {
+                "urn": "urn:pulumi:dev::app::aws:iam/role:Role::web",
+                "custom": true,
+                "id": "rec-r2-4507-web",
+                "type": "aws:iam/role:Role",
+                "inputs": {
+                    "__defaults": [
+                        "maxSessionDuration",
+                        "path"
+                    ],
+                    "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}]}",
+                    "maxSessionDuration": 3600,
+                    "name": "rec-r2-4507-web",
+                    "path": "/",
+                    "tags": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:iam/role:Role::web"
+                    },
+                    "tagsAll": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:iam/role:Role::web"
+                    }
+                },
+                "outputs": {
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "inlinePolicies": {
+                                    "arr": {}
+                                },
+                                "managedPolicyArns": {
+                                    "arr": {}
+                                },
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                }
+                            },
+                            "renamed": {
+                                "inlinePolicies": "inline_policy"
+                            }
+                        }
+                    },
+                    "arn": "arn:aws:iam::000000000000:role/rec-r2-4507-web",
+                    "assumeRolePolicy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+                    "createDate": "2026-10-26T20:59:15Z",
+                    "description": "",
+                    "forceDetachPolicies": false,
+                    "id": "rec-r2-4507-web",
+                    "inlinePolicies": [],
+                    "managedPolicyArns": [],
+                    "maxSessionDuration": 3600,
+                    "name": "rec-r2-4507-web",
+                    "namePrefix": "",
+                    "path": "/",
+                    "permissionsBoundary": "",
+                    "tags": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:iam/role:Role::web"
+                    },
+                    "tagsAll": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:iam/role:Role::web"
+                    },
+                    "uniqueId": "AROAF2C825SNJVKCJN88"
+                },
+                "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+                "provider": "urn:pulumi:dev::app::pulumi:providers:aws::default_7_51_1::6388aa09-4e08-5485-b3b8-914f3c0a35b0",
+                "propertyDependencies": {
+                    "assumeRolePolicy": [],
+                    "name": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T20:59:15.474995Z",
+                "modified": "2026-10-26T20:59:15.474995Z",
+                "sourcePosition": "project:///index.js#13,13",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.js#13,13"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            {
+                "urn": "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets",
+                "custom": true,
+                "id": "rec-r2-4507-assets",
+                "type": "aws:s3/bucket:Bucket",
+                "inputs": {
+                    "__defaults": [],
+                    "bucket": "rec-r2-4507-assets",
+                    "region": "us-east-1",
+                    "tags": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:s3/bucket:Bucket::assets"
+                    },
+                    "tagsAll": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:s3/bucket:Bucket::assets"
+                    }
+                },
+                "outputs": {
+                    "__meta": "{\"e2bfb730-ecaa-11e6-8f88-34363bc7c4c0\":{\"create\":1200000000000,\"delete\":3600000000000,\"read\":1200000000000,\"update\":1200000000000}}",
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "corsRules": {
+                                    "arr": {}
+                                },
+                                "grants": {
+                                    "arr": {
+                                        "el": {
+                                            "0": {
+                                                "obj": {
+                                                    "ps": {
+                                                        "permissions": {
+                                                            "arr": {}
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "lifecycleRules": {
+                                    "arr": {}
+                                },
+                                "logging": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "objectLockConfiguration": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "replicationConfiguration": {
+                                    "plu": {
+                                        "i": {
+                                            "obj": {}
+                                        }
+                                    }
+                                },
+                                "serverSideEncryptionConfiguration": {
+                                    "plu": {
+                                        "i": {
+                                            "obj": {
+                                                "ps": {
+                                                    "rule": {
+                                                        "plu": {
+                                                            "i": {
+                                                                "obj": {
+                                                                    "ps": {
+                                                                        "applyServerSideEncryptionByDefault": {
+                                                                            "plu": {
+                                                                                "i": {
+                                                                                    "obj": {}
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                },
+                                "versioning": {
+                                    "plu": {
+                                        "i": {
+                                            "obj": {}
+                                        }
+                                    }
+                                },
+                                "website": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                }
+                            },
+                            "renamed": {
+                                "corsRules": "cors_rule",
+                                "grants": "grant",
+                                "lifecycleRules": "lifecycle_rule"
+                            }
+                        }
+                    },
+                    "accelerationStatus": "",
+                    "acl": null,
+                    "arn": "arn:aws:s3:::rec-r2-4507-assets",
+                    "bucket": "rec-r2-4507-assets",
+                    "bucketDomainName": "rec-r2-4507-assets.s3.amazonaws.com",
+                    "bucketNamespace": "global",
+                    "bucketPrefix": "",
+                    "bucketRegion": "us-east-1",
+                    "bucketRegionalDomainName": "rec-r2-4507-assets.s3.us-east-1.amazonaws.com",
+                    "corsRules": [],
+                    "forceDestroy": false,
+                    "grants": [
+                        {
+                            "id": "000000000000",
+                            "permissions": [
+                                "FULL_CONTROL"
+                            ],
+                            "type": "CanonicalUser",
+                            "uri": ""
+                        }
+                    ],
+                    "hostedZoneId": "Z3AQBSTGFYJSTF",
+                    "id": "rec-r2-4507-assets",
+                    "lifecycleRules": [],
+                    "logging": null,
+                    "objectLockConfiguration": null,
+                    "objectLockEnabled": false,
+                    "policy": "",
+                    "region": "us-east-1",
+                    "replicationConfiguration": {
+                        "role": null,
+                        "rules": null
+                    },
+                    "requestPayer": "BucketOwner",
+                    "serverSideEncryptionConfiguration": {
+                        "rule": {
+                            "applyServerSideEncryptionByDefault": {
+                                "kmsMasterKeyId": "",
+                                "sseAlgorithm": "AES256"
+                            },
+                            "bucketKeyEnabled": false
+                        }
+                    },
+                    "tags": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:s3/bucket:Bucket::assets"
+                    },
+                    "tagsAll": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "aws:s3/bucket:Bucket::assets"
+                    },
+                    "versioning": {
+                        "enabled": false,
+                        "mfaDelete": false
+                    },
+                    "website": null,
+                    "websiteDomain": null,
+                    "websiteEndpoint": null
+                },
+                "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+                "provider": "urn:pulumi:dev::app::pulumi:providers:aws::default_7_51_1::6388aa09-4e08-5485-b3b8-914f3c0a35b0",
+                "propertyDependencies": {
+                    "bucket": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T20:59:15.496834Z",
+                "modified": "2026-10-26T20:59:15.496834Z",
+                "sourcePosition": "project:///index.js#11,16",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.js#11,16"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            {
+                "urn": "urn:pulumi:dev::app::my:mod:Web::web-app",
+                "custom": false,
+                "type": "my:mod:Web",
+                "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+                "created": "2026-10-26T20:59:15.270837Z",
+                "modified": "2026-10-26T20:59:15.270837Z",
+                "sourcePosition": "project:///index.js#47,1",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.js#47,1"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            {
+                "urn": "urn:pulumi:dev::app::aws:iam/rolePolicy:RolePolicy::webReadsAssets",
+                "custom": true,
+                "id": "rec-r2-4507-web:webReadsAssets-d6b1af3",
+                "type": "aws:iam/rolePolicy:RolePolicy",
+                "inputs": {
+                    "__defaults": [
+                        "name"
+                    ],
+                    "name": "webReadsAssets-d6b1af3",
+                    "policy": {
+                        "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+                        "ciphertext": "v1:WEYdUuZizMuzg3bz:DVXPVCtOJ9QIRbVQIU0GlbKE2bR4ORcCa9IyW4Ji5yriE/FEhQvpxMlYkmvddZPR3ZnrEF5o+a8VDCPK3bhzhbun3wOPdsDMf031qnn9FWG7X/mAjgMJg112tXMtrdvScqvu5xF5Dqbh9eMQYttXKrsqiL4rCaGKdSu10c/++3NatFaz3z8VCzpzzYj8V5SO0KpiKd9oIl653Bx5fE3ex4XOdIdCZ0O8"
+                    },
+                    "role": "rec-r2-4507-web"
+                },
+                "outputs": {
+                    "__pulumi_raw_state_delta": {
+                        "obj": {}
+                    },
+                    "id": "rec-r2-4507-web:webReadsAssets-d6b1af3",
+                    "name": "webReadsAssets-d6b1af3",
+                    "namePrefix": "",
+                    "policy": {
+                        "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+                        "ciphertext": "v1:DNVmCQMlFo6iBXGM:m/hJ74bi1qMU4rFWJLbz6A3wIWS3PHJTunhEW0tlUrYW6WpI79K1554Br0RyTsTu34N6xV2LsMAR7+2M58Wnrcgv4IUf348sg1kRHuM0jmqqBW8fTUV5vGoxGqEmdGsn1J4vaFffxZBTmrmKbecy+Qj512kLlnjl+5NkGEMMrDZqMd+Lz7meLH2yd0XWTmltgs1Ezgr1DsauOQm3pF5W9mwY1eCTpEfY"
+                    },
+                    "role": "rec-r2-4507-web"
+                },
+                "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev",
+                "dependencies": [
+                    "urn:pulumi:dev::app::aws:iam/role:Role::web",
+                    "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets"
+                ],
+                "provider": "urn:pulumi:dev::app::pulumi:providers:aws::default_7_51_1::6388aa09-4e08-5485-b3b8-914f3c0a35b0",
+                "propertyDependencies": {
+                    "policy": [
+                        "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets"
+                    ],
+                    "role": [
+                        "urn:pulumi:dev::app::aws:iam/role:Role::web"
+                    ]
+                },
+                "created": "2026-10-26T20:59:15.506535Z",
+                "modified": "2026-10-26T20:59:15.506535Z",
+                "sourcePosition": "project:///index.js#23,1",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.js#23,1"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            {
+                "urn": "urn:pulumi:dev::app::my:mod:Web$aws:lambda/function:Function::handler",
+                "custom": true,
+                "id": "rec-r2-4507-handler",
+                "type": "aws:lambda/function:Function",
+                "inputs": {
+                    "__defaults": [
+                        "memorySize",
+                        "packageType",
+                        "reservedConcurrentExecutions",
+                        "timeout"
+                    ],
+                    "code": {
+                        "4dabf18193072939515e22adb298388d": "0def7320c3a5731c473e5ecbe6d01bc7",
+                        "assets": {
+                            "index.js": {
+                                "4dabf18193072939515e22adb298388d": "c44067f5952c0a294b673a41bacd8c17",
+                                "hash": "60af0a5433823fbb498c68dfa28be56f2ae0f9c4dae6105bfa044d8f79b1639e",
+                                "text": "exports.handler = async () => ({ statusCode: 200 });\n"
+                            }
+                        },
+                        "hash": "450e8d7b1bbf5bfb4432bb64ca53d8e45884d4279ee403a35a2e5e200f0bba3d"
+                    },
+                    "handler": "index.handler",
+                    "memorySize": 128,
+                    "name": "rec-r2-4507-handler",
+                    "packageType": "Zip",
+                    "region": "us-east-1",
+                    "reservedConcurrentExecutions": -1,
+                    "role": "arn:aws:iam::000000000000:role/rec-r2-4507-web",
+                    "runtime": "nodejs20.x",
+                    "tags": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "my:mod:Web$aws:lambda/function:Function::handler"
+                    },
+                    "tagsAll": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "my:mod:Web$aws:lambda/function:Function::handler"
+                    },
+                    "timeout": 3
+                },
+                "outputs": {
+                    "__meta": "{\"e2bfb730-ecaa-11e6-8f88-34363bc7c4c0\":{\"create\":600000000000,\"delete\":600000000000,\"update\":600000000000}}",
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "architectures": {
+                                    "arr": {}
+                                },
+                                "capacityProviderConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "code": {
+                                    "asset": {
+                                        "archiveFormat": 3,
+                                        "hashField": "source_code_hash",
+                                        "kind": 2
+                                    }
+                                },
+                                "deadLetterConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "durableConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "environment": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "ephemeralStorage": {
+                                    "plu": {
+                                        "i": {
+                                            "obj": {}
+                                        }
+                                    }
+                                },
+                                "fileSystemConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "imageConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "loggingConfig": {
+                                    "plu": {
+                                        "i": {
+                                            "obj": {}
+                                        }
+                                    }
+                                },
+                                "snapStart": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                },
+                                "tenancyConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                },
+                                "tracingConfig": {
+                                    "plu": {
+                                        "i": {
+                                            "obj": {}
+                                        }
+                                    }
+                                },
+                                "vpcConfig": {
+                                    "plu": {
+                                        "i": {}
+                                    }
+                                }
+                            },
+                            "renamed": {
+                                "code": "filename",
+                                "name": "function_name"
+                            }
+                        }
+                    },
+                    "architectures": [
+                        "x86_64"
+                    ],
+                    "arn": "arn:aws:lambda:us-east-1:000000000000:function:rec-r2-4507-handler",
+                    "capacityProviderConfig": null,
+                    "code": {
+                        "4dabf18193072939515e22adb298388d": "0def7320c3a5731c473e5ecbe6d01bc7",
+                        "assets": {
+                            "index.js": {
+                                "4dabf18193072939515e22adb298388d": "c44067f5952c0a294b673a41bacd8c17",
+                                "hash": "60af0a5433823fbb498c68dfa28be56f2ae0f9c4dae6105bfa044d8f79b1639e",
+                                "text": "exports.handler = async () => ({ statusCode: 200 });\n"
+                            }
+                        },
+                        "hash": "450e8d7b1bbf5bfb4432bb64ca53d8e45884d4279ee403a35a2e5e200f0bba3d"
+                    },
+                    "codeSha256": "r4jMtfhc6oYRr5pen/We0jtaNDiwXuGJwvp/Tt4cYDA=",
+                    "codeSigningConfigArn": "",
+                    "deadLetterConfig": null,
+                    "description": "",
+                    "durableConfig": null,
+                    "environment": null,
+                    "ephemeralStorage": {
+                        "size": 512
+                    },
+                    "fileSystemConfig": null,
+                    "handler": "index.handler",
+                    "id": "rec-r2-4507-handler",
+                    "imageConfig": null,
+                    "imageUri": "",
+                    "invokeArn": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:rec-r2-4507-handler/invocations",
+                    "kmsKeyArn": "",
+                    "lastModified": "2026-10-26T20:59:15.483+0000",
+                    "layers": null,
+                    "loggingConfig": {
+                        "applicationLogLevel": "",
+                        "logFormat": "Text",
+                        "logGroup": "/aws/lambda/rec-r2-4507-handler",
+                        "systemLogLevel": ""
+                    },
+                    "memorySize": 128,
+                    "name": "rec-r2-4507-handler",
+                    "packageType": "Zip",
+                    "publish": false,
+                    "publishTo": null,
+                    "qualifiedArn": "arn:aws:lambda:us-east-1:000000000000:function:rec-r2-4507-handler",
+                    "qualifiedInvokeArn": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:rec-r2-4507-handler/invocations",
+                    "region": "us-east-1",
+                    "replaceSecurityGroupsOnDestroy": null,
+                    "replacementSecurityGroupIds": null,
+                    "reservedConcurrentExecutions": -1,
+                    "responseStreamingInvokeArn": "arn:aws:apigateway:us-east-1:lambda:path/2021-11-15/functions/arn:aws:lambda:us-east-1:000000000000:function:rec-r2-4507-handler/response-streaming-invocations",
+                    "role": "arn:aws:iam::000000000000:role/rec-r2-4507-web",
+                    "runtime": "nodejs20.x",
+                    "s3Bucket": null,
+                    "s3Key": null,
+                    "s3ObjectVersion": null,
+                    "signingJobArn": "",
+                    "signingProfileVersionArn": "",
+                    "skipDestroy": false,
+                    "snapStart": null,
+                    "sourceCodeHash": "",
+                    "sourceCodeSize": 207,
+                    "sourceKmsKeyArn": "",
+                    "tags": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "my:mod:Web$aws:lambda/function:Function::handler"
+                    },
+                    "tagsAll": {
+                        "plunge-stack": "app/dev",
+                        "plunge-urn": "my:mod:Web$aws:lambda/function:Function::handler"
+                    },
+                    "tenancyConfig": null,
+                    "timeout": 3,
+                    "tracingConfig": {
+                        "mode": "PassThrough"
+                    },
+                    "useResourceTimeoutForPropagation": null,
+                    "version": "$LATEST",
+                    "vpcConfig": null
+                },
+                "parent": "urn:pulumi:dev::app::my:mod:Web::web-app",
+                "dependencies": [
+                    "urn:pulumi:dev::app::aws:iam/role:Role::web"
+                ],
+                "provider": "urn:pulumi:dev::app::pulumi:providers:aws::default_7_51_1::6388aa09-4e08-5485-b3b8-914f3c0a35b0",
+                "propertyDependencies": {
+                    "code": [],
+                    "handler": [],
+                    "name": [],
+                    "role": [
+                        "urn:pulumi:dev::app::aws:iam/role:Role::web"
+                    ],
+                    "runtime": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T20:59:20.514627Z",
+                "modified": "2026-10-26T20:59:20.514627Z",
+                "sourcePosition": "project:///index.js#34,9",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.js#34,9"
+                    },
+                    {
+                        "sourcePosition": "project:///index.js#47,1"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            }
         ],
-        "inputs": { "policy": { "4dabf18193072939515568f2c6568e55": "1b47061264138c4ac30d75fd1eb44270", "ciphertext": "secret" } }
-      },
-      {
-        "urn": "urn:pulumi:dev::app::my:mod:Web$aws:lambda/function:Function::handler",
-        "custom": true,
-        "id": "fn",
-        "type": "aws:lambda/function:Function",
-        "parent": "urn:pulumi:dev::app::my:mod:Web::web-app",
-        "dependencies": ["urn:pulumi:dev::app::aws:iam/role:Role::web"]
-      },
-      {
-        "urn": "urn:pulumi:dev::app::my:mod:Web::web-app",
-        "custom": false,
-        "type": "my:mod:Web",
-        "parent": "urn:pulumi:dev::app::pulumi:pulumi:Stack::app-dev"
-      }
-    ]
-  }
+        "metadata": {}
+    }
 }

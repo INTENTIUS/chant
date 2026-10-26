@@ -214,3 +214,21 @@ export function jsonConfigTree(source: string): Record<string, unknown> {
   }
   return out;
 }
+
+/**
+ * The bodies of the `live` blocks nested in the `terraform` blocks of a
+ * `.tf.json` or `.tofu.json` document, in the order written (chant#4504).
+ * The fast live readers (`report.ts`'s `estateOfDir`, `op/activities/live-detect.ts`)
+ * read HCL by text and a JSON file through this. Malformed JSON reads as no
+ * `live` block, as those readers treat any file they cannot read.
+ */
+export function jsonLiveBlocks(source: string): Record<string, unknown>[] {
+  let tree: Record<string, unknown>;
+  try {
+    tree = jsonConfigTree(source);
+  } catch {
+    return [];
+  }
+  const terraform = Array.isArray(tree.terraform) ? tree.terraform : [];
+  return terraform.flatMap((t) => (isObject(t) && Array.isArray(t.live) ? t.live.filter(isObject) : []));
+}

@@ -86,7 +86,7 @@ describe("the composition reads the file's keys before init (ruled: yes)", () =>
 
   test("rootState finds the state's address from a key only the file gives", () => {
     const dir = tree({ "main.tf": S3_NO_LOCK });
-    expect(rootState(dir, "app", { key: "from-file.tfstate" }).own).toMatchObject({ key: "from-file.tfstate" });
+    expect(rootState(dir, "app", { env: {}, recorded: null, backendConfig: { key: "from-file.tfstate" } }).own).toMatchObject({ key: "from-file.tfstate" });
   });
 
   test("a composition lines a read up with a member whose state key is only in its file", () => {

@@ -41,6 +41,48 @@
  * Imports nothing at run time, so it bundles with `./change-set.ts`.
  */
 
+/**
+ * Why the declared graph leaves an expanded block as one node (#4489): the
+ * codes of a block node's `instanceRollup`. Each is in the read contract's
+ * closed list (`workspace/reason-codes.ts`).
+ */
+export const INSTANCE_ROLLUP_CODES = [
+  "instances-each-value",
+  "instances-merge",
+  "instances-value-unknown",
+  "instances-form-unread",
+  "instances-over-limit",
+  "instances-module-uncounted",
+] as const;
+export type InstanceRollupCode = (typeof INSTANCE_ROLLUP_CODES)[number];
+
+/**
+ * On a block node whose `count` or `for_each` the declared graph cannot
+ * count (#4489): why, and the expression it could not count. `argument` and
+ * `expression` are the block's own, or with `call` those of the enclosing
+ * module call that could not be counted.
+ */
+export interface InstanceRollup {
+  code: InstanceRollupCode;
+  /** `count` or `for_each`. */
+  argument: "count" | "for_each";
+  /** The expression as written, without the `${ }` around it. */
+  expression: string;
+  /** With `instances-module-uncounted`: the module call, `module.app` or `module.app.module.db`. */
+  call?: string;
+}
+
+/** An entity's duck-typed `instanceRollup`, when it is one (#4489). */
+export function entityInstanceRollup(entity: unknown): InstanceRollup | undefined {
+  const r = (entity as { instanceRollup?: unknown } | null)?.instanceRollup;
+  if (typeof r !== "object" || r === null) return undefined;
+  const { code, argument, expression, call } = r as Record<string, unknown>;
+  if (!(INSTANCE_ROLLUP_CODES as readonly unknown[]).includes(code)) return undefined;
+  if (argument !== "count" && argument !== "for_each") return undefined;
+  if (typeof expression !== "string") return undefined;
+  return { code: code as InstanceRollupCode, argument, expression, ...(typeof call === "string" ? { call } : {}) };
+}
+
 /** A `[...]` instance key, a number or a quoted string with escapes. */
 const KEY = /\[(?:"(?:[^"\\]|\\.)*"|\d+)\]/;
 const TRAILING_KEY = new RegExp(`(${KEY.source})$`);
@@ -173,9 +215,20 @@ export function terraformInstancePath(address: string): TerraformInstancePath | 
  * instance node and paint it on its own.
  */
 export interface InstanceObservation {
-  /** The instance key as Terraform prints it, `[0]` or `["a"]`. */
-  key: string;
-  /** The engine's own instance address, `aws_eip.pool[0]`. */
+  /**
+   * The block's own instance key as Terraform prints it, `[0]` or `["a"]`.
+   * Absent on an instance that only an expanded module call makes (#4488),
+   * which then carries {@link scope}.
+   */
+  key?: string;
+  /**
+   * The expanded module path as Terraform prints it, `module.app[0]`, on an
+   * instance under an expanded module call (#4488). The live graph then
+   * builds the node id by {@link terraformInstancePath} from {@link address},
+   * the same id the declared graph lists: `estate/module.app[0]/aws_eip.pool[1]`.
+   */
+  scope?: string;
+  /** The engine's own instance address, `aws_eip.pool[0]` or `module.app[0].aws_eip.pool[1]`. */
   address: string;
   verdict: "present" | "absent" | "not-observed";
   /** The provider's id, on a present instance, when the read gave one. */
@@ -187,6 +240,22 @@ export interface InstanceObservation {
   /** Why it was not observed, on a not-observed instance. An `UnobservedReason`. */
   reason?: string;
   detail?: string;
+}
+
+/**
+ * The live graph's node id for one observed instance of the block node
+ * `blockNode` (#4488): `<blockNode><key>` with no expanded module call on
+ * the way, else the declared graph's rule (#4486) applied to the instance's
+ * address, so `module.app[0].aws_eip.pool[1]` under
+ * `estate/module.app/aws_eip.pool` is `estate/module.app[0]/aws_eip.pool[1]`.
+ * Undefined when the address does not belong to that block node.
+ */
+export function observedInstanceNodeId(blockNode: string, inst: Pick<InstanceObservation, "key" | "scope" | "address">): string | undefined {
+  if (inst.scope === undefined) return inst.key === undefined ? undefined : instanceNodeId(blockNode, inst.key);
+  const path = terraformInstancePath(inst.address);
+  if (!path?.scope) return undefined;
+  if (blockNode !== path.block && !blockNode.endsWith(`/${path.block}`)) return undefined;
+  return `${blockNode.slice(0, blockNode.length - path.block.length)}${path.instance}`;
 }
 
 /**

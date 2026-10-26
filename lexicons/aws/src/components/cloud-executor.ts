@@ -107,6 +107,8 @@ export interface CfnExecuteChangeSetArgs {
 export interface CfnStackStatus {
   stackStatus: string;
   outputs: Record<string, string>;
+  /** The stack's exports by export name (#4466c): the output each is and its value. Absent when it exports nothing or the backend does not say. */
+  exports?: Record<string, { output: string; value: string }>;
 }
 
 export interface CloudFormationClient {
@@ -129,6 +131,12 @@ export interface CloudFormationClient {
    * empty stack, and the next CREATE change set reuses it.
    */
   deleteStackShell?(stackName: string): Promise<boolean>;
+  /**
+   * The stacks that import `exportName` now (`ListImports`, #4466c), sorted;
+   * empty when none does. Optional: without it, a plan cannot say whether a
+   * change to an export is in use, and refuses nothing.
+   */
+  listImports?(exportName: string): Promise<string[]>;
 }
 
 // ── ECS ──────────────────────────────────────────────────────────────────��─
@@ -590,12 +598,34 @@ const realCloudFormation: CloudFormationClient = {
   async describeStack(stackName) {
     const { stdout } = await run(`aws cloudformation describe-stacks --stack-name ${q(stackName)}`);
     const described = JSON.parse(stdout) as {
-      Stacks: Array<{ StackStatus: string; Outputs?: Array<{ OutputKey: string; OutputValue: string }> }>;
+      Stacks: Array<{ StackStatus: string; Outputs?: Array<{ OutputKey: string; OutputValue: string; ExportName?: string }> }>;
     };
     const stack = described.Stacks[0];
     const outputs: Record<string, string> = {};
-    for (const o of stack?.Outputs ?? []) outputs[o.OutputKey] = o.OutputValue;
-    return { stackStatus: stack?.StackStatus ?? "UNKNOWN", outputs };
+    const exports: Record<string, { output: string; value: string }> = {};
+    for (const o of stack?.Outputs ?? []) {
+      outputs[o.OutputKey] = o.OutputValue;
+      if (o.ExportName) exports[o.ExportName] = { output: o.OutputKey, value: o.OutputValue };
+    }
+    return { stackStatus: stack?.StackStatus ?? "UNKNOWN", outputs, ...(Object.keys(exports).length > 0 ? { exports } : {}) };
+  },
+  async listImports(exportName) {
+    const stacks: string[] = [];
+    let token: string | undefined;
+    do {
+      let stdout: string;
+      try {
+        ({ stdout } = await run(`aws cloudformation list-imports --export-name ${q(exportName)}${token ? ` --next-token ${q(token)}` : ""}`));
+      } catch (err) {
+        // CloudFormation answers an export nobody imports with an error, not an empty list.
+        if (/is not imported by any stack/i.test(err instanceof Error ? err.message : String(err))) return [];
+        throw err;
+      }
+      const page = JSON.parse(stdout) as { Imports?: string[]; NextToken?: string };
+      stacks.push(...(page.Imports ?? []));
+      token = page.NextToken;
+    } while (token);
+    return [...new Set(stacks)].sort();
   },
   async waitForStack(stackName, opts) {
     const intervalMs = opts?.intervalMs ?? 10_000;

@@ -34,6 +34,7 @@ import { parseReleaseLedger, releaseLedgerLines } from "./release-read";
 import { CUTS_FILE, parseCuts, parseRelease, RELEASES_DIR, verifyReleaseDigest } from "./release-store";
 import { opOfRunLedgerFile, parseRunLedger } from "./run-ledger";
 import type { LifecycleSnapshot } from "./types";
+import { NEXT_RELEASE } from "../release-floors";
 
 /** The version of the table schema below. */
 export const QUERY_SCHEMA_VERSION = 1;
@@ -54,9 +55,10 @@ export const QUERY_TABLES = {
   /**
    * One row per Op run record. `labels` and `outcomes` are JSON. `root_member`
    * (#4482) is the workspace member whose directory holds the terraform root
-   * a TerraformApplyOp run applied, read off its `TerraformRootPath` outcome,
-   * or NULL for any other run, outside a workspace, or for a run whose Init
-   * step never finished.
+   * a TerraformApplyOp run applied, read off its `TerraformRootPath` outcome.
+   * NULL means unknown (#4508): any other run, outside a workspace, or a run
+   * whose Init step never finished, since the Op names its root only by key
+   * and Init is what resolves the root's directory.
    */
   runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"], ["root_member", "TEXT"]],
   /** One row per gate ledger line: `kind` is `pending` or `resolution`. `signed` is 1 for a sealed approval. */
@@ -68,6 +70,13 @@ export const QUERY_TABLES = {
   /** One row per line of `_releases/cuts.jsonl`. `signed` is 1 for a signed cut. */
   cuts: [["member", "TEXT"], ["release_digest", "TEXT"], ["label", "TEXT"], ["actor", "TEXT"], ["timestamp", "TEXT"], ["run_id", "TEXT"], ["forge", "TEXT"], ["channel", "TEXT"], ["signed", "INTEGER"], ["composed_base", "TEXT"]],
 } as const satisfies Record<string, ReadonlyArray<readonly [string, ColumnType]>>;
+
+/**
+ * The first chant that writes `root_member` on a `runs` row, in `chant query`
+ * and in `chant ledger runs --json` (#4482, #4500). A contract field added
+ * within version 1: a reader treats a row from an older chant as lacking it.
+ */
+export const LEDGER_ROOT_MEMBER_FLOOR = NEXT_RELEASE;
 
 export type QueryTable = keyof typeof QUERY_TABLES;
 

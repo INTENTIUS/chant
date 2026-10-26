@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../cli/main";
-import { parseDeclaration } from "./declaration";
+import { parseDeclaration, resolveGroups } from "./declaration";
+import { workingTree } from "./tree";
 import { proposeWorkspace, runWorkspaceInit, sanitizeName } from "./init";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
@@ -127,6 +128,42 @@ describe("proposeWorkspace (#2534)", () => {
     ]);
     // The proposal reads back as a valid declaration.
     expect(() => parseDeclaration(JSON.stringify(declaration), "chant.workspace.json")).not.toThrow();
+  });
+
+  test("a workspace under an examples directory is a workspace member with a note; plain projects there stay examples (#4499)", () => {
+    const root = repo({
+      "examples/a/chant.config.ts": "",
+      "examples/b/chant.config.ts": "",
+      "examples/kit/chant.workspace.json": JSON.stringify({ name: "kit", schema: 1, members: [] }),
+      "examples/kit/chant.config.ts": "",
+      "examples/kit/app/chant.config.ts": "",
+    });
+    const { declaration } = proposeWorkspace(root, { name: "acme" });
+    expect(declaration.members).toEqual([
+      {
+        name: "kit",
+        dir: "examples/kit",
+        kind: "workspace",
+        because: "a workspace of its own under examples, an examples directory; a workspace is a member, never an example",
+      },
+      // The group's glob leaves the member's directory out by name.
+      { name: "examples", kind: "examples", glob: "examples/!(kit)" },
+    ]);
+    const parsed = parseDeclaration(JSON.stringify(declaration), "chant.workspace.json");
+    expect(resolveGroups(parsed, workingTree(root))[0].matches).toEqual(["examples/a", "examples/b"]);
+  });
+
+  test("a workspace under an examples directory inside another package stays an example, since members don't nest (#4499)", () => {
+    const root = repo({
+      "package.json": JSON.stringify({ name: "acme", workspaces: ["lexicons/*"] }),
+      "lexicons/x/package.json": pkg("@acme/lexicon-x"),
+      "lexicons/x/examples/ws/chant.workspace.json": JSON.stringify({ name: "ws", schema: 1, members: [] }),
+      "lexicons/x/examples/ws/chant.config.ts": "",
+      "lexicons/x/examples/plain/chant.config.ts": "",
+    });
+    const { declaration } = proposeWorkspace(root, { name: "acme" });
+    expect(declaration.members.some((m) => m.kind === "workspace")).toBe(false);
+    expect(declaration.members.find((m) => m.kind === "examples")?.glob).toBe("lexicons/x/examples/*");
   });
 
   test("names the workspace by --name, then the remote, then the root package, then the directory", () => {

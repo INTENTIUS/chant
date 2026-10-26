@@ -76,6 +76,9 @@ export const SLOW_UNIT_TEST_FILES: readonly string[] = [
     "check-contract",
     "graph-contract",
     "records-sessions-write",
+    // #4502: walks real git history per test and is load-sensitive, 5.4 to 16.9s
+    // alone on a loaded Mac (slowest test 1.8 to 5.9s).
+    "intent-gaps",
   ].map((name) => `packages/core/src/workspace/${name}.test.ts`),
   ...[
     "release-at",

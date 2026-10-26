@@ -1,10 +1,10 @@
 ---
 title: Drift Record
-description: One record per resource instance for what each engine's read found, in one shape for chant, terraform, tofu and choudoufu members.
+description: One record per resource instance for what each engine's read found. Every member kind uses the same shape.
 diataxis: reference
 ---
 
-A drift record says what one read found for one resource instance ([#4451](https://github.com/INTENTIUS/chant/issues/4451)). Chant's live diff, deep observe, component status, a stock terraform root's state and plan, and a choudoufu root's `live-plan`, `live-ls` and plan each become the same records, so a renderer colours a card from one pair, `(status, read)`, with no per-engine branches.
+A drift record says what one read found for one resource instance ([#4451](https://github.com/INTENTIUS/chant/issues/4451)). Each engine's reads become the same records. On a chant member that means the live diff, deep observe and component status. A stock terraform root gives its state and plan. A choudoufu root gives `live-plan`, `live-ls` and its plan. A renderer then colours a card from one pair, `(status, read)`, with no per-engine branches.
 
 The module is `@intentius/chant/drift-record`, the terraform family's adapters are `@intentius/chant-lexicon-terraform/drift-record`, and the Pulumi one is `@intentius/chant-lexicon-pulumi/drift-record`. Both bundle with the change-set code, under the same guard, described [below](#bundling). The schema ships at `src/workspace/drift.schema.json`, `$id` `https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json`. The document is versioned by its `drift: "v1"` field rather than `contract`. Within the version, fields are only added.
 
@@ -50,7 +50,7 @@ Change sets keep holding planned changes only. A drift record authorizes nothing
 - `not-observed` always carries a reason from the [observation contract](/chant/lexicon-authoring/observation-contract/), and is never absence. `not-reached` is the reason a stream gives an address it expected and never heard about.
 - An attribute the planner marked sensitive keeps its path and drops both values. A second pass does the same for any path with a key segment `isSensitiveKey` names, such as `db_password` or `tags["api_token"]`.
 
-In an attribute, `before` is what was expected (the record, the snapshot, the declaration) and `after` is what the read found. Values are optional; a card needs only the paths.
+In an attribute, `before` is what was expected and `after` is what the read found. The expected value comes from the record, a snapshot or the declaration. Values are optional; a card needs only the paths.
 
 ## The document
 
@@ -87,7 +87,7 @@ An `UNOWNED` omission with no `unowned[]` row is not-observed, `read-failed`, wi
 
 ## Streaming
 
-A read can stream its records as NDJSON, one object per line, in the layout choudoufu's `live-plan -resource` writes. Every line has a `type`:
+A read can stream its records as NDJSON, one object per line, in the layout choudoufu's `live-plan -resource` writes. The `type` field on each line says what it holds.
 
 | `type` | Holds |
 |---|---|
@@ -124,4 +124,13 @@ The member half is `chant lifecycle drift [--member <name>] [--read <read>] [--r
 
 ## Bundling
 
-`@intentius/chant/drift-record` and `@intentius/chant-lexicon-terraform/drift-record` import the plan hashing code, the observation contract's reason list, the change-set graph's node rule, the instance rollup, the sensitive-key list and the plan projection, and nothing else. `change-set-bundle.test.ts` lists every module in that bundle and fails when TypeScript, esbuild, zod or chant's fold, lint or codegen code joins it.
+`@intentius/chant/drift-record` and `@intentius/chant-lexicon-terraform/drift-record` import only these modules:
+
+- the plan hashing code
+- the observation contract's reason list
+- the change-set graph's node rule
+- the instance rollup
+- the sensitive-key list
+- the plan projection
+
+`change-set-bundle.test.ts` lists every module in that bundle. It fails if TypeScript or esbuild joins it. It also fails on zod and on chant's own fold, lint and codegen code.

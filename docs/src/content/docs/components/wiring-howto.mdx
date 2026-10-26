@@ -89,10 +89,10 @@ The values are read the way a pull request reads any upstream ([plan previews](/
 - When the change does not touch the member, the consumer is planned against the outputs it has now.
 - When the change touches it, the consumer is planned against the outputs the member's own plan says it will have. An output known only after the member applies has no value yet. The consumer's step is planned without it, the pull request's report lists the output (`azure.azureEndpoint`, or `aws.awsEndpoint` for a Pulumi `aws` member) under the consumer's `unknownInputs`, and the change set has a hole on `azure#outputs` that names the output. On merge, the consumer is held back until the member applied, then planned again against the value it applied as. That round is gated like any other.
 
-The member applies through its own pipeline, never through the consumer's. The step only reads. While the member's plan still has changes to apply, the step refuses, and the consumer is blocked behind it. The member's component is in a change when the change signal names the member as a changed unit. The terraform lexicon does this for a `terraform.roots` entry of the same name. `--from-affected` can name it too.
+The member applies through its own pipeline, and the consumer's step only reads. While the member's plan still has changes to apply, the step refuses, and the consumer is blocked behind it. The member's component is in a change when the change signal names the member as a changed unit. The terraform lexicon does this for a `terraform.roots` entry of the same name. `--from-affected` can name it too.
 
 <Aside type="note" title="Both wirings, one resolver">
-Cross-stack outputs and cross-component artifact outputs are resolved the same way — by the graph, never by orchestrator code. That is what keeps the driver generic across an unbounded set of components.
+Cross-stack outputs and cross-component artifact outputs are both resolved by the graph, and orchestrator code resolves neither. That is what keeps the driver generic across an unbounded set of components.
 </Aside>
 
 ## Read next

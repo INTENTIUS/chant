@@ -1,6 +1,6 @@
 /**
  * `examples/demo-composed-stacks` through the pull-request loop against
- * Floci (#4448): both scenarios, each from a fresh base, through `chant
+ * Floci (#4448): each scenario from a fresh base, through `chant
  * components pr-plan`, one approval and `chant components pr-apply`, as
  * #4430 ran them by hand.
  *
@@ -11,6 +11,10 @@
  *   `covered` with `filledInputs` naming the id, and app's parameter holds
  *   network's real subnet id, and so does edge's, through app's
  *   `WorkerSubnetId` output.
+ * - The imports act (#4466): the stacks read each other only through
+ *   `Fn::ImportValue`. pr-plan orders them by the imports and lists both
+ *   as known after apply, one approval covers both rounds, and edge holds
+ *   the id of the interface app created in network's new subnet.
  *
  * Each act copies the example with its stack names and SSM names made the
  * run's own, builds the templates with the example's `npm run build`, and
@@ -190,5 +194,42 @@ actSuite("chant-compose-create", ({ loop, id }) => {
     expect(stack(`${id}-edge`).Parameters?.find((p) => p.ParameterKey === "edgeWorkerSubnetId")?.ParameterValue).toBe(subnetB);
     expect(ssm(`/${id}/worker-subnet`)).toBe(subnetB);
     expect(ssm(`/${id}/allowlist`)).toBe("10.0.1.0/24,10.0.2.0/24");
+  }, TIMEOUT);
+});
+
+actSuite("chant-compose-imports", ({ loop, id }) => {
+  test("one pr-plan digest: the imports in the templates order the stacks, and both are known after apply (#4466)", async () => {
+    const { code, report: plan } = await loop().open(1, "chant-compose-imports");
+    expect(code).toBe(0);
+    expect(plan.status).toBe("planned");
+    expect(plan.selection.waves).toEqual([["network"], ["app"], ["edge"]]);
+    const m = byComponent(plan);
+    expect(m.app!.unknownInputs).toEqual(["network.SubnetCId"]);
+    expect(m.app!.reads?.find((r) => r.upstream === "network")?.unknown).toEqual(["SubnetCId"]);
+    expect(m.edge!.unknownInputs).toEqual(["app.ImportsInterfaceId"]);
+    expect(m.edge!.reads?.find((r) => r.upstream === "app")?.unknown).toEqual(["ImportsInterfaceId"]);
+    expect([total(plan, "create"), total(plan, "update"), total(plan, "delete")]).toEqual([3, 0, 0]);
+    expect(plan.approval).toEqual({ status: "pending" });
+  }, TIMEOUT);
+
+  test("one approval, and pr-apply exits 0: both rounds are covered, and edge records the interface app put in subnet c", async () => {
+    const plan = loop().report("plan");
+    await loop().approve(1, "pr-apply", plan.digest);
+    expect(await loop().merge(1)).toBe(0);
+    const applied = loop().report("apply");
+    expect(applied.digest).toBe(plan.digest);
+    expect(applied.status).toBe("applied");
+    const rounds = applied.rounds ?? [];
+    for (const r of rounds) expect(r.status).toBe("applied");
+    const appRound = rounds.find((r) => r.components.includes("app"));
+    expect(appRound?.covered?.digest).toBe(plan.digest);
+    expect(appRound?.covered?.filledInputs).toContain("network.SubnetCId");
+    const edgeRound = [...rounds].reverse().find((r) => r.components.includes("edge"));
+    expect(edgeRound?.covered?.digest).toBe(plan.digest);
+    expect(edgeRound?.covered?.filledInputs).toContain("app.ImportsInterfaceId");
+
+    const iface = stack(`${id}-app`).Outputs?.find((o) => o.OutputKey === "ImportsInterfaceId")?.OutputValue;
+    expect(iface).toMatch(/^eni-/);
+    expect(ssm(`/${id}/imports-interface`)).toBe(iface);
   }, TIMEOUT);
 });

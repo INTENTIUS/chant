@@ -19,7 +19,7 @@ list is the whole of what chant runs for a Pulumi member:
 |---|---|---|---|
 | graph | none; the checked-in `stack-export.json` | the same | no |
 | change set | `pulumi preview --json` | `plunge preview --json` | no |
-| drift | `pulumi refresh --preview-only --json --target <urn>` | `plunge drift --resource <urn> --stream` | no |
+| drift | `pulumi refresh --preview-only --json --stack <name> --target <urn>` | `plunge drift --resource <urn> --stream --stack <name>` | no |
 | applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
 | planned outputs | the change set's preview | the same | no |
 
@@ -27,7 +27,11 @@ list is the whole of what chant runs for a Pulumi member:
 reaches the binary, and `stack output` with secrets shown is refused too.
 With `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
 source), the applied outputs are read from the checked-in export and nothing
-runs. Each command runs in the member's directory against its selected stack.
+runs. Each command runs in the member's directory against its selected stack,
+except the drift read, which names the stack with `--stack` ([#4496](https://github.com/INTENTIUS/chant/issues/4496)):
+`pulumi.member.stack` when the config sets it, else the stack the checked-in
+export's URNs name. A checked-in member with no selected stack can still be
+refreshed.
 
 ## The member kind
 
@@ -60,8 +64,15 @@ URN: `create`, `update` (in place), `delete`, a replace as one `replace`
 entry, `same` as `no-op`, `read` and `refresh` as `read`. An input that holds
 Pulumi's unknown value is `unknown: true`, and a secret is `sensitive: true`
 with neither value. Resources a program registers inside an `apply()` the
-preview could not run are marked `mayAppear` rather than left out. The full
-table is under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
+preview could not run are marked `mayAppear` when they sit under a component,
+or when the checked-in export holds them and the preview has no step for
+them. A resource registered inside an `apply()` directly under the stack is
+not marked: with no export holding it, it is not in the change set, and when
+the export holds it and its input is unknown, the preview prints a `delete`
+that the change set keeps as a plain delete. Nothing in a Pulumi preview tells
+that apart from a real removal
+([#4497](https://github.com/INTENTIUS/chant/issues/4497)). The full table is
+under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
 
 ## Drift
 
@@ -117,10 +128,34 @@ export default {
 ```
 
 `dir` is resolved against the project root. `engine` is `pulumi` or `plunge`
-and defaults to what `Pulumi.yaml` says. The build runs these checks:
+and defaults to what `Pulumi.yaml` says. `stack` is the stack the drift read
+passes as `--stack`, and defaults to the one the export's URNs name. The build runs these checks:
 
 | Id | Kind | Reports |
 |---|---|---|
 | PUL101 | lint | `pulumi.member.dir` written as an absolute path |
 | PUL001 | post-synth | a member read with no nodes, with the reason |
 | PUL002 | post-synth | an export that records pending operations from an interrupted update |
+
+`chant audit` gives PUL001 and PUL002 a title, a remediation and the
+`report-only` tier from the lexicon's audit catalog.
+
+## Watching a member
+
+`PulumiWatchOp` (#4494) previews one member and reads its drift, on a
+`schedule` or with `chant run`. It runs the commands in the table above and
+never applies.
+
+```ts
+import { PulumiWatchOp } from "@intentius/chant-lexicon-pulumi";
+
+export const { op } = PulumiWatchOp({ name: "infra-watch", member: "infra", dir: "./infra", schedule: "0 6 * * *" });
+```
+
+| Phase | Activity | Outcome |
+|---|---|---|
+| Preview | `pulumiPreview`: `pulumi preview --json` | `Changes`, true when the preview plans a change or a resource may appear |
+| Drift | `pulumiDrift`: one targeted `pulumi refresh --preview-only` per resource | `Drift`, the drifted and missing count |
+
+`drift: false` leaves the Drift phase out. The project lists `pulumi` among
+its lexicons so the two activities load.

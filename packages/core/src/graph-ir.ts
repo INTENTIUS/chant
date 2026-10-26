@@ -7,6 +7,7 @@ import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { subTemplateRefs } from "./graph-sub-template";
 import type { ResourceMetadata } from "./lexicon";
+import { entityInstanceRollup, observedInstanceNodeId, type InstanceRollup } from "./instance-nodes";
 import type { RootRead, UnobservedEntity } from "./observation";
 
 export { subTemplateRefs };
@@ -115,6 +116,13 @@ export interface IRNode {
    * carries the key on the scope's segment, `estate/module.app[0]/aws_eip.pool[1]`.
    */
   instanceScope?: string;
+  /**
+   * On a block node whose `count` or `for_each` the declared graph cannot
+   * count (#4489): why it stays one node, and the expression. Absent on a
+   * block that is not expanded and on one whose instances are listed. See
+   * `./instance-nodes.ts`.
+   */
+  instanceRollup?: InstanceRollup;
 }
 
 /**
@@ -1060,8 +1068,10 @@ export function buildGraphIr(
  * the entity lists under an expanded module call (#4486), the
  * block's kind, lexicon and source location, `instanceOf` and `instanceKey`,
  * no attrs and no edges. Each instance joins every group its block is in, so
- * a renderer draws it in the block's box. Pure. Returns `ir` itself when no
- * entity has instance keys, so a graph with none prints what it did before.
+ * a renderer draws it in the block's box. A block node whose entity carries
+ * an `instanceRollup` (#4489) gets it. Pure. Returns `ir` itself when no
+ * entity has instance keys or a rollup, so a graph with none prints what it
+ * did before.
  *
  * Called by `chant graph` and the declared half of `--live`, not by
  * {@link buildGraphIr}, so `chant search`, which reads the base IR, still
@@ -1071,9 +1081,12 @@ export function withInstanceNodes(ir: GraphIR, entities: ReadonlyMap<string, Dec
   const byId = new Map(ir.nodes.map((n) => [n.id, n]));
   const added: IRNode[] = [];
   const childrenOf = new Map<string, string[]>();
+  const rolledUp = new Map<string, InstanceRollup>();
   for (const [name, entity] of entities) {
     const block = byId.get(name);
     if (!block || block.instanceOf) continue;
+    const rollup = entityInstanceRollup(entity);
+    if (rollup) rolledUp.set(name, rollup);
     for (const { id, key, scope } of entityInstances(name, entity)) {
       if (byId.has(id)) continue;
       const node: IRNode = {
@@ -1093,8 +1106,13 @@ export function withInstanceNodes(ir: GraphIR, entities: ReadonlyMap<string, Dec
       (childrenOf.get(name) ?? childrenOf.set(name, []).get(name)!).push(id);
     }
   }
-  if (added.length === 0) return ir;
-  const nodes = [...ir.nodes, ...added].sort((a, b) => a.id.localeCompare(b.id));
+  if (added.length === 0 && rolledUp.size === 0) return ir;
+  const own = ir.nodes.map((n) => {
+    const rollup = rolledUp.get(n.id);
+    return rollup ? { ...n, instanceRollup: rollup } : n;
+  });
+  if (added.length === 0) return { ...ir, nodes: own };
+  const nodes = [...own, ...added].sort((a, b) => a.id.localeCompare(b.id));
   const withChildren = (rec: Record<string, string[]> | undefined): Record<string, string[]> | undefined => {
     if (!rec) return rec;
     const out: Record<string, string[]> = {};
@@ -1287,16 +1305,21 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       // its own under the block's (#4454), so the overlay paints it alone.
       // The block node above is the rollup. An absent or not-observed
       // instance is no live node: the overlay reads that off `instances`.
+      // Under an expanded module call the id follows the declared graph's
+      // rule (#4486, #4488), `estate/module.app[0]/aws_eip.pool[1]`, with
+      // `instanceScope` and no `instanceKey` when only the call is expanded.
       for (const inst of meta.instances ?? []) {
         if (inst.verdict !== "present") continue;
-        const id = `${name}${inst.key}`;
+        const id = observedInstanceNodeId(name, inst);
+        if (id === undefined) continue;
         const child: IRNode = {
           id,
           kind: meta.type,
           lexicon,
           attrs: { address: inst.address, ...(inst.status ? { status: inst.status } : {}) },
           instanceOf: name,
-          instanceKey: inst.key,
+          ...(inst.key !== undefined ? { instanceKey: inst.key } : {}),
+          ...(inst.scope !== undefined ? { instanceScope: inst.scope } : {}),
         };
         if (inst.physicalId) child.physicalId = inst.physicalId;
         if (inst.ownership === "owned" || inst.ownership === "foreign") child.ownership = inst.ownership;

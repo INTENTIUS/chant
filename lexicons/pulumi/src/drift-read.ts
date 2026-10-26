@@ -13,6 +13,9 @@
  * | plunge | unset | `plunge drift --resource <urn> --stream`, once per resource in the export |
  * | plunge | `<urn>` | the same, for that URN alone |
  *
+ * Each read passes `--stack` (#4496): the member's declared
+ * `pulumi.member.stack`, else the stack the export's URNs name.
+ *
  * The one read is `refresh`. The member's engine is `pulumiMemberEngine`'s:
  * the member config's `engine`, then a plunge backend URL in `Pulumi.yaml`.
  * Neither command writes the stack. Each member's records go out as one
@@ -46,6 +49,7 @@ export async function readPulumiDrift(options: ReadDriftOptions, runners: Pulumi
       dir: member.dir,
       observedAt: options.observedAt,
       ...(member.engine ? { engine: member.engine } : {}),
+      ...(member.stack ? { stack: member.stack } : {}),
       ...(options.resource !== undefined ? { urns: [options.resource] } : {}),
       ...(runners.run ? { run: runners.run } : {}),
       ...(runners.plunge ? { plunge: runners.plunge } : {}),

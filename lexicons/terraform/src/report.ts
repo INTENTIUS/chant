@@ -35,7 +35,7 @@ import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { plannerForBinary, terraformChangeSetPart } from "./change-set";
 import { moduleChanges, stripModule, topModule } from "./compose/module-address";
 import { stateResources } from "./applied-state";
-import { listConfigFiles } from "./hcl/files";
+import { isJsonConfigFile, jsonLiveBlocks, listConfigFiles } from "./hcl/files";
 
 export { topModule } from "./compose/module-address";
 
@@ -193,18 +193,25 @@ export interface ReportRead {
 
 /**
  * The estate named by the first `live { estate = "..." }` block in a
- * directory's HCL configuration files, or undefined. A `live` block takes
- * effect only under choudoufu, so the files are the ones choudoufu reads
- * (`.tf` and `.tofu`, chant#4457) unless `binary` names another.
+ * directory's configuration files, in filename order, or undefined. A `live`
+ * block takes effect only under choudoufu, so the files are the ones
+ * choudoufu reads (`.tf`, `.tf.json`, `.tofu` and `.tofu.json`, chant#4457)
+ * unless `binary` names another. A JSON-syntax file's `live` block is the one
+ * nested in its `terraform` block (chant#4504).
  */
 export function estateOfDir(dir: string, binary = "choudoufu"): string | undefined {
   let files: string[];
   try {
-    files = listConfigFiles(dir, binary).filter((f) => !f.endsWith(".json"));
+    files = listConfigFiles(dir, binary);
   } catch {
     return undefined;
   }
   for (const f of files) {
+    if (isJsonConfigFile(f)) {
+      const estate = jsonLiveBlocks(readFileSync(join(dir, f), "utf8")).map((b) => b.estate).find((e): e is string => typeof e === "string" && e !== "");
+      if (estate) return estate;
+      continue;
+    }
     const text = readFileSync(join(dir, f), "utf8").replace(/^\s*(#|\/\/).*$/gm, "");
     const live = /\blive\s*\{/.exec(text);
     if (!live) continue;

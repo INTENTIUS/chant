@@ -1,0 +1,7 @@
+name: app
+description: chant#4507 recording program for lexicons/pulumi/src/testdata/pulumi-member/stack-export.json
+runtime:
+  name: nodejs
+  options:
+    typescript: false
+    packagemanager: npm

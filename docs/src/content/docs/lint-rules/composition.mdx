@@ -1,6 +1,6 @@
 ---
 title: Composition Rules
-description: COMP* rules — semantic checks over the discovered Component graph (epic #551 Phase 2)
+description: COMP* rules, the semantic checks over the discovered Component graph (epic #551 Phase 2)
 diataxis: reference
 ---
 
@@ -277,6 +277,32 @@ export const inventoryTable: Component = {
 
 ---
 
+## COMP008: Applies A signalOnly Root
+
+Flags a component whose `terraform-apply` step deploys a root that the project's `terraform.roots` marks `signalOnly: true` ([#4484](https://github.com/INTENTIUS/chant/issues/4484)). A signalOnly root belongs to another workspace member. This project declares it only so that a change to it brings the project into the change, and the build and live reads skip it. A component that applies it applies a root this project's graph does not draw. The warning names the root and the workspace member whose directory holds it ([#4490](https://github.com/INTENTIUS/chant/issues/4490)).
+
+| | |
+|---|---|
+| **Severity** | Warning |
+| **Category** | Correctness |
+
+```typescript
+// chant.config.ts of the dns member
+terraform: {
+  roots: {
+    dns: { dir: "./estate" },
+    azure: { dir: "../azure", signalOnly: true },
+  },
+},
+
+// ⚠ Triggers COMP008: azure is signalOnly here, and member "azure" owns it
+deploy: [phase("Apply", [{ kind: "terraform-apply", root: "azure" }])],
+```
+
+To fix it, deploy the root from the member that owns it, or drop `signalOnly` if this project does own the root.
+
+---
+
 ## Auto-fix
 
 No COMP* rule has an automatic fix yet (see [#562](https://github.com/INTENTIUS/chant/issues/562)). COMP007 is the likeliest first one. A fix could scaffold the shared preset call, but the author still picks the preset's name and parameter shape.
@@ -284,7 +310,7 @@ No COMP* rule has an automatic fix yet (see [#562](https://github.com/INTENTIUS/
 ## See Also
 
 - [Lint Rules Overview](/chant/lint-rules/overview/)
-- [Component Contract](/chant/components/component-contract/) — the `Component`/`Phase`/`Step`/`Gate` shapes these rules check
-- [Composition & Wiring](/chant/components/composition-and-wiring/) — the wiring reference forms COMP002 validates
-- [Capabilities](/chant/components/capabilities/#the-discipline) — the verb/noun and escape-hatch discipline COMP005/COMP006 enforce
-- [Orchestration](/chant/components/orchestration/#what-chant-adds-over-hand-driving-it) — "what chant adds" over a plain JSON contract
+- [Component Contract](/chant/components/component-contract/), the `Component`/`Phase`/`Step`/`Gate` shapes these rules check
+- [Composition & Wiring](/chant/components/composition-and-wiring/), with the wiring reference forms COMP002 validates
+- [Capabilities](/chant/components/capabilities/#the-discipline), on the verb/noun and escape-hatch discipline COMP005/COMP006 enforce
+- [Orchestration](/chant/components/orchestration/#what-chant-adds-over-hand-driving-it), on "what chant adds" over a plain JSON contract

@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { engineEnv, previewPulumiMember, pulumiMemberEngine, pulumiPreviewArgs, refreshPulumiMember, runAllowedPlunge, runAllowedPulumi, type PulumiRunner } from "./run";
+import { engineEnv, previewPulumiMember, pulumiMemberEngine, pulumiExportStack, pulumiPreviewArgs, refreshPulumiMember, runAllowedPlunge, runAllowedPulumi, type PulumiRunner } from "./run";
 
 const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
@@ -122,7 +122,23 @@ describe("refreshPulumiMember", () => {
     const targets = calls.map((c) => c.args[c.args.indexOf("--target") + 1]);
     expect(targets.some((t) => t.includes("pulumi:providers:") || t.includes("pulumi:pulumi:Stack"))).toBe(false);
     expect(targets).toContain("urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets");
+    // No stack declared: the one the export's URNs name (#4496).
+    expect(calls.every((c) => c.args[c.args.indexOf("--stack") + 1] === "dev")).toBe(true);
     expect(records.every((r) => r.status === "not-observed" && r.unobserved?.reason === "not-reached")).toBe(true);
+  });
+
+  test("with no export and no declared stack, the stack the URNs asked for name (#4496)", async () => {
+    const asked = "urn:pulumi:qa::site::aws:s3/bucket:Bucket::site-bucket";
+    const { run, calls } = fake(() => text("pulumi-refresh", "bucket-edited.json"));
+    await refreshPulumiMember({ member: "site", dir: join(testdata, "pulumi-unexported"), urns: [asked], observedAt: "2026-10-25T12:00:00Z", run });
+    expect(calls.map((c) => c.args)).toEqual([["refresh", "--preview-only", "--json", "--stack", "qa", "--target", asked]]);
+  });
+
+  test("pulumiExportStack names the export's one stack, and none when its URNs disagree (#4496)", () => {
+    const exported = (...urns: string[]) => ({ deployment: { resources: urns.map((u) => ({ urn: u, type: "aws:s3/bucket:Bucket" })) } });
+    expect(pulumiExportStack(exported("urn:pulumi:dev::app::aws:s3/bucket:Bucket::a"))).toBe("dev");
+    expect(pulumiExportStack(exported("urn:pulumi:dev::app::aws:s3/bucket:Bucket::a", "urn:pulumi:prod::app::aws:s3/bucket:Bucket::b"))).toBeUndefined();
+    expect(pulumiExportStack(undefined)).toBeUndefined();
   });
 
   test("with no export, one untargeted refresh", async () => {
