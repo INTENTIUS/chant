@@ -1,7 +1,8 @@
 /**
  * A fast, regex-based read of whether a root module directory declares a
  * live estate: an `estate.chdf.hcl` sidecar, or a `live { ... }` block nested
- * inside a `terraform { ... }` block of some `.tf` file (#2103).
+ * inside a `terraform { ... }` block of some configuration file (#2103), the
+ * `terraform` object of a `.tf.json` file included (chant#4504).
  *
  * Deliberately separate from `../../hcl/parse.ts`'s AST-accurate detection
  * (`blocksToEntities`'s `liveBlocksIn`), which the build and lint paths use.
@@ -19,17 +20,35 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { listConfigFiles } from "../../hcl/files";
+import { isJsonConfigFile, jsonLiveBlocks, listConfigFiles } from "../../hcl/files";
 
 /**
- * The HCL configuration files of `dir` a live check reads, in filename order.
+ * The configuration files of `dir` a live check reads, in filename order.
  * A `live` block takes effect only under choudoufu, so the set is the one
- * choudoufu reads (`.tf` and `.tofu`, `x.tofu` over `x.tf`) from the
- * lexicon's one lister (chant#4457), which reads the directory and nothing
- * else. The JSON syntax is left to the AST parse.
+ * choudoufu reads (`.tf`, `.tf.json`, `.tofu` and `.tofu.json`, `x.tofu`
+ * over `x.tf`) from the lexicon's one lister (chant#4457), which reads the
+ * directory and nothing else.
  */
 function liveFiles(dir: string, binary: string): string[] {
-  return listConfigFiles(dir, binary).filter((f) => !f.endsWith(".json"));
+  return listConfigFiles(dir, binary);
+}
+
+/**
+ * The `live` block bodies of one file: a JSON-syntax file's from its
+ * `terraform` blocks (chant#4504), an HCL file's first one by brace counting.
+ * HCL bodies come back as text and JSON ones as objects.
+ */
+function liveBlocksOf(name: string, source: string): Array<string | Record<string, unknown>> {
+  if (isJsonConfigFile(name)) return jsonLiveBlocks(source);
+  const terraformBlock = extractBalancedBlock(source, "terraform");
+  if (terraformBlock === undefined) return [];
+  const liveBlock = extractBalancedBlock(terraformBlock, "live");
+  return liveBlock === undefined ? [] : [liveBlock];
+}
+
+/** A non-empty string, or undefined. */
+function nonEmpty(v: unknown): string | undefined {
+  return typeof v === "string" && v !== "" ? v : undefined;
 }
 
 /** Kept in sync with `LIVE_SIDECAR_FILENAME` in `../../hcl/parse.ts`. */
@@ -106,12 +125,10 @@ export function detectLiveEstate(dir: string, binary = "choudoufu"): string | un
     } catch {
       continue;
     }
-    const terraformBlock = extractBalancedBlock(source, "terraform");
-    if (terraformBlock === undefined) continue;
-    const liveBlock = extractBalancedBlock(terraformBlock, "live");
-    if (liveBlock === undefined) continue;
-    const estate = extractEstateAttr(liveBlock);
-    if (estate) return estate;
+    for (const liveBlock of liveBlocksOf(name, source)) {
+      const estate = typeof liveBlock === "string" ? extractEstateAttr(liveBlock) : nonEmpty(liveBlock.estate);
+      if (estate) return estate;
+    }
   }
 
   return undefined;
@@ -154,16 +171,20 @@ export function detectLivePolicyVerbs(dir: string, binary = "choudoufu"): LivePo
     } catch {
       continue;
     }
-    const terraformBlock = extractBalancedBlock(source, "terraform");
-    if (terraformBlock === undefined) continue;
-    const liveBlock = extractBalancedBlock(terraformBlock, "live");
-    if (liveBlock === undefined) continue;
-    const policyBlock = extractBalancedBlock(liveBlock, "policy");
-    if (policyBlock === undefined) continue;
-    return {
-      undeclaredTagged: extractQuotedAttr(policyBlock, "undeclared_tagged"),
-      undeclaredUntagged: extractQuotedAttr(policyBlock, "undeclared_untagged"),
-    };
+    for (const liveBlock of liveBlocksOf(name, source)) {
+      if (typeof liveBlock === "string") {
+        const policyBlock = extractBalancedBlock(liveBlock, "policy");
+        if (policyBlock === undefined) continue;
+        return {
+          undeclaredTagged: extractQuotedAttr(policyBlock, "undeclared_tagged"),
+          undeclaredUntagged: extractQuotedAttr(policyBlock, "undeclared_untagged"),
+        };
+      }
+      // JSON syntax writes the nested `policy` block as one object or an array of them.
+      const policy = [liveBlock.policy].flat().find((p): p is Record<string, unknown> => typeof p === "object" && p !== null && !Array.isArray(p));
+      if (!policy) continue;
+      return { undeclaredTagged: nonEmpty(policy.undeclared_tagged), undeclaredUntagged: nonEmpty(policy.undeclared_untagged) };
+    }
   }
 
   return undefined;

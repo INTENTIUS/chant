@@ -2,8 +2,10 @@
  * Every file lister in the lexicon reads the same configuration files for one
  * root, through `./hcl/files.ts` (chant#4457): `.tf` and `.tf.json`, plus
  * `.tofu` and `.tofu.json` when the root runs tofu or choudoufu, with `x.tofu`
- * shadowing `x.tf`. One test per lister that changed.
+ * shadowing `x.tf`. One test per lister that changed. The fast `live` readers
+ * also read a `.tf.json` file's `live` block (chant#4504).
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,9 +15,11 @@ import { listConfigFiles, readsTofuFiles, selectConfigFiles } from "./hcl/files"
 import { backendBlock, configFiles, liveEstate, localModules, rootState } from "./compose/hcl";
 import { hasCloudBlock, stateObject } from "./state/backend";
 import { estateOfDir } from "./report";
-import { detectLiveEstate } from "./op/activities/live-detect";
+import { detectLiveEstate, detectLivePolicyVerbs } from "./op/activities/live-detect";
 import { rootWatchPaths } from "./changed-roots";
 import { editPins } from "./pin/edit";
+import { runPinRollout } from "./pin/rollout";
+import { terragruntAffected } from "./terragrunt/affected";
 
 const made: string[] = [];
 afterEach(() => {
@@ -113,6 +117,126 @@ describe("report and live-detect read choudoufu's set", () => {
     expect(detectLiveEstate(tree({ "main.tofu": live }))).toBe("prod");
     expect(detectLiveEstate(tree({ "main.tf": live, "main.tofu": "" }))).toBeUndefined();
     expect(detectLiveEstate(tree({ "main.tf": live, "main.tofu": "" }), "terraform")).toBe("prod");
+  });
+
+  const liveJson = JSON.stringify({ terraform: { required_version: ">= 1.5.0", live: { estate: "prod" } } });
+
+  test("estateOfDir finds a live block in a .tf.json file (chant#4504)", () => {
+    expect(estateOfDir(tree({ "main.tf.json": liveJson }))).toBe("prod");
+    expect(estateOfDir(tree({ "main.tf.json": liveJson }), "terraform")).toBe("prod");
+    // JSON syntax may write the terraform block as an array of bodies.
+    expect(estateOfDir(tree({ "main.tf.json": JSON.stringify({ terraform: [{}, { live: [{ estate: "second" }] }] }) }))).toBe("second");
+    expect(estateOfDir(tree({ "main.tf.json": JSON.stringify({ terraform: { live: { estate: "" } } }) }))).toBeUndefined();
+    expect(estateOfDir(tree({ "main.tf.json": "{ not json" }))).toBeUndefined();
+    // A live key outside the terraform block is not a live block.
+    expect(estateOfDir(tree({ "main.tf.json": JSON.stringify({ live: { estate: "prod" } }) }))).toBeUndefined();
+  });
+
+  test("estateOfDir takes the first live block in filename order across .tf and .tf.json", () => {
+    expect(estateOfDir(tree({ "a.tf.json": liveJson, "b.tf": live.replace("prod", "other") }))).toBe("prod");
+    expect(estateOfDir(tree({ "a.tf": live.replace("prod", "other"), "b.tf.json": liveJson }))).toBe("other");
+  });
+
+  test("estateOfDir reads a .tofu.json live block under choudoufu, and x.tofu.json shadows x.tf.json", () => {
+    expect(estateOfDir(tree({ "main.tofu.json": liveJson }))).toBe("prod");
+    expect(estateOfDir(tree({ "main.tofu.json": liveJson }), "terraform")).toBeUndefined();
+    expect(estateOfDir(tree({ "main.tf.json": liveJson, "main.tofu.json": "{}" }))).toBeUndefined();
+  });
+
+  test("detectLiveEstate finds a live block in a .tf.json file (chant#4504)", () => {
+    expect(detectLiveEstate(tree({ "main.tf.json": liveJson }))).toBe("prod");
+    expect(detectLiveEstate(tree({ "main.tf.json": liveJson }), "terraform")).toBe("prod");
+    expect(detectLiveEstate(tree({ "main.tofu.json": liveJson }))).toBe("prod");
+    expect(detectLiveEstate(tree({ "main.tf.json": JSON.stringify({ terraform: { live: { estate: "" } } }) }))).toBeUndefined();
+    expect(detectLiveEstate(tree({ "main.tf.json": "{ not json" }))).toBeUndefined();
+    // The sidecar still comes first.
+    expect(detectLiveEstate(tree({ "estate.chdf.hcl": 'estate = "side"\n', "main.tf.json": liveJson }))).toBe("side");
+  });
+
+  test("detectLivePolicyVerbs reads a .tf.json live block's policy, as an object or an array", () => {
+    const policy = { undeclared_tagged: "adopt", undeclared_untagged: "report" };
+    expect(detectLivePolicyVerbs(tree({ "main.tf.json": JSON.stringify({ terraform: { live: { estate: "prod", policy } } }) }))).toEqual({
+      undeclaredTagged: "adopt",
+      undeclaredUntagged: "report",
+    });
+    expect(detectLivePolicyVerbs(tree({ "main.tf.json": JSON.stringify({ terraform: { live: { estate: "prod", policy: [{ undeclared_untagged: "delete" }] } } }) }))).toEqual({
+      undeclaredTagged: undefined,
+      undeclaredUntagged: "delete",
+    });
+    expect(detectLivePolicyVerbs(tree({ "main.tf.json": liveJson }))).toBeUndefined();
+  });
+});
+
+describe("pin rollout's listers follow the binary (chant#4504)", () => {
+  const REGISTRY = "app.terraform.io/acme/vpc/aws";
+  const call = (version: string) => `module "vpc" {\n  source  = "${REGISTRY}"\n  version = "${version}"\n}\n`;
+
+  /** A git repository on `main` holding `files`, committed. */
+  function repo(files: Record<string, string>): string {
+    const dir = tree(files);
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: dir, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    git("init", "--quiet", "--initial-branch=main");
+    git("add", ".");
+    git("commit", "--quiet", "-m", "fixture");
+    return dir;
+  }
+
+  async function roots(cwd: string, binary?: string) {
+    const r = await runPinRollout({ cwd, module: REGISTRY, from: "1.3.0", to: "1.4.0", parser: await loadHcl2json(), mode: "report", ...(binary ? { binary } : {}) });
+    return Object.fromEntries(r.roots.map((x) => [x.root, { state: x.state, files: x.files }]));
+  }
+
+  test("candidateRoots and rootFiles read .tofu files under tofu only, with x.tofu shadowing x.tf", async () => {
+    const cwd = repo({
+      "only-tofu/main.tofu": call("1.3.0"),
+      "shadowed/main.tf": call("1.2.0"),
+      "shadowed/main.tofu": call("1.3.0"),
+      "plain/main.tf": call("1.3.0"),
+      "plain/notes.md": call("1.3.0"),
+    });
+    expect(await roots(cwd)).toEqual({
+      plain: { state: "from", files: ["plain/main.tf"] },
+      shadowed: { state: "elsewhere", files: ["shadowed/main.tf"] },
+    });
+    expect(await roots(cwd, "tofu")).toEqual({
+      "only-tofu": { state: "from", files: ["only-tofu/main.tofu"] },
+      plain: { state: "from", files: ["plain/main.tf"] },
+      shadowed: { state: "from", files: ["shadowed/main.tofu"] },
+    });
+  });
+
+  test("a .tf.json root is a candidate, and its moving call is refused by name", async () => {
+    const cwd = repo({ "json/main.tf.json": JSON.stringify({ module: { vpc: { source: REGISTRY, version: "1.3.0" } } }) });
+    const r = await runPinRollout({ cwd, module: REGISTRY, from: "1.3.0", to: "1.4.0", parser: await loadHcl2json(), mode: "report" });
+    expect(r.roots).toEqual([expect.objectContaining({ root: "json", state: "refused", files: ["json/main.tf.json"], reason: expect.stringContaining("JSON syntax") })]);
+    expect(r.waves).toEqual([]);
+  });
+});
+
+describe("terragrunt affected follows a module's .tofu calls (chant#4504)", () => {
+  const unit = { path: "live/app", dependencies: [], reading: ["live/app/terragrunt.hcl", "modules/app/main.tofu"] };
+
+  test("a change under a module called from a .tofu file is a module-call reason", () => {
+    const dir = tree({
+      "live/app/terragrunt.hcl": 'terraform {\n  source = "../../modules/app"\n}\n',
+      "modules/app/main.tofu": 'module "net" {\n  source = "../net"\n}\n',
+      "modules/net/main.tf": "",
+    });
+    expect(terragruntAffected({ dir, units: [unit], terragruntSelected: [], changedFiles: ["modules/net/main.tf"] })).toEqual({
+      units: [{ path: "live/app", reasons: [{ kind: "module-call", files: ["modules/net/main.tf"], via: "modules/net" }] }],
+      notes: [],
+    });
+  });
+
+  test("a call in an x.tf that x.tofu shadows is not followed", () => {
+    const dir = tree({
+      "live/app/terragrunt.hcl": 'terraform {\n  source = "../../modules/app"\n}\n',
+      "modules/app/main.tofu": "",
+      "modules/app/main.tf": 'module "old" {\n  source = "../old"\n}\n',
+      "modules/old/main.tf": "",
+    });
+    expect(terragruntAffected({ dir, units: [unit], terragruntSelected: [], changedFiles: ["modules/old/main.tf"] })).toEqual({ units: [], notes: [] });
   });
 });
 
