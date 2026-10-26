@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 287 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 293 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -227,6 +227,12 @@ Each row follows, in the order of the table above.
 | reason code | `lexicon-has-no-mapping` | chant | capabilities.schema.json | The lexicon ships no capability mapping, so no capability rule can read its resources. |
 | reason code | `capability-not-derivable` | chant | capabilities.schema.json | The lexicon's capability mapping labels none of the kinds the capability's rule needs. |
 | reason code | `lexicon-not-loaded` | chant | capabilities.schema.json | The lexicon isn't installed where the chant that wrote the catalog runs, so its mapping wasn't read. |
+| reason code | `instances-each-value` | chant | graph.schema.json | The block's count or for_each reads each.value or each.key, which only a plan can count. |
+| reason code | `instances-merge` | chant | graph.schema.json | The block's count or for_each calls merge(), which the declared graph does not evaluate. |
+| reason code | `instances-value-unknown` | chant | graph.schema.json | The block's count or for_each is a form the graph reads, and the files a plan reads give it no value, or one that keys no instances. |
+| reason code | `instances-form-unread` | chant | graph.schema.json | The block's count or for_each is an expression the graph does not read: another function, a for expression, another conditional, arithmetic, or a resource, data or module attribute. |
+| reason code | `instances-over-limit` | chant | graph.schema.json | The block would have more than 256 instance nodes, so it is drawn alone. |
+| reason code | `instances-module-uncounted` | chant | graph.schema.json | The block is under an expanded module call whose count or for_each the graph cannot count, so none of its instance ids is known. |
 | reason code | `environment-invalid` | chant | delivery-metrics.schema.json, status.schema.json | An environment name that can't name a ledger directory. |
 | reason code | `dir-missing` | chant | composites.schema.json, graph.schema.json, ls.schema.json, search.schema.json | The member's directory does not exist. |
 | reason code | `unknown-kind` | chant | composites.schema.json, graph.schema.json, ls.schema.json, search.schema.json | No built-in kind or pinned package supplies the member's kind. |
