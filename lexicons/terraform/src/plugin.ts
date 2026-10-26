@@ -10,7 +10,7 @@ import { withCallersChain } from "./lint/post-synth/scope";
 import { terraformAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
-import { terraformConfigSchema, type TerraformConfig } from "./config";
+import { ownRoots, terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -193,7 +193,8 @@ export const terraformPlugin: LexiconPlugin = {
    */
   async buildRoots(ctx): Promise<{ entities: Map<string, Declarable>; warnings: string[] }> {
     const namespace = (ctx.config as { terraform?: TerraformConfig }).terraform;
-    const roots = namespace?.roots ?? {};
+    // A `signalOnly` root (#4484) feeds change detection only, so it builds no entities here.
+    const roots = ownRoots(namespace?.roots);
     if (Object.keys(roots).length === 0) return { entities: new Map(), warnings: [] };
     return renderTerraformRoots({
       projectRoot: ctx.projectRoot,
@@ -212,7 +213,8 @@ export const terraformPlugin: LexiconPlugin = {
   /**
    * The `terraform.roots` a change touched (#3183): a changed file in the
    * root's directory, in a local module it calls, or one of its var files.
-   * See `./changed-roots.ts`.
+   * See `./changed-roots.ts`. Every root counts, a `signalOnly` one too
+   * (#4484): that is what it is declared for.
    */
   async changedUnits(ctx) {
     const tf = (ctx.config as { terraform?: TerraformConfig }).terraform;
