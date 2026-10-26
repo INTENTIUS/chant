@@ -31,6 +31,7 @@ import type {
   ChoudoufuLiveLsArgs,
   ChoudoufuLiveCheckArgs,
   ChoudoufuAdoptArgs,
+  TerraformRootArgs,
 } from "./activities/terraform";
 import type { TerraformPinRolloutArgs } from "./activities/pin-rollout";
 
@@ -184,6 +185,19 @@ export const terraformShow = (
     { root, ...args },
     { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) },
   );
+};
+
+/**
+ * `choudoufuPlanSet` (#4483): `live-plan-set -json` over one live choudoufu
+ * root. Hand `step.out.changeSet` from each root's step to `composeChangeSet`
+ * to make one change-set document over several roots, such as one per cloud.
+ */
+export const choudoufuPlanSet = (
+  root: string,
+  opts?: WithStepRefs<Omit<TerraformRootArgs, "root">> & StepOpts,
+): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("choudoufuPlanSet", { root, ...args }, { profile: profile ?? "longInfra", ...(id ? { id } : {}) });
 };
 
 /**
