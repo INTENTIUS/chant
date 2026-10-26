@@ -394,8 +394,10 @@ release bump="patch" *args:
     echo "Released $next: publish.yml runs on release/npm/$next"
 
 # Check that every contract floor names a released version or a local build
-# stamp, or set the next release's number (#4480)
-# (just release-floors [--npm] [--release <v>] [--rev <sha>] | just release-floors --set <v>)
+# stamp, or set the next release's number (#4480), or after <v> is published
+# turn its floors into literals and move NEXT_RELEASE on (#4501)
+# (just release-floors [--npm] [--release <v>] [--rev <sha>] | just release-floors --set <v>
+#  | just release-floors --freeze <v> [--next <n>])
 release-floors *args:
     npx tsx scripts/release-floors.ts {{args}}
 
