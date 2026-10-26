@@ -7,6 +7,7 @@ import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { subTemplateRefs } from "./graph-sub-template";
 import type { ResourceMetadata } from "./lexicon";
+import { observedInstanceNodeId } from "./instance-nodes";
 import type { RootRead, UnobservedEntity } from "./observation";
 
 export { subTemplateRefs };
@@ -1287,16 +1288,21 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       // its own under the block's (#4454), so the overlay paints it alone.
       // The block node above is the rollup. An absent or not-observed
       // instance is no live node: the overlay reads that off `instances`.
+      // Under an expanded module call the id follows the declared graph's
+      // rule (#4486, #4488), `estate/module.app[0]/aws_eip.pool[1]`, with
+      // `instanceScope` and no `instanceKey` when only the call is expanded.
       for (const inst of meta.instances ?? []) {
         if (inst.verdict !== "present") continue;
-        const id = `${name}${inst.key}`;
+        const id = observedInstanceNodeId(name, inst);
+        if (id === undefined) continue;
         const child: IRNode = {
           id,
           kind: meta.type,
           lexicon,
           attrs: { address: inst.address, ...(inst.status ? { status: inst.status } : {}) },
           instanceOf: name,
-          instanceKey: inst.key,
+          ...(inst.key !== undefined ? { instanceKey: inst.key } : {}),
+          ...(inst.scope !== undefined ? { instanceScope: inst.scope } : {}),
         };
         if (inst.physicalId) child.physicalId = inst.physicalId;
         if (inst.ownership === "owned" || inst.ownership === "foreign") child.ownership = inst.ownership;

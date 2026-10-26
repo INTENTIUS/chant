@@ -233,7 +233,7 @@ import {
 import type { OwnershipMarker } from "@intentius/chant/ownership";
 import {
   rollupInstances,
-  terraformInstanceKey,
+  terraformInstancePath,
   TERRAFORM_INSTANCE_ROLLUP,
   type InstanceObservation,
 } from "@intentius/chant/instance-nodes";
@@ -529,7 +529,9 @@ function omissionVerdict(row: LivePlanOmissionRow): UnobservedReason | "absent" 
  * #2360), which places the same blocks against the same document.
  */
 export function instancesOf(address: string, index: LivePlanIndex): string[] {
-  return index.addresses.filter((a) => a === address || a.startsWith(`${address}[`));
+  // `blockAddressOf` strips every key, so an instance under an expanded
+  // module call (`module.app[0].aws_eip.pool[1]`) is the block's too (#4488).
+  return index.addresses.filter((a) => a === address || a.startsWith(`${address}[`) || blockAddressOf(a) === address);
 }
 
 /** True when the document names any instance under `module.<name>`, at any depth. */
@@ -588,32 +590,45 @@ export function classifyLiveInstance(address: string, index: LivePlanIndex): Ins
 }
 
 /**
+ * Where one instance address of the declared block `address` sits: its own
+ * key and the expanded module path (`@intentius/chant/instance-nodes`), or
+ * undefined when it is the block's unexpanded address or another block's.
+ * An instance under an expanded module call carries `scope` (#4488), so the
+ * live graph draws it under the same id the declared graph lists.
+ */
+function instanceKeyAndScope(address: string, instance: string): { key?: string; scope?: string } | undefined {
+  if (instance === address || blockAddressOf(instance) !== address) return undefined;
+  const path = terraformInstancePath(instance);
+  if (!path) return undefined;
+  return { ...(path.key !== undefined ? { key: path.key } : {}), ...(path.scope !== undefined ? { scope: path.scope } : {}) };
+}
+
+/**
  * Each instance's own verdict (#4454), keyed as Terraform prints it, for the
- * block's `instances`. An instance under an expanded module call has no key
- * of its own on the block (`@intentius/chant/instance-nodes`) and is left
- * out; it still counts in the block's rollup.
+ * block's `instances`. An instance under an expanded module call carries its
+ * module path as `scope` (#4488) and its own key when the block is expanded too.
  */
 function liveInstanceObservations(address: string, instances: readonly string[], verdicts: readonly InstanceVerdict[]): InstanceObservation[] {
   const out: InstanceObservation[] = [];
   instances.forEach((a, i) => {
-    const key = a.startsWith(`${address}[`) ? terraformInstanceKey(a) : undefined;
-    if (key === undefined || a !== `${address}${key}`) return;
+    const at = instanceKeyAndScope(address, a);
+    if (at === undefined) return;
     const v = verdicts[i]!;
     switch (v.kind) {
       case "owned":
-        out.push({ key, address: a, verdict: "present", ownership: "owned", status: "bound", ...(v.row.identity ? { physicalId: v.row.identity } : {}) });
+        out.push({ ...at, address: a, verdict: "present", ownership: "owned", status: "bound", ...(v.row.identity ? { physicalId: v.row.identity } : {}) });
         break;
       case "foreign":
-        out.push({ key, address: a, verdict: "present", ownership: "foreign", status: "unowned", ...(v.row.identity ? { physicalId: v.row.identity } : {}) });
+        out.push({ ...at, address: a, verdict: "present", ownership: "foreign", status: "unowned", ...(v.row.identity ? { physicalId: v.row.identity } : {}) });
         break;
       case "adoptable":
-        out.push({ key, address: a, verdict: "present", ownership: "unknown", status: "adoptable", ...(v.row.identity ? { physicalId: v.row.identity } : {}) });
+        out.push({ ...at, address: a, verdict: "present", ownership: "unknown", status: "adoptable", ...(v.row.identity ? { physicalId: v.row.identity } : {}) });
         break;
       case "absent":
-        out.push({ key, address: a, verdict: "absent" });
+        out.push({ ...at, address: a, verdict: "absent" });
         break;
       case "unobserved":
-        out.push({ key, address: a, verdict: "not-observed", reason: v.reason, detail: v.detail });
+        out.push({ ...at, address: a, verdict: "not-observed", reason: v.reason, detail: v.detail });
         break;
     }
   });
@@ -1247,15 +1262,15 @@ function blockRows(address: string, index: StateIndex): StateResourceRow[] {
 /**
  * Each row of an expanded block as an instance (#4454), keyed as Terraform
  * prints it. A state row is a recorded instance, owned by membership. A row
- * under an expanded module call has no key of its own on the block and is
- * left out, as on the live read.
+ * under an expanded module call carries its module path as `scope`, as on
+ * the live read (#4488).
  */
 function stateInstanceObservations(address: string, rows: readonly StateResourceRow[]): InstanceObservation[] {
   const out: InstanceObservation[] = [];
   for (const r of rows) {
-    const key = terraformInstanceKey(r.address);
-    if (key === undefined || r.address !== `${address}${key}`) continue;
-    out.push({ key, address: r.address, verdict: "present", ownership: "owned", status: r.mode ?? "managed", ...(r.id ? { physicalId: r.id } : {}) });
+    const at = instanceKeyAndScope(address, r.address);
+    if (at === undefined) continue;
+    out.push({ ...at, address: r.address, verdict: "present", ownership: "owned", status: r.mode ?? "managed", ...(r.id ? { physicalId: r.id } : {}) });
   }
   return out.sort((a, b) => a.address.localeCompare(b.address));
 }
