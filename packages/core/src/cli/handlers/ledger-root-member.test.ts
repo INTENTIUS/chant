@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { ActivityFn, ActivityProfile } from "../../op/activity-registry";
-import { runOpLocally } from "../../op/local-executor";
+import { OpRunFailure, runOpLocally } from "../../op/local-executor";
 import type { OpConfig } from "../../op/types";
 import { clearMemberLedgerCache } from "../../lifecycle/member-ledger";
 import { readLedgerTable } from "../../lifecycle/ledger-read";
@@ -112,8 +112,13 @@ describe("chant ledger runs: root_member (#4482)", () => {
       ["terraformPlan", async () => ({ changed: true })],
       ["terraformApply", async () => ({ applied: true })],
     ]);
-    const result = await runOpLocally(config, activities, PROFILES, undefined, { ledger: { cwd: join(root, "app") } });
-    expect(result.status).not.toBe("ok");
+    // A failed run throws OpRunFailure, carrying the result; the ledger row is written first.
+    const failure = await runOpLocally(config, activities, PROFILES, undefined, { ledger: { cwd: join(root, "app") } }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(OpRunFailure);
+    expect((failure as OpRunFailure).result.status).not.toBe("ok");
 
     const doc = await readLedgerTable("runs", () => queryLedgers(root), {});
     if ("error" in doc) throw new Error(doc.error.message);
