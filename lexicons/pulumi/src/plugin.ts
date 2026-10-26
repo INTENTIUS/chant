@@ -22,18 +22,33 @@
  *   in source, PUL001 and PUL002 over the member read (`./lint/`);
  * - completion and hover over `Pulumi.yaml`, a stack's `Pulumi.<stack>.yaml`,
  *   the workspace member entry and `pulumi.member` (`./lsp/`);
- * - its docs section (`./codegen/docs.ts`, `docs/pages/`).
+ * - its docs section (`./codegen/docs.ts`, `docs/pages/`);
+ * - audit metadata for PUL001 and PUL002 (`./lint/audit-catalog.ts`), the
+ *   `chant-pulumi` skill (`./skills/`), and the `PulumiWatchOp` composite
+ *   over the `pulumiPreview` and `pulumiDrift` activities (`./composites/`,
+ *   `./op/`), following the terraform lexicon (#4494).
  */
 import { isAbsolute, resolve } from "node:path";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
+import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { pulumiConfigSchema, type PulumiConfig } from "./config";
 import { pulumiSerializer } from "./serializer";
 import { lastMemberReport, readPulumiMember, setLastMemberReport } from "./workspace-member";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
+import { pulumiAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+
+const loadSkills = createSkillsLoader(import.meta.url, [
+  {
+    file: "chant-pulumi.md",
+    name: "chant-pulumi",
+    description:
+      "Add a Pulumi program to a chant workspace as a member, read its preview into the change set and its refresh as drift, and watch it with PulumiWatchOp",
+  },
+]);
 
 export const pulumiPlugin: LexiconPlugin = {
   name: "pulumi",
@@ -77,6 +92,22 @@ export const pulumiPlugin: LexiconPlugin = {
   postSynthChecks() {
     return postSynthChecks;
   },
+
+  auditCatalog() {
+    return pulumiAuditCatalog;
+  },
+
+  /**
+   * No `mcpTools()` and no `mcpResources()`, deliberately, as in the
+   * terraform lexicon (#2220, #4494). The two shapes other lexicons serve
+   * have nothing to serve here: `createDiffTool` diffs one build's serializer
+   * output against the last, and this serializer writes `{}` on every build
+   * (`./serializer.ts`); `createCatalogResource` serves the generated
+   * resource registry, and this lexicon generates none. A member's preview
+   * and drift already reach MCP through core's workspace tools, so the two
+   * tier-2 "registers" checks stay honest gaps rather than stubs.
+   */
+  skills: loadSkills,
 
   completionProvider(ctx: CompletionContext) {
     return completions(ctx);
