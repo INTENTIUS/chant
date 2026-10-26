@@ -23,7 +23,8 @@
  *
  * `before` is what the state recorded and `after` what the provider read.
  * A path whose `detailedDiff` says `inputDiff` reads the inputs, any other
- * the outputs. A value that is or holds a secret, on either side, is
+ * the outputs, then the inputs when neither output side holds it. Paths are
+ * Pulumi's property paths as it prints them (`tags["corpus-owner"]`). A value that is or holds a secret, on either side, is
  * `sensitive: true` with neither value; the record constructor's key-name
  * pass runs after. The URN is the record's `address`, and its `node` the one
  * URN rule's (`@intentius/chant/pulumi-urn`, #4456) through the change set's
@@ -31,10 +32,13 @@
  * drifts and get no record.
  *
  * The design record (#4450) takes the step ops as `same`, `update` and
- * `delete`; Pulumi may print `refresh` with both states instead, so both are
- * read. The fixtures under `testdata/pulumi-refresh` are hand-written to the
- * documented `--json` shape, not recorded from a real run, and the shape
- * still wants checking against one.
+ * `delete`. Recorded against the plunge corpus on floci (pulumi 3.272.0,
+ * #4475, fixtures in `testdata/pulumi-refresh`): a resource the provider
+ * reads unchanged prints `refresh` with both states, an edited one `update`
+ * with a `detailedDiff`, one deleted out of band `delete` with no new state.
+ * A `--target`ed refresh prints only the target's step, no stack and no
+ * provider. `same` is still read, for older CLIs. The CLI refuses
+ * `--preview-only` under `PULUMI_SKIP_CONFIRMATIONS`, so the runner unsets it.
  *
  * ## A member on plunge
  *
@@ -47,7 +51,9 @@
  * `node` by the URN rule, which `placeDriftRecord` applies to plunge as to
  * pulumi. Which members run on plunge is `./run.ts`'s
  * `pulumiMemberEngine`. The fixtures in `testdata/plunge-drift` are
- * hand-written to the layout plunge's P-L5 prints, not recorded from a run.
+ * recorded from plunge on floci (#4475). plunge answers a component with a
+ * not-observed `unsupported-kind` record, and a URN its stack holds no
+ * record for with exit 1 and no stream.
  *
  * Imports chant's `drift-record` and `pulumi-urn` subpaths and `./values`,
  * never the lexicon's entry point, so it bundles small (#3421).
@@ -144,8 +150,14 @@ function attributesOf(step: PulumiStep): DriftAttribute[] {
   for (const { path, inputs } of driftPaths(step)) {
     if (seen.has(path)) continue;
     seen.add(path);
-    const before = valueAtPath(inputs ? step.oldState?.inputs : step.oldState?.outputs, path);
-    const after = valueAtPath(inputs ? step.newState?.inputs : step.newState?.outputs, path);
+    let before = valueAtPath(inputs ? step.oldState?.inputs : step.oldState?.outputs, path);
+    let after = valueAtPath(inputs ? step.newState?.inputs : step.newState?.outputs, path);
+    // A refresh can name a path that only the inputs hold, with inputDiff false (recorded, #4475: tags an emulator
+    // never echoed into the outputs, dropped out of band). Neither output side holds it, so the inputs answer.
+    if (!inputs && (before === undefined || before === null) && (after === undefined || after === null)) {
+      before = valueAtPath(step.oldState?.inputs, path);
+      after = valueAtPath(step.newState?.inputs, path);
+    }
     if (holdsSecret(before) || holdsSecret(after)) {
       out.push({ path, sensitive: true });
       continue;

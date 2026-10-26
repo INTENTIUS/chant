@@ -2,12 +2,17 @@
  * The Pulumi engine's member outputs (#4455): a chant member's parameter
  * planned against a Pulumi stack output, read through `pulumiOutputSource`.
  *
- * The estate is the three-cloud demo's once AWS moves to Pulumi: `dns`
- * reads `awsEndpoint`, which the `aws` member's stack publishes. `records`
- * is dns's deploy, a fake step that plans its parameters the way
- * `cfn-deploy` does (a hole when an input is not known yet). The pulumi
- * and plunge runners are fakes that answer the hand-written fixtures in
- * `testdata/pulumi-outputs`; no binary runs here.
+ * The estate: `records` reads `vpcId`, which the `aws` member's stack
+ * publishes. `records` is a fake step that plans its parameters the way
+ * `cfn-deploy` does (a hole when an input is not known yet). The pulumi and
+ * plunge runners are fakes that answer the fixtures in
+ * `testdata/pulumi-outputs` and `testdata/plunge-outputs`, recorded for
+ * #4475 from pulumi 3.272.0 and plunge running the plunge corpus's aws-ts
+ * program on floci (see their READMEs): `stack output --json
+ * --show-secrets=false` prints a secret output as the string `"[secret]"`,
+ * and `preview --json` plans no stack outputs, so a settled preview gives
+ * the export's and a preview with changes leaves every output unknown. No
+ * binary runs here.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,7 +42,12 @@ const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
 const AWS_DIR = join(testdata, "pulumi-outputs");
 const PLUNGE_DIR = join(testdata, "plunge-outputs");
-const OLD = "web-old.execute-api.localhost.localstack.cloud";
+const OLD = "vpc-05097b38";
+/** What `stack output` printed, the blinded secret left out. */
+const withoutSecret = (file: string): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(JSON.parse(text(file, "stack-output.json")) as Record<string, unknown>).filter(([, v]) => v !== "[secret]"));
+const APPLIED = withoutSecret("pulumi-outputs");
+const PLUNGE_APPLIED = withoutSecret("plunge-outputs");
 
 function fake(answer: (args: string[]) => string): { run: PulumiRunner; calls: string[][] } {
   const calls: string[][] = [];
@@ -49,8 +59,8 @@ function fake(answer: (args: string[]) => string): { run: PulumiRunner; calls: s
 }
 
 /** The aws member, as a pulumi CLI that answers `stack output` and `preview` from the fixtures. */
-function awsCli(state: { preview: string }) {
-  return fake((args) => (args[0] === "stack" ? text("pulumi-outputs", "stack-output.json") : text("pulumi-outputs", state.preview)));
+function awsCli(state: { preview: string; outputs?: string }) {
+  return fake((args) => (args[0] === "stack" ? text(state.outputs ?? "pulumi-outputs", "stack-output.json") : text("pulumi-outputs", state.preview)));
 }
 
 describe("the allow-list", () => {
@@ -72,43 +82,48 @@ describe("pulumiOutputSource", () => {
   test("applied values come from pulumi stack output --json --show-secrets=false, the secret left out", async () => {
     const cli = awsCli({ preview: "preview-settled.json" });
     const outputs = await pulumiOutputSource({ run: cli.run }).applied(ctx, ref);
-    expect(outputs).toEqual({ awsEndpoint: OLD });
+    expect(outputs).toEqual(APPLIED);
+    expect(outputs.vpcId).toBe(OLD);
+    expect(outputs).not.toHaveProperty("dbPasswordValue");
     expect(cli.calls).toEqual([["stack", "output", "--json", "--show-secrets=false"]]);
-    expect(JSON.stringify(outputs)).not.toContain("secret");
+    expect(JSON.stringify(outputs)).not.toContain("[secret]");
   });
 
   test("applied values come from the checked-in export when chant must not run pulumi", async () => {
     const cli = fake(() => {
       throw new Error("pulumi must not run");
     });
-    expect(await pulumiOutputSource({ applied: "export", run: cli.run }).applied(ctx, ref)).toEqual({ awsEndpoint: OLD });
+    // The export's stack outputs are the same values stack output printed; its secret is ciphertext, left out.
+    expect(await pulumiOutputSource({ applied: "export", run: cli.run }).applied(ctx, ref)).toEqual(APPLIED);
     expect(cli.calls).toEqual([]);
   });
 
-  test("planned values: a settled preview knows awsEndpoint and has nothing to apply", async () => {
+  test("planned values: a settled preview plans no stack outputs and nothing to apply, so the export's stand", async () => {
     const cli = awsCli({ preview: "preview-settled.json" });
     const planned = await pulumiOutputSource({ run: cli.run }).planned(ctx, ref);
-    expect(planned).toMatchObject({ known: { awsEndpoint: OLD }, unknown: [], changes: false });
+    expect(planned).toMatchObject({ known: APPLIED, unknown: [], changes: false });
     expect(planned.planDigest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
-    expect(cli.calls).toEqual([["preview", "--json"]]);
+    expect(cli.calls).toEqual([["preview", "--json", "--show-sames"]]);
   });
 
-  test("planned values: a replaced API makes awsEndpoint unknown, the secret is neither known nor unknown", async () => {
+  test("planned values: a preview with changes (a replaced VPC) leaves every output unknown, the secret neither known nor unknown", async () => {
     const read = await previewPulumiMemberRead({ member: "aws", dir: AWS_DIR, run: awsCli({ preview: "preview-replaced.json" }).run });
-    const planned = pulumiMemberPlannedOutputs("aws", read);
-    expect(planned).toMatchObject({ known: {}, unknown: ["awsEndpoint"], changes: true, planDigest: read.part.member.planDigest });
+    const planned = pulumiMemberPlannedOutputs("aws", { ...read, exported: JSON.parse(text("pulumi-outputs", "stack-export.json")) });
+    expect(planned).toMatchObject({ known: {}, unknown: Object.keys(APPLIED).sort(), changes: true, planDigest: read.part.member.planDigest });
+    expect(planned.unknown).not.toContain("dbPasswordValue");
   });
 
   test("a member on plunge runs the same commands under plunge, never pulumi", async () => {
     const pulumi = fake(() => {
       throw new Error("pulumi must not run for a plunge member");
     });
-    const plunge = awsCli({ preview: "preview-settled.json" });
+    const plunge = awsCli({ preview: "preview-settled.json", outputs: "plunge-outputs" });
     const source = pulumiOutputSource({ run: pulumi.run, plunge: plunge.run });
     const plungeRef = { ...ref, dir: PLUNGE_DIR };
-    expect(await source.applied(ctx, plungeRef)).toEqual({ awsEndpoint: OLD });
-    expect((await source.planned(ctx, plungeRef)).known).toEqual({ awsEndpoint: OLD });
-    expect(plunge.calls).toEqual([["stack", "output", "--json", "--show-secrets=false"], ["preview", "--json"]]);
+    // plunge prints stack output exactly as pulumi does, the secret as "[secret]" (recorded).
+    expect(await source.applied(ctx, plungeRef)).toEqual(PLUNGE_APPLIED);
+    expect((await source.planned(ctx, plungeRef)).known).toEqual(PLUNGE_APPLIED);
+    expect(plunge.calls).toEqual([["stack", "output", "--json", "--show-secrets=false"], ["preview", "--json", "--show-sames"]]);
     expect(pulumi.calls).toEqual([]);
   });
 
@@ -136,7 +151,7 @@ const ESTATE: DriverComponent[] = [
   {
     name: "records",
     dependsOn: ["aws"],
-    deploy: [{ phase: "Apply", steps: [{ kind: "fake-records", inputs: { awsEndpoint: { stackOutput: { stack: "aws", name: "awsEndpoint" } } } }] }],
+    deploy: [{ phase: "Apply", steps: [{ kind: "fake-records", inputs: { vpcId: { stackOutput: { stack: "aws", name: "vpcId" } } } }] }],
   },
 ];
 
@@ -192,8 +207,8 @@ describe("dns against a Pulumi output (#4455)", () => {
     const plan = planFanOut({ components: ESTATE, changed: ["records"] });
     const set = await planPrSet({ components: ESTATE, plan, registry: w.registry, env: "local" });
     expect(set.failed).toBe(false);
-    expect(w.state.recordsPlanned).toEqual([{ inputs: { awsEndpoint: OLD } }]);
-    expect(set.deployedOutputs).toEqual({ aws: ["awsEndpoint"] });
+    expect(w.state.recordsPlanned).toEqual([{ inputs: { vpcId: OLD } }]);
+    expect(set.deployedOutputs).toEqual({ aws: Object.keys(APPLIED).sort() });
     const records = set.members.find((m) => m.member === "records")!;
     expect(records.unknownInputs).toBeUndefined();
   });
@@ -202,8 +217,8 @@ describe("dns against a Pulumi output (#4455)", () => {
     const w = world({ preview: "preview-settled.json" });
     const plan = planFanOut({ components: ESTATE, changed: ["aws"] });
     const set = await planPrSet({ components: ESTATE, plan, registry: w.registry, env: "local" });
-    expect(w.state.recordsPlanned).toEqual([{ inputs: { awsEndpoint: OLD } }]);
-    expect(set.plannedOutputs).toEqual({ aws: ["awsEndpoint"] });
+    expect(w.state.recordsPlanned).toEqual([{ inputs: { vpcId: OLD } }]);
+    expect(set.plannedOutputs).toEqual({ aws: Object.keys(APPLIED).sort() });
     expect(set.doc.members.find((m) => m.member === memberOutputsMemberName("aws"))!.holes).toEqual([]);
   });
 
@@ -215,11 +230,12 @@ describe("dns against a Pulumi output (#4455)", () => {
 
     expect(w.state.recordsPlanned).toEqual([{ inputs: {}, unresolved: ["aws"] }]);
     const records = set.members.find((m) => m.member === "records")!;
-    expect(records.unknownInputs).toEqual(["aws.awsEndpoint"]);
-    expect(records.reads).toEqual([{ upstream: "aws", outputs: ["awsEndpoint"], unknown: ["awsEndpoint"] }]);
-    expect(set.doc.members.find((m) => m.member === memberOutputsMemberName("aws"))!.holes).toEqual([
-      { address: "aws.awsEndpoint", type: "output", reason: "aws.awsEndpoint is known only after aws applies; what reads it is planned again then" },
-    ]);
+    expect(records.unknownInputs).toEqual(["aws.vpcId"]);
+    expect(records.reads).toEqual([{ upstream: "aws", outputs: ["vpcId"], unknown: ["vpcId"] }]);
+    // Every output the stack publishes is unknown while its preview has changes: one hole each.
+    const holes = set.doc.members.find((m) => m.member === memberOutputsMemberName("aws"))!.holes;
+    expect(holes).toHaveLength(Object.keys(APPLIED).length);
+    expect(holes).toContainEqual({ address: "aws.vpcId", type: "output", reason: "aws.vpcId is known only after aws applies; what reads it is planned again then" });
 
     // Merged before aws's own pipeline applied: the read refuses, so records is blocked behind it.
     const early = await applyPrSet({ components: ESTATE, plan, registry: w.registry, env: "local", set });
@@ -227,8 +243,8 @@ describe("dns against a Pulumi output (#4455)", () => {
     expect(w.state.recordsRan).toEqual([]);
 
     // Once aws applied: records is held back with the reason, and planned again against the applied value.
-    const NEW = "web-new.execute-api.localhost.localstack.cloud";
-    w.state.stackOutput = JSON.stringify({ awsEndpoint: NEW, apiKey: "[secret]" });
+    const NEW = "vpc-0new";
+    w.state.stackOutput = JSON.stringify({ ...APPLIED, vpcId: NEW, dbPasswordValue: "[secret]" });
     w.state.preview = "preview-settled.json";
     const decideNothing = async ({ gate, set: round }: { gate: string; set: PrPlanSet }) => {
       const check = await decidePrGate(readOnlyLedger(memoryGateLedgerPort()), { op: "pr-12", gate, digest: round.doc.digest, now: NOW });
@@ -239,7 +255,7 @@ describe("dns against a Pulumi output (#4455)", () => {
     expect(held.members.find((m) => m.member === "records")).toMatchObject({
       status: "waiting",
       round: 2,
-      held: "its plan read aws.awsEndpoint before that output applied as another value",
+      held: "its plan read aws.vpcId before that output applied as another value",
     });
     expect(w.state.recordsRan).toEqual([]);
   });
@@ -249,6 +265,6 @@ describe("dns against a Pulumi output (#4455)", () => {
     const capability = w.registry.resolve(MEMBER_OUTPUTS_KIND);
     await expect(capability.run({ env: "local", component: "aws" }, { member: "aws" } as never)).rejects.toBeInstanceOf(MemberOutputsPendingError);
     w.state.preview = "preview-settled.json";
-    await expect(capability.run({ env: "local", component: "aws" }, { member: "aws" } as never)).resolves.toEqual({ member: "aws", outputs: { awsEndpoint: OLD } });
+    await expect(capability.run({ env: "local", component: "aws" }, { member: "aws" } as never)).resolves.toEqual({ member: "aws", outputs: APPLIED });
   });
 });

@@ -11,8 +11,12 @@
  * back on an unknown output, as chant holds back roots waiting on unknown
  * terraform outputs.
  *
- * Where the preview JSON puts the stack's planned outputs is still to be
- * checked on a real run; this reads the stack step's `newState.outputs`.
+ * Recorded against the plunge corpus (#4475): `pulumi preview --json` (3.272.0)
+ * prints the stack's step with no `outputs` at all, so a real preview plans
+ * no stack outputs. {@link pulumiPlannedStackOutputs} reads `newState.outputs`
+ * when a step carries them and is undefined when it does not, which
+ * `member-outputs` turns into the exported outputs (nothing to apply) or
+ * every output unknown (a change planned).
  */
 import { PULUMI_STACK_TYPE } from "@intentius/chant/pulumi-urn";
 import { pulumiSteps } from "./change-set";
@@ -48,9 +52,15 @@ export function pulumiExportedStackOutputs(exported: unknown): PulumiStackOutput
   return outputsOf(isObject(stack?.outputs) ? (stack!.outputs as Json) : undefined);
 }
 
-/** The outputs a `pulumi preview --json` plans for the stack, unknowns marked. Undefined when the preview has no stack step. */
+/**
+ * The outputs a `pulumi preview --json` plans for the stack, unknowns marked. Undefined when the preview has no
+ * stack step, or a stack step that carries no outputs, which is what a real preview prints.
+ */
 export function pulumiPlannedStackOutputs(preview: unknown): PulumiStackOutput[] | undefined {
   const step = (pulumiSteps(preview) ?? []).find((s) => (s.newState?.type ?? s.oldState?.type) === PULUMI_STACK_TYPE);
-  if (!step) return undefined;
-  return outputsOf(step.newState?.outputs ?? step.oldState?.outputs);
+  // Only the new state plans: a `same` stack step's old state holds the last deployment's outputs, which a change
+  // elsewhere in the stack can move (recorded, #4475: a replaced VPC's id).
+  const outputs = step?.newState?.outputs;
+  if (!step || !isObject(outputs)) return undefined;
+  return outputsOf(outputs);
 }

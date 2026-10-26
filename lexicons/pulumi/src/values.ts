@@ -14,9 +14,11 @@
  *   `plaintext`, `ciphertext` or `value`. Without `--show-secrets` the
  *   display blinds it to `"[secret]"`, so that string counts as a secret too.
  *
- * These shapes are written from Pulumi's documented serialization, not read
- * off a real run; the fixtures under `testdata/pulumi-preview` and
- * `testdata/pulumi-refresh` are hand-written to them.
+ * Recorded from pulumi 3.272.0 against the plunge corpus on floci (#4475,
+ * `testdata/pulumi-preview` and `testdata/pulumi-refresh`): previews and
+ * refreshes print the unknown sentinel for a value known only after apply,
+ * and a secret, in inputs and outputs alike, as the blinded `"[secret]"`;
+ * a `pulumi stack export` holds the signature object with its ciphertext.
  *
  * Imports nothing, so the adapters bundle small (#3421).
  */

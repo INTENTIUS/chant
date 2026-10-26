@@ -58,7 +58,9 @@
  *
  * A resource registered inside an `apply()` directly under the stack, with
  * no export that holds it, has no component to stand under and is not
- * detected. That is the one case left out.
+ * detected. When the export does hold it and its input is unknown, the
+ * preview prints a `delete` for it, which reads as a plain delete. Those are
+ * the two cases left out.
  *
  * ## The digest
  *
@@ -68,10 +70,17 @@
  * `config`, `duration`, `diagnostics` and `changeSummary`, and the states'
  * outputs, which at preview are the last deployment's or unknown.
  *
- * The fixtures under `testdata/pulumi-preview` are hand-written to the
- * documented `pulumi preview --json` shape (`steps[].op/urn/oldState/
- * newState/diffReasons/replaceReasons/detailedDiff`), not recorded from a
- * real run.
+ * The fixtures under `testdata/pulumi-preview` are recorded from pulumi
+ * 3.272.0 against the plunge corpus's aws-ts program on floci (#4475). What
+ * the recording showed: `preview --json` lists no unchanged resource unless
+ * `--show-sames` is passed, which chant's argv does, since signal 2 reads a
+ * missing resource as one an `apply()` may register; a replace is one
+ * `replace` step at preview, not three; the stack's step carries no planned
+ * outputs; a secret is the blinded string `"[secret]"`; and a resource
+ * registered inside an `apply()` directly under the stack whose input is
+ * unknown (the corpus's `vpc-id` parameter, named after a VPC being
+ * replaced) is printed as a `delete`, which this adapter keeps as a plain
+ * delete since nothing tells it apart from a removed resource.
  *
  * ## The import graph
  *
@@ -211,21 +220,34 @@ function attributesOf(steps: PulumiStep[], action: ChangeSetAction, states: { be
     action === "create"
       ? propertyKeys(after)
       : [...new Set([...named, ...propertyKeys(after).filter((k) => holdsUnknown(after[k]))])].filter((k) => !k.startsWith("__"));
+  const beforeOut = isObject(states.before?.outputs) ? states.before!.outputs! : {};
+  const afterOut = isObject(states.after?.outputs) ? states.after!.outputs! : {};
+  const present = (v: unknown): boolean => v !== undefined && v !== null;
   const out: ChangeSetAttribute[] = [];
   for (const k of keys.sort()) {
-    const unknown = holdsUnknown(after[k]);
-    const hasBefore = action !== "create" && before[k] !== undefined && before[k] !== null;
-    const hasAfter = after[k] !== undefined && after[k] !== null;
+    let b: unknown = before[k];
+    let a: unknown = after[k];
+    let unknown = holdsUnknown(a);
     // On an update a key the diff names is listed even when both sides read the same: the provider said it changes.
-    if (action === "create" && !hasAfter && !unknown) continue;
-    const sensitive = holdsSecret(before[k]) || holdsSecret(after[k]);
+    if (action === "create" && !present(a) && !unknown) continue;
+    // A key the diff names with no input on either side is an output the provider computes (an SSM parameter's
+    // `version`, recorded, #4475): before is the last deployment's output, after the planned output, which a
+    // preview leaves empty when the value is known only after apply.
+    if (action !== "create" && !present(b) && !present(a) && !unknown && named.has(k)) {
+      b = beforeOut[k];
+      a = afterOut[k];
+      unknown = !present(a) || holdsUnknown(a);
+    }
+    const hasBefore = action !== "create" && present(b);
+    const hasAfter = present(a);
+    const sensitive = holdsSecret(b) || holdsSecret(a);
     out.push({
       path: k,
       ...(sensitive
         ? { sensitive: true as const }
         : {
-            ...(hasBefore ? { before: before[k] } : {}),
-            ...(hasAfter && !unknown ? { after: after[k] } : {}),
+            ...(hasBefore ? { before: b } : {}),
+            ...(hasAfter && !unknown ? { after: a } : {}),
           }),
       ...(unknown ? { unknown: true as const } : {}),
       ...(forcing.has(k) ? { forcesReplacement: true as const } : {}),

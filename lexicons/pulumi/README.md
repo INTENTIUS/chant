@@ -35,7 +35,7 @@ export const records: Component = {
 The consumer lists `pulumi` among its lexicons, which brings `pulumiCapabilityPlugin` and its source, `pulumiOutputSource`, for members of kind `pulumi`.
 
 - Applied values come from `pulumi stack output --json --show-secrets=false` in the member's directory. With `CHANT_PULUMI_APPLIED_OUTPUTS=export`, chant runs nothing and reads them from the checked-in `stack-export.json`.
-- Planned values come from `pulumi preview --json`, the outputs of the stack's `pulumi:pulumi:Stack` step. An output holding Pulumi's unknown sentinel is unknown. The consumer is planned without it, gets a hole on `aws#outputs` naming `aws.awsEndpoint`, and is held back on merge until the member applied, then planned again.
+- Planned values come from `pulumi preview --json --show-sames`. A real preview carries no outputs on the stack's `pulumi:pulumi:Stack` step (recorded, #4475), so a preview with nothing to apply gives the checked-in export's outputs and one with changes leaves every output unknown. An output a stack step does carry is read, and one holding Pulumi's unknown sentinel is unknown. The consumer is planned without an unknown output, gets a hole on `aws#outputs` naming it, and is held back on merge until the member applied, then planned again.
 - The plan digest is the member part's `pulumi-preview` digest, so a preview that moves after review moves the consumer's digest.
 - While the preview still has changes, `run` refuses and the consumer is blocked behind the member.
 - Secret outputs are left out of both reads. chant never carries or prints their values.

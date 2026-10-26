@@ -1,50 +1,242 @@
 {
-  "steps": [
-    {
-      "op": "same",
-      "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
-      "newState": {
-        "urn": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
-        "custom": false,
-        "type": "pulumi:pulumi:Stack"
-      }
+    "config": {
+        "aws:accessKey": "test",
+        "aws:endpoints": "[{\"ec2\":\"http://localhost:4566\",\"iam\":\"http://localhost:4566\",\"s3\":\"http://localhost:4566\",\"sns\":\"http://localhost:4566\",\"sqs\":\"http://localhost:4566\",\"ssm\":\"http://localhost:4566\",\"sts\":\"http://localhost:4566\"}]",
+        "aws:region": "us-east-1",
+        "aws:s3UsePathStyle": "true",
+        "aws:secretKey": "test",
+        "aws:skipCredentialsValidation": "true",
+        "aws:skipMetadataApiCheck": "true",
+        "aws:skipRegionValidation": "true",
+        "aws:skipRequestingAccountId": "true",
+        "corpus:flociEndpoint": "http://localhost:4566",
+        "corpus:prefix": "rec-ts",
+        "corpus:workerCount": "3"
     },
-    {
-      "op": "same",
-      "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
-      "newState": {
-        "urn": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0",
-        "custom": true,
-        "type": "pulumi:providers:aws",
-        "id": "prov-1"
-      }
-    },
-    {
-      "op": "same",
-      "urn": "urn:pulumi:dev::site::aws:iam/role:Role::web",
-      "provider": "urn:pulumi:dev::site::pulumi:providers:aws::default_6_50_0::prov-1",
-      "oldState": {
-        "urn": "urn:pulumi:dev::site::aws:iam/role:Role::web",
-        "custom": true,
-        "type": "aws:iam/role:Role",
-        "id": "web",
-        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
-        "outputs": {
-          "name": "web"
+    "steps": [
+        {
+            "op": "refresh",
+            "urn": "urn:pulumi:floci::corpus-aws-ts::aws:iam/role:Role::app-role",
+            "provider": "urn:pulumi:floci::corpus-aws-ts::pulumi:providers:aws::default_7_51_1::6f538b4e-9183-48c8-88fe-2bddfa67e309",
+            "oldState": {
+                "urn": "urn:pulumi:floci::corpus-aws-ts::aws:iam/role:Role::app-role",
+                "custom": true,
+                "id": "rec-ts-app",
+                "type": "aws:iam/role:Role",
+                "inputs": {
+                    "__defaults": [
+                        "maxSessionDuration",
+                        "path"
+                    ],
+                    "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"}}]}",
+                    "maxSessionDuration": 3600,
+                    "name": "rec-ts-app",
+                    "path": "/",
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    }
+                },
+                "outputs": {
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "inlinePolicies": {
+                                    "arr": {}
+                                },
+                                "managedPolicyArns": {
+                                    "arr": {}
+                                },
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                }
+                            },
+                            "renamed": {
+                                "inlinePolicies": "inline_policy"
+                            }
+                        }
+                    },
+                    "arn": "arn:aws:iam::000000000000:role/rec-ts-app",
+                    "assumeRolePolicy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+                    "createDate": "2026-10-26T05:22:38Z",
+                    "description": "",
+                    "forceDetachPolicies": false,
+                    "id": "rec-ts-app",
+                    "inlinePolicies": [],
+                    "managedPolicyArns": [],
+                    "maxSessionDuration": 3600,
+                    "name": "rec-ts-app",
+                    "namePrefix": "",
+                    "path": "/",
+                    "permissionsBoundary": "",
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "uniqueId": "AROAHNS7FPBOONEIJC5T"
+                },
+                "parent": "urn:pulumi:floci::corpus-aws-ts::pulumi:pulumi:Stack::corpus-aws-ts-floci",
+                "provider": "urn:pulumi:floci::corpus-aws-ts::pulumi:providers:aws::default_7_51_1::6f538b4e-9183-48c8-88fe-2bddfa67e309",
+                "propertyDependencies": {
+                    "assumeRolePolicy": [],
+                    "name": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T05:22:38.586153Z",
+                "modified": "2026-10-26T05:22:38.586153Z",
+                "sourcePosition": "project:///index.ts#29,17",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.ts#29,17"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3009,23"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3011,12"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            "newState": {
+                "urn": "urn:pulumi:floci::corpus-aws-ts::aws:iam/role:Role::app-role",
+                "custom": true,
+                "id": "rec-ts-app",
+                "type": "aws:iam/role:Role",
+                "inputs": {
+                    "__defaults": [
+                        "maxSessionDuration",
+                        "path"
+                    ],
+                    "assumeRolePolicy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"}}]}",
+                    "maxSessionDuration": 3600,
+                    "name": "rec-ts-app",
+                    "path": "/",
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    }
+                },
+                "outputs": {
+                    "__pulumi_raw_state_delta": {
+                        "obj": {
+                            "ps": {
+                                "inlinePolicies": {
+                                    "arr": {}
+                                },
+                                "managedPolicyArns": {
+                                    "arr": {}
+                                },
+                                "tags": {
+                                    "map": {}
+                                },
+                                "tagsAll": {
+                                    "map": {}
+                                }
+                            },
+                            "renamed": {
+                                "inlinePolicies": "inline_policy"
+                            }
+                        }
+                    },
+                    "arn": "arn:aws:iam::000000000000:role/rec-ts-app",
+                    "assumeRolePolicy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}",
+                    "createDate": "2026-10-26T05:22:38Z",
+                    "description": "",
+                    "forceDetachPolicies": false,
+                    "id": "rec-ts-app",
+                    "inlinePolicies": [],
+                    "managedPolicyArns": [],
+                    "maxSessionDuration": 3600,
+                    "name": "rec-ts-app",
+                    "namePrefix": "",
+                    "path": "/",
+                    "permissionsBoundary": "",
+                    "tags": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "tagsAll": {
+                        "corpus-owner": "plunge",
+                        "corpus-program": "aws-ts"
+                    },
+                    "uniqueId": "AROAHNS7FPBOONEIJC5T"
+                },
+                "parent": "urn:pulumi:floci::corpus-aws-ts::pulumi:pulumi:Stack::corpus-aws-ts-floci",
+                "provider": "urn:pulumi:floci::corpus-aws-ts::pulumi:providers:aws::default_7_51_1::6f538b4e-9183-48c8-88fe-2bddfa67e309",
+                "propertyDependencies": {
+                    "assumeRolePolicy": [],
+                    "name": [],
+                    "tags": []
+                },
+                "created": "2026-10-26T05:22:38.586153Z",
+                "modified": "2026-10-26T05:22:38.586153Z",
+                "sourcePosition": "project:///index.ts#29,17",
+                "stackTrace": [
+                    {
+                        "sourcePosition": "project:///index.ts#29,17"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3009,23"
+                    },
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/pulumi/vendor/ts-node@7.0.1/index.js#3011,12"
+                    },
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {},
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/cmd/run/run.ts#541,33"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/runtime/stack.ts#79,28"
+                    },
+                    {
+                        "sourcePosition": "project:///node_modules/@pulumi/resource.ts#1687,22"
+                    }
+                ]
+            },
+            "detailedDiff": null
         }
-      },
-      "newState": {
-        "urn": "urn:pulumi:dev::site::aws:iam/role:Role::web",
-        "custom": true,
-        "type": "aws:iam/role:Role",
-        "id": "web",
-        "parent": "urn:pulumi:dev::site::pulumi:pulumi:Stack::site-dev",
-        "outputs": {
-          "name": "web"
-        }
-      }
+    ],
+    "duration": 212736875,
+    "changeSummary": {
+        "same": 1
     }
-  ],
-  "diagnostics": [],
-  "duration": 900000000
 }
