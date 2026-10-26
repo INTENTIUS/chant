@@ -376,7 +376,7 @@ release bump="patch" *args:
     # Refuse a cut whose floors name a version that is neither released nor
     # $next (#4480): set NEXT_RELEASE on main first with
     # `npx tsx scripts/release-floors.ts --set <version>`.
-    npx tsx scripts/release-floors.ts --rev "$sha" --release "$next"
+    npx tsx scripts/release-floors.ts --npm --rev "$sha" --release "$next"
     echo "Release $next from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
     yes=()
     [ "$RELEASE_DRY_RUN" = 1 ] || yes=(--yes)

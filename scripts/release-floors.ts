@@ -24,7 +24,14 @@
  * chant-v<v>, so the default mode needs no network; fetch the tags first
  * (`git fetch origin 'refs/tags/release/*:refs/tags/release/*'
  * 'refs/tags/chant-v*:refs/tags/chant-v*'`), as `just release` does. `--npm`
- * adds `npm view @intentius/chant versions`, for a checkout without tags.
+ * adds `npm view @intentius/chant versions`.
+ *
+ * npm is the source of truth for what was published (#4503). A tag can exist
+ * in one checkout and not on origin (chant-v0.81.0 did: npm lists 0.81.0,
+ * origin's tags skip from 0.80.0 to 0.82.0), so a check that read tags only
+ * passed on the maintainer's checkout and would fail on a clean CI checkout.
+ * scripts/release-pack.sh and `just release` both run with `--npm`; the
+ * tags-only default is for an offline look at the working tree.
  *
  * A local build stamp is the version of packages/core/package.json in the
  * working tree when it differs from the committed one: scripts/release-pack.sh
@@ -36,6 +43,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
 const CONSTANT_FILE = "packages/core/src/release-floors.ts";
@@ -122,18 +130,37 @@ function floors(read: (file: string) => string, rev: string | undefined, next: s
   return out;
 }
 
-/** The versions with a release: the checkout's tags, and npm's list with --npm. */
-function released(npm: boolean): Set<string> {
+/**
+ * The versions with a release, from a tag list (`git tag -l` output) and,
+ * when given, npm's list of published versions.
+ */
+export function releasedVersions(tags: string[], npmVersions?: string[]): Set<string> {
   const out = new Set<string>();
-  for (const t of git(["tag", "-l", "release/npm/*", "chant-v*"]).split("\n")) {
+  for (const t of tags) {
     const m = /^(?:release\/npm\/|chant-v)(\d+\.\d+\.\d+)$/.exec(t.trim());
     if (m) out.add(m[1]);
   }
-  if (npm) {
-    const raw = execFileSync("npm", ["view", "@intentius/chant", "versions", "--json"], { encoding: "utf-8" });
-    for (const v of JSON.parse(raw) as string[]) out.add(v);
-  }
+  for (const v of npmVersions ?? []) out.add(v);
   return out;
+}
+
+/** The versions with a release: the checkout's tags, and npm's list with --npm. */
+function released(npm: boolean): Set<string> {
+  const tags = git(["tag", "-l", "release/npm/*", "chant-v*"]).split("\n");
+  if (!npm) return releasedVersions(tags);
+  const raw = execFileSync("npm", ["view", "@intentius/chant", "versions", "--json"], { encoding: "utf-8" });
+  return releasedVersions(tags, JSON.parse(raw) as string[]);
+}
+
+/** Each floor whose version is not in `allowed`, as a problem line. */
+export function unreleasedFloors(
+  named: { name: string; file: string; version: string }[],
+  allowed: Set<string>,
+  npm: boolean,
+): string[] {
+  return named
+    .filter((f) => !allowed.has(f.version))
+    .map((f) => `${f.file}: ${f.name} names ${f.version}, which has no release tag${npm ? " or npm version" : ""} and no local build stamp`);
 }
 
 /** The working tree's stamp: packages/core/package.json's version when it differs from HEAD's. */
@@ -180,11 +207,7 @@ function check(args: Args): number {
   const stamp = args.rev ? undefined : localStamp();
   const allowed = new Set([...known, ...args.release, ...(stamp ? [stamp] : [])]);
   const named = [{ name: "NEXT_RELEASE", file: CONSTANT_FILE, version: next }, ...floors(read, args.rev, next)];
-  for (const f of named) {
-    if (!allowed.has(f.version)) {
-      problems.push(`${f.file}: ${f.name} names ${f.version}, which has no release tag${args.npm ? " or npm version" : ""} and no local build stamp`);
-    }
-  }
+  problems.push(...unreleasedFloors(named, allowed, args.npm));
 
   const where = args.rev ? `at ${args.rev}` : "in the working tree";
   if (problems.length > 0) {
@@ -198,6 +221,8 @@ function check(args: Args): number {
   return 0;
 }
 
-const args = parseArgs(process.argv.slice(2));
-if (args.set) set(args.set);
-else process.exit(check(args));
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.set) set(args.set);
+  else process.exit(check(args));
+}
