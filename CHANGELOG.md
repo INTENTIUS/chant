@@ -4,6 +4,38 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#4473](https://github.com/INTENTIUS/chant/issues/4473) a new package, `@intentius/chant-lexicon-pulumi`, published with chant for the first time. It carries the `pulumi` member kind ([#4453](https://github.com/INTENTIUS/chant/issues/4453)), its preview change set, refresh drift and outputs ([#4455](https://github.com/INTENTIUS/chant/issues/4455)), and since [#4468](https://github.com/INTENTIUS/chant/issues/4468) the tier-1 lexicon checks: completion and hover over `Pulumi.yaml`, stack config and the member declaration, lint and post-synth rules, an example workspace, a docs page, and `dist/manifest.json`. `@intentius/chant/drift-record` and `@intentius/chant/pulumi-urn` are importable from the published chant, and `chant workspace drift`, `chant lifecycle drift` and `chant workspace promote --all` ship in it.
+
+- [#4458](https://github.com/INTENTIUS/chant/issues/4458) terraform lexicon: `moved`, `import`, `removed` and `check` blocks are entities (`Terraform::Moved`, `Terraform::Import`, `Terraform::Removed`, `Terraform::Check`), with their references as graph edges. `chant graph` and `chant workspace graph` print nodes for them that they did not print before.
+
+- [#4457](https://github.com/INTENTIUS/chant/issues/4457) terraform lexicon: a root's configuration is the files its binary reads. `.tf.json` is read for terraform, and `.tofu` and `.tofu.json` too for tofu and choudoufu, with `x.tofu` shadowing `x.tf`. A JSON file yields the entities its HCL twin does. Every reader (graph, compose, backend, changed roots, live detection, pin rollouts, audit discovery) uses the same list, so a root written in JSON or `.tofu` is no longer partly invisible.
+
+- [#4486](https://github.com/INTENTIUS/chant/issues/4486) graph: instance nodes for `count = var.n`, `length(var.x)`, `for_each = var.m` and `toset(var.l)`, counted from the variable's default, the root's tfvars and varFiles, and a child module's call arguments, and for blocks under an expanded module call, as `<member>/<root>/module.app[0]/aws_eip.pool[1]` with `instanceScope` on the node. A plan address under an expanded call maps to that id.
+
+- [#4463](https://github.com/INTENTIUS/chant/issues/4463) `terraform-apply` previews a root outside a composed group whose `vars` read an output not known yet, with a typed stand-in per such variable. What the stand-ins drive is marked unknown, the change-set member lists them under the new `placeholders` field, and the apply plans again with the real values and refuses a plan beyond the preview's shape (`PlanShapeMovedError`). A preview that cannot be made stays a hole whose reason says why.
+
+- [#4467](https://github.com/INTENTIUS/chant/issues/4467) `kubectl-apply` plans one hole, `inputs from <component>; re-checked on apply`, when its inputs wait on another component, and reads or dry-runs nothing for it.
+
+- [#4465](https://github.com/INTENTIUS/chant/issues/4465) `chant components promote`, `components fan-out` and `run --components` plan and apply a group of components one capability declares `planGroup` and `runGroup` for as one, as `pr-plan` and `pr-apply` do (ws-107), and print a line per group with each member's outcome. Under `--wave-gate` no group forms and each member falls back as `wave-gate`.
+
+- [#4478](https://github.com/INTENTIUS/chant/issues/4478) terraform lexicon: the composition and the state store give one answer on where a root's state is and whether chant can lock it. The declared backend is read with the `-backend-config` flags of `TF_CLI_ARGS`, `TF_CLI_ARGS_init` and `backendConfig` over it, and a disagreement with what `init` recorded (another type, or a key with two values) is refused with a reason naming both.
+
+- [#4459](https://github.com/INTENTIUS/chant/issues/4459) terraform lexicon: `terraform.roots.<name>.backendConfigFiles` lists backend-config files. Every `init` chant runs passes them as `-backend-config=<path>` before the key/value pairs, and the backend verdict reads them.
+
+- [terragucci#1274](https://github.com/INTENTIUS/terragucci/issues/1274) terraform lexicon state: `takeSourceLocks` and `takeLocksWithSources` lock a workspace a state is read from (such as a Terraform Cloud workspace a migration moves from) before any state lock, and release it when a later lock cannot be taken (`SourceLockedError`). `takeLocks` takes any store with the lock methods.
+
+- [#4484](https://github.com/INTENTIUS/chant/issues/4484) terraform lexicon: a root may set `signalOnly: true`. Change detection still counts it, and the build, the behaviour build, live root names and the drift read skip it.
+
+- [#4483](https://github.com/INTENTIUS/chant/issues/4483) terraform lexicon: `choudoufuPlanSet` is an Op activity, with a contract and a step builder, so an Op can plan several live choudoufu roots and hand each root's change set to `composeChangeSet`.
+
+- [#4482](https://github.com/INTENTIUS/chant/issues/4482) a TerraformApplyOp's Init step publishes `TerraformRootPath`, and `chant ledger runs` and `chant query` gain `root_member`, the member whose directory holds the root a run applied, so `--where root_member=<member>` finds the local applies of a root another member's Op ran.
+
+- [#4485](https://github.com/INTENTIUS/chant/issues/4485) `chant workspace promote` keeps a stamp record when `live-import -approve` fails after the kind change is written, and a re-run (single member or `--all`) retries only the stamp instead of reporting `already-promoted`. A stamp that fails again stays `stamp-failed` with the command to run.
+
+- [#4461](https://github.com/INTENTIUS/chant/issues/4461) `chant workspace promote` to `choudoufu` runs `choudoufu init -backend=false` in the staging worktree before `live-check`, and leaves what it installs under `.terraform/` out of the patch.
+
+- [#4479](https://github.com/INTENTIUS/chant/issues/4479) `terraform-apply` reads each plan with one `show -json` and no text render.
+
 - [#4455](https://github.com/INTENTIUS/chant/issues/4455) `chant workspace drift --member <m>` reads a member of kind `pulumi` (read `refresh`, `--resource <urn>` allowed) through the pulumi lexicon's `readDrift`; before, it answered `no-drift-read`. A Pulumi or plunge drift record is now placed on the member's graph. `member-outputs` reads a `pulumi` member's outputs through `pulumiOutputSource`, which runs `pulumi stack output --json --show-secrets=false` and `pulumi preview --json` (under `plunge` for a member on plunge).
 
 - [#4453](https://github.com/INTENTIUS/chant/issues/4453) the `pulumi` member kind moved from `@intentius/chant-lexicon-terraform` to a new `@intentius/chant-lexicon-pulumi`, under the same name. A workspace that reads Pulumi members pins the pulumi lexicon. The graph's nodes keep their ids; their `lexicon` is now `pulumi`. The change set takes a `pulumi` planner, from `pulumi preview --json`, and entries may carry `mayAppear: true` for resources a preview cannot list. A Pulumi URN's drift record now gets its graph `node`, and so does a plunge one. A Pulumi member on plunge reads drift with `plunge drift --resource <urn> --stream`.

@@ -56,6 +56,9 @@ export const CHANGE_SET_CONTRACT = 1;
 /** The first chant whose change set can carry a member's `group` (ws-107, #4440). */
 export const CHANGE_SET_GROUP_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose change set can carry a member's `placeholders` (#4463). */
+export const CHANGE_SET_PLACEHOLDERS_FLOOR = NEXT_RELEASE;
+
 /** What a planner proposes for one resource. `no-op`, `read` and `forget` appear only when the planner reports them. */
 export type ChangeSetAction = "create" | "update" | "replace" | "delete" | "read" | "no-op" | "forget";
 
@@ -192,7 +195,8 @@ export interface ChangeSetMember {
    * planned with a typed placeholder per such variable (`var.<name>`), and
    * every attribute those drive is marked unknown in its entries. Its plan
    * digest covers them. The apply plans it again with the real values and
-   * holds that plan to the preview's shape.
+   * holds that plan to the preview's shape. Added within contract 1 by chant
+   * {@link CHANGE_SET_PLACEHOLDERS_FLOOR}.
    */
   placeholders?: string[];
   /** The planner's own digest of the same plan, when it prints one (choudoufu's per-root digest). */
