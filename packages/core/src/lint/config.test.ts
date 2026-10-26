@@ -424,6 +424,7 @@ describe("loadConfig", () => {
       COMP005: "error",
       COMP006: "error",
       COMP007: "warning",
+      COMP008: "warning",
     });
   });
 
@@ -474,6 +475,7 @@ describe("loadConfig", () => {
       COMP005: "off",
       COMP006: "off",
       COMP007: "off",
+      COMP008: "warning",
     });
   });
 
@@ -511,6 +513,7 @@ describe("loadConfig", () => {
       COMP005: "error",
       COMP006: "error",
       COMP007: "warning",
+      COMP008: "warning",
     });
   });
 

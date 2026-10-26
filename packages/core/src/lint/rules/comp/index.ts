@@ -14,6 +14,7 @@ import { comp004GateNeedsDurableRuntimeRule } from "./comp004-gate-needs-durable
 import { comp005CapabilityKindIsNounRule } from "./comp005-capability-kind-is-noun";
 import { comp006ShellNeedsReasonRule } from "./comp006-shell-needs-reason";
 import { comp007CompositionSprawlRule } from "./comp007-composition-sprawl";
+import { comp008AppliesSignalOnlyRootRule } from "./comp008-applies-signal-only-root";
 
 export { comp001PublishesNeverAppliesRule } from "./comp001-publishes-never-applies";
 export { comp002DanglingWiringRefRule } from "./comp002-dangling-wiring-ref";
@@ -22,8 +23,9 @@ export { comp004GateNeedsDurableRuntimeRule } from "./comp004-gate-needs-durable
 export { comp005CapabilityKindIsNounRule } from "./comp005-capability-kind-is-noun";
 export { comp006ShellNeedsReasonRule } from "./comp006-shell-needs-reason";
 export { comp007CompositionSprawlRule } from "./comp007-composition-sprawl";
+export { comp008AppliesSignalOnlyRootRule, signalOnlyRootsOf } from "./comp008-applies-signal-only-root";
 
-/** All seven COMP* checks, sorted by id. */
+/** All eight COMP* checks, sorted by id. */
 export function loadComponentChecks(): ComponentCheck[] {
   return [
     comp001PublishesNeverAppliesRule,
@@ -33,5 +35,6 @@ export function loadComponentChecks(): ComponentCheck[] {
     comp005CapabilityKindIsNounRule,
     comp006ShellNeedsReasonRule,
     comp007CompositionSprawlRule,
+    comp008AppliesSignalOnlyRootRule,
   ];
 }

@@ -57,6 +57,21 @@ export interface ComponentCheckContext {
    * `none-by-design`, i.e. flags nothing).
    */
   rollbackPolicies?: ReadonlyMap<string, RollbackPolicy>;
+  /**
+   * The project's `terraform.roots` entries marked `signalOnly` (#4484),
+   * keyed by root name. Supplied by `chant lint` from the project's config
+   * (`signalOnlyRootsOf` in ./rules/comp/comp008-applies-signal-only-root.ts);
+   * undefined when none was resolved, in which case COMP008 flags nothing.
+   */
+  signalOnlyRoots?: ReadonlyMap<string, SignalOnlyRoot>;
+}
+
+/** One `terraform.roots` entry marked `signalOnly` (#4490). */
+export interface SignalOnlyRoot {
+  /** The root's `dir` as the config writes it. */
+  dir: string;
+  /** The workspace member whose directory holds the root, when the workspace reads. */
+  owner?: string;
 }
 
 /** A diagnostic from a component composition check. Shaped like `PostSynthDiagnostic`, plus a `file` so it can be merged into `LintDiagnostic`s and reported per-file like every other lint diagnostic. */
@@ -104,7 +119,7 @@ export interface ComponentCheck {
 export async function runComponentChecks(
   path: string,
   checks: ComponentCheck[],
-  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies">,
+  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies" | "signalOnlyRoots">,
   sandbox?: boolean,
   buildParams?: BuildParamProvenance[],
 ): Promise<ComponentCheckDiagnostic[]> {
@@ -137,6 +152,7 @@ export async function runComponentChecks(
     components,
     knownKinds: registryContext?.knownKinds,
     rollbackPolicies: registryContext?.rollbackPolicies,
+    signalOnlyRoots: registryContext?.signalOnlyRoots,
   };
   for (const check of checks) {
     diagnostics.push(...check.check(ctx));
