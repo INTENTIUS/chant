@@ -7,12 +7,14 @@
  * that it exports no generated classes (the terraform lexicon packages the
  * same way). What the bundle does carry is the manifest, with the
  * `chantVersion` a consumer checks, and the lint and post-synth rule sources
- * under `dist/rules/`, which the docs pipeline reads for the rules page.
+ * under `dist/rules/`, which the docs pipeline reads for the rules page, and
+ * the `chant-pulumi` skill (#4494).
  */
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { moduleSourceDir } from "@intentius/chant/module-source";
-import { packagePipeline } from "@intentius/chant/codegen/package";
+import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
+import { pulumiPlugin } from "../plugin";
 import type { GenerateResult } from "@intentius/chant/codegen/generate";
 
 /** This package's `src/`, which `packagePipeline` scans for `lint/rules` and `lint/post-synth`. */
@@ -53,7 +55,7 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
         namespace: "Pulumi",
       }),
       srcDir,
-      collectSkills: () => new Map(),
+      collectSkills: () => collectSkills(pulumiPlugin.skills?.() ?? []),
       version,
     },
     options,
