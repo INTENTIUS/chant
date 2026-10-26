@@ -173,7 +173,10 @@ export class ComposedRun implements ComposedRunner {
     this.exec = o.exec ?? runBinary;
     this.composeDir = join(resolve(o.projectRoot), COMPOSE_DIR);
     this.states = new RootStates({
-      roots: c.order.map((m) => ({ root: m, dir: this.dirOf(m), env: o.env })),
+      roots: c.order.map((m) => {
+        const backendConfig = o.terraform.roots[c.roots.get(m) ?? m]?.backendConfig;
+        return { root: m, dir: this.dirOf(m), env: o.env, ...(backendConfig ? { backendConfig } : {}) };
+      }),
       binary: o.binary.path,
       exec: this.exec,
       ...(o.runId ? { runId: o.runId } : {}),
