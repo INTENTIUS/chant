@@ -18,7 +18,7 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 
 | Activity | Runs | Notes |
 |---|---|---|
-| `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfig`. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
+| `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfigFiles` (one `-backend-config=<path>` each, relative to the root's `dir`) and then its `backendConfig` pairs, so a pair overrides a file. The composed run's init passes the same flags. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
 | `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. Also returns `planDigest` and `changeSet`, the root's part of a [change-set document](/chant/reference/change-set/). |
 | `terraformApply` | `terraform apply <planFile>` | A saved plan, on either kind of root: there is no bare-apply mode here, and a missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. On a live root (see "choudoufu" below) that file is the approval artifact, and an apply that disagrees with it comes back as a named refusal rather than a thrown error. |
 | `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
@@ -115,7 +115,7 @@ A member that cannot compose leaves the group and plans root by root as without 
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
 | `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. A root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either matches wins. |
 | `workspace` | The root plans in a workspace other than `default`. |
-| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, a root whose code and `-backend-config` flags disagree with what `init` last recorded, or a root without a `live` block among estates. The backend is read once, for this and for the state locks: the code with `TF_CLI_ARGS`, `TF_CLI_ARGS_init` and `backendConfig` over it, compared with `.terraform/terraform.tfstate` when init has run, and a disagreement names both. |
+| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, a root whose code and `-backend-config` flags disagree with what `init` last recorded, or a root without a `live` block among estates. The backend is read once, for this and for the state locks: the code with `TF_CLI_ARGS`, `TF_CLI_ARGS_init`, the keys of the `backendConfigFiles` and `backendConfig` over it, compared with `.terraform/terraform.tfstate` when init has run, and a disagreement names both. |
 | `provider-lock` | Two members lock one provider at different versions. |
 | `read` | A member reads another through a `terraform_remote_state` with `count` or `for_each`, or from inside a module. |
 | `import` | An `import` block takes no literal string `id`. |

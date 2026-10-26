@@ -121,7 +121,12 @@ async function stateRecords(ctx: RootContext, fellBackFrom?: string): Promise<Dr
   const base = { member: ctx.options.member, observedAt: ctx.options.observedAt, engine: ctx.engine as "terraform" | "tofu", declared: ctx.declared, ...(fellBackFrom ? { fellBackFrom } : {}) };
   const env = { ...process.env, ...terraformEnvironment(ctx.root) };
   if (!rootIsInitialised(ctx.dir, env)) {
-    const line = terraformInitLine({ binary: ctx.binary, dir: ctx.dir, ...(ctx.root.backendConfig ? { backendConfig: ctx.root.backendConfig } : {}) });
+    const line = terraformInitLine({
+      binary: ctx.binary,
+      dir: ctx.dir,
+      ...(ctx.root.backendConfig ? { backendConfig: ctx.root.backendConfig } : {}),
+      ...(ctx.root.backendConfigFiles ? { backendConfigFiles: ctx.root.backendConfigFiles } : {}),
+    });
     return terraformStateDriftRecords({ ...base, failed: { reason: "read-failed", detail: `${ctx.dir} has never been initialised: run \`${line}\` first; chant never runs init on a read` } });
   }
   try {

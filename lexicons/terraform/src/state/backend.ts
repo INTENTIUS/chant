@@ -30,6 +30,7 @@ import { GCS_ENDPOINT, type GcsTarget } from "./gcs";
 import { s3FromEnv, type S3Target } from "./s3";
 import { isJsonConfigFile, listConfigFilesSafe } from "../hcl/files";
 import { blockBody, jsonBlocks, rootTexts } from "../compose/hcl";
+import { backendConfigFileKeys, literalAttributes } from "../backend-config";
 
 /** The backend `init` recorded: its type and configuration. */
 export interface InitialisedBackend {
@@ -191,6 +192,8 @@ const CLOUD_REASON = "the root has a cloud block, whose state HCP Terraform keep
 export interface DeclaredBackendInput {
   /** `terraform.roots.<name>.backendConfig`: the `-backend-config` pairs chant's own init passes, last. */
   backendConfig?: Readonly<Record<string, string>>;
+  /** `terraform.roots.<name>.backendConfigFiles`: the backend-config files chant's own init passes before the pairs (chant#4459), relative to the root. */
+  backendConfigFiles?: readonly string[];
   /** The job's environment: its `TF_CLI_ARGS` and `TF_CLI_ARGS_init` may carry `-backend-config` flags. */
   env?: NodeJS.ProcessEnv;
   /** `terraform.binary`, which says which of the root's files are its code (chant#4457). */
@@ -201,9 +204,10 @@ export interface DeclaredBackendInput {
 const typed = (v: string): unknown => (v === "true" ? true : v === "false" ? false : v);
 
 /** The `-backend-config` flags in `TF_CLI_ARGS` then `TF_CLI_ARGS_init`, in order: `key=value` pairs, and the paths of backend-config files. */
-export function cliBackendConfig(env: NodeJS.ProcessEnv = {}): { pairs: Record<string, string>; files: string[] } {
+export function cliBackendConfig(env: NodeJS.ProcessEnv = {}): { pairs: Record<string, string>; files: string[]; ordered: Array<{ file: string } | { key: string; value: string }> } {
   const pairs: Record<string, string> = {};
   const files: string[] = [];
+  const ordered: Array<{ file: string } | { key: string; value: string }> = [];
   const unquote = (t: string): string => t.replace(/^(["'])(.*)\1$/, "$2");
   for (const line of [env.TF_CLI_ARGS, env.TF_CLI_ARGS_init]) {
     const tokens = (line ?? "").match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
@@ -214,47 +218,16 @@ export function cliBackendConfig(env: NodeJS.ProcessEnv = {}): { pairs: Record<s
       const value = flag[1] !== undefined ? unquote(flag[1]) : tokens[i + 1] !== undefined ? unquote(tokens[++i]!) : undefined;
       if (value === undefined || value === "") continue;
       const eq = value.indexOf("=");
-      if (eq > 0) pairs[value.slice(0, eq)] = value.slice(eq + 1);
-      else files.push(value);
+      if (eq > 0) {
+        pairs[value.slice(0, eq)] = value.slice(eq + 1);
+        ordered.push({ key: value.slice(0, eq), value: value.slice(eq + 1) });
+      } else {
+        files.push(value);
+        ordered.push({ file: value });
+      }
     }
   }
-  return { pairs, files };
-}
-
-/** An HCL block's body with everything inside its nested braces blanked, so only its own attributes are left to read. */
-function ownLevel(body: string): string {
-  const out = body.split("");
-  let depth = 0;
-  let inString = false;
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i]!;
-    if (depth >= 2 && c !== "\n") out[i] = " ";
-    if (inString) {
-      if (c === "\\") {
-        if (depth >= 2 && body[i + 1] !== "\n") out[i + 1] = " ";
-        i++;
-      } else if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') inString = true;
-    else if (c === "{") depth++;
-    else if (c === "}") depth--;
-  }
-  return out.join("");
-}
-
-/** A backend block's own literal attributes: plain strings, booleans and numbers. A string with an interpolation is left out. */
-function hclBackendAttrs(body: string): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const m of ownLevel(body).matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*"|true|false|-?\d+(?:\.\d+)?)\s*$/gm)) {
-    const raw = m[2]!;
-    if (raw.startsWith('"')) {
-      const text = raw.slice(1, -1);
-      if (/\$\{|%\{/.test(text)) continue;
-      out[m[1]!] = text.replace(/\\(.)/g, "$1");
-    } else out[m[1]!] = raw === "true" ? true : raw === "false" ? false : Number(raw);
-  }
-  return out;
+  return { pairs, files, ordered };
 }
 
 const plain = (v: unknown): v is string | number | boolean => typeof v === "string" || typeof v === "number" || typeof v === "boolean";
@@ -294,14 +267,21 @@ export function declaredBackend(dir: string, input: DeclaredBackendInput = {}): 
     }
     const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
     if (m) {
-      found = { type: m[1]!, config: hclBackendAttrs(blockBody(text, m.index!)) };
+      found = { type: m[1]!, config: literalAttributes(blockBody(text, m.index!), 1) };
       break;
     }
     if (/^\s*cloud\s*\{/m.test(text)) found = { type: "cloud", config: {} };
   }
   if (!found || found.type === "cloud") return found;
+  // The order init applies them: the job's TF_CLI_ARGS flags first, then the
+  // flags chant's own init passes, its files before its pairs (chant#4459).
+  // A file's keys are read from it, relative to the root as init reads it.
   const config = { ...found.config };
-  for (const [k, v] of Object.entries(cliBackendConfig(input.env).pairs)) config[k] = typed(v);
+  for (const flag of cliBackendConfig(input.env).ordered) {
+    if ("file" in flag) Object.assign(config, backendConfigFileKeys(dir, [flag.file]).config);
+    else config[flag.key] = typed(flag.value);
+  }
+  Object.assign(config, backendConfigFileKeys(dir, input.backendConfigFiles).config);
   for (const [k, v] of Object.entries(input.backendConfig ?? {})) config[k] = typed(v);
   return { type: found.type, config };
 }
@@ -378,7 +358,7 @@ export function lockRefusal(reading: BackendReading): StateRefusal | undefined {
 /**
  * Where the root's state is, or why chant does not lock it, from
  * {@link readBackend}: what `init` recorded (`backend` stands in for it),
- * compared with the root's code and `backendConfig`. A root neither declares
+ * compared with the root's code, `backendConfigFiles` and `backendConfig`. A root neither declares
  * nor records a backend for reads as a local one.
  */
 export function stateObject(
@@ -386,9 +366,15 @@ export function stateObject(
   env: NodeJS.ProcessEnv = process.env,
   backend: InitialisedBackend | undefined = initialisedBackend(dir, env),
   binary?: string,
-  backendConfig?: Readonly<Record<string, string>>,
+  flags: Pick<DeclaredBackendInput, "backendConfig" | "backendConfigFiles"> = {},
 ): StateObject {
-  const reading = readBackend(dir, { env, recorded: backend ?? null, ...(binary ? { binary } : {}), ...(backendConfig ? { backendConfig } : {}) });
+  const reading = readBackend(dir, {
+    env,
+    recorded: backend ?? null,
+    ...(binary ? { binary } : {}),
+    ...(flags.backendConfig ? { backendConfig: flags.backendConfig } : {}),
+    ...(flags.backendConfigFiles ? { backendConfigFiles: flags.backendConfigFiles } : {}),
+  });
   const refusal = lockRefusal(reading);
   if (refusal) return refusal;
   const chosen = reading.backend;

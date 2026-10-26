@@ -39,6 +39,7 @@ import type { GroupFallback } from "@intentius/chant/components/capability";
 import { wiringReads, type DriverComponent, type DriverPhase, type DriverStep } from "@intentius/chant/components/driver";
 import type { TerraformConfig, TerraformRootConfig } from "./config";
 import { lockRefusal, readBackend } from "./state/backend";
+import { backendConfigFileKeys } from "./backend-config";
 import {
   estateOutputReads,
   importLiteral,
@@ -321,7 +322,10 @@ function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform
       const binary = tf.binary;
       const live = liveEstate(dir, binary ?? "terraform");
       const estate = config.estate ?? live.estate;
-      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, config.backendConfig, binary), live: live.live, ...(estate ? { estate } : {}), ...(binary ? { binary } : {}) });
+      // The backend-config files' keys, then the pairs over them, as init takes them (chant#4459).
+      const fileKeys = Object.fromEntries(Object.entries(backendConfigFileKeys(dir, config.backendConfigFiles).config).map(([k, v]) => [k, String(v)]));
+      const backendConfig = { ...fileKeys, ...config.backendConfig };
+      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, backendConfig, binary), live: live.live, ...(estate ? { estate } : {}), ...(binary ? { binary } : {}) });
     }
     rcs.push(rc);
   }
@@ -450,7 +454,12 @@ export function compositionFor(input: CompositionInput): Composition {
     if (ws && ws !== "default") return ["workspace", `\`${m}\` plans in workspace ${ws}, and a composed run plans in default`];
     // The one backend verdict (chant#4478): the code and flags before init, compared with what init recorded after.
     const refusal = lockRefusal(
-      readBackend(rc.dir!, { env: input.env, ...(rc.binary ? { binary: rc.binary } : {}), ...(rc.config!.backendConfig ? { backendConfig: rc.config!.backendConfig } : {}) }),
+      readBackend(rc.dir!, {
+        env: input.env,
+        ...(rc.binary ? { binary: rc.binary } : {}),
+        ...(rc.config!.backendConfig ? { backendConfig: rc.config!.backendConfig } : {}),
+        ...(rc.config!.backendConfigFiles ? { backendConfigFiles: rc.config!.backendConfigFiles } : {}),
+      }),
     );
     if (refusal) return ["backend", `\`${m}\`: ${refusal.reason}`];
     return undefined;

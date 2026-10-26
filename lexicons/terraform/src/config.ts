@@ -63,8 +63,15 @@ export const terraformRootSchema = z.strictObject({
   workspace: z.string().optional(),
   /** `-var-file` arguments, in order, relative to `dir`. */
   varFiles: z.array(z.string()).optional(),
-  /** `-backend-config` key/value pairs handed to `init`. */
+  /** `-backend-config` key/value pairs handed to `init`, after {@link backendConfigFiles}. */
   backendConfig: z.record(z.string(), z.string()).optional(),
+  /**
+   * Backend-config files handed to `init` as `-backend-config=<path>`, in
+   * order and before the {@link backendConfig} pairs, relative to `dir`
+   * (chant#4459). The composition reads their `key = "value"` lines as it
+   * reads the pairs, to find a root's state before init.
+   */
+  backendConfigFiles: z.array(z.string()).optional(),
   /**
    * The choudoufu estate this root runs against, for a live root whose HCL
    * does not declare one of its own (#2479).

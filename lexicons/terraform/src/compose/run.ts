@@ -34,6 +34,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { stateOutputs, stateResources } from "../applied-state";
+import { backendConfigArgs } from "../backend-config";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import type { OpWaveHookMoment } from "@intentius/chant/op";
 import type { Composition } from "../compose";
@@ -63,7 +64,7 @@ export interface ComposedRunOptions {
   projectRoot: string;
   /** What `compositionFor` answered, with two or more members and no fallback. */
   composition: Composition;
-  /** The config's `terraform` namespace: each root's `varFiles` and `backendConfig`. */
+  /** The config's `terraform` namespace: each root's `varFiles`, `backendConfigFiles` and `backendConfig`. */
   terraform: TerraformConfig;
   /** The binary every member runs: its path, and its name when the path does not say it (`tofu`, `terraform`). */
   binary: { path: string; name?: string };
@@ -174,8 +175,14 @@ export class ComposedRun implements ComposedRunner {
     this.composeDir = join(resolve(o.projectRoot), COMPOSE_DIR);
     this.states = new RootStates({
       roots: c.order.map((m) => {
-        const backendConfig = o.terraform.roots[c.roots.get(m) ?? m]?.backendConfig;
-        return { root: m, dir: this.dirOf(m), env: o.env, ...(backendConfig ? { backendConfig } : {}) };
+        const config = o.terraform.roots[c.roots.get(m) ?? m];
+        return {
+          root: m,
+          dir: this.dirOf(m),
+          env: o.env,
+          ...(config?.backendConfig ? { backendConfig: config.backendConfig } : {}),
+          ...(config?.backendConfigFiles ? { backendConfigFiles: config.backendConfigFiles } : {}),
+        };
       }),
       binary: o.binary.path,
       exec: this.exec,
@@ -290,8 +297,8 @@ export class ComposedRun implements ComposedRunner {
     for (const m of this.c.order) {
       const err = await this.hook(m, "before-observe");
       if (err) throw new PlanStopped(`a before-observe hook failed: ${err}`, "hook", m);
-      const backendConfig = this.o.terraform.roots[this.c.roots.get(m) ?? m]?.backendConfig ?? {};
-      const args = ["init", "-input=false", "-no-color", ...Object.entries(backendConfig).map(([k, v]) => `-backend-config=${k}=${v}`)];
+      // The root's backend-config files, then its pairs, as every init the lexicon runs passes them (chant#4459).
+      const args = ["init", "-input=false", "-no-color", ...backendConfigArgs(this.o.terraform.roots[this.c.roots.get(m) ?? m] ?? {})];
       const init = await this.turn(() => this.exec(bin, args, this.dirOf(m), this.o.env));
       if (init.code !== 0) throw new PlanStopped(`init failed: ${lastLines(init.out, 8)}`, "init", m);
     }
