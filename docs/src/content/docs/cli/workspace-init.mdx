@@ -113,6 +113,8 @@ chant workspace promote --all [--state-dir <dir>] [--state <member>=<terraform.t
 
 The canary, `--canary <member>` or else the first member in declaration order, is wave 1. The rest follow in declaration order, `--wave-size` roots a wave (default 5). Roots run one after another within a wave. A root that fails leaves the other roots and the tree as they were, and the rest of its wave is still tried. The next wave runs only when every root of the wave before it landed: applied, already promoted, or staged cleanly under `--dry-run`. So a failed canary stops every other wave, and a gated root holds the waves after it until it is approved and the command is run again.
 
+The staging worktree has no `.terraform/` of its own, so each root's staging runs `choudoufu init -backend=false` before `live-check` and the report, and nothing it installs goes into the patch. The stamp after approval runs in the member's own directory, so that directory needs its providers installed already (`tofu init` or `choudoufu init`). `TF_PLUGIN_CACHE_DIR` saves a download per root.
+
 Each root's state is `--state <member>=<path>`, else `<state-dir>/<member>.tfstate`, else `terraform.tfstate` in the member's directory. `live-import` reads a local tfstate of format version 4. A root with a remote backend and no local state is refused by name with the `terraform state pull` to run first, and a state of another version is refused too. A state kept in the member's directory has to be ignored by git, since promote refuses a member with uncommitted changes. Only resources of admitted types are stamped: the report lists the rest under `UNADMITTED_TYPE` and the summary counts them per root.
 
 The command ends with one line per root naming its wave and outcome:
