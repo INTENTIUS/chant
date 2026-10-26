@@ -5,6 +5,13 @@
  * The note lists the blocked set. Git, the change signal, the derivation and
  * the gate ledger are fakes, as in `pr-waves.test.ts`; the planning, the
  * coverage check and the apply are the real ones.
+ *
+ * Kept fast (#4502): the readers pr-plan and pr-apply run against the
+ * declaration at base (hooks, policy, security groups, ci.locks, new
+ * migrations) each start git processes in this checkout, so they read as a
+ * declaration that sets none of them. The pull request is planned once for
+ * the file, since every test starts from the same estate and so the same
+ * digest; each test approves that digest on its own ledger.
  */
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -44,6 +51,28 @@ vi.mock("../../lifecycle/gate-change-set", () => ({
 vi.mock("../../lifecycle/git", async () => {
   const actual = await vi.importActual<typeof import("../../lifecycle/git")>("../../lifecycle/git");
   return { ...actual, pushLifecycleReport: async () => { throw new Error("pr-waves.test must not push chant/lifecycle"); } };
+});
+
+// The declaration at base sets no hooks, policy, security group or lock, and the change adds no migration (#4502).
+vi.mock("../../components/pr-hooks", async () => {
+  const actual = await vi.importActual<typeof import("../../components/pr-hooks")>("../../components/pr-hooks");
+  return { ...actual, prLoopHooksAt: (_cwd: string, base: string) => ({ hooks: {}, base }) };
+});
+vi.mock("../../components/pr-policy", async () => {
+  const actual = await vi.importActual<typeof import("../../components/pr-policy")>("../../components/pr-policy");
+  return { ...actual, prLoopPolicyAt: (_cwd: string, base: string) => ({ base }) };
+});
+vi.mock("../../workspace/security", async () => {
+  const actual = await vi.importActual<typeof import("../../workspace/security")>("../../workspace/security");
+  return { ...actual, securityGroupsAt: () => new Set() };
+});
+vi.mock("../../workspace/ci-locks", async () => {
+  const actual = await vi.importActual<typeof import("../../workspace/ci-locks")>("../../workspace/ci-locks");
+  return { ...actual, ciLocksAt: () => null };
+});
+vi.mock("../../workspace/new-migrations", async () => {
+  const actual = await vi.importActual<typeof import("../../workspace/new-migrations")>("../../workspace/new-migrations");
+  return { ...actual, newMigrationFilesBetween: async () => [] };
 });
 
 vi.mock("./run", () => ({
@@ -166,10 +195,16 @@ const resolution = (gate: string, planDigest: string, by = "github:alice") => ({
 const report = async (): Promise<PrReport> => JSON.parse(await readFile(join(dir, "pr-apply.json"), "utf8")) as PrReport;
 const note = async (): Promise<string> => readFile(join(dir, "pr-note.md"), "utf8");
 
+/** The digest of pull request 12's plan, planned by the first test that asks: every test starts from the same estate (#4502). */
+let plannedDigest: string | undefined;
+
 /** Plan pull request 12, as its plan job does, and approve its digest as alice. */
 async function planAndApprove(): Promise<string> {
-  expect(await runComponentsPrPlan(ctx({ pr: 12 }))).toBe(0);
-  const digest = (JSON.parse(await readFile(join(dir, "pr-plan.json"), "utf8")) as PrReport).digest;
+  if (plannedDigest === undefined) {
+    expect(await runComponentsPrPlan(ctx({ pr: 12 }))).toBe(0);
+    plannedDigest = (JSON.parse(await readFile(join(dir, "pr-plan.json"), "utf8")) as PrReport).digest;
+  }
+  const digest = plannedDigest;
   gateLedger = memoryGateLedgerPort({ resolutions: [resolution("pr-apply", digest)] });
   errors = [];
   return digest;
