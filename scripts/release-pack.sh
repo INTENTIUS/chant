@@ -26,6 +26,9 @@ bump_files=(packages/core/package.json packages/k8s-client/package.json lexicons
 restore() { git checkout --quiet -- "${bump_files[@]}" package-lock.json; }
 trap restore EXIT
 release_apply_version "$version"
+# Every contract floor names a released version or this one (#4480). The
+# stamp above is what lets NEXT_RELEASE pass at the release's own label.
+npx tsx scripts/release-floors.ts
 
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/chant-release-pack.XXXXXX")
 DRY_RUN=1 PACK_ALL=1 CHANT_PUBLISH_WORK="$work" bash scripts/publish-packages.sh
