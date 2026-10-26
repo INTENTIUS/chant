@@ -2533,7 +2533,9 @@ export interface ResourceMetadata {
    * The instances of a `count` or `for_each` block (#4454), each with its own
    * verdict, keyed as the engine prints them (`[0]`, `["a"]`). The rest of
    * this metadata is the block's rollup over them. `buildLiveGraphIr` draws
-   * each present instance as a node `<name><key>` under this one, and the
+   * each present instance as a node `<name><key>` under this one, or by the
+   * declared graph's module-key rule when the instance carries a `scope`
+   * (`estate/module.app[0]/aws_eip.pool[1]`, #4488), and the
    * overlay paints a declared instance from it. Absent when the lexicon reads
    * no instances, or the block is not expanded.
    */

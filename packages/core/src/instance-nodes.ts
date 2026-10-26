@@ -173,9 +173,20 @@ export function terraformInstancePath(address: string): TerraformInstancePath | 
  * instance node and paint it on its own.
  */
 export interface InstanceObservation {
-  /** The instance key as Terraform prints it, `[0]` or `["a"]`. */
-  key: string;
-  /** The engine's own instance address, `aws_eip.pool[0]`. */
+  /**
+   * The block's own instance key as Terraform prints it, `[0]` or `["a"]`.
+   * Absent on an instance that only an expanded module call makes (#4488),
+   * which then carries {@link scope}.
+   */
+  key?: string;
+  /**
+   * The expanded module path as Terraform prints it, `module.app[0]`, on an
+   * instance under an expanded module call (#4488). The live graph then
+   * builds the node id by {@link terraformInstancePath} from {@link address},
+   * the same id the declared graph lists: `estate/module.app[0]/aws_eip.pool[1]`.
+   */
+  scope?: string;
+  /** The engine's own instance address, `aws_eip.pool[0]` or `module.app[0].aws_eip.pool[1]`. */
   address: string;
   verdict: "present" | "absent" | "not-observed";
   /** The provider's id, on a present instance, when the read gave one. */
@@ -187,6 +198,22 @@ export interface InstanceObservation {
   /** Why it was not observed, on a not-observed instance. An `UnobservedReason`. */
   reason?: string;
   detail?: string;
+}
+
+/**
+ * The live graph's node id for one observed instance of the block node
+ * `blockNode` (#4488): `<blockNode><key>` with no expanded module call on
+ * the way, else the declared graph's rule (#4486) applied to the instance's
+ * address, so `module.app[0].aws_eip.pool[1]` under
+ * `estate/module.app/aws_eip.pool` is `estate/module.app[0]/aws_eip.pool[1]`.
+ * Undefined when the address does not belong to that block node.
+ */
+export function observedInstanceNodeId(blockNode: string, inst: Pick<InstanceObservation, "key" | "scope" | "address">): string | undefined {
+  if (inst.scope === undefined) return inst.key === undefined ? undefined : instanceNodeId(blockNode, inst.key);
+  const path = terraformInstancePath(inst.address);
+  if (!path?.scope) return undefined;
+  if (blockNode !== path.block && !blockNode.endsWith(`/${path.block}`)) return undefined;
+  return `${blockNode.slice(0, blockNode.length - path.block.length)}${path.instance}`;
 }
 
 /**
