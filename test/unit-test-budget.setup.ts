@@ -13,8 +13,12 @@ import { overBudgetMessage, unitTestBudgetForFile, unitTestBudgetMs } from "./un
  *
  * The time counted is the test and its beforeEach/afterEach hooks, the same span
  * vitest reports for the test. A file's beforeAll is not counted.
+ *
+ * A test in one of the named slow files (`SLOW_UNIT_TEST_FILES`, #4472) has
+ * that file's higher budget; every other test has the run's.
  */
 const budget = unitTestBudgetMs(process.env);
+const repoRoot = resolve(import.meta.dirname, "..");
 const started = new WeakMap<object, number>();
 
 beforeEach((ctx) => {
