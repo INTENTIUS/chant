@@ -45,6 +45,7 @@
 import { computePlanDigest } from "./lifecycle/plan-digest";
 import type { ChangeSet as LifecycleChangeSet, ChangeSetEntry as LifecycleEntry } from "./lifecycle/change-set";
 import type { ChangeSet as ReconcileChangeSet } from "./reconcile";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The schema a change-set document names in `$schema`. */
 export const CHANGE_SET_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json";
@@ -53,7 +54,10 @@ export const CHANGE_SET_SCHEMA_ID = "https://intentius.io/chant/schemas/workspac
 export const CHANGE_SET_CONTRACT = 1;
 
 /** The first chant whose change set can carry a member's `group` (ws-107, #4440). */
-export const CHANGE_SET_GROUP_FLOOR = "0.124.53";
+export const CHANGE_SET_GROUP_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose change set can carry a member's `placeholders` (#4463). */
+export const CHANGE_SET_PLACEHOLDERS_FLOOR = NEXT_RELEASE;
 
 /** What a planner proposes for one resource. `no-op`, `read` and `forget` appear only when the planner reports them. */
 export type ChangeSetAction = "create" | "update" | "replace" | "delete" | "read" | "no-op" | "forget";
@@ -185,6 +189,16 @@ export interface ChangeSetMember {
    * summary never folds it into a group of real plans.
    */
   provisional?: true;
+  /**
+   * The inputs the member was previewed with stand-in values for (#4463),
+   * sorted: a Terraform root whose `vars` read an output not known yet is
+   * planned with a typed placeholder per such variable (`var.<name>`), and
+   * every attribute those drive is marked unknown in its entries. Its plan
+   * digest covers them. The apply plans it again with the real values and
+   * holds that plan to the preview's shape. Added within contract 1 by chant
+   * {@link CHANGE_SET_PLACEHOLDERS_FLOOR}.
+   */
+  placeholders?: string[];
   /** The planner's own digest of the same plan, when it prints one (choudoufu's per-root digest). */
   nativeDigest?: string;
   holes: ChangeSetHole[];

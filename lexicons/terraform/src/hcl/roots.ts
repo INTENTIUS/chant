@@ -34,6 +34,7 @@ import type { TerraformRootConfig } from "../config";
 import { LIVE_TYPE, parseTerraformRootDir } from "./parse";
 import { descendModules, resolveCallModuleType, type CallModuleType } from "./descend";
 import { resolveEntityReferences } from "./edges";
+import { resolveInstanceNodes } from "./instances";
 
 export interface TerraformRootsResult {
   entities: Map<string, Declarable>;
@@ -110,6 +111,11 @@ export async function renderTerraformRoots(
       });
       for (const [key, entity] of descended.entities) entities.set(key, entity);
       warnings.push(...descended.warnings);
+
+      // Instance nodes the root's variables let the declared graph count,
+      // and those under expanded module calls (#4486). Needs the root and
+      // every child scope parsed, so it runs once the descent has.
+      await resolveInstanceNodes(entities, name, { dir, ...(root.varFiles ? { varFiles: root.varFiles } : {}), hcl2json: opts.hcl2json });
 
       // A `live` block or `estate.chdf.hcl` sidecar only takes effect under
       // choudoufu; under any other binary it parses fine but is inert, which

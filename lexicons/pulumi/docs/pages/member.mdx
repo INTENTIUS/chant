@@ -1,0 +1,126 @@
+---
+title: The pulumi member
+description: What chant reads from a Pulumi member and the commands it runs for the change set, drift and outputs
+diataxis: reference
+---
+
+The `pulumi` member kind is supplied by `@intentius/chant-lexicon-pulumi`
+(`workspace-kinds.json`). It moved there from the terraform lexicon in
+[#4453](https://github.com/INTENTIUS/chant/issues/4453) and kept its name.
+
+## What chant runs
+
+The ruling on [#4476](https://github.com/INTENTIUS/chant/issues/4476)
+(2026-10-25) widened the [#4450](https://github.com/INTENTIUS/chant/issues/4450)
+ruling's `preview` and `refresh --preview-only` to the list below, and the
+list is the whole of what chant runs for a Pulumi member:
+
+| Read | Stock member | Member on plunge | Changes the stack |
+|---|---|---|---|
+| graph | none; the checked-in `stack-export.json` | the same | no |
+| change set | `pulumi preview --json` | `plunge preview --json` | no |
+| drift | `pulumi refresh --preview-only --json --target <urn>` | `plunge drift --resource <urn> --stream` | no |
+| applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
+| planned outputs | the change set's preview | the same | no |
+
+`runAllowedPulumi` and `runAllowedPlunge` refuse any other argv before it
+reaches the binary, and `stack output` with secrets shown is refused too.
+With `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
+source), the applied outputs are read from the checked-in export and nothing
+runs. Each command runs in the member's directory against its selected stack.
+
+## The member kind
+
+| Field | Value |
+|---|---|
+| probe | a `Pulumi.yaml` in the directory |
+| member file | `Pulumi.yaml`, checked for `name` and `runtime` |
+| precedence | 310 |
+| graph | the `pulumi` lexicon, with `pulumi.member` set to the member's directory and name |
+
+## The graph
+
+The graph is the `pulumi stack export` JSON checked in beside `Pulumi.yaml`
+as `stack-export.json`. A node's id is `<member>/<qualified type>::<name>`,
+the URN after its stack and project, so `urn:pulumi:dev::shop::aws:s3/bucketV2:BucketV2::assets`
+in member `infra` is `infra/aws:s3/bucketV2:BucketV2::assets`. The change set
+and the drift records put a resource on the same node by the same rule
+(`@intentius/chant/pulumi-urn`). Edges come from `dependencies` and `parent`.
+Providers and the root stack have no node, and inputs and outputs are not
+copied, since an export can hold secrets.
+
+With no export, or one that is not JSON, the member has no nodes and the
+graph's `meta.pulumiMember` is `{ exported: false, reason }`.
+
+## The change set
+
+The member's part of the change set is `pulumi preview --json`, planner
+`pulumi`, with the checked-in export as the last deployment. One entry per
+URN: `create`, `update` (in place), `delete`, a replace as one `replace`
+entry, `same` as `no-op`, `read` and `refresh` as `read`. An input that holds
+Pulumi's unknown value is `unknown: true`, and a secret is `sensitive: true`
+with neither value. Resources a program registers inside an `apply()` the
+preview could not run are marked `mayAppear` rather than left out. The full
+table is under [Pulumi plans](/chant/reference/change-set/#pulumi-plans).
+
+## Drift
+
+`chant workspace drift --member <member> [--resource <urn>] [--stream]` runs
+`chant lifecycle drift` in the member's reader project, which calls the
+lexicon's `readDrift`. A stock member is read with one
+`pulumi refresh --preview-only --json --target <urn>` per resource in its
+export; with no export, one untargeted refresh. `same` is in-sync, `update`
+is drifted with a path per `detailedDiff` key, `delete` is missing, and a
+target the refresh did not reach is not-observed. See the
+[drift record reference](/chant/reference/drift-record/).
+
+### A member on plunge
+
+A member runs on plunge when its config says `engine: "plunge"`, or when
+`Pulumi.yaml` has a `backend.url` starting with `plunge` (`plunge+file://...`,
+`plunge://...`). Only `Pulumi.yaml` is read, never `PULUMI_BACKEND_URL` or the
+CLI's login state, so every checkout gets the same answer. Its drift is
+`plunge drift --resource <urn> --stream` per resource, whose drift-record
+NDJSON chant decodes and places on nodes by the URN rule. Its preview and
+stack outputs run the same argv under `plunge`.
+
+## Outputs
+
+Another member reads a Pulumi member's outputs as parameters with core's
+`member-outputs` verb (see [Wiring components](/chant/components/wiring-howto/)).
+The consumer lists `pulumi` among its lexicons.
+
+| Outputs | Source |
+|---|---|
+| applied | `pulumi stack output --json --show-secrets=false`, or the checked-in export with `CHANT_PULUMI_APPLIED_OUTPUTS=export` |
+| planned | `pulumi preview --json --show-sames`: the export's outputs when it plans nothing to apply, every output unknown when it plans a change |
+
+A real preview prints the stack's step with no outputs (recorded against the
+plunge corpus, #4475), so chant cannot read a planned value off it. A
+planned output that is unknown leaves the consumer
+planned without it, the change set has a hole on `<member>#outputs` naming
+it, and on merge the consumer waits for the member's apply and is planned
+again. The member part's `pulumi-preview` digest is the plan digest, so a
+preview that moves after review moves the consumer's digest. Secret outputs
+are left out of both reads.
+
+## Reading the member into a build
+
+A project can set `pulumi.member` itself to read a member's graph into its
+own `chant build`:
+
+```ts
+export default {
+  lexicons: ["pulumi"],
+  pulumi: { member: { dir: "./infra", label: "infra" } },
+} satisfies ChantConfig;
+```
+
+`dir` is resolved against the project root. `engine` is `pulumi` or `plunge`
+and defaults to what `Pulumi.yaml` says. The build runs these checks:
+
+| Id | Kind | Reports |
+|---|---|---|
+| PUL101 | lint | `pulumi.member.dir` written as an absolute path |
+| PUL001 | post-synth | a member read with no nodes, with the reason |
+| PUL002 | post-synth | an export that records pending operations from an interrupted update |

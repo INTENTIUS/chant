@@ -9,7 +9,7 @@ Pulumi lexicon for [chant](https://intentius.io/chant/). It declares no resource
 | its drift records | `pulumi refresh --preview-only --json --target <urn>`, one resource at a time | `src/drift-record.ts`, `src/drift-read.ts` |
 | its stack outputs, for another member's parameters | `pulumi stack output --json --show-secrets=false` (applied) and `pulumi preview --json` (planned) | `src/stack-outputs.ts`, `src/member-outputs.ts` |
 
-The graph read never runs `pulumi`. The change set and drift run `preview` and `refresh --preview-only`, and the outputs read adds `stack output --json --show-secrets=false`. Nothing else runs (`runAllowedPulumi` refuses any other argv), so chant never changes a stack.
+The graph read never runs `pulumi`. The change set and drift run `preview` and `refresh --preview-only`, and the outputs read adds `stack output --json --show-secrets=false`. A member on plunge runs `plunge preview`, `plunge stack output --json --show-secrets=false` and `plunge drift --resource <urn> --stream`. That is the whole list, as ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476) (2026-10-25), which widened the [#4450](https://github.com/INTENTIUS/chant/issues/4450) ruling's `preview` and `refresh --preview-only` to keep the outputs read and the plunge commands. Nothing else runs (`runAllowedPulumi` and `runAllowedPlunge` refuse any other argv), so chant never changes a stack. With `CHANT_PULUMI_APPLIED_OUTPUTS=export`, the outputs read runs nothing either.
 
 ## Drift: `chant workspace drift`
 
@@ -35,7 +35,7 @@ export const records: Component = {
 The consumer lists `pulumi` among its lexicons, which brings `pulumiCapabilityPlugin` and its source, `pulumiOutputSource`, for members of kind `pulumi`.
 
 - Applied values come from `pulumi stack output --json --show-secrets=false` in the member's directory. With `CHANT_PULUMI_APPLIED_OUTPUTS=export`, chant runs nothing and reads them from the checked-in `stack-export.json`.
-- Planned values come from `pulumi preview --json`, the outputs of the stack's `pulumi:pulumi:Stack` step. An output holding Pulumi's unknown sentinel is unknown. The consumer is planned without it, gets a hole on `aws#outputs` naming `aws.awsEndpoint`, and is held back on merge until the member applied, then planned again.
+- Planned values come from `pulumi preview --json --show-sames`. A real preview carries no outputs on the stack's `pulumi:pulumi:Stack` step (recorded, #4475), so a preview with nothing to apply gives the checked-in export's outputs and one with changes leaves every output unknown. An output a stack step does carry is read, and one holding Pulumi's unknown sentinel is unknown. The consumer is planned without an unknown output, gets a hole on `aws#outputs` naming it, and is held back on merge until the member applied, then planned again.
 - The plan digest is the member part's `pulumi-preview` digest, so a preview that moves after review moves the consumer's digest.
 - While the preview still has changes, `run` refuses and the consumer is blocked behind the member.
 - Secret outputs are left out of both reads. chant never carries or prints their values.

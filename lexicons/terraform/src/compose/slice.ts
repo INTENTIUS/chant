@@ -168,11 +168,11 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
  * (./root.ts) a `terraform_remote_state` read is `var.chant_read_<name>`,
  * which counts the same.
  */
-function fieldsRead(dir: string | undefined, type: string, name: string, field: string): Set<string> | undefined {
+function fieldsRead(dir: string | undefined, binary: string | undefined, type: string, name: string, field: string): Set<string> | undefined {
   const ref = type === "terraform_remote_state" ? `(?:data\\.${type}\\.|var\\.${READ_VAR_PREFIX})` : `data\\.${type}\\.`;
   const re = new RegExp(`\\b${ref}${escapeRe(name)}(?![\\w-])(\\.${field}(?:\\.([A-Za-z_][\\w-]*)|\\[\\s*"([^"]+)"\\s*\\])?)?`, "g");
   const read = new Set<string>();
-  for (const t of dir ? rootTexts(dir) : []) {
+  for (const t of dir ? rootTexts(dir, binary) : []) {
     for (const hit of t.text.matchAll(re)) {
       const out = hit[2] ?? hit[3];
       if (!out) return undefined;
@@ -203,7 +203,7 @@ export interface ComposedMemberRead {
  * `terraform_estate_outputs` block's outputs are read from the member's own
  * files, as terragucci's `outputsRead` and `estateValuesRead` did.
  */
-export function composedReads(c: Pick<Composition, "members" | "reads" | "dirs">, outputs: ReadonlyMap<string, PlannedOutputs>): Map<string, ComposedMemberRead[]> {
+export function composedReads(c: Pick<Composition, "members" | "reads" | "dirs"> & Partial<Pick<Composition, "binary">>, outputs: ReadonlyMap<string, PlannedOutputs>): Map<string, ComposedMemberRead[]> {
   const out = new Map<string, ComposedMemberRead[]>();
   for (const member of c.members) {
     const reads: ComposedMemberRead[] = [];
@@ -218,7 +218,7 @@ export function composedReads(c: Pick<Composition, "members" | "reads" | "dirs">
         if (had) had.outputs!.add(r.output);
         else byKey.set(key, { r, outputs: new Set([r.output]) });
       } else {
-        const read = r.via === "remote-state" ? fieldsRead(c.dirs.get(member), "terraform_remote_state", r.name, "outputs") : fieldsRead(c.dirs.get(member), "terraform_estate_outputs", r.name, "values");
+        const read = r.via === "remote-state" ? fieldsRead(c.dirs.get(member), c.binary, "terraform_remote_state", r.name, "outputs") : fieldsRead(c.dirs.get(member), c.binary, "terraform_estate_outputs", r.name, "values");
         byKey.set(`${r.via}\u0000${r.upstream}\u0000${r.name}`, { r, ...(read ? { outputs: read } : {}) });
       }
     }
@@ -263,7 +263,7 @@ export interface ComposedMemberPlansOptions {
  * a plan of its root alone gives on the same state. The member is the root's
  * name (`Composition.roots`), as a single `terraform-apply` plan names it.
  */
-export function composedMemberPlans(c: Pick<Composition, "members" | "order" | "modules" | "reads" | "dirs" | "roots">, plan: unknown, options: ComposedMemberPlansOptions = {}): Record<string, ComposedMemberPlan> {
+export function composedMemberPlans(c: Pick<Composition, "members" | "order" | "modules" | "reads" | "dirs" | "roots"> & Partial<Pick<Composition, "binary">>, plan: unknown, options: ComposedMemberPlansOptions = {}): Record<string, ComposedMemberPlan> {
   const slices = new Map(c.order.map((member) => [member, slicePlan(plan, c.modules.get(member)!)] as const));
   const outputs = new Map(c.order.map((member) => [member, terraformPlannedOutputs(slices.get(member))] as const));
   const reads = composedReads(c, outputs);

@@ -1,5 +1,6 @@
+import { relative, resolve } from "node:path";
 import { afterEach, beforeEach } from "vitest";
-import { overBudgetMessage, unitTestBudgetMs } from "./unit-test-budget";
+import { overBudgetMessage, unitTestBudgetForFile, unitTestBudgetMs } from "./unit-test-budget";
 
 /**
  * The per-test time budget for the `unit` vitest project (chant #2817).
@@ -12,8 +13,12 @@ import { overBudgetMessage, unitTestBudgetMs } from "./unit-test-budget";
  *
  * The time counted is the test and its beforeEach/afterEach hooks, the same span
  * vitest reports for the test. A file's beforeAll is not counted.
+ *
+ * A test in one of the named slow files (`SLOW_UNIT_TEST_FILES`, #4472) has
+ * that file's higher budget; every other test has the run's.
  */
 const budget = unitTestBudgetMs(process.env);
+const repoRoot = resolve(import.meta.dirname, "..");
 const started = new WeakMap<object, number>();
 
 beforeEach((ctx) => {
@@ -24,5 +29,8 @@ afterEach((ctx) => {
   const start = started.get(ctx.task);
   if (start === undefined || budget === 0) return;
   const elapsed = performance.now() - start;
-  if (elapsed > budget) throw new Error(overBudgetMessage(ctx.task.name, elapsed, budget));
+  const filepath = ctx.task.file?.filepath;
+  const file = filepath === undefined ? undefined : relative(repoRoot, filepath).replaceAll("\\", "/");
+  const limit = unitTestBudgetForFile(file, budget);
+  if (elapsed > limit) throw new Error(overBudgetMessage(ctx.task.name, elapsed, limit, file));
 });

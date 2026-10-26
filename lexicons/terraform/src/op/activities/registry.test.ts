@@ -15,7 +15,7 @@ import { describe, test, expect } from "vitest";
 import { loadActivities, resolveActivity } from "@intentius/chant/op";
 
 describe("loadActivities([\"terraform\"]) (#2086, #2103)", () => {
-  test("resolves all seven activity names", async () => {
+  test("resolves its activity names", async () => {
     const activities = await loadActivities(["terraform"]);
     for (const name of [
       "terraformInit",
@@ -25,6 +25,7 @@ describe("loadActivities([\"terraform\"]) (#2086, #2103)", () => {
       "choudoufuLivePlan",
       "choudoufuLiveLs",
       "choudoufuLiveCheck",
+      "choudoufuPlanSet",
     ]) {
       expect(typeof resolveActivity(activities, name)).toBe("function");
     }

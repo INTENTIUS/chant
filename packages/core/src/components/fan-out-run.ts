@@ -53,7 +53,7 @@ import { emitGateStep, joinRunEventSinks, progressSinkOf, type RunEventSink } fr
 import type { CapabilityRegistry, GroupMemberStatus, GroupRun } from "./capability";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { DeployContext } from "./capability";
-import { groupsByComponent, runComponentGroup } from "./groups";
+import { groupsByComponent, narrowGroups, planAndRunComponentGroup, runComponentGroup } from "./groups";
 import { planWaveComponent, type WaveComponentPlan } from "./wave-plan";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { decideWaveGate, runWaveLoop, waveGateName, waveSetDigest, type WaveMember, type WaveRecord } from "../wave-engine";
@@ -255,6 +255,13 @@ export interface FanOutRunOptions {
    * member held or blocked holds or blocks the rest. Not with `waveGate`.
    */
   groupRuns?: Record<string, GroupRun>;
+  /**
+   * A group with no entry in `groupRuns` plans in its wave against the
+   * outputs standing, then applies (#4465): `components fan-out` plans
+   * nothing before it runs. Without it such a group fails, which is what a
+   * pull request's apply wants for a group nobody approved.
+   */
+  planGroupsAtWave?: boolean;
 }
 
 /** A component {@link FanOutRunOptions.hold} held back, or one downstream of it. */
@@ -315,7 +322,8 @@ export async function runFanOut(
 
   // Resume first, so the gate is decided against the work that is actually left
   // and a re-run does not re-approve. The digest is carried, not recomputed.
-  const active = options.progress ? remainingFanOut(plan, components, options.progress) : plan;
+  // A group keeps what is left of it (#4465).
+  const active = options.progress ? narrowGroups(remainingFanOut(plan, components, options.progress), components, plan.groups) : plan;
 
   if (options.gate && options.waveGate) {
     throw new Error("a fan-out takes one gate over the set or one gate per wave, not both");
@@ -421,16 +429,17 @@ export async function runFanOut(
     const groupRuns = Promise.all(
       groupsHere.map(async (group) => {
         for (const name of group.components) emit?.({ type: "component-start", wave: waveNum, component: name });
-        const ran = await runComponentGroup({
+        const approved = options.groupRuns?.[group.components[0]!];
+        const each = {
           group,
           components: byName,
           registry,
           env: options.env,
           ...(options.vars ? { vars: options.vars } : {}),
-          ctxOf: (name) => fanOutContext(options, name),
-          run: options.groupRuns?.[group.components[0]!],
+          ctxOf: (name: string) => fanOutContext(options, name),
           componentOutputs,
-        });
+        };
+        const ran = approved === undefined && options.planGroupsAtWave ? await planAndRunComponentGroup(each) : await runComponentGroup({ ...each, run: approved });
         for (const result of ran.results) {
           emit?.({ type: "component-settle", wave: waveNum, component: result.component, status: result.status === "fail" ? "failed" : result.status });
           options.onComponentSettled?.(result, componentOutputs[result.component]);

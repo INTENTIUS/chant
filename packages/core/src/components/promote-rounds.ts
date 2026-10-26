@@ -22,6 +22,12 @@
  * A stage whose components declare no gate has nowhere to wait, so the
  * promote stops there with nothing more deployed.
  *
+ * - **Groups** (ws-107, #4465). With `grouped`, the waves are the grouped
+ *   fan-out's, so each group sits in one wave and is checked, planned again
+ *   and run as one: when any member's input moved, every member left of the
+ *   group is planned again with it. Under `--wave-gate` no group forms
+ *   (`formRunGroups`), so there is none here.
+ *
  * A promote that stops at a round's or a wave's gate writes a resume record
  * ({@link PromoteResume}): the components that applied and the outputs they
  * left. The same promote run again with it skips what applied and carries on
@@ -37,6 +43,8 @@ import { waveGateName } from "../gated-waves";
 import { capabilitySteps } from "./wave-plan";
 import type { ChangeSetDocument } from "../change-set";
 import type { ReleasePlan } from "./release-gate";
+import type { FanOutGroup, FanOutPlan } from "./fan-out";
+import { groupsByComponent } from "./groups";
 
 export const PROMOTE_RESUME_SCHEMA = "chant-promote-resume/v1";
 
@@ -90,6 +98,8 @@ export interface PromoteRoundsOptions {
   replan: (only: ReadonlySet<string>, outputs: Record<string, Record<string, unknown>>) => Promise<ChangeSetDocument>;
   /** Store a stage's plan and bind its gates (empty resolutions included). */
   bind: (doc: ChangeSetDocument, gates: string[]) => Promise<ReleaseGateBinding>;
+  /** The grouped fan-out (#4465): its waves replace the ones `dependsOn` gives, and each group is checked as one. */
+  grouped?: FanOutPlan;
 }
 
 export interface PromoteRoundsResult {
@@ -169,7 +179,17 @@ function joinRuns(runs: DriverRunResult[], outputs: Record<string, Record<string
  */
 export async function runPromotionInRounds(options: PromoteRoundsOptions): Promise<PromoteRoundsResult> {
   const byName = new Map(options.components.map((c) => [c.name, c]));
-  const { waves } = resolveComponentGraph(options.components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => byName.has(d)) })));
+  const grouped = options.grouped?.groups?.length ? options.grouped : undefined;
+  const placed = new Set(grouped?.order ?? []);
+  // A grouped fan-out over what a resume left holds no wave for what applied earlier; that is skipped anyway.
+  const waves = grouped
+    ? grouped.waves.map((w) => w.filter((name) => byName.has(name)))
+    : resolveComponentGraph(options.components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => byName.has(d)) }))).waves;
+  if (grouped) {
+    const missing = options.components.filter((c) => !placed.has(c.name) && !(options.completed ?? []).includes(c.name)).map((c) => c.name);
+    if (missing.length > 0) throw new Error(`the grouped waves leave out ${missing.join(", ")}, which this promote runs`);
+  }
+  const groupOf = grouped ? groupsByComponent(grouped) : new Map<string, FanOutGroup>();
   const completed = [...(options.completed ?? [])];
   const done = new Set(completed);
   let outputs = { ...options.outputs };
@@ -181,9 +201,12 @@ export async function runPromotionInRounds(options: PromoteRoundsOptions): Promi
     const waveNumber = index + 1;
     const pending = wave.filter((name) => !done.has(name));
     if (pending.length === 0) continue;
-    const check = options.waveGate !== undefined && waveNumber > 1
+    const moved = options.waveGate !== undefined && waveNumber > 1
       ? pending
       : pending.filter((name) => movedInputs(byName.get(name)!, options.reads[name], outputs).length > 0);
+    // A group is planned again as one: a member whose input moved takes the rest of its group with it.
+    const withMates = new Set(moved.flatMap((name) => [name, ...(groupOf.get(name)?.components ?? [])]));
+    const check = pending.filter((name) => withMates.has(name));
     const batches: Array<{ names: string[]; binding: ReleaseGateBinding; stage?: PromoteStage; rename?: (g: string) => string }> = [];
     const rest = pending.filter((name) => !check.includes(name));
     if (check.length > 0) {

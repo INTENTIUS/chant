@@ -13,8 +13,9 @@
  * as there: no HCL parse runs.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { isJsonConfigFile, listConfigFilesSafe } from "../hcl/files";
 import { literal, stateAddress, type Attr, type StateKey } from "./state-address";
 
 export type { StateKey } from "./state-address";
@@ -80,19 +81,13 @@ export const hclAttr =
     return null;
   };
 
-const isJson = (file: string): boolean => file.endsWith(".tf.json") || file.endsWith(".tofu.json");
-
-/** A root's own configuration files: `.tf`, `.tofu` and their JSON syntax, not its modules'. */
-export function configFiles(dir: string): string[] {
-  try {
-    return readdirSync(dir)
-      .filter((n) => n.endsWith(".tf") || n.endsWith(".tofu") || n.endsWith(".tf.json") || n.endsWith(".tofu.json"))
-      .sort()
-      .map((n) => join(dir, n))
-      .filter((p) => statSync(p).isFile());
-  } catch {
-    return [];
-  }
+/**
+ * A root's own configuration files, not its modules', as paths: the set the
+ * root's `binary` reads (`.tf` and `.tf.json`, plus `.tofu` and `.tofu.json`
+ * for tofu or choudoufu), from the lexicon's one lister (chant#4457).
+ */
+export function configFiles(dir: string, binary?: string): string[] {
+  return listConfigFilesSafe(dir, binary).map((n) => join(dir, n));
 }
 
 /** One configuration file's text, comments blanked when it is HCL. */
@@ -103,10 +98,10 @@ export interface RootText {
 }
 
 /** The text of a root's own configuration files, comments blanked so positions still match. */
-export function rootTexts(dir: string): RootText[] {
-  return configFiles(dir).map((f) => {
+export function rootTexts(dir: string, binary?: string): RootText[] {
+  return configFiles(dir, binary).map((f) => {
     const raw = readFileSync(f, "utf-8");
-    const json = isJson(f);
+    const json = isJsonConfigFile(f);
     return { file: f, text: json ? raw : blankComments(raw), json };
   });
 }
@@ -133,8 +128,8 @@ export function jsonBlocks(doc: unknown, kind: string): Record<string, unknown>[
 export type BackendBlock = { type: string; attrs: Record<string, string> } | { cloud: true };
 
 /** The backend block (or `cloud` block) of the root at `dir`, from HCL or Terraform's JSON syntax. */
-export function backendBlock(dir: string): BackendBlock | undefined {
-  for (const { text, json } of rootTexts(dir)) {
+export function backendBlock(dir: string, binary?: string): BackendBlock | undefined {
+  for (const { text, json } of rootTexts(dir, binary)) {
     if (json) {
       for (const b of jsonBlocks(parseJson(text), "terraform")) {
         if (b.cloud !== undefined) return { cloud: true };
@@ -179,11 +174,11 @@ const asKey = (a: ReturnType<typeof stateAddress>): StateKey | undefined => ("un
  * `local` path resolves against. An address the code does not spell in plain
  * strings is left out, so nothing lines up with it.
  */
-export function rootState(dir: string, rel: string, backendConfig: Readonly<Record<string, string>> = {}): RootState {
+export function rootState(dir: string, rel: string, backendConfig: Readonly<Record<string, string>> = {}, binary?: string): RootState {
   const out: RootState = { reads: [] };
   const over = (get: Attr): Attr => (name) => (name in backendConfig ? (literal(backendConfig[name]) ?? null) : get(name));
   let declared = false;
-  for (const { text, json } of rootTexts(dir)) {
+  for (const { text, json } of rootTexts(dir, binary)) {
     if (json) {
       const doc = parseJson(text);
       for (const t of jsonBlocks(doc, "terraform")) {
@@ -238,14 +233,19 @@ export const sameState = (a: StateKey, b: StateKey): boolean => a.key === b.key 
 
 const LIVE_SIDECAR = "estate.chdf.hcl";
 
-/** A choudoufu root's estate, from its `estate.chdf.hcl` or the `live` block in its `terraform` block; undefined when it declares none. */
-export function liveEstate(dir: string): { live: boolean; estate?: string } {
+/**
+ * A choudoufu root's estate, from its `estate.chdf.hcl` or the `live` block in
+ * its `terraform` block; undefined when it declares none. A `live` block takes
+ * effect only under choudoufu, so the files read are the ones choudoufu reads
+ * unless `binary` names another.
+ */
+export function liveEstate(dir: string, binary = "choudoufu"): { live: boolean; estate?: string } {
   const sidecar = join(dir, LIVE_SIDECAR);
   if (existsSync(sidecar)) {
     const estate = hclAttr(blankComments(readFileSync(sidecar, "utf-8")))("estate");
     return { live: true, ...(typeof estate === "string" ? { estate } : {}) };
   }
-  for (const { text, json } of rootTexts(dir)) {
+  for (const { text, json } of rootTexts(dir, binary)) {
     if (json) continue;
     for (const t of text.matchAll(/^\s*terraform\s*\{/gm)) {
       const body = blockBody(text, t.index!);
@@ -259,9 +259,9 @@ export function liveEstate(dir: string): { live: boolean; estate?: string } {
 }
 
 /** Each `data "terraform_estate_outputs"` block of a root: its label and the estate whose outputs it reads. */
-export function estateOutputReads(dir: string): { name: string; estate: string }[] {
+export function estateOutputReads(dir: string, binary?: string): { name: string; estate: string }[] {
   const out: { name: string; estate: string }[] = [];
-  for (const { text, json } of rootTexts(dir)) {
+  for (const { text, json } of rootTexts(dir, binary)) {
     if (json) continue;
     for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"([^"]+)"\s*\{/g)) {
       const e = hclAttr(blockBody(text, m.index!))("estate");
@@ -288,12 +288,12 @@ export function lockedProviders(dir: string): Map<string, string> {
 }
 
 /** Local module directories the root at `dir` calls (`source = "./..."` or `"../..."`), followed through, absolute. */
-export function localModules(dir: string): string[] {
+export function localModules(dir: string, binary?: string): string[] {
   const seen = new Set<string>();
   const queue = [resolve(dir)];
   while (queue.length > 0) {
     const at = queue.pop()!;
-    for (const { text, json } of rootTexts(at)) {
+    for (const { text, json } of rootTexts(at, binary)) {
       if (json) continue;
       for (const m of text.matchAll(/\bmodule\s+"[^"]+"\s*\{/g)) {
         const src = blockBody(text, m.index!).match(/\bsource\s*=\s*"(\.{1,2}\/[^"]*)"/)?.[1];

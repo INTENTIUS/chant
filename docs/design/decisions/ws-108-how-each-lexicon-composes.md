@@ -72,7 +72,7 @@ constrains:
 
 # How each lexicon composes in a pull request's run
 
-Decided on 2026-10-25 for #4443. Code was read at origin/integration/4419-composed-runs b1ae26157. The CloudFormation `Fn::ImportValue` row follows ruling 7 of #4419.
+Decided on 2026-10-25 for #4443. Code was read at origin/integration/4419-composed-runs b1ae26157. The CloudFormation `Fn::ImportValue` row follows ruling 7 of #4419. The maintainer ruled the same day that this record stays `decided` (#4481, ruling 8).
 
 A member composes in one of three ways:
 
@@ -84,7 +84,7 @@ A member composes in one of three ways:
 
 | Capability | Lexicon | Composes as | Issue | What the API offers | Why |
 |---|---|---|---|---|---|
-| `terraform-apply` | terraform | group | [#4447](https://github.com/INTENTIUS/chant/issues/4447) | `terraform plan` over a root of module calls, where a value one module creates is known after apply in the modules that read it | One apply carries a value from one root to another. Outside a group a waiting root is a hole (`waitingRoot`); a preview outside a group is [#4463](https://github.com/INTENTIUS/chant/issues/4463), not built in this epic. |
+| `terraform-apply` | terraform | group | [#4447](https://github.com/INTENTIUS/chant/issues/4447) | `terraform plan` over a root of module calls, where a value one module creates is known after apply in the modules that read it | One apply carries a value from one root to another. Outside a group a waiting root is previewed with typed placeholders since [#4463](https://github.com/INTENTIUS/chant/issues/4463) (epic:engine-ship), and stays a hole (`waitingRoot`) when no preview is possible. |
 | `cfn-deploy` | aws | preview | [#4423](https://github.com/INTENTIUS/chant/issues/4423), [#4430](https://github.com/INTENTIUS/chant/issues/4430) | a change set per stack, created and deleted without executing | Built. `previewCfnDeploy` creates the change set with `cfnPlaceholder` stand-ins for the unknown parameters and returns `cfnPlanShape`. CloudFormation has no change set over several stacks, so a group would run change sets in order, as covered rounds do. |
 | `Fn::ImportValue` | aws | preview | [#4466](https://github.com/INTENTIUS/chant/issues/4466) | the same change set; an import resolves only when the change set is created, and fails when the export does not exist yet | The CDK shape. Core sees no read, since the import is inside the template, and `valueReads` treats it as opaque. The epic turns an import of an export another stack in the change declares into a read, and previews the importer with the import as a stand-in parameter. |
 | `arm-deploy` | azure | hole | none | ARM what-if (`deployments/whatIf`), for ARM deployments only | chant applies through `azApply`, one PUT per resource, and plans by reading each resource with a GET (`readPlan`). It makes no ARM deployment, so what-if has nothing to preview. `ArmDeployInput` takes no template parameters: an upstream output can only fill `resourceGroup`, `location`, `endpoint`, `subscriptionId` or `template`, and a stand-in there reads a different target. |

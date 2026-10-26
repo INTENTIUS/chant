@@ -153,7 +153,9 @@ function isDockerfileName(name: string): boolean {
 function isTerraformFileName(name: string): boolean {
   // `terragrunt.hcl` and `root.hcl` ride in the terraform bundle (#3417): the
   // terraform lexicon reads them into Terragrunt entities, apart from modules.
-  return /\.tf$/i.test(name) || name === "terragrunt.hcl" || name === "root.hcl";
+  // `.tf.json`, `.tofu` and `.tofu.json` are configuration too (chant#4457);
+  // which of them a root reads is the lexicon's call, by its binary.
+  return /\.(tf|tofu)(\.json)?$/i.test(name) || name === "terragrunt.hcl" || name === "root.hcl";
 }
 
 /**

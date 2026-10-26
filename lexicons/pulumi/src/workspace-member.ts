@@ -55,6 +55,14 @@ export interface PulumiMemberReport {
   exported: boolean;
   /** Why nothing was read; set with `exported: false`. */
   reason?: string;
+  /**
+   * How many `deployment.pending_operations` the export records, set only
+   * when there are some (#4468). Pulumi writes one for each step an update
+   * started and never finished, so a non-zero count means the last update was
+   * interrupted and the stack may hold resources its state does not. PUL002
+   * reports it.
+   */
+  pendingOperations?: number;
 }
 
 interface ExportedResource {
@@ -82,11 +90,14 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
     return missing(`no ${PULUMI_EXPORT_FILE} in the member; run \`pulumi stack export --file ${PULUMI_EXPORT_FILE}\` and check it in, and chant will read it (the graph read does not run the program)`);
   }
   let resources: ExportedResource[];
+  let pendingOperations = 0;
   try {
-    const doc = JSON.parse(readFileSync(file, "utf-8")) as { deployment?: { resources?: unknown } };
+    const doc = JSON.parse(readFileSync(file, "utf-8")) as { deployment?: { resources?: unknown; pending_operations?: unknown } };
     const list = doc?.deployment?.resources;
     if (list !== undefined && !Array.isArray(list)) return missing(`${PULUMI_EXPORT_FILE} has a deployment.resources that is not a list`);
     resources = (list ?? []) as ExportedResource[];
+    const pending = doc?.deployment?.pending_operations;
+    pendingOperations = Array.isArray(pending) ? pending.length : 0;
   } catch (e) {
     return missing(`${PULUMI_EXPORT_FILE} is not readable JSON: ${(e as Error).message}`);
   }
@@ -119,7 +130,9 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig }): {
     } as unknown as Declarable);
   }
 
-  return { entities, warnings: [], report: { export: PULUMI_EXPORT_FILE, objects: entities.size, exported: true } };
+  const report: PulumiMemberReport = { export: PULUMI_EXPORT_FILE, objects: entities.size, exported: true };
+  if (pendingOperations > 0) report.pendingOperations = pendingOperations;
+  return { entities, warnings: [], report };
 }
 
 let lastReport: PulumiMemberReport | undefined;

@@ -259,9 +259,11 @@ describe("mapping onto a graph", () => {
     const mapped = mapDriftToGraph(doc, { member: "infra", at: null, ids: ["estate/aws_eip.pool", "estate/module.app/aws_eip.pool", "zone"] });
     const at = (address: string) => mapped.records.find((r) => r.address === address)!;
     expect(at("aws_eip.pool[0]")).toMatchObject({ node: "infra/estate/aws_eip.pool[0]", instanceOf: "infra/estate/aws_eip.pool" });
-    // Under an expanded module call the instance keeps the block node.
-    expect(at("module.app[0].aws_eip.pool[1]").node).toBe("infra/estate/module.app/aws_eip.pool");
-    expect(at("module.app[0].aws_eip.pool[1]").instanceOf).toBeUndefined();
+    // Under an expanded module call the module key sits on the call's segment (#4486).
+    expect(at("module.app[0].aws_eip.pool[1]")).toMatchObject({
+      node: "infra/estate/module.app[0]/aws_eip.pool[1]",
+      instanceOf: "infra/estate/module.app/aws_eip.pool",
+    });
     expect(at("zone").node).toBe("infra/zone");
     expect(at("urn:pulumi:dev::site::aws:s3/bucket:Bucket::assets").node).toBeNull();
     expect(mapDriftToGraph(doc, null).records.every((r) => r.node === null && r.instanceOf === undefined)).toBe(true);
@@ -354,37 +356,41 @@ describe("the stream", () => {
 });
 
 describe("choudoufu's live-plan -resource stream, as it writes it", () => {
+  // Recorded (#4475, __fixtures__/drift-record/README.md): choudoufu's estate-block fixture on floci, its log group's
+  // retention changed out of band (choudoufu-resource.ndjson), and the subnet's cone, the VPC with it (choudoufu-cone.ndjson).
   const text = readFileSync(join(DIR, "choudoufu-resource.ndjson"), "utf-8");
+  const cone = readFileSync(join(DIR, "choudoufu-cone.ndjson"), "utf-8");
 
   test("decodes line for line, the settle's reads carried as given", () => {
     const lines = decodeDriftLines(text);
-    expect(lines.map((l) => l.type)).toEqual(["drift-start", "drift-record", "drift-record", "drift-record", "drift-settle"]);
-    for (const l of lines) lineSchema.expectValid(JSON.parse(encodeDriftLine(l)));
-    for (const raw of text.split("\n").filter(Boolean)) lineSchema.expectValid(JSON.parse(raw));
-    const settle = lines[4] as DriftSettleLine;
-    expect(settle.reads).toEqual({ recordsRead: 2, recordKeys: 2, recordListCalls: 0, sweepCalls: 0, scanTypes: [], scanListCalls: 0 });
-    expect(settle.counts).toEqual({ drifted: 1, "not-observed": 1, unclaimed: 1 });
+    expect(lines.map((l) => l.type)).toEqual(["drift-start", "drift-record", "drift-settle"]);
+    for (const l of [...lines, ...decodeDriftLines(cone)]) lineSchema.expectValid(JSON.parse(encodeDriftLine(l)));
+    for (const raw of [...text.split("\n"), ...cone.split("\n")].filter(Boolean)) lineSchema.expectValid(JSON.parse(raw));
+    const settle = lines[2] as DriftSettleLine;
+    expect(settle.reads).toEqual({ recordsRead: 6, recordKeys: 1, recordListCalls: 0, sweepCalls: 0, scanTypes: [], scanListCalls: 0, tagIndexCalls: 0 });
+    expect(settle.counts).toEqual({ drifted: 1 });
   });
 
-  test("folds to one record per expected address, the unclaimed one under ownership", () => {
-    const { document, reading } = foldDriftLines(decodeDriftLines(text));
+  test("folds to one record per expected address; choudoufu names a changed path and no values", () => {
+    const one = foldDriftLines(decodeDriftLines(text));
+    expect(one.reading).toEqual([]);
+    expect(one.document.records.map((r) => [r.address, r.read, r.status, r.ownership?.by])).toEqual([["aws_cloudwatch_log_group.app", "plan", "drifted", "derived"]]);
+    expect(one.document.records[0].attributes).toEqual([{ path: "retention_in_days" }]);
+    const { document, reading } = foldDriftLines(decodeDriftLines(cone));
     expect(reading).toEqual([]);
-    expect(document.records.map((r) => [r.address, r.read, r.status])).toEqual([
-      ["aws_eip.pool[0]", "plan", "drifted"],
-      ["aws_eip.pool[1]", "ownership", "unclaimed"],
-      ["aws_eip.pool[2]", "plan", "not-observed"],
+    expect(document.records.map((r) => [r.address, r.read, r.status, r.ownership?.by])).toEqual([
+      ["aws_subnet.app", "plan", "in-sync", "marker"],
+      ["aws_vpc.main", "plan", "in-sync", "marker"],
     ]);
-    expect(document.records[0].attributes).toEqual([{ path: "secret_value", sensitive: true }, { path: "tags" }]);
-    roundTrip(document.records);
+    roundTrip([...one.document.records, ...document.records]);
   });
 
   test("a settle with an expected address nobody answered folds it to not-reached", () => {
-    const short = text.split("\n").filter(Boolean).filter((l) => !l.includes('"aws_eip.pool[2]","node"')).join("\n");
+    const short = cone.split("\n").filter(Boolean).filter((l) => !l.includes('"address":"aws_vpc.main"')).join("\n");
     const { document } = foldDriftLines(decodeDriftLines(short));
-    const silent = document.records.find((r) => r.address === "aws_eip.pool[2]")!;
+    const silent = document.records.find((r) => r.address === "aws_vpc.main")!;
     expect(silent.status).toBe("not-observed");
     expect(silent.unobserved?.reason).toBe("not-reached");
-    expect(silent.observedAt).toBe("2026-10-25T12:00:00Z");
   });
 });
 

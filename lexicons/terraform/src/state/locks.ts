@@ -4,8 +4,15 @@
  * run holds stops the take: every lock taken so far is released, and the
  * error names the holder from the lock info it left.
  *
+ * A run can also hold the lock of a workspace a state is read from, which
+ * no backend block of the root names (a Terraform Cloud or Enterprise
+ * workspace a state migration moves from, terragucci#1274): the workspace's
+ * own lock, taken through its API before any state lock (`takeSourceLocks`,
+ * `takeLocksWithSources`).
+ *
  * Lifted from terragucci's `migrate.ts` (c493e0e): `lockInfo`,
- * `LockOperation`, `HeldLock` and `takeLocks`.
+ * `LockOperation`, `HeldLock` and `takeLocks`, and the source-workspace lock
+ * of its `takeLocks` (lines 1045 to 1056).
  */
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
@@ -56,10 +63,13 @@ export class StateLockedError extends Error {
   }
 }
 
+/** What taking a lock needs of a store: a caller with a store of its own (terragucci's, which also reads versions) passes that. */
+export type LockStore = Pick<StateStore, "location" | "lockLocation" | "heldLock" | "lock" | "unlock" | "adopt">;
+
 /** A lock taken, on one root's state. */
-export interface HeldLock {
+export interface HeldLock<S extends LockStore = StateStore> {
   root: string;
-  store: StateStore;
+  store: S;
   /** The lock was another run's, kept on purpose with a state it could not write, and this take took it over. */
   adopted: boolean;
   release: () => Promise<void>;
@@ -71,14 +81,14 @@ export interface HeldLock {
  * `adopt` sees a held lock and says whether this take takes it over (a lock
  * an earlier run of the same operation left held on purpose).
  */
-export async function takeLocks(
-  stores: readonly { root: string; store: StateStore }[],
+export async function takeLocks<S extends LockStore = StateStore>(
+  stores: readonly { root: string; store: S }[],
   now: string,
   op: LockOperation,
-  adopt?: (root: string, store: StateStore, held: LockHolder) => Promise<boolean>,
+  adopt?: (root: string, store: S, held: LockHolder) => Promise<boolean>,
   who?: string,
-): Promise<HeldLock[]> {
-  const held: HeldLock[] = [];
+): Promise<HeldLock<S>[]> {
+  const held: HeldLock<S>[] = [];
   const releaseAll = async (): Promise<void> => {
     for (const h of held.reverse()) await h.release().catch(() => {});
   };
@@ -104,4 +114,88 @@ export async function takeLocks(
     throw new StateLockedError(root, store.lockLocation, info ? holderOf(info) : undefined);
   }
   return held;
+}
+
+/**
+ * The lock of a workspace a state is read from, taken through the
+ * workspace's own API (Terraform Cloud's `actions/lock`), not a lock object
+ * beside a state. `lock` takes it with a reason the workspace shows, and
+ * returns its release; it throws when another run holds it.
+ */
+export interface SourceLock {
+  root: string;
+  /** The workspace, for messages. */
+  location: string;
+  lock(reason: string): Promise<() => Promise<void>>;
+}
+
+/** A source workspace's lock, taken. */
+export interface HeldSourceLock {
+  root: string;
+  location: string;
+  release: () => Promise<void>;
+}
+
+/** A source workspace's lock could not be taken: another run holds it, or the API refused. Nothing was read. */
+export class SourceLockedError extends Error {
+  constructor(
+    readonly root: string,
+    readonly location: string,
+    readonly reason: string,
+  ) {
+    super(`${root}: the lock of the workspace it is read from (${location}) could not be taken: ${reason}`);
+    this.name = "SourceLockedError";
+  }
+}
+
+/** The reason a source workspace's lock shows: the operation and its info, as a state lock's info names them. */
+export const sourceLockReason = (op: LockOperation): string => `${op.operation}: ${op.info}`;
+
+/**
+ * Take each source workspace's lock, in the order given, so no run writes a
+ * state while it is read. Releases what it took and throws SourceLockedError
+ * when one cannot be taken.
+ */
+export async function takeSourceLocks(sources: readonly SourceLock[], op: LockOperation): Promise<HeldSourceLock[]> {
+  const held: HeldSourceLock[] = [];
+  for (const s of sources) {
+    try {
+      held.push({ root: s.root, location: s.location, release: await s.lock(sourceLockReason(op)) });
+    } catch (e) {
+      for (const h of held.reverse()) await h.release().catch(() => {});
+      throw new SourceLockedError(s.root, s.location, (e as Error).message);
+    }
+  }
+  return held;
+}
+
+export interface LocksWithSourcesInput<S extends LockStore> {
+  /** The workspaces states are read from, locked first. */
+  sources: readonly SourceLock[];
+  /** The states written, locked after the sources, in the order given. */
+  stores: readonly { root: string; store: S }[];
+  now: string;
+  /** What the state locks name. */
+  op: LockOperation;
+  /** What a source workspace's lock names; default `op`. A run that only reads the source says so here. */
+  sourceOp?: LockOperation;
+  adopt?: (root: string, store: S, held: LockHolder) => Promise<boolean>;
+  who?: string;
+}
+
+/**
+ * Every lock a run that reads from source workspaces and writes states
+ * holds: the source workspaces' first, then the states'. When any cannot be
+ * taken, every lock taken so far is released, and the error is
+ * SourceLockedError or StateLockedError.
+ */
+export async function takeLocksWithSources<S extends LockStore = StateStore>(input: LocksWithSourcesInput<S>): Promise<{ sources: HeldSourceLock[]; locks: HeldLock<S>[] }> {
+  const sources = await takeSourceLocks(input.sources, input.sourceOp ?? input.op);
+  try {
+    const locks = await takeLocks(input.stores, input.now, input.op, input.adopt, input.who);
+    return { sources, locks };
+  } catch (e) {
+    for (const h of sources.reverse()) await h.release().catch(() => {});
+    throw e;
+  }
 }

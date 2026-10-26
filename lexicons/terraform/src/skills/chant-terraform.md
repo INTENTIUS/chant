@@ -33,7 +33,7 @@ export default {
 
 ## What a build produces
 
-Every block of every configured root becomes one entity, keyed `<root>/<address>`: `terraform { }` -> `Terraform::Terraform`, `provider "x" {}` -> `Terraform::Provider`, `resource "x" "y" {}` -> `Terraform::Resource`, `data "x" "y" {}` -> `Terraform::Data`, `module "x" {}` -> `Terraform::Module`, `variable "x" {}` -> `Terraform::Variable`, `output "x" {}` -> `Terraform::Output`, `locals {}` -> `Terraform::Locals`. Each carries `props.address`, `props.body` (the block, verbatim), `props.file` and `props.root`. A root whose `dir` doesn't exist, or whose HCL the parser refuses, warns and contributes no entities — the rest of the build is unaffected.
+Every block of every configured root becomes one entity, keyed `<root>/<address>`: `terraform { }` -> `Terraform::Terraform`, `provider "x" {}` -> `Terraform::Provider`, `resource "x" "y" {}` -> `Terraform::Resource`, `data "x" "y" {}` -> `Terraform::Data`, `module "x" {}` -> `Terraform::Module`, `variable "x" {}` -> `Terraform::Variable`, `output "x" {}` -> `Terraform::Output`, `locals {}` -> `Terraform::Locals`, `moved {}` -> `Terraform::Moved`, `import {}` -> `Terraform::Import`, `removed {}` -> `Terraform::Removed`, `check "x" {}` -> `Terraform::Check`. Each carries `props.address`, `props.body` (the block, verbatim), `props.file` and `props.root`. A root whose `dir` doesn't exist, or whose HCL the parser refuses, warns and contributes no entities — the rest of the build is unaffected.
 
 ## The one thing to check before anything else
 

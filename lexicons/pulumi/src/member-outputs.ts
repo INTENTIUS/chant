@@ -81,8 +81,11 @@ export function pulumiPartHasChanges(part: ChangeSetPart): boolean {
  * What a member's preview says about its stack outputs (#4455): the stack
  * step's outputs, unknowns named, secrets left out; the part's digest; and
  * whether it has changes. A failed preview throws, naming the member and
- * the preview's error. A preview with no stack step names every output the
- * export holds unknown, so nothing reads a value the preview did not plan.
+ * the preview's error. A preview that plans no stack outputs (no stack step,
+ * or one without outputs, which is what a real `pulumi preview --json`
+ * prints, #4475) gives the export's outputs when it plans nothing to apply,
+ * since no apply will move them, and names every output the export holds
+ * unknown otherwise, so nothing reads a value the preview did not plan.
  */
 export function pulumiMemberPlannedOutputs(member: string, read: { part: ChangeSetPart; preview: unknown; exported?: unknown }): EnginePlannedOutputs {
   const { part } = read;
@@ -93,6 +96,7 @@ export function pulumiMemberPlannedOutputs(member: string, read: { part: ChangeS
   const changes = pulumiPartHasChanges(part);
   if (planned === undefined) {
     const exported = read.exported === undefined ? [] : pulumiExportedStackOutputs(read.exported);
+    if (!changes) return { known: knownValues(exported), unknown: [], planDigest: part.member.planDigest, changes };
     return { known: {}, unknown: exported.filter((o) => !o.secret).map((o) => o.name), planDigest: part.member.planDigest, changes };
   }
   const unknown = planned.filter((o) => o.unknown).map((o) => o.name);

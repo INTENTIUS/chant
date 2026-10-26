@@ -148,6 +148,13 @@
           "const": true,
           "description": "Planned before what it reads applied, so it may hold stand-in values (a Terragrunt dependent planned on mock_outputs). Left out of the document's digest, refused by a wave's set digest, and never grouped with real plans."
         },
+        "placeholders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Added in contract 1 by #4463, written by chant 0.124.53 and newer. The inputs the member was previewed with stand-in values for (#4463), as var.<name>, sorted. Every attribute they drive is marked unknown in its entries, and its planDigest covers them."
+        },
         "holes": {
           "type": "array",
           "description": "What the planner could not read, so the plan says nothing about it.",

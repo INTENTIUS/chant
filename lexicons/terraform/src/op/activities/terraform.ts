@@ -45,12 +45,14 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { resolve, dirname, join, relative, sep } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
+import { findWorkspaceRoot } from "@intentius/chant/project-root";
 import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
 import { terraformPlanDigest } from "../../plan-digest";
 import { choudoufuSetPlanParts, plannerForBinary, terraformChangeSetPart } from "../../change-set";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
+import { backendConfigValues } from "../../backend-config";
 import {
   parseAdoptionCommands,
   readAdoptionLedger,
@@ -202,6 +204,14 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
    * of that file changes nothing else.
    */
   targets?: string[];
+  /**
+   * `false` skips `show -no-color`, the human-readable render (#4479). The
+   * plan then runs one `show` process, `show -json`, whose document gives the
+   * digest, the change set and everything a caller derives from `json`, and
+   * {@link TerraformPlanResult.text} is `""`. For a caller that never reads
+   * the text, such as the `terraform-apply` capability. Default: `true`.
+   */
+  text?: boolean;
 }
 
 export interface TerraformApplyArgs extends TerraformRootArgs {
@@ -291,6 +301,13 @@ export interface TerraformInitResult {
   dir: string;
   /** Workspace the run selected via `TF_WORKSPACE`, when the root names one. */
   workspace?: string;
+  /**
+   * The root module directory relative to the chant workspace root, with `/`
+   * separators (chant#4482), when the root sits inside a workspace. A
+   * TerraformApplyOp publishes it as the `TerraformRootPath` run outcome, so a
+   * ledger read can name the member whose directory holds the root it applied.
+   */
+  rootPath?: string;
 }
 
 /** Counts projected out of a plan's `resource_changes`. */
@@ -315,7 +332,7 @@ export interface TerraformPlanResult extends PlanChangeCounts {
   dir: string;
   /** `terraform show -json <planFile>`, parsed. */
   json: unknown;
-  /** `terraform show -no-color <planFile>` — the human-readable plan. */
+  /** `terraform show -no-color <planFile>` — the human-readable plan. `""` when the plan ran with `text: false`. */
   text: string;
   /**
    * This plan's identity (#2300) — {@link terraformPlanDigest} over
@@ -548,19 +565,24 @@ export function terraformEnvironment(root?: Pick<TerraformRootConfig, "workspace
   };
 }
 
-/** `terraform init`, with the root's `backendConfig` as `-backend-config=k=v` flags. */
+/**
+ * `terraform init`, with the root's `backendConfigFiles` as
+ * `-backend-config=<path>` flags and then its `backendConfig` as
+ * `-backend-config=k=v` flags (chant#4459): init applies later flags over
+ * earlier ones, so a pair overrides a file. A path is passed as written; init
+ * runs in the root's directory, which a relative one resolves against.
+ */
 export function terraformInitCommand(opts: {
   binary: string;
   backendConfig?: Record<string, string>;
+  backendConfigFiles?: readonly string[];
   upgrade?: boolean;
   reconfigure?: boolean;
 }): string {
   const parts = [opts.binary, "init", "-input=false"];
   if (opts.upgrade) parts.push("-upgrade");
   if (opts.reconfigure) parts.push("-reconfigure");
-  for (const [key, value] of Object.entries(opts.backendConfig ?? {})) {
-    parts.push(`-backend-config=${quoteArg(`${key}=${value}`)}`);
-  }
+  for (const value of backendConfigValues(opts)) parts.push(`-backend-config=${quoteArg(value)}`);
   return parts.join(" ");
 }
 
@@ -928,8 +950,8 @@ function report(stdout: string, stderr: string): void {
 // ── Activities ──────────────────────────────────────────────────────────────
 
 /**
- * `terraform init` in the named root, with the root's `backendConfig` supplied
- * as `-backend-config` flags. Uses the longInfra profile: init downloads
+ * `terraform init` in the named root, with the root's `backendConfigFiles` and
+ * `backendConfig` supplied as `-backend-config` flags. Uses the longInfra profile: init downloads
  * providers and modules, a network call of unpredictable size.
  */
 export async function terraformInit(
@@ -940,6 +962,7 @@ export async function terraformInit(
   const cmd = terraformInitCommand({
     binary,
     ...(root.backendConfig ? { backendConfig: root.backendConfig } : {}),
+    ...(root.backendConfigFiles ? { backendConfigFiles: root.backendConfigFiles } : {}),
     ...(args.upgrade ? { upgrade: true } : {}),
     ...(args.reconfigure ? { reconfigure: true } : {}),
   });
@@ -947,12 +970,27 @@ export async function terraformInit(
   const { stdout, stderr } = await run(cmd, dir, terraformEnvironment(root), signal);
   report(stdout, stderr);
 
-  return { dir, ...(root.workspace ? { workspace: root.workspace } : {}) };
+  const rootPath = workspaceRelativePath(dir);
+  return { dir, ...(root.workspace ? { workspace: root.workspace } : {}), ...(rootPath !== undefined ? { rootPath } : {}) };
+}
+
+/**
+ * `dir` relative to the chant workspace that holds it, `/`-separated, or
+ * undefined outside a workspace or outside its root (chant#4482). The
+ * workspace root `"."` stands for itself.
+ */
+export function workspaceRelativePath(dir: string): string | undefined {
+  const found = findWorkspaceRoot(dir);
+  if (!found) return undefined;
+  const rel = relative(found.dir, dir);
+  if (rel.startsWith("..")) return undefined;
+  return rel === "" ? "." : rel.split(sep).join("/");
 }
 
 /**
  * `terraform plan -detailed-exitcode -out=<planFile>` in the named root, then
- * `terraform show` over the written plan in both `-json` and `-no-color` form.
+ * `terraform show` over the written plan in both `-json` and `-no-color` form
+ * (`-json` alone with `text: false`).
  *
  * The exit code is the answer, not an error condition: 0 is a plan with no
  * changes, 2 is a plan with changes, and anything else, 1 included, is a
@@ -1000,7 +1038,7 @@ export async function terraformPlan(
   }
 
   const jsonRun = await run(terraformShowCommand({ binary, json: true, planFile }), dir, env, signal);
-  const textRun = await run(terraformShowCommand({ binary, json: false, planFile }), dir, env, signal);
+  const text = args.text === false ? "" : (await run(terraformShowCommand({ binary, json: false, planFile }), dir, env, signal)).stdout;
   const json: unknown = JSON.parse(jsonRun.stdout);
 
   return {
@@ -1008,7 +1046,7 @@ export async function terraformPlan(
     planFile,
     dir,
     json,
-    text: textRun.stdout,
+    text,
     planDigest: terraformPlanDigest(json),
     changeSet: terraformChangeSetPart({
       member: args.root,
@@ -1189,7 +1227,7 @@ export async function choudoufuWaveRoot(
   if (resolved.root.varFiles && resolved.root.varFiles.length > 0) {
     return { wave: false, reason: "the root has var files, which live-plan-set does not take" };
   }
-  if (resolved.root.backendConfig && Object.keys(resolved.root.backendConfig).length > 0) {
+  if ((resolved.root.backendConfig && Object.keys(resolved.root.backendConfig).length > 0) || (resolved.root.backendConfigFiles?.length ?? 0) > 0) {
     return { wave: false, reason: "the root has backend config, which live-plan-set does not take" };
   }
   const root = choudoufuSetRootPath(resolved.projectRoot, resolved.dir);
@@ -1585,10 +1623,11 @@ export function terraformPlanReadCommand(opts: { binary: string; planFile: strin
  * The one line a person runs to initialise a root chant refuses to plan,
  * with the root's `backendConfig` carried, so it can be pasted as printed.
  */
-export function terraformInitLine(opts: { binary: string; dir: string; backendConfig?: Record<string, string> }): string {
+export function terraformInitLine(opts: { binary: string; dir: string; backendConfig?: Record<string, string>; backendConfigFiles?: readonly string[] }): string {
   const init = terraformInitCommand({
     binary: opts.binary,
     ...(opts.backendConfig ? { backendConfig: opts.backendConfig } : {}),
+    ...(opts.backendConfigFiles ? { backendConfigFiles: opts.backendConfigFiles } : {}),
   });
   return init.replace(`${opts.binary} init`, `${opts.binary} -chdir=${quoteArg(opts.dir)} init`);
 }
@@ -1700,7 +1739,12 @@ export async function terraformPlanRead(
 ): Promise<TerraformPlanReadResult> {
   const { binary, root, dir } = await resolveRoot(args, signal);
   const env = terraformEnvironment(root);
-  const initLine = terraformInitLine({ binary, dir, ...(root.backendConfig ? { backendConfig: root.backendConfig } : {}) });
+  const initLine = terraformInitLine({
+    binary,
+    dir,
+    ...(root.backendConfig ? { backendConfig: root.backendConfig } : {}),
+    ...(root.backendConfigFiles ? { backendConfigFiles: root.backendConfigFiles } : {}),
+  });
   const notInitialised = (detail: string): TerraformPlanReadError =>
     new TerraformPlanReadError(
       "not-initialised",

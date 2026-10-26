@@ -137,6 +137,20 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
       expect(found.find((i) => i.path === "live/app")!.content).toContain("# file: terragrunt.hcl");
     });
 
+    test(".tf.json, .tofu and .tofu.json files join the terraform bundle beside .tf (chant#4457)", () => {
+      const files = [
+        { path: "app/main.tf", content: 'resource "x" "a" {}\n' },
+        { path: "app/extra.tf.json", content: '{"resource": {"x": {"b": {}}}}\n' },
+        { path: "app/tofu.tofu", content: 'resource "x" "c" {}\n' },
+        { path: "app/tofu.tofu.json", content: '{"resource": {"x": {"d": {}}}}\n' },
+      ];
+      const found = classifyFiles(files, [terraform]);
+      expect(targets(found)).toEqual(["terraform:app"]);
+      expect(Object.keys(found[0]!.files!).sort()).toEqual(["extra.tf.json", "main.tf", "tofu.tofu", "tofu.tofu.json"]);
+      expect(hintLexiconForFile("app/extra.tf.json", "{}")).toBe("terraform");
+      expect(hintLexiconForFile("app/tofu.tofu", "")).toBe("terraform");
+    });
+
     test("without the terraform plugin, .tf files are classified into nothing (skipped, same as an unloaded helm)", () => {
       const found = discoverByDetection(fixture("audit-terraform"), []);
       expect(found).toEqual([]);

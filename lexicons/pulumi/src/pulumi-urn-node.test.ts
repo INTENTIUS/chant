@@ -1,8 +1,10 @@
 /**
  * Pulumi URN to graph node (#4456): the stack-export render and a change set
  * over `pulumi preview --json` put each resource of one program on the same
- * node. The fixtures in `testdata/pulumi-urn-node` are an export and a preview
- * of the same stack; nothing here runs Pulumi.
+ * node. The fixtures in `testdata/pulumi-urn-node` are recorded (#4475, see its
+ * README): an export of the plunge corpus's aws-ts stack on floci and a
+ * `preview --json --show-sames` of a change to it, pulumi 3.272.0. Nothing
+ * here runs Pulumi.
  */
 import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
@@ -20,6 +22,8 @@ function renderedIds(): Set<string> {
   return new Set(readPulumiMember({ member: { dir, label: "site" } }).entities.keys());
 }
 
+const urn = (type: string, name: string) => `urn:pulumi:floci::corpus-aws-ts::${type}::${name}`;
+
 describe("Pulumi URN to graph node (#4456)", () => {
   test("every resource in both the export and the preview maps to the same node", () => {
     const ids = renderedIds();
@@ -28,11 +32,11 @@ describe("Pulumi URN to graph node (#4456)", () => {
       if (!byUrn.has(s.urn)) byUrn.set(s.urn, new Set());
       byUrn.get(s.urn)!.add(s.node);
     }
-    const both = exported.filter((r) => byUrn.has(r.urn));
-    expect(both.length).toBe(exported.length);
-    for (const r of both) {
+    // The preview lists every resource the export holds but the default provider, which preview --json never prints.
+    const missing = exported.filter((r) => !byUrn.has(r.urn)).map((r) => r.urn);
+    expect(missing).toEqual([expect.stringMatching(/::pulumi:providers:aws::default_/)]);
+    for (const r of exported.filter((x) => byUrn.has(x.urn))) {
       const fromPreview = [...byUrn.get(r.urn)!];
-      // A replace is three steps on one URN; all three land on one node.
       expect(fromPreview, r.urn).toHaveLength(1);
       const node = fromPreview[0];
       if (node === null) {
@@ -47,46 +51,44 @@ describe("Pulumi URN to graph node (#4456)", () => {
   test("the nodes: the URN tail under the member, providers and the stack on none", () => {
     expect(pulumiPreviewNodes(preview, "site").map((s) => `${s.op} ${s.node}`)).toEqual([
       "same null",
+      "same site/corpus:index:Site::docs",
       "same null",
-      "update site/aws:s3/bucket:Bucket::assets",
-      "same site/my:web:Site::site",
-      "same null",
-      "same site/my:web:Site$aws:s3/bucketPolicy:BucketPolicy::site-policy",
-      "same site/my:web:Site$my:web:Cdn::site-cdn",
-      "create-replacement site/my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
-      "replace site/my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
-      "create site/my:web:Site$aws:route53/record:Record::site-alias",
-      "delete-replaced site/my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
-      "delete site/aws:iam/role:Role::old-deployer",
+      "replace site/aws:ec2/vpc:Vpc::main",
+      "same site/aws:iam/role:Role::app-role",
+      "update site/aws:sqs/queue:Queue::events",
+      "update site/aws:ssm/parameter:Parameter::db-password",
+      "same site/aws:s3/bucket:Bucket::site-bucket",
+      "same site/aws:sqs/queue:Queue::worker-1",
+      "same site/aws:sqs/queue:Queue::worker-0",
+      "same site/corpus:index:Site$aws:s3/bucket:Bucket::docs-assets",
+      "same site/corpus:index:Site$aws:sns/topic:Topic::docs-notify",
+      "replace site/aws:ec2/securityGroup:SecurityGroup::app-sg",
+      "same site/aws:sns/topic:Topic::alerts-west",
+      "same site/aws:s3/bucketPolicy:BucketPolicy::site-bucket-policy",
+      "delete site/aws:sqs/queue:Queue::worker-2",
+      "delete site/aws:ssm/parameter:Parameter::vpc-id",
     ]);
-    expect([...renderedIds()].sort()).toEqual([
-      "site/aws:iam/role:Role::old-deployer",
-      "site/aws:s3/bucket:Bucket::assets",
-      "site/my:web:Site$aws:s3/bucketPolicy:BucketPolicy::site-policy",
-      "site/my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn",
-      "site/my:web:Site$my:web:Cdn::site-cdn",
-      "site/my:web:Site::site",
-    ]);
+    // Every custom resource and the component, the stack and the two providers left out.
+    expect(renderedIds().size).toBe(15);
   });
 
-  test("a create the export does not hold yet has an id the graph lacks, so a mapped entry gets node: null", () => {
+  test("a resource the export does not hold has an id the graph lacks", () => {
     const ids = renderedIds();
-    const create = pulumiPreviewNodes(preview, "site").find((s) => s.op === "create")!;
-    expect(ids.has(create.node!)).toBe(false);
+    expect(ids.has("site/aws:sqs/queue:Queue::worker-3")).toBe(false);
+    expect(ids.has("site/aws:sqs/queue:Queue::worker-2")).toBe(true);
   });
 
   test("a child nests under its component through the parent edge", () => {
     const { entities } = readPulumiMember({ member: { dir, label: "site" } });
     const refs = (key: string) => (entities.get(key) as unknown as { references: { to: string; viaAttr: string }[] }).references;
-    const cdn = refs("site/my:web:Site$my:web:Cdn$aws:cloudfront/distribution:Distribution::site-cdn");
-    expect(cdn).toContainEqual({ to: "site/my:web:Site$my:web:Cdn::site-cdn", viaAttr: "parent" });
-    expect(refs("site/aws:s3/bucket:Bucket::assets").filter((r) => r.viaAttr === "parent")).toEqual([]);
+    expect(refs("site/corpus:index:Site$aws:s3/bucket:Bucket::docs-assets")).toContainEqual({ to: "site/corpus:index:Site::docs", viaAttr: "parent" });
+    expect(refs("site/aws:s3/bucket:Bucket::site-bucket").filter((r) => r.viaAttr === "parent")).toEqual([]);
   });
 
   test("the key ignores the stack and the project", () => {
-    const urn = (stack: string, project: string) => `urn:pulumi:${stack}::${project}::my:web:Site$aws:s3/bucketPolicy:BucketPolicy::site-policy`;
-    expect(pulumiNodeKey(urn("dev", "site"))).toBe(pulumiNodeKey(urn("prod", "other")));
-    expect(pulumiNodeKey("urn:pulumi:dev::site::aws:s3/bucket:Bucket::a::b")).toBe("aws:s3/bucket:Bucket::a::b");
-    expect(pulumiNodeCandidates({ member: "site", address: "urn:pulumi:dev::site::my:web:Site$pulumi:providers:aws::east" })).toEqual([]);
+    const at = (stack: string, project: string) => `urn:pulumi:${stack}::${project}::corpus:index:Site$aws:s3/bucket:Bucket::docs-assets`;
+    expect(pulumiNodeKey(at("floci", "corpus-aws-ts"))).toBe(pulumiNodeKey(at("prod", "other")));
+    expect(pulumiNodeKey(urn("aws:s3/bucket:Bucket", "a::b"))).toBe("aws:s3/bucket:Bucket::a::b");
+    expect(pulumiNodeCandidates({ member: "site", address: "urn:pulumi:floci::corpus-aws-ts::corpus:index:Site$pulumi:providers:aws::east" })).toEqual([]);
   });
 });

@@ -22,9 +22,9 @@ import type { PinRoot } from "./pin";
 const USAGE =
   "usage: chant terraform pin-rollout --module <source> --from <pin> --to <pin> [--root <dir>]... [--depends-on <dir>=<dir>]... " +
   "[--ts-source <dir>=<file>]... [--canary <dir>]... [--waves-from <file> [--waves-prefix <dir>]] [--pull-request] " +
-  "[--base <branch>] [--remote <name>] [--applied-check <name>] [--json]";
+  "[--base <branch>] [--remote <name>] [--applied-check <name>] [--binary <terraform|tofu|choudoufu>] [--json]";
 
-const VALUE_FLAGS = new Set(["--module", "--from", "--to", "--root", "--depends-on", "--ts-source", "--canary", "--waves-from", "--waves-prefix", "--base", "--remote", "--applied-check"]);
+const VALUE_FLAGS = new Set(["--module", "--from", "--to", "--root", "--depends-on", "--ts-source", "--canary", "--waves-from", "--waves-prefix", "--base", "--remote", "--applied-check", "--binary"]);
 const BOOLEAN_FLAGS = new Set(["--pull-request", "--json"]);
 
 /** Parse the verb's flags into the activity's args. Throws on an unknown flag or a missing value. */
@@ -75,6 +75,7 @@ export function parsePinRolloutArgs(rawArgs: string[]): { args: TerraformPinRoll
     ...(one("--base") ? { base: one("--base")! } : {}),
     ...(one("--remote") ? { remote: one("--remote")! } : {}),
     ...(one("--applied-check") ? { appliedCheck: one("--applied-check")! } : {}),
+    ...(one("--binary") ? { binary: one("--binary")! } : {}),
   };
   return { args, json: flags.has("--json") };
 }

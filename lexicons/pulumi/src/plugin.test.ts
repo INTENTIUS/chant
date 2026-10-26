@@ -35,4 +35,20 @@ describe("pulumiPlugin", () => {
     expect(roots.entities.size).toBe(0);
     expect(pulumiPlugin.graphMeta!(roots.entities)).toBeUndefined();
   });
+
+  test("a relative member dir resolves against the project root (#4468)", async () => {
+    const roots = await pulumiPlugin.buildRoots!({
+      projectRoot: import.meta.dirname,
+      config: { pulumi: { member: { dir: "testdata/pulumi-member", label: "infra" } } },
+    } as never);
+    expect([...roots.entities.keys()]).toContain("infra/aws:s3/bucket:Bucket::assets");
+  });
+
+  test("meets the tier-1 lexicon surface: lint, post-synth, completion, hover, docs (#4468)", () => {
+    expect(pulumiPlugin.lintRules!().map((r) => r.id)).toEqual(["PUL101"]);
+    expect(pulumiPlugin.postSynthChecks!().map((c) => c.id)).toEqual(["PUL001", "PUL002"]);
+    expect(typeof pulumiPlugin.completionProvider).toBe("function");
+    expect(typeof pulumiPlugin.hoverProvider).toBe("function");
+    expect(typeof pulumiPlugin.docs).toBe("function");
+  });
 });

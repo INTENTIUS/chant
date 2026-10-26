@@ -18,10 +18,16 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 
 | Activity | Runs | Notes |
 |---|---|---|
-| `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfig`. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
+| `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfigFiles` (one `-backend-config=<path>` each, relative to the root's `dir`) and then its `backendConfig` pairs, so a pair overrides a file. The composed run's init passes the same flags. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
 | `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. Also returns `planDigest` and `changeSet`, the root's part of a [change-set document](/chant/reference/change-set/). |
 | `terraformApply` | `terraform apply <planFile>` | A saved plan, on either kind of root: there is no bare-apply mode here, and a missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. On a live root (see "choudoufu" below) that file is the approval artifact, and an apply that disagrees with it comes back as a named refusal rather than a thrown error. |
 | `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
+
+The ninth activity acts across many roots and names no `terraform.roots` entry:
+
+| Activity | Runs | Notes |
+|---|---|---|
+| `terraformPinRollout` | one step of a pin-bump rollout | Finds the roots that call a module, splits them into waves, and opens at most the next wave's pull request. Throws, naming the cause, when a root failed or a wave's PR closed without merging. The HCL parser loads on first call. See [TerraformPinRolloutOp](#terraformpinrolloutop). |
 
 ## The builders
 
@@ -101,24 +107,40 @@ A member that cannot compose leaves the group and plans root by root as without 
 
 | Kind | When |
 |---|---|
-| `off` | `terraform.compose` is not enabled. Recorded, not printed in the note. |
+| `off` | `terraform.compose` is not enabled. Recorded, not printed in the note (ruling 3 on #4481). |
 | `path` | The step names no root in `terraform.roots`, sets `cwd`, or the root uses `path.root` or `path.cwd`. |
 | `same-root` | Two members deploy the same root. |
-| `steps` | The component's deploy has more than its one `terraform-apply` step, gates included. |
+| `steps` | The component's deploy has more than its one `terraform-apply` step, gates included (ruling 5 on #4481). |
 | `targets` | The component is given `--target`. |
 | `binary` | Members run different binaries, or choudoufu is too old to run estates as one. |
 | `identity` | The member applies under another cloud identity than the rest: `ci.identity.cloud` resolved for its root as the target. A root matches a target glob by its key in `terraform.roots` or by its directory relative to the project, and the first rule either matches wins. |
 | `workspace` | The root plans in a workspace other than `default`. |
-| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, or a root without a `live` block among estates. |
+| `backend` | The backend is one chant does not lock itself (anything but s3 with `use_lockfile`, gcs, azurerm and local), a `cloud` block, a root whose code and `-backend-config` flags disagree with what `init` last recorded, or a root without a `live` block among estates. The backend is read once, for this and for the state locks: the code with `TF_CLI_ARGS`, `TF_CLI_ARGS_init`, the keys of the `backendConfigFiles` and `backendConfig` over it, compared with `.terraform/terraform.tfstate` when init has run, and a disagreement names both. |
 | `provider-lock` | Two members lock one provider at different versions. |
 | `read` | A member reads another through a `terraform_remote_state` with `count` or `for_each`, or from inside a module. |
 | `import` | An `import` block takes no literal string `id`. |
 | `order-only` | A member `dependsOn` another with no read between them. |
 | `split` | A component outside the group applies between two members. |
 | `cli-args` | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` carries `-target`, `-exclude`, `-replace` or `-var`. |
-| `too-many-roots` | The group has more roots than `compose.max`. |
+| `too-many-roots` | The group has more roots than `compose.max`. Nothing composes then, not even `max` of them (ruling 6 on #4481). |
 
-A composed plan that fails makes every member plan-failed with its error, and nothing applies. Outside a group, a root whose `vars` wait on an output not known yet is a hole and its round needs its own approval.
+A composed plan that fails makes every member plan-failed with its error, and nothing applies. Outside a group, a root whose `vars` wait on an output not known yet is previewed with typed placeholders ([#4463](https://github.com/INTENTIUS/chant/issues/4463), [plan previews](/chant/components/plan-previews/#terraform-apply)), and stays a hole only when no preview is possible.
+
+#### What was ruled on the shipped behaviour
+
+The composed runs shipped with a first answer to twelve questions, and the maintainer ruled on them on 2026-10-25 ([#4481](https://github.com/INTENTIUS/chant/issues/4481)). These keep what shipped:
+
+- A `planGroup` that throws makes every member of the group plan-failed with the same error (ruling 2). Core does not re-plan the members one by one.
+- The `off` fallback is recorded in the report and not printed in the note (ruling 3), so a workspace that has not opted in sees no line about it.
+- A root with a local backend is locked with chant's own `<path>.tflock` beside the state (ruling 4). It keeps another chant run out. A bare `terraform apply` on the same checkout at the same time is not kept out, since the run writes with `-lock=false` while it holds the lock.
+- A gate step counts as a step (ruling 5), so a component with a gate never joins a group (`steps`).
+- When a change reaches more roots than `compose.max`, nothing composes (ruling 6). The whole change falls back to waves with `too-many-roots`, rather than a cut of `max` roots that would move with unrelated changes.
+- [ws-108](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-108-how-each-lexicon-composes.md) stays `decided` (ruling 8).
+- The composed estate root keeps re-exporting each estate's outputs as `<module>__<name>` (ruling 10), which the post-apply reads and `report.ts`'s unknown-output check read.
+- When the post-apply plan's state carries no root outputs for an estate, its outputs fall back to that plan's planned outputs (ruling 11), so a state choudoufu builds from records does not leave a downstream read unknown after a successful apply.
+- The `pr-loop` bundle ceiling stays 110 KB (ruling 12, `pr-loop-bundle.test.ts`).
+
+Ruling 7, one backend reader in place of the two in `compose/hcl.ts` and `state/backend.ts`, is [#4478](https://github.com/INTENTIUS/chant/issues/4478).
 
 ### A choudoufu member's outputs, read by another member
 
@@ -190,7 +212,7 @@ estate = "prod-networking"
 
 Declaring `binary: "choudoufu"` with no estate anywhere runs the root stock, exactly as `"terraform"`/`"tofu"` do; declaring an estate under any other binary parses fine but is inert, and `chant dev check-lexicon`/`buildRoots()` warns about it.
 
-Four more activities exist for a live root, alongside the four above:
+Four more activities exist for a live root, alongside the four stock ones:
 
 | Activity | Runs | Notes |
 |---|---|---|
@@ -198,14 +220,15 @@ Four more activities exist for a live root, alongside the four above:
 | `choudoufuLiveLs` | `live-ls -estate=<estate> -json [-consistent]` | Lists every resource the account holds under the estate, straight off the Resource Groups Tagging API. No configuration, state or record store is read. |
 | `choudoufuLiveCheck` | `live-check -json` | Whether the root can move under live resource markers, and what stops it if not. Makes no cloud calls and needs no estate at all; `refused: true` on a non-zero exit carries the answer back rather than throwing. |
 | `choudoufuAdopt` | one tagging call per adoptable match | Writes the `tofu-estate` and `tofu-address` markers that claim the live resources an adoption ledger found. Takes the ledger's own `adoptions` and `contested` lists; a contested address is reported and never written. See [Reconcile](#reconcile-adoption-not-regeneration). |
+| `choudoufuPlanSet` | `live-plan-set -json` over the one root, from the project root | The root planned as a one-root set ([#4483](https://github.com/INTENTIUS/chant/issues/4483)). Returns choudoufu's `setDigest` and `rootDigest`, chant's `planDigest` over the embedded plan, `changed`, the plan's `json`, `planSetFile` (the document, under `.chant/choudoufu-waves/<root>/`, which `live-wave-apply -plan-set` takes) and `changeSet`, the root's part of a change-set document. Plan several roots, one per cloud, and hand each `.out.changeSet` to `composeChangeSet` to get one document and one digest to gate on. Needs choudoufu v0.22.0 or later; a root on another binary is refused. |
 
 `terraformInit`, `terraformPlan`, `terraformApply` and `terraformShow` are reused as-is on a live root. Every choudoufu invocation still gets `TF_IN_AUTOMATION=1`. `choudoufu version` is checked once per activity-module load and refuses a binary older than v0.15.0. v0.12.0 brought `live-plan -json`, `live-ls` and `live-check -json`; v0.13.0 brought the approval artifact ([choudoufu #878](https://github.com/INTENTIUS/choudoufu/issues/878)); v0.14.0 made the `-json` document reachable on a configuration that names its own estate ([choudoufu #894](https://github.com/INTENTIUS/choudoufu/issues/894)), which is the shape every chant live root has; v0.15.0 put the estate-wide sweep's content matches in that document as an `adoptable` section, with the swept type list beside it ([choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962)), which is what the adopt path reads. So v0.15.0 is the floor `describeResources()` and all three document-reading Ops need.
 
 **The adoption ledger.** `choudoufuLivePlan` with `adoptionOnly` reads two sections of the document into one ledger. `unowned[]` is a live resource found at an identity the configuration itself declares, and `adoptable[]` is one the estate-wide sweep matched to a declaration by comparing arguments, for a declaration that names no identity at all (a VPC's id is assigned by EC2, so nothing in the block determines it). The second section is populated only when the run asks the account-bounded question, so `adoptionOnly` puts `TOFU_LIVE_COLLECT_UNCLAIMED=1` on the `-json` invocation and no other run pays for the sweep. Each `adoptable[]` row carries its own tagging command; an `unowned[]` row does not, and its command is still read out of the human `-adoption-only` render, which is the one thing on this path that still parses text.
 
-**Which acceptance suites have actually run.** All four of this lexicon's acceptance blocks skip rather than fail when their binary or emulator is absent, so a green test run says nothing about whether any of them has ever passed. `lexicons/terraform/src/__fixtures__/ACCEPTANCE.md` records the answer per block: what it proves, what gates it, the command to run it, and the last binary and emulator it passed against with the date. All four passed on 2026-09-08 against the choudoufu v0.15.0 release binary with the pinned floci emulator up, which is the first pass the adopt block (`composites/terraform-adopt-op.acceptance.test.ts`) has ever had: until v0.15.0 the content match that finds the fixture's unmarked `aws_vpc` was printed only in the human `-adoption-only` render, which choudoufu refuses alongside `-json`, and the document reported the instance under `omissions` as `NEEDS_DISCOVERY` with `unowned` empty. That was filed upstream as [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962) and fixed by its PR 963. There is no `TerraformWatchOp` acceptance suite; the watch Op's live evidence is the `live-plan` block it shares with the adopt Op.
+**Which acceptance suites have actually run.** All eleven of this lexicon's acceptance blocks (eight files, including the three Terragrunt suites) skip rather than fail when their binary or emulator is absent, so a green test run says nothing about whether any of them has ever passed. `lexicons/terraform/src/__fixtures__/ACCEPTANCE.md` records the answer per block: what it proves, what gates it, the command to run it, and the last binary and emulator it passed against with the date. The dates live there and are not repeated here. The adopt block (`composites/terraform-adopt-op.acceptance.test.ts`) first passed against the choudoufu v0.15.0 release binary: until v0.15.0 the content match that finds the fixture's unmarked `aws_vpc` was printed only in the human `-adoption-only` render, which choudoufu refuses alongside `-json`, and the document reported the instance under `omissions` as `NEEDS_DISCOVERY` with `unowned` empty. That was filed upstream as [choudoufu #962](https://github.com/INTENTIUS/choudoufu/issues/962) and fixed by its PR 963. There is no `TerraformWatchOp` acceptance suite; the watch Op's live evidence is the `live-plan` block it shares with the adopt Op.
 
-`choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck` and `choudoufuAdopt` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource.
+`choudoufuLivePlan`, `choudoufuLiveLs`, `choudoufuLiveCheck`, `choudoufuAdopt` and `choudoufuPlanSet` exist as typed step builders too, the same shape as the four above (`root` positional, `opts` the activity's own args minus `root`). `choudoufuLivePlan`/`choudoufuLiveLs` default to the `longInfra`/`fastIdempotent` profiles respectively the same way `terraformPlan`/`terraformShow` do; `choudoufuLiveCheck` defaults to `fastIdempotent`, no cloud calls, no state; `choudoufuAdopt` defaults to `longInfra`, one tagging round trip per resource; `choudoufuPlanSet` defaults to `longInfra`.
 
 TF001 (no remote backend) does not fire on a live root, since a `backend` block is exactly what choudoufu refuses there. TF024, TF025 and TF026 are the live-root equivalents; see [Lint Rules](../lint-rules/).
 
@@ -433,7 +456,7 @@ chant does not wrap it in an Op, on purpose. It reads a state file, once, and ch
 
 ## TerraformPinRolloutOp
 
-`terraformPinRollout` runs one step of a pin-bump rollout ([#3189](https://github.com/INTENTIUS/chant/issues/3189)). It names no `terraform.roots` entry. It finds the roots that call a module, in `.tf` files and `terragrunt.hcl`, splits them into waves, and opens at most the next wave's pull request. `TerraformPinRolloutOp` wraps it in one `Rollout` phase, whose run outcome is the rollout's status. `chant terraform pin-rollout` runs the same step from the command line.
+`terraformPinRollout` runs one step of a pin-bump rollout ([#3189](https://github.com/INTENTIUS/chant/issues/3189)). It names no `terraform.roots` entry. It finds the roots that call a module, in `.tf` files and `terragrunt.hcl` (and `.tofu` files when its `binary` is `tofu` or `choudoufu`), splits them into waves, and opens at most the next wave's pull request. `TerraformPinRolloutOp` wraps it in one `Rollout` phase, whose run outcome is the rollout's status. `chant terraform pin-rollout` runs the same step from the command line.
 
 ```typescript
 import { TerraformPinRolloutOp } from "@intentius/chant-lexicon-terraform";

@@ -183,6 +183,22 @@ describe("terraformInitCommand (#2086)", () => {
     ).toBe("tofu init -input=false -backend-config=bucket=tf-state -backend-config=key=app/terraform.tfstate");
   });
 
+  test("backendConfigFiles become -backend-config=<path> flags, in order and before the pairs (chant#4459)", () => {
+    expect(
+      terraformInitCommand({
+        binary: "tofu",
+        backendConfig: { key: "app/terraform.tfstate" },
+        backendConfigFiles: ["backend.hcl", "/etc/chant/shared.hcl"],
+      }),
+    ).toBe("tofu init -input=false -backend-config=backend.hcl -backend-config=/etc/chant/shared.hcl -backend-config=key=app/terraform.tfstate");
+  });
+
+  test("the init line a refusal prints carries the files too, relative to the root it -chdirs into (chant#4459)", () => {
+    expect(terraformInitLine({ binary: "terraform", dir: "/repo/roots/app", backendConfigFiles: ["backend.hcl"], backendConfig: { key: "k" } })).toBe(
+      "terraform -chdir=/repo/roots/app init -input=false -backend-config=backend.hcl -backend-config=key=k",
+    );
+  });
+
   test("-upgrade and -reconfigure are opt-in", () => {
     expect(terraformInitCommand({ binary: "terraform", upgrade: true, reconfigure: true })).toBe(
       "terraform init -input=false -upgrade -reconfigure",
@@ -426,6 +442,19 @@ describe("terraformPlan — the -detailed-exitcode mapping (#2086)", () => {
       "terraform plan -input=false -detailed-exitcode -out=chant.tfplan",
       "terraform show -json chant.tfplan",
       "terraform show -no-color chant.tfplan",
+    ]);
+  });
+
+  test("text: false runs show -json alone, and the result's text is empty (#4479)", async () => {
+    const dir = project({ roots: { app: { dir: "./infra" } } });
+    showReplies();
+    const result = await terraformPlan({ root: "app", cwd: dir, text: false });
+    expect(result.text).toBe("");
+    expect(result.json).toEqual(JSON.parse(PLAN_JSON));
+    expect(result.planDigest).toBe(terraformPlanDigest(JSON.parse(PLAN_JSON)));
+    expect(execCalls.map((c) => c.cmd)).toEqual([
+      "terraform plan -input=false -detailed-exitcode -out=chant.tfplan",
+      "terraform show -json chant.tfplan",
     ]);
   });
 

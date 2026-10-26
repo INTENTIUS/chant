@@ -21,6 +21,9 @@
  *   digest into each member's plan digest ({@link bindGroup}).
  * - {@link runComponentGroup}: apply it in one call, and turn each member's
  *   outcome into a component result.
+ * - {@link formRunGroups}, {@link componentSetFanOut} and
+ *   {@link planAndRunComponentGroup}: the same groups where a promote under a
+ *   release, `components fan-out` and `run --components` run (#4465).
  */
 
 import { computePlanDigest } from "../lifecycle/plan-digest";
@@ -29,6 +32,7 @@ import type { PlanShape } from "./covered-round";
 import {
   accumulateComponentOutputs,
   assertTargetsAccepted,
+  resolveComponentGraph,
   resolveStepInput,
   unresolvedWiringSources,
   wiringReads,
@@ -790,4 +794,87 @@ export async function runComponentGroup(options: RunComponentGroupOptions): Prom
     results.push({ component: name, ok: false, status: "fail", records: [record(name, { status: "fail", error })] });
   }
   return { results, notStarted, outcomes };
+}
+
+/** The fallback kind of a component that would have joined a group under `--wave-gate` (#4465, ruling 1). */
+export const WAVE_GATE_FALLBACK = "wave-gate";
+
+/**
+ * The fan-out over `components` and nothing else (#4465), as a promote and
+ * `run --components` run them: a dependency outside the set is already
+ * satisfied, and nothing is skipped or seeded. `digest` names the set.
+ */
+export function componentSetFanOut(components: readonly DriverComponent[]): FanOutPlan {
+  const names = new Set(components.map((c) => c.name));
+  const { order, waves } = resolveComponentGraph(components.map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => names.has(d)) })));
+  return { order, waves, skipped: [], seeds: [], indeterminate: [], digest: computePlanDigest("component-set", [...names].sort()) };
+}
+
+export interface FormRunGroupsOptions extends Omit<FindComponentGroupsOptions, "within"> {
+  /** `--wave-gate`: no group forms (#4465, ruling 1). */
+  waveGate?: boolean;
+}
+
+/**
+ * `options.plan` with the groups a promote under a release, `components
+ * fan-out` and `run --components` form (#4465), by the rule the
+ * pull-request run uses ({@link findComponentGroups}, {@link groupFanOut}).
+ *
+ * Under a wave gate nothing groups (ruling 1 of #4465): a gated wave plans
+ * component by component, as `runFanOut` requires, so each member of a group
+ * that would have formed falls back with kind {@link WAVE_GATE_FALLBACK},
+ * and the plan keeps its waves.
+ */
+export async function formRunGroups(options: FormRunGroupsOptions): Promise<FanOutPlan> {
+  const { waveGate, ...find } = options;
+  const found = await findComponentGroups(find);
+  if (!waveGate || found.groups.length === 0) return groupFanOut(options.plan, options.components, found);
+  const gated: FanOutGroupFallback[] = found.groups.flatMap((g) =>
+    g.components.map((component) => ({
+      component,
+      capability: g.capability,
+      kind: WAVE_GATE_FALLBACK,
+      reason: `${listOf(g.components)} would plan and apply as one, but under --wave-gate each wave plans component by component, so no group forms`,
+    })),
+  );
+  const fallbacks = [...found.fallbacks, ...gated].sort((a, b) => a.component.localeCompare(b.component));
+  return groupFanOut(options.plan, options.components, { groups: [], fallbacks });
+}
+
+/** `a`, `b` and `c`. */
+function listOf(items: readonly string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : (items[0] ?? "");
+}
+
+/**
+ * Plan `group` in its wave against the outputs standing, then apply it
+ * (#4465). `components fan-out` and `run --components` run a group this way,
+ * since neither plans before it applies, as each of their components plans
+ * inside its own step. A group that fails to plan applies nothing: each
+ * member fails with the plan's error and is `not-started`.
+ */
+export async function planAndRunComponentGroup(options: Omit<RunComponentGroupOptions, "run">): Promise<ComponentGroupRunResult> {
+  const { group } = options;
+  const planned = await planComponentGroup({
+    group,
+    components: options.components,
+    registry: options.registry,
+    env: options.env,
+    ...(options.vars ? { vars: options.vars } : {}),
+    ctxOf: options.ctxOf,
+    outputs: options.componentOutputs,
+  });
+  if (planned.run) return runComponentGroup({ ...options, run: planned.run });
+  const failed = planned.plans.find((p): p is Extract<WaveComponentPlan, { error: string }> => "error" in p);
+  const error = `the group ${group.components.join(", ")} failed to plan, so nothing of it applied: ${failed?.error ?? "no plan"}`;
+  return {
+    results: group.components.map((name) => ({
+      component: name,
+      ok: false,
+      status: "fail" as const,
+      records: [{ component: name, phase: "Plan", kind: group.capability, status: "fail" as const, durationMs: 0, error }],
+    })),
+    notStarted: [...group.components],
+    outcomes: Object.fromEntries(group.components.map((name) => [name, "not-started" as const])),
+  };
 }

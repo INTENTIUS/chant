@@ -1,2 +1,7 @@
-name: aws
-runtime: nodejs
+name: corpus-aws-ts
+description: plunge corpus, TypeScript program against the floci AWS emulator (INTENTIUS/plunge#4)
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+    packagemanager: npm

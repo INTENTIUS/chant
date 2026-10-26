@@ -1,11 +1,13 @@
 /**
  * The one shared HCL parse for the terraform lexicon.
  *
- * Two entry points, one entity shape. `parseTerraformRootDir` reads the `.tf`
- * files of a directory (non-recursive, matching Terraform's own module
- * scoping) and is what `buildRoots()` calls. `parseTerraformRootContent` takes
- * the joined-file string `chant audit` hands a lexicon for a discovered root
- * module: every `.tf` in filename order behind a `# file: <name>` line comment.
+ * Two entry points, one entity shape. `parseTerraformRootDir` reads the
+ * configuration files of a directory (non-recursive, matching Terraform's own
+ * module scoping; `.tf` and `.tf.json`, plus `.tofu` and `.tofu.json` for a
+ * tofu or choudoufu root, see `./files.ts`) and is what `buildRoots()` calls.
+ * `parseTerraformRootContent` takes the joined-file string `chant audit` hands
+ * a lexicon for a discovered root module: every configuration file in filename
+ * order behind a `# file: <name>` line comment, narrowed to the same set.
  * Both funnel through `blocksToEntities`, so an entity the audit path sees is
  * the entity the build path sees.
  *
@@ -18,7 +20,7 @@
  * changed in `packages/core/package.json` for this.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
@@ -27,6 +29,20 @@ import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
 import type { TerraformDeleteMode } from "../config";
 import { redactSensitiveBody, redactSensitiveSource } from "./redact";
 import { scanSuppressions, directivesFor, type FileScan } from "./suppressions";
+import { isJsonConfigFile, jsonConfigTree, listConfigFiles, selectConfigFiles } from "./files";
+
+export {
+  TERRAFORM_SUFFIXES,
+  TOFU_SUFFIXES,
+  isConfigFileFor,
+  isJsonConfigFile,
+  isTofuConfigFile,
+  jsonConfigTree,
+  listConfigFiles,
+  listConfigFilesSafe,
+  readsTofuFiles,
+  selectConfigFiles,
+} from "./files";
 
 /** A parsed HCL block body, as `@cdktn/hcl2json` encodes it. */
 export type BlockBody = Record<string, unknown>;
@@ -162,9 +178,20 @@ export interface TerraformEntity extends Declarable {
    * `toset([...])`. Core's `withInstanceNodes` reads this lexicon-neutral
    * field, as `buildGraphIr` reads `stack`, and draws one instance node per
    * key under the block's node. Absent when the block is not expanded or its
-   * expansion is not a literal (`count = var.n`): only a plan can count those.
+   * expansion is not a literal. Since #4486 `./instances.ts` also sets it
+   * for an expansion it can count from the root's variables (`count = var.n`
+   * with `n` known), and for a `module` call.
    */
   readonly instanceKeys?: readonly string[];
+  /**
+   * The instance nodes of a block under an expanded module call (#4486), by
+   * full node id: `estate/module.app[0]/aws_eip.pool[1]`, with `key` the
+   * block's own key (`[1]`, absent when the block is not expanded itself)
+   * and `scope` the module path as Terraform prints it (`module.app[0]`).
+   * Core's `entityInstances` reads this in place of `instanceKeys`, which
+   * such a block never carries. Set by `./instances.ts`.
+   */
+  readonly instances?: ReadonlyArray<{ readonly id: string; readonly key?: string; readonly scope?: string }>;
   /**
    * Every reference in this block, resolved to the entity keys it points at
    * (chant #2265), in core's lexicon-neutral {@link EntityReference} shape.
@@ -197,6 +224,23 @@ export const OUTPUT_TYPE = "Terraform::Output";
 export const LOCALS_TYPE = "Terraform::Locals";
 /** A `live { estate = "..." }` block, or an `estate.chdf.hcl` sidecar's content (#2103). */
 export const LIVE_TYPE = "Terraform::Live";
+/**
+ * The four configuration blocks that change how a plan treats addresses
+ * rather than declaring anything (#4458): `moved`, `import`, `removed` and
+ * `check`. The first three carry no label and key as `moved`, `import`,
+ * `removed` (numbered `~2`, `~3` when a root holds several, as `locals` is);
+ * a `check` keys as `check.<name>`. Their references are edges like any other
+ * block's: a `moved` block's `from` and `to`, an `import` block's `to`, a
+ * `removed` block's `from`, and everything a `check` block's assertions and
+ * scoped `data` blocks read. A `from` usually names an address that is no
+ * longer declared, which resolves to no entity and so draws no edge, and
+ * that is all that happens: an unresolved reference is dropped, never
+ * reported (`./edges.ts`).
+ */
+export const MOVED_TYPE = "Terraform::Moved";
+export const IMPORT_TYPE = "Terraform::Import";
+export const REMOVED_TYPE = "Terraform::Removed";
+export const CHECK_TYPE = "Terraform::Check";
 
 /**
  * Terragrunt config entities (#3417). A `terragrunt.hcl` or `root.hcl` is not
@@ -367,11 +411,20 @@ export function splitBundleContent(content: string, fallbackName = "main.tf"): T
   return files.filter((f) => f.source.trim() !== "");
 }
 
-/** Every `.tf` directly under `dir`, in filename order. Non-recursive. */
-export function listTerraformFiles(dir: string): string[] {
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".tf"))
-    .sort();
+/**
+ * Every configuration file directly under `dir` that a root run by `binary`
+ * reads, in filename order, non-recursive: `.tf` and `.tf.json`, plus `.tofu`
+ * and `.tofu.json` for a tofu or choudoufu root, with `x.tofu` shadowing
+ * `x.tf` (chant#4457). The shared lister is `./files.ts`'s `listConfigFiles`.
+ */
+export function listTerraformFiles(dir: string, binary?: string): string[] {
+  return listConfigFiles(dir, binary);
+}
+
+/** One file's tree in hcl2json's shape: hcl2json for HCL, {@link jsonConfigTree} for Terraform's JSON syntax. */
+export async function parseFileTree(parser: Hcl2Json, file: TerraformFile): Promise<Record<string, unknown>> {
+  if (isJsonConfigFile(file.name)) return jsonConfigTree(file.source);
+  return (await parser.parse(file.name, file.source)) as Record<string, unknown>;
 }
 
 /** The Terragrunt config files directly under `dir` (`root.hcl`, `terragrunt.hcl`), in filename order like the audit's bundle. */
@@ -553,7 +606,7 @@ export async function blocksToEntities(
   };
 
   for (const file of files) {
-    const tree = (await parser.parse(file.name, file.source)) as Record<string, unknown>;
+    const tree = await parseFileTree(parser, file);
     const scan = scanSuppressions(file.name, file.source);
     if (isTerragruntFileName(file.name)) {
       terragruntBlocks(tree, file, scan, add);
@@ -568,6 +621,10 @@ export async function blocksToEntities(
     oneLabel(tree, "output", OUTPUT_TYPE, (n) => `output.${n}`, file, scan);
     twoLabels(tree, "resource", RESOURCE_TYPE, (t, n) => `${t}.${n}`, file, scan);
     twoLabels(tree, "data", DATA_TYPE, (t, n) => `data.${t}.${n}`, file, scan);
+    unlabelled(tree, "moved", MOVED_TYPE, file, scan);
+    unlabelled(tree, "import", IMPORT_TYPE, file, scan);
+    unlabelled(tree, "removed", REMOVED_TYPE, file, scan);
+    oneLabel(tree, "check", CHECK_TYPE, (n) => `check.${n}`, file, scan);
   }
 
   if (sidecar) {
@@ -633,8 +690,9 @@ function terragruntBlocks(
 }
 
 /**
- * Parse a root module directory. Reads every `.tf` directly under `dir`, plus
- * the `estate.chdf.hcl` sidecar beside them when present. Throws whatever the
+ * Parse a root module directory. Reads the configuration files directly under
+ * `dir` that `modeOptions.binary` reads ({@link listTerraformFiles}), plus the
+ * `estate.chdf.hcl` sidecar beside them when present. Throws whatever the
  * parser throws for malformed HCL; `buildRoots()` is where that becomes a
  * warning.
  */
@@ -646,7 +704,7 @@ export async function parseTerraformRootDir(
   callers: readonly string[] = [],
 ): Promise<Map<string, Declarable>> {
   // A child module is a Terraform module, never a Terragrunt unit (#3417).
-  const names = [...listTerraformFiles(dir), ...(callers.length === 0 ? listTerragruntFiles(dir) : [])];
+  const names = [...listTerraformFiles(dir, modeOptions?.binary), ...(callers.length === 0 ? listTerragruntFiles(dir) : [])];
   const files = names.map((name) => ({
     name,
     source: readFileSync(join(dir, name), "utf-8"),
@@ -675,7 +733,17 @@ export async function parseTerraformRootContent(
   hcl2json?: Hcl2Json,
   modeOptions?: TerraformRootModeOptions,
 ): Promise<Map<string, Declarable>> {
-  return blocksToEntities(splitBundleContent(content), root, hcl2json, modeOptions);
+  return blocksToEntities(bundleFilesFor(splitBundleContent(content), modeOptions?.binary), root, hcl2json, modeOptions);
+}
+
+/**
+ * The files of a joined bundle a root run by `binary` reads: the same set
+ * {@link listTerraformFiles} gives for a directory holding them, plus the
+ * Terragrunt files, in bundle order (chant#4457).
+ */
+export function bundleFilesFor(files: readonly TerraformFile[], binary?: string): TerraformFile[] {
+  const keep = new Set(selectConfigFiles(files.map((f) => f.name), binary));
+  return files.filter((f) => keep.has(f.name) || isTerragruntFileName(f.name));
 }
 
 /** The root name an audit of the audited directory itself parses under. */

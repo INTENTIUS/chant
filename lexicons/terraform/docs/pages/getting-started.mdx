@@ -44,10 +44,36 @@ export default {
 `dir` resolves against the project root, the directory holding
 `chant.config.ts`, because a `.tf` tree usually sits beside the typed source
 rather than inside it. Each root also takes an optional `workspace`, a
-`varFiles` list and a `backendConfig` map.
+`varFiles` list, a `backendConfigFiles` list (backend-config files such as
+`backend.hcl`, relative to `dir`, passed to `init` before the pairs) and a
+`backendConfig` map.
+
+A root can also be marked `signalOnly: true` ([#4484](https://github.com/INTENTIUS/chant/issues/4484)).
+Use it for a root that belongs to another workspace member and is declared here
+only so that a change to it brings this project into the change, as a dns member
+declares the azure estate's root. Change detection still counts the root. The
+build skips it, so the graph doesn't draw it under this project, and so do the
+live reads: `describeResources`, drift and the owned-resource reads. An Op step
+that names the root by key still runs against it.
+
+```typescript
+terraform: {
+  roots: {
+    dns: { dir: "./estate" },
+    azure: { dir: "../azure", signalOnly: true },
+  },
+},
+```
 
 `binary` is `"terraform"` or `"tofu"`. The two are wire-compatible for
 everything this lexicon does, so the choice is recorded rather than guessed.
+
+The binary also says which files of a root are its configuration, as it does
+for the binary itself. Under `"terraform"` (and when `binary` is unset) a root
+is its `.tf` and `.tf.json` files. Under `"tofu"` or `"choudoufu"` its `.tofu`
+and `.tofu.json` files count too, and `x.tofu` replaces `x.tf` when both
+exist, which is OpenTofu's own rule. The parse, change detection, the backend
+and state readers and the pin rollout all read that one set.
 
 The other keys of the namespace:
 
@@ -82,6 +108,10 @@ Every block of every configured root becomes one entity, keyed
 | `variable "region" {}` | `Terraform::Variable` | `app/var.region` |
 | `output "url" {}` | `Terraform::Output` | `app/output.url` |
 | `locals { ... }` | `Terraform::Locals` | `app/locals` |
+| `moved { ... }` | `Terraform::Moved` | `app/moved` (`app/moved~2` for a second one) |
+| `import { ... }` | `Terraform::Import` | `app/import` |
+| `removed { ... }` | `Terraform::Removed` | `app/removed` |
+| `check "health" {}` | `Terraform::Check` | `app/check.health` |
 
 Each entity carries `props.address`, `props.body` (the block, verbatim from the
 parser), `props.file` and `props.root`.

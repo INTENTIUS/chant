@@ -143,6 +143,7 @@ export {
   choudoufuLiveLs,
   choudoufuLiveCheck,
   choudoufuAdopt,
+  choudoufuPlanSet,
   terraformPinRollout,
 } from "./op/builders";
 

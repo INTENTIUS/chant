@@ -421,7 +421,7 @@ export function writeComposedRoot(input: ComposedRootInput): ComposedRoot {
     for (const member of c.order) {
       const m = c.modules.get(member)!;
       const rdir = c.dirs.get(member)!;
-      const texts = rootTexts(rdir);
+      const texts = rootTexts(rdir, input.terraform.binary);
       outputs.set(member, declaredOutputs(texts));
       const variables = declaredVariables(texts);
       const remote = (c.reads.get(member) ?? []).flatMap((r) => (r.via === "remote-state" ? [{ name: r.name, upstream: r.upstream }] : []));
@@ -577,7 +577,7 @@ export function writeEstateRoot(input: Pick<ComposedRootInput, "projectRoot" | "
   const projectRoot = resolve(input.projectRoot);
   const dir = join(projectRoot, COMPOSE_DIR);
   const undo = new Undo(input.write ?? ((f, t) => writeFileSync(f, t)));
-  const outputs = new Map<string, Map<string, boolean>>(c.order.map((m) => [m, declaredOutputs(rootTexts(c.dirs.get(m)!))] as const));
+  const outputs = new Map<string, Map<string, boolean>>(c.order.map((m) => [m, declaredOutputs(rootTexts(c.dirs.get(m)!, "choudoufu"))] as const));
   try {
     const modules = c.order.map((m) => `module "${c.modules.get(m)}" {\n  source = ${moduleSource(dir, c.dirs.get(m)!)}\n}\n`);
     undo.dir(dir);

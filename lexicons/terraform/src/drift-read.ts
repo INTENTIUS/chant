@@ -43,7 +43,7 @@ import {
   type ReadDriftOptions,
   type ReadDriftResult,
 } from "@intentius/chant/drift-record";
-import type { TerraformConfig, TerraformRootConfig } from "./config";
+import { ownRoots, type TerraformConfig, type TerraformRootConfig } from "./config";
 import { declaredOf } from "./describe-resources";
 import {
   choudoufuLivePlusPlanDriftRecords,
@@ -121,7 +121,12 @@ async function stateRecords(ctx: RootContext, fellBackFrom?: string): Promise<Dr
   const base = { member: ctx.options.member, observedAt: ctx.options.observedAt, engine: ctx.engine as "terraform" | "tofu", declared: ctx.declared, ...(fellBackFrom ? { fellBackFrom } : {}) };
   const env = { ...process.env, ...terraformEnvironment(ctx.root) };
   if (!rootIsInitialised(ctx.dir, env)) {
-    const line = terraformInitLine({ binary: ctx.binary, dir: ctx.dir, ...(ctx.root.backendConfig ? { backendConfig: ctx.root.backendConfig } : {}) });
+    const line = terraformInitLine({
+      binary: ctx.binary,
+      dir: ctx.dir,
+      ...(ctx.root.backendConfig ? { backendConfig: ctx.root.backendConfig } : {}),
+      ...(ctx.root.backendConfigFiles ? { backendConfigFiles: ctx.root.backendConfigFiles } : {}),
+    });
     return terraformStateDriftRecords({ ...base, failed: { reason: "read-failed", detail: `${ctx.dir} has never been initialised: run \`${line}\` first; chant never runs init on a read` } });
   }
   try {
@@ -234,8 +239,9 @@ function unobservedOne(ctx: RootContext, address: string, detail: string, comman
 /** `LexiconPlugin.readDrift` for the terraform lexicon. */
 export async function readTerraformDrift(options: ReadDriftOptions): Promise<ReadDriftResult> {
   const namespace = (options.config as { terraform?: TerraformConfig }).terraform;
-  const roots = Object.entries(namespace?.roots ?? {});
-  if (roots.length === 0) return { refused: { code: "no-drift-read", message: "terraform.roots declares no root" } };
+  // A `signalOnly` root (#4484) is not this project's to read.
+  const roots = Object.entries(ownRoots(namespace?.roots));
+  if (roots.length === 0) return { refused: { code: "no-drift-read", message: "terraform.roots declares no root of its own" } };
   const binary = terraformBinary(namespace);
   const live = (root: TerraformRootConfig, dir: string) => binary === "choudoufu" && (detectLiveEstate(dir) !== undefined || root.estate !== undefined);
 

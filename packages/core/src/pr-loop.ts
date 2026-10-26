@@ -51,6 +51,7 @@ import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The schema a pull-request report names in `$schema`. */
 export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json";
@@ -92,10 +93,10 @@ export const PR_REPORT_MIGRATIONS_FLOOR = "0.124.49";
 export const PR_REPORT_READS_FLOOR = "0.124.52";
 
 /** The first chant whose report can carry the `not-started` member status (ws-107, #4440). */
-export const PR_REPORT_NOT_STARTED_FLOOR = "0.124.53";
+export const PR_REPORT_NOT_STARTED_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose report can carry `groups`, `fallbacks`, and a member's `group` and `groupOutcome` (ws-107, #4446). */
-export const PR_REPORT_GROUPS_FLOOR = "0.124.53";
+export const PR_REPORT_GROUPS_FLOOR = NEXT_RELEASE;
 
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
@@ -811,11 +812,14 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     out.push("", "| Member | Component | Status | Create | Update | Replace | Delete |", "|---|---|---|---:|---:|---:|---:|");
     for (const m of report.members) {
       const holes = memberHoleReasons(report, m.member);
+      // #4463: a member planned with stand-in values says so, naming them.
+      const placeholders = report.changeSet.members.find((x) => x.member === m.member)?.placeholders ?? [];
       const status =
         STATUS_WORDS[m.status] +
         (m.status === "blocked" && m.blockedBy ? ` by ${code(m.blockedBy)}` : "") +
         (m.groupOutcome === "partial" ? ", applied in part" : m.groupOutcome === "no-changes" ? ", no changes" : "") +
         (m.inputsMoved?.length ? `, inputs from ${m.inputsMoved.join(", ")} moved` : "") +
+        (placeholders.length > 0 ? `, previewed with placeholders for ${placeholders.map(code).join(", ")}` : "") +
         (holes.length > 0 ? `; ${holes.length > 2 ? `${holes[0]}; and ${holes.length - 1} more, listed under Holes` : holes.join("; ")}` : "");
       // A member whose plan has holes and no entries says nothing about what
       // it changes, so its counts are unknown, not zero (#4084).

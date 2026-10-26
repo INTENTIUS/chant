@@ -54,9 +54,10 @@ just docs
 
 ## Acceptance evidence
 
-Four `describe` blocks run this lexicon against a real `terraform`, `tofu` or
-`choudoufu` binary, and each of them skips rather than fails when its
-dependency is absent. `src/__fixtures__/ACCEPTANCE.md` records, per block,
-what it proves, what gates it, the command that runs it, and the last binary
-and emulator it passed against with the date. Two of the four have never
-passed against anything, and that file says so.
+Eleven `describe` blocks across eight files run this lexicon against a real
+`terraform`, `tofu`, `choudoufu` or `terragrunt` binary, and each of them
+skips rather than fails when its dependency is absent.
+`src/__fixtures__/ACCEPTANCE.md` records, per block, what it proves, what
+gates it, the command that runs it, and a "Last passed" line: the binary,
+emulator and date of its last recorded pass. Eight blocks have one. The three
+Terragrunt suites read "not recorded" until their first run is written down.

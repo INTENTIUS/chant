@@ -70,6 +70,48 @@ const tofuMissing =
       ? "CHANT_FLOCI_ENDPOINT is not set (for example `docker run -d -p 4611:4566 floci/floci` and CHANT_FLOCI_ENDPOINT=http://localhost:4611)"
       : (awsCli ?? offline ?? ((await resolvable("registry.opentofu.org")) ? undefined : "registry.opentofu.org does not resolve"));
 
+/**
+ * The choudoufu commit that fixes an in-place `aws_ssm_parameter` update
+ * under a `live` block (choudoufu#2261, chant#4470): before it, the plan
+ * carried `insecure_value` as known after apply and the apply sent no
+ * `PutParameter`. It is on choudoufu's integration/engine-ship (merge
+ * de9bdaa0bb) and in no release yet, so a version floor would refuse every
+ * build that has it. The check is the build's commit instead: the
+ * `vcs.revision` Go stamps into the binary, which has to descend from this
+ * one in a choudoufu checkout (CHOUDOUFU_REPO, or `../choudoufu` beside this
+ * repo). When a release carries the fix, a release build at or above it can
+ * pass on its version alone.
+ */
+const CHOUDOUFU_SSM_UPDATE_FIX = "9edd589376223f07642ee6bdf20d31cc56ba76cf";
+
+/** The commit a Go binary was built at, from its embedded build info: `go version -m` when go is on PATH, else the bytes themselves. */
+function goBuildRevision(bin: string): string | undefined {
+  const rev = /^\s*build\s+vcs\.revision=([0-9a-f]{40})\s*$/m;
+  const fromGo = runs("go", ["version", "-m", bin]);
+  if (fromGo !== undefined) return rev.exec(fromGo)?.[1];
+  try {
+    return /\tvcs\.revision=([0-9a-f]{40})\n/.exec(readFileSync(bin).toString("latin1"))?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Why this choudoufu lacks {@link CHOUDOUFU_SSM_UPDATE_FIX}, or cannot be shown to have it. `undefined` when it has it. */
+function choudoufuLacksSsmUpdateFix(): string | undefined {
+  const bin = runs("which", ["choudoufu"])?.trim();
+  const rev = bin ? goBuildRevision(bin) : undefined;
+  const fix = `choudoufu#2261's fix (${CHOUDOUFU_SSM_UPDATE_FIX.slice(0, 10)})`;
+  if (!rev) return `the choudoufu binary names no vcs.revision, so it cannot be shown to carry ${fix}; build it from a git checkout`;
+  const repo = process.env.CHOUDOUFU_REPO ?? join(REPO, "..", "choudoufu");
+  try {
+    execFileSync("git", ["-C", repo, "merge-base", "--is-ancestor", CHOUDOUFU_SSM_UPDATE_FIX, rev], { stdio: "ignore" });
+    return undefined;
+  } catch (e) {
+    if ((e as { status?: number }).status === 1) return `choudoufu at ${rev.slice(0, 10)} does not carry ${fix}`;
+    return `cannot tell whether choudoufu at ${rev.slice(0, 10)} carries ${fix}: ${repo} is not a choudoufu checkout holding both commits (set CHOUDOUFU_REPO, and fetch)`;
+  }
+}
+
 const choudoufuOut = runs("choudoufu", ["version"]);
 const choudoufuVersion = choudoufuOut === undefined ? undefined : (parseChoudoufuVersion(choudoufuOut) ?? "dev");
 const choudoufuMissing =
@@ -77,9 +119,9 @@ const choudoufuMissing =
     ? "choudoufu is not on PATH"
     : choudoufuVersion !== "dev" && isOlderVersion(choudoufuVersion, MIN_CHOUDOUFU_ESTATES_VERSION)
       ? `choudoufu ${choudoufuVersion} is older than v${MIN_CHOUDOUFU_ESTATES_VERSION}`
-      : !emulator
+      : (choudoufuLacksSsmUpdateFix() ?? (!emulator
         ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
-        : (awsCli ?? offline ?? ((await resolvable("registry.terraform.io")) ? undefined : "registry.terraform.io does not resolve"));
+        : (awsCli ?? offline ?? ((await resolvable("registry.terraform.io")) ? undefined : "registry.terraform.io does not resolve"))));
 
 interface Mode {
   name: "tofu" | "choudoufu";
@@ -167,6 +209,14 @@ const ssm = (endpoint: string, name: string): string =>
 const byComponent = (r: PrReport): Record<string, PrMember> => Object.fromEntries(r.members.map((m) => [m.component, m]));
 const counts = (create: number, update: number) => ({ create, update, replace: 0, delete: 0 });
 
+/** What the plan does to a parameter's `insecure_value`: the action, and the attribute's before and after (or that it is unknown). */
+function insecureValue(r: PrReport, resource: string): { action: string; before?: unknown; after?: unknown; unknown?: true } | undefined {
+  const e = r.changeSet.entries.find((x) => x.address === resource || x.address.endsWith(`.${resource}`));
+  if (!e) return undefined;
+  const a = e.attributes.find((x) => x.path === "insecure_value");
+  return { action: e.action, before: a?.before, after: a?.after, ...(a?.unknown ? { unknown: a.unknown } : {}) };
+}
+
 /** Paths a composed run must not leave in the checkout. */
 function leftovers(dir: string): string[] {
   const out: string[] = [];
@@ -230,6 +280,10 @@ for (const mode of MODES) {
         expect(x.unknownInputs).toBeUndefined();
         for (const r of x.reads ?? []) expect(r.unknown).toBeUndefined();
       }
+      // Each port's parameter plans its new value, on estates too (choudoufu#2261, #4470).
+      expect(insecureValue(plan, "aws_ssm_parameter.http_proxy_port")).toEqual({ action: "update", before: "8080", after: "8090" });
+      expect(insecureValue(plan, "aws_ssm_parameter.listener_port")).toEqual({ action: "update", before: "8080", after: "8090" });
+      expect(insecureValue(plan, "aws_ssm_parameter.upstream")).toEqual({ action: "update", before: "http://app:8080", after: "http://app:8090" });
       expect(plan.changeSet.digest).toBe(plan.digest);
       expect(plan.approval).toEqual({ status: "pending" });
       expect(leftovers(loop().dir)).toEqual([]);
@@ -251,12 +305,10 @@ for (const mode of MODES) {
         app: ["applied", "applied"],
         edge: ["applied", "applied"],
       });
-      // Skipped for estates: choudoufu applies an in-place aws_ssm_parameter update as a no-op (#4470).
-      if (!mode.estate) {
-        expect(ssm(endpoint, `/${id}/http-proxy-port`)).toBe("8090");
-        expect(ssm(endpoint, `/${id}/listener-port`)).toBe("8090");
-        expect(ssm(endpoint, `/${id}/upstream`)).toBe("http://app:8090");
-      }
+      // The in-place updates reached the emulator: on estates the apply sends PutParameter (choudoufu#2261, #4470).
+      expect(ssm(endpoint, `/${id}/http-proxy-port`)).toBe("8090");
+      expect(ssm(endpoint, `/${id}/listener-port`)).toBe("8090");
+      expect(ssm(endpoint, `/${id}/upstream`)).toBe("http://app:8090");
       expect(ssm(endpoint, `/${id}/admin-upstream`)).toBe("http://app:9000");
       expect(leftovers(loop().dir)).toEqual([]);
     }, TIMEOUT);
@@ -287,6 +339,8 @@ for (const mode of MODES) {
       // Inside the group they are no holes, and no member waits on a later round.
       for (const x of Object.values(m)) expect(x.unknownInputs).toBeUndefined();
       for (const member of plan.changeSet.members) expect(member.holes ?? []).toEqual([]);
+      // edge's allowlist plans its new value, on estates too (choudoufu#2261, #4470).
+      expect(insecureValue(plan, "aws_ssm_parameter.allowlist")).toEqual({ action: "update", before: "10.0.1.0/24", after: "10.0.1.0/24,10.0.2.0/24" });
       expect(Object.fromEntries(Object.entries(m).map(([c, x]) => [c, x.counts]))).toEqual({
         network: counts(1, 0),
         app: counts(1, 0),
@@ -319,8 +373,7 @@ for (const mode of MODES) {
       }).NetworkInterfaces;
       expect(workers.map((w) => w.SubnetId)).toEqual([subnetB]);
       expect(ssm(endpoint, `/${id}/worker-subnet`)).toBe(subnetB);
-      // Skipped for estates: an in-place aws_ssm_parameter update is lost (#4470).
-      if (!mode.estate) expect(ssm(endpoint, `/${id}/allowlist`)).toBe("10.0.1.0/24,10.0.2.0/24");
+      expect(ssm(endpoint, `/${id}/allowlist`)).toBe("10.0.1.0/24,10.0.2.0/24");
 
       if (!mode.estate) {
         // app's own state holds the id network's state does.

@@ -49,8 +49,12 @@ export interface RootState {
   dir: string;
   /** The root's environment for the binary. */
   env: NodeJS.ProcessEnv;
-  /** Where its state is; read from what `init` recorded when absent. */
+  /** Where its state is; read from what `init` recorded, compared with the root's code, when absent. */
   object?: StateObject;
+  /** `terraform.roots.<name>.backendConfig`, which the comparison with what init recorded reads (chant#4478). */
+  backendConfig?: Readonly<Record<string, string>>;
+  /** `terraform.roots.<name>.backendConfigFiles`, whose keys the same comparison reads (chant#4459). */
+  backendConfigFiles?: readonly string[];
 }
 
 export interface RootStatesOptions {
@@ -129,7 +133,10 @@ export class RootStates {
     let o = this.objects.get(root);
     if (!o) {
       const r = this.rootOf(root);
-      o = r.object ?? stateObject(r.dir, r.env);
+      o = r.object ?? stateObject(r.dir, r.env, undefined, this.o.binary, {
+        ...(r.backendConfig ? { backendConfig: r.backendConfig } : {}),
+        ...(r.backendConfigFiles ? { backendConfigFiles: r.backendConfigFiles } : {}),
+      });
       this.objects.set(root, o);
     }
     return o;

@@ -10,7 +10,7 @@ import { withCallersChain } from "./lint/post-synth/scope";
 import { terraformAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
-import { terraformConfigSchema, type TerraformConfig } from "./config";
+import { ownRoots, terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -193,7 +193,8 @@ export const terraformPlugin: LexiconPlugin = {
    */
   async buildRoots(ctx): Promise<{ entities: Map<string, Declarable>; warnings: string[] }> {
     const namespace = (ctx.config as { terraform?: TerraformConfig }).terraform;
-    const roots = namespace?.roots ?? {};
+    // A `signalOnly` root (#4484) feeds change detection only, so it builds no entities here.
+    const roots = ownRoots(namespace?.roots);
     if (Object.keys(roots).length === 0) return { entities: new Map(), warnings: [] };
     return renderTerraformRoots({
       projectRoot: ctx.projectRoot,
@@ -212,13 +213,15 @@ export const terraformPlugin: LexiconPlugin = {
   /**
    * The `terraform.roots` a change touched (#3183): a changed file in the
    * root's directory, in a local module it calls, or one of its var files.
-   * See `./changed-roots.ts`.
+   * See `./changed-roots.ts`. Every root counts, a `signalOnly` one too
+   * (#4484): that is what it is declared for.
    */
   async changedUnits(ctx) {
-    const roots = (ctx.config as { terraform?: TerraformConfig }).terraform?.roots ?? {};
+    const tf = (ctx.config as { terraform?: TerraformConfig }).terraform;
+    const roots = tf?.roots ?? {};
     if (Object.keys(roots).length === 0) return [];
     const { changedRoots } = await import("./changed-roots");
-    return changedRoots(ctx.projectRoot, roots, ctx.changedFiles);
+    return changedRoots(ctx.projectRoot, roots, ctx.changedFiles, tf?.binary);
   },
 
   lintRules() {
@@ -293,12 +296,21 @@ export const terraformPlugin: LexiconPlugin = {
       // A local audit knows the root's directory, so it can say whether the
       // lock file is beside the `.tf` files (TF040); a fetched one cannot.
       const lockFile = input?.dir !== undefined ? existsSync(join(input.dir, LOCK_FILENAME)) : undefined;
-      const entities = await parseTerraformRootContent(content, root, undefined, lockFile === undefined ? undefined : { lockFile });
+      // An audit has no `terraform.binary` to follow (chant#4457). A root
+      // that carries a `.tofu` file is written for OpenTofu, so it is read
+      // as a tofu root; any other is read as terraform, the config default.
+      const binary = /^# file: .*\.tofu(\.json)?\s*$/m.test(content) ? "tofu" : undefined;
+      const modeOptions = {
+        ...(binary !== undefined ? { binary } : {}),
+        ...(lockFile !== undefined ? { lockFile } : {}),
+      };
+      const entities = await parseTerraformRootContent(content, root, undefined, Object.keys(modeOptions).length > 0 ? modeOptions : undefined);
       if (input?.dir === undefined) return entities;
       const { entities: children } = await descendModules(entities, {
         dir: input.dir,
         root,
         projectRoot: input.baseDir ?? input.dir,
+        ...(binary !== undefined ? { modeOptions: { binary } } : {}),
       });
       for (const [key, entity] of children) entities.set(key, entity);
       return entities;
