@@ -195,16 +195,20 @@ The last table in each section is for whatever has no row: the rules a lexicon s
 | `aws_sns_topic` | queue | none | the request's |
 | `aws_sqs_queue` | queue | none | the request's |
 
-#### Declared unmapped (53)
+#### Declared unmapped (57)
 
 | Type | Why it carries no rate |
 |---|---|
+| `Terraform::Check` | an assertion terraform evaluates after a plan or apply, which holds nothing in any account |
 | `Terraform::Data` | a read of something that exists outside this root; whatever it reads is priced where it is declared |
+| `Terraform::Import` | an instruction to adopt an existing object into state; the resource it names carries the figures |
 | `Terraform::Live` | choudoufu's estate declaration, which names the ownership marker every resource of the root carries and holds nothing itself |
 | `Terraform::Locals` | named expressions a root reuses; they exist only in the evaluation |
 | `Terraform::Module` | a call to a child module; the blocks the call expands to are entities of their own and carry the figures |
+| `Terraform::Moved` | an instruction to rename an address in state; the resource it names carries the figures |
 | `Terraform::Output` | a value the root publishes after an apply, not a thing the account holds |
 | `Terraform::Provider` | a provider configuration: how terraform reaches an account, not a thing the account holds |
+| `Terraform::Removed` | an instruction to drop an address from state; nothing is created by it |
 | `Terraform::Terraform` | the root's settings block, which names providers and a backend and holds nothing in any account |
 | `Terraform::Variable` | a root module input; it shapes what is created and is never created itself |
 | `aws_cloudwatch_event_rule` | priced by the events matched, which is a fact about traffic the declaration does not state |
@@ -272,7 +276,7 @@ The last table in each section is for whatever has no row: the rules a lexicon s
 | any other prefix, for example `example_thing` | provider-not-modelled | the example terraform provider, which nothing here models |
 | any other `Terraform::` type | unknown-type, the one verdict that is a defect | the entity has no row in any contributed coverage table. It is a type from a substrate that is modelled, and is neither mapped to an engine kind nor declared unmapped, so nothing has an opinion about it rather than a stated one. Add a row in the lexicon that owns Terraform::. |
 
-**41 mapped and 121 declared unmapped** across 3 lexicons. Any lexicon not listed here contributes no rows, so its types are `unknown-type` until it does.
+**41 mapped and 125 declared unmapped** across 3 lexicons. Any lexicon not listed here contributes no rows, so its types are `unknown-type` until it does.
 
 {/* GENERATED:behaviour-coverage:end */}
 

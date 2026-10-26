@@ -138,6 +138,10 @@ const BLOCKS: Readonly<Record<string, string>> = {
   "Terraform::Module": "a call to a child module; the blocks the call expands to are entities of their own and carry the figures",
   "Terraform::Data": "a read of something that exists outside this root; whatever it reads is priced where it is declared",
   "Terraform::Live": "choudoufu's estate declaration, which names the ownership marker every resource of the root carries and holds nothing itself",
+  "Terraform::Moved": "an instruction to rename an address in state; the resource it names carries the figures",
+  "Terraform::Import": "an instruction to adopt an existing object into state; the resource it names carries the figures",
+  "Terraform::Removed": "an instruction to drop an address from state; nothing is created by it",
+  "Terraform::Check": "an assertion terraform evaluates after a plan or apply, which holds nothing in any account",
 };
 
 /**
