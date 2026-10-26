@@ -63,6 +63,9 @@ export {
   type GroupRead,
   type GroupRun,
   type ReportedGroupRead,
+  type DeclaredRead,
+  type DeclaredReadMember,
+  type DeclaredReadsContext,
   CapabilityRegistry,
   CapabilityNotImplementedError,
 } from "./capability";
@@ -189,6 +192,7 @@ export {
   deriveFanOut,
   fanOutRegistry,
 } from "./fan-out-support";
+export { applyDeclaredReads, declaredReadsOf, withDeclaredReads, type PlacedRead } from "./declared-reads";
 export {
   EcsFargateComponent,
   type EcsFargateComponentConfig,

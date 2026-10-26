@@ -242,6 +242,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
   const signal = await resolveChangedUnits(ctx, config, { base, stacksOnly: true });
   if ("error" in signal) return fail(signal.error, signal.hint);
 
+  const registry = await fanOutRegistry(projectPath, config);
   let derived;
   try {
     derived = await deriveFanOut({
@@ -250,6 +251,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
       sandbox: args.sandbox,
       buildParams: paramsResolution.provenance,
       config,
+      registry,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -289,7 +291,6 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
   if (policy.note) console.error(formatInfo(policy.note));
 
   const env = args.env ?? "local";
-  const registry = await fanOutRegistry(projectPath, config);
   const routedAway = member ? await routing(ctx, stage, projectPath, member, base, forge) : undefined;
   if (routedAway) console.error(formatInfo(routedAway));
   // ws-107: the groups a capability plans and applies as one, placed in the waves every stage and wave job reads.
