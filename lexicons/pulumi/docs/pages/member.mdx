@@ -10,17 +10,24 @@ The `pulumi` member kind is supplied by `@intentius/chant-lexicon-pulumi`
 
 ## What chant runs
 
-| Read | Command | Changes the stack |
-|---|---|---|
-| graph | none; the checked-in `stack-export.json` | no |
-| change set | `pulumi preview --json` | no |
-| drift | `pulumi refresh --preview-only --json --target <urn>` | no |
-| applied outputs | `pulumi stack output --json --show-secrets=false` | no |
-| planned outputs | the change set's `pulumi preview --json` | no |
+The ruling on [#4476](https://github.com/INTENTIUS/chant/issues/4476)
+(2026-10-25) widened the [#4450](https://github.com/INTENTIUS/chant/issues/4450)
+ruling's `preview` and `refresh --preview-only` to the list below, and the
+list is the whole of what chant runs for a Pulumi member:
 
-`runAllowedPulumi` refuses any other argv before it reaches the binary, and
-`stack output` with secrets shown is refused too. Each command runs in the
-member's directory against its selected stack.
+| Read | Stock member | Member on plunge | Changes the stack |
+|---|---|---|---|
+| graph | none; the checked-in `stack-export.json` | the same | no |
+| change set | `pulumi preview --json` | `plunge preview --json` | no |
+| drift | `pulumi refresh --preview-only --json --target <urn>` | `plunge drift --resource <urn> --stream` | no |
+| applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
+| planned outputs | the change set's preview | the same | no |
+
+`runAllowedPulumi` and `runAllowedPlunge` refuse any other argv before it
+reaches the binary, and `stack output` with secrets shown is refused too.
+With `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
+source), the applied outputs are read from the checked-in export and nothing
+runs. Each command runs in the member's directory against its selected stack.
 
 ## The member kind
 

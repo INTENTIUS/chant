@@ -135,7 +135,8 @@ export const MEMBER_KIND_DOC =
   "- change set: `pulumi preview --json`\n" +
   "- drift: `pulumi refresh --preview-only --json`, one resource at a time, or `plunge drift --stream` on plunge\n" +
   "- outputs: `pulumi stack output --json --show-secrets=false` (applied) and the preview (planned)\n\n" +
-  "chant runs nothing else, so it never changes the stack.";
+  "On plunge, `plunge preview`, `plunge stack output` and `plunge drift`. chant runs nothing else (#4476), so it " +
+  "never changes the stack.";
 
 /** `pulumi.member` in `chant.config.ts`. */
 export const MEMBER_CONFIG_KEYS: KeyDoc[] = [
