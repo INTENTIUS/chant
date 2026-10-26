@@ -101,6 +101,7 @@ describe("three stacks wired only by imports (#4466d)", () => {
     expect(executed(mock)).toEqual(["network", "app", "edge"]);
     const rounds = applied.rounds ?? [];
     expect(rounds.find((r) => r.components.includes("app"))?.covered?.filledInputs).toContain("network.SubnetCId");
-    expect(rounds.find((r) => r.components.includes("edge"))?.covered?.filledInputs).toContain("app.ImportsInterfaceId");
+    // Round 2 plans app and edge, and edge waits for app; the last round with edge is the one that applies it.
+    expect([...rounds].reverse().find((r) => r.components.includes("edge"))?.covered?.filledInputs).toContain("app.ImportsInterfaceId");
   });
 });

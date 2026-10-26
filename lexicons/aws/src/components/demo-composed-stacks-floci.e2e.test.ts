@@ -224,7 +224,7 @@ actSuite("chant-compose-imports", ({ loop, id }) => {
     const appRound = rounds.find((r) => r.components.includes("app"));
     expect(appRound?.covered?.digest).toBe(plan.digest);
     expect(appRound?.covered?.filledInputs).toContain("network.SubnetCId");
-    const edgeRound = rounds.find((r) => r.components.includes("edge"));
+    const edgeRound = [...rounds].reverse().find((r) => r.components.includes("edge"));
     expect(edgeRound?.covered?.digest).toBe(plan.digest);
     expect(edgeRound?.covered?.filledInputs).toContain("app.ImportsInterfaceId");
 
