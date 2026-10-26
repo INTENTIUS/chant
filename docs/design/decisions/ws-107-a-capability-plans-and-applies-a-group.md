@@ -105,6 +105,8 @@ The maintainer's rulings on #4419's open questions, 2026-10-25, as they stand:
 
 Rulings 1 to 4 shape this record. 5 to 10 belong to other issues and are listed so the epic's decisions sit in one place.
 
+The questions the epic shipped with a first answer were ruled on 2026-10-25 in #4481. For this record: a `planGroup` that throws makes every member plan-failed with its error, and core does not re-plan the members one by one (#4481 ruling 2); the `off` fallback is recorded and not printed (ruling 3); and a gate counts as a step under ruling 3 above, so a gated component never joins a group (ruling 5).
+
 ## The interface
 
 Three optional methods on `Capability`, beside `plan`, `run` and `outputs`:

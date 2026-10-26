@@ -12,7 +12,10 @@
  *   local    a lock file `<path>.tflock` beside the state, created only when
  *            absent. It keeps another chant run out; the binary's own local
  *            lock is a file lock it takes per command, so the run writes
- *            with `-lock=false` while it holds this one.
+ *            with `-lock=false` while it holds this one. A bare
+ *            `terraform apply` on the same checkout at the same time is not
+ *            kept out. Ruled on #4481 (ruling 4, 2026-10-25): chant's own
+ *            lock file, no Terraform lock-info file, local backends allowed.
  *
  * Lifted from terragucci's `backend.ts` (c493e0e): `StateStore`, `s3Store`,
  * `gcsStore` and `azureStore`, plus a local store and `removeBeside`.

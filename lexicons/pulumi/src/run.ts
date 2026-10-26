@@ -1,13 +1,25 @@
 /**
- * Running `pulumi` for a Pulumi member (#4453), under the ruling on #4450:
- * chant may run `pulumi preview` and `pulumi refresh --preview-only` for a
- * Pulumi member, and nothing else. Both read the provider and change no
- * stack. #4455 adds one read of the backend, `pulumi stack output --json
- * --show-secrets=false`, for the member's applied outputs: it reads the
- * last deployment and calls no provider, and with secrets shown it is
- * refused. {@link PULUMI_ALLOWED_COMMANDS} is that list, and
- * {@link runAllowedPulumi} refuses any argv outside it before it reaches the
- * runner, so no later caller can make this module apply.
+ * Running `pulumi` for a Pulumi member (#4453). The ruling on #4450 let
+ * chant run `pulumi preview` and `pulumi refresh --preview-only` for a
+ * Pulumi member; both read the provider and change no stack. The ruling on
+ * #4476 (2026-10-25) widened it to the list main ships, and that list is the
+ * whole of what chant runs:
+ *
+ * - `pulumi preview` (with `--json`),
+ * - `pulumi refresh --preview-only` (with `--json`, and `--target <urn>`),
+ * - `pulumi stack output --json`, with `--show-secrets` absent or
+ *   `--show-secrets=false` (#4455): the member's applied outputs. It reads
+ *   the backend's last deployment, calls no provider, and with secrets shown
+ *   it is refused;
+ * - for a member on plunge, `plunge preview`, the same blind
+ *   `plunge stack output --json`, and `plunge drift --resource <urn> --stream`.
+ *
+ * {@link PULUMI_ALLOWED_COMMANDS} is the pulumi half, and
+ * {@link runAllowedPulumi} and {@link runAllowedPlunge} refuse any argv
+ * outside the list before it reaches the runner, so no later caller can make
+ * this module apply. A workspace that wants nothing run for applied outputs
+ * sets `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
+ * source), and they are read from the checked-in `stack-export.json`.
  *
  * - {@link previewPulumiMember}: `pulumi preview --json` in the member's
  *   directory, as the member's change-set part (`./change-set.ts`), with the
@@ -64,8 +76,9 @@ export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
   execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: { ...process.env, PULUMI_SKIP_UPDATE_CHECK: "true" } });
 
 /**
- * The only `pulumi` commands chant runs (ruling on #4450, and #4455 for
- * `stack output`): each argv must start with one of these.
+ * The only `pulumi` commands chant runs (ruling on #4450, widened by the
+ * ruling on #4476 to keep #4455's `stack output`): each argv must start
+ * with one of these.
  */
 export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"]];
 
