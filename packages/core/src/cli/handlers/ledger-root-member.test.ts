@@ -102,4 +102,23 @@ describe("chant ledger runs: root_member (#4482)", () => {
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.rows.map((r) => [r.op, r.root_member])).toEqual([["plain", null]]);
   });
+
+  it("leaves root_member null, meaning unknown, when Init fails, with the declared root key in labels (#4508)", async () => {
+    const root = workspace();
+    const activities = new Map<string, ActivityFn>([
+      ["terraformInit", async () => {
+        throw new Error("terraform init: backend unreachable");
+      }],
+      ["terraformPlan", async () => ({ changed: true })],
+      ["terraformApply", async () => ({ applied: true })],
+    ]);
+    const result = await runOpLocally(config, activities, PROFILES, undefined, { ledger: { cwd: join(root, "app") } });
+    expect(result.status).not.toBe("ok");
+
+    const doc = await readLedgerTable("runs", () => queryLedgers(root), {});
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.rows).toHaveLength(1);
+    expect(doc.rows[0]).toMatchObject({ member: "app", op: "aws-apply", root_member: null, labels: { Apply: "true", TerraformRoot: "aws" } });
+    expect(doc.rows[0].outcomes).not.toHaveProperty("TerraformRootPath");
+  });
 });

@@ -55,9 +55,10 @@ export const QUERY_TABLES = {
   /**
    * One row per Op run record. `labels` and `outcomes` are JSON. `root_member`
    * (#4482) is the workspace member whose directory holds the terraform root
-   * a TerraformApplyOp run applied, read off its `TerraformRootPath` outcome,
-   * or NULL for any other run, outside a workspace, or for a run whose Init
-   * step never finished.
+   * a TerraformApplyOp run applied, read off its `TerraformRootPath` outcome.
+   * NULL means unknown (#4508): any other run, outside a workspace, or a run
+   * whose Init step never finished, since the Op names its root only by key
+   * and Init is what resolves the root's directory.
    */
   runs: [["member", "TEXT"], ["id", "TEXT"], ["op", "TEXT"], ["env", "TEXT"], ["started", "TEXT"], ["ended", "TEXT"], ["status", "TEXT"], ["git_sha", "TEXT"], ["forge", "TEXT"], ["run_url", "TEXT"], ["failure_code", "TEXT"], ["failure_reason", "TEXT"], ["failed_phase", "TEXT"], ["gate", "TEXT"], ["steward", "TEXT"], ["labels", "TEXT"], ["outcomes", "TEXT"], ["root_member", "TEXT"]],
   /** One row per gate ledger line: `kind` is `pending` or `resolution`. `signed` is 1 for a sealed approval. */
