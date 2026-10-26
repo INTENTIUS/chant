@@ -91,7 +91,7 @@ export const PLANNERS: Record<string, PlannerNote> = {
   },
   "terraform-apply": {
     source: "lexicons/terraform/src/components/capability-plugin.ts",
-    reads: "`terraform plan` (or tofu or choudoufu) in the root, against its state",
+    reads: "`terraform plan` (or tofu or choudoufu) in the root, against its state, with a typed placeholder for each variable that reads an output not known yet",
     shows: "every resource change with its action, and each changed top-level attribute with its value before and after",
     anchor: "terraform-apply",
   },
