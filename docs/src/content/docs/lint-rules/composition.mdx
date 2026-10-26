@@ -1,6 +1,6 @@
 ---
 title: Composition Rules
-description: COMP* rules — semantic checks over the discovered Component graph (epic #551 Phase 2)
+description: COMP* rules, the semantic checks over the discovered Component graph (epic #551 Phase 2)
 diataxis: reference
 ---
 
@@ -299,7 +299,7 @@ terraform: {
 deploy: [phase("Apply", [{ kind: "terraform-apply", root: "azure" }])],
 ```
 
-**Fix:** deploy the root from the member that owns it, or drop `signalOnly` if this project does own the root.
+To fix it, deploy the root from the member that owns it, or drop `signalOnly` if this project does own the root.
 
 ---
 
@@ -310,7 +310,7 @@ No COMP* rule has an automatic fix yet (see [#562](https://github.com/INTENTIUS/
 ## See Also
 
 - [Lint Rules Overview](/chant/lint-rules/overview/)
-- [Component Contract](/chant/components/component-contract/) — the `Component`/`Phase`/`Step`/`Gate` shapes these rules check
-- [Composition & Wiring](/chant/components/composition-and-wiring/) — the wiring reference forms COMP002 validates
-- [Capabilities](/chant/components/capabilities/#the-discipline) — the verb/noun and escape-hatch discipline COMP005/COMP006 enforce
-- [Orchestration](/chant/components/orchestration/#what-chant-adds-over-hand-driving-it) — "what chant adds" over a plain JSON contract
+- [Component Contract](/chant/components/component-contract/), the `Component`/`Phase`/`Step`/`Gate` shapes these rules check
+- [Composition & Wiring](/chant/components/composition-and-wiring/), with the wiring reference forms COMP002 validates
+- [Capabilities](/chant/components/capabilities/#the-discipline), on the verb/noun and escape-hatch discipline COMP005/COMP006 enforce
+- [Orchestration](/chant/components/orchestration/#what-chant-adds-over-hand-driving-it), on "what chant adds" over a plain JSON contract

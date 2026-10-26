@@ -65,7 +65,7 @@ Once the file is written, root-level `chant build`, `lint`, `run` and `audit` st
 
 [`chant init --from`](/chant/cli/init/) copies the profile from `reference-workspace/profiles/<profile>` in the chant repository at the tag of the chant you run (`chant-v<version>`). The copy has a lineage lock, so [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) takes later versions of it. `--from` reads the profiles from another `<repo>@<ref>`, or from a chant checkout on disk. `--param name=<display name>` sets the name the stub app shows, and `--name` sets the declaration's `name`. Each profile passes [`chant workspace check`](/chant/cli/workspace-check/) as it is copied.
 
-## Importing from Terraform Cloud, Spacelift or Backstage
+## Importing from another tool
 
 ```
 chant workspace init --from tfc --org <organization> [--input <export.json>] [--token <token>] [dir] [--yes]
@@ -73,7 +73,7 @@ chant workspace init --from spacelift --endpoint <https://acme.app.spacelift.io/
 chant workspace init --from backstage [dir] [--name <name>] [--yes]
 ```
 
-`--from tfc|spacelift|backstage` ([#3178](https://github.com/INTENTIUS/chant/issues/3178)) proposes members, links, environments and constraint records from structure a repository does not hold. Like plain `init`, it prints the proposal and what it left out, and writes only on confirmation. Confirming writes `chant.workspace.json` and `chant-import.<source>.json`, which holds the environments, the constraint records and the left-out list.
+`--from tfc|spacelift|backstage` ([#3178](https://github.com/INTENTIUS/chant/issues/3178)) reads structure a repository does not hold and proposes members and links from it, with environments and constraint records. Like plain `init`, it prints the proposal and what it left out, and writes only on confirmation. Confirming writes `chant.workspace.json` and `chant-import.<source>.json`. The second file holds the environments and constraint records, and the list of what was left out.
 
 | Source | Read from | Becomes |
 |---|---|---|
@@ -81,7 +81,7 @@ chant workspace init --from backstage [dir] [--name <name>] [--yes]
 | Spacelift | the GraphQL API (`--endpoint`, token in `--token` or `SPACELIFT_API_TOKEN`) or `--input` | a Terraform or OpenTofu stack is a `terraform` member, any other vendor an `other` member; a dependency is a link on the output it references, else `applied`; an `env:` label is an environment; a policy is a constraint record |
 | Backstage | the `catalog-info.yaml` files under `dir` | a Component or Resource is an `other` member; `dependsOn` and `consumesApis` are links to a `catalog` output; `spec.lifecycle` is an environment |
 
-A member is one directory, so workspaces or stacks that share a working directory fold into the first, and the output says so. Variable values, VCS connections, contexts, state and Backstage groups, users and systems are left out, each listed with a count and a reason. The `terraform` kind comes from `@intentius/chant-lexicon-terraform`, so pin that package before `chant workspace check` reads the members. The API readers only read, and are listed under "Importing structure from another tool" in the [network egress](/chant/reference/network-egress/) page.
+A member is one directory, so workspaces or stacks that share a working directory fold into the first, and the output says so. Some structure is left out, each kind listed with a count and a reason. From the IaC tools that is variable values and VCS connections, contexts and state. From Backstage it is groups and users and systems. The `terraform` kind comes from `@intentius/chant-lexicon-terraform`, so pin that package before `chant workspace check` reads the members. The API readers only read, and are listed under "Importing structure from another tool" in the [network egress](/chant/reference/network-egress/) page.
 
 ## Promoting a member
 

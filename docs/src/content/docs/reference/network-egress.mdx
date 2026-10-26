@@ -6,7 +6,7 @@ diataxis: reference
 
 import { Aside } from '@astrojs/starlight/components';
 
-chant sends no telemetry. Nothing in core or in any lexicon reports usage, versions, errors or identities anywhere, and there is no endpoint to opt out of.
+chant sends no telemetry. Nothing in core or in any lexicon reports usage or versions anywhere, and the same goes for errors and identities. There is no endpoint to opt out of.
 
 This page lists all the network chant uses: every module that calls a network primitive, which command reaches it, and where it dials. The tables below are generated from `test/egress-catalogue.ts`, which the same test that guards the offline phases checks against the tree on every run. A module that starts calling `fetch` and is not in the catalogue fails CI.
 
