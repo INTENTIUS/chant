@@ -24,12 +24,35 @@
  * Both need the `aws` CLI to read the emulator after the apply, and the
  * hashicorp/aws provider from the registry (CHANT_OFFLINE skips). Each suite
  * skips with the reason named when something is missing.
+ *
+ * The choudoufu suite reads:
+ *
+ * - CHOUDOUFU_BIN: the choudoufu binary to run, a path or a name on PATH.
+ *   Unset, it is the `choudoufu` on PATH. When set, the test puts a
+ *   `choudoufu` link to it first on its own PATH, so the roots (whose config
+ *   says `binary: "choudoufu"`) and the version and commit checks below all
+ *   run that binary.
+ * - CHOUDOUFU_EMULATOR_ENDPOINT: the AWS emulator the estates apply to and the
+ *   `aws` CLI reads back, for example the floci that choudoufu's `just smoke`
+ *   brings up (`http://localhost:4566`). Unset, the suite skips.
+ * - CHOUDOUFU_REPO: a choudoufu checkout holding both the binary's commit and
+ *   choudoufu#2261's fix, so `git merge-base` can tell whether the build
+ *   carries it (see CHOUDOUFU_SSM_UPDATE_FIX). Default `../choudoufu` beside
+ *   this repo. When it cannot answer, the suite skips and says so.
+ *
+ * For example, from the chant repo:
+ *
+ *   CHOUDOUFU_BIN=$HOME/src/choudoufu/bin/choudoufu \
+ *   CHOUDOUFU_EMULATOR_ENDPOINT=http://localhost:4566 \
+ *   CHOUDOUFU_REPO=$HOME/src/choudoufu \
+ *   npx vitest run --project e2e lexicons/terraform/src/components/demo-composed-roots.e2e.test.ts
  */
 
 import { execFileSync } from "node:child_process";
 import { lookup } from "node:dns/promises";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { PrMember, PrReport } from "@intentius/chant/pr-loop";
 import { openScenarioLoop, type ScenarioLoop } from "@intentius/chant-test-utils/pr-loop-harness";
@@ -62,6 +85,32 @@ const offline = process.env.CHANT_OFFLINE ? "CHANT_OFFLINE is set, and the roots
 const awsCli = runs("aws", ["--version"]) === undefined ? "the aws CLI is not on PATH" : undefined;
 const floci = process.env.CHANT_FLOCI_ENDPOINT?.replace(/\/+$/, "");
 const emulator = process.env.CHOUDOUFU_EMULATOR_ENDPOINT?.replace(/\/+$/, "");
+
+/**
+ * The choudoufu binary the suite runs: CHOUDOUFU_BIN (a path, or a name on
+ * PATH) when set, else `choudoufu` on PATH. A set CHOUDOUFU_BIN is linked as
+ * `choudoufu` in a scratch directory put first on this process's PATH, which
+ * the harness's commands inherit, so every `choudoufu` the roots run is it.
+ * `error` says why a set CHOUDOUFU_BIN cannot be used.
+ */
+function choudoufuBinary(): { bin?: string; error?: string } {
+  const named = process.env.CHOUDOUFU_BIN?.trim();
+  if (!named) return { bin: runs("which", ["choudoufu"])?.trim() || undefined };
+  const bin = named.includes("/") ? (isAbsolute(named) ? named : resolve(named)) : runs("which", [named])?.trim();
+  try {
+    if (!bin) throw new Error("not found");
+    accessSync(bin, constants.X_OK);
+  } catch {
+    return { error: `CHOUDOUFU_BIN=${named} is not an executable file` };
+  }
+  const linkDir = mkdtempSync(join(tmpdir(), "chant-choudoufu-bin-"));
+  symlinkSync(bin, join(linkDir, "choudoufu"));
+  process.env.PATH = `${linkDir}${delimiter}${process.env.PATH ?? ""}`;
+  process.on("exit", () => rmSync(linkDir, { recursive: true, force: true }));
+  return { bin };
+}
+
+const choudoufu = choudoufuBinary();
 
 const tofuMissing =
   runs("tofu", ["version"]) === undefined
@@ -98,7 +147,7 @@ function goBuildRevision(bin: string): string | undefined {
 
 /** Why this choudoufu lacks {@link CHOUDOUFU_SSM_UPDATE_FIX}, or cannot be shown to have it. `undefined` when it has it. */
 function choudoufuLacksSsmUpdateFix(): string | undefined {
-  const bin = runs("which", ["choudoufu"])?.trim();
+  const bin = choudoufu.bin;
   const rev = bin ? goBuildRevision(bin) : undefined;
   const fix = `choudoufu#2261's fix (${CHOUDOUFU_SSM_UPDATE_FIX.slice(0, 10)})`;
   if (!rev) return `the choudoufu binary names no vcs.revision, so it cannot be shown to carry ${fix}; build it from a git checkout`;
@@ -112,16 +161,19 @@ function choudoufuLacksSsmUpdateFix(): string | undefined {
   }
 }
 
-const choudoufuOut = runs("choudoufu", ["version"]);
+const choudoufuOut = choudoufu.bin ? runs(choudoufu.bin, ["version"]) : undefined;
 const choudoufuVersion = choudoufuOut === undefined ? undefined : (parseChoudoufuVersion(choudoufuOut) ?? "dev");
 const choudoufuMissing =
-  choudoufuVersion === undefined
-    ? "choudoufu is not on PATH"
+  choudoufu.error ??
+  (choudoufuVersion === undefined
+    ? process.env.CHOUDOUFU_BIN
+      ? `CHOUDOUFU_BIN=${process.env.CHOUDOUFU_BIN} does not answer \`version\``
+      : "choudoufu is not on PATH (or set CHOUDOUFU_BIN)"
     : choudoufuVersion !== "dev" && isOlderVersion(choudoufuVersion, MIN_CHOUDOUFU_ESTATES_VERSION)
       ? `choudoufu ${choudoufuVersion} is older than v${MIN_CHOUDOUFU_ESTATES_VERSION}`
       : (choudoufuLacksSsmUpdateFix() ?? (!emulator
         ? "CHOUDOUFU_EMULATOR_ENDPOINT is not set (bring up choudoufu's `just smoke` emulator stack and export it)"
-        : (awsCli ?? offline ?? ((await resolvable("registry.terraform.io")) ? undefined : "registry.terraform.io does not resolve"))));
+        : (awsCli ?? offline ?? ((await resolvable("registry.terraform.io")) ? undefined : "registry.terraform.io does not resolve")))));
 
 interface Mode {
   name: "tofu" | "choudoufu";
