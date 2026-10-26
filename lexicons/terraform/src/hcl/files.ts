@@ -101,14 +101,21 @@ export function listConfigFilesSafe(dir: string, binary?: string): string[] {
 interface BlockShape {
   labels: number;
   nested?: Record<string, BlockShape>;
+  /**
+   * Attributes JSON syntax writes as a bare expression in a string (a type,
+   * a reference), where HCL writes the expression itself and hcl2json gives
+   * it as `"${...}"`. Their strings are wrapped the same way.
+   */
+  exprs?: readonly string[];
 }
 
-const LIFECYCLE: BlockShape = { labels: 0 };
+const LIFECYCLE: BlockShape = { labels: 0, exprs: ["ignore_changes", "replace_triggered_by"] };
 const RESOURCE_NESTED: Record<string, BlockShape> = {
   lifecycle: LIFECYCLE,
   provisioner: { labels: 1, nested: { connection: { labels: 0 } } },
   connection: { labels: 0 },
 };
+const REFERS = ["provider", "depends_on"];
 
 const TOP_LEVEL: Record<string, BlockShape> = {
   terraform: {
@@ -123,27 +130,35 @@ const TOP_LEVEL: Record<string, BlockShape> = {
   },
   locals: { labels: 0 },
   provider: { labels: 1 },
-  module: { labels: 1 },
-  variable: { labels: 1, nested: { validation: { labels: 0 } } },
-  output: { labels: 1, nested: { precondition: { labels: 0 } } },
-  resource: { labels: 2, nested: RESOURCE_NESTED },
-  data: { labels: 2, nested: { lifecycle: LIFECYCLE } },
-  moved: { labels: 0 },
-  import: { labels: 0 },
-  removed: { labels: 0, nested: { lifecycle: LIFECYCLE, provisioner: RESOURCE_NESTED.provisioner! } },
+  module: { labels: 1, exprs: ["depends_on", "providers"] },
+  variable: { labels: 1, nested: { validation: { labels: 0 } }, exprs: ["type"] },
+  output: { labels: 1, nested: { precondition: { labels: 0 } }, exprs: ["depends_on"] },
+  resource: { labels: 2, nested: RESOURCE_NESTED, exprs: REFERS },
+  data: { labels: 2, nested: { lifecycle: LIFECYCLE }, exprs: REFERS },
+  moved: { labels: 0, exprs: ["from", "to"] },
+  import: { labels: 0, exprs: ["to", "provider"] },
+  removed: { labels: 0, nested: { lifecycle: LIFECYCLE, provisioner: RESOURCE_NESTED.provisioner! }, exprs: ["from"] },
   check: { labels: 1, nested: { data: { labels: 2 }, assert: { labels: 0 } } },
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** A JSON body with its `"//"` comment keys dropped (Terraform ignores them) and its known nested blocks wrapped. */
-function normaliseBody(body: unknown, nested: Record<string, BlockShape> | undefined): Record<string, unknown> {
+/** A bare expression string as hcl2json writes the expression: `aws.west` becomes `${aws.west}`; a template is kept. */
+function asExpression(v: unknown): unknown {
+  if (typeof v === "string") return v.includes("${") ? v : `\${${v}}`;
+  if (Array.isArray(v)) return v.map(asExpression);
+  if (isObject(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, asExpression(x)]));
+  return v;
+}
+
+/** A JSON body with its `"//"` comment keys dropped (Terraform ignores them), its known nested blocks wrapped and its expression attributes written as hcl2json writes them. */
+function normaliseBody(body: unknown, shape: BlockShape): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!isObject(body)) return out;
   for (const [k, v] of Object.entries(body)) {
     if (k === "//") continue;
-    const shape = nested?.[k];
-    out[k] = shape ? wrapBlock(v, shape) : v;
+    const inner = shape.nested?.[k];
+    out[k] = inner ? wrapBlock(v, inner) : shape.exprs?.includes(k) ? asExpression(v) : v;
   }
   return out;
 }
@@ -155,7 +170,7 @@ function normaliseBody(body: unknown, nested: Record<string, BlockShape> | undef
  * label level to be merged, so both are read.
  */
 function wrapBlock(value: unknown, shape: BlockShape, labels = shape.labels): unknown {
-  if (labels === 0) return (Array.isArray(value) ? value : [value]).filter(isObject).map((b) => normaliseBody(b, shape.nested));
+  if (labels === 0) return (Array.isArray(value) ? value : [value]).filter(isObject).map((b) => normaliseBody(b, shape));
   const out: Record<string, unknown> = {};
   for (const part of Array.isArray(value) ? value : [value]) {
     if (!isObject(part)) continue;
