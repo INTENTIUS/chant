@@ -58,7 +58,7 @@ A lexicon with more than one read path says which one answered each root on the 
 }
 ```
 
-The same facts are on stderr as one note per root. The notes are prose and may be reworded, so a consumer reads `rootReads` and never matches note text. The field is additive and leaves `version` at `1`. It is absent when no lexicon reported a root read, on a source graph, on an `--at` replay, and on output from a chant before it.
+The same facts are on stderr as one note per root. The notes are prose and may be reworded, so a consumer reads `rootReads` and never matches note text. The field is additive and leaves `version` at `1`. A document has no `rootReads` when no lexicon reported a root read. Source graphs and `--at` replays leave it out too, and so does a chant from before the field.
 
 ### `--at <ref>`, a recorded snapshot
 

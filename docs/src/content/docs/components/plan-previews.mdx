@@ -109,7 +109,16 @@ Each resource change is one entry, addressed by its logical id, or `<nested stac
 
 A change CloudFormation marks `Replacement: True` fails the member's plan when `onReplace` is `"block"`, which is the default. The error names the resources.
 
-When a parameter reads another component's output that has no value yet, such as an output of a stack that does not exist or one its upstream's plan knows only after apply, the stack is previewed with placeholders ([#4423](https://github.com/INTENTIUS/chant/issues/4423)). The plan creates the change set with a stand-in for each such parameter, typed from the template's `Parameters`: `subnet-00000000known-after-apply` and the like for an EC2 id type, `0` for a `Number`, `/known-after-apply` for an SSM parameter type, and `known-after-apply` otherwise. Its entries are the change set's changes as above, and each property a stand-in drives is marked known after apply, so no stand-in value is in the note or the digest. The plan keeps the change set's shape (each change's logical id, action, replacement and properties), puts its digest in the plan's digest, and deletes the change set and any empty stack it made. A parameter that reads an earlier step of the same component is previewed the same way.
+When a parameter reads another component's output that has no value yet, such as an output of a stack that does not exist or one its upstream's plan knows only after apply, the stack is previewed with placeholders ([#4423](https://github.com/INTENTIUS/chant/issues/4423)). The plan creates the change set with a stand-in for each such parameter, typed from the template's `Parameters`.
+
+| Parameter type | Stand-in |
+|---|---|
+| An EC2 id type | `subnet-00000000known-after-apply` and the like |
+| `Number` | `0` |
+| An SSM parameter type | `/known-after-apply` |
+| Anything else | `known-after-apply` |
+
+Its entries are the change set's changes as above. Each property a stand-in drives is marked known after apply, so no stand-in value is in the note or the digest. The plan keeps the change set's shape. For each change that is its logical id and action, its replacement and its properties. That shape's digest goes in the plan's digest. Then the plan deletes the change set and any empty stack it made. A parameter that reads an earlier step of the same component is previewed the same way.
 
 No preview is possible when CloudFormation refuses the change set with the stand-ins, as real CloudFormation does for an id type naming a resource that does not exist, or when the upstream is unresolved but no parameter is left without a value. Then the member is a hole saying `inputs from <component>; re-checked on apply` (or `inputs <names> are known only at apply; re-checked on apply` for an earlier step), followed by `; no preview: <why>` when the preview was refused, and the note shows `?` for its counts.
 
@@ -145,7 +154,7 @@ With `delete: "owned-only"` the plan adds a delete for each object carrying chan
 
 When the API server refuses a change in the dry run, as it does for a Deployment's `spec.selector`, the object is an update with unknown disruption. Its hole carries the server's message, and the apply would fail the same way.
 
-A step whose inputs wait on another component's outputs reads nothing and dry-runs nothing, since its `manifest` or `context` may be one of them. Its member gets one hole, `inputs from <component>; re-checked on apply`, and no artifact. That plan's digest is taken over the environment, the member, the step's `manifest`, `context` and `delete`, and the components whose outputs were missing.
+Nothing is read or dry-run for a step waiting on another component's outputs, since its `manifest` or `context` may be one of them. Its member gets one hole, `inputs from <component>; re-checked on apply`, and no artifact. That plan's digest is taken over the environment and the member, plus the step's `manifest`, `context` and `delete` and the components whose outputs were missing.
 
 The digest covers the documents sent, the target they are sent to and the delete mode. For each object it also covers the action and the new value of every changed field. On apply, `run` dry-runs the approved documents again. It applies them only when that dry run gives the approved digest. Otherwise it fails before the cluster changes and names both digests.
 
@@ -169,7 +178,17 @@ The plan runs `init`, then `plan -input=false -detailed-exitcode -out=<plan file
 
 Every `resource_changes` entry is an entry with its address and action. `create`, `update` and `delete` keep their names, and a delete with a create in either order is a replace. Attributes are the top-level attributes the change writes, each with its value before and after. A value terraform knows only after apply shows as `<known after apply>`. A sensitive attribute carries no value. An attribute that forces the replacement is marked. Imports, forgets, deposed objects and, from Terraform 1.14, action invocations as side effects are kept too.
 
-A root outside a composed group whose `vars` read an upstream output with no value yet is previewed with placeholders ([#4463](https://github.com/INTENTIUS/chant/issues/4463)), since terraform takes no unknown variable. Each variable that holds no value gets a stand-in typed from the root's `variable` block: `known-after-apply` for a string, `0` for a number, `false` for a bool, an empty list or map, and an object or tuple of stand-ins. The preview covers every resource change the root plans with those values, with the action, the type and the attributes it writes. An attribute or root output a stand-in drives, through `var.<name>` in the attribute's expression (module inputs included) or by carrying the `known-after-apply` string, shows as known after apply, so no stand-in value is in the note or the digest. The member lists the variables under `placeholders`, and its row in the note says `previewed with placeholders for var.<name>`. The plan file is deleted, and `run` gets the preview's shape instead of a plan file.
+A root outside a composed group whose `vars` read an upstream output with no value yet is previewed with placeholders ([#4463](https://github.com/INTENTIUS/chant/issues/4463)), since terraform takes no unknown variable. Each variable that holds no value gets a stand-in typed from the root's `variable` block.
+
+| Variable type | Stand-in |
+|---|---|
+| string | `known-after-apply` |
+| number | `0` |
+| bool | `false` |
+| list or map | an empty one |
+| object or tuple | one made of stand-ins |
+
+The preview covers every resource change the root plans with those values. Each change has its action and type and the attributes it writes. An attribute or root output a stand-in drives, through `var.<name>` in the attribute's expression (module inputs included) or by carrying the `known-after-apply` string, shows as known after apply, so no stand-in value is in the note or the digest. The member lists the variables under `placeholders`, and its row in the note says `previewed with placeholders for var.<name>`. The plan file is deleted, and `run` gets the preview's shape instead of a plan file.
 
 On merge the apply plans the root again once its upstream applied. That round is covered by the first approval when its shape is within the preview's ([covered rounds](/chant/guide/apply-on-merge/#a-round-the-first-approval-covers)), and asks for an approval of its own otherwise. A `run` handed the shape itself plans with the real values and refuses, with exit 3, a plan that goes beyond it. The preview cannot see a stand-in that reaches an attribute another way, such as a number through a `local`, so the attribute shows the stand-in. The real plan then differs from the preview and asks for its own approval.
 
@@ -179,7 +198,7 @@ The digest covers the plan's resource changes, output changes and action invocat
 
 A live choudoufu root that `live-plan-set` can plan as chant would, one with no var files, no `vars` and no backend config, is planned as a one-root set instead. `run` hands choudoufu that set and its digest with `live-wave-apply`, and choudoufu's refusal of a moved set exits 3.
 
-Its `outputs` runs `output -json` in the root after an `init`. The plan says the outputs the root will have: `planned_values.outputs` from `show -json`, less each output whose `output_changes` entry is unknown after apply.
+Its `outputs` runs `output -json` in the root after an `init`. The plan reads the root's future outputs from `show -json`, in the same way as for a choudoufu member above.
 
 ## A capability without `plan`
 
