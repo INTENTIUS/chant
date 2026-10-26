@@ -151,3 +151,24 @@ describe("a `from` naming an undeclared address", () => {
     for (const e of ir.edges) expect(entities.has(e.to)).toBe(true);
   });
 });
+
+describe("the same blocks in Terraform's JSON syntax (chant#4457)", () => {
+  /** Each config block's entity as the acceptance compares it: type, address and body, by key. */
+  const configBlocks = (all: Map<string, Declarable>): Record<string, { type: string; address: string; body: unknown }> =>
+    Object.fromEntries(
+      [...all]
+        .filter(([, e]) => [MOVED_TYPE, IMPORT_TYPE, REMOVED_TYPE, CHECK_TYPE].includes(e.entityType))
+        .map(([key, e]) => {
+          const p = (e as TerraformEntity).props;
+          return [key, { type: e.entityType, address: p.address, body: p.body }];
+        }),
+    );
+
+  it("main.tf.json's moved, import, removed and check blocks are the entities main.tf's are", async () => {
+    const json = (await renderTerraformRoots({ projectRoot: TREE, roots: { app: { dir: "./app-json" } } })).entities;
+    const fromJson = configBlocks(json);
+    expect(Object.keys(fromJson).sort()).toEqual(["app/check.health", "app/import", "app/moved", "app/moved~2", "app/removed"]);
+    expect(fromJson).toEqual(configBlocks(entities));
+    for (const key of Object.keys(fromJson)) expect((json.get(key) as TerraformEntity).props.file).toBe("main.tf.json");
+  });
+});
