@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { loadHcl2json } from "@intentius/chant/terraform/hcl2json";
 import { listConfigFiles, readsTofuFiles, selectConfigFiles } from "./hcl/files";
-import { backendBlock, configFiles, liveEstate, localModules, rootState } from "./compose/hcl";
+import { configFiles, liveEstate, localModules, rootState } from "./compose/hcl";
 import { hasCloudBlock, stateObject } from "./state/backend";
 import { estateOfDir } from "./report";
 import { detectLiveEstate } from "./op/activities/live-detect";
@@ -67,9 +67,8 @@ describe("compose/hcl reads the lister's set", () => {
 
   test("a backend in a .tofu file is seen under tofu only", () => {
     const dir = tree({ "backend.tofu": 'terraform {\n  backend "gcs" {\n    bucket = "b"\n    prefix = "p"\n  }\n}\n' });
-    expect(backendBlock(dir)).toBeUndefined();
-    expect(backendBlock(dir, "tofu")).toEqual({ type: "gcs", attrs: { bucket: "b", prefix: "p" } });
-    expect(rootState(dir, "app", {}, "tofu").own).toBeDefined();
+    expect(rootState(dir, "app", { env: {}, recorded: null }).own).toEqual({ key: "local:app/terraform.tfstate" });
+    expect(rootState(dir, "app", { env: {}, recorded: null, binary: "tofu" }).own).toEqual({ bucket: "b", key: "p" });
   });
 
   test("a live block in a .tofu file is a choudoufu root's estate", () => {

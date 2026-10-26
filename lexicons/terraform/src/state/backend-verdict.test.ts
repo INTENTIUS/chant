@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { compositionFor, type CompositionInput } from "../compose";
+import { rootState } from "../compose/hcl";
 import type { TerraformConfig } from "../config";
 import { LOCKABLE_BACKENDS, LOCKS, cliBackendConfig, declaredBackend, isRefused, lockRefusal, readBackend, stateObject } from "./backend";
 
@@ -147,5 +148,40 @@ describe("the parts of the verdict", () => {
   test("the declared backend in Terraform's JSON syntax", () => {
     const dir = project({ "main.tf.json": JSON.stringify({ terraform: { backend: { s3: { bucket: "b", key: "k", use_lockfile: true } } } }) });
     expect(declaredBackend(dir)).toEqual({ type: "s3", config: { bucket: "b", key: "k", use_lockfile: true } });
+  });
+});
+
+describe("compose's state address comes from the same verdict (chant#4478 round 2)", () => {
+  const S3_NO_KEY = 'terraform {\n  backend "s3" {\n    bucket = "b"\n    use_lockfile = true\n  }\n}\n';
+  const reader = 'data "terraform_remote_state" "a" {\n  backend = "s3"\n  config = {\n    bucket = "b"\n    key    = "a.tfstate"\n  }\n}\n\nresource "terraform_data" "x" {\n  input = data.terraform_remote_state.a.outputs.id\n}\n';
+
+  test("a key only TF_CLI_ARGS_init gives is the root's state address, as stateObject reads it", () => {
+    const dir = project({ "main.tf": S3_NO_KEY });
+    const env = { ...CREDS, TF_CLI_ARGS_init: "-backend-config=key=from-init-args.tfstate" };
+    expect(rootState(dir, "app", { env, recorded: null }).own).toEqual({ bucket: "b", key: "from-init-args.tfstate" });
+    expect(stateObject(dir, env, undefined)).toMatchObject({ backend: "s3", bucket: "b", key: "from-init-args.tfstate" });
+    expect(rootState(dir, "app", { env: {}, recorded: null }).own).toBeUndefined();
+  });
+
+  test("a key TF_CLI_ARGS gives is overridden by TF_CLI_ARGS_init, as init applies them", () => {
+    const dir = project({ "main.tf": S3_NO_KEY });
+    const env = { TF_CLI_ARGS: "-backend-config=key=first.tfstate", TF_CLI_ARGS_init: "-backend-config=key=second.tfstate" };
+    expect(rootState(dir, "app", { env, recorded: null }).own).toEqual({ bucket: "b", key: "second.tfstate" });
+  });
+
+  test("after init, the recorded configuration names the state", () => {
+    const dir = project({ "main.tf": S3_NO_KEY, ".terraform/terraform.tfstate": record("s3", { bucket: "b", key: "recorded.tfstate", use_lockfile: true, region: null }) });
+    expect(rootState(dir, "app", { env: {} }).own).toEqual({ bucket: "b", key: "recorded.tfstate" });
+  });
+
+  test("a composition lines a read up with a member whose key comes only from TF_CLI_ARGS_init", () => {
+    const dir = project({ "roots/a/main.tf": S3_NO_KEY, "roots/b/main.tf": S3_NO_KEY + reader });
+    const c = compositionFor({
+      projectRoot: dir,
+      env: { TF_CLI_ARGS_init: "-backend-config=key=a.tfstate" },
+      components: [tf("a"), tf("b")],
+      terraform: { roots: { a: { dir: "roots/a" }, b: { dir: "roots/b" } }, compose: { enabled: true } },
+    });
+    expect(c.reads.get("b")).toEqual([{ via: "remote-state", upstream: "a", name: "a" }]);
   });
 });
