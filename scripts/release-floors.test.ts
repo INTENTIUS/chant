@@ -97,7 +97,8 @@ describe("release floors --freeze (#4501)", () => {
     const src = readFileSync(join(root, "scripts/release-floors.ts"), "utf8");
     const out = freezeTextList(src);
     const list = out.slice(out.indexOf("const NEXT_RELEASE_TEXT:"), out.indexOf("\n];\n", out.indexOf("const NEXT_RELEASE_TEXT:")) + 4);
-    expect(list).not.toMatch(/\{ file: /);
+    // The declaration line carries the type `{ file: string; ... }`; only entry lines must go.
+    expect(list).not.toMatch(/^\s*\{ file: /m);
     expect(list).toMatch(/= \[\n[\s\S]*\n\];\n$/);
     expect(out.length).toBeLessThan(src.length);
     expect(out.slice(out.indexOf("interface Args"))).toBe(src.slice(src.indexOf("interface Args")));
