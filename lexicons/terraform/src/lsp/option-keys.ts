@@ -26,6 +26,7 @@ export const ROOT_ENTRY_KEYS: OptionKey[] = [
   { key: "varFiles", detail: "`-var-file` arguments, in order, relative to `dir`." },
   { key: "backendConfig", detail: "`-backend-config` key/value pairs handed to `init`." },
   { key: "delete", detail: '"never" | "owned-only" | "gated" — this root\'s delete mode, mapped onto choudoufu\'s policy block on a live root.' },
+  { key: "signalOnly", detail: "`true` when the root is declared only so a change to it brings this project into the change. The build and live reads skip it." },
 ];
 
 /** `TerraformApplyOpConfig`'s keys (`TerraformApplyOp({ <here> })`). */

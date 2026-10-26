@@ -43,7 +43,7 @@ import {
   type ReadDriftOptions,
   type ReadDriftResult,
 } from "@intentius/chant/drift-record";
-import type { TerraformConfig, TerraformRootConfig } from "./config";
+import { ownRoots, type TerraformConfig, type TerraformRootConfig } from "./config";
 import { declaredOf } from "./describe-resources";
 import {
   choudoufuLivePlusPlanDriftRecords,
@@ -234,8 +234,9 @@ function unobservedOne(ctx: RootContext, address: string, detail: string, comman
 /** `LexiconPlugin.readDrift` for the terraform lexicon. */
 export async function readTerraformDrift(options: ReadDriftOptions): Promise<ReadDriftResult> {
   const namespace = (options.config as { terraform?: TerraformConfig }).terraform;
-  const roots = Object.entries(namespace?.roots ?? {});
-  if (roots.length === 0) return { refused: { code: "no-drift-read", message: "terraform.roots declares no root" } };
+  // A `signalOnly` root (#4484) is not this project's to read.
+  const roots = Object.entries(ownRoots(namespace?.roots));
+  if (roots.length === 0) return { refused: { code: "no-drift-read", message: "terraform.roots declares no root of its own" } };
   const binary = terraformBinary(namespace);
   const live = (root: TerraformRootConfig, dir: string) => binary === "choudoufu" && (detectLiveEstate(dir) !== undefined || root.estate !== undefined);
 

@@ -109,6 +109,16 @@ export const terraformRootSchema = z.strictObject({
    * every root, for one run.
    */
   observe: terraformObserveDepthSchema.optional(),
+  /**
+   * The root is declared only so a change to it brings this project into the
+   * change (#4484). A dns member that declares another cloud's root, so that
+   * an azure change reaches dns, sets it on that root. Change detection
+   * (`changedUnits`) still counts the root; the build and every live read
+   * skip it, so it is never drawn or read as this project's own: its entities
+   * are not built, and `describeResources`, drift and the owned-resource
+   * reads leave it out. An Op step that names the root still runs against it.
+   */
+  signalOnly: z.boolean().optional(),
 });
 
 export const terraformConfigSchema = z.strictObject({
@@ -167,6 +177,15 @@ export const terraformConfigSchema = z.strictObject({
 });
 
 export type TerraformRootConfig = z.infer<typeof terraformRootSchema>;
+
+/**
+ * The roots a project owns: `roots` without the ones marked `signalOnly`
+ * (#4484), which only feed change detection. The build and the live reads
+ * take these; `changedUnits` takes every root.
+ */
+export function ownRoots<R extends { signalOnly?: boolean }>(roots: Record<string, R> | undefined): Record<string, R> {
+  return Object.fromEntries(Object.entries(roots ?? {}).filter(([, r]) => r.signalOnly !== true));
+}
 export type TerraformConfig = z.infer<typeof terraformConfigSchema>;
 
 declare module "@intentius/chant/config" {

@@ -46,6 +46,23 @@ export default {
 rather than inside it. Each root also takes an optional `workspace`, a
 `varFiles` list and a `backendConfig` map.
 
+A root can also be marked `signalOnly: true` ([#4484](https://github.com/INTENTIUS/chant/issues/4484)).
+Use it for a root that belongs to another workspace member and is declared here
+only so that a change to it brings this project into the change, as a dns member
+declares the azure estate's root. Change detection still counts the root. The
+build skips it, so the graph doesn't draw it under this project, and so do the
+live reads: `describeResources`, drift and the owned-resource reads. An Op step
+that names the root by key still runs against it.
+
+```typescript
+terraform: {
+  roots: {
+    dns: { dir: "./estate" },
+    azure: { dir: "../azure", signalOnly: true },
+  },
+},
+```
+
 `binary` is `"terraform"` or `"tofu"`. The two are wire-compatible for
 everything this lexicon does, so the choice is recorded rather than guessed.
 

@@ -963,7 +963,8 @@ export interface LiveEstateOptions {
 }
 
 /**
- * Every live root the project declares, in config order. Reads the project
+ * Every live root the project declares, in config order, leaving out a
+ * `signalOnly` one (#4484). Reads the project
  * config the same way the activities do, so `terraform.roots` is read once
  * and the same answer reaches both.
  */
@@ -975,12 +976,14 @@ export async function liveRootNames(cwd?: string): Promise<Array<{ root: string;
   const start = resolve(cwd ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
   const projectRoot = configPath ? dirname(configPath) : start;
-  const namespace = (config as { terraform?: { binary?: string; roots?: Record<string, { dir: string }> } })
+  const namespace = (config as { terraform?: { binary?: string; roots?: Record<string, { dir: string; signalOnly?: boolean }> } })
     .terraform;
   if (namespace?.binary !== "choudoufu") return [];
 
   const live: Array<{ root: string; estate: string }> = [];
   for (const [name, root] of Object.entries(namespace.roots ?? {})) {
+    // A `signalOnly` root (#4484) is another project's: it only brings this one into a change.
+    if (root.signalOnly === true) continue;
     const estate = detectLiveEstate(resolve(projectRoot, root.dir));
     if (estate !== undefined) live.push({ root: name, estate });
   }

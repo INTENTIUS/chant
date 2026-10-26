@@ -163,10 +163,13 @@ export const readTerraformDeclaration: TerraformDeclarationReader = async (cwd) 
   const { config, configPath } = await loadChantConfigUpward(start);
   const namespace = (config as { terraform?: TerraformConfig }).terraform;
   const entities = new Map<string, TerraformBehaviourEntity>();
-  if (!namespace?.roots || Object.keys(namespace.roots).length === 0) return entities;
+  // A `signalOnly` root (#4484) builds nothing, as in `buildRoots`.
+  if (!namespace) return entities;
+  const roots = Object.fromEntries(Object.entries(namespace.roots ?? {}).filter(([, r]) => r.signalOnly !== true));
+  if (Object.keys(roots).length === 0) return entities;
   const rendered = await renderTerraformRoots({
     projectRoot: configPath ? dirname(configPath) : start,
-    roots: namespace.roots,
+    roots,
     binary: namespace.binary,
     callModuleType: namespace.callModuleType,
     moduleRoot: namespace.moduleRoot,
