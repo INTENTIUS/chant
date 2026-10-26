@@ -158,7 +158,10 @@ describe("chant workspace promote --all (#4461)", () => {
     const second = await promote(l);
     expect(outcomes(second)).toEqual({ b: "applied", a: "gated", c: "gated", d: "not-run" });
     expect(second.roots.find((r) => r.member === "b")!.stamped).toEqual({ newly: 2, already: 0, failed: 0 });
-    expect(calls.filter((c) => c.argv.includes("-approve")).map((c) => c.cwd)).toEqual([join(realpathSync(root), "b")]);
+    // The stamp runs in b's staging directory, where its choudoufu init ran, not in the tree (chant#4492).
+    const bInit = calls.find((c) => c.argv[1] === "init" && basename(c.cwd) === "b")!;
+    expect(calls.filter((c) => c.argv.includes("-approve")).map((c) => c.cwd)).toEqual([bInit.cwd]);
+    expect(bInit.cwd).not.toBe(join(realpathSync(root), "b"));
     expect(kinds()).toMatchObject({ b: "choudoufu", a: "terraform", c: "terraform" });
 
     const gateOf = (m: string) => l.pending.filter((p) => p.gate === m);
@@ -232,10 +235,14 @@ describe("chant workspace promote --all (#4461)", () => {
     const retried = await promote(l);
     expect(row(retried, "b").outcome).toBe("applied");
     expect(row(retried, "b").stamped).toEqual({ newly: 2, already: 0, failed: 0 });
-    // Only the stamp ran for b: no live-check, no report, no new gate.
-    expect(calls.filter((c) => memberOf(c.argv, c.cwd) === "b").map((c) => c.argv.slice(1))).toEqual([
+    // Only the stamp ran for b, in a staging of its own whose init installed the providers (chant#4492): no live-check, no report, no new gate.
+    const forB = calls.filter((c) => memberOf(c.argv, c.cwd) === "b");
+    expect(forB.map((c) => c.argv.slice(1))).toEqual([
+      ["init", "-input=false", "-backend=false", "-no-color"],
       ["live-import", `-state=${join(states, "b.tfstate")}`, "-estate=b", "-approve"],
     ]);
+    expect(forB[1]!.cwd).toBe(forB[0]!.cwd);
+    expect(forB[1]!.cwd).not.toBe(join(realpathSync(root), "b"));
     expect(l.pending.filter((p) => p.gate === "b")).toHaveLength(1);
     expect(existsSync(join(root, ".chant", "workspace-promote", "b.stamp.json"))).toBe(false);
     // The canary landed, so wave 2 ran.
