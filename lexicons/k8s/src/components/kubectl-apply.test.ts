@@ -318,6 +318,32 @@ describe("kubectl-apply plan: a server-side dry-run diff (#3998)", () => {
     await cap.run({ env: "prod", component: "api", plans: { other: { kind: "kubectl-apply-plan", planDigest: "sha256:x", documents: [] } } }, { manifest: "k8s.yaml", stack: "web" });
     expect(applied).toEqual([{ manifest: "k8s.yaml", environment: "prod", stack: "web" }]);
   });
+
+  test("inputs waiting on another component read nothing and leave a hole (#4467)", async () => {
+    const cap = createKubectlApplyCapability(
+      noApply,
+      () => {
+        throw new Error("no read expected");
+      },
+      async () => {
+        throw new Error("no dry run expected");
+      },
+      async () => {
+        throw new Error("no live read expected");
+      },
+    );
+    const ctx = { env: "prod", component: "api", unresolvedInputs: ["network", "cluster"] };
+    const input = { manifest: undefined as unknown as string, stack: "web", outputs: { host: { object: "Service/prod/web", field: "spec.clusterIP" } } };
+    const planned = await cap.plan!(ctx, input);
+    expect(planned.member).toBe("web");
+    expect(planned.artifact).toBeUndefined();
+    expect(planned.outputs).toBeUndefined();
+    expect(planned.changeSet!.entries).toEqual([]);
+    expect(planned.changeSet!.member.holes).toEqual([{ address: "web", type: "kubectl-apply", reason: "inputs from cluster, network; re-checked on apply" }]);
+    expect(isPlanDigest(planned.planDigest)).toBe(true);
+    const other = await cap.plan!({ ...ctx, unresolvedInputs: ["network"] }, input);
+    expect(other.planDigest).not.toBe(planned.planDigest);
+  });
 });
 
 describe("kubectl-apply outputs: the fields a step names (#3999)", () => {

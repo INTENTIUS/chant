@@ -259,6 +259,37 @@ function dryRunDigest(
   });
 }
 
+/**
+ * The plan of a step whose inputs wait on other components (#4467): one hole
+ * naming them, no artifact, and a digest over the environment, the member,
+ * the input and the unresolved names.
+ */
+function unresolvedPlan(ctx: DeployContext, input: KubectlApplyInput, member: string, unresolved: string[]): CapabilityPlan {
+  const planDigest = computePlanDigest("kubectl-apply-plan", {
+    env: ctx.env,
+    member,
+    manifest: input.manifest ?? null,
+    context: input.context ?? null,
+    delete: input.delete ?? "never",
+    unresolved,
+  });
+  return {
+    member,
+    planDigest,
+    changeSet: {
+      member: {
+        member,
+        lexicon: "k8s",
+        planner: "chant",
+        status: "planned",
+        planDigest,
+        holes: [{ address: member, type: "kubectl-apply", reason: `inputs from ${unresolved.join(", ")}; re-checked on apply` }],
+      },
+      entries: [],
+    },
+  };
+}
+
 export interface KubectlApplyInput {
   /** Path to a manifest file, or a directory of them. */
   manifest: string;
@@ -464,10 +495,16 @@ export function createKubectlApplyCapability(
      * would apply, release attributes set, server-side applied with
      * `dryRun=All` as the same field manager, each compared with its live
      * object. The member is the step's `stack`, or the component.
+     *
+     * A step whose inputs wait on another component's outputs (#4467) reads
+     * nothing and dry-runs nothing: its manifest or context may be one of
+     * them, so the member gets one hole and no artifact, as `gcp-apply` does.
      */
     async plan(ctx: DeployContext, stepInput: KubectlApplyInput): Promise<CapabilityPlan> {
       const input = narrowedInput(ctx, stepInput);
       const member = input.stack ?? ctx.component;
+      const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
+      if (unresolved.length > 0) return unresolvedPlan(ctx, input, member, unresolved);
       const read_ = (read ?? (await activities()).readManifestDocuments)(input.manifest);
       const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
       const documents = targets ? targetedDocuments(member, input.manifest, read_, targets) : read_;
