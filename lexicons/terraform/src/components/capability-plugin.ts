@@ -304,8 +304,8 @@ const firstLines = (err: unknown): string => {
  */
 async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresolved: string[], targets?: string[]): Promise<CapabilityPlan> {
   const dir = await rootDir(input);
-  const declared = dir === undefined ? new Map<string, { type?: string }>() : declaredVariables(rootTexts(dir));
-  const stand = placeholderVars(input.vars, declared);
+  if (dir === undefined) return waitingRoot(ctx, input, unresolved, `no root named "${input.root}" in terraform.roots to read its variables from`);
+  const stand = placeholderVars(input.vars, declaredVariables(rootTexts(dir)));
   if (typeof stand === "string") return waitingRoot(ctx, input, unresolved, stand);
   let planned: Awaited<ReturnType<typeof terraformPlan>>;
   try {
@@ -319,9 +319,8 @@ async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, u
   } catch (err) {
     return waitingRoot(ctx, input, unresolved, `the plan with stand-in values failed: ${firstLines(err)}`);
   } finally {
-    if (dir !== undefined) rmSync(join(dir, PREVIEW_PLAN_FILE), { force: true });
+    rmSync(join(dir, PREVIEW_PLAN_FILE), { force: true });
   }
-  rmSync(join(planned.dir, PREVIEW_PLAN_FILE), { force: true });
   const marked = markPlaceholderDriven(planned.json, stand.placeholders);
   if ("refused" in marked) return waitingRoot(ctx, input, unresolved, marked.refused);
   const placeholders = stand.placeholders.map((name) => `var.${name}`);
@@ -330,8 +329,8 @@ async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, u
   const part = terraformChangeSetPart({
     member: input.root,
     plan: marked.plan,
-    planner: planned.changeSet.member.planner,
-    ...(planned.changeSet.member.scope ? { scope: planned.changeSet.member.scope } : {}),
+    ...(planned.changeSet?.member.planner ? { planner: planned.changeSet.member.planner } : {}),
+    ...(planned.changeSet?.member.scope ? { scope: planned.changeSet.member.scope } : {}),
   });
   // The stand-ins' values are not real, so the digest is over the preview's shape and entries, never the raw plan.
   const planDigest = computePlanDigest("terraform-apply-preview", {
