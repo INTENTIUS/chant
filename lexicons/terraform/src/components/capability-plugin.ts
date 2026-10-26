@@ -38,9 +38,18 @@
  * when both roots are in the change.
  *
  * A root whose `vars` read an output not known yet (`DeployContext.unresolvedInputs`)
- * is not planned: terraform takes no unknown variable. Its member gets a hole
- * naming the roots it waits on and no artifact, and the run that applies it
- * plans it once their outputs are known.
+ * cannot be planned as it stands: terraform takes no unknown variable. It is
+ * previewed instead (#4463, `./placeholder-preview.ts`): planned with a
+ * stand-in per variable that holds no value, typed from the root's
+ * `variable` block, with every attribute and output a stand-in drives marked
+ * unknown after apply. The member lists the variables under `placeholders`,
+ * and its artifact is the preview's shape, never a plan file. The apply plans
+ * the root again once the upstream applied, and core covers that round with
+ * the first approval when its shape is within the preview's; a `run` handed
+ * the shape itself holds the fresh plan to it. When no preview can be made
+ * (an undeclared variable, a `count` or `for_each` over a stand-in, a
+ * placeholder plan that fails) the member stays a hole naming the roots it
+ * waits on, and the hole's reason says why there is no preview.
  *
  * ## The plan's shape (#4436)
  *
@@ -48,8 +57,8 @@
  * resource the plan changes with its action, type, replacement, the
  * attributes that differ and the ones unknown after apply. Core's
  * `coveredRound` compares it with the shape of a later plan of the root. A
- * root waiting on outputs not known yet has no plan, so no shape, and stays
- * uncovered.
+ * previewed root's shape lists the upstreams it read as unknown inputs; a
+ * root that stays a hole has no plan, so no shape, and stays uncovered.
  *
  * ## choudoufu roots in a gated wave (#3459)
  *
@@ -93,7 +102,16 @@
  * comes from the workspace declaration.
  */
 
+import { rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Capability, DeployContext, CapabilityPlan, PlannedOutputs } from "@intentius/chant/components/capability";
+import { loadChantConfigUpward } from "@intentius/chant/config";
+import {
+  PlanShapeMovedError,
+  planShapeDifferences,
+  planShapeDigest,
+  type PlanShapeArtifact,
+} from "@intentius/chant/components/covered-round";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
@@ -110,7 +128,12 @@ import {
   terraformPlan,
 } from "../op/activities/terraform";
 import { terraformPlanShape } from "../plan-shape";
+import { terraformChangeSetPart } from "../change-set";
+import type { TerraformConfig } from "../config";
+import { rootTexts } from "../compose/hcl";
+import { declaredVariables } from "../compose/root";
 import { terraformComposeGroup } from "./compose-group";
+import { markPlaceholderDriven, placeholderVars, waitingHole } from "./placeholder-preview";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -219,13 +242,17 @@ export const choudoufuOutputSource: EngineOutputSource = {
   planned: async (_ctx, ref) => choudoufuMemberPlannedOutputs(await choudoufuMemberPlanSet(memberArgs(ref))),
 };
 
+const resolvedVars = (input: TerraformApplyStepInput): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(input.vars ?? {}).map(([k, v]) => [k, v === undefined ? null : v]));
+
 /**
- * The member of a root whose `vars` read outputs not known yet (#3999): no
- * plan, a hole naming whose outputs it waits on, and a digest over the root,
- * the vars as resolved and those names.
+ * The member of a root whose `vars` read outputs not known yet and that
+ * could not be previewed (#3999, #4463): no plan, a hole naming whose outputs
+ * it waits on and, when a preview was tried, why it was not possible, and a
+ * digest over the root, the vars as resolved and those names.
  */
-function waitingRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresolved: string[]): CapabilityPlan {
-  const vars = Object.fromEntries(Object.entries(input.vars ?? {}).map(([k, v]) => [k, v === undefined ? null : v]));
+function waitingRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresolved: string[], noPreview?: string): CapabilityPlan {
+  const vars = resolvedVars(input);
   const planDigest = computePlanDigest("terraform-apply-unresolved", { env: ctx.env, root: input.root, vars, unresolved });
   const changeSet: ChangeSetPart = {
     member: {
@@ -234,11 +261,98 @@ function waitingRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresol
       planner: "chant",
       status: "planned",
       planDigest,
-      holes: [{ address: input.root, type: "terraform_root", reason: `inputs from ${unresolved.join(", ")}; planned again once they apply` }],
+      holes: [waitingHole(input.root, unresolved, noPreview)],
     },
     entries: [],
   };
   return { member: input.root, planDigest, changeSet, ...(ctx.targets?.length ? { targets: ctx.targets } : {}) };
+}
+
+/** The plan file a preview writes, removed once it is read: a plan made with stand-ins must never apply. */
+export const PREVIEW_PLAN_FILE = ".chant-preview.tfplan";
+
+/** What a previewed root hands `run` (#4463): the shape its plan had with stand-in values. Never a plan file. */
+export interface TerraformShapeArtifact extends PlanShapeArtifact {
+  kind: "terraform-apply-shape";
+}
+
+function isShapeArtifact(value: unknown): value is TerraformShapeArtifact {
+  const v = value as Partial<TerraformShapeArtifact> | undefined;
+  return v?.kind === "terraform-apply-shape" && typeof v.digest === "string" && typeof v.shape === "object" && v.shape !== null;
+}
+
+/** The root's directory, as `terraform.roots` names it from the nearest `chant.config.*`. */
+async function rootDir(input: TerraformApplyStepInput): Promise<string | undefined> {
+  const start = resolve(input.cwd ?? process.cwd());
+  const { config, configPath } = await loadChantConfigUpward(start);
+  const dir = (config as { terraform?: TerraformConfig }).terraform?.roots?.[input.root]?.dir;
+  return dir === undefined ? undefined : resolve(configPath ? dirname(configPath) : start, dir);
+}
+
+const firstLines = (err: unknown): string => {
+  const text = (err instanceof Error ? err.message : String(err)).trim();
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.slice(0, 4).join(" ").slice(0, 600);
+};
+
+/**
+ * Preview a root whose `vars` read outputs not known yet (#4463): plan it
+ * with a typed stand-in per such variable, mark what the stand-ins drive
+ * unknown, and answer the change set, the planned outputs and the shape of
+ * that plan, with the shape as the artifact. The plan file is removed. When
+ * no preview can be made, the member stays a hole saying why.
+ */
+async function previewRoot(ctx: DeployContext, input: TerraformApplyStepInput, unresolved: string[], targets?: string[]): Promise<CapabilityPlan> {
+  const dir = await rootDir(input);
+  const declared = dir === undefined ? new Map<string, { type?: string }>() : declaredVariables(rootTexts(dir));
+  const stand = placeholderVars(input.vars, declared);
+  if (typeof stand === "string") return waitingRoot(ctx, input, unresolved, stand);
+  let planned: Awaited<ReturnType<typeof terraformPlan>>;
+  try {
+    await terraformInit(rootArgs(input));
+    planned = await terraformPlan({
+      ...rootArgs(input),
+      vars: stand.vars,
+      planFile: PREVIEW_PLAN_FILE,
+      ...(targets ? { targets } : {}),
+    });
+  } catch (err) {
+    return waitingRoot(ctx, input, unresolved, `the plan with stand-in values failed: ${firstLines(err)}`);
+  } finally {
+    if (dir !== undefined) rmSync(join(dir, PREVIEW_PLAN_FILE), { force: true });
+  }
+  rmSync(join(planned.dir, PREVIEW_PLAN_FILE), { force: true });
+  const marked = markPlaceholderDriven(planned.json, stand.placeholders);
+  if ("refused" in marked) return waitingRoot(ctx, input, unresolved, marked.refused);
+  const placeholders = stand.placeholders.map((name) => `var.${name}`);
+  const shape = terraformPlanShape(marked.plan, input.root, { unknownInputs: unresolved });
+  const artifact: TerraformShapeArtifact = { kind: "terraform-apply-shape", member: input.root, shape, digest: planShapeDigest(shape) };
+  const part = terraformChangeSetPart({
+    member: input.root,
+    plan: marked.plan,
+    planner: planned.changeSet.member.planner,
+    ...(planned.changeSet.member.scope ? { scope: planned.changeSet.member.scope } : {}),
+  });
+  // The stand-ins' values are not real, so the digest is over the preview's shape and entries, never the raw plan.
+  const planDigest = computePlanDigest("terraform-apply-preview", {
+    env: ctx.env,
+    root: input.root,
+    vars: resolvedVars(input),
+    unresolved,
+    placeholders,
+    shape: artifact.digest,
+    entries: part.entries,
+  });
+  const changeSet: ChangeSetPart = { ...part, member: { ...part.member, planDigest, placeholders } };
+  return {
+    member: input.root,
+    planDigest,
+    artifact,
+    changeSet,
+    outputs: terraformPlannedOutputs(marked.plan),
+    shape,
+    ...(targets ? { targets } : {}),
+  };
 }
 
 /**
@@ -311,8 +425,8 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   async plan(ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
     requireRoot(input);
     const unresolved = [...(ctx.unresolvedInputs ?? [])].sort();
-    if (unresolved.length > 0) return waitingRoot(ctx, input, unresolved);
     const targets = ctx.targets && ctx.targets.length > 0 ? ctx.targets : undefined;
+    if (unresolved.length > 0) return previewRoot(ctx, input, unresolved, targets);
     // A targeted root plans with `plan -target`, never as a choudoufu one-root set.
     const wave = targets ? { wave: false } : await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
     if (wave.wave) {
@@ -350,6 +464,19 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
     if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
+    if (isShapeArtifact(fromWave)) {
+      // A root previewed with stand-ins (#4463): plan it now with the real
+      // values, and apply that plan only when it is within the preview's shape.
+      const fresh = await planRoot(input, ctx.targets);
+      const differences = planShapeDifferences(fromWave.shape, terraformPlanShape(fresh.json, input.root));
+      if (differences.length > 0) throw new PlanShapeMovedError(input.root, differences);
+      const applied = await terraformApply({ ...rootArgs(input), planFile: fresh.planFile });
+      if (!applied.applied) {
+        throw new Error(`terraform-apply: root "${input.root}" refused the plan it was given (${applied.refused ?? "refused"}). ${applied.refusal ?? ""}`);
+      }
+      const outputs = await terraformOutputs(rootArgs(input));
+      return { root: input.root, planDigest: fresh.planDigest, fromWavePlan: false, outputs };
+    }
     const planned: PlannedRoot = isPlannedRoot(fromWave)
       ? fromWave
       : await planRoot(input, ctx.targets).then(({ planFile, planDigest }) => ({ planFile, planDigest }));

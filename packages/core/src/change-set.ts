@@ -185,6 +185,15 @@ export interface ChangeSetMember {
    * summary never folds it into a group of real plans.
    */
   provisional?: true;
+  /**
+   * The inputs the member was previewed with stand-in values for (#4463),
+   * sorted: a Terraform root whose `vars` read an output not known yet is
+   * planned with a typed placeholder per such variable (`var.<name>`), and
+   * every attribute those drive is marked unknown in its entries. Its plan
+   * digest covers them. The apply plans it again with the real values and
+   * holds that plan to the preview's shape.
+   */
+  placeholders?: string[];
   /** The planner's own digest of the same plan, when it prints one (choudoufu's per-root digest). */
   nativeDigest?: string;
   holes: ChangeSetHole[];

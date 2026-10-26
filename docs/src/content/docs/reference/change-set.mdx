@@ -36,6 +36,7 @@ The document is part of the [workspace read contract](/chant/reference/workspace
 | `nativeDigest` | the planner's own hash of the same plan, such as choudoufu's per-root value |
 | `holes` | what the planner could not read, each `{ address, type, reason }` |
 | `provisional` | `true` for a preview planned before what it reads applied, such as a Terragrunt dependent planned on `mock_outputs`; absent otherwise |
+| `placeholders` | the inputs a Terraform root was previewed with stand-in values for, as `var.<name>`, sorted ([#4463](https://github.com/INTENTIUS/chant/issues/4463)); every attribute they drive is marked unknown in its entries. Absent otherwise |
 | `group` | on a member a capability planned with others as one group ([ws-107](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-107-a-capability-plans-and-applies-a-group.md)): `{ digest, reads }`, the group digest folded into `planDigest` and the `<component>.<output>` values it reads from the group that the plan does not know. Part of the digest when present. Written by chant 0.124.53 and newer |
 
 A member with holes has an incomplete plan. Its entries say nothing about the addresses listed there.
