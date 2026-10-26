@@ -39,7 +39,6 @@ import type { GroupFallback } from "@intentius/chant/components/capability";
 import { wiringReads, type DriverComponent, type DriverPhase, type DriverStep } from "@intentius/chant/components/driver";
 import type { TerraformConfig, TerraformRootConfig } from "./config";
 import { lockRefusal, readBackend } from "./state/backend";
-import { backendConfigFileKeys } from "./backend-config";
 import {
   estateOutputReads,
   importLiteral,
@@ -55,7 +54,7 @@ import {
   type RootState,
 } from "./compose/hcl";
 
-export { blankComments, lockedProviders, blockBody, hclAttr, backendBlock, rootState, liveEstate, estateOutputReads } from "./compose/hcl";
+export { blankComments, lockedProviders, blockBody, hclAttr, rootState, liveEstate, estateOutputReads } from "./compose/hcl";
 
 /** `terraform.compose.max` when unset. */
 export const DEFAULT_COMPOSE_MAX = 10;
@@ -305,7 +304,7 @@ function hclReads(rcs: readonly RootComponent[]): Map<string, ComposedRead[]> {
 }
 
 /** Every component of `input` that deploys a root, its files read once. */
-function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform" | "components">): RootComponent[] {
+function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform" | "components"> & Partial<Pick<CompositionInput, "env">>): RootComponent[] {
   const tf = input.terraform;
   const projectRoot = resolve(input.projectRoot);
   const rcs: RootComponent[] = [];
@@ -322,10 +321,14 @@ function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform
       const binary = tf.binary;
       const live = liveEstate(dir, binary ?? "terraform");
       const estate = config.estate ?? live.estate;
-      // The backend-config files' keys, then the pairs over them, as init takes them (chant#4459).
-      const fileKeys = Object.fromEntries(Object.entries(backendConfigFileKeys(dir, config.backendConfigFiles).config).map(([k, v]) => [k, String(v)]));
-      const backendConfig = { ...fileKeys, ...config.backendConfig };
-      Object.assign(rc, { config, dir, rel, state: rootState(dir, rel, backendConfig, binary), live: live.live, ...(estate ? { estate } : {}), ...(binary ? { binary } : {}) });
+      // The state address from the one backend verdict (chant#4478): the code, TF_CLI_ARGS*, the backend-config files and pairs, and what init recorded.
+      const state = rootState(dir, rel, {
+        ...(input.env ? { env: input.env } : {}),
+        ...(binary ? { binary } : {}),
+        ...(config.backendConfig ? { backendConfig: config.backendConfig } : {}),
+        ...(config.backendConfigFiles ? { backendConfigFiles: config.backendConfigFiles } : {}),
+      });
+      Object.assign(rc, { config, dir, rel, state, live: live.live, ...(estate ? { estate } : {}), ...(binary ? { binary } : {}) });
     }
     rcs.push(rc);
   }
@@ -338,7 +341,7 @@ function rootComponents(input: Pick<CompositionInput, "projectRoot" | "terraform
  * composition finds them (#4447): what `terraform-apply`'s `groupReads`
  * reports to core. Components with no such read are left out.
  */
-export function rootHclReads(input: Pick<CompositionInput, "projectRoot" | "terraform" | "components">): Map<string, ComposedRead[]> {
+export function rootHclReads(input: Pick<CompositionInput, "projectRoot" | "terraform" | "components"> & Partial<Pick<CompositionInput, "env">>): Map<string, ComposedRead[]> {
   return new Map([...hclReads(rootComponents(input))].filter(([, reads]) => reads.length > 0));
 }
 
@@ -498,7 +501,7 @@ export function compositionFor(input: CompositionInput): Composition {
     }
     for (const mod of localModules(rc.dir!, rc.binary)) {
       const modRel = relPath(projectRoot, mod);
-      for (const read of rootState(mod, modRel, {}, rc.binary).reads) {
+      for (const read of rootState(mod, modRel, { recorded: null, env: {}, ...(rc.binary ? { binary: rc.binary } : {}) }).reads) {
         const up = members.find((o) => o !== m && rcOf.get(o)!.state?.own && sameState(rcOf.get(o)!.state!.own!, read));
         if (up) return ["read", `\`${m}\` reads \`${up}\` from its module \`${modRel}\`, and a composed run rewrites only a root's own reads`];
       }

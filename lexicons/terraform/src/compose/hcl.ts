@@ -6,7 +6,7 @@
  *
  * Lifted from terragucci at c493e0e (`compose.ts` `blankComments`,
  * `lockedProviders`, `localModules`, `importLiteral`, `jsonBlocks`;
- * `detect.ts` `blockBody`, `hclAttr`, `backendBlock`, `stateOf`, `estateOf`,
+ * `detect.ts` `blockBody`, `hclAttr`, `stateOf`, `estateOf`,
  * `estateOutputReads`, `liveRoots`; `linked.ts` `configFiles`), reading a
  * root's `-backend-config` from `terraform.roots.<name>.backendConfig` where
  * terragucci read `TF_CLI_ARGS_init`. Regex over text with comments blanked,
@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { isJsonConfigFile, listConfigFilesSafe } from "../hcl/files";
 import { literal, stateAddress, type Attr, type StateKey } from "./state-address";
+import { readBackend, type ReadBackendInput } from "../state/backend";
 
 export type { StateKey } from "./state-address";
 
@@ -124,35 +125,6 @@ export function jsonBlocks(doc: unknown, kind: string): Record<string, unknown>[
   return v && typeof v === "object" ? [v as Record<string, unknown>] : [];
 }
 
-/** The backend a root's code declares: its type and plain-string attributes, `cloud` for a `cloud` block, undefined for neither. */
-export type BackendBlock = { type: string; attrs: Record<string, string> } | { cloud: true };
-
-/** The backend block (or `cloud` block) of the root at `dir`, from HCL or Terraform's JSON syntax. */
-export function backendBlock(dir: string, binary?: string): BackendBlock | undefined {
-  for (const { text, json } of rootTexts(dir, binary)) {
-    if (json) {
-      for (const b of jsonBlocks(parseJson(text), "terraform")) {
-        if (b.cloud !== undefined) return { cloud: true };
-        const backends = objectOf(b.backend) ?? {};
-        const type = Object.keys(backends)[0];
-        if (!type) continue;
-        const body = firstOf(backends[type]) ?? {};
-        return { type, attrs: Object.fromEntries(Object.entries(body).filter(([, v]) => typeof v === "string")) as Record<string, string> };
-      }
-      continue;
-    }
-    const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
-    if (m) {
-      const body = blockBody(text, m.index!);
-      const attrs: Record<string, string> = {};
-      for (const a of body.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"/gm)) attrs[a[1]!] = a[2]!;
-      return { type: m[1]!, attrs };
-    }
-    if (/^\s*cloud\s*\{/m.test(text)) return { cloud: true };
-  }
-  return undefined;
-}
-
 /** A `terraform_remote_state` block: its label, the state it reads, and whether it repeats (count or for_each). */
 export interface RemoteStateRead extends StateKey {
   name: string;
@@ -167,32 +139,45 @@ export interface RootState {
 
 const asKey = (a: ReturnType<typeof stateAddress>): StateKey | undefined => ("unresolved" in a ? undefined : a);
 
+/** A backend configuration value as an address part: a plain string, `null` for anything else written, undefined for none. */
+const configValue = (v: unknown): string | null | undefined => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return literal(v) ?? null;
+};
+
 /**
- * The state the root at `dir` keeps, as its backend block names it with the
- * `-backend-config` pairs over it, and the states its `terraform_remote_state`
- * blocks read. `rel` is the root's directory relative to the project, which a
- * `local` path resolves against. An address the code does not spell in plain
- * strings is left out, so nothing lines up with it.
+ * The state the root at `dir` keeps, and the states its
+ * `terraform_remote_state` blocks read. `rel` is the root's directory
+ * relative to the project, which a `local` path resolves against.
+ *
+ * Which backend and which configuration name the root's own state is
+ * state/backend.ts's {@link readBackend} verdict (chant#4478): the code with
+ * the `-backend-config` flags of `TF_CLI_ARGS`, `TF_CLI_ARGS_init`,
+ * `backendConfigFiles` and `backendConfig` over it, and what `init` recorded
+ * once it has run. A key neither gives is read from the code's own block,
+ * which still names nested ones (a `cloud` or `remote` backend's
+ * `workspaces`). An address the code does not spell in plain strings is left
+ * out, so nothing lines up with it.
  */
-export function rootState(dir: string, rel: string, backendConfig: Readonly<Record<string, string>> = {}, binary?: string): RootState {
+export function rootState(dir: string, rel: string, input: ReadBackendInput = {}): RootState {
   const out: RootState = { reads: [] };
-  const over = (get: Attr): Attr => (name) => (name in backendConfig ? (literal(backendConfig[name]) ?? null) : get(name));
-  let declared = false;
-  for (const { text, json } of rootTexts(dir, binary)) {
+  // The code's own backend block, the first one as declaredBackend reads it: its type and attributes.
+  let code: { type: string; get: Attr } | undefined;
+  for (const { text, json } of rootTexts(dir, input.binary)) {
     if (json) {
       const doc = parseJson(text);
       for (const t of jsonBlocks(doc, "terraform")) {
-        const backends = Object.entries(objectOf(t.backend) ?? {});
-        for (const [type, v] of backends) {
-          declared = true;
-          const b = firstOf(v);
-          out.own = asKey(stateAddress(type, over((n) => literal(b?.[n])), rel));
-        }
+        if (code) break;
         if (t.cloud !== undefined) {
-          declared = true;
           const b = firstOf(t.cloud);
-          out.own = asKey(stateAddress("cloud", (n) => literal(b?.[n] ?? firstOf(b?.workspaces)?.[n]), rel));
+          code = { type: "cloud", get: (n) => literal(b?.[n] ?? firstOf(b?.workspaces)?.[n]) };
+          break;
         }
+        const [type, v] = Object.entries(objectOf(t.backend) ?? {})[0] ?? [];
+        if (!type) continue;
+        const b = firstOf(v);
+        code = { type, get: (n) => literal(b?.[n] ?? firstOf(b?.workspaces)?.[n]) };
       }
       for (const d of jsonBlocks(doc, "data")) {
         for (const [name, v] of Object.entries(objectOf(d.terraform_remote_state) ?? {})) {
@@ -206,13 +191,13 @@ export function rootState(dir: string, rel: string, backendConfig: Readonly<Reco
       }
       continue;
     }
-    for (const m of text.matchAll(/\bbackend\s+"([^"]+)"\s*\{/g)) {
-      declared = true;
-      out.own = asKey(stateAddress(m[1]!, over(hclAttr(blockBody(text, m.index!))), rel));
-    }
-    for (const m of text.matchAll(/^\s*cloud\s*\{/gm)) {
-      declared = true;
-      out.own = asKey(stateAddress("cloud", hclAttr(blockBody(text, m.index!)), rel));
+    if (!code) {
+      const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
+      if (m) code = { type: m[1]!, get: hclAttr(blockBody(text, m.index!)) };
+      else {
+        const c = /^\s*cloud\s*\{/m.exec(text);
+        if (c) code = { type: "cloud", get: hclAttr(blockBody(text, c.index!)) };
+      }
     }
     for (const m of text.matchAll(/\bdata\s+"terraform_remote_state"\s+"([^"]+)"\s*\{/g)) {
       const body = blockBody(text, m.index!);
@@ -224,7 +209,10 @@ export function rootState(dir: string, rel: string, backendConfig: Readonly<Reco
       if (key) out.reads.push({ name: m[1]!, ...key, repeated: /^\s*(count|for_each)\s*=/m.test(body) });
     }
   }
-  if (!declared) out.own = asKey(stateAddress("local", over(() => undefined), rel));
+  const { backend } = readBackend(dir, input);
+  const fromCode = code?.type === backend.type ? code.get : (): undefined => undefined;
+  const get: Attr = (n) => configValue(backend.config[n] ?? objectOf(backend.config.workspaces)?.[n]) ?? fromCode(n);
+  out.own = asKey(stateAddress(backend.type, get, rel));
   return out;
 }
 
