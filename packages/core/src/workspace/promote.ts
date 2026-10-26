@@ -13,7 +13,10 @@
  *
  * Rungs:
  *
- * - `terraform` to `choudoufu`: `choudoufu live-check` in the member's
+ * - `terraform` to `choudoufu`: `choudoufu init -backend=false` installs the
+ *   providers in the staging worktree, which has no `.terraform/` of its own
+ *   (#4461: `live-import` reads each resource through its provider), then
+ *   `choudoufu live-check` in the member's
  *   directory must pass, then `choudoufu live-import -state=<--state>
  *   -estate=<member>` prints its ratification report (read-only: it stamps
  *   nothing without `-approve`). The patch changes the member's kind. The
@@ -106,6 +109,7 @@ export function stagingRuns(rung: Rung, member: { name: string; dir: string }, o
   if (rung.to === "choudoufu") {
     if (!opts.state) throw new PromoteError(`promoting ${member.name} to choudoufu reads its state for the adoption report: pass --state <terraform.tfstate>`);
     return [
+      { label: "choudoufu init", argv: ["choudoufu", "init", "-input=false", "-backend=false", "-no-color"], cwd: member.dir },
       { label: "choudoufu live-check", argv: ["choudoufu", "live-check"], cwd: member.dir },
       { label: "choudoufu live-import (report)", argv: ["choudoufu", "live-import", `-state=${opts.state}`, `-estate=${member.name}`], cwd: member.dir, report: true },
     ];
@@ -282,6 +286,9 @@ export interface PromoteResult {
   retriedStamp?: true;
 }
 
+/** What a staging writes that no patch carries: the providers and modules `init` installs (#4461). */
+const NOT_STAGED = [":(exclude,glob)**/.terraform/**"];
+
 /** The staging step whose output is the adoption report. */
 const REPORT_STEP = "choudoufu live-import (report)";
 
@@ -393,12 +400,13 @@ export async function promoteCommand(opts: PromoteOptions): Promise<PromoteResul
     const reportDigest = reportOutput === undefined ? undefined : contentDigest(reportOutput.trimEnd());
     const declRel = inProject(declFile);
     // What the staging wrote outside the declaration: the hunks the apply
-    // carries. The kind change is described by from and to.
-    git(worktree, ["add", "-A"]);
+    // carries. The kind change is described by from and to. The providers
+    // `choudoufu init` installed under `.terraform/` are never part of it.
+    git(worktree, ["add", "-A", "--", ".", ...NOT_STAGED]);
     const memberPatch = git(worktree, ["diff", "--cached", "--binary", "HEAD", "--", ".", `:(exclude)${declRel}`]);
     const declPath = join(project, declFile);
     writeFileSync(declPath, setMemberKind(readFileSync(declPath, "utf-8"), declFile, found.name, rung.to));
-    git(worktree, ["add", "-A"]);
+    git(worktree, ["add", "-A", "--", ".", ...NOT_STAGED]);
     const patch = git(worktree, ["diff", "--cached", "--binary", "HEAD"]);
     const digest = computePlanDigest(PROMOTE_PLAN_KIND, {
       member: found.name,

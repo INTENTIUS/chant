@@ -228,6 +228,11 @@ trunk-curated-floci-e2e:
     @scripts/human-gate.sh trunk-curated-floci-e2e
     bash test/trunk-curated-floci-e2e.sh
 
+# Adopt a workspace of four Terraform roots into choudoufu in waves, canary first, one gate per root (chant#4461; Floci in Docker; on-demand, needs Docker, the aws CLI, node, OpenTofu and choudoufu)
+workspace-promote-waves-floci-e2e:
+    @scripts/human-gate.sh workspace-promote-waves-floci-e2e
+    bash test/workspace-promote-waves-floci-e2e.sh
+
 # Deploy the components-aws-e2e example against a local AWS emulator (Floci in Docker; on-demand, needs Docker + aws CLI)
 components-aws-e2e:
     @scripts/human-gate.sh components-aws-e2e

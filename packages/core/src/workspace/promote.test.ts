@@ -70,7 +70,7 @@ describe("chant workspace promote (#3178)", () => {
     const first = await promoteCommand({ root, member: "net", state: "/s/terraform.tfstate", runner, ledger: l });
     expect(first.outcome).toBe("gated");
     expect(first.exitCode).toBe(3);
-    expect(calls.map((c) => c.argv.slice(0, 2).join(" "))).toEqual(["choudoufu live-check", "choudoufu live-import"]);
+    expect(calls.map((c) => c.argv.slice(0, 2).join(" "))).toEqual(["choudoufu init", "choudoufu live-check", "choudoufu live-import"]);
     expect(calls.every((c) => !c.argv.includes("-approve") && c.cwd !== join(realpathSync(root), "net"))).toBe(true);
     expect(kind()).toBe("terraform");
 
@@ -82,6 +82,23 @@ describe("chant workspace promote (#3178)", () => {
     expect(kind()).toBe("choudoufu");
     expect(calls.at(-1)?.argv).toContain("-approve");
     expect(calls.at(-1)?.cwd).toBe(join(realpathSync(root), "net"));
+  });
+
+  test("the staging installs providers with choudoufu init, and nothing it writes under .terraform/ reaches the patch (#4461)", async () => {
+    const l = ledger();
+    const installing: PromoteRunner = async (argv, cwd) => {
+      calls.push({ argv, cwd });
+      if (argv[1] === "init") {
+        mkdirSync(join(cwd, ".terraform", "providers"), { recursive: true });
+        writeFileSync(join(cwd, ".terraform", "providers", "aws"), "a provider binary\n");
+      }
+      return { exitCode: 0, output: "" };
+    };
+    const r = await promoteCommand({ root, member: "net", state: "/s/terraform.tfstate", runner: installing, ledger: l });
+    expect(r.outcome).toBe("gated");
+    expect(calls[0]!.argv).toEqual(["choudoufu", "init", "-input=false", "-backend=false", "-no-color"]);
+    expect(r.patch).not.toContain(".terraform");
+    expect(r.patch).toContain('"kind": "choudoufu"');
   });
 
   test("a failing live-check stops before any gate and leaves the tree alone", async () => {
