@@ -202,6 +202,14 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
    * of that file changes nothing else.
    */
   targets?: string[];
+  /**
+   * `false` skips `show -no-color`, the human-readable render (#4479). The
+   * plan then runs one `show` process, `show -json`, whose document gives the
+   * digest, the change set and everything a caller derives from `json`, and
+   * {@link TerraformPlanResult.text} is `""`. For a caller that never reads
+   * the text, such as the `terraform-apply` capability. Default: `true`.
+   */
+  text?: boolean;
 }
 
 export interface TerraformApplyArgs extends TerraformRootArgs {
@@ -315,7 +323,7 @@ export interface TerraformPlanResult extends PlanChangeCounts {
   dir: string;
   /** `terraform show -json <planFile>`, parsed. */
   json: unknown;
-  /** `terraform show -no-color <planFile>` — the human-readable plan. */
+  /** `terraform show -no-color <planFile>` — the human-readable plan. `""` when the plan ran with `text: false`. */
   text: string;
   /**
    * This plan's identity (#2300) — {@link terraformPlanDigest} over
@@ -952,7 +960,8 @@ export async function terraformInit(
 
 /**
  * `terraform plan -detailed-exitcode -out=<planFile>` in the named root, then
- * `terraform show` over the written plan in both `-json` and `-no-color` form.
+ * `terraform show` over the written plan in both `-json` and `-no-color` form
+ * (`-json` alone with `text: false`).
  *
  * The exit code is the answer, not an error condition: 0 is a plan with no
  * changes, 2 is a plan with changes, and anything else, 1 included, is a
@@ -1000,7 +1009,7 @@ export async function terraformPlan(
   }
 
   const jsonRun = await run(terraformShowCommand({ binary, json: true, planFile }), dir, env, signal);
-  const textRun = await run(terraformShowCommand({ binary, json: false, planFile }), dir, env, signal);
+  const text = args.text === false ? "" : (await run(terraformShowCommand({ binary, json: false, planFile }), dir, env, signal)).stdout;
   const json: unknown = JSON.parse(jsonRun.stdout);
 
   return {
@@ -1008,7 +1017,7 @@ export async function terraformPlan(
     planFile,
     dir,
     json,
-    text: textRun.stdout,
+    text,
     planDigest: terraformPlanDigest(json),
     changeSet: terraformChangeSetPart({
       member: args.root,
