@@ -189,6 +189,28 @@ function run(p: Project, exec: BinaryExec, extra: Partial<ComposedRunOptions> = 
   return new ComposedRun({ projectRoot: p.dir, composition: p.c, terraform: p.terraform, binary: { path: "tofu" }, env: {}, work: tmp("chant-compose-work-"), lock: true, runId: "run-1", exec, retryDelays: [0, 0], ...extra });
 }
 
+describe("ComposedRun's init takes the root's backend-config files (chant#4459)", () => {
+  test("each member's init gets -backend-config=<file> for each file, then its pairs, run in the member's directory", async () => {
+    const p = project();
+    writeFileSync(join(p.dir, "roots", "a", "backend.hcl"), 'path = "terraform.tfstate"\n');
+    const terraform: TerraformConfig = { ...p.terraform, roots: { ...p.terraform.roots, a: { dir: "roots/a", backendConfigFiles: ["backend.hcl"], backendConfig: { workspace_dir: "ws" } } } };
+    const fake = fakeTofu(p);
+    const inits: Array<[string, string[]]> = [];
+    const exec: BinaryExec = async (bin, args, dir, env) => {
+      if (args[0] === "init") inits.push([relative(p.dir, dir), args]);
+      return fake.exec(bin, args, dir, env);
+    };
+    const r = run(p, exec, { terraform });
+    try {
+      await r.plan();
+    } finally {
+      await r.release();
+    }
+    expect(inits.find(([d]) => d === join("roots", "a"))![1]).toEqual(["init", "-input=false", "-no-color", "-backend-config=backend.hcl", "-backend-config=workspace_dir=ws"]);
+    expect(inits.find(([d]) => d === join("roots", "b"))![1]).toEqual(["init", "-input=false", "-no-color"]);
+  });
+});
+
 describe("ComposedRun", () => {
   test("one plan names B's and C's reads unknown, one digest covers all three, and one apply writes each state back to its own root, upstreams first", async () => {
     const p = project();

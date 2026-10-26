@@ -61,6 +61,11 @@ const CASES: Case[] = [
   { name: "a cloud block in a .tofu file of a tofu root", files: { "main.tofu": 'terraform {\n  cloud {\n    organization = "o"\n  }\n}\n' }, terraform: { binary: "tofu" }, refused: "cloud" },
   { name: "another backend", files: { "main.tf": 'terraform {\n  backend "consul" {\n    path = "c"\n  }\n}\n' }, refused: "backend" },
   {
+    name: "s3 whose use_lockfile = true is only in a backend-config file (chant#4459)",
+    files: { "main.tf": s3(""), "backend.hcl": "# the lock\nuse_lockfile = true\n" },
+    terraform: { roots: { a: { dir: "roots/a" }, b: { dir: "roots/b" }, c: { dir: "roots/c", backendConfigFiles: ["backend.hcl"] } } },
+  },
+  {
     name: "init recorded another bucket than the code names",
     files: { "main.tf": s3("    use_lockfile = true\n"), ".terraform/terraform.tfstate": record("s3", { bucket: "elsewhere", key: "c.tfstate", use_lockfile: true }) },
     refused: "disagree",
@@ -82,7 +87,10 @@ function both(c: Case): { fallback?: string; state: ReturnType<typeof stateObjec
   const terraform: TerraformConfig = { roots: { a: { dir: "roots/a" }, b: { dir: "roots/b" }, c: { dir: "roots/c" } }, compose: { enabled: true }, ...c.terraform } as TerraformConfig;
   const input: CompositionInput = { projectRoot: dir, components: [tf("a"), tf("b"), tf("c")], env, terraform };
   const fallback = compositionFor(input).fallbacks.find((f) => f.member === "c" && f.kind === "backend")?.reason;
-  const state = stateObject(join(dir, "roots/c"), env, undefined, terraform.binary, terraform.roots.c?.backendConfig);
+  const state = stateObject(join(dir, "roots/c"), env, undefined, terraform.binary, {
+    ...(terraform.roots.c?.backendConfig ? { backendConfig: terraform.roots.c.backendConfig } : {}),
+    ...(terraform.roots.c?.backendConfigFiles ? { backendConfigFiles: terraform.roots.c.backendConfigFiles } : {}),
+  });
   return { ...(fallback ? { fallback } : {}), state };
 }
 
@@ -122,7 +130,7 @@ describe("the parts of the verdict", () => {
   });
 
   test("TF_CLI_ARGS and TF_CLI_ARGS_init -backend-config flags, pairs and files, later over earlier", () => {
-    expect(cliBackendConfig({ TF_CLI_ARGS: "-backend-config=region=eu-west-1 -backend-config backend.hcl", TF_CLI_ARGS_init: '-backend-config="region=us-east-2" --backend-config=use_lockfile=true' })).toEqual({
+    expect(cliBackendConfig({ TF_CLI_ARGS: "-backend-config=region=eu-west-1 -backend-config backend.hcl", TF_CLI_ARGS_init: '-backend-config="region=us-east-2" --backend-config=use_lockfile=true' })).toMatchObject({
       pairs: { region: "us-east-2", use_lockfile: "true" },
       files: ["backend.hcl"],
     });

@@ -44,7 +44,9 @@ export default {
 `dir` resolves against the project root, the directory holding
 `chant.config.ts`, because a `.tf` tree usually sits beside the typed source
 rather than inside it. Each root also takes an optional `workspace`, a
-`varFiles` list and a `backendConfig` map.
+`varFiles` list, a `backendConfigFiles` list (backend-config files such as
+`backend.hcl`, relative to `dir`, passed to `init` before the pairs) and a
+`backendConfig` map.
 
 A root can also be marked `signalOnly: true` ([#4484](https://github.com/INTENTIUS/chant/issues/4484)).
 Use it for a root that belongs to another workspace member and is declared here
