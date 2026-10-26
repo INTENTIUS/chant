@@ -66,7 +66,8 @@ export const terraformInitContract = activityContract(
     upgrade: z.boolean().optional(),
     reconfigure: z.boolean().optional(),
   }),
-  z.object({ dir: z.string(), workspace: z.string().optional() }),
+  // `rootPath` (#4482) is what TerraformApplyOp's Init step publishes as `TerraformRootPath`; OPS012 checks it here.
+  z.object({ dir: z.string(), workspace: z.string().optional(), rootPath: z.string().optional() }),
   rootEntity,
 );
 
