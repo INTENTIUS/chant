@@ -40,7 +40,7 @@ import {
 } from "./drift-record";
 import type { DeepDiffResult } from "./lifecycle/deep-diff";
 import type { LiveDiffResult } from "./lifecycle/live-diff";
-import type { ComponentStatusResult } from "./lifecycle/status";
+import type { ComponentStatusRow } from "./lifecycle/status";
 import { UNOBSERVED_REASONS } from "./observation";
 import { contract, validSchema } from "./workspace/__fixtures__/contract-repo";
 import schema from "./workspace/drift.schema.json";
@@ -172,6 +172,7 @@ describe("redaction", () => {
   test("path keys skip indexes and read quoted keys", () => {
     expect(attributePathKeys('spec.env[0]["db.password"].value')).toEqual(["spec", "env", "db.password", "value"]);
     expect(attributePathKeys("a")).toEqual(["a"]);
+    expect(attributePathKeys("Environment[#DB_PASSWORD].Value")).toEqual(["Environment", "DB_PASSWORD", "Value"]);
   });
 });
 
@@ -394,8 +395,55 @@ describe("choudoufu's live-plan -resource stream, as it writes it", () => {
   });
 });
 
-describe("lifecycle diff --live", () => {
-  const records = liveDiffDriftRecords({ member: "app", observedAt: AT, diff: fixture<LiveDiffResult>("live-diff.json") });
+// The recorded reads (#4475): `lifecycle diff --live --json` and `components
+// status --json` (with and without --live) run against a chant AWS project on
+// floci. __fixtures__/drift-record/README.md says how. Shapes floci cannot
+// produce (a runtime child, an orphan, an unchanged thin entity, a thin
+// attribute change, a failed deep read, a digest drift, missing credentials)
+// stay below as constructed inputs, labelled as such.
+const recordedDiff = fixture<{ lexicons: Record<string, { resources: LiveDiffResult; observed: Record<string, { type: string }>; deep: DeepDiffResult }> }>(
+  "lifecycle-diff-live.json",
+).lexicons.aws;
+const recordedTypes = Object.fromEntries(Object.entries(recordedDiff.observed).map(([name, meta]) => [name, meta.type]));
+
+describe("lifecycle diff --live, recorded", () => {
+  const records = liveDiffDriftRecords({ member: "app", observedAt: AT, diff: fixture<LiveDiffResult>("live-diff.json"), types: recordedTypes });
+
+  test("the slice is the command's own resources", () => {
+    expect(fixture<LiveDiffResult>("live-diff.json")).toEqual(recordedDiff.resources);
+  });
+
+  test("maps every bucket the run produced", () => {
+    expect(statusOf(records)).toEqual({
+      alertsTopic: "in-sync",
+      appRole: "drifted",
+      cacheTopic: "pending",
+      dataBucket: "drifted",
+      dataBucketPolicy: "drifted",
+      eventsTopic: "drifted",
+      quietSg: "in-sync",
+      strayTopic: "missing",
+      taskQueue: "drifted",
+      webSg: "in-sync",
+    });
+    expect(records.every((r) => r.read === "live-read" && r.engine === "chant")).toBe(true);
+    expect(records.find((r) => r.address === "webSg")!.resourceType).toBe("AWS::EC2::SecurityGroup");
+  });
+
+  test("a redeploy since the snapshot reads as thin drift on its timestamps", () => {
+    expect(records.find((r) => r.address === "eventsTopic")!.attributes?.map((a) => a.path)).toEqual(["lastUpdated", "status"]);
+  });
+
+  test("round-trips", () => {
+    roundTrip(records);
+  });
+});
+
+describe("lifecycle diff --live, constructed shapes", () => {
+  // Not recorded: floci gives no runtime children, no ownership markers on a
+  // stack (so no orphan), and no thin attribute change beyond timestamps.
+  const constructed = {"missing": ["queue"], "orphan": ["stray-bucket"], "runtimeChildren": [{"name": "web-7d9f-abcde", "type": "K8s::Core::Pod", "owner": "web"}], "disappeared": ["cache"], "newlyObserved": ["topic"], "driftedSinceSnapshot": [{"name": "bucket", "type": "AWS::S3::Bucket", "changes": [{"path": "attributes.tags.env", "oldValue": "prod", "newValue": "staging"}, {"path": "attributes.dbPassword", "oldValue": "hunter2", "newValue": "hunter3"}]}], "unchanged": ["role"], "unobserved": [{"name": "widget", "type": "K8s::X::Widget", "reason": "unsupported-kind", "detail": "no reader for this CRD", "queried": "/apis/x/v1/widgets/widget"}]} as LiveDiffResult;
+  const records = liveDiffDriftRecords({ member: "app", observedAt: AT, diff: constructed });
 
   test("maps every bucket", () => {
     expect(statusOf(records)).toEqual({
@@ -408,7 +456,6 @@ describe("lifecycle diff --live", () => {
       "web-7d9f-abcde": "runtime",
       widget: "not-observed",
     });
-    expect(records.every((r) => r.read === "live-read" && r.engine === "chant")).toBe(true);
   });
 
   test("carries the paths, redacted, and the hole's reason and address", () => {
@@ -430,8 +477,60 @@ describe("lifecycle diff --live", () => {
   });
 });
 
-describe("deep observe", () => {
+describe("deep observe, recorded", () => {
   const deep = deepDiffDriftRecords({ member: "app", observedAt: AT, diff: fixture<DeepDiffResult>("deep-diff.json") });
+
+  test("the slice is the command's own deep result", () => {
+    expect(fixture<DeepDiffResult>("deep-diff.json")).toEqual(recordedDiff.deep);
+  });
+
+  test("a changed property carries declared before and live after", () => {
+    expect(deep.find((r) => r.address === "webSg")!.attributes).toContainEqual({ path: "GroupDescription", before: "rx web tier, v2", after: "rx web tier" });
+  });
+
+  test("a property the live read does not return carries only the declared value", () => {
+    expect(deep.find((r) => r.address === "appRole")!.attributes).toContainEqual({ path: "MaxSessionDuration", before: 3600 });
+  });
+
+  test("a keyed element whose key looks secret-bearing is redacted", () => {
+    const role = deep.find((r) => r.address === "appRole")!.attributes!;
+    expect(role.filter((a) => a.path.startsWith("Tags[#api-token-owner]"))).toEqual([
+      { path: "Tags[#api-token-owner].Key", sensitive: true },
+      { path: "Tags[#api-token-owner].Value", sensitive: true },
+    ]);
+  });
+
+  test("a type with no deep reader is a hole with its reason", () => {
+    expect(statusOf(deep)).toEqual({
+      alertsTopic: "not-observed",
+      appRole: "drifted",
+      dataBucket: "drifted",
+      dataBucketPolicy: "not-observed",
+      eventsTopic: "not-observed",
+      quietSg: "drifted",
+      taskQueue: "not-observed",
+      webSg: "drifted",
+    });
+    expect(deep.find((r) => r.address === "taskQueue")!.unobserved?.reason).toBe("unsupported-kind");
+    roundTrip(deep);
+  });
+
+  test("laid over the thin read, an unsupported deep kind stays on the attribute surface", () => {
+    const thin = liveDiffDriftRecords({ member: "app", observedAt: AT, diff: recordedDiff.resources, types: recordedTypes });
+    const merged = mergeDeepDrift(thin, deep);
+    expect(merged.find((r) => r.address === "alertsTopic")!.status).toBe("in-sync");
+    expect(merged.find((r) => r.address === "alertsTopic")!.attributesUnobserved?.reason).toBe("unsupported-kind");
+    expect(merged.find((r) => r.address === "webSg")!.status).toBe("drifted");
+    roundTrip(merged);
+  });
+});
+
+describe("deep observe, constructed shapes", () => {
+  // Not recorded: floci's Cloud Control answers every read, so no read-failed
+  // hole, and it returns too little of any type for a deep unchanged entity.
+  const constructed = {"drifted": [{"name": "role", "type": "AWS::IAM::Role", "changes": [{"path": "MaxSessionDuration", "kind": "changed", "declared": 3600, "live": 7200}, {"path": "Tags[0].Value", "kind": "absent", "declared": "prod"}, {"path": "Policies[0].secretArn", "kind": "changed", "declared": "arn:a", "live": "arn:b"}]}], "accepted": [], "unclaimed": [], "held": [], "unchanged": ["topic"], "unobserved": [{"name": "bucket", "type": "AWS::S3::Bucket", "reason": "read-failed", "detail": "GetBucketPolicy returned 500"}], "undeclaredEntities": []} as DeepDiffResult;
+  const deep = deepDiffDriftRecords({ member: "app", observedAt: AT, diff: constructed });
+  const thinConstructed = liveDiffDriftRecords({ member: "app", observedAt: AT, diff: {"missing": ["queue"], "orphan": ["stray-bucket"], "runtimeChildren": [{"name": "web-7d9f-abcde", "type": "K8s::Core::Pod", "owner": "web"}], "disappeared": ["cache"], "newlyObserved": ["topic"], "driftedSinceSnapshot": [{"name": "bucket", "type": "AWS::S3::Bucket", "changes": [{"path": "attributes.tags.env", "oldValue": "prod", "newValue": "staging"}, {"path": "attributes.dbPassword", "oldValue": "hunter2", "newValue": "hunter3"}]}], "unchanged": ["role"], "unobserved": [{"name": "widget", "type": "K8s::X::Widget", "reason": "unsupported-kind", "detail": "no reader for this CRD", "queried": "/apis/x/v1/widgets/widget"}]} as LiveDiffResult });
 
   test("drifted carries the paths, declared before and live after", () => {
     expect(deep.find((r) => r.address === "role")!.attributes).toEqual([
@@ -444,8 +543,7 @@ describe("deep observe", () => {
   });
 
   test("laid over the thin read, a deep hole stays on the attribute surface", () => {
-    const thin = liveDiffDriftRecords({ member: "app", observedAt: AT, diff: fixture<LiveDiffResult>("live-diff.json") });
-    const merged = mergeDeepDrift(thin, deep);
+    const merged = mergeDeepDrift(thinConstructed, deep);
     const bucket = merged.find((r) => r.address === "bucket")!;
     expect(bucket.status).toBe("drifted");
     expect(bucket.attributesUnobserved).toEqual({ reason: "read-failed", detail: "GetBucketPolicy returned 500" });
@@ -457,12 +555,26 @@ describe("deep observe", () => {
   });
 });
 
-describe("component status", () => {
-  const records = componentStatusDriftRecords({
-    member: "app",
-    observedAt: AT,
-    rows: fixture<ComponentStatusResult>("component-status.json").rows,
+describe("component status, recorded", () => {
+  const live = componentStatusDriftRecords({ member: "app", observedAt: AT, rows: fixture<ComponentStatusRow[]>("component-status.json") });
+  const ledger = componentStatusDriftRecords({ member: "app", observedAt: AT, rows: fixture<ComponentStatusRow[]>("component-status-ledger.json") });
+
+  test("--live maps every verdict the run produced", () => {
+    expect(statusOf(live)).toEqual({ api: "in-sync", "demo-infra": "in-sync", docs: "pending", edge: "drifted", jobs: "missing" });
+    roundTrip(live);
   });
+
+  test("without --live every row is a hole the read never reached", () => {
+    expect(new Set(ledger.map((r) => r.status))).toEqual(new Set(["not-observed"]));
+    expect(ledger.find((r) => r.address === "api")!.unobserved?.reason).toBe("not-reached");
+    roundTrip(ledger);
+  });
+});
+
+describe("component status, constructed shapes", () => {
+  // Not recorded: floci gives no live digest to differ from a record, and
+  // credentials it never checks cannot be missing.
+  const records = componentStatusDriftRecords({ member: "app", observedAt: AT, rows: [{"component": "api", "env": "prod", "reconciliation": "reconciled", "detail": "recorded 2026-10-01T00:00:00Z (digest sha256:aa), live and consistent", "live": true}, {"component": "web", "env": "prod", "reconciliation": "drifted", "detail": "recorded 2026-10-01T00:00:00Z (digest sha256:bb), but the live digest is sha256:cc", "live": true}, {"component": "jobs", "env": "prod", "reconciliation": "stale", "detail": "recorded 2026-10-01T00:00:00Z (digest sha256:dd), but nothing observed live now", "live": false}, {"component": "edge", "env": "prod", "reconciliation": "unrecorded", "detail": "live and chant-owned, but no release record exists \u2014 deployed outside the recorded path", "live": true}, {"component": "docs", "env": "prod", "reconciliation": "unrecorded", "detail": "no release record and nothing observed live", "live": false}, {"component": "search", "env": "prod", "reconciliation": "unknown", "detail": "recorded, but live state could not be observed \u2014 no credentials", "unobserved": {"reason": "no-credentials", "detail": "AWS_PROFILE unset"}}, {"component": "mail", "env": "prod", "reconciliation": "unknown", "detail": "recorded; live status not queried (pass --live to reconcile)"}] as ComponentStatusRow[] });
 
   test("maps every reconciliation verdict", () => {
     expect(statusOf(records)).toEqual({

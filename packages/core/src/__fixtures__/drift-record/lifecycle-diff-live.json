@@ -1,0 +1,825 @@
+{
+  "environment": "recy",
+  "lexicons": {
+    "aws": {
+      "resources": {
+        "missing": [
+          "cacheTopic"
+        ],
+        "orphan": [],
+        "runtimeChildren": [],
+        "disappeared": [
+          "strayTopic"
+        ],
+        "newlyObserved": [
+          "alertsTopic",
+          "quietSg",
+          "webSg"
+        ],
+        "driftedSinceSnapshot": [
+          {
+            "name": "appRole",
+            "type": "AWS::IAM::Role",
+            "changes": [
+              {
+                "path": "status",
+                "oldValue": "CREATE_COMPLETE",
+                "newValue": "EXTERNAL"
+              },
+              {
+                "path": "lastUpdated",
+                "oldValue": "2026-10-26T06:31:45.132045382Z"
+              },
+              {
+                "path": "attributes.region",
+                "oldValue": "us-east-1"
+              },
+              {
+                "path": "attributes.Arn",
+                "newValue": "arn:aws:iam::000000000000:role/ry-app-role"
+              },
+              {
+                "path": "attributes.RoleName",
+                "newValue": "ry-app-role"
+              },
+              {
+                "path": "attributes.Path",
+                "newValue": "/"
+              }
+            ]
+          },
+          {
+            "name": "dataBucket",
+            "type": "AWS::S3::Bucket",
+            "changes": [
+              {
+                "path": "status",
+                "oldValue": "CREATE_COMPLETE",
+                "newValue": "UPDATE_COMPLETE"
+              },
+              {
+                "path": "lastUpdated",
+                "oldValue": "2026-10-26T06:31:45.132492549Z",
+                "newValue": "2026-10-26T06:32:00.156983792Z"
+              }
+            ]
+          },
+          {
+            "name": "dataBucketPolicy",
+            "type": "AWS::S3::BucketPolicy",
+            "changes": [
+              {
+                "path": "status",
+                "oldValue": "CREATE_COMPLETE",
+                "newValue": "UPDATE_COMPLETE"
+              },
+              {
+                "path": "physicalId",
+                "oldValue": "bucket-policy-4516bdd6",
+                "newValue": "bucket-policy-993b2ead"
+              },
+              {
+                "path": "lastUpdated",
+                "oldValue": "2026-10-26T06:31:45.133049215Z",
+                "newValue": "2026-10-26T06:32:00.157473792Z"
+              }
+            ]
+          },
+          {
+            "name": "eventsTopic",
+            "type": "AWS::SNS::Topic",
+            "changes": [
+              {
+                "path": "status",
+                "oldValue": "CREATE_COMPLETE",
+                "newValue": "UPDATE_COMPLETE"
+              },
+              {
+                "path": "lastUpdated",
+                "oldValue": "2026-10-26T06:31:45.132664465Z",
+                "newValue": "2026-10-26T06:32:00.157185292Z"
+              }
+            ]
+          },
+          {
+            "name": "taskQueue",
+            "type": "AWS::SQS::Queue",
+            "changes": [
+              {
+                "path": "status",
+                "oldValue": "CREATE_COMPLETE",
+                "newValue": "UPDATE_COMPLETE"
+              },
+              {
+                "path": "lastUpdated",
+                "oldValue": "2026-10-26T06:31:45.132903549Z",
+                "newValue": "2026-10-26T06:32:00.157365833Z"
+              }
+            ]
+          }
+        ],
+        "unchanged": [],
+        "unobserved": [],
+        "queried": {
+          "appRole": "cloudcontrol:GetResource:AWS::IAM::Role:ry-app-role"
+        },
+        "definitions": {
+          "cacheTopic": "cfbb459653feffdc748e920ae9f0eb9a0c78d8efcd82cc21b74371be533e2e66"
+        }
+      },
+      "observed": {
+        "appRole": {
+          "type": "AWS::IAM::Role",
+          "physicalId": "ry-app-role",
+          "status": "EXTERNAL",
+          "ownership": "foreign",
+          "attributes": {
+            "Arn": "arn:aws:iam::000000000000:role/ry-app-role",
+            "RoleName": "ry-app-role",
+            "Path": "/"
+          }
+        },
+        "dataBucket": {
+          "type": "AWS::S3::Bucket",
+          "physicalId": "recy-000000000000-data",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.156983792Z",
+          "ownership": "foreign",
+          "attributes": {
+            "region": "us-east-1"
+          }
+        },
+        "dataBucketPolicy": {
+          "type": "AWS::S3::BucketPolicy",
+          "physicalId": "bucket-policy-993b2ead",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.157473792Z",
+          "ownership": "foreign",
+          "attributes": {
+            "region": "us-east-1"
+          }
+        },
+        "eventsTopic": {
+          "type": "AWS::SNS::Topic",
+          "physicalId": "arn:aws:sns:us-east-1:000000000000:ry-events",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.157185292Z",
+          "ownership": "foreign",
+          "attributes": {
+            "region": "us-east-1"
+          }
+        },
+        "taskQueue": {
+          "type": "AWS::SQS::Queue",
+          "physicalId": "https://sqs.us-east-1.amazonaws.com/000000000000/ry-tasks",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.157365833Z",
+          "ownership": "foreign",
+          "attributes": {
+            "region": "us-east-1"
+          }
+        },
+        "alertsTopic": {
+          "type": "AWS::SNS::Topic",
+          "physicalId": "arn:aws:sns:us-east-1:000000000000:ry-alerts",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.156195542Z",
+          "ownership": "foreign",
+          "attributes": {
+            "region": "us-east-1"
+          }
+        },
+        "quietSg": {
+          "type": "AWS::EC2::SecurityGroup",
+          "physicalId": "sg-d302c9213d0385623",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.157217208Z",
+          "ownership": "foreign",
+          "attributes": {
+            "GroupId": "sg-d302c9213d0385623",
+            "IpPermissionsEgress": [
+              {
+                "IpProtocol": "-1",
+                "UserIdGroupPairs": [],
+                "IpRanges": [
+                  {
+                    "CidrIp": "0.0.0.0/0"
+                  }
+                ],
+                "Ipv6Ranges": [],
+                "PrefixListIds": []
+              }
+            ],
+            "Tags": [],
+            "VpcId": "vpc-default",
+            "OwnerId": "000000000000",
+            "GroupName": "ry-quiet",
+            "Description": "rx quiet tier",
+            "IpPermissions": [],
+            "region": "us-east-1"
+          }
+        },
+        "webSg": {
+          "type": "AWS::EC2::SecurityGroup",
+          "physicalId": "sg-d192bc8ba5701dd2f",
+          "status": "UPDATE_COMPLETE",
+          "lastUpdated": "2026-10-26T06:32:00.157415667Z",
+          "ownership": "foreign",
+          "attributes": {
+            "GroupId": "sg-d192bc8ba5701dd2f",
+            "IpPermissionsEgress": [
+              {
+                "IpProtocol": "-1",
+                "UserIdGroupPairs": [],
+                "IpRanges": [
+                  {
+                    "CidrIp": "0.0.0.0/0"
+                  }
+                ],
+                "Ipv6Ranges": [],
+                "PrefixListIds": []
+              }
+            ],
+            "Tags": [],
+            "VpcId": "vpc-default",
+            "OwnerId": "000000000000",
+            "GroupName": "ry-web",
+            "Description": "rx web tier",
+            "IpPermissions": [],
+            "region": "us-east-1"
+          }
+        }
+      },
+      "deep": {
+        "drifted": [
+          {
+            "name": "appRole",
+            "type": "AWS::IAM::Role",
+            "changes": [
+              {
+                "path": "AssumeRolePolicyDocument.Statement[0].Action",
+                "kind": "absent",
+                "declared": "sts:AssumeRole",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "AssumeRolePolicyDocument.Statement[0].Effect",
+                "kind": "absent",
+                "declared": "Allow",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "AssumeRolePolicyDocument.Statement[0].Principal.Service",
+                "kind": "absent",
+                "declared": "lambda.amazonaws.com",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "AssumeRolePolicyDocument.Version",
+                "kind": "absent",
+                "declared": "2012-10-17",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "MaxSessionDuration",
+                "kind": "absent",
+                "declared": 3600,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#api-token-owner].Key",
+                "kind": "absent",
+                "declared": "api-token-owner",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#api-token-owner].Value",
+                "kind": "absent",
+                "declared": "platform",
+                "origin": {
+                  "kind": "authored"
+                }
+              }
+            ]
+          },
+          {
+            "name": "dataBucket",
+            "type": "AWS::S3::Bucket",
+            "changes": [
+              {
+                "path": "PublicAccessBlockConfiguration.BlockPublicAcls",
+                "kind": "absent",
+                "declared": true,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "PublicAccessBlockConfiguration.BlockPublicPolicy",
+                "kind": "absent",
+                "declared": true,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "PublicAccessBlockConfiguration.IgnorePublicAcls",
+                "kind": "absent",
+                "declared": true,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "PublicAccessBlockConfiguration.RestrictPublicBuckets",
+                "kind": "absent",
+                "declared": true,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#demo].Key",
+                "kind": "absent",
+                "declared": "demo",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#demo].Value",
+                "kind": "absent",
+                "declared": "rec-4475y",
+                "origin": {
+                  "kind": "authored"
+                }
+              }
+            ]
+          },
+          {
+            "name": "quietSg",
+            "type": "AWS::EC2::SecurityGroup",
+            "changes": [
+              {
+                "path": "Tags[#demo].Key",
+                "kind": "absent",
+                "declared": "demo",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#demo].Value",
+                "kind": "absent",
+                "declared": "rec-4475y",
+                "origin": {
+                  "kind": "authored"
+                }
+              }
+            ]
+          },
+          {
+            "name": "webSg",
+            "type": "AWS::EC2::SecurityGroup",
+            "changes": [
+              {
+                "path": "GroupDescription",
+                "kind": "changed",
+                "declared": "rx web tier, v2",
+                "live": "rx web tier",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].CidrIp",
+                "kind": "absent",
+                "declared": "10.0.0.0/16",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].FromPort",
+                "kind": "absent",
+                "declared": 443,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].IpProtocol",
+                "kind": "absent",
+                "declared": "tcp",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].ToPort",
+                "kind": "absent",
+                "declared": 443,
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#demo].Key",
+                "kind": "absent",
+                "declared": "demo",
+                "origin": {
+                  "kind": "authored"
+                }
+              },
+              {
+                "path": "Tags[#demo].Value",
+                "kind": "absent",
+                "declared": "rec-4475y",
+                "origin": {
+                  "kind": "authored"
+                }
+              }
+            ]
+          }
+        ],
+        "accepted": [],
+        "unclaimed": [
+          {
+            "name": "quietSg",
+            "type": "AWS::EC2::SecurityGroup",
+            "fields": [
+              {
+                "path": "VpcId",
+                "live": "vpc-default",
+                "source": "claimed-fields"
+              }
+            ]
+          },
+          {
+            "name": "webSg",
+            "type": "AWS::EC2::SecurityGroup",
+            "fields": [
+              {
+                "path": "VpcId",
+                "live": "vpc-default",
+                "source": "claimed-fields"
+              }
+            ]
+          }
+        ],
+        "held": [],
+        "unchanged": [],
+        "unobserved": [
+          {
+            "name": "alertsTopic",
+            "type": "AWS::SNS::Topic",
+            "reason": "unsupported-kind",
+            "detail": "no deep reader for AWS::SNS::Topic \u2014 coverage is opt-in per type"
+          },
+          {
+            "name": "dataBucketPolicy",
+            "type": "AWS::S3::BucketPolicy",
+            "reason": "unsupported-kind",
+            "detail": "no deep reader for AWS::S3::BucketPolicy \u2014 coverage is opt-in per type"
+          },
+          {
+            "name": "eventsTopic",
+            "type": "AWS::SNS::Topic",
+            "reason": "unsupported-kind",
+            "detail": "no deep reader for AWS::SNS::Topic \u2014 coverage is opt-in per type"
+          },
+          {
+            "name": "taskQueue",
+            "type": "AWS::SQS::Queue",
+            "reason": "unsupported-kind",
+            "detail": "no deep reader for AWS::SQS::Queue \u2014 coverage is opt-in per type"
+          }
+        ],
+        "undeclaredEntities": []
+      },
+      "reconcile": [
+        {
+          "entity": "appRole",
+          "path": "AssumeRolePolicyDocument.Statement[0].Action",
+          "declared": "sts:AssumeRole",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "AssumeRolePolicyDocument.Statement[0].Action on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `AssumeRolePolicyDocument.Statement[0].Action` in src/infra.ts from \"sts:AssumeRole\" to unset."
+          }
+        },
+        {
+          "entity": "appRole",
+          "path": "AssumeRolePolicyDocument.Statement[0].Effect",
+          "declared": "Allow",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "AssumeRolePolicyDocument.Statement[0].Effect on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `AssumeRolePolicyDocument.Statement[0].Effect` in src/infra.ts from \"Allow\" to unset."
+          }
+        },
+        {
+          "entity": "appRole",
+          "path": "AssumeRolePolicyDocument.Statement[0].Principal.Service",
+          "declared": "lambda.amazonaws.com",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "AssumeRolePolicyDocument.Statement[0].Principal.Service on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `AssumeRolePolicyDocument.Statement[0].Principal.Service` in src/infra.ts from \"lambda.amazonaws.com\" to unset."
+          }
+        },
+        {
+          "entity": "appRole",
+          "path": "AssumeRolePolicyDocument.Version",
+          "declared": "2012-10-17",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "AssumeRolePolicyDocument.Version on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `AssumeRolePolicyDocument.Version` in src/infra.ts from \"2012-10-17\" to unset."
+          }
+        },
+        {
+          "entity": "appRole",
+          "path": "MaxSessionDuration",
+          "declared": 3600,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "MaxSessionDuration on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `MaxSessionDuration` in src/infra.ts from 3600 to unset."
+          }
+        },
+        {
+          "entity": "appRole",
+          "path": "Tags[#api-token-owner].Key",
+          "declared": "api-token-owner",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#api-token-owner].Key on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `Tags[#api-token-owner].Key` in src/infra.ts from \"api-token-owner\" to unset."
+          }
+        },
+        {
+          "entity": "appRole",
+          "path": "Tags[#api-token-owner].Value",
+          "declared": "platform",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#api-token-owner].Value on AWS::IAM::Role appRole is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `Tags[#api-token-owner].Value` in src/infra.ts from \"platform\" to unset."
+          }
+        },
+        {
+          "entity": "dataBucket",
+          "path": "PublicAccessBlockConfiguration.BlockPublicAcls",
+          "declared": true,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "PublicAccessBlockConfiguration.BlockPublicAcls on AWS::S3::Bucket dataBucket is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `PublicAccessBlockConfiguration.BlockPublicAcls` in src/infra.ts from true to unset."
+          }
+        },
+        {
+          "entity": "dataBucket",
+          "path": "PublicAccessBlockConfiguration.BlockPublicPolicy",
+          "declared": true,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "PublicAccessBlockConfiguration.BlockPublicPolicy on AWS::S3::Bucket dataBucket is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `PublicAccessBlockConfiguration.BlockPublicPolicy` in src/infra.ts from true to unset."
+          }
+        },
+        {
+          "entity": "dataBucket",
+          "path": "PublicAccessBlockConfiguration.IgnorePublicAcls",
+          "declared": true,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "PublicAccessBlockConfiguration.IgnorePublicAcls on AWS::S3::Bucket dataBucket is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `PublicAccessBlockConfiguration.IgnorePublicAcls` in src/infra.ts from true to unset."
+          }
+        },
+        {
+          "entity": "dataBucket",
+          "path": "PublicAccessBlockConfiguration.RestrictPublicBuckets",
+          "declared": true,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "PublicAccessBlockConfiguration.RestrictPublicBuckets on AWS::S3::Bucket dataBucket is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `PublicAccessBlockConfiguration.RestrictPublicBuckets` in src/infra.ts from true to unset."
+          }
+        },
+        {
+          "entity": "dataBucket",
+          "path": "Tags[#demo].Key",
+          "declared": "demo",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#demo].Key on AWS::S3::Bucket dataBucket is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `Tags[#demo].Key` in src/infra.ts from \"demo\" to unset."
+          }
+        },
+        {
+          "entity": "dataBucket",
+          "path": "Tags[#demo].Value",
+          "declared": "rec-4475y",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#demo].Value on AWS::S3::Bucket dataBucket is declared directly in src/infra.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/infra.ts",
+            "description": "change the declared value of `Tags[#demo].Value` in src/infra.ts from \"rec-4475y\" to unset."
+          }
+        },
+        {
+          "entity": "quietSg",
+          "path": "Tags[#demo].Key",
+          "declared": "demo",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#demo].Key on AWS::EC2::SecurityGroup quietSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `Tags[#demo].Key` in src/sg.ts from \"demo\" to unset."
+          }
+        },
+        {
+          "entity": "quietSg",
+          "path": "Tags[#demo].Value",
+          "declared": "rec-4475y",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#demo].Value on AWS::EC2::SecurityGroup quietSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `Tags[#demo].Value` in src/sg.ts from \"rec-4475y\" to unset."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "GroupDescription",
+          "declared": "rx web tier, v2",
+          "live": "rx web tier",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "GroupDescription on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `GroupDescription` in src/sg.ts from \"rx web tier, v2\" to \"rx web tier\"."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].CidrIp",
+          "declared": "10.0.0.0/16",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].CidrIp on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].CidrIp` in src/sg.ts from \"10.0.0.0/16\" to unset."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].FromPort",
+          "declared": 443,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].FromPort on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].FromPort` in src/sg.ts from 443 to unset."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].IpProtocol",
+          "declared": "tcp",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].IpProtocol on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].IpProtocol` in src/sg.ts from \"tcp\" to unset."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].ToPort",
+          "declared": 443,
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].ToPort on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `SecurityGroupIngress[#tcp:443:443:10.0.0.0/16].ToPort` in src/sg.ts from 443 to unset."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "Tags[#demo].Key",
+          "declared": "demo",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#demo].Key on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `Tags[#demo].Key` in src/sg.ts from \"demo\" to unset."
+          }
+        },
+        {
+          "entity": "webSg",
+          "path": "Tags[#demo].Value",
+          "declared": "rec-4475y",
+          "origin": {
+            "kind": "direct"
+          },
+          "summary": "Tags[#demo].Value on AWS::EC2::SecurityGroup webSg is declared directly in src/sg.ts",
+          "resolution": {
+            "kind": "edit-declaration",
+            "sourceFile": "<project>/src/sg.ts",
+            "description": "change the declared value of `Tags[#demo].Value` in src/sg.ts from \"rec-4475y\" to unset."
+          }
+        }
+      ]
+    }
+  }
+}

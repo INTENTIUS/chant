@@ -1,21 +1,125 @@
 {
-  "missing": ["queue"],
-  "orphan": ["stray-bucket"],
-  "runtimeChildren": [{ "name": "web-7d9f-abcde", "type": "K8s::Core::Pod", "owner": "web" }],
-  "disappeared": ["cache"],
-  "newlyObserved": ["topic"],
+  "missing": [
+    "cacheTopic"
+  ],
+  "orphan": [],
+  "runtimeChildren": [],
+  "disappeared": [
+    "strayTopic"
+  ],
+  "newlyObserved": [
+    "alertsTopic",
+    "quietSg",
+    "webSg"
+  ],
   "driftedSinceSnapshot": [
     {
-      "name": "bucket",
+      "name": "appRole",
+      "type": "AWS::IAM::Role",
+      "changes": [
+        {
+          "path": "status",
+          "oldValue": "CREATE_COMPLETE",
+          "newValue": "EXTERNAL"
+        },
+        {
+          "path": "lastUpdated",
+          "oldValue": "2026-10-26T06:31:45.132045382Z"
+        },
+        {
+          "path": "attributes.region",
+          "oldValue": "us-east-1"
+        },
+        {
+          "path": "attributes.Arn",
+          "newValue": "arn:aws:iam::000000000000:role/ry-app-role"
+        },
+        {
+          "path": "attributes.RoleName",
+          "newValue": "ry-app-role"
+        },
+        {
+          "path": "attributes.Path",
+          "newValue": "/"
+        }
+      ]
+    },
+    {
+      "name": "dataBucket",
       "type": "AWS::S3::Bucket",
       "changes": [
-        { "path": "attributes.tags.env", "oldValue": "prod", "newValue": "staging" },
-        { "path": "attributes.dbPassword", "oldValue": "hunter2", "newValue": "hunter3" }
+        {
+          "path": "status",
+          "oldValue": "CREATE_COMPLETE",
+          "newValue": "UPDATE_COMPLETE"
+        },
+        {
+          "path": "lastUpdated",
+          "oldValue": "2026-10-26T06:31:45.132492549Z",
+          "newValue": "2026-10-26T06:32:00.156983792Z"
+        }
+      ]
+    },
+    {
+      "name": "dataBucketPolicy",
+      "type": "AWS::S3::BucketPolicy",
+      "changes": [
+        {
+          "path": "status",
+          "oldValue": "CREATE_COMPLETE",
+          "newValue": "UPDATE_COMPLETE"
+        },
+        {
+          "path": "physicalId",
+          "oldValue": "bucket-policy-4516bdd6",
+          "newValue": "bucket-policy-993b2ead"
+        },
+        {
+          "path": "lastUpdated",
+          "oldValue": "2026-10-26T06:31:45.133049215Z",
+          "newValue": "2026-10-26T06:32:00.157473792Z"
+        }
+      ]
+    },
+    {
+      "name": "eventsTopic",
+      "type": "AWS::SNS::Topic",
+      "changes": [
+        {
+          "path": "status",
+          "oldValue": "CREATE_COMPLETE",
+          "newValue": "UPDATE_COMPLETE"
+        },
+        {
+          "path": "lastUpdated",
+          "oldValue": "2026-10-26T06:31:45.132664465Z",
+          "newValue": "2026-10-26T06:32:00.157185292Z"
+        }
+      ]
+    },
+    {
+      "name": "taskQueue",
+      "type": "AWS::SQS::Queue",
+      "changes": [
+        {
+          "path": "status",
+          "oldValue": "CREATE_COMPLETE",
+          "newValue": "UPDATE_COMPLETE"
+        },
+        {
+          "path": "lastUpdated",
+          "oldValue": "2026-10-26T06:31:45.132903549Z",
+          "newValue": "2026-10-26T06:32:00.157365833Z"
+        }
       ]
     }
   ],
-  "unchanged": ["role"],
-  "unobserved": [
-    { "name": "widget", "type": "K8s::X::Widget", "reason": "unsupported-kind", "detail": "no reader for this CRD", "queried": "/apis/x/v1/widgets/widget" }
-  ]
+  "unchanged": [],
+  "unobserved": [],
+  "queried": {
+    "appRole": "cloudcontrol:GetResource:AWS::IAM::Role:ry-app-role"
+  },
+  "definitions": {
+    "cacheTopic": "cfbb459653feffdc748e920ae9f0eb9a0c78d8efcd82cc21b74371be533e2e66"
+  }
 }
