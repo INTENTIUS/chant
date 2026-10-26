@@ -172,6 +172,9 @@ interface BoundReleaseGate {
   unknownInputs?: Record<string, string[]>;
   /** The approval a resume record carried on, when it still covers what is left. */
   resumedFrom?: string;
+  /** The groups the plan planned as one (#4465), and the components that could have grouped and did not. */
+  groups?: import("../../components/release-gate").ReleasePlanGroup[];
+  fallbacks?: import("../../components/fan-out").FanOutGroupFallback[];
   replan: (only: ReadonlySet<string>, outputs: Record<string, Record<string, unknown>>) => Promise<ChangeSetDocument>;
   bind: (doc: ChangeSetDocument, gates: string[]) => Promise<ReleaseGateBinding>;
 }
@@ -200,6 +203,10 @@ async function bindReleaseGate(input: {
   projectPath: string;
   head: string | undefined;
   resume?: import("../../components/promote-rounds").PromoteResume;
+  /** The grouped fan-out (#4465): its groups plan as one. */
+  grouped?: import("../../components/fan-out").FanOutPlan;
+  /** Each group plan this binding makes is added here, the newest first, for the run to apply. */
+  groupRuns: import("../../components/capability").GroupRun[];
 }): Promise<BoundReleaseGate | number | undefined> {
   const { plan, under, port } = input;
   const gate = await import("../../components/release-gate");
@@ -230,8 +237,8 @@ async function bindReleaseGate(input: {
   }
 
   const digests = new Map(plan.items.map((i) => [i.component, i.digest]));
-  const planSet = (only: ReadonlySet<string> | undefined, outputs: Record<string, Record<string, unknown>>) =>
-    gate.planReleaseSet({
+  const planSet = async (only: ReadonlySet<string> | undefined, outputs: Record<string, Record<string, unknown>>) => {
+    const planned = await gate.planReleaseSet({
       release: under.release,
       env,
       components: input.prepared,
@@ -241,7 +248,13 @@ async function bindReleaseGate(input: {
       unsettled,
       seededOutputs: outputs,
       ...(only ? { only } : {}),
+      ...(input.grouped ? { grouped: input.grouped } : {}),
     });
+    // #4465: the run applies the plan the gate bound, the newest one for a group planned again.
+    for (const g of planned.groups ?? []) if (g.run) input.groupRuns.unshift(g.run);
+    return planned;
+  };
+  const groupsOf = (p: Awaited<ReturnType<typeof planSet>>) => ({ ...(p.groups ? { groups: p.groups } : {}), ...(p.fallbacks ? { fallbacks: p.fallbacks } : {}) });
 
   const { storeGateChangeSet } = await import("../../lifecycle/gate-change-set");
   const { readStoredChangeSet } = await import("../../lifecycle/change-set-store");
@@ -322,6 +335,7 @@ async function bindReleaseGate(input: {
           binding: { op: gate.RELEASE_GATE_OP, planDigest: stored.document.digest, releaseDigest, verifyEmpty },
           reads: fresh.reads,
           resumedFrom: stored.document.digest,
+          ...groupsOf(fresh),
           ...(fresh.plannedOutputs ? { plannedOutputs: fresh.plannedOutputs } : {}),
           ...(fresh.unknownInputs ? { unknownInputs: fresh.unknownInputs } : {}),
           ...later,
@@ -331,7 +345,7 @@ async function bindReleaseGate(input: {
     }
     const bound = await bindDoc(fresh.doc, gates, "change set");
     if (typeof bound === "number") return bound;
-    return { doc: fresh.doc, ...bound, reads: fresh.reads, ...(fresh.plannedOutputs ? { plannedOutputs: fresh.plannedOutputs } : {}), ...(fresh.unknownInputs ? { unknownInputs: fresh.unknownInputs } : {}), ...later };
+    return { doc: fresh.doc, ...bound, reads: fresh.reads, ...groupsOf(fresh), ...(fresh.plannedOutputs ? { plannedOutputs: fresh.plannedOutputs } : {}), ...(fresh.unknownInputs ? { unknownInputs: fresh.unknownInputs } : {}), ...later };
   }
 
   const first = await planSet(undefined, input.seededOutputs);
@@ -340,7 +354,7 @@ async function bindReleaseGate(input: {
   for (const [component, refs] of Object.entries(first.unknownInputs ?? {})) {
     console.error(formatInfo(`${component} reads ${refs.join(", ")}, known only once its upstream applies; it is planned again then, and needs its own approval if its plan moves`));
   }
-  return { doc: first.doc, ...bound, reads: first.reads, ...(first.plannedOutputs ? { plannedOutputs: first.plannedOutputs } : {}), ...(first.unknownInputs ? { unknownInputs: first.unknownInputs } : {}), ...later };
+  return { doc: first.doc, ...bound, reads: first.reads, ...groupsOf(first), ...(first.plannedOutputs ? { plannedOutputs: first.plannedOutputs } : {}), ...(first.unknownInputs ? { unknownInputs: first.unknownInputs } : {}), ...later };
 }
 
 /** A later round's or wave's plan was refused (provisional or failed members); the refusal is already printed. */
@@ -536,10 +550,51 @@ async function deployPlanIn(
       console.error(formatWarning({ message: `could not read the resume record ${resumePath}: ${err instanceof Error ? err.message : String(err)}` }));
     }
   }
+  // ws-107 (#4465): under a release, the components a capability takes as one
+  // plan and apply as one group; under --wave-gate none forms (ruling 1).
+  // A resume groups again what is left of each group.
+  let grouped: import("../../components/fan-out").FanOutPlan | undefined;
+  const groupRuns: import("../../components/capability").GroupRun[] = [];
+  if (under) {
+    const groups = await import("../../components/groups");
+    const whole = await groups.formRunGroups({
+      components: prepared,
+      plan: groups.componentSetFanOut(prepared),
+      registry,
+      env: plan.to,
+      ...(args.waveGate !== undefined ? { waveGate: true } : {}),
+    });
+    if (resume && whole.groups?.length) {
+      const { remainingFanOut } = await import("../../components/fan-out");
+      grouped = await groups.regroupRemaining({
+        components: prepared,
+        plan: remainingFanOut(whole, prepared, { completed: resume.completed }),
+        registry,
+        env: plan.to,
+        groups: whole.groups,
+        ...(whole.fallbacks ? { fallbacks: whole.fallbacks } : {}),
+      });
+    } else {
+      grouped = whole;
+    }
+  }
   let pullRequests: Array<import("../../lifecycle/merge-record").MergeRecord> = [];
   if (under) {
     try {
-      const result = await bindReleaseGate({ plan, prepared, under, registry, port, seededOutputs, actor: actor!, projectPath: project.projectPath, head, ...(resume ? { resume } : {}) });
+      const result = await bindReleaseGate({
+        plan,
+        prepared,
+        under,
+        registry,
+        port,
+        seededOutputs,
+        actor: actor!,
+        projectPath: project.projectPath,
+        head,
+        ...(resume ? { resume } : {}),
+        ...(grouped ? { grouped } : {}),
+        groupRuns,
+      });
       if (typeof result === "number") {
         tidy();
         return result;
@@ -594,6 +649,7 @@ async function deployPlanIn(
         ...(args.waveGate ? { waveGate: args.waveGate } : {}),
         replan: bound.replan,
         bind: bound.bind,
+        ...(grouped?.groups?.length ? { grouped } : {}),
         run: (components, outputs, binding) =>
           runPromotion({
             plan: { ...plan, items: plan.items.filter((i) => components.some((c) => c.name === i.component)) },
@@ -602,6 +658,7 @@ async function deployPlanIn(
             componentOutputs: outputs,
             gates: port,
             releaseGate: binding,
+            ...(grouped?.groups?.length ? { grouped, groupRuns } : {}),
             ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
             ...(events ? { onRunEvent: events.emit } : {}),
           }),
@@ -615,6 +672,8 @@ async function deployPlanIn(
         componentOutputs: seededOutputs,
         gates: port,
         ...(releaseGate ? { releaseGate } : {}),
+        // #4465: with no release gate to bind, nothing planned the groups beforehand, so each plans in its wave.
+        ...(grouped?.groups?.length ? { grouped, groupRuns, planGroupsAtWave: bound === undefined } : {}),
         ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
         ...(events ? { onRunEvent: events.emit } : {}),
       });
@@ -653,6 +712,15 @@ async function deployPlanIn(
       console.error(formatInfo(`resume record: ${resumePath}; the same promote carries on from here`));
     }
   }
+  // #4465: the groups applied as one, and how each member ended, as pr-report says it.
+  const { runGroupsReport, renderRunGroups } = await import("../../components/run-groups");
+  const groupsReport = runGroupsReport({
+    grouped,
+    ...(bound?.groups ? { planned: bound.groups } : {}),
+    ...(bound ? { doc: bound.doc } : {}),
+    ...(run.groupOutcomes ? { outcomes: run.groupOutcomes } : {}),
+  });
+  if (!args.json) for (const line of renderRunGroups(groupsReport, `the same ${verb}`)) console.error(formatInfo(line));
   // The driver settles the stream; this only ends one it left open.
   events?.settle(run.status === "fail" ? "failed" : run.status);
   if (!args.json) renderDriverHuman(run);
@@ -690,7 +758,7 @@ async function deployPlanIn(
     const withChangeSet = under && changeSetJson ? { release: { ...releaseJson.release!, ...changeSetJson } } : releaseJson;
     const stagedJson = staged ? { stages: staged.stages, ...(bound?.plannedOutputs ? { plannedOutputs: bound.plannedOutputs } : {}), ...(bound?.unknownInputs ? { unknownInputs: bound.unknownInputs } : {}) } : {};
     const prJson = pullRequests.length > 0 ? { pullRequests: pullRequests.map((r) => ({ commit: r.commit, source: r.source, plan: r.plan, digest: r.digest, approvedBy: r.approvedBy, ...(r.authorApproved ? { authorApproved: r.authorApproved } : {}) })) } : {};
-    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, ...stagedJson, ...prJson, run, recorded, ...(outcome ? { outcome } : {}) }, null, 2));
+    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, ...stagedJson, ...prJson, ...groupsReport, run, recorded, ...(outcome ? { outcome } : {}) }, null, 2));
   } else {
     for (const r of recorded) {
       console.error(formatSuccess(

@@ -17,6 +17,16 @@ A value another component creates in the same run has no value when the plan is 
 2. A preview. The capability plans the waiting component with stand-ins for the unknown values and keeps the plan's shape. After the upstream applies, the real plan is compared with that shape. If it matches, the round is covered by the first approval.
 3. A hole. The component is not planned until its upstream has applied. The note shows `inputs from <component>; re-checked on apply`, and the round needs an approval of its own.
 
+## Where a composed run applies
+
+Groups form in the pull-request run (`pr-plan`, `pr-apply`, `pr-env`), and at promote too. Under the default `trunk-curated` workflow a merge deploys nothing, and `chant components promote --release` deploys, so the release gate's plan forms the same groups by the same rule ([#4465](https://github.com/INTENTIUS/chant/issues/4465)). Each group plans with one `planGroup` call, its digest is folded into each member's part of the release gate's change set, and the promote applies it with one `runGroup` call, with no round between its members. The promote prints a line per group with its members, its wave and its digest, then how each member ended. A promote that stopped part way through a group writes its resume record, and running the same promote again plans only the members that did not apply, as a smaller group where they still join.
+
+`chant components fan-out` and `chant run --components` form the same groups. Neither plans before it applies, so each group plans in its wave against the outputs standing then, and applies at once.
+
+Under `--wave-gate` no group forms, at promote or in a fan-out. Each wave is planned component by component, so every component that would have joined a group falls back with kind `wave-gate` and the run goes wave by wave as before.
+
+A member of a group has one step, gates counted, so it has no gate of its own. At promote, the release gate is decided at the gates of the other components the promote deploys.
+
 ## Per lexicon
 
 | Capability | Lexicon | Composes as | Issue | What the API offers | Why |

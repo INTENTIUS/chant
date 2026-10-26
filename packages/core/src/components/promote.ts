@@ -44,6 +44,8 @@ import { CapabilityRegistry, type Capability } from "./capability";
 import {
   runInterpretDriver,
   DriverRunFailure,
+  deployContext,
+  type InterpretGroups,
   type DriverComponent,
   type DriverComponentResult,
   type DriverGate,
@@ -53,6 +55,9 @@ import {
   type DriverStep,
 } from "./driver";
 import type { GateLedgerPort } from "../op/gate";
+import type { GroupRun } from "./capability";
+import type { FanOutGroup, FanOutPlan } from "./fan-out";
+import { planAndRunComponentGroup, runComponentGroup } from "./groups";
 import type { Release } from "../lifecycle/release-store";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
@@ -631,6 +636,27 @@ export interface RunPromotionOptions {
   onProgress?: (event: RunProgressEvent) => void;
   /** Where the run's events go (#4041, `--events-json`). */
   onRunEvent?: RunEventSink;
+  /**
+   * The grouped fan-out (ws-107, #4465, `formRunGroups`): each of its groups
+   * applies as one, in the wave it places it in. Absent, or without
+   * `groups`: every component runs its own deploy, as before.
+   */
+  grouped?: FanOutPlan;
+  /**
+   * The approved plan of each group, as the release gate's plan made it
+   * (`ReleasePlan.groups`). A group runs the one whose members are its own;
+   * the newest first. A group with none plans in its wave and applies only
+   * under `planGroupsAtWave`, and fails otherwise.
+   */
+  groupRuns?: readonly GroupRun[];
+  /** A promote with no release gate to bind plans each group in its wave (#4465). */
+  planGroupsAtWave?: boolean;
+}
+
+/** The run in `runs` that plans exactly the members of `group`. */
+function approvedRunOf(runs: readonly GroupRun[] | undefined, group: FanOutGroup): GroupRun | undefined {
+  const want = [...group.components].sort().join("\n");
+  return runs?.find((r) => Object.keys(r.plans).sort().join("\n") === want);
 }
 
 /**
@@ -647,18 +673,42 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
     .filter((c) => names.has(c.name))
     .map((c) => ({ ...c, dependsOn: (c.dependsOn ?? []).filter((d) => names.has(d)) }));
   const expected = new Map(plan.items.map((i) => [i.component, i.digest]));
+  const registry = checkPublishedDigest(options.registry, expected);
+  const releaseIdentity = (component: string) => {
+    const item = plan.items.find((i) => i.component === component);
+    return item ? { version: item.digest, revision: item.source.gitSha } : undefined;
+  };
+  // ws-107 (#4465): a group applies as one, through its approved plan.
+  const grouped = options.grouped?.groups?.length ? options.grouped : undefined;
+  const byName = new Map(targets.map((c) => [c.name, c]));
+  const groups: InterpretGroups | undefined = grouped
+    ? {
+        waves: grouped.waves,
+        groups: grouped.groups!,
+        run: (group, componentOutputs) => {
+          const each = {
+            group,
+            components: byName,
+            registry,
+            env: plan.to,
+            ctxOf: (name: string) => deployContext({ env: plan.to, releaseIdentity }, name),
+            componentOutputs,
+          };
+          const approved = approvedRunOf(options.groupRuns, group);
+          return approved === undefined && options.planGroupsAtWave ? planAndRunComponentGroup(each) : runComponentGroup({ ...each, run: approved });
+        },
+      }
+    : undefined;
   try {
-    return await runInterpretDriver(targets, checkPublishedDigest(options.registry, expected), {
+    return await runInterpretDriver(targets, registry, {
       env: plan.to,
       componentOutputs: options.componentOutputs ?? {},
       // #2574: a gate approval for this promote or rollback is bound to the
       // release it deploys, as well as the environment and composition.
       releases: expected,
       // #3061: the workload's service.version and vcs.ref.head.revision are the earlier release's own.
-      releaseIdentity: (component) => {
-        const item = plan.items.find((i) => i.component === component);
-        return item ? { version: item.digest, revision: item.source.gitSha } : undefined;
-      },
+      releaseIdentity,
+      ...(groups ? { groups } : {}),
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.onRunEvent ? { onRunEvent: options.onRunEvent } : {}),
       ...(options.gates ? { gates: options.gates } : {}),
