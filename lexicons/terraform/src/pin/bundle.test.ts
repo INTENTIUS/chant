@@ -38,6 +38,8 @@ describe("the pin bundle", () => {
       expect(inputs.filter((i) => pattern.test(i)), String(pattern)).toEqual([]);
     }
     expect(inputs.map((i) => i.replace(/^.*?(packages|lexicons)\//, "$1/")).sort()).toEqual([
+      // The one config-file lister (chant#4457): node built-ins only, kept apart from the HCL parser.
+      "lexicons/terraform/src/hcl/files.ts",
       "lexicons/terraform/src/pin/edit.ts",
       "lexicons/terraform/src/pin/forge.ts",
       "lexicons/terraform/src/pin/index.ts",
