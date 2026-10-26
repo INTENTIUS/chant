@@ -60,7 +60,7 @@ import { promisify } from "node:util";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriftAdapterBase, DriftRecord } from "@intentius/chant/drift-record";
 import type { UnobservedReason } from "@intentius/chant/observation";
-import { isPulumiNodeless } from "@intentius/chant/pulumi-urn";
+import { isPulumiNodeless, parsePulumiUrn } from "@intentius/chant/pulumi-urn";
 import { pulumiExportResources, pulumiPreviewPart } from "./change-set";
 import { pulumiRefreshArgs, pulumiRefreshDocumentRecords, pulumiRefreshDriftRecords, type PulumiRefreshRead } from "./drift-record";
 import { parseYAML } from "@intentius/chant/yaml";
@@ -160,6 +160,21 @@ export function pulumiPreviewArgs(opts: { stack?: string; targets?: readonly str
   // --show-sames: without it `preview --json` lists no unchanged resource but the stack (recorded, #4475), and the
   // change-set adapter reads a resource the export holds and the preview never lists as one an apply() may register.
   return ["preview", "--json", "--show-sames", ...(opts.stack ? ["--stack", opts.stack] : []), ...(opts.targets ?? []).flatMap((t) => ["--target", t])];
+}
+
+/**
+ * The stack a `pulumi stack export` names in its URNs
+ * (`urn:pulumi:<stack>::<project>::...`, #4496), or undefined when it holds
+ * no URN that parses or its URNs name more than one stack.
+ */
+export function pulumiExportStack(exported: unknown): string | undefined {
+  return soleStack(pulumiExportResources(exported).map((r) => r.urn));
+}
+
+/** The one stack a list of URNs names, or undefined when none parses or they disagree. */
+function soleStack(urns: readonly string[]): string | undefined {
+  const stacks = new Set(urns.map((u) => parsePulumiUrn(u)?.stack).filter((s): s is string => typeof s === "string" && s.length > 0));
+  return stacks.size === 1 ? [...stacks][0] : undefined;
 }
 
 /** The checked-in `pulumi stack export`, parsed, or undefined when there is none or it does not read. */
@@ -305,6 +320,12 @@ export async function pulumiMemberStackOutputs(opts: PulumiMemberStackOutputsOpt
 
 export interface RefreshPulumiMemberOptions extends DriftAdapterBase {
   dir: string;
+  /**
+   * The stack to read, passed as `--stack` (#4496): the member's declared
+   * `pulumi.member.stack`. Without it, the stack the checked-in export's
+   * URNs name, then the one the URNs asked for name. A member with no
+   * selected stack can still be refreshed that way.
+   */
   stack?: string;
   /** The URNs to read. Default: the checked-in export's resources, providers and the stack left out. */
   urns?: readonly string[];
@@ -333,19 +354,21 @@ function unobservedFor(f: RunFailure): { reason: UnobservedReason; detail: strin
  */
 export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Promise<DriftRecord[]> {
   const run = opts.run ?? defaultPulumiRunner;
+  const exported = readMemberExport(opts.dir);
   const urns =
     opts.urns ??
-    (() => {
-      const exported = readMemberExport(opts.dir);
-      return exported === undefined ? undefined : pulumiExportResources(exported).filter((r) => !isPulumiNodeless(r.type)).map((r) => r.urn);
-    })();
+    (exported === undefined ? undefined : pulumiExportResources(exported).filter((r) => !isPulumiNodeless(r.type)).map((r) => r.urn));
+  // `--stack` (#4496): the declared stack, else the export's, else the URNs'.
+  // Without one the CLI reads the selected stack, and a checked-in member
+  // has none selected.
+  const stack = opts.stack || pulumiExportStack(exported) || (urns ? soleStack(urns) : undefined);
   const base: DriftAdapterBase & { stack?: string } = {
     member: opts.member,
     observedAt: opts.observedAt,
     ...(opts.graph !== undefined ? { graph: opts.graph } : {}),
     ...(opts.fellBackFrom !== undefined ? { fellBackFrom: opts.fellBackFrom } : {}),
     ...(opts.version !== undefined ? { version: opts.version } : {}),
-    ...(opts.stack ? { stack: opts.stack } : {}),
+    ...(stack ? { stack } : {}),
   };
 
   if (pulumiMemberEngine(opts.dir, opts.engine).engine === "plunge") {
@@ -355,7 +378,7 @@ export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Pro
     const reads: PlungeDriftRead[] = [];
     for (const urn of urns) {
       try {
-        const { stdout } = await runAllowedPlunge(plunge, plungeDriftArgs({ urn, stack: opts.stack, member: opts.member }), opts.dir);
+        const { stdout } = await runAllowedPlunge(plunge, plungeDriftArgs({ urn, stack, member: opts.member }), opts.dir);
         reads.push({ urn, stream: stdout });
       } catch (err) {
         const f = failureOf(err);
@@ -367,7 +390,7 @@ export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Pro
 
   if (urns === undefined) {
     try {
-      const { stdout } = await runAllowedPulumi(run, pulumiRefreshArgs({ stack: opts.stack }), opts.dir);
+      const { stdout } = await runAllowedPulumi(run, pulumiRefreshArgs({ stack }), opts.dir);
       return pulumiRefreshDocumentRecords({ ...base, refresh: parseJson(stdout) ?? {} });
     } catch (err) {
       // Nothing names the resources, so the failure has no record to sit on.
@@ -379,7 +402,7 @@ export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Pro
   const reads: PulumiRefreshRead[] = [];
   for (const urn of urns) {
     try {
-      const { stdout } = await runAllowedPulumi(run, pulumiRefreshArgs({ urn, stack: opts.stack }), opts.dir);
+      const { stdout } = await runAllowedPulumi(run, pulumiRefreshArgs({ urn, stack }), opts.dir);
       reads.push({ urn, refresh: parseJson(stdout) });
     } catch (err) {
       const f = failureOf(err);

@@ -62,7 +62,7 @@ describe("pulumi completions", () => {
 
   test("chant.config.ts: the pulumi namespace, member keys and engine values", () => {
     expect(labels(completions(at("file:///p/chant.config.ts", "export default {\n  pulumi: {\n    me")))).toEqual(["member"]);
-    expect(labels(completions(at("file:///p/chant.config.ts", "export default {\n  pulumi: { member: {\n    ")))).toEqual(["dir", "label", "engine"]);
+    expect(labels(completions(at("file:///p/chant.config.ts", "export default {\n  pulumi: { member: {\n    ")))).toEqual(["dir", "label", "engine", "stack"]);
     expect(labels(completions(at("file:///p/chant.config.ts", 'export default { pulumi: { member: { dir: "./infra", engine: "pl')))).toEqual(["plunge"]);
     expect(completions(at("file:///p/chant.config.ts", "export default {\n  terraform: {\n    ro"))).toEqual([]);
   });

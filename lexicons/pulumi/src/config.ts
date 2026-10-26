@@ -19,6 +19,11 @@ export const pulumiMemberConfigSchema = z.strictObject({
    * backend URL in `Pulumi.yaml` (`./run.ts`, `pulumiMemberEngine`).
    */
   engine: z.enum(["pulumi", "plunge"]).optional(),
+  /**
+   * The stack the drift read passes as `--stack` (#4496). Omit to take the
+   * stack the checked-in `stack-export.json` names in its URNs.
+   */
+  stack: z.string().min(1).optional(),
 });
 
 export const pulumiConfigSchema = z.strictObject({
