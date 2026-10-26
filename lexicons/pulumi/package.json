@@ -24,8 +24,10 @@
   "scripts": {
     "generate": "node -e \"console.log('pulumi: nothing to generate, the lexicon has no declarable kinds')\"",
     "validate": "node -e \"console.log('pulumi: nothing to validate')\"",
+    "bundle": "tsx src/package-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json",
-    "prepack": "npm run build"
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build"
   },
   "devDependencies": {
     "@intentius/chant": "*",

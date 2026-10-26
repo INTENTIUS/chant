@@ -62,7 +62,15 @@ export async function activate(context: ExtensionContext): Promise<void> {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "typescript" }],
+    // TypeScript for every lexicon, plus the pulumi lexicon's own surface
+    // (#4468): the project file, stack config files and the workspace
+    // declaration, which the server completes and hovers but never lints.
+    documentSelector: [
+      { scheme: "file", language: "typescript" },
+      { scheme: "file", pattern: "**/Pulumi.{yaml,yml}" },
+      { scheme: "file", pattern: "**/Pulumi.*.{yaml,yml}" },
+      { scheme: "file", pattern: "**/chant.workspace.{json,jsonc}" },
+    ],
     synchronize: {
       fileEvents: workspace.createFileSystemWatcher(
         "**/chant.config.{ts,json}"

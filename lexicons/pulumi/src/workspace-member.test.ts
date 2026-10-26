@@ -12,6 +12,7 @@ import type { GraphIR } from "@intentius/chant/graph-ir";
 import { runGraph } from "@intentius/chant/cli/handlers/graph";
 import { readPackageKinds, substituteGraphConfig } from "../../../packages/core/src/workspace/kinds";
 import { pulumiPlugin } from "./plugin";
+import { readPulumiMember } from "./workspace-member";
 
 const packageDir = join(import.meta.dirname, "..");
 const member = join(import.meta.dirname, "testdata", "pulumi-member");
@@ -81,5 +82,27 @@ describe("pulumi member graph block (#3179)", () => {
     expect(report.exported).toBe(false);
     expect(report.reason).toMatch(/pulumi stack export/);
     expect(err.join("\n")).toMatch(/was not read/);
+  });
+
+  test("an export with pending operations says how many, and one without leaves the count out (#4468)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chant-pulumi-pending-"));
+    scratch.push(dir);
+    await writeFile(
+      join(dir, "stack-export.json"),
+      JSON.stringify({
+        version: 3,
+        deployment: {
+          resources: [{ urn: "urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets", type: "aws:s3/bucket:Bucket" }],
+          pending_operations: [{ type: "creating", resource: { urn: "urn:pulumi:dev::app::aws:s3/bucket:Bucket::logs" } }],
+        },
+      }),
+    );
+    expect(readPulumiMember({ member: { dir, label: "infra" } }).report).toEqual({
+      export: "stack-export.json",
+      objects: 1,
+      exported: true,
+      pendingOperations: 1,
+    });
+    expect(readPulumiMember({ member: { dir: member, label: "infra" } }).report.pendingOperations).toBeUndefined();
   });
 });

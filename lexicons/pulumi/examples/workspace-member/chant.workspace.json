@@ -1,0 +1,10 @@
+{
+  "name": "pulumi-example",
+  "schema": 1,
+  "pins": [
+    { "package": "@intentius/chant-lexicon-pulumi", "version": "0.124.34" }
+  ],
+  "members": [
+    { "name": "infra", "dir": "infra", "kind": "pulumi" }
+  ]
+}
