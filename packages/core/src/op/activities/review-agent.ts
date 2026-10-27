@@ -75,8 +75,12 @@ const MAX_REVIEW = 50_000;
 /** The longest diff the prompt carries (#4326). The rest is cut, and the text says so. */
 export const MAX_DIFF = 60_000;
 
-/** The tags the prompt wraps untrusted text in. */
-const DATA_TAGS = ["title", "description", "diff", "change_set", "instructions"];
+/**
+ * The tags chant's review prompt wraps untrusted text in, and the list
+ * {@link quoted} escapes by default. A product whose prompt adds its own
+ * sections (terragucci's `plan_note` and `policy`) passes its own list.
+ */
+export const REVIEW_DATA_TAGS: readonly string[] = ["title", "description", "diff", "change_set", "instructions"];
 
 /** The variable that names the directory a `handoff` review is written to, and the note job reads it from. */
 export const REVIEW_DIR_ENV = "CHANT_REVIEW_DIR";
@@ -167,9 +171,15 @@ export function parseReviewResult(body: string): { head: string; risk: ReviewRis
 /** The prefix every Op's review note starts with, for a reader that does not know the Op. */
 export const REVIEW_MARKER_PREFIX = "<!-- chant-review:";
 
-/** Text as it goes between the prompt's tags: a closing tag of ours inside it cannot end the section. */
-export function quoted(text: string): string {
-  return text.replace(new RegExp(`</(${DATA_TAGS.join("|")})>`, "gi"), "< /$1>");
+/**
+ * Text as it goes between the prompt's tags: a closing tag of ours inside it
+ * cannot end the section. `tags` names the sections the prompt has, matched
+ * without regard to case; it defaults to chant's own ({@link REVIEW_DATA_TAGS}).
+ */
+export function quoted(text: string, tags: readonly string[] = REVIEW_DATA_TAGS): string {
+  if (tags.length === 0) return text;
+  const names = tags.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return text.replace(new RegExp(`</(${names})>`, "gi"), "< /$1>");
 }
 
 function cut(text: string, max: number, what: string): string {
