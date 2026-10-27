@@ -245,6 +245,18 @@ The capabilities are the project's, built the way `chant run --components` build
 
 The wave-job runtime (`wave-runtime.mjs`) does not carry the config loader, so a spec with a `step` needs the full `@intentius/chant` install, or a product's own bin that passes `capabilities`.
 
+### SQL members
+
+The sql lexicon adds two kinds ([#4569](https://github.com/INTENTIUS/chant/issues/4569)). `sql-migrate` runs SQL Yodeler's versioned migration engine, and `sql-apply` applies a declarative build with the lexicon's own appliers.
+
+```json
+{ "step": { "kind": "sql-migrate", "environment": "{target}", "spec": "yodel-waves.json" } }
+```
+
+chant runs `yodel` with three argv and refuses any other: `yodel plan <env> --part <file>`, `yodel apply <env> --wave-plan <file> --spec <spec>` and `yodel apply <env> --wave-apply <file> --spec <spec>`. Each may end with `--dir`, `--op` and `--allow-out-of-order`, in that order. The plan gives the member's change-set part, one entry per object the pending migrations touch. The wave plan's digest is the one the gate binds. Its destructive steps come back as the plan's `destructive` classes, such as `pg-rewrite`. A wave under `on-destructive` waits on them. The apply hands the engine the decided plan. The engine plans again under its lock and checks the wave's decision and the ledger's approval itself. A plan that moved is refused and the job exits 4. The two planning commands run without `YODEL_ROLE` and the writer's variables, so the writer reaches only the apply. A step without `spec` plans the migrations under their own digest and never applies. `chant components pr-plan` uses it that way.
+
+`sql-apply` takes `environment` and `build`, the `chant build` output. It plans the build against the environment's server as `chant sql plan` does. The apply goes through `clickhouseApply` or `postgresApply` by the build's dialect. A change the applier refuses fails the plan and names the migration Op to run instead. A ClickHouse rebuild is one such change. The apply plans again and sends nothing when the digest moved.
+
 ## Runs found at plan time
 
 Some tools find a wave's runs at run time. A Terragrunt repo's waves are its units' dependency layers from `terragrunt find`, and a repo can grow a layer after its pipeline was rendered. Mark those waves `discover`, and the last one `rest`:

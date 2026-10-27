@@ -51,3 +51,25 @@ export {
 // SQL engine and yodel outcomes on chant's exit-code table (#4570); also at
 // `@intentius/chant-lexicon-sql/exit-codes`.
 export { sqlExitOf, sqlPlanMoved, yodelExitOf, YODEL_LEGACY_EXIT, type SqlEngineOutcome, type YodelExitSource } from "./exit-codes";
+
+// The `sql-migrate` and `sql-apply` capabilities (#4569), contributed to core's
+// capability-plugin seam: core loads `sqlCapabilityPlugin` when a project's
+// chant.config lists this lexicon, so op waves and pr-plan plan and apply a
+// SQL member through chant. sql-yodeler's engine runs by a fixed argv list
+// (`YODEL_COMMANDS`).
+export {
+  sqlCapabilityPlugin,
+  sqlMigrateCapability,
+  sqlApplyCapability,
+  createSqlMigrateCapability,
+  createSqlApplyCapability,
+  SqlPlanMovedError,
+  YodelRunError,
+  SQL_VERB_FAMILIES,
+  type SqlMigrateStepInput,
+  type SqlMigrateStepOutput,
+  type SqlMigrateArtifact,
+  type SqlApplyStepInput,
+  type SqlApplyStepOutput,
+} from "./capability-plugin";
+export { YODEL_COMMANDS, YODEL_OPTIONAL_FLAGS, runAllowedYodel, allowedYodelArgv, type YodelRunner, type YodelRun } from "./yodel-run";
