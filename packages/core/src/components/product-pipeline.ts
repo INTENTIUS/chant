@@ -28,6 +28,7 @@ import {
   assertProductWords,
   CHANT_WORDS,
   commentLine,
+  type CiProductApplyMode,
   type CiProductCommand,
   type CiProductWords,
   type CiProductWordsInput,
@@ -113,7 +114,11 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
   if (options.applyBeforeMerge || options.waves) jobs.push("apply");
   if (options.locks === "plan") jobs.push("lock", "unlock");
   if (options.agent) jobs.push("agent");
-  const words = assertProductWords(options.words, { jobs });
+  // #4601: the note's merge sentence follows the jobs built here: waves on merge, an apply before merge, else a record for a release.
+  // Words that ask for before-merge keep it when the pipeline has that job beside its waves.
+  const built: CiProductApplyMode = options.waves ? "on-merge" : options.applyBeforeMerge ? "before-merge" : "release";
+  const applyMode: CiProductApplyMode = options.words.applyMode === "before-merge" && options.applyBeforeMerge ? "before-merge" : built;
+  const words = assertProductWords({ ...options.words, applyMode }, { jobs });
   const { waves: spec, wavesSpecFile, member, agent: _agent, ...loop } = options;
   const prLoop: PrLoopPipelineOptions = { ...loop, words, gate: options.gate ?? words.prGate };
   const [plan, apply, record] = prLoopJobs(forge, env, prLoop, member);

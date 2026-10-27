@@ -43,6 +43,17 @@ export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply"
  */
 export type CiProductApproval = "per-wave" | "pull-request";
 
+/**
+ * When a product's plan applies (#4601), which the note's merge sentence
+ * follows. `on-merge`: the merge applies the waves, as sql-yodeler,
+ * terragucci and plywood do. `release`: the merge records the plan and a
+ * release deploys it, chant's PR loop. `before-merge`: the apply job applies
+ * the open pull request's plan, and the merge records what applied.
+ */
+export type CiProductApplyMode = "on-merge" | "release" | "before-merge";
+
+export const CI_PRODUCT_APPLY_MODES: readonly CiProductApplyMode[] = ["on-merge", "release", "before-merge"];
+
 /** An alias another tool's users type for one of the product's commands, such as `atlantis plan`. */
 export interface CiProductAlias {
   /** The words the comment starts with, such as `atlantis plan`. */
@@ -88,6 +99,12 @@ export interface CiProductWordsInput {
   /** What an approval binds to. Default `pull-request`, chant's PR loop. */
   approval?: CiProductApproval;
   /**
+   * When the plan applies (#4601). Default `on-merge` for a product that
+   * names its waves' op or binds approvals per wave, since its merge runs
+   * the waves; else `release`, as chant's PR loop has it.
+   */
+  applyMode?: CiProductApplyMode;
+  /**
    * The command a generated job runs in place of `chant`, such as `npx
    * --no-install plywood`. The product's bin passes the rest of the line to
    * chant in process with these words. Absent: `chant`.
@@ -115,6 +132,7 @@ export interface CiProductWords {
   gateName: string;
   prGate: string;
   approval: CiProductApproval;
+  applyMode: CiProductApplyMode;
   bin?: string;
   adoptMarkers: string[];
 }
@@ -138,6 +156,7 @@ export const CHANT_WORDS: CiProductWords = Object.freeze<CiProductWords>({
   gateName: "{gate}-wave-{k}",
   prGate: "pr-apply",
   approval: "pull-request",
+  applyMode: "release",
   adoptMarkers: [],
 });
 
@@ -159,6 +178,7 @@ export function resolveProductWords(input: CiProductWordsInput | CiProductWords 
     gateName: input.gateName ?? CHANT_WORDS.gateName,
     prGate: input.prGate ?? CHANT_WORDS.prGate,
     approval: input.approval ?? CHANT_WORDS.approval,
+    applyMode: input.applyMode ?? (own && (input.op !== undefined || input.approval === "per-wave") ? "on-merge" : CHANT_WORDS.applyMode),
     ...(input.bin !== undefined ? { bin: input.bin } : {}),
     adoptMarkers: input.adoptMarkers ?? [],
   };
@@ -219,6 +239,7 @@ export function productWordsProblems(words: CiProductWords, options: { jobs?: re
   if (!words.gateName.includes("{k}")) problems.push("gateName needs {k}, so each wave has its own gate");
   else if (!NAME.test(words.gateName.replace("{gate}", "g").replace("{k}", "1"))) problems.push(`gateName ${JSON.stringify(words.gateName)} does not make a gate name`);
   if (words.approval !== "per-wave" && words.approval !== "pull-request") problems.push(`approval is ${JSON.stringify(words.approval)}; use per-wave or pull-request`);
+  if (!CI_PRODUCT_APPLY_MODES.includes(words.applyMode)) problems.push(`applyMode is ${JSON.stringify(words.applyMode)}; use ${CI_PRODUCT_APPLY_MODES.join(", ")}`);
   if (words.bin !== undefined && !/^[A-Za-z0-9@/._ -]+$/.test(words.bin)) problems.push(`bin ${JSON.stringify(words.bin)} carries shell syntax`);
   return problems;
 }

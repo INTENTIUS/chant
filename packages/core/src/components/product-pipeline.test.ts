@@ -54,6 +54,14 @@ describe("the product pipeline (#4550)", () => {
     expect(pw.approvals?.pullRequest).toEqual({ gate: "up" });
   });
 
+  test("the words the jobs carry take the apply mode the jobs build (#4601)", () => {
+    expect(productPipelineJobs("github", "production", { words: PLYWOOD, waves }).words.applyMode).toBe("on-merge");
+    expect(productPipelineJobs("github", "production", { words: PLYWOOD }).words.applyMode).toBe("release");
+    expect(productPipelineJobs("github", "production", { words: PLYWOOD, applyBeforeMerge: true }).words.applyMode).toBe("before-merge");
+    expect(productPipelineJobs("github", "production", { words: { ...PLYWOOD, applyMode: "before-merge" }, waves, applyBeforeMerge: true }).words.applyMode).toBe("before-merge");
+    expect(productPipelineJobs("github", "production", { words: { ...PLYWOOD, applyMode: "before-merge" }, waves }).words.applyMode).toBe("on-merge");
+  });
+
   test("a command with no job is refused", () => {
     expect(() => productPipelineJobs("github", "production", { words: TERRAGUCCI })).toThrow(/needs a apply job/);
   });

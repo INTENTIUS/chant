@@ -53,7 +53,7 @@ import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
-import { activeProductWords, approveLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
+import { activeProductWords, approveLine, commentLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
 
 /** The schema a pull-request report names in `$schema`. */
 export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json";
@@ -643,21 +643,50 @@ export function memberHoleReasons(report: Pick<PrReport, "changeSet">, member: s
   return [...new Set((m?.holes ?? []).map((h) => h.reason))];
 }
 
-/** The approve command a reviewer runs for this report's digest: the product's approve line under its words (#4550). */
-export function prApproveCommand(report: Pick<PrReport, "op" | "gate" | "digest">, approver = "<you>", words: CiProductWords = activeProductWords()): string {
-  if (!isChantWords(words)) return approveLine(words, { op: report.op, gate: report.gate, digest: report.digest, approver, sign: true });
+/**
+ * The approve command a reviewer runs for this report's digest: the product's
+ * approve line under its words (#4550). `target` fills the template's
+ * `{target}` (#4601): the member the line approves, such as sql-yodeler's
+ * environment.
+ */
+export function prApproveCommand(report: Pick<PrReport, "op" | "gate" | "digest"> & { target?: string }, approver = "<you>", words: CiProductWords = activeProductWords()): string {
+  if (!isChantWords(words)) return approveLine(words, { op: report.op, gate: report.gate, digest: report.digest, approver, sign: true, ...(report.target !== undefined ? { target: report.target } : {}) });
   return `chant approve ${report.op} ${report.gate} --plan ${report.digest} --approver ${approver} --sign`;
+}
+
+/**
+ * The targets the product's approve line names (#4601), one line each: none
+ * when its template has no `{target}`; else the workspace member the report
+ * is for, else each member in the report, else the environment.
+ */
+export function prApproveTargets(report: Pick<PrReport, "env"> & Partial<Pick<PrReport, "member" | "members">>, words: CiProductWords = activeProductWords()): string[] {
+  if (!words.approve.includes("{target}")) return [];
+  if (report.member) return [report.member];
+  const names = [...new Set((report.members ?? []).map((m) => m.member))];
+  return names.length > 0 ? names : [report.env];
+}
+
+/** Every approve command the report asks for: one per {@link prApproveTargets}, or the one line when the template names no target. */
+export function prApproveCommands(
+  report: Pick<PrReport, "op" | "gate" | "digest" | "env"> & Partial<Pick<PrReport, "member" | "members">>,
+  approver = "<you>",
+  words: CiProductWords = activeProductWords(),
+): string[] {
+  const targets = prApproveTargets(report, words);
+  if (targets.length === 0) return [prApproveCommand(report, approver, words)];
+  return targets.map((target) => prApproveCommand({ op: report.op, gate: report.gate, digest: report.digest, target }, approver, words));
 }
 
 /**
  * The refusal when the approved digest is not the planned one: both digests,
  * that nothing applied, and how to close it.
  */
-export function describePlanChanged(report: Pick<PrReport, "op" | "gate" | "digest" | "approval">): string {
+export function describePlanChanged(report: Pick<PrReport, "op" | "gate" | "digest" | "approval"> & Partial<Pick<PrReport, "env" | "member" | "members">>): string {
+  const approve = report.env !== undefined ? prApproveCommands({ ...report, env: report.env }).join("; ") : prApproveCommand(report);
   return (
     `The plan changed after review, so nothing was applied. ` +
     `approved: ${report.approval.approved ?? "(none)"}; planned now: ${report.digest}. ` +
-    `Read the new plan, and if it is right, approve it: ${prApproveCommand(report)}; then run the apply again.`
+    `Read the new plan, and if it is right, approve it: ${approve}; then run the apply again.`
   );
 }
 
@@ -849,13 +878,44 @@ function waveLines(report: PrReport, approver: string, words: CiProductWords): s
       `Read wave ${w.wave}'s plan, ${code(w.digest)}, and approve it with:`,
       "",
       "```",
-      prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest }, approver, words),
+      ...waveApproveCommands(report, w, approver, words),
       "```",
       "",
       "Then run the wave's apply job again.",
     );
   }
   return out;
+}
+
+/** A waiting wave's approve lines: one per component when the product's template names `{target}` (#4601). */
+function waveApproveCommands(report: PrReport, w: PrWave, approver: string, words: CiProductWords): string[] {
+  const targets = words.approve.includes("{target}") ? (w.components.length > 0 ? w.components : [report.env]) : [];
+  if (targets.length === 0) return [prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest }, approver, words)];
+  return targets.map((target) => prApproveCommand({ op: report.op, gate: w.gate, digest: w.digest, target }, approver, words));
+}
+
+/**
+ * The note's sentence on what the merge does with the plan (#4601), by the
+ * product's apply mode. chant's words keep chant's sentence, which covers
+ * the record on merge and the opt-in apply on merge alike.
+ */
+export function prMergeSentence(report: Pick<PrReport, "gate">, words: CiProductWords = activeProductWords()): string {
+  const applied = words.verbs.apply[1];
+  switch (words.applyMode) {
+    case "on-merge": {
+      if (words.approval === "per-wave") {
+        return `On merge the waves are ${applied} in order, each under an approval of its own gate for its own plan. A wave whose plan moved since this note waits at its gate for a new approval.`;
+      }
+      const waveGate = words.gateName.replace("{gate}", report.gate).replace("{k}", "<k>");
+      return `On merge the waves are ${applied} in order under this approval, each while its plan is one this approval covers. A wave whose plan moved waits at its own gate, ${code(waveGate)}, for an approval of its own.`;
+    }
+    case "before-merge": {
+      const comment = commentLine(words, "apply");
+      return `Before merge, ${comment ? code(comment) : "the apply job"} runs this plan once the pull request is approved, mergeable and green, and only while the plan is still this one; if it moved, the apply refuses and names both digests. The merge records what was ${applied}.`;
+    }
+    case "release":
+      return "On merge the plan is recorded, and a release deploys it. With apply on merge it applies if the plan is still this one; if it moved, the apply refuses and names both digests.";
+  }
 }
 
 function approvalLines(report: PrReport, approver: string, words: CiProductWords): string[] {
@@ -867,15 +927,16 @@ function approvalLines(report: PrReport, approver: string, words: CiProductWords
       ? [`An approval stands for ${code(a.approved ?? "(none)")}, not for this digest: the plan changed since it was approved.`]
       : [report.stage === "record" ? "No approval stands for this plan. The release gate decides before it deploys." : "Not approved yet."];
   if (report.stage === "plan" && report.status === "planned") {
+    const commands = prApproveCommands(report, approver, words);
     lines.push(
       "",
-      "A reviewer who approved this pull request approves the plan with:",
+      commands.length > 1 ? `A reviewer who approved this pull request approves each ${words.noun[0]}'s plan with:` : "A reviewer who approved this pull request approves the plan with:",
       "",
       "```",
-      prApproveCommand(report, approver, words),
+      ...commands,
       "```",
       "",
-      "On merge the plan is recorded, and a release deploys it. With apply on merge it applies if the plan is still this one; if it moved, the apply refuses and names both digests.",
+      prMergeSentence(report, words),
     );
   }
   return lines;

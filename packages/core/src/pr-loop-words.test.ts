@@ -5,9 +5,9 @@
  */
 import { describe, expect, test } from "vitest";
 import { composeChangeSet } from "./change-set";
-import { memberCounts, PR_REPORT_SCHEMA_ID, prApproveCommand, prStatusContext, prStatusDescription, renderPrNote, type PrReport } from "./pr-loop";
+import { memberCounts, PR_REPORT_SCHEMA_ID, prApproveCommand, prApproveCommands, prMergeSentence, prStatusContext, prStatusDescription, renderPrNote, type PrReport } from "./pr-loop";
 import { assertProductWords, CHANT_WORDS } from "./ci-product-words";
-import { PLYWOOD } from "./__fixtures__/product-words";
+import { PLYWOOD, TERRAGUCCI, YODEL } from "./__fixtures__/product-words";
 
 const hex = (n: number) => n.toString(16).padStart(64, "0");
 const doc = composeChangeSet([
@@ -97,5 +97,59 @@ describe("a capability's policy findings (#4550, pulumi-up's CrossGuard)", () =>
     expect(note).toContain("plywood override up --rule crossguard.aws.no-public-bucket --reason <text>");
     expect(note).toContain("| `shop/prod` | `crossguard.aws.tags` | advisory | missing the team tag |");
     expect(note).toContain("| `shop/prod` |  | warning | pack aws is in preview |");
+  });
+});
+
+describe("the approve line's target and the merge sentence (#4601)", () => {
+  const yodel = assertProductWords(YODEL);
+  const terragucci = assertProductWords(TERRAGUCCI);
+
+  /** sql-yodeler's probe (src/pr/note.ts at integration/ci-products): one environment, the wave's gate and digest. */
+  const probe: PrReport = {
+    ...report,
+    env: "yodel-probe-env",
+    op: "yodel-apply",
+    gate: "yodel-apply-wave-1",
+    digest: "jcs1-sha256:probe",
+    members: [{ member: "yodel-probe-env", component: "1 pending", planDigest: "jcs1-sha256:probe", status: "planned", counts: { create: 0, update: 0, replace: 0, delete: 0 } }],
+    selection: { changed: ["yodel-probe-env"], dependents: [], unclaimed: [], indeterminate: [], waves: [["yodel-probe-env"]] },
+  };
+
+  test("sql-yodeler's probe passes: the approve line names the environment, and no release deploys the merge", () => {
+    const note = renderPrNote(probe, { words: yodel });
+    expect(note).toContain("yodel approve yodel-probe-env --plan jcs1-sha256:probe --sign");
+    expect(note).not.toContain("a release deploys it");
+    expect(note).toContain("On merge the waves are applied in order, each under an approval of its own gate for its own plan.");
+  });
+
+  test("{target} is filled once per member, and a template without it gives one line", () => {
+    const tenants: PrReport = {
+      ...probe,
+      env: "prod",
+      members: ["prod/acme", "prod/zeta"].map((m) => ({ member: m, component: "1 pending", planDigest: "jcs1-sha256:probe", status: "planned" as const, counts: { create: 0, update: 0, replace: 0, delete: 0 } })),
+    };
+    expect(prApproveCommands(tenants, "<you>", yodel)).toEqual(["yodel approve prod/acme --plan jcs1-sha256:probe --sign", "yodel approve prod/zeta --plan jcs1-sha256:probe --sign"]);
+    const note = renderPrNote(tenants, { words: yodel });
+    expect(note).toContain("approves each environment's plan with:");
+    expect(note).toContain("yodel approve prod/zeta --plan jcs1-sha256:probe --sign");
+    expect(prApproveCommands({ ...tenants, member: "prod/acme" }, "<you>", yodel)).toEqual(["yodel approve prod/acme --plan jcs1-sha256:probe --sign"]);
+    expect(prApproveCommands({ ...tenants, members: [] }, "<you>", yodel)).toEqual(["yodel approve prod --plan jcs1-sha256:probe --sign"]);
+    expect(prApproveCommands(tenants, "<you>", plywood)).toEqual([`plywood approve ${tenants.gate} --plan jcs1-sha256:probe --sign`]);
+    expect(prApproveCommand({ ...report, target: "shop-dev" }, "<you>", plywood)).toBe(`plywood approve up --plan ${doc.digest} --sign`);
+  });
+
+  test("the merge sentence follows each product's apply mode", () => {
+    expect(prMergeSentence(report, plywood)).toBe(
+      "On merge the waves are updated in order under this approval, each while its plan is one this approval covers. A wave whose plan moved waits at its own gate, `wave-<k>`, for an approval of its own.",
+    );
+    expect(prMergeSentence(report, terragucci)).toBe(
+      "On merge the waves are applied in order, each under an approval of its own gate for its own plan. A wave whose plan moved since this note waits at its gate for a new approval.",
+    );
+    expect(prMergeSentence(report, CHANT_WORDS)).toContain("On merge the plan is recorded, and a release deploys it.");
+    expect(prMergeSentence(report, assertProductWords({ ...PLYWOOD, applyMode: "before-merge" }))).toBe(
+      "Before merge, `/plywood up` runs this plan once the pull request is approved, mergeable and green, and only while the plan is still this one; if it moved, the apply refuses and names both digests. The merge records what was updated.",
+    );
+    for (const w of [plywood, terragucci, yodel]) expect(renderPrNote(report, { words: w })).not.toContain("a release deploys it");
+    expect(renderPrNote({ ...report, op: "pr-12", gate: "pr-apply" }, { words: CHANT_WORDS })).toContain("On merge the plan is recorded, and a release deploys it.");
   });
 });
