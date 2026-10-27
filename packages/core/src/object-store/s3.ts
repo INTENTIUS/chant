@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { presignV4, sha256Hex, signV4 } from "../cloud-lister/sigv4";
-import { defaultFetch, encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, tradedVars, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./common";
+import { defaultFetch, encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, tradedVars, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch, type StoreHints } from "./common";
 import { CLOUD_TARGETS_ENV } from "../ci-identity";
 
 export type S3Fetch = StoreFetch;
@@ -65,6 +65,8 @@ export interface S3Where {
   setting?: string;
   /** What the role is called in messages, such as `reports.role`. Default `the role`. */
   roleSetting?: string;
+  /** The product key that fixes a missing identity (#4584). */
+  hints?: StoreHints;
 }
 
 /**
@@ -77,6 +79,7 @@ export interface S3Where {
 export function s3FromEnv(where: S3Where, env: NodeJS.ProcessEnv = process.env): S3Target {
   const setting = where.setting ?? "the bucket";
   const roleSetting = where.roleSetting ?? "the role";
+  const hints = where.hints ?? {};
   const endpoint = where.endpoint ?? env.AWS_ENDPOINT_URL_S3 ?? env.AWS_ENDPOINT_URL;
   const region = env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1";
   const at = {
@@ -100,14 +103,14 @@ export function s3FromEnv(where: S3Where, env: NodeJS.ProcessEnv = process.env):
     return { ...at, accessKeyId: c.AWS_ACCESS_KEY_ID!, secretAccessKey: c.AWS_SECRET_ACCESS_KEY!, ...(c.AWS_SESSION_TOKEN ? { sessionToken: c.AWS_SESSION_TOKEN } : {}) };
   }
   if (where.role) {
-    if (!tokenFile) throw new StoreError(`${roleSetting} is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not: the job needs an OIDC token to assume ${where.role}`);
+    if (!tokenFile) throw new StoreError(`${roleSetting} is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not: the job needs an OIDC token to assume ${where.role}${hints.oidc ? `, which a job with ${hints.oidc} gets` : ""}`);
     return assume(where.role);
   }
   const accessKeyId = env.AWS_ACCESS_KEY_ID;
   const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
   if (accessKeyId && secretAccessKey) return { ...at, accessKeyId, secretAccessKey, ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}) };
   if (env.AWS_ROLE_ARN && tokenFile) return assume(env.AWS_ROLE_ARN);
-  throw new StoreError(`${setting} is set, but the job has no credentials for it: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE, or ${roleSetting}`);
+  throw new StoreError(`${setting} is set, but the job has no credentials for it: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE${hints.oidc ? ` (a job with ${hints.oidc} sets both)` : ""}, or ${roleSetting}`);
 }
 
 /** STS AssumeRoleWithWebIdentity. The request carries the token and is not signed. */

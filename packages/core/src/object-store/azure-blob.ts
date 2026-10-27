@@ -20,7 +20,7 @@
  */
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { defaultFetch, encodePath, isoSeconds, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./common";
+import { defaultFetch, encodePath, isoSeconds, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch, type StoreHints } from "./common";
 
 /** The REST version every request names, and the SAS version: the 2020-12-06 string-to-sign layouts. */
 export const AZURE_VERSION = "2021-08-06";
@@ -64,14 +64,14 @@ export interface BlobHead {
 export type BlobAt = { versionid: string } | { snapshot: string };
 
 /** The target from where the store is and the job's environment. An account key wins over the job's OIDC identity. `setting` names the container in messages, such as `reports.bucket`. */
-export function azureFromEnv(where: { account: string; container: string; endpoint?: string; setting?: string }, env: NodeJS.ProcessEnv = process.env): AzureTarget {
+export function azureFromEnv(where: { account: string; container: string; endpoint?: string; setting?: string; hints?: StoreHints }, env: NodeJS.ProcessEnv = process.env): AzureTarget {
   const at: AzureLocation = { account: where.account, container: where.container, endpoint: (where.endpoint ?? `https://${where.account}.blob.core.windows.net`).replace(/\/+$/, "") };
   if (env.AZURE_STORAGE_KEY) return { ...at, accountKey: env.AZURE_STORAGE_KEY };
   const tenantId = env.ARM_TENANT_ID;
   const clientId = env.ARM_CLIENT_ID;
   const tokenFile = env.ARM_OIDC_TOKEN_FILE_PATH;
   if (tenantId && clientId && tokenFile) return { ...at, oidc: { tenantId, clientId, tokenFile, authority: (env.AZURE_AUTHORITY_HOST || AZURE_AUTHORITY).replace(/\/+$/, "") } };
-  throw new StoreError(`${where.setting ?? "the container"} is az://${where.account}/${where.container}, but the job has no credentials for it: set ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH (a job's OIDC setup sets them), or AZURE_STORAGE_KEY`);
+  throw new StoreError(`${where.setting ?? "the container"} is az://${where.account}/${where.container}, but the job has no credentials for it: ${where.hints?.azure ? `give the job ${where.hints.azure} (it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH), or set AZURE_STORAGE_KEY` : "set ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH (a job's OIDC setup sets them), or AZURE_STORAGE_KEY"}`);
 }
 
 const hmac64 = (key: string, s: string): string => createHmac("sha256", Buffer.from(key, "base64")).update(s, "utf8").digest("base64");

@@ -62,6 +62,29 @@ describe("default-branch and status reads (#4554)", () => {
     expect(await forge.defaultBranch!()).toBe("main");
     expect(await forge.commitStatuses!("abc")).toEqual([{ context: "terragucci/plan", state: "success" }]);
   });
+
+  test("GitLab filters the statuses by ref when given one, and asks for none when not (#4584)", async () => {
+    const { fetch, asked } = recorded({
+      "/api/v4/projects/g%2Fp/repository/commits/abc/statuses?all=true&ref=release%2F1": [{ id: 4, name: "terragucci/apply", status: "success" }],
+      "/api/v4/projects/g%2Fp/repository/commits/abc/statuses?all=true": [{ id: 5, name: "terragucci/other", status: "failed" }],
+    });
+    const forge = gitlabForge({ apiBase: "https://gitlab.test/api/v4", project: "g/p", fetch });
+    expect(await forge.commitStatuses!("abc", "release/1")).toEqual([{ context: "terragucci/apply", state: "success" }]);
+    expect(asked[0]).toContain("&ref=release%2F1");
+    expect(await forge.commitStatuses!("abc")).toEqual([{ context: "terragucci/other", state: "failed" }]);
+    expect(asked[1]).not.toContain("ref=");
+  });
+
+  test("GitHub and Forgejo take the ref and read the commit's statuses as before (#4584)", async () => {
+    const statuses = [{ id: 1, context: "chant/plan", state: "success" }];
+    const gh = recorded({ "/repos/o/r/commits/abc/statuses": statuses });
+    const github = githubForge({ apiBase: "https://api.test", repo: "o/r", token: "t", fetch: gh.fetch });
+    expect(await github.commitStatuses!("abc", "main")).toEqual([{ context: "chant/plan", state: "success" }]);
+    expect(gh.asked[0]).not.toContain("ref=");
+    const fj = recorded({ "/api/v1/repos/o/r/commits/abc/statuses": statuses });
+    const forgejo = forgejoForge({ apiBase: "https://forge.test/api/v1", repo: "o/r", host: "forge.test", fetch: fj.fetch });
+    expect(await forgejo.commitStatuses!("abc", "main")).toEqual([{ context: "chant/plan", state: "success" }]);
+  });
 });
 
 describe("the handover with a product's parameters (#4554)", () => {

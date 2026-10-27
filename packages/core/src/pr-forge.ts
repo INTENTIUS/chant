@@ -485,8 +485,11 @@ export interface PrForge {
   /**
    * The commit statuses on `sha` (#4554): each context's newest, newest
    * first. Commit statuses only; GitHub's check runs are not among them.
+   * `ref` (#4584) keeps the statuses reported for that branch: GitLab
+   * scopes statuses to a ref and filters on it. GitHub and Forgejo statuses
+   * belong to the commit alone, so they read the same with or without it.
    */
-  commitStatuses?(sha: string): Promise<ReadCommitStatus[]>;
+  commitStatuses?(sha: string, ref?: string): Promise<ReadCommitStatus[]>;
 }
 
 /** Each context's newest status, newest first, from statuses in any order with a numeric `id` (GitLab) or newest first (GitHub, Forgejo). */
@@ -1148,6 +1151,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
     },
     async commitStatuses(sha) {
+      // Statuses on GitHub and Forgejo belong to the commit; there is no ref to filter by (#4584).
       return newestStatuses(await api.list(`${repo}/commits/${sha}/statuses`, pageParams, pageSize), "context");
     },
     async scheduledRuns(q) {
@@ -1533,8 +1537,9 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       const got = await api.call("GET", project);
       return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
     },
-    async commitStatuses(sha) {
-      return newestStatuses(await api.list(`${project}/repository/commits/${sha}/statuses?all=true`, pageParams, 100), "name");
+    async commitStatuses(sha, ref) {
+      const only = ref ? `&ref=${encodeURIComponent(ref)}` : "";
+      return newestStatuses(await api.list(`${project}/repository/commits/${sha}/statuses?all=true${only}`, pageParams, 100), "name");
     },
     async statusUrl(sha, context) {
       const statuses = await api.list(`${project}/repository/commits/${sha}/statuses?all=true&name=${encodeURIComponent(context)}`, pageParams, 100);
