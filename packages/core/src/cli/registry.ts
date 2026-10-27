@@ -135,6 +135,8 @@ export interface ParsedArgs {
   selectType?: string;
   /** `chant import --name <name>` selector */
   selectName?: string;
+  /** `chant import --index <ref> --tag key=value` (#4524), repeatable */
+  selectTags?: string[];
   /** `chant import --owned` — restrict live import to chant-owned resources */
   owned?: boolean;
   /**

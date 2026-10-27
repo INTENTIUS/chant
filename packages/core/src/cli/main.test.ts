@@ -28,6 +28,12 @@ describe("parseArgs", () => {
     expect(parseArgs(["import", "--from", "prod", "--skip-undeclarable"]).skipUndeclarable).toBe(true);
   });
 
+  test("import --index takes a selection: --type, --name, repeatable --tag, --select, --all (#4524)", () => {
+    const args = parseArgs(["import", "--index", "i.json", "--type", "AWS::S3::Bucket,AWS::IAM::Role", "--tag", "team=a", "--tag", "env=prod", "--select", "ids.json", "--all"]);
+    expect(args).toMatchObject({ command: "import", index: "i.json", selectType: "AWS::S3::Bucket,AWS::IAM::Role", selectTags: ["team=a", "env=prod"], selectAddress: "ids.json", all: true });
+    expect(() => parseArgs(["import", "--index", "i.json", "--tag", "team"])).toThrow(/--tag needs key=value/);
+  });
+
   test("--fold and --no-fold set the tri-state fold option (#1134)", () => {
     expect(parseArgs(["build", "src"]).fold).toBeUndefined();
     expect(parseArgs(["build", "src", "--fold"]).fold).toBe(true);
