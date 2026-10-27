@@ -66,6 +66,7 @@ import {
 } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import { FORGE_TOKEN_VARS, GITLAB_DROP_FORGE_TOKENS } from "@intentius/chant/ci-handover";
+import { CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -406,7 +407,22 @@ function prLoopGitlabPipeline(
   const applySpec = (job: typeof plan): CloudTradeSpec | undefined => (identity ? (job.jobName === "record" ? identity.plan : identity.apply) : undefined);
   // #4298: a pull request environment's jobs, in a stage of their own after the plan.
   const prEnv = loop.prEnvironment ? prEnvGitlabJobs(image, beforeScript, extraScript, enter, loop, member, named, onMergeRequest) : undefined;
-  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
+  // #4568: once the last apply on merge succeeded, one job tells the control repo this member applied.
+  const lastGreen = loop.control && !loop.applyBeforeMerge && greens.length > 0 ? greens[greens.length - 1]!.name : undefined;
+  const control =
+    loop.control && lastGreen
+      ? controlDispatchJob("gitlab", loop.control.target, loop.waveGate ? "$GREEN_SHA" : "$CI_COMMIT_SHA", {
+          ...(loop.words ? { words: loop.words } : {}),
+          ...(loop.control.sentCheck ? { sentCheck: loop.control.sentCheck } : {}),
+          ...(loop.control.markSent ? { markSent: loop.control.markSent } : {}),
+        })
+      : undefined;
+  const controlJob = control ? named(control.name) : undefined;
+  // A CI/CD variable reaches every job, so the plan job drops the control repo's tokens with the forge tokens.
+  const dropControl = loop.control
+    ? [`unset ${[...new Set([...CONTROL_TOKEN_VARS, loop.control.target.tokenSecret, loop.control.target.readTokenSecret])].join(" ")}`]
+    : [];
+  const stages = ["plan", PR_PLAN_NOTE_JOB, ...applies.map((a) => a.stage), ...(control ? [control.name] : []), ...(prEnv ? [PR_ENV_STAGE, PR_ENV_POST_STAGE] : [])];
   const noteJob = named(PR_PLAN_NOTE_JOB);
   const post = prLoopPostJob("gitlab", env, member?.name, loop.words ? { ...(loop.words.bin ? { bin: loop.words.bin } : {}) } : undefined);
   const doc: Record<string, unknown> = {
@@ -423,7 +439,7 @@ function prLoopGitlabPipeline(
       variables: { ...plan.run.env, ...tradeVars(identity?.plan) },
       // #4295: the merge request's code runs in this job, so the job's shell drops the forge tokens first.
       // #4296: with identity, the trade runs before that, and the same unset drops the token variables too.
-      script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...script(plan)],
+      script: [...(identity ? gitlabTradeLines(FORGE_TOKEN_VARS) : [GITLAB_DROP_FORGE_TOKENS]), ...dropControl, ...script(plan)],
       artifacts: { when: "always", paths: [reportPath] },
     },
     // #4295, #4328: a job of the target branch's pipeline posts each open merge request's note and status from its plan job's report.
@@ -462,6 +478,21 @@ function prLoopGitlabPipeline(
         },
       ]),
     ),
+    ...(control && controlJob
+      ? {
+          [controlJob]: {
+            stage: control.name,
+            image,
+            needs: [lastGreen],
+            rules: [{ if: onGreen }],
+            // The runner sets a needed job's dotenv values when the script starts, so the commit is read there.
+            script: [
+              ...Object.entries(control.env).map(([k, v]) => `export ${k}="${v}"`),
+              `bash <<'CONTROL_DISPATCH' || exit $?\n${control.script}\nCONTROL_DISPATCH`,
+            ],
+          },
+        }
+      : {}),
   ...(prEnv ? prEnv.jobs : {}),
   };
   const jobs: GeneratedJob[] = [
@@ -473,9 +504,10 @@ function prLoopGitlabPipeline(
       stage,
       needs: i > 1 ? [applies[i - 1]!.name] : [],
     })),
+    ...(controlJob ? [{ jobName: controlJob, component: "control repo dispatch", stage: control!.name, needs: [lastGreen!] }] : []),
     ...(prEnv ? prEnv.listed : []),
   ];
-  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
+  const yaml = emitGitlabFile(["workflow", "stages", "variables", planJob, noteJob, ...applies.map((a) => a.name), ...(controlJob ? [controlJob] : []), ...Object.keys(prEnv?.jobs ?? {})].map((key) => [key, doc[key]] as const));
   return { yaml, stages, jobs, env };
 }
 

@@ -95,6 +95,7 @@ import type { DriverComponent } from "./driver";
 import type { GatedWavePipelineOptions } from "./gated-wave-pipeline";
 import type { CloudTradeSpec, PipelineCloudIdentity } from "../ci-identity";
 import { commentLine, resolveProductWords, type CiProductWords, type CiProductWordsInput } from "../ci-product-words";
+import type { ControlTarget } from "../control/dispatch";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -259,6 +260,18 @@ export interface PrLoopPipelineOptions {
   words?: CiProductWordsInput | CiProductWords;
   /** The engine install lines of the project's lexicons (#4550), for {@link prLoopSetup}. */
   engineSetup?: string[];
+  /**
+   * The control repo (#4568, `@intentius/chant/ci-control`): after the last
+   * apply on merge succeeds, a `control-dispatch` job tells the control
+   * repo this member applied, and the control repo runs its dependents.
+   * The job maps the target's secret into `CHANT_CONTROL_TOKEN` for its one
+   * step; on GitLab, where a CI/CD variable reaches every job, the plan job
+   * unsets it with the forge tokens. `sentCheck` and `markSent` are the
+   * product's shell lines that find and set the commit's control status.
+   * Needs `applyOnMerge` or `waveGate`; ignored under `applyBeforeMerge`,
+   * which applies no default branch.
+   */
+  control?: { target: ControlTarget; sentCheck?: string; markSent?: string };
 }
 
 /** The lock job's step names and commands (#4327), shared by the GitHub-shaped generators. */
