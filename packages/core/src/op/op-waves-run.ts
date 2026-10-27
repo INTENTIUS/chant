@@ -89,7 +89,22 @@ import { appendRunRecord, DEFAULT_RUN_ENV } from "../lifecycle/run-ledger";
 import { pushLifecycleReport } from "../lifecycle/git";
 import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunRecordInput, OpRunStepRecord, OpRunWave } from "./runtime";
-import type { ChangeSetDocument } from "../change-set";
+import type { ChangeSetDocument, ChangeSetPart } from "../change-set";
+import type { CapabilityRegistry } from "../components/capability";
+import type { GatePolicyExec } from "../gate-policy";
+import {
+  applyOpWaveStep,
+  opWaveCosts,
+  opWaveCostVerdict,
+  opWaveHoldsAt,
+  opWaveHoldsProblems,
+  opWavePolicyVerdicts,
+  opWaveRegistry,
+  opWaveStepChangeSet,
+  planOpWaveStep,
+  type OpWaveHolds,
+  type OpWaveStepPlan,
+} from "./op-waves-capability";
 import {
   changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, ruleNeedsProof, samePrincipal, trustQuorumJudge,
   type GateQuorumJudge, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
@@ -170,6 +185,8 @@ export interface OpWavePlanFile {
    * approve` holds it. `@intentius/chant/gate-policy` gives the rules.
    */
   held?: { rules: string[]; reason?: string };
+  /** The run's change-set part (#4545), which a `holds.policy` hold runs the policy over. A `step` writes it itself. */
+  changeSet?: ChangeSetPart;
 }
 
 /** What a wave-level plan command writes to `{plans}` (#3762): one plan per run, by target. The array alone is read too. */
@@ -536,6 +553,10 @@ export interface OpWaveBaseRules {
   reviewLedger?: string;
   /** `approvals.involved` at base (#4333). */
   involved?: OpWavesInvolved;
+  /** `holds` at base (#4545): the policy and cost holds the wave runs over its plans. */
+  holds?: OpWaveHolds;
+  /** Set when `holds` at base cannot be read: none runs, and the wave waits for a person. */
+  holdsRefused?: string;
   /** `approvals.pullRequest.gate` at base (#4550): the pull request's gate a `pull-request` wave takes its approval from. */
   pullRequestGate?: string;
 }
@@ -570,7 +591,7 @@ export function readOpWavePolicy(
   const spend = (spec as { approvals?: { spend?: unknown } }).approvals?.spend === true;
   const neverOverMcp = (spec as { neverOverMcp?: unknown }).neverOverMcp === true;
   // #3836: the gate's decision point, the spec's for a wave the base does not have yet.
-  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec) };
+  const asks = { ...pointAtBase(spec, name, `${specFile} at ${sha.slice(0, 12)}`), ...quorumAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...holdsAtBase(spec, `${specFile} at ${sha.slice(0, 12)}`), ...pullRequestGateAtBase(spec) };
   const wave = spec.waves.find((w) => w.name === name);
   if (!wave) return { ...absent, spend, neverOverMcp, ...asks };
   const policy = wave.gate ?? "always";
@@ -614,6 +635,15 @@ function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "
   const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true }) : ["`approvals.quorum` must be a list of rules"];
   if (problems.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${problems.join("; ")})` };
   return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[], ...extra } : {};
+}
+
+/** The holds at base (#4545), or why they cannot be read. */
+function holdsAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "holds" | "holdsRefused"> {
+  const raw = (spec as { holds?: unknown }).holds;
+  if (raw === undefined) return {};
+  const problems = opWaveHoldsProblems(raw);
+  if (problems.length > 0) return { holdsRefused: `the holds in ${where} cannot be read (${problems.join("; ")})` };
+  return { holds: structuredClone(raw as OpWaveHolds) };
 }
 
 /** The point wave `name` asks at base (#3836), or why it cannot be asked. */
@@ -695,6 +725,14 @@ export interface RunOpWaveOptions {
    * the job records no run.
    */
   runs?: OpWaveRunPort;
+  /**
+   * The capabilities a spec's `step` plans and applies through (#4545).
+   * Default: the project's at `cwd`, as `chant run --components` builds it.
+   * A product that runs chant in process passes its own.
+   */
+  capabilities?: CapabilityRegistry;
+  /** How a hold's policy engine and cost estimator run (#4545). Default: spawned in `cwd`. */
+  holdExec?: GatePolicyExec;
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -756,6 +794,8 @@ interface WaveContext {
   options: RunOpWaveOptions;
   /** How another gate a hook holds the wave on is decided (#3821): the approval mode and base the wave's rules were read at, and whether pending facts carry neverOverMcp. */
   gateRule: { approval: GateApprovalSource; base: string; neverOverMcp: boolean };
+  /** With a `step` (#4545): each run's plan through it, by target, which its apply hands back. */
+  steps?: Map<string, OpWaveStepPlan>;
   /** The plans file's change set (#4551), which a `pull-request` gate checks the pull request's approval against (#4550). */
   changeSetDoc?: ChangeSetDocument;
 }
@@ -833,7 +873,15 @@ function writeRunsFile(
  */
 function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec }, runs: readonly OpWaveRun[], discover = false): PlannedRuns {
   const { spec, k, wave, cwd, exec } = at;
-  if (!spec.planWave) return { members: runs.map((run) => planRun({ spec, wave: k, cwd, exec }, wave.name, run)) };
+  if (!spec.planWave) {
+    const members = runs.map((run) => planRun({ spec, wave: k, cwd, exec }, wave.name, run));
+    // #4545: a plan file's `changeSet` part, which a policy hold reads.
+    const parts = new Map(runs.flatMap((run) => {
+      const part = partOf(readPlanFileField(join(cwd, opWavePlanPath(spec, k, run.target)), "changeSet"));
+      return part ? [[run.target, part] as const] : [];
+    }));
+    return { members, ...(parts.size > 0 ? { parts } : {}) };
+  }
   const runsPath = writeRunsFile(at, runs, undefined, undefined, undefined, discover);
   const plans = opWavePlansPath(spec, k);
   rmSync(join(cwd, plans), { force: true });
@@ -876,6 +924,10 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   if (changeSetDoc !== undefined && (changeSetDoc === null || typeof changeSetDoc !== "object" || Array.isArray(changeSetDoc))) {
     throw new Error(`the plans file of wave ${k} (${plans}): \`changeSet\` must be a change-set document`);
   }
+  const parts = new Map(runs.flatMap((run) => {
+    const part = partOf((byTarget.get(run.target) as { changeSet?: unknown } | undefined)?.changeSet);
+    return part ? [[run.target, part] as const] : [];
+  }));
   const members = runs.map((run) => {
     const m = member(run.target, run.op ?? spec.op, byTarget.get(run.target)!);
     const path = join(cwd, opWavePlanPath(spec, k, run.target));
@@ -892,6 +944,7 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   }
   return {
     members,
+    ...(parts.size > 0 ? { parts } : {}),
     ...(pending ? { pending } : {}),
     ...(overriders ? { overriders: overriders as string[] } : {}),
     ...(overriders && overridersSource ? { overridersSource: overridersSource as string } : {}),
@@ -901,9 +954,124 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
   };
 }
 
+/**
+ * Plan `runs` of wave `k` (#4545): through the spec's `step` when it names
+ * one, each run's plan kept on `at.steps` for its apply, else with the
+ * commands ({@link planRuns}).
+ */
+async function planWaveRuns(
+  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities">; steps?: Map<string, OpWaveStepPlan> },
+  runs: readonly OpWaveRun[],
+  discover = false,
+): Promise<PlannedRuns> {
+  const { spec, k, wave, cwd } = at;
+  if (!spec.step) return planRuns(at, runs, discover);
+  const registry = await opWaveRegistry(at.options, cwd, at.options.capabilities);
+  const plans: OpWaveStepPlan[] = [];
+  for (const run of runs) {
+    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target) }, run);
+    at.steps?.set(run.target, plan);
+    plans.push(plan);
+  }
+  const members = plans.map((p) => ({
+    member: p.target,
+    planDigest: p.planDigest,
+    op: runs.find((r) => r.target === p.target)?.op ?? spec.op,
+    ...(p.destructive ? { destructive: true } : {}),
+    ...(p.empty ? { empty: true } : {}),
+  }));
+  const parts = new Map(plans.flatMap((p) => (p.part ? [[p.target, p.part] as const] : [])));
+  const changeSet = opWaveStepChangeSet(plans);
+  return { members, ...(parts.size > 0 ? { parts } : {}), ...(changeSet ? { changeSet } : {}) };
+}
+
+/** A wave's cost hold over its plans (#4545): each changing run priced, the sum against `approveAbove`. */
+function costVerdictOf(
+  hold: NonNullable<OpWaveHolds["cost"]>,
+  spec: OpWavesSpec,
+  k: number,
+  members: readonly OpWaveMember[],
+  steps: ReadonlyMap<string, OpWaveStepPlan> | undefined,
+  cwd: string,
+  exec?: GatePolicyExec,
+) {
+  const runs = members.map((m) => ({ target: m.member, plan: opWavePlanPath(spec, k, m.member), artifact: steps?.get(m.member)?.artifact, empty: m.empty === true }));
+  return opWaveCostVerdict(hold, opWaveCosts(hold, runs, cwd, exec));
+}
+
+/**
+ * Run a wave's holds over its plans (#4545): the policy marks each run it
+ * denies or holds (the gate then settles them as a product's plan file
+ * would), and the cost adds its digest member and, over its amount, a hold.
+ * `failed` when the policy cannot run, or a run gave it no change set.
+ */
+async function runWaveHolds(
+  ctx: WaveContext,
+  holds: OpWaveHolds | undefined,
+  members: OpWaveMember[],
+  parts: ReadonlyMap<string, ChangeSetPart> | undefined,
+  base: string,
+): Promise<{ holds: string[]; extras: WaveMember[] } | { failed: string }> {
+  const { spec, k, wave, cwd, log, options } = ctx;
+  const out = { holds: [] as string[], extras: [] as WaveMember[] };
+  if (!holds) return out;
+  if (holds.policy) {
+    const missing = members.filter((m) => !parts?.has(m.member)).map((m) => m.member);
+    if (missing.length > 0) return { failed: `wave ${k} (${wave.name}): holds.policy reads each run's change set, and the plans of ${missing.join(", ")} gave none, so nothing in it was applied` };
+    let head = options.head;
+    if (!head) {
+      try {
+        head = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      } catch {
+        head = "";
+      }
+    }
+    let got: Awaited<ReturnType<typeof opWavePolicyVerdicts>>;
+    try {
+      got = await opWavePolicyVerdicts({ spec, gate: opWaveGateName(spec, k), env: spec.labels?.Env ?? wave.name, base, head, cwd, ...(options.holdExec ? { exec: options.holdExec } : {}) }, parts!);
+    } catch (err) {
+      return { failed: `wave ${k} (${wave.name}): ${err instanceof Error ? err.message : String(err)}, so nothing in it was applied` };
+    }
+    if ("note" in got) log(`wave ${k} (${wave.name}): ${got.note}`);
+    else {
+      for (const m of members) {
+        const v = got.verdicts.get(m.member);
+        if (!v || v.result === "passed") continue;
+        if (v.result === "error") return { failed: `wave ${k} (${wave.name}): the policy did not run on ${m.member} (${v.reason ?? "no answer"}), so nothing in it was applied` };
+        if (v.result === "denied") m.denied = { rules: v.rules, ...(v.reason ? { reason: v.reason } : {}) };
+        else m.held = { rules: v.holds, ...(v.reason ? { reason: v.reason } : {}) };
+      }
+    }
+  }
+  if (holds.cost) {
+    const verdict = costVerdictOf(holds.cost, spec, k, members, ctx.steps, cwd, options.holdExec);
+    out.extras.push(verdict.member);
+    log(`wave ${k} (${wave.name}): cost ${verdict.monthlyDelta >= 0 ? "+" : ""}${verdict.monthlyDelta.toFixed(2)} ${verdict.currency} a month${verdict.unestimated.length ? `, ${verdict.unestimated.length} run${verdict.unestimated.length === 1 ? "" : "s"} not priced` : ""}`);
+    if (verdict.hold) out.holds.push(verdict.hold);
+  }
+  return out;
+}
+
+/** One field of a plan file, or undefined when the file or the field is missing. */
+function readPlanFileField(path: string, field: string): unknown {
+  try {
+    return (JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>)[field];
+  } catch {
+    return undefined;
+  }
+}
+
+/** A plan file's change-set part (#4545), when it gives one of the right shape. */
+function partOf(value: unknown): ChangeSetPart | undefined {
+  const p = value as Partial<ChangeSetPart> | undefined;
+  return p && typeof p === "object" && p.member && typeof p.member.member === "string" && Array.isArray(p.entries) ? (p as ChangeSetPart) : undefined;
+}
+
 /** What planning a wave's runs gave: each run's plan, and the product's pending-fact fields (#3821). */
 interface PlannedRuns {
   members: OpWaveMember[];
+  /** Each run's change-set part, by target, when its plan gave one (#4545): what a policy hold reads. */
+  parts?: Map<string, ChangeSetPart>;
   pending?: Record<string, unknown>;
   /** The plans file's overriders (#3821). */
   overriders?: string[];
@@ -1711,7 +1879,8 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
     const before = await runBeforePlanHooks(ctx, decision.hooks, slice);
     if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in ${part} of wave ${k} was planned or applied`) };
     if (before.waitingOn) return { end: await waitOnOther(ctx, decision, before.waitingOn) };
-    const { members } = planRuns(ctx, slice);
+    if (spec.step) ctx.steps = new Map();
+    const { members } = await planWaveRuns(ctx, slice);
     const planned = new Map(members.map((m) => [m.member, m]));
     const after = await runHooks(ctx, "after-plan", decision.hooks?.["after-plan"], slice, planned);
     if (after.failed) return { end: failed(ctx, `a hook after the plan failed, so nothing in ${part} of wave ${k} was applied`) };
@@ -1771,7 +1940,19 @@ async function planOpWave(options: RunOpWaveOptions, { k, pass }: WaveAttempt<Ru
   const before = await runBeforePlanHooks(ctx, rules.hooks, wave.runs);
   if (before.failed) return { end: failed(ctx, `a hook before the plan failed, so nothing in wave ${k} was planned or applied`) };
   if (before.waitingOn) return { end: await decided(ctx, decision, recordPath, before.waitingOn) };
-  const { members, pending, overriders, overridersSource, extras, waves: found, changeSet } = planRuns(ctx, wave.runs, wave.discover === true);
+  if (spec.step) ctx.steps = new Map();
+  const { members, pending, overriders, overridersSource, extras: planExtras, waves: found, changeSet, parts } = await planWaveRuns(ctx, wave.runs, wave.discover === true);
+  // #4545: the holds at base (else the change's), run over the plans before the gate decides.
+  let extras = planExtras;
+  if (rules.holdsRefused) {
+    holds.push(rules.holdsRefused);
+    log(`wave ${k} (${wave.name}): ${rules.holdsRefused}, so none runs and the wave waits for an approval`);
+  } else {
+    const held = await runWaveHolds(ctx, opWaveHoldsAt(rules.holds, spec.holds), members, parts, base);
+    if ("failed" in held) return { end: failed(ctx, held.failed) };
+    holds.push(...held.holds);
+    if (held.extras.length > 0) extras = [...(extras ?? []), ...held.extras];
+  }
   if (wave.discover) {
     wave = { ...wave, runs: members.map((m) => ({ target: m.member, ...(m.op !== spec.op ? { op: m.op } : {}) })) };
     ctx.wave = wave;
@@ -2680,6 +2861,26 @@ async function applyStage(
         log(`${run.target}: blocked by ${by}, so not applied`);
         continue;
       }
+      if (spec.step) {
+        // #4545: the run applies through its step, with the plan the gate decided.
+        const plan = ctx.steps?.get(run.target);
+        if (!plan) {
+          log(`${run.target}: this job holds no plan of it to apply`);
+          result.failed.push(run.target);
+          continue;
+        }
+        const registry = await opWaveRegistry(options, ctx.cwd, options.capabilities);
+        const got = await applyOpWaveStep({ spec, wave, registry }, run, plan);
+        if (got.outcome === "applied") result.applied.push(run.target);
+        else if (got.outcome === "moved") {
+          log(`${run.target}: its plan moved since wave ${k} was decided, so it was not applied: ${got.reason}`);
+          result.moved.push(run.target);
+        } else {
+          log(`${run.target}: apply failed: ${got.reason}`);
+          result.failed.push(run.target);
+        }
+        continue;
+      }
       const key = run.target.replace(/[^A-Za-z0-9._-]/g, "_");
       // Under runBy "apply" each run's apply runs its own apply-stage hooks, over a runs file of that run alone.
       const runsPath = byApply ? writeRunsFile(ctx, [run], planned, decision.digest, `.chant/op-waves/${spec.name}/wave-${k}/${key}.runs.json`) : opWaveRunsPath(spec, k);
@@ -2720,6 +2921,11 @@ async function applyStage(
   }
   if (result.failed.length > 0) {
     result.exitCode = 1;
+    return;
+  }
+  // #4545: a run its step refused as moved applied nothing, so the wave exits moved and its after-apply hooks do not run.
+  if (spec.step && result.moved.length > 0) {
+    result.exitCode = CHANT_EXIT.moved;
     return;
   }
   if (problems.length > 0) {
@@ -2843,6 +3049,10 @@ export interface RecordHeadPlansOptions {
   now?: string;
   /** Write the record. Default: append to `chant/lifecycle` and push. */
   write?: (plans: HeadPlans) => Promise<void>;
+  /** The capabilities a spec's `step` plans through (#4545). Default: the project's at `cwd`. */
+  capabilities?: CapabilityRegistry;
+  /** How a cost hold's estimator runs (#4545). */
+  holdExec?: GatePolicyExec;
 }
 
 /**
@@ -2870,7 +3080,11 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
   const last = spec.waves[spec.waves.length - 1]!;
   for (let k = 1; ; k++) {
     const wave = spec.waves[k - 1] ?? last;
-    const { members, extras, waves: found } = planRuns({ spec, k, wave, cwd, exec }, wave.runs, wave.discover === true);
+    const steps = new Map<string, OpWaveStepPlan>();
+    const { members, extras: planExtras, waves: found } = await planWaveRuns({ spec, k, wave, cwd, exec, options, steps }, wave.runs, wave.discover === true);
+    // #4545: a cost hold's member is in the digest the merged wave decides, so the head's digest carries it too.
+    const cost = spec.holds?.cost ? costVerdictOf(spec.holds.cost, spec, k, members, steps, cwd, options.holdExec).member : undefined;
+    const extras = cost ? [...(planExtras ?? []), cost] : planExtras;
     plans.waves.push({ wave: k, name: wave.name, digest: opWaveSetDigest(spec, members, extras) });
     if (k >= spec.waves.length && !(last.rest && found !== undefined && k < found)) break;
   }

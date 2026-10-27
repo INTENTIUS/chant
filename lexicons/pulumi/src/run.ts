@@ -30,8 +30,21 @@
  *
  * {@link PULUMI_ALLOWED_COMMANDS} is the pulumi half, and
  * {@link runAllowedPulumi} and {@link runAllowedPlunge} refuse any argv
- * outside the list before it reaches the runner, so no later caller can make
- * this module apply. A workspace that wants nothing run for applied outputs
+ * outside the list before it reaches the runner, so no read path can make
+ * this module apply. A preview is also refused with `--show-secrets` or
+ * `--import-file` (#4541), which write files chant never wants written.
+ *
+ * ## Applies (#4541)
+ *
+ * Ruling 1 on INTENTIUS/plywood#1 widened #4450 and #4476: the `pulumi-up`
+ * capability (`./pulumi-up.ts`) applies a stack, from an apply job holding
+ * the apply identity only. It does so through two separate entry points,
+ * {@link runApplyPulumi} and {@link runApplyPlunge}, each checking the argv
+ * against one fixed form in {@link PULUMI_APPLY_COMMANDS}. Nothing but that
+ * capability's `run` calls them, and the read entry points above still
+ * refuse `up`.
+ *
+ * A workspace that wants nothing run for applied outputs
  * sets `CHANT_PULUMI_APPLIED_OUTPUTS=export` (or `applied: "export"` on the
  * source), and they are read from the checked-in `stack-export.json`.
  *
@@ -94,8 +107,13 @@ import { PULUMI_EXPORT_FILE } from "./workspace-member";
 
 const execFileAsync = promisify(execFile);
 
-/** Runs the pulumi binary with these arguments in `cwd`. Injectable so tests need no binary. */
-export type PulumiRunner = (args: string[], opts: { cwd: string }) => Promise<{ stdout: string }>;
+/**
+ * Runs the pulumi binary with these arguments in `cwd`. Injectable so tests
+ * need no binary. `env` holds variables added to the engine's environment
+ * ({@link engineEnv}) for this run only, such as
+ * `PULUMI_ENABLE_STREAMING_JSON_PREVIEW` for the pulumi-up preview (#4541).
+ */
+export type PulumiRunner = (args: string[], opts: { cwd: string; env?: Record<string, string> }) => Promise<{ stdout: string }>;
 
 /**
  * The engine's environment: no update check, and no PULUMI_SKIP_CONFIRMATIONS, which stands for `--yes` and
@@ -108,7 +126,7 @@ export function engineEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
 }
 
 export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
-  execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
+  execFileAsync("pulumi", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
 
 /**
  * The only `pulumi` commands chant runs (ruling on #4450, widened by the
@@ -136,20 +154,33 @@ function wellFormedStack(args: string[]): boolean {
   return args.every((a, i) => a !== "--stack" || (typeof args[i + 1] === "string" && args[i + 1].length > 0 && !args[i + 1].startsWith("-")));
 }
 
+/**
+ * A preview flag that writes what chant must not have written (#4541): any
+ * form of `--show-secrets`, which with `--save-plan` puts plaintext secrets
+ * in the plan file (plunge `preview.go:723-726`), and `--import-file`, which
+ * writes a file chant never reads.
+ */
+const PREVIEW_REFUSED_FLAGS = ["--show-secrets", "--import-file"];
+
+function refusedPreviewFlag(args: string[]): boolean {
+  return args.some((a) => PREVIEW_REFUSED_FLAGS.some((f) => a === f || a.startsWith(`${f}=`)));
+}
+
 function allowedRead(args: string[]): boolean {
   if (!wellFormedStack(args)) return false;
   if (!PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a))) return false;
   if (args[0] === "refresh") return args.includes("--preview-only");
   if (args[0] === "stack") return blindStackOutput(args);
+  if (args[0] === "preview") return !refusedPreviewFlag(args);
   return true;
 }
 
-/** Run `args` through `run`, refusing any argv that is not an allowed read. */
-export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
+/** Run `args` through `run`, refusing any argv that is not an allowed read. `env` is added to the engine's environment. */
+export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   if (!allowedRead(args)) {
     throw new Error(`chant runs only pulumi preview and pulumi refresh --preview-only, and pulumi stack output --json --show-secrets=false, for a Pulumi member, not pulumi ${args.join(" ")}`);
   }
-  return run(args, { cwd });
+  return run(args, env ? { cwd, env } : { cwd });
 }
 
 /**
@@ -195,7 +226,7 @@ function allowedPlungeGraph(args: string[]): boolean {
  * same preview and blind stack output it runs under `pulumi`, and the
  * stack's engine graph from its records (#4529). None writes.
  */
-export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
+export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
   const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream") && wellFormedStack(args);
   const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args);
   if (!allowed) {
@@ -203,10 +234,142 @@ export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: s
       `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
     );
   }
-  return run(args, { cwd });
+  return run(args, env ? { cwd, env } : { cwd });
 }
 
-export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
+export const defaultPlungeRunner: PulumiRunner = (args, opts) =>
+  execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv({ ...process.env, ...opts.env }) });
+
+/**
+ * The two `up` argv chant runs, for the `pulumi-up` capability's `run` alone
+ * (#4541; ruling 1 on INTENTIUS/plywood#1 widened #4450 and #4476 so the
+ * capability applies, from an apply job holding the apply identity only).
+ * The order is fixed and nothing else gets through. `<…>` stands for a value
+ * that is not empty and does not start with `-`; `[…]` is optional; `…`
+ * repeats.
+ *
+ * `up` is refused with `--skip-preview`, `--refresh`, `--show-secrets`,
+ * `--replace`, `--target-replace`, `--target-dependents`, `--exclude`,
+ * `--remote`, `--continue-on-error`, `--config` and any flag not here, since
+ * none of them is in the list.
+ */
+export const PULUMI_APPLY_COMMANDS: readonly string[] = [
+  "plunge up --plan <file> --yes --json --stack <stack> [--config-file <file>] [--target <urn>]... [--policy-pack <dir> [--policy-pack-config <file>]]...",
+  "pulumi up --yes --json --stack <stack> [--config-file <file>] [--target <urn>]... [--policy-pack <dir> [--policy-pack-config <file>]]...",
+];
+
+/** A CrossGuard pack the preview and `up` run (ruling 7: in the preview job, feeding chant's gate). */
+export interface PulumiPolicyPack {
+  /** The pack's directory. */
+  dir: string;
+  /** Its `--policy-pack-config` file. */
+  config?: string;
+}
+
+/** What the apply argv carry after the stack. */
+export interface PulumiApplyTail {
+  /** A scratch copy of the stack's config file, passed as `--config-file` (#4541): never `--config`, which writes the working tree's file. */
+  configFile?: string;
+  targets?: readonly string[];
+  policyPacks?: readonly PulumiPolicyPack[];
+}
+
+function tailArgs(t: PulumiApplyTail): string[] {
+  return [
+    ...(t.configFile ? ["--config-file", t.configFile] : []),
+    ...(t.targets ?? []).flatMap((u) => ["--target", u]),
+    ...(t.policyPacks ?? []).flatMap((p) => ["--policy-pack", p.dir, ...(p.config ? ["--policy-pack-config", p.config] : [])]),
+  ];
+}
+
+/**
+ * The preview the `pulumi-up` capability runs (#4541): the member's preview
+ * argv, with `--save-plan <file>` on plunge, then the apply tail. It goes
+ * through {@link runAllowedPulumi} or {@link runAllowedPlunge} like every
+ * other preview.
+ */
+export function pulumiUpPreviewArgs(opts: { stack: string; savePlan?: string } & PulumiApplyTail): string[] {
+  return ["preview", "--json", "--show-sames", "--stack", opts.stack, ...(opts.savePlan ? ["--save-plan", opts.savePlan] : []), ...tailArgs(opts)];
+}
+
+/** `plunge up --plan <file> --yes --json --stack <stack>` and the tail: the first of {@link PULUMI_APPLY_COMMANDS}. */
+export function plungeUpArgs(opts: { plan: string; stack: string } & PulumiApplyTail): string[] {
+  return ["up", "--plan", opts.plan, "--yes", "--json", "--stack", opts.stack, ...tailArgs(opts)];
+}
+
+/** `pulumi up --yes --json --stack <stack>` and the tail: the second of {@link PULUMI_APPLY_COMMANDS}. */
+export function pulumiUpArgs(opts: { stack: string } & PulumiApplyTail): string[] {
+  return ["up", "--yes", "--json", "--stack", opts.stack, ...tailArgs(opts)];
+}
+
+const isValue = (v: string | undefined): v is string => typeof v === "string" && v.length > 0 && !v.startsWith("-");
+
+/** Whether `rest` is exactly an apply tail, in its order. */
+function wellFormedTail(rest: string[]): boolean {
+  let i = 0;
+  if (rest[i] === "--config-file") {
+    if (!isValue(rest[i + 1])) return false;
+    i += 2;
+  }
+  while (rest[i] === "--target") {
+    if (!isValue(rest[i + 1])) return false;
+    i += 2;
+  }
+  while (rest[i] === "--policy-pack") {
+    if (!isValue(rest[i + 1])) return false;
+    i += 2;
+    if (rest[i] === "--policy-pack-config") {
+      if (!isValue(rest[i + 1])) return false;
+      i += 2;
+    }
+  }
+  return i === rest.length;
+}
+
+/** Exactly `plunge up --plan <file> --yes --json --stack <stack>` and a tail. */
+function allowedPlungeUp(args: string[]): boolean {
+  return (
+    args[0] === "up" &&
+    args[1] === "--plan" &&
+    isValue(args[2]) &&
+    args[3] === "--yes" &&
+    args[4] === "--json" &&
+    args[5] === "--stack" &&
+    isValue(args[6]) &&
+    wellFormedTail(args.slice(7))
+  );
+}
+
+/** Exactly `pulumi up --yes --json --stack <stack>` and a tail. */
+function allowedPulumiUp(args: string[]): boolean {
+  return args[0] === "up" && args[1] === "--yes" && args[2] === "--json" && args[3] === "--stack" && isValue(args[4]) && wellFormedTail(args.slice(5));
+}
+
+/**
+ * Run `pulumi up` for the `pulumi-up` capability (#4541), refusing any argv
+ * but the stock form in {@link PULUMI_APPLY_COMMANDS}. Only the capability's
+ * `run` calls this; no read path reaches it, and {@link runAllowedPulumi}
+ * still refuses `up`.
+ */
+export async function runApplyPulumi(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPulumiUp(args)) {
+    throw new Error(`chant applies a Pulumi stack only as ${PULUMI_APPLY_COMMANDS[1]}, not pulumi ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
+/**
+ * Run `plunge up --plan` for the `pulumi-up` capability (#4541), refusing
+ * any argv but the plunge form in {@link PULUMI_APPLY_COMMANDS}. plunge
+ * refuses a saved plan whose records moved, or one with no stamp, before
+ * anything changes (exit 40).
+ */
+export async function runApplyPlunge(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (!allowedPlungeUp(args)) {
+    throw new Error(`chant applies a plunge stack only as ${PULUMI_APPLY_COMMANDS[0]}, not plunge ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
 
 export { pulumiMemberEngine, readPlywoodEngine, type PulumiMemberEngine, type PulumiMemberEngineSource, type PulumiMemberEngineOptions } from "./member-engine";
 
@@ -258,23 +421,32 @@ export function readMemberExport(dir: string): unknown {
   }
 }
 
-interface RunFailure {
+/** What a failed engine run left: its output, its exit status when it ran, and whether the binary was missing. */
+export interface PulumiRunFailure {
   stdout?: string;
   stderr?: string;
   message: string;
   missingBinary: boolean;
+  /** The process's exit status, when it ran and exited (`execFile`'s numeric `code`). */
+  exitCode?: number;
 }
 
-function failureOf(err: unknown): RunFailure {
-  const e = err as (NodeJS.ErrnoException & { stdout?: unknown; stderr?: unknown }) | undefined;
+type RunFailure = PulumiRunFailure;
+
+/** A runner's thrown error read as a {@link PulumiRunFailure}. */
+export function pulumiRunFailure(err: unknown): PulumiRunFailure {
+  const e = err as (Omit<NodeJS.ErrnoException, "code"> & { code?: unknown; stdout?: unknown; stderr?: unknown }) | undefined;
   const message = err instanceof Error ? err.message : String(err);
   return {
     ...(typeof e?.stdout === "string" ? { stdout: e.stdout } : {}),
     ...(typeof e?.stderr === "string" ? { stderr: e.stderr } : {}),
     message,
     missingBinary: e?.code === "ENOENT" || /ENOENT|command not found/.test(message),
+    ...(typeof e?.code === "number" ? { exitCode: e.code } : {}),
   };
 }
+
+const failureOf = pulumiRunFailure;
 
 function parseJson(text: string | undefined): unknown {
   if (!text) return undefined;

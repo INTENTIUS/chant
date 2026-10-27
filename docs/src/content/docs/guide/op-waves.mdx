@@ -93,7 +93,7 @@ A run can list the runs it needs applied first:
 
 Each entry is a target of an earlier wave, or of a run listed before it in the same wave (`assertOpWaveDependsOn`, `packages/core/src/op/op-waves.ts:745`). Inside one wave this needs a single job to apply it, so a wave with `shares` or `jobs` takes only dependencies on earlier waves.
 
-Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1273`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
+Each wave job writes an outcome file, `.chant/op-waves/<name>/outcomes/outcome-wave-<k>.json`, and the forge keeps it whatever the job's exit code. The next wave's job downloads them and reads them (`opWaveBefore`, `packages/core/src/op/op-waves-run.ts:1623`). A run that failed, or was blocked, blocks the runs that depend on it. A blocked run is neither planned nor applied, and the log names the failed run it traces back to. A run with no failed dependency applies. Exit 1 means one of the job's own runs failed or was blocked.
 
 A run that waits at its gate (exit 3), or one that was refused or held, still stops the waves after it, because those runs did not apply. On GitHub and Forgejo the later jobs get `if: !cancelled()` (`lexicons/github/src/components/generate-op-waves-pipeline.ts:136`). On GitLab each job is `allow_failure: { exit_codes: [1] }`, so only exit 1 lets the next wave run (`lexicons/gitlab/src/components/generate-op-waves-pipeline.ts`). Regenerate the pipeline to get them ([#4322](https://github.com/INTENTIUS/chant/issues/4322)).
 
@@ -218,6 +218,32 @@ Every apply call, `apply` or `applyWave`, also gets `CHANT_APPLY_OUTCOME`, a pat
 `plan` and `planWave` cannot both be given, and neither can `apply` and `applyWave`. Either kind of plan can go with either kind of apply.
 
 `shares` keeps working. The deciding job plans the whole wave in one call. Each share job calls `planWave` with a runs file of its own slice, and calls `applyWave` with only the runs whose plan digest still matches the decision.
+
+## Plan and apply through a capability
+
+A spec can name a `step` in place of `plan` and `apply` ([#4545](https://github.com/INTENTIUS/chant/issues/4545)). Each run is then planned and applied in the wave's own process, through the capability a component's deploy step would name: `terraform-apply` from the terraform lexicon, `pulumi-up` from the pulumi lexicon, or any kind a capability plugin adds.
+
+```json
+{
+  "name": "tf-apply",
+  "op": "tf-apply",
+  "step": { "kind": "terraform-apply", "root": "{target}", "lockTimeout": "5m" },
+  "waves": [
+    { "name": "network", "runs": [{ "target": "network" }] },
+    { "name": "apps", "runs": [{ "target": "api", "input": { "vars": { "size": "small" } } }, { "target": "web" }] }
+  ]
+}
+```
+
+The step is `{ kind, ...input }`. chant fills `{target}`, `{op}` and `{wave}` in each string of the input for every run, and lays the run's own `input` over it, so one step covers every root of the pipeline and a run adds its own vars or reads.
+
+- The plan is `capability.plan` for each run. Its `planDigest` is the run's member digest. The run is `empty` when its change-set part has no entry but `no-op` and `read`, and `destructive` when one entry deletes or replaces. A member with holes and no artifact fails the plan with the holes' reasons. The parts are composed into the wave's change-set document, and the pending fact cites it as the plans file's `changeSet` would.
+- The apply is `capability.run` with the plan's artifact in `ctx.plans`, so the run applies the plan the gate decided. A run the capability refuses as moved applies nothing, the job lists it under `moved` and exits 4. Any other error fails the run.
+- Each run's plan file at `{plan}` carries `planDigest`, `member`, `artifact` and `changeSet`, so a `perRun` hook can read the plan.
+
+The capabilities are the project's, built the way `chant run --components` builds them from `chant.config`. A product that runs chant in process passes its own registry as `capabilities` to `runOpWave`. A `step` replaces the four commands, so the spec refuses it beside any of them. It also refuses `discover`, which only `planWave` can report, and `hooks.apply.runBy: "apply"`, since no apply command exists to hand the hooks to. Shares and job groups work as with commands: each share plans its slice through the step again and applies the runs whose digest still matches the decision.
+
+The wave-job runtime (`wave-runtime.mjs`) does not carry the config loader, so a spec with a `step` needs the full `@intentius/chant` install, or a product's own bin that passes `capabilities`.
 
 ## Runs found at plan time
 
@@ -647,7 +673,19 @@ A plan file can also say the product's policy holds a run for a person ([#4294](
 { "runs": [{ "target": "network/iam", "planDigest": "jcs1-sha256:...", "held": { "rules": ["main.hold_iam"], "reason": "an IAM role changes" } }] }
 ```
 
-Such a run holds its wave until a person approves the set digest. This happens under `gate: "never"` too, the way a hook with `onFailure: "approve"` holds a wave. The decision's `heldBy` names it as `policy on <target> (<rules>)` (`packages/core/src/op/op-waves-run.ts:1636`). A denial on the same run still refuses the wave. `@intentius/chant/gate-policy` runs conftest or OPA and gives the rules a product writes here ([Policy at the Gate](/chant/guide/gate-policy/#for-a-product-with-its-own-input)).
+Such a run holds its wave until a person approves the set digest. This happens under `gate: "never"` too, the way a hook with `onFailure: "approve"` holds a wave. The decision's `heldBy` names it as `policy on <target> (<rules>)` (`packages/core/src/op/op-waves-run.ts:1987`). A denial on the same run still refuses the wave. `@intentius/chant/gate-policy` runs conftest or OPA and gives the rules a product writes here ([Policy at the Gate](/chant/guide/gate-policy/#for-a-product-with-its-own-input)).
+
+## Wave holds
+
+`holds` turns on holds chant runs over a wave's plans itself ([#4545](https://github.com/INTENTIUS/chant/issues/4545)), so a product does not need its own hook for them. They are read at the base commit with the policy. A `policy` hold set at base or in the change holds either way, so a change can add it and cannot drop it. A `cost` hold at base wins over the change's.
+
+```json
+{ "holds": { "policy": true, "cost": { "command": ["infracost", "breakdown", "--path", "{planJson}", "--format", "json", "--log-level", "error"], "approveAbove": 100 } } }
+```
+
+With `policy: true`, the deciding job runs the workspace's `ci.policy`, read from the declaration at base as the pull-request jobs read it ([Policy at the Gate](/chant/guide/gate-policy/)), over each run's change-set part. A deny rule marks the run `denied` and a hold rule marks it `held`, exactly as a plan file's [denials](#policy-denials) and [holds](#policy-holds) do. A policy that cannot run fails the wave. Each run needs a change-set part, which a `step` always gives and a `plan` command gives as `changeSet` in its plan file.
+
+With `cost`, chant runs `command` once for each run whose plan changes something. `{target}` and `{plan}` are filled in, and `{planJson}` gets the engine's plan document when the capability's artifact names one (`terraform-apply` writes `show -json` beside its plan file). The command prints the estimate: infracost's JSON by default, or `{ "monthlyDelta": <number> }` with `format: "chant"`. chant sums the monthly change over the wave. When the sum is over `approveAbove`, or a run could not be priced, the wave waits for a person whatever its gate says. `heldBy` gives the reason. The sum is a member of the set digest, `(monthly cost)`, so an approval at one cost does not apply at another, and `--record-plans` puts the same member in the head's digest. The terraform lexicon's preset is `terraformCostHold({ approveAbove })` from `@intentius/chant-lexicon-terraform/cost-hold`.
 
 ## Keep a product's gate names
 

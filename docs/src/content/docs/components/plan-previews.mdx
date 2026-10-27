@@ -67,6 +67,7 @@ The table is generated from the capability plugins that core and the lexicons re
 | `kubectl-apply` | k8s | yes | yes | a server-side dry run (`dryRun=All`) of the manifest, compared with each live object | a create, update, no-op or delete per object, and each changed field path with its value before and after. See [kubectl-apply](#kubectl-apply) |
 | `kustomize-apply` | k8s | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
 | `ocb-build` | otel | no | no | nothing | no entries for this step. See [without `plan`](#a-capability-without-plan) |
+| `pulumi-up` | pulumi | yes | yes | `pulumi preview --json --show-sames` (or `plunge preview` with `--save-plan`) in the stack's directory, streamed as engine events, with CrossGuard's policy events | a create, update, replace or delete per URN, and each top-level input the change writes with its value before and after. See [pulumi-up](#pulumi-up) |
 | `terraform-apply` | terraform | yes | yes | `terraform plan` (or tofu or choudoufu) in the root, against its state, with a typed placeholder for each variable that reads an output not known yet | every resource change with its action, and each changed top-level attribute with its value before and after. See [terraform-apply](#terraform-apply) |
 
 {/* END GENERATED plan-previews */}
@@ -169,6 +170,20 @@ The plan asks the source for the member's planned outputs. For a choudoufu membe
 The digest covers the environment, the member, its kind, the digest of the member's own plan and the known and unknown outputs, so a member's plan that moves after review moves the consumer's digest too. `run` applies nothing. It plans the member again and refuses while the member has changes left to apply, then answers the member's applied outputs.
 
 `outputs` answers the member's outputs as applied now, for a choudoufu member from `choudoufu output -json` in its directory.
+
+### `pulumi-up`
+
+`lexicons/pulumi/src/pulumi-up.ts` holds the capability ([#4541](https://github.com/INTENTIUS/chant/issues/4541)), and `lexicons/pulumi/src/change-set.ts` maps its steps to entries. The step is `{ kind: "pulumi-up", dir, stack }`, and the member is `<project>/<stack>`, where the project is `Pulumi.yaml`'s `name` unless the step names a `member`. One kind covers stock Pulumi and plunge. The engine is the one the member's config, `plywood.yml`, `PULUMI_BACKEND_URL` or `Pulumi.yaml` names, in that order ([#4559](https://github.com/INTENTIUS/chant/issues/4559)).
+
+The plan runs `preview --json --show-sames --stack <stack>` in the stack's directory with `PULUMI_ENABLE_STREAMING_JSON_PREVIEW=true`, so the preview prints its engine events. The steps give the entries, read as the printed preview document reads them, and the policy events give CrossGuard's findings. On plunge the preview also saves its plan with `--save-plan` into a scratch directory outside the working tree. The step's `config` is written into a scratch copy of `Pulumi.<stack>.yaml` and passed with `--config-file`, and `policyPacks` pass as `--policy-pack`.
+
+Each URN is one entry with its action. A replace is one entry, and it is marked `destroy` when the delete comes before the create. Each top-level input the change writes is listed with its old and new value. An input holding Pulumi's unknown value shows as known after apply, and a secret carries no value. A resource a program may register inside an `apply()` is a `mayAppear` entry. A mandatory CrossGuard violation denies the plan before any gate opens, and an advisory one is kept with the plan.
+
+The digest is the one a workspace plan of the member binds (`pulumiPreviewDigest`). For a member on the resource lock grain, the default on plunge, `same` and `read` steps are left out, so a pull request that changes other resources of the stack does not move it. A stack whose `config` reads an output not known yet is a hole naming that output, with no preview.
+
+On plunge, `run` applies the saved plan with `plunge up --plan <file> --yes --json --stack <stack>`. plunge refuses a plan whose records moved since it was saved, and the command exits 4. On stock Pulumi, `run` previews again and exits 4 when that preview goes beyond the approved shape. Then it runs `pulumi up --yes --json --stack <stack>` and compares the steps in its event stream with the approved shape. A step the approval did not hold fails the apply, with exit 1, since the update has run. With no approved plan, `run` previews and applies in one go.
+
+Its `outputs` runs `stack output --json --show-secrets=false`. The plan reads the stack's future outputs from the stack step of the preview.
 
 ### `terraform-apply`
 

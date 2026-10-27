@@ -13,4 +13,5 @@ export * from "./reader";
 export * from "./handler";
 export * from "./serve";
 export * from "./headers-file";
+export * from "./mirror";
 export * from "./edge";

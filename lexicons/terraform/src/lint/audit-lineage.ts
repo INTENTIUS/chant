@@ -110,6 +110,13 @@
  * a root's mode, and no surveyed tool has an Op model to read: choudoufu lints
  * HCL, and every tflint ruleset, tfsec/trivy-checks and the Sentinel policies
  * do the same. There is nothing upstream to credit.
+ *
+ * TF046 (chant#4561, a live root on the local record store in a CI run) has
+ * no entry. choudoufu prints where records go on every run and reports a
+ * `record_store.note` in `live-check -json` (INTENTIUS/choudoufu#2293), but
+ * it has no `internal/live/lint` rule for the local store, and no surveyed
+ * tool knows about record stores. TF044 is the nearest neighbour, for a
+ * Terragrunt state backend.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 

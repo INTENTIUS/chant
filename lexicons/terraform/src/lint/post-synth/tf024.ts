@@ -13,8 +13,9 @@
  *   to the location it names, so `terraform_remote_state` readers keep
  *   working, and when the live declaration has no `record_store` the record
  *   store is derived from the backend's bucket, s3 to s3, gcs to gcs, azurerm
- *   to azurerm (INTENTIUS/choudoufu#2293). An explicit `record_store` always
- *   wins.
+ *   to azurerm (INTENTIUS/choudoufu#2293), when the bucket is a literal in
+ *   the configuration. An explicit `record_store` always wins. The resolution
+ *   is shared with TF046 in `./record-store.ts`.
  * - `cloud {}`: dropped entirely. Nothing is published to it and no store is
  *   derived from it.
  *
@@ -22,7 +23,7 @@
  * author may want, and is the derivation source the maintainer ruled for),
  * and the cloud case as `warning` (the block does nothing at all). Neither
  * fails a build at default severity. The guard against a CI root that ends
- * up on the local store is a separate rule (chant#4561).
+ * up on the local store is TF046 (chant#4561).
  *
  * The live marker is the root's `mode`, stamped from either a `live` block or
  * an `estate.chdf.hcl` sidecar (`hcl/parse.ts`), so a sidecar estate is
@@ -48,46 +49,51 @@ import { isResourceDeclarable } from "@intentius/chant/declarable";
 import { LIVE_TYPE, TERRAFORM_TYPE, type BlockBody } from "../../hcl/parse";
 import { backendTypes, hasBlock } from "./tf001";
 import { isRootScoped } from "./scope";
+import { DERIVABLE_BACKENDS, resolveRecordStore, type ResolvedRecordStore } from "./record-store";
 
-/** Backend types choudoufu derives a record store from (INTENTIUS/choudoufu#2293). */
-export const DERIVABLE_BACKENDS: ReadonlySet<string> = new Set(["s3", "gcs", "azurerm"]);
+export { DERIVABLE_BACKENDS } from "./record-store";
 
 const bodyOf = (props: { body?: unknown }): BlockBody =>
   (typeof props.body === "object" && props.body !== null ? props.body : {}) as BlockBody;
 
-/** Roots whose live declaration (a `live` block or the sidecar) names a `record_store`. */
-function rootsWithRecordStore(ctx: PostSynthContext): Set<string> {
-  const roots = new Set<string>();
+/** Each root's live declarations (its `live` block and its sidecar), keyed by root. */
+export function liveBodiesByRoot(ctx: PostSynthContext): Map<string, BlockBody[]> {
+  const roots = new Map<string, BlockBody[]>();
   for (const entity of ctx.entities.values()) {
     if (entity.entityType !== LIVE_TYPE) continue;
     if (!isResourceDeclarable(entity) || !isRootScoped(entity)) continue;
     const props = entity.props as { root?: unknown; body?: unknown };
-    if (hasBlock(bodyOf(props), "record_store")) roots.add(typeof props.root === "string" ? props.root : "");
+    const root = typeof props.root === "string" ? props.root : "";
+    const list = roots.get(root) ?? [];
+    list.push(bodyOf(props));
+    roots.set(root, list);
   }
   return roots;
 }
 
-function backendMessage(root: string, type: string, recordStore: boolean): string {
+function backendMessage(root: string, type: string, store: ResolvedRecordStore): string {
   const label = type ? `backend "${type}"` : "backend";
   const head =
     `Root module "${root}" runs choudoufu with a declared estate and also declares a ${label} block. ` +
     "choudoufu ignores it with a warning: no state is read or written there and `init -migrate-state` " +
     "is refused. An apply publishes the estate's non-sensitive outputs to the location it names, so " +
     "terraform_remote_state readers keep working.";
-  if (recordStore) {
+  if (store.source === "record_store") {
     return `${head} Records go to the record_store the live declaration names, which wins over the backend.`;
   }
-  if (DERIVABLE_BACKENDS.has(type)) {
+  if (store.source === "backend") {
     return (
       `${head} With no record_store declared, choudoufu derives the record store from this backend's ` +
       "bucket and prints it on every init and plan (INTENTIUS/choudoufu#2293). Declare record_store to " +
       "put records somewhere else."
     );
   }
+  const why = DERIVABLE_BACKENDS.has(type) && store.note
+    ? `No record store is derived from it: ${store.note}.`
+    : `No record store is derived from a ${type ? `"${type}"` : "backend of unknown type"} (only s3, gcs and azurerm are).`;
   return (
-    `${head} No record store is derived from a ${type ? `"${type}"` : "backend of unknown type"} ` +
-    "(only s3, gcs and azurerm are), and no record_store is declared, so records stay in the local " +
-    "store. Declare record_store if more than one machine runs this root."
+    `${head} ${why} No record_store is declared, so records stay in the local ` +
+    "store. Declare record_store if more than one machine runs this root (TF046 guards this in CI)."
   );
 }
 
@@ -107,7 +113,7 @@ export const tf024: PostSynthCheck = {
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];
     const flagged = new Set<string>();
-    let withStore: Set<string> | undefined;
+    let liveBodies: Map<string, BlockBody[]> | undefined;
 
     for (const [name, entity] of ctx.entities) {
       if (entity.entityType !== TERRAFORM_TYPE) continue;
@@ -130,12 +136,13 @@ export const tf024: PostSynthCheck = {
         continue;
       }
 
-      withStore ??= rootsWithRecordStore(ctx);
+      liveBodies ??= liveBodiesByRoot(ctx);
       const type = backendTypes(body)[0] ?? "";
+      const store = resolveRecordStore([body], liveBodies.get(root) ?? []);
       diagnostics.push({
         checkId: "TF024",
         severity: "info",
-        message: backendMessage(root, type, withStore.has(root)),
+        message: backendMessage(root, type, store),
         entity: name,
         lexicon: "terraform",
       });

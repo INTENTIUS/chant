@@ -57,6 +57,7 @@ import { loadRecordKind, RecordReadError, type LoadedRecordKind, type RecordEntr
 import { gitRoot } from "./record-source";
 import type { ReasonCode } from "./reason-codes";
 import { replicateAfter } from "./wip";
+import { CHANT_EXIT } from "../exit-codes";
 
 /** The version of the `work` output this chant writes. */
 export const WORK_LEASE_CONTRACT_VERSION = 1;
@@ -73,7 +74,12 @@ const USAGE = [
 ].join("\n");
 
 /** Exit code when the lease was refused rather than the command failing. */
-export const EXIT_LEASE_REFUSED = 2;
+export const EXIT_LEASE_REFUSED = CHANT_EXIT.held;
+
+/** Exit code for a refusal: 5 when another worker or writer holds or won the lease, 1 when nobody holds it or the token is stale (#4585). */
+export function leaseRefusedExit(code: string): number {
+  return code === "lease-not-held" || code === "lease-token-mismatch" ? CHANT_EXIT.failed : EXIT_LEASE_REFUSED;
+}
 
 export type WorkVerb = "claim" | "renew" | "release";
 
@@ -549,7 +555,7 @@ export async function runWorkspaceWork(ctx: CommandContext): Promise<number> {
   }
   if ("refused" in doc) {
     if (!args.json) console.error(formatError({ message: `${doc.refused.code}: ${doc.refused.message}` }));
-    return EXIT_LEASE_REFUSED;
+    return leaseRefusedExit(doc.refused.code);
   }
   if (!args.json) {
     const what = verb === "claim" ? "claimed" : verb === "renew" ? "renewed" : "released";

@@ -27,6 +27,7 @@ chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--int
 chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
+chant ci check --base <rev> [<target>...] [--output <dir>] [--json]
 chant ci workflow [--workflow <name>]... [--output <file>] [--chant <command>] [--install <command>]
                   [--token-secret <NAME> | --app-id-var <VAR> --app-key-secret <NAME>]
                   [--runner-key-secret <NAME>]
@@ -472,6 +473,10 @@ chant ci serve --forge forgejo --repo demo/estate --env local
 `ci run` uses the host's key too when it is given no `--key` and no `CHANT_RUNNER_KEY`. As with the variable, a host key the commit's trust config doesn't list leaves the run unsigned, with a warning only under `signedSince`.
 
 `ci serve` takes no webhook yet. It polls, so the host needs no inbound port, and a webhook checked with an HMAC secret is a follow-up.
+
+## ci check
+
+`chant ci check --base <rev> [<target>...]` runs the `ci.hooks.check` hooks the workspace declaration at `--base` names ([#4556](https://github.com/INTENTIUS/chant/issues/4556)). A product's check job runs it before any plan. Each target is a root, stack or component the change touches, and a `perRun` hook runs once per target. The hooks run with no forge token or cloud credentials in their environment. `check-hooks.json` under `--output` (default `.chant/check`) lists each hook's result, and `--json` prints it. The command exits 1 when a hook failed, and 0 when every hook passed or none is declared. [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/#the-check-moment) has the shape.
 
 ## ci init
 

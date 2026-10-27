@@ -115,6 +115,17 @@ export type {
   RunOpWaveOptions,
   RunOpWaveResult,
 } from "./op-waves-run";
+export {
+  OP_WAVE_COST_FORMATS,
+  OP_WAVE_COST_MEMBER,
+  opWaveCostVerdict,
+  opWaveHoldsAt,
+  opWaveHoldsProblems,
+  opWaveStepInput,
+  opWaveStepProblems,
+  readCostEstimate,
+} from "./op-waves-capability";
+export type { OpWaveCostFormat, OpWaveCostHold, OpWaveCostVerdict, OpWaveHolds, OpWaveRunCost, OpWaveStep, OpWaveStepApply, OpWaveStepPlan } from "./op-waves-capability";
 export { notifyOpWave, opWaveNotifyFields } from "./op-waves-notify";
 export type { OpWaveOutcome } from "./op-waves-notify";
 export { loadActivities, loadProfiles, resolveActivity } from "./activity-registry";

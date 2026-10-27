@@ -181,8 +181,8 @@ describe("pulumiOutputSource", () => {
     await expect(pulumiOutputSource({ run }).planned(ctx, ref)).rejects.toThrow(/Pulumi member "aws" failed: error: no stack selected/);
   });
 
-  test("the lexicon's capability plugin contributes the source and no verbs", () => {
-    expect(pulumiCapabilityPlugin.capabilities()).toEqual([]);
+  test("the lexicon's capability plugin contributes the source and the pulumi-up verb (#4541)", () => {
+    expect(pulumiCapabilityPlugin.capabilities().map((c) => c.kind)).toEqual(["pulumi-up"]);
     expect(pulumiCapabilityPlugin.engineOutputSources!().map((s) => s.kinds)).toEqual([["pulumi"]]);
   });
 });
