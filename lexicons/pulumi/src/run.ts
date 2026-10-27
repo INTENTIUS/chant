@@ -523,6 +523,23 @@ export async function runGatedPlunge(run: PulumiRunner, args: string[], cwd: str
   return run(args, env ? { cwd, env } : { cwd });
 }
 
+/**
+ * The install chant runs in a release's recorded copy of a program (#4542),
+ * for `./release-copy.ts` alone: exactly `pulumi install` or `plunge
+ * install`, no flag. The cut records tracked files only, so the copy has no
+ * `node_modules` or virtualenv; the CLI's install follows `Pulumi.yaml`'s
+ * runtime options and the recorded lockfile.
+ */
+export const PULUMI_INSTALL_COMMANDS: readonly string[] = ["pulumi install", "plunge install"];
+
+/** Run `install` with no flag in a release copy, refusing any other argv. The runner picks the binary. */
+export async function runReleaseInstall(run: PulumiRunner, args: string[], cwd: string, env?: Record<string, string>): Promise<{ stdout: string }> {
+  if (args.length !== 1 || args[0] !== "install") {
+    throw new Error(`chant installs a release copy's dependencies only as ${PULUMI_INSTALL_COMMANDS.join(" or ")}, not ${args.join(" ")}`);
+  }
+  return run(args, env ? { cwd, env } : { cwd });
+}
+
 export { pulumiMemberEngine, readPlywoodEngine, type PulumiMemberEngine, type PulumiMemberEngineSource, type PulumiMemberEngineOptions } from "./member-engine";
 
 /** The argv chant runs for a member's applied outputs, after `pulumi` (#4455). Secrets stay blinded. */
