@@ -22,6 +22,7 @@ list is the whole of what chant runs for a Pulumi member:
 | drift | `pulumi refresh --preview-only --json --stack <name> --target <urn>` | `plunge drift --resource <urn> --stream --stack <name>` | no |
 | applied outputs | `pulumi stack output --json`, `--show-secrets` absent or `=false` | `plunge stack output --json`, the same | no |
 | planned outputs | the change set's preview | the same | no |
+| engine facts | none | `plunge graph --json --stack <name>`, or the checked-in `engine-graph.json` ([A member on plunge](../plunge/)) | no |
 
 `runAllowedPulumi` and `runAllowedPlunge` refuse any other argv before it
 reaches the binary, and `stack output` with secrets shown is refused too.

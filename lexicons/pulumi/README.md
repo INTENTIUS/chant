@@ -8,14 +8,24 @@ Pulumi lexicon for [chant](https://intentius.io/chant/). It declares no resource
 | its change-set part | `pulumi preview --json` | `src/change-set.ts` |
 | its drift records | `pulumi refresh --preview-only --json --target <urn>`, one resource at a time | `src/drift-record.ts`, `src/drift-read.ts` |
 | its stack outputs, for another member's parameters | `pulumi stack output --json --show-secrets=false` (applied) and `pulumi preview --json` (planned) | `src/stack-outputs.ts`, `src/member-outputs.ts` |
+| engine facts, for a member on plunge | `plunge graph --json --stack <stack>` (`describeResources`), or the checked-in `engine-graph.json` (the graph read) | `src/describe-resources.ts`, `src/engine-graph.ts` |
 
-The graph read never runs `pulumi`. The change set and drift run `preview` and `refresh --preview-only`, and the outputs read adds `stack output --json --show-secrets=false`. A member on plunge runs `plunge preview`, `plunge stack output --json --show-secrets=false` and `plunge drift --resource <urn> --stream`. That is the whole list, as ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476) (2026-10-25), which widened the [#4450](https://github.com/INTENTIUS/chant/issues/4450) ruling's `preview` and `refresh --preview-only` to keep the outputs read and the plunge commands. Nothing else runs (`runAllowedPulumi` and `runAllowedPlunge` refuse any other argv), so chant never changes a stack. With `CHANT_PULUMI_APPLIED_OUTPUTS=export`, the outputs read runs nothing either.
+The graph read never runs `pulumi`. The change set and drift run `preview` and `refresh --preview-only`, and the outputs read adds `stack output --json --show-secrets=false`. A member on plunge runs `plunge preview`, `plunge stack output --json --show-secrets=false` and `plunge drift --resource <urn> --stream`. For its engine facts it runs one of exactly four argv: `plunge graph --json`, `plunge graph --json --stack <stack>`, `plunge graph --json --versions` and `plunge graph --json --stack <stack> --versions` ([#4529](https://github.com/INTENTIUS/chant/issues/4529)). An outputs or secrets flag on `plunge graph` is refused. That is the whole list, as ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476) (2026-10-25), which widened the [#4450](https://github.com/INTENTIUS/chant/issues/4450) ruling's `preview` and `refresh --preview-only` to keep the outputs read and the plunge commands. Nothing else runs (`runAllowedPulumi` and `runAllowedPlunge` refuse any other argv), so chant never changes a stack. With `CHANT_PULUMI_APPLIED_OUTPUTS=export`, the outputs read runs nothing either.
 
 ## Drift: `chant workspace drift`
 
 `chant workspace drift --member <pulumi member> [--resource <urn>] [--stream]` runs `chant lifecycle drift` in the member's reader project, which calls this lexicon's `readDrift`. A stock member is read with one `pulumi refresh --preview-only --json --target <urn>` per resource in its checked-in `stack-export.json`. A member on plunge is read with `plunge drift --resource <urn> --stream` per resource. `--resource` reads one URN. The only read is `refresh`.
 
 A member runs on plunge when its config says `engine: "plunge"`, or when `Pulumi.yaml` names a backend URL starting with `plunge` (`plunge+file://...`, `plunge://...`). Only `Pulumi.yaml` is read, never `PULUMI_BACKEND_URL` or login state.
+
+## Engine facts for a member on plunge
+
+plunge keeps a record per resource, and `plunge graph --json` prints the stack's graph from those records in the engine graph document chant#4520 designed. It makes no provider call and prints no output value. chant reads it two ways ([#4529](https://github.com/INTENTIUS/chant/issues/4529)):
+
+- `describeResources` runs `plunge graph --json --stack <stack>` once per member, with the stack the other reads use. Each node becomes a resource keyed like the member graph's node, with plunge's facts on `ResourceMetadata.facts`. Every resource has `ownership: "unknown"` and no marker, so no change set or teardown decides from it.
+- The graph read takes a checked-in `engine-graph.json` beside `stack-export.json`. Its facts go on the nodes (`nodes[].facts`) and its `property` edges join the graph with `grain: "property"`. The export's `dependencies` and `parent` edges carry `grain: "instance"`.
+
+plunge's markers say `source: "record"`: what its record says it wrote, not a read of the object. A stock member gets neither read, and chant runs nothing new for it. Record versions (`--versions`) cost one listing per record, so `describeResources` leaves them off.
 
 ## Outputs into another member's parameters
 

@@ -1,7 +1,9 @@
 // Engine facts on graph nodes and edge grain (#4527, designed on #4520).
 import { describe, it, expect } from "vitest";
-import { buildLiveGraphIr, sourceOverlayGraphs, type GraphIR, type LiveObservation } from "./graph-ir";
-import type { EngineFacts } from "./engine-facts";
+import { buildGraphIr, buildLiveGraphIr, entityFacts, sourceOverlayGraphs, type GraphIR, type LiveObservation } from "./graph-ir";
+import { DECLARABLE_MARKER, type Declarable } from "./declarable";
+import { ENGINE_FACTS_FLOOR, type EngineFacts } from "./engine-facts";
+import { NEXT_RELEASE } from "./release-floors";
 
 const facts: EngineFacts = {
   ownership: "bound",
@@ -125,5 +127,52 @@ describe("sourceOverlayGraphs: engine facts and grain (#4527)", () => {
     const ir = sourceOverlayGraphs(declared, live);
     expect(ir.nodes.find((x) => x.id === "aws_s3_bucket.stray")!.facts).toEqual({ ownership: "unowned" });
     expect(ir.edges.map((e) => e.grain).sort()).toEqual(["block", "instance"]);
+  });
+});
+
+describe("buildGraphIr: an entity's facts and reference grain (#4529)", () => {
+  // The shape the pulumi lexicon's member read gives a plunge member's entity.
+  function entity(type: string, references: unknown[], withFacts?: EngineFacts): Declarable {
+    const e = { lexicon: "pulumi", entityType: type, kind: "resource", props: {}, references, [DECLARABLE_MARKER]: true };
+    if (withFacts) Object.defineProperty(e, "facts", { value: withFacts, enumerable: false });
+    return e as unknown as Declarable;
+  }
+
+  it("copies an entity's facts onto its node, and keeps them out of attrs", () => {
+    const ir = buildGraphIr(new Map([["m/a", entity("aws:s3/bucket:Bucket", [], facts)]]));
+    expect(ir.nodes[0]!.facts).toEqual(facts);
+    expect(ir.nodes[0]!.attrs).toEqual({});
+  });
+
+  it("keeps an enumerable facts field out of attrs too", () => {
+    const e = { ...(entity("aws:s3/bucket:Bucket", []) as unknown as Record<string, unknown>), facts };
+    const ir = buildGraphIr(new Map([["m/a", e as unknown as Declarable]]));
+    expect(ir.nodes[0]!.facts).toEqual(facts);
+    expect(ir.nodes[0]!.attrs).toEqual({});
+  });
+
+  it("adds no facts field to an entity with none", () => {
+    expect(entityFacts(entity("x", []))).toBeUndefined();
+    expect("facts" in buildGraphIr(new Map([["m/a", entity("x", [])]])).nodes[0]!).toBe(false);
+  });
+
+  it("passes a reference's grain to its edge, and two grains between one pair are two edges", () => {
+    const ir = buildGraphIr(
+      new Map([
+        ["m/a", entity("x", [{ to: "m/b", viaAttr: "bucket", grain: "property" }, { to: "m/b", viaAttr: "bucket", grain: "instance" }, { to: "m/b", viaAttr: "dependencies" }])],
+        ["m/b", entity("y", [{ to: "m/a", viaAttr: "parent", grain: "sideways" }])],
+      ]),
+    );
+    expect(ir.edges.map((e) => [e.from, e.viaAttr, e.grain ?? null])).toEqual([
+      ["m/a", "bucket", "instance"],
+      ["m/a", "bucket", "property"],
+      ["m/a", "dependencies", null],
+      // A grain outside the three is not carried.
+      ["m/b", "parent", null],
+    ]);
+  });
+
+  it("names its floor as the next release", () => {
+    expect(ENGINE_FACTS_FLOOR).toBe(NEXT_RELEASE);
   });
 });

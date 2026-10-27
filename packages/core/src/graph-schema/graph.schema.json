@@ -962,7 +962,7 @@
           "$ref": "#/$defs/InstanceRollup"
         },
         "facts": {
-          "description": "Live-only: what an ownership engine (choudoufu, plunge) observed about this node (#4520, #4527), copied from `ResourceMetadata.facts` or read from the engine's graph document. For people and for readers that show the graph. Nothing in chant decides from it, and ownership keeps its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.",
+          "description": "What an ownership engine (choudoufu, plunge) observed about this node (#4520, #4527). On a live node it is copied from `ResourceMetadata.facts`. On a declared node it comes from the entity's entityFacts: the pulumi lexicon reads a plunge member's checked-in `engine-graph.json` beside its stack export (#4529). For people and for readers that show the graph. Nothing in chant decides from it, and ownership keeps its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.",
           "$ref": "#/$defs/EngineFacts"
         },
         "listedType": {

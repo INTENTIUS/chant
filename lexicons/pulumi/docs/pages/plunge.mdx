@@ -34,9 +34,51 @@ stock backend, is not reported.
 | change set | `plunge preview --json` | no |
 | applied outputs | `plunge stack output --json --show-secrets=false` | no |
 | drift | `plunge drift --resource <urn> --stream --stack <name>`, per resource | no |
+| engine facts | `plunge graph --json --stack <name>`, once per member | no |
 
 `runAllowedPlunge` refuses any other argv before it reaches the binary, as
-ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476).
+ruled on [#4476](https://github.com/INTENTIUS/chant/issues/4476). For
+`plunge graph` it lets through exactly four argv
+([#4529](https://github.com/INTENTIUS/chant/issues/4529)):
+
+```
+plunge graph --json
+plunge graph --json --stack <stack>
+plunge graph --json --versions
+plunge graph --json --stack <stack> --versions
+```
+
+Flags go in that order, each at most once. Any outputs or secrets flag is
+refused, since chant never asks plunge for an output value.
+
+## Engine facts
+
+`plunge graph --json` prints the stack's graph from plunge's records, in the
+engine graph document of [#4520](https://github.com/INTENTIUS/chant/issues/4520).
+It reads no live object and makes no provider call. chant reads it two ways:
+
+| Read | Source | What it adds |
+|---|---|---|
+| `describeResources` | `plunge graph --json --stack <name>` | each node as a resource, with plunge's `physicalId` and its facts on `ResourceMetadata.facts`; `ownership` is `unknown` and no marker is set |
+| the graph | a checked-in `engine-graph.json` beside `stack-export.json` | `nodes[].facts`, and the `property` edges with `grain: "property"` |
+
+The export's `dependencies` and `parent` edges carry `grain: "instance"`
+on every member. The graph's provider edges are not taken, since providers
+have no node. Facts are for people and for readers that show the graph:
+nothing in chant decides from them. plunge's markers say `source: "record"`,
+what its record says it wrote, and its ownership is only `bound` or
+`pending`.
+
+`describeResources` leaves `--versions` off: it costs one version listing
+per record. Take the file with the same command the read runs:
+
+```bash
+plunge graph --json --stack dev > engine-graph.json
+```
+
+A stock member gets no facts, and chant runs nothing new for it. A plunge
+older than `plunge graph` fails the read, and every entity is then
+not-observed with `read-failed`.
 
 ## Drift
 

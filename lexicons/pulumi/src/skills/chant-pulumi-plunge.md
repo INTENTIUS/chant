@@ -16,6 +16,9 @@ plunge is a Pulumi fork with its own state backends. A member runs on plunge whe
 | change set | `plunge preview --json` |
 | applied outputs | `plunge stack output --json --show-secrets=false` |
 | drift | `plunge drift --resource <urn> --stream --stack <name>`, one per resource |
+| engine facts | `plunge graph --json --stack <name>`, once per member (`describeResources`); the graph read takes a checked-in `engine-graph.json` instead |
+
+`plunge graph` runs as exactly one of `plunge graph --json`, `plunge graph --json --stack <stack>`, `plunge graph --json --versions` and `plunge graph --json --stack <stack> --versions`; an outputs or secrets flag is refused. It reads plunge's records, calls no provider and prints no output value. Its facts land on `nodes[].facts`, and nothing in chant decides from them.
 
 Nothing else runs. `runAllowedPlunge` refuses any other argv before it reaches the binary, so chant never changes the stack. The drift stream is drift-record NDJSON, which chant places on nodes by the same URN rule the graph uses.
 

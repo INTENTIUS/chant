@@ -12,7 +12,13 @@
  *   the backend's last deployment, calls no provider, and with secrets shown
  *   it is refused;
  * - for a member on plunge, `plunge preview`, the same blind
- *   `plunge stack output --json`, and `plunge drift --resource <urn> --stream`.
+ *   `plunge stack output --json`, and `plunge drift --resource <urn> --stream`;
+ * - for a member on plunge, its engine graph (#4529, ruled on #4520), as
+ *   exactly one of `plunge graph --json`, `plunge graph --json --stack
+ *   <stack>`, `plunge graph --json --versions` and `plunge graph --json
+ *   --stack <stack> --versions` ({@link PLUNGE_GRAPH_COMMANDS}). plunge
+ *   reads the stack's records and calls no provider. An outputs or secrets
+ *   flag on it is refused, like any other argv off the list.
  *
  * Each of these may carry `--stack <name>` (#4496 for the drift read, #4514
  * for the preview and `stack output`). That stays inside #4476's ruling: it
@@ -40,13 +46,17 @@
  *   resource with `plunge drift --resource <urn> --stream` instead.
  * - {@link pulumiMemberStackOutputs}: `pulumi stack output --json
  *   --show-secrets=false`, the member's applied outputs (#4455).
+ * - {@link plungeMemberGraph}: `plunge graph --json --stack <stack>`, a
+ *   member on plunge's engine graph, for the lexicon's `describeResources`
+ *   (`./describe-resources.ts`, #4529). A stock member has no such read.
  *
- * All three pass `--stack` when {@link memberStack} names one; without it
+ * Each passes `--stack` when {@link memberStack} names one; without it
  * the CLI reads whatever stack is selected, and a checked-in member has none.
  *
  * A member on plunge runs the same argv under `plunge` (a fork of the
  * pulumi CLI) for its preview and stack outputs; {@link runAllowedPlunge}
- * lets those and `plunge drift --resource <urn> --stream` through.
+ * lets those, `plunge drift --resource <urn> --stream` and the four
+ * `plunge graph` argv through.
  *
  * ## Which members run on plunge
  *
@@ -74,8 +84,8 @@ import type { UnobservedReason } from "@intentius/chant/observation";
 import { isPulumiNodeless, parsePulumiUrn } from "@intentius/chant/pulumi-urn";
 import { pulumiExportResources, pulumiPreviewPart } from "./change-set";
 import { pulumiRefreshArgs, pulumiRefreshDocumentRecords, pulumiRefreshDriftRecords, type PulumiRefreshRead } from "./drift-record";
-import { parseYAML } from "@intentius/chant/yaml";
 import { plungeDriftArgs, plungeDriftStreamRecords, type PlungeDriftRead } from "./drift-record";
+import { pulumiMemberEngine, type PulumiMemberEngine } from "./member-engine";
 import { PULUMI_EXPORT_FILE } from "./workspace-member";
 
 const execFileAsync = promisify(execFile);
@@ -139,39 +149,62 @@ export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: s
 }
 
 /**
- * The plunge commands chant runs: a single resource's drift stream, and the
- * same preview and blind stack output it runs under `pulumi`. None writes.
+ * The four `plunge graph` argv chant runs (#4529, ruled on #4520 Q4 and Q6),
+ * in this order of flags and no other. `<stack>` stands for a stack name.
+ */
+export const PLUNGE_GRAPH_COMMANDS: readonly string[] = [
+  "plunge graph --json",
+  "plunge graph --json --stack <stack>",
+  "plunge graph --json --versions",
+  "plunge graph --json --stack <stack> --versions",
+];
+
+/**
+ * The argv chant runs for a plunge member's engine graph (#4529): `--stack`
+ * when {@link memberStack} names one, `--versions` only when asked, since it
+ * costs one version listing per record.
+ */
+export function plungeGraphArgs(opts: { stack?: string; versions?: boolean } = {}): string[] {
+  return ["graph", "--json", ...(opts.stack ? ["--stack", opts.stack] : []), ...(opts.versions ? ["--versions"] : [])];
+}
+
+/**
+ * Exactly one of {@link PLUNGE_GRAPH_COMMANDS}. Nothing else gets through:
+ * no other flag, no repeated flag, no other order. An outputs or secrets
+ * flag (`--show-secrets`, `--outputs`) is refused with the rest, since chant
+ * never asks plunge for an output value. The stack name follows
+ * {@link wellFormedStack}'s rule (#4514).
+ */
+function allowedPlungeGraph(args: string[]): boolean {
+  if (args[0] !== "graph" || args[1] !== "--json") return false;
+  let rest = args.slice(2);
+  if (rest[0] === "--stack") {
+    if (!wellFormedStack(rest)) return false;
+    rest = rest.slice(2);
+  }
+  if (rest[0] === "--versions") rest = rest.slice(1);
+  return rest.length === 0;
+}
+
+/**
+ * The plunge commands chant runs: a single resource's drift stream, the
+ * same preview and blind stack output it runs under `pulumi`, and the
+ * stack's engine graph from its records (#4529). None writes.
  */
 export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
   const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream") && wellFormedStack(args);
-  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args));
+  const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args)) || allowedPlungeGraph(args);
   if (!allowed) {
-    throw new Error(`chant runs only plunge drift --resource <urn> --stream, plunge preview and plunge stack output --json --show-secrets=false for a Pulumi member, not plunge ${args.join(" ")}`);
+    throw new Error(
+      `chant runs only plunge drift --resource <urn> --stream, plunge preview, plunge stack output --json --show-secrets=false and ${PLUNGE_GRAPH_COMMANDS.join(", ")} for a Pulumi member, not plunge ${args.join(" ")}`,
+    );
   }
   return run(args, { cwd });
 }
 
 export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
 
-/** What runs a Pulumi member's stack. */
-export type PulumiMemberEngine = "pulumi" | "plunge";
-
-/** Which engine runs the member, and the rule that said so (see the module comment). */
-export function pulumiMemberEngine(dir: string, configured?: PulumiMemberEngine): { engine: PulumiMemberEngine; because: string } {
-  if (configured) return { engine: configured, because: `the member's config says engine: ${configured}` };
-  const file = join(dir, "Pulumi.yaml");
-  if (existsSync(file)) {
-    try {
-      const doc = parseYAML(readFileSync(file, "utf-8"));
-      const backend = doc.backend as { url?: unknown } | undefined;
-      const url = typeof backend?.url === "string" ? backend.url : undefined;
-      if (url && /^plunge[+:]/.test(url)) return { engine: "plunge", because: `Pulumi.yaml names the plunge backend ${url}` };
-    } catch {
-      // An unreadable Pulumi.yaml fails the member file check; here it just names no backend.
-    }
-  }
-  return { engine: "pulumi", because: "nothing names plunge" };
-}
+export { pulumiMemberEngine, type PulumiMemberEngine } from "./member-engine";
 
 /** The argv chant runs for a member's applied outputs, after `pulumi` (#4455). Secrets stay blinded. */
 export function pulumiStackOutputArgs(opts: { stack?: string } = {}): string[] {
@@ -456,4 +489,54 @@ export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Pro
     }
   }
   return pulumiRefreshDriftRecords({ ...base, reads });
+}
+
+export interface PlungeMemberGraphOptions {
+  /** The member's directory, where Pulumi.yaml is. */
+  dir: string;
+  /**
+   * The stack to read, passed as `--stack`: the member's declared stack.
+   * Without it, the stack the checked-in export's URNs name
+   * ({@link memberStack}), as for every other read.
+   */
+  stack?: string;
+  /** Pass `--versions`: each node lists its record's versions, one version listing per record (#4520 Q6). Off by default. */
+  versions?: boolean;
+  plunge?: PulumiRunner;
+}
+
+/** What one `plunge graph` run gave: the parsed document, or why there is none. */
+export type PlungeMemberGraphRead =
+  | { ok: true; doc: unknown; command: string; stack?: string }
+  | { ok: false; command: string; stack?: string; reason: UnobservedReason; detail: string };
+
+/**
+ * `plunge graph --json [--stack <stack>] [--versions]` in the member's
+ * directory (#4529): the stack's engine graph from its records, in
+ * chant#4520's document. plunge makes no provider call for it and prints no
+ * output value. Never throws for a run that failed: the read says why. A
+ * plunge older than the command (INTENTIUS/plunge#40) fails it with cobra's
+ * unknown-command error, and the read says that plunge has no `graph`.
+ *
+ * Only a member on plunge runs it. The caller decides that with
+ * {@link pulumiMemberEngine}; nothing here runs stock `pulumi`.
+ */
+export async function plungeMemberGraph(opts: PlungeMemberGraphOptions): Promise<PlungeMemberGraphRead> {
+  const stack = memberStack({ declared: opts.stack, exported: readMemberExport(opts.dir) });
+  const args = plungeGraphArgs({ stack, ...(opts.versions ? { versions: true } : {}) });
+  const command = `plunge ${args.join(" ")}`;
+  const at = { command, ...(stack ? { stack } : {}) };
+  try {
+    const { stdout } = await runAllowedPlunge(opts.plunge ?? defaultPlungeRunner, args, opts.dir);
+    const doc = parseJson(stdout);
+    if (doc === undefined) return { ok: false, ...at, reason: "read-failed", detail: `${command} printed no JSON` };
+    return { ok: true, doc, ...at };
+  } catch (err) {
+    const f = failureOf(err);
+    if (f.missingBinary) return { ok: false, ...at, reason: "read-failed", detail: "the plunge binary was not found on PATH" };
+    if (/unknown command "graph"/.test(`${f.stderr ?? ""}\n${f.message}`)) {
+      return { ok: false, ...at, reason: "read-failed", detail: "this plunge has no `plunge graph` (INTENTIUS/plunge#40); a plunge that has it gives the member's engine facts" };
+    }
+    return { ok: false, ...at, ...unobservedFor(f) };
+  }
 }
