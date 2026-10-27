@@ -683,6 +683,18 @@ describe("chant #1984 — the egress catalogue matches the tree", () => {
     expect(egressPrimitivesIn('const sdk = () => import("e2b");')).toEqual(["sdk-client-package"]);
   });
 
+  test("a member named fetch is not the global fetch", () => {
+    // packages/core/src/lifecycle/snapshot-store.ts's `fetch()` methods run `git fetch`; snapshot-store-fake.ts and
+    // packages/test-utils/src/pr-loop-harness.ts declare fakes. None of them dials.
+    expect(egressPrimitivesIn("interface M { fetch(): Promise<void> }\nclass S { async fetch() { return this.m.fetch(); } }")).toEqual([]);
+    expect(egressPrimitivesIn("const fake = { fetch: async () => {} };\nclass G { fetch = async (url: string) => url; }")).toEqual([]);
+    expect(egressPrimitivesIn("function f(fetch: typeof globalThis.fetch) {}\nconst { fetch: f2 } = o;")).toEqual([]);
+    // The global, however it is reached, still counts, and so does an options type's injectable fetch.
+    expect(egressPrimitivesIn("const f = opts.fetch ?? ((u) => globalThis.fetch(u));")).toEqual(["fetch"]);
+    expect(egressPrimitivesIn("export const d = (u: string) => fetch(u);")).toEqual(["fetch"]);
+    expect(egressPrimitivesIn("export interface O { fetch?: StoreFetch }")).toEqual(["fetch"]);
+  });
+
   test("no catalogue entry is listed twice", () => {
     const files = EGRESS_CATALOGUE.map((site) => site.file);
     expect(files.length).toBe(new Set(files).size);
