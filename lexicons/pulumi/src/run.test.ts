@@ -40,6 +40,27 @@ describe("the allow-list (ruling on #4450)", () => {
     await runAllowedPulumi(run, ["refresh", "--preview-only", "--json"], "/tmp");
     expect(calls.map((c) => c.args[0])).toEqual(["preview", "refresh"]);
   });
+
+  test("--stack <name> passes, and a --stack with no name or a flag for one is refused before the runner (#4514)", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of [
+      ["preview", "--json", "--stack"],
+      ["preview", "--json", "--stack", "--yes"],
+      ["refresh", "--preview-only", "--json", "--stack", "-y"],
+      ["preview", "--json", "--stack", ""],
+    ]) {
+      await expect(runAllowedPulumi(run, args, "/tmp")).rejects.toThrow(/only pulumi preview and pulumi refresh --preview-only/);
+    }
+    for (const args of [["preview", "--json", "--stack", "--yes"], ["drift", "--resource", "x", "--stream", "--stack", "--member"]]) {
+      await expect(runAllowedPlunge(run, args, "/tmp")).rejects.toThrow(/only plunge drift --resource <urn> --stream/);
+    }
+    expect(calls).toEqual([]);
+    await runAllowedPulumi(run, ["preview", "--json", "--show-sames", "--stack", "floci"], "/tmp");
+    await runAllowedPulumi(run, ["refresh", "--preview-only", "--json", "--stack", "floci", "--target", "u"], "/tmp");
+    await runAllowedPlunge(run, ["preview", "--json", "--show-sames", "--stack", "floci"], "/tmp");
+    await runAllowedPlunge(run, ["drift", "--resource", "u", "--stream", "--stack", "floci", "--member", "site"], "/tmp");
+    expect(calls.map((c) => c.args[0])).toEqual(["preview", "refresh", "preview", "drift"]);
+  });
 });
 
 describe("previewPulumiMember", () => {
@@ -69,10 +90,30 @@ describe("previewPulumiMember", () => {
     const one = JSON.parse(text("pulumi-preview", "preview.json")) as { steps: { urn: string }[] };
     const { run: targetedRun, calls: targetedCalls } = fake(() => JSON.stringify({ ...one, steps: one.steps.filter((s) => s.urn === target) }));
     const part = await previewPulumiMember({ member: "site", dir, targets: [target], run: targetedRun });
-    expect(targetedCalls[0].args).toEqual(pulumiPreviewArgs({ targets: [target] }));
-    expect(targetedCalls[0].args).toEqual(["preview", "--json", "--show-sames", "--target", target]);
+    // No stack declared: the one the export's URNs name (#4514).
+    expect(targetedCalls[0].args).toEqual(pulumiPreviewArgs({ stack: "floci", targets: [target] }));
+    expect(targetedCalls[0].args).toEqual(["preview", "--json", "--show-sames", "--stack", "floci", "--target", target]);
     expect(part.entries.map((e) => e.address)).toEqual([target]);
     expect(calls).toEqual([]);
+  });
+
+  test("with no declared stack, the preview passes the stack the export's URNs name (#4514)", async () => {
+    const { run, calls } = fake(() => text("pulumi-preview", "preview.json"));
+    const part = await previewPulumiMember({ member: "site", dir, run });
+    expect(calls).toEqual([{ args: ["preview", "--json", "--show-sames", "--stack", "floci"], cwd: dir }]);
+    expect(part.member.scope).toBe("floci");
+  });
+
+  test("with no export and no declared stack, a targeted preview passes the stack its targets name, an untargeted one none (#4514)", async () => {
+    const unexported = join(testdata, "pulumi-unexported");
+    const asked = "urn:pulumi:qa::app::aws:s3/bucket:Bucket::logs";
+    const { run, calls } = fake(() => JSON.stringify({ steps: [] }));
+    await previewPulumiMember({ member: "site", dir: unexported, targets: [asked], run });
+    await previewPulumiMember({ member: "site", dir: unexported, run });
+    expect(calls.map((c) => c.args)).toEqual([
+      ["preview", "--json", "--show-sames", "--stack", "qa", "--target", asked],
+      ["preview", "--json", "--show-sames"],
+    ]);
   });
 
   test("no pulumi binary is a failed member that says so", async () => {

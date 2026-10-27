@@ -36,7 +36,7 @@ import {
 } from "@intentius/chant/components/verbs/member-outputs";
 import { pulumiCapabilityPlugin } from "./capability-plugin";
 import { pulumiMemberPlannedOutputs, pulumiOutputSource } from "./member-outputs";
-import { previewPulumiMemberRead, runAllowedPulumi, type PulumiRunner } from "./run";
+import { previewPulumiMemberRead, pulumiMemberStackOutputs, runAllowedPlunge, runAllowedPulumi, type PulumiRunner } from "./run";
 
 const testdata = join(import.meta.dirname, "testdata");
 const text = (...path: string[]) => readFileSync(join(testdata, ...path), "utf-8");
@@ -73,6 +73,25 @@ describe("the allow-list", () => {
     await runAllowedPulumi(run, ["stack", "output", "--json", "--show-secrets=false"], "/tmp");
     expect(calls).toEqual([["stack", "output", "--json", "--show-secrets=false"]]);
   });
+
+  test("stack output may name its stack, and a --stack with no name, or a flag for one, is refused (#4514)", async () => {
+    const { run, calls } = fake(() => "{}");
+    for (const args of [
+      ["stack", "output", "--json", "--show-secrets=false", "--stack"],
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", "--show-secrets"],
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", ""],
+    ]) {
+      await expect(runAllowedPulumi(run, args, "/tmp")).rejects.toThrow(/stack output --json --show-secrets=false/);
+      await expect(runAllowedPlunge(run, args, "/tmp")).rejects.toThrow(/plunge stack output --json --show-secrets=false/);
+    }
+    expect(calls).toEqual([]);
+    await runAllowedPulumi(run, ["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"], "/tmp");
+    await runAllowedPlunge(run, ["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"], "/tmp");
+    expect(calls).toEqual([
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"],
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"],
+    ]);
+  });
 });
 
 describe("pulumiOutputSource", () => {
@@ -85,7 +104,8 @@ describe("pulumiOutputSource", () => {
     expect(outputs).toEqual(APPLIED);
     expect(outputs.vpcId).toBe(OLD);
     expect(outputs).not.toHaveProperty("dbPasswordValue");
-    expect(cli.calls).toEqual([["stack", "output", "--json", "--show-secrets=false"]]);
+    // --stack (#4514): the workspace declares no stack, so the one the export's URNs name.
+    expect(cli.calls).toEqual([["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"]]);
     expect(JSON.stringify(outputs)).not.toContain("[secret]");
   });
 
@@ -103,7 +123,7 @@ describe("pulumiOutputSource", () => {
     const planned = await pulumiOutputSource({ run: cli.run }).planned(ctx, ref);
     expect(planned).toMatchObject({ known: APPLIED, unknown: [], changes: false });
     expect(planned.planDigest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
-    expect(cli.calls).toEqual([["preview", "--json", "--show-sames"]]);
+    expect(cli.calls).toEqual([["preview", "--json", "--show-sames", "--stack", "floci"]]);
   });
 
   test("planned values: a preview with changes (a replaced VPC) leaves every output unknown, the secret neither known nor unknown", async () => {
@@ -123,8 +143,35 @@ describe("pulumiOutputSource", () => {
     // plunge prints stack output exactly as pulumi does, the secret as "[secret]" (recorded).
     expect(await source.applied(ctx, plungeRef)).toEqual(PLUNGE_APPLIED);
     expect((await source.planned(ctx, plungeRef)).known).toEqual(PLUNGE_APPLIED);
-    expect(plunge.calls).toEqual([["stack", "output", "--json", "--show-secrets=false"], ["preview", "--json", "--show-sames"]]);
+    expect(plunge.calls).toEqual([
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", "floci"],
+      ["preview", "--json", "--show-sames", "--stack", "floci"],
+    ]);
     expect(pulumi.calls).toEqual([]);
+  });
+
+  test("both reads pass the declared stack over the export's (#4514)", async () => {
+    const cli = awsCli({ preview: "preview-settled.json" });
+    await pulumiMemberStackOutputs({ dir: AWS_DIR, stack: "prod", run: cli.run });
+    const read = await previewPulumiMemberRead({ member: "aws", dir: AWS_DIR, stack: "prod", run: cli.run });
+    expect(cli.calls).toEqual([
+      ["stack", "output", "--json", "--show-secrets=false", "--stack", "prod"],
+      ["preview", "--json", "--show-sames", "--stack", "prod"],
+    ]);
+    expect(read.part.member.scope).toBe("prod");
+  });
+
+  test("a member with no export and no declared stack reads the selected stack, passing no --stack (#4514)", async () => {
+    const dir = join(testdata, "pulumi-unexported");
+    const cli = fake((args) => (args[0] === "stack" ? "{}" : text("pulumi-outputs", "preview-settled.json")));
+    const source = pulumiOutputSource({ run: cli.run });
+    const unexported = { ...ref, dir };
+    await source.applied(ctx, unexported);
+    await previewPulumiMemberRead({ member: "aws", dir, run: cli.run });
+    expect(cli.calls).toEqual([
+      ["stack", "output", "--json", "--show-secrets=false"],
+      ["preview", "--json", "--show-sames"],
+    ]);
   });
 
   test("a failed preview throws, naming the member", async () => {

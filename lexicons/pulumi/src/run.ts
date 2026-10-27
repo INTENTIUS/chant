@@ -14,6 +14,14 @@
  * - for a member on plunge, `plunge preview`, the same blind
  *   `plunge stack output --json`, and `plunge drift --resource <urn> --stream`.
  *
+ * Each of these may carry `--stack <name>` (#4496 for the drift read, #4514
+ * for the preview and `stack output`). That stays inside #4476's ruling: it
+ * picks which stack the same read reads and changes no stack, so it adds no
+ * command. The allow-list was extended for that flag alone: a `--stack` must
+ * be followed by a name that is not itself a flag, and an argv where it is
+ * not is refused like any other. The stack is the member's declared one,
+ * else the one the checked-in export's URNs name ({@link memberStack}).
+ *
  * {@link PULUMI_ALLOWED_COMMANDS} is the pulumi half, and
  * {@link runAllowedPulumi} and {@link runAllowedPlunge} refuse any argv
  * outside the list before it reaches the runner, so no later caller can make
@@ -32,6 +40,9 @@
  *   resource with `plunge drift --resource <urn> --stream` instead.
  * - {@link pulumiMemberStackOutputs}: `pulumi stack output --json
  *   --show-secrets=false`, the member's applied outputs (#4455).
+ *
+ * All three pass `--stack` when {@link memberStack} names one; without it
+ * the CLI reads whatever stack is selected, and a checked-in member has none.
  *
  * A member on plunge runs the same argv under `plunge` (a fork of the
  * pulumi CLI) for its preview and stack outputs; {@link runAllowedPlunge}
@@ -88,7 +99,8 @@ export const defaultPulumiRunner: PulumiRunner = (args, opts) =>
 /**
  * The only `pulumi` commands chant runs (ruling on #4450, widened by the
  * ruling on #4476 to keep #4455's `stack output`): each argv must start
- * with one of these.
+ * with one of these. Any of them may name its stack with `--stack <name>`
+ * (#4496, #4514), which {@link wellFormedStack} checks.
  */
 export const PULUMI_ALLOWED_COMMANDS: readonly (readonly string[])[] = [["preview"], ["refresh", "--preview-only"], ["stack", "output"]];
 
@@ -100,7 +112,18 @@ function blindStackOutput(args: string[]): boolean {
   return args.includes("--json") && args.every((a) => !a.startsWith("--show-secrets") || a === "--show-secrets=false");
 }
 
+/**
+ * Every `--stack` in the argv is followed by a stack name, not by another
+ * flag or nothing (#4514). The one allow-list extension for `--stack`: it
+ * selects the stack an allowed read reads, inside #4476's ruling, and a
+ * dash-led "name" would smuggle a flag past the list.
+ */
+function wellFormedStack(args: string[]): boolean {
+  return args.every((a, i) => a !== "--stack" || (typeof args[i + 1] === "string" && args[i + 1].length > 0 && !args[i + 1].startsWith("-")));
+}
+
 function allowedRead(args: string[]): boolean {
+  if (!wellFormedStack(args)) return false;
   if (!PULUMI_ALLOWED_COMMANDS.some((prefix) => prefix.every((a, i) => args[i] === a))) return false;
   if (args[0] === "refresh") return args.includes("--preview-only");
   if (args[0] === "stack") return blindStackOutput(args);
@@ -120,7 +143,7 @@ export async function runAllowedPulumi(run: PulumiRunner, args: string[], cwd: s
  * same preview and blind stack output it runs under `pulumi`. None writes.
  */
 export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: string): Promise<{ stdout: string }> {
-  const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream");
+  const drift = args[0] === "drift" && args.includes("--resource") && args.includes("--stream") && wellFormedStack(args);
   const allowed = drift || ((args[0] === "preview" || args[0] === "stack") && allowedRead(args));
   if (!allowed) {
     throw new Error(`chant runs only plunge drift --resource <urn> --stream, plunge preview and plunge stack output --json --show-secrets=false for a Pulumi member, not plunge ${args.join(" ")}`);
@@ -177,6 +200,16 @@ function soleStack(urns: readonly string[]): string | undefined {
   return stacks.size === 1 ? [...stacks][0] : undefined;
 }
 
+/**
+ * The stack a member's reads pass as `--stack` (#4496, #4514): the declared
+ * one, else the one the checked-in export's URNs name, else the one the
+ * given URNs name. Undefined when none says, and the CLI reads the selected
+ * stack.
+ */
+export function memberStack(opts: { declared?: string; exported?: unknown; urns?: readonly string[] }): string | undefined {
+  return opts.declared || pulumiExportStack(opts.exported) || (opts.urns?.length ? soleStack(opts.urns) : undefined);
+}
+
 /** The checked-in `pulumi stack export`, parsed, or undefined when there is none or it does not read. */
 export function readMemberExport(dir: string): unknown {
   const file = join(dir, PULUMI_EXPORT_FILE);
@@ -227,6 +260,11 @@ export interface PreviewPulumiMemberOptions {
   member: string;
   /** The member's directory, where Pulumi.yaml is. */
   dir: string;
+  /**
+   * The stack to preview, passed as `--stack` (#4514): the member's declared
+   * stack. Without it, the stack the checked-in export's URNs name, then the
+   * one the targets name ({@link memberStack}).
+   */
   stack?: string;
   /** Narrow the preview to these URNs. A narrowed preview does not mark what it leaves out. */
   targets?: readonly string[];
@@ -251,10 +289,11 @@ export interface PulumiMemberPreview {
  * same run. Never throws for a run that failed: the part is failed.
  */
 export async function previewPulumiMemberRead(opts: PreviewPulumiMemberOptions): Promise<PulumiMemberPreview> {
-  const args = pulumiPreviewArgs({ stack: opts.stack, targets: opts.targets });
   const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
   const prior = readMemberExport(opts.dir);
-  const common = { member: opts.member, ...(opts.stack ? { stack: opts.stack } : {}), ...(prior !== undefined ? { prior } : {}), ...(opts.targets?.length ? { targeted: true } : {}) };
+  const stack = memberStack({ declared: opts.stack, exported: prior, urns: opts.targets });
+  const args = pulumiPreviewArgs({ stack, targets: opts.targets });
+  const common = { member: opts.member, ...(stack ? { stack } : {}), ...(prior !== undefined ? { prior } : {}), ...(opts.targets?.length ? { targeted: true } : {}) };
   try {
     const { stdout } =
       engine === "plunge"
@@ -285,6 +324,11 @@ export async function previewPulumiMember(opts: PreviewPulumiMemberOptions): Pro
 export interface PulumiMemberStackOutputsOptions {
   /** The member's directory, where Pulumi.yaml is. */
   dir: string;
+  /**
+   * The stack to read, passed as `--stack` (#4514): the member's declared
+   * stack. Without it, the stack the checked-in export's URNs name
+   * ({@link memberStack}).
+   */
   stack?: string;
   /** The member's configured engine; see {@link pulumiMemberEngine}. */
   engine?: PulumiMemberEngine;
@@ -300,7 +344,7 @@ export interface PulumiMemberStackOutputsOptions {
  */
 export async function pulumiMemberStackOutputs(opts: PulumiMemberStackOutputsOptions): Promise<Record<string, unknown>> {
   const engine = pulumiMemberEngine(opts.dir, opts.engine).engine;
-  const args = pulumiStackOutputArgs({ stack: opts.stack });
+  const args = pulumiStackOutputArgs({ stack: memberStack({ declared: opts.stack, exported: readMemberExport(opts.dir) }) });
   const command = `${engine} ${args.join(" ")}`;
   let stdout: string;
   try {
@@ -361,7 +405,7 @@ export async function refreshPulumiMember(opts: RefreshPulumiMemberOptions): Pro
   // `--stack` (#4496): the declared stack, else the export's, else the URNs'.
   // Without one the CLI reads the selected stack, and a checked-in member
   // has none selected.
-  const stack = opts.stack || pulumiExportStack(exported) || (urns ? soleStack(urns) : undefined);
+  const stack = memberStack({ declared: opts.stack, exported, urns });
   const base: DriftAdapterBase & { stack?: string } = {
     member: opts.member,
     observedAt: opts.observedAt,
