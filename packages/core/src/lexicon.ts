@@ -26,6 +26,7 @@ import type { OwnershipChannel, OwnershipMarker } from "./ownership";
 import type { LexiconConfigSchema } from "./lexicon-config";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
+import type { ListedTypeMapping } from "./lifecycle/type-listing";
 import type { IREdge, LexiconGraphEdges, LexiconUnreadSource, LexiconWorkspaceLinks, LexiconWorkspaceOutputs } from "./graph-ir";
 import type { DescribeResourcesResult, UnobservedReason } from "./observation";
 import type { ReadDriftOptions, ReadDriftResult } from "./drift-record";
@@ -2195,6 +2196,17 @@ export interface LexiconPlugin {
    * method. Opt-in.
    */
   referenceCatalog?: ReferenceCatalog;
+
+  /**
+   * How a cloud inventory API's type names map to this lexicon's kinds
+   * (#4521): CloudFormation types for aws, lowercase ARM types for azure,
+   * Cloud Asset types for gcp, group/version/kind for k8s. `typeListing`
+   * (./lifecycle/type-listing.ts) reads it to type an indexed resource, then
+   * normalizes its properties with {@link deepNormalizationHooks}. Data plus
+   * pure functions. Opt-in: a lexicon without it leaves listed objects of its
+   * substrate as unknown-kind nodes.
+   */
+  listedTypes?: ListedTypeMapping;
 
   /**
    * This lexicon's capability pack (#4375): its mapping onto the

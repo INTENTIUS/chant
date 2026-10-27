@@ -28,6 +28,7 @@ import { GcpGenerator } from "./import/generator";
 import { gcpCompletions } from "./lsp/completions";
 import { gcpHover } from "./lsp/hover";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
+import { gcpListedTypes } from "./listed-types";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
@@ -416,6 +417,9 @@ export const bucket = new StorageBucket({
   },
 
   deepNormalizationHooks: gcpDeepNormalizationHooks,
+
+  // Cloud inventory type names to kinds, for an indexed resource (#4521).
+  listedTypes: gcpListedTypes,
 
   /**
    * Runtime health (#4177, #4239): Cloud Run services, backend services and IAM

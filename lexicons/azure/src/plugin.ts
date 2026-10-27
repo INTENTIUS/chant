@@ -15,6 +15,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { moduleSourceDir } from "@intentius/chant/module-source";
 import { azureSerializer } from "./serializer";
+import { azureListedTypes } from "./listed-types";
 import { azureGraphEdges } from "./graph-edges";
 import { hardcodedLocationRule } from "./lint/rules/hardcoded-location";
 import { storageHttpsRule } from "./lint/rules/storage-https";
@@ -494,6 +495,9 @@ export const tags = defaultTags([
 
   /** The noise rules the deep pass applies to both the live and declared trees. */
   deepNormalizationHooks: azureDeepNormalizationHooks,
+
+  // Cloud inventory type names to kinds, for an indexed resource (#4521).
+  listedTypes: azureListedTypes,
 
   /** Runtime health (#4177): Container Apps. Implementation in ./health.ts. */
   healthTypes: ["Microsoft.App/containerApps"],

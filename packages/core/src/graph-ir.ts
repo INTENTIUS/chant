@@ -132,6 +132,31 @@ export interface IRNode {
    * its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.
    */
   facts?: EngineFacts;
+  /**
+   * Indexed nodes only (#4521, behold#1025): the inventory API's own type
+   * name, as the cloud lister read it: `AWS::S3::Bucket`,
+   * `microsoft.storage/storageaccounts`, `storage.googleapis.com/Bucket`,
+   * `apps/v1/Deployment`. Absent on every node a cloud listing did not make.
+   */
+  listedType?: string;
+  /**
+   * Indexed nodes only: the region or location the object was listed in,
+   * `global` for a global type, a namespace or `cluster` for Kubernetes.
+   */
+  location?: string;
+  /**
+   * Indexed nodes only: the identifier the listing returned, Cloud Control's
+   * `Identifier`, the ARM id, the asset `name`, or `namespace/name`.
+   */
+  nativeId?: string;
+  /** Indexed nodes only: tags or labels as read, masked by key. Where markers come from. */
+  tags?: Record<string, string>;
+  /**
+   * Indexed nodes only: true when no lexicon kind maps the listed type. The
+   * node keeps `kind` = {@link listedType} and `lexicon` = the substrate, and
+   * is never dropped (#4521).
+   */
+  unmappedKind?: boolean;
 }
 
 /**
