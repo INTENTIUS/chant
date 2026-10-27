@@ -52,7 +52,7 @@ import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
-import { activeProductWords, approveLine, isChantWords, productStatusContext, type CiProductWords } from "./ci-product-words";
+import { activeProductWords, approveLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
 
 /** The schema a pull-request report names in `$schema`. */
 export const PR_REPORT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json";
@@ -552,6 +552,12 @@ export interface PrReport {
    * carries `CI_PRODUCT_FLOOR` (`@intentius/chant/ci-product`).
    */
   details?: PrMemberDetail[];
+  /**
+   * The policy findings capabilities' plans carried (#4550), one entry per
+   * member with any. Absent when none did. Added within contract 1 by the
+   * chant that carries `CI_PRODUCT_FLOOR`.
+   */
+  capabilityPolicy?: PrCapabilityPolicy[];
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
     changed: string[];
@@ -580,6 +586,20 @@ export interface PrReport {
    * {@link PR_REPORT_BEFORE_MERGE_FLOOR}.
    */
   beforeMerge?: PrBeforeMerge;
+}
+
+/**
+ * A policy engine's findings a capability's plan carried for one member
+ * (#4550, from chant#4541's `pulumi-up`: CrossGuard in the preview job).
+ * `denied`: the capability refused the plan (`policyDenied`), so the stage
+ * exits 7. Otherwise the findings are advisory and the note lists them.
+ */
+export interface PrCapabilityPolicy {
+  member: string;
+  denied: boolean;
+  denials: Array<{ rule: string; message: string }>;
+  holds: Array<{ rule: string; message: string }>;
+  warnings: string[];
 }
 
 /** One member's detail section (#4573): markdown lines its lexicon rendered. */
@@ -761,6 +781,31 @@ function policyLines(report: PrReport): string[] {
   }
   if (p.holds.length > 0) out.push(`Policy (${p.engine}, ${at}) holds this plan for a person's approval of its digest:`, ...each(p.holds));
   if (p.warnings.length > 0) out.push(`Policy warnings: ${p.warnings.join("; ")}`);
+  return out;
+}
+
+/**
+ * The findings capabilities' plans carried (#4550), in the product's words:
+ * a denial with the product's override line, then each advisory finding as
+ * a row.
+ */
+function capabilityPolicyLines(report: PrReport, words: CiProductWords): string[] {
+  const all = report.capabilityPolicy ?? [];
+  if (all.length === 0) return [];
+  const out: string[] = [];
+  for (const p of all.filter((x) => x.denied)) {
+    out.push("", `The policy in ${code(p.member)}'s ${words.verbs.plan[0]} denied it, so nothing can apply:`, ...p.denials.map((d) => `- ${code(d.rule)}: ${d.message}`));
+    if (p.denials.length > 0) out.push("", `A person the overriders file at base lists may override it: ${code(overrideLine(words, { op: "policy-override", gate: report.gate, target: p.member, rules: p.denials.map((d) => d.rule) }))}`);
+  }
+  const rows = all.flatMap((p) => [
+    ...(p.denied ? [] : p.denials).map((d) => [p.member, d.rule, "denied", d.message]),
+    ...p.holds.map((d) => [p.member, d.rule, "advisory", d.message]),
+    ...p.warnings.map((w) => [p.member, "", "warning", w]),
+  ]);
+  if (rows.length > 0) {
+    out.push("", `| ${capital(words.noun[0])} | Rule | Finding | Message |`, "|---|---|---|---|");
+    for (const [m, rule, kind, message] of rows) out.push(`| ${code(m!)} | ${rule ? code(rule) : ""} | ${kind} | ${message!.replaceAll("|", "\\|").replaceAll("\n", " ")} |`);
+  }
   return out;
 }
 
@@ -972,6 +1017,7 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     out.push("", `Hooks: ${passed} passed${other.length > 0 ? `; ${other.join("; ")}` : ""}.`);
   }
   out.push(...policyLines(report));
+  out.push(...capabilityPolicyLines(report, words));
   out.push(...renderMigrationLines(report.migrations));
   if (report.selection.unclaimed.length > 0) {
     out.push("", `Changed, and deployed by no component: ${report.selection.unclaimed.map(code).join(", ")}.`);

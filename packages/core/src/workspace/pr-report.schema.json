@@ -278,6 +278,22 @@
         }
       }
     },
+    "capabilityPolicy": {
+      "type": "array",
+      "description": "Added within contract version 1 by #4550, written by the chant that carries CI_PRODUCT_FLOOR. The policy findings a capability's plan carried, such as CrossGuard's in pulumi-up's preview, one entry per member with any, sorted by member. denied: the capability refused the plan, and the stage exits 7. Absent when none.",
+      "items": {
+        "type": "object",
+        "required": ["member", "denied", "denials", "holds", "warnings"],
+        "additionalProperties": false,
+        "properties": {
+          "member": { "type": "string" },
+          "denied": { "type": "boolean" },
+          "denials": { "type": "array", "items": { "type": "object", "required": ["rule", "message"], "additionalProperties": false, "properties": { "rule": { "type": "string" }, "message": { "type": "string" } } } },
+          "holds": { "type": "array", "items": { "type": "object", "required": ["rule", "message"], "additionalProperties": false, "properties": { "rule": { "type": "string" }, "message": { "type": "string" } } } },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "details": {
       "type": "array",
       "description": "Added within contract version 1 by #4573, written by the chant that carries CI_PRODUCT_FLOOR. A section per member that its lexicon rendered from its own part of the change set, as markdown lines the note places under the member table. Absent when no lexicon rendered one.",

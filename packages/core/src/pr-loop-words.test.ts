@@ -78,3 +78,24 @@ describe("a member's detail section (#4573)", () => {
     expect([...note].length).toBeLessThanOrEqual(4000);
   });
 });
+
+describe("a capability's policy findings (#4550, pulumi-up's CrossGuard)", () => {
+  test("a denial names the rules and the product's override line, and advisory findings are rows", () => {
+    const note = renderPrNote(
+      {
+        ...report,
+        status: "plan-failed",
+        capabilityPolicy: [
+          { member: "shop/dev", denied: true, denials: [{ rule: "crossguard.aws.no-public-bucket", message: "the bucket is public" }], holds: [], warnings: [] },
+          { member: "shop/prod", denied: false, denials: [], holds: [{ rule: "crossguard.aws.tags", message: "missing the team tag" }], warnings: ["pack aws is in preview"] },
+        ],
+      },
+      { words: plywood },
+    );
+    expect(note).toContain("The policy in `shop/dev`'s preview denied it, so nothing can apply:");
+    expect(note).toContain("- `crossguard.aws.no-public-bucket`: the bucket is public");
+    expect(note).toContain("plywood override up --rule crossguard.aws.no-public-bucket --reason <text>");
+    expect(note).toContain("| `shop/prod` | `crossguard.aws.tags` | advisory | missing the team tag |");
+    expect(note).toContain("| `shop/prod` |  | warning | pack aws is in preview |");
+  });
+});

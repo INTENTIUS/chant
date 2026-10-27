@@ -776,6 +776,8 @@ async function prPlan(ctx: CommandContext, stage: StageEvents): Promise<number> 
     console.error(formatInfo(approval.status === "approved" ? `approved by ${(approval.approvedBy ?? []).join(", ")}` : `approve : ${prApproveCommand(report)}`));
   }
   if (judged.stop) console.error(formatWarning({ message: judged.stop.message }));
+  // #4550: a capability's policy denial (pulumi-up's CrossGuard) exits as a denial, 7, not as a failed plan.
+  if (status === "plan-failed" && set.policyDenied) return CHANT_EXIT.denied;
   return status === "plan-failed" ? CHANT_EXIT.failed : judged.stop ? judged.stop.code : CHANT_EXIT.done;
 }
 
@@ -977,9 +979,11 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
         ...base,
         approval: { status: "pending" },
         status: "plan-failed",
-        message: "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied.",
+        message: set.policyDenied
+          ? "The policy denied a member's plan, so nothing was applied."
+          : "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied.",
       }),
-      1,
+      set.policyDenied ? CHANT_EXIT.denied : 1,
     );
   }
 
@@ -1903,6 +1907,7 @@ async function prApplyWaves(
     const set = await planAll(p, events?.emit);
     approved = set;
     if (set.failed) {
+      if (set.policyDenied) return stop(report({ status: "plan-failed", message: "The policy denied a member's plan, so nothing was applied." }), CHANT_EXIT.denied);
       return stop(report({ status: "plan-failed", message: "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied." }), 1);
     }
     await storeChangeSetForGate(ctx, p, set.doc);

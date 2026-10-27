@@ -112,7 +112,7 @@ import type { CapabilityRegistry, GroupRun, PlannedOutputs } from "./capability"
 import { groupsByComponent, narrowGroups, planComponentGroup, regroupRemaining } from "./groups";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSink } from "../run-event-stream";
-import { capabilitySteps, planWaveComponent, readDeployedOutputs, type WaveComponentPlan } from "./wave-plan";
+import { capabilitySteps, planWaveComponent, readDeployedOutputs, type CapabilityPolicyFindings, type WaveComponentPlan } from "./wave-plan";
 import type { PrMigrationFile } from "../pr-migrations";
 
 export interface PrPlanSetOptions {
@@ -167,6 +167,10 @@ export interface PrPlanSet {
   fallbacks?: FanOutGroupFallback[];
   /** Whether any component failed to plan. */
   failed: boolean;
+  /** A capability's plan threw `policyDenied` (#4550): the stage exits 7, not 1. */
+  policyDenied?: boolean;
+  /** The policy findings capabilities' plans carried (#4550), by member. Absent when none. */
+  capabilityPolicy?: CapabilityPolicyFindings[];
 }
 
 /** A group a pull request planned as one (ws-107). */
@@ -212,6 +216,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
   const plans: Record<string, Record<string, unknown>> = {};
   const shapes: Record<string, PlanShape> = {};
   let failed = false;
+  // #4550: the findings capabilities' plans carried, and a policy denial among them.
+  const capabilityPolicy: CapabilityPolicyFindings[] = [];
   const emit = options.onRunEvent;
   emit?.({ type: "phase-start", component: null, phase: PR_PLAN_PHASE });
   // ws-107: each group plans once, in its wave, with one call.
@@ -294,6 +300,7 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
       const readsView = group ? { ...outputs, ...Object.fromEntries(group.components.filter((c) => c !== p.component).map((c) => [c, { ...(plannedHere.get(c) ?? {}) }])) } : outputs;
       const reads = readsOf(component, readsView);
       if (reads.length > 0) readsBy.set(p.component, reads);
+      if (p.policy) capabilityPolicy.push(...p.policy);
       if ("error" in p) {
         failed = true;
         plannedBy.set(p.component, undefined);
@@ -342,6 +349,8 @@ export async function planPrSet(options: PrPlanSetOptions): Promise<PrPlanSet> {
     plans,
     outputs,
     failed,
+    ...(capabilityPolicy.some((c) => c.denied) ? { policyDenied: true } : {}),
+    ...(capabilityPolicy.length > 0 ? { capabilityPolicy: [...capabilityPolicy].sort((x, y) => (x.member < y.member ? -1 : x.member > y.member ? 1 : 0)) } : {}),
     ...(groups.length > 0 ? { groups } : {}),
     ...(options.plan.fallbacks?.length ? { fallbacks: options.plan.fallbacks } : {}),
     ...(Object.keys(shapes).length > 0 ? { shapes } : {}),
@@ -1152,6 +1161,7 @@ export function prReport(input: PrReportInput): PrReport {
       waves: input.plan.waves,
     },
     ...(groups.length > 0 ? { groups } : {}),
+    ...(input.set.capabilityPolicy?.length ? { capabilityPolicy: input.set.capabilityPolicy.map((c) => ({ ...c })) } : {}),
     ...(input.set.fallbacks?.length ? { fallbacks: input.set.fallbacks.map((f) => ({ ...f })) } : {}),
     members,
     changeSet: input.set.doc,
