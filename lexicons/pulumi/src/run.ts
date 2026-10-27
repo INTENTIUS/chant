@@ -63,14 +63,18 @@
  * {@link pulumiMemberEngine} decides, first rule that answers:
  *
  * 1. the member's config says `engine: "pulumi"` or `"plunge"`;
- * 2. `Pulumi.yaml` names a backend whose URL starts with `plunge`
+ * 2. the nearest `plywood.yml` (the member's directory up to the repo
+ *    root) says `engine:`, or names a `backend:` URL starting with `plunge`;
+ * 3. `PULUMI_BACKEND_URL` in the job environment starts with `plunge`;
+ * 4. `Pulumi.yaml` names a backend whose URL starts with `plunge`
  *    (`backend: { url: "plunge+file:///..." }`, `plunge://...`), plunge's
  *    backend scheme;
- * 3. otherwise `pulumi`.
+ * 5. otherwise `pulumi`.
  *
- * Only `Pulumi.yaml` is read, never `PULUMI_BACKEND_URL` or the CLI's
- * login state, so the answer is the same on every machine that checks the
- * member out.
+ * The result carries `source`, the rule that answered, for the plan output.
+ * Rule 3 reads the job's environment, so a machine that logs in to a plunge
+ * backend by variable gets plunge, as the CLI does; the checked-in files
+ * (rules 2 and 4) give the same answer wherever the member is checked out.
  *
  * The runner is injectable, so the tests run no binary.
  */
@@ -204,7 +208,7 @@ export async function runAllowedPlunge(run: PulumiRunner, args: string[], cwd: s
 
 export const defaultPlungeRunner: PulumiRunner = (args, opts) => execFileAsync("plunge", args, { cwd: opts.cwd, maxBuffer: 256 * 1024 * 1024, env: engineEnv() });
 
-export { pulumiMemberEngine, type PulumiMemberEngine } from "./member-engine";
+export { pulumiMemberEngine, readPlywoodEngine, type PulumiMemberEngine, type PulumiMemberEngineSource, type PulumiMemberEngineOptions } from "./member-engine";
 
 /** The argv chant runs for a member's applied outputs, after `pulumi` (#4455). Secrets stay blinded. */
 export function pulumiStackOutputArgs(opts: { stack?: string } = {}): string[] {

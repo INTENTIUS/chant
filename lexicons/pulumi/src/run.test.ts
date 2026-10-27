@@ -208,9 +208,13 @@ describe("a member on plunge (#4453)", () => {
   const dir = join(testdata, "plunge-member");
 
   test("the engine: the config first, then a plunge backend URL in Pulumi.yaml, else pulumi", () => {
-    expect(pulumiMemberEngine(dir)).toEqual({ engine: "plunge", because: "Pulumi.yaml names the plunge backend plunge+file:///var/lib/plunge/site" });
+    expect(pulumiMemberEngine(dir, undefined, { env: {} })).toEqual({
+      engine: "plunge",
+      because: "Pulumi.yaml names the plunge backend plunge+file:///var/lib/plunge/site",
+      source: "Pulumi.yaml",
+    });
     expect(pulumiMemberEngine(dir, "pulumi").engine).toBe("pulumi");
-    expect(pulumiMemberEngine(join(testdata, "pulumi-member")).engine).toBe("pulumi");
+    expect(pulumiMemberEngine(join(testdata, "pulumi-member"), undefined, { env: {} }).engine).toBe("pulumi");
     expect(pulumiMemberEngine(join(testdata, "pulumi-member"), "plunge").engine).toBe("plunge");
   });
 
