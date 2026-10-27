@@ -214,6 +214,7 @@ for a query or another search flag given with `--capabilities`). Without
 | `uses[]` | the capabilities and helpers its rule refers to |
 | `rule` | the rule as written |
 | `helpers[]` | `{ name, rule }` for each rule the capabilities use that the catalog doesn't list |
+| `templates[]` | the [investigation templates](#investigation-templates), each `{ id, title, question, sources?, inputs, reads, query, note? }` |
 
 In a declared workspace, `chant workspace search --capabilities --json`
 prints the same document from the workspace root's chant, for every lexicon
@@ -227,6 +228,49 @@ member pinned to another lexicon version answers by that version's mapping. The
 reader conformance suite covers it as `search --capabilities`. chant's MCP
 `capabilities` tool returns whichever of the two applies where the server
 runs, unchanged. An agent reads it once per session.
+
+## Investigation templates
+
+The catalog has a second kind of entry since
+[#4531](https://github.com/INTENTIUS/chant/issues/4531). An investigation
+template is a fixed query about one resource, so that behold's graph pane
+and choudoufu's `investigate` run the same query when someone asks the same
+question. Where a `chant search` path pattern can express the question, the
+entry's query has `kind: "path"` and needs no graph database; it keeps
+working when behold's optional LadybugDB peer is missing. Questions that
+cross sources need Cypher, and those entries have `kind: "cypher"`, a
+read-only statement that only behold's pane runs.
+
+| Template | Query | Reads | Question |
+|---|---|---|---|
+| `dependents` | path, `->*{{node}}` | source | what reads this resource, in its own project |
+| `dependencies` | path, `<-*{{node}}` | source | what this resource reads, in its own project |
+| `paths-to-kind` | path, `{{node}} ->*kind:{{kind}}` | source | does this resource reach anything of a given kind |
+| `capability` | path, `{{node}} cap:{{capability}}` | source | does a capability hold for this resource |
+| `drift` | path, `{{node}}` | live | has this resource drifted in an environment |
+| `dependents-all` | cypher | session | what reads this resource, from any source loaded |
+| `dependencies-all` | cypher | session | what this resource reads, from any source loaded |
+| `ownership` | cypher | session | who owns this cloud ID |
+| `same-object` | cypher | session | where else the object behind this resource is declared or recorded |
+| `readers` | cypher | session | which other estate or root reads this resource |
+| `history` | cypher | snapshots | how this resource's record changed over time |
+
+Each entry's first input is its `resource` input, `node`, which the caller
+resolves to one node from whatever identifier it holds, cloud IDs included.
+An input of kind `term` holds one search term (a kind, or a capability call
+with its arguments), and an input of kind `scope` names the environment the
+query is read in without appearing in its text. Filling a path template
+replaces each `{{<input>}}` with the input's value, the node's id for
+`{{node}}`, and refuses a value that would add a second search term. Cypher
+templates never have text spliced in, since the node's key is bound as
+`$key` and each other input as `$<name>`. The Reads column above is the
+entry's `reads` field, and an entry's optional `note` says what the template
+does not answer.
+
+chant ships the templates for behold and choudoufu to read as data, in the
+file `@intentius/chant/capabilities/templates.json` and in the `templates`
+field of the capabilities document. That field was added within contract 1,
+so the capabilities document's templates are written by chant `0.124.53` and newer.
 
 ## Evaluation time
 

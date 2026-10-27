@@ -51,6 +51,7 @@
       "default": "./src/cli/index.ts"
     },
     "./workspace/*.schema.json": "./src/workspace/*.schema.json",
+    "./capabilities/templates.json": "./src/capabilities/templates.json",
     "./notify.schema.json": "./src/notify.schema.json",
     "./health.schema.json": "./src/health.schema.json",
     "./workspace/factory-rules": {

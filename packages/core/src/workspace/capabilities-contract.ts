@@ -16,6 +16,7 @@
 import { resolve } from "node:path";
 import type { ReasonCode } from "./reason-codes";
 import type { CapabilityEntry } from "../capabilities/catalog";
+import type { TemplateEntry } from "../capabilities/templates";
 
 /** The version of the `capabilities` document this chant writes. */
 export const CAPABILITIES_CONTRACT_VERSION = 1;
@@ -40,6 +41,12 @@ interface CapabilitiesHead {
 export interface CapabilitiesResult extends CapabilitiesHead {
   capabilities: CapabilityEntry[];
   helpers: { name: string; rule: string }[];
+  /**
+   * The investigation templates (#4531), the catalog's second kind of entry.
+   * Added within contract 1; a document from a chant older than
+   * CAPABILITY_TEMPLATES_FLOOR lacks it.
+   */
+  templates: TemplateEntry[];
 }
 
 export interface CapabilitiesFailure extends CapabilitiesHead {
@@ -74,13 +81,14 @@ export async function capabilitiesDocument(
       mappings[name] = undefined;
     }
   }
+  const { investigationTemplates } = await import("../capabilities/templates");
   const catalog = capabilityCatalog(mappings);
   for (const c of catalog.capabilities) {
     for (const name of notLoaded) {
       c.lexicons[name] = { code: "lexicon-not-loaded", message: `the ${name} lexicon isn't installed where this chant runs, so its mapping wasn't read` };
     }
   }
-  return { ...(await head()), ...catalog };
+  return { ...(await head()), ...catalog, templates: investigationTemplates() };
 }
 
 export async function capabilitiesFailure(error: CapabilitiesFailure["error"]): Promise<CapabilitiesFailure> {
