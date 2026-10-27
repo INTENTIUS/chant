@@ -33,6 +33,7 @@
  */
 
 import type { ResourceMetadata } from "./lexicon";
+import type { IREdge } from "./graph-ir";
 
 /**
  * Why a declared entity was not observed. Total: a lexicon that cannot observe
@@ -198,6 +199,16 @@ export interface ObservationResult {
    * question. Values are already scrubbed of anything that looks secret.
    */
   stackExports?: Record<string, Record<string, unknown>>;
+  /**
+   * Relationships the read observed between the resources it returned
+   * (chant#4528): an ownership engine's graph, such as the block edges
+   * `choudoufu live-graph` prints, with their `grain`. Core carries them to
+   * `LiveObservation.edges` beside the ones `describeDependencies` reports;
+   * `buildLiveGraphIr` drops any whose endpoints were not both observed.
+   * `from`/`to` are node ids in the space of {@link resources} keys and the
+   * instance node ids built from them.
+   */
+  edges?: IREdge[];
 }
 
 /**
@@ -236,6 +247,8 @@ export interface NormalizedObservation {
   notes: string[];
   /** Per-stack exports (#1279), keyed by stack name. Absent when the lexicon reported none. */
   stackExports?: Record<string, Record<string, unknown>>;
+  /** Observed relationships (chant#4528). Absent when the lexicon reported none. */
+  edges?: IREdge[];
 }
 
 /** True when `value` is the versioned {@link ObservationResult} envelope. */
@@ -260,6 +273,7 @@ export function observation(
   sources?: Record<string, string>,
   annotations?: Record<string, Record<string, unknown>>,
   rootReads?: Record<string, RootRead>,
+  edges?: IREdge[],
 ): ObservationResult {
   return {
     observation: "v1",
@@ -271,6 +285,7 @@ export function observation(
     ...(rootReads && Object.keys(rootReads).length > 0 ? { rootReads } : {}),
     ...(notes && notes.length > 0 ? { notes } : {}),
     ...(stackExports && Object.keys(stackExports).length > 0 ? { stackExports } : {}),
+    ...(edges && edges.length > 0 ? { edges } : {}),
   };
 }
 
@@ -292,6 +307,7 @@ export function normalizeObservation(value: DescribeResourcesResult | undefined)
       ...(value.annotations && Object.keys(value.annotations).length > 0 ? { annotations: value.annotations } : {}),
       ...(value.rootReads && Object.keys(value.rootReads).length > 0 ? { rootReads: value.rootReads } : {}),
       ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
+      ...(Array.isArray(value.edges) && value.edges.length > 0 ? { edges: value.edges } : {}),
     };
   }
   return { resources: value, unobserved: {}, queried: {}, sources: {}, notes: [] };
@@ -345,6 +361,10 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   // Annotations (#4372) merge like `sources`: per entity, disjoint parts.
   const annotations: Record<string, Record<string, unknown>> = {};
   const rootReads: Record<string, RootRead> = {};
+  // Edges (#4528) concatenate, once each: the parts read disjoint entity sets,
+  // and two parts reporting the same edge is one edge.
+  const edges: IREdge[] = [];
+  const edgeKeys = new Set<string>();
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
@@ -354,6 +374,12 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     Object.assign(rootReads, part.rootReads ?? {});
     for (const n of part.notes) notes.add(n);
     Object.assign(stackExports, part.stackExports ?? {});
+    for (const e of part.edges ?? []) {
+      const key = `${e.from}\0${e.to}\0${e.viaAttr ?? ""}\0${e.toAttr ?? ""}\0${e.grain ?? ""}`;
+      if (edgeKeys.has(key)) continue;
+      edgeKeys.add(key);
+      edges.push(e);
+    }
   }
   // Present wins: a stack that could not be read does not un-observe a resource
   // another stack returned.
@@ -367,6 +393,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
     ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}),
     ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
+    ...(edges.length > 0 ? { edges } : {}),
   };
 }
 

@@ -203,6 +203,31 @@
  * The cost is two refreshes of the estate per read, run one after the other
  * so they never share the root's cache file.
  *
+ * ## Engine facts on a live root (#4528)
+ *
+ * After `live-plan -json` answers, the same document is handed to `choudoufu
+ * live-graph -json -from-plan=<file>` (choudoufu#2285), which builds the
+ * root's graph from the configuration and that file alone: no second live
+ * read, so the facts and the verdicts above come from one refresh (choudoufu
+ * #1014, the #4520 ruling Q3). `<file>` is the `<root>.live-plan.json`
+ * written under {@link TERRAFORM_LIVE_PLAN_DIR_ENV} when the caller asked
+ * for it, and otherwise a copy in a temporary directory removed afterwards.
+ *
+ * The document's node ids are choudoufu's addresses (the ruling's Q2). A
+ * block node maps to its entity with {@link entityKeyFor}; an instance node
+ * (`instanceOf` set) maps to its block's entity, and its facts go on that
+ * block's `instances` entry of the same address, from which core's
+ * `observedInstanceNodeId` draws the instance node. Each node's `facts` land
+ * on `ResourceMetadata.facts` or `InstanceObservation.facts`, and edges with
+ * a grain land on the observation's `edges`, endpoints mapped the same way
+ * ({@link readEngineGraph}). Facts are never read for a decision: ownership
+ * and the change set keep reading the verdicts above.
+ *
+ * A choudoufu without the command, older than
+ * `MIN_CHOUDOUFU_GRAPH_VERSION`, answers with a usage error: `facts` stay
+ * absent, the root gets one note, and the rest of the read is unchanged. Any
+ * other failure of the graph read degrades the same way, with its own note.
+ *
  * ## Nothing from `values` is surfaced
  *
  * A state row's `values` are the resource's full attribute set, secrets
@@ -232,16 +257,22 @@ import {
 } from "@intentius/chant/observation";
 import type { OwnershipMarker } from "@intentius/chant/ownership";
 import {
+  observedInstanceNodeId,
   rollupInstances,
   terraformInstancePath,
   TERRAFORM_INSTANCE_ROLLUP,
   type InstanceObservation,
 } from "@intentius/chant/instance-nodes";
-import { mkdirSync, writeFileSync } from "node:fs";
+import type { EdgeGrain, EngineFacts } from "@intentius/chant/engine-facts";
+import type { IREdge } from "@intentius/chant/graph-ir";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
+  choudoufuLiveGraph,
   choudoufuLiveLs,
   choudoufuLivePlanDocument,
+  MIN_CHOUDOUFU_GRAPH_VERSION,
   terraformInit,
   terraformPlanRead,
   terraformShow,
@@ -780,16 +811,33 @@ export function livePlanDocumentFile(root: string): string {
   return `${root.replace(/[^A-Za-z0-9._-]/g, "_")}.live-plan.json`;
 }
 
-/** Write a live root's document where {@link TERRAFORM_LIVE_PLAN_DIR_ENV} asks, if it asks. */
-function handLivePlanDocument(root: string, json: unknown): void {
+/**
+ * Write a live root's document where {@link TERRAFORM_LIVE_PLAN_DIR_ENV} asks,
+ * if it asks. The path written, or undefined when nothing was.
+ */
+function handLivePlanDocument(root: string, json: unknown): string | undefined {
   const out = process.env[TERRAFORM_LIVE_PLAN_DIR_ENV];
-  if (!out || !isAbsolute(out)) return;
+  if (!out || !isAbsolute(out)) return undefined;
   try {
     mkdirSync(out, { recursive: true });
-    writeFileSync(join(out, livePlanDocumentFile(root)), JSON.stringify(json));
+    const file = join(out, livePlanDocumentFile(root));
+    writeFileSync(file, JSON.stringify(json));
+    return file;
   } catch {
     // Best effort: the read's answer does not depend on the copy.
+    return undefined;
   }
+}
+
+/**
+ * What a live root's bind leaves for the engine graph read (#4528): the
+ * `live-plan -json` document it indexed, the file it was handed to under
+ * {@link TERRAFORM_LIVE_PLAN_DIR_ENV} if any, and the estate.
+ */
+interface LivePlanHandoff {
+  json?: unknown;
+  file?: string;
+  estate?: string;
 }
 
 /**
@@ -797,7 +845,12 @@ function handLivePlanDocument(root: string, json: unknown): void {
  * the document. `terraform show` is never run here, and there is no state
  * file to run it over.
  */
-function liveAdapter(root: string, cwd: string | undefined, deps: TerraformReadDeps): ObserverAdapter<LivePlanIndex> {
+function liveAdapter(
+  root: string,
+  cwd: string | undefined,
+  deps: TerraformReadDeps,
+  handoff: LivePlanHandoff = {},
+): ObserverAdapter<LivePlanIndex> {
   const where = cwd ? { cwd } : {};
   let dir: string | undefined;
 
@@ -805,8 +858,12 @@ function liveAdapter(root: string, cwd: string | undefined, deps: TerraformReadD
     async bind(): Promise<LivePlanIndex> {
       const planned = await deps.livePlan({ root, ...where });
       dir = planned.dir;
-      handLivePlanDocument(root, planned.json);
-      return indexLivePlan(planned.json);
+      const file = handLivePlanDocument(root, planned.json);
+      const index = indexLivePlan(planned.json);
+      handoff.json = planned.json;
+      handoff.estate = planned.estate ?? index.estate;
+      if (file) handoff.file = file;
+      return index;
     },
 
     classifyBindFailure(err) {
@@ -863,6 +920,204 @@ function liveAdapter(root: string, cwd: string | undefined, deps: TerraformReadD
       };
     },
   };
+}
+
+/* ─────────────────────── engine facts (#4528) ──────────────────────────── */
+
+/** {@link readEngineGraph}'s answer: facts and edges keyed in chant's id space. */
+export interface EngineGraphRead {
+  /** Facts of a block node, by entity key. */
+  blocks: Map<string, EngineFacts>;
+  /** Facts of an instance node, by its block's entity key, then by the instance address. */
+  instances: Map<string, Map<string, EngineFacts>>;
+  /** Edges with a grain, endpoints as live graph node ids. */
+  edges: IREdge[];
+}
+
+const GRAINS: ReadonlySet<string> = new Set<EdgeGrain>(["block", "instance", "property"]);
+const OWNERSHIPS: ReadonlySet<string> = new Set(["bound", "unowned", "pending", "foreign"]);
+const OWNED_BY: ReadonlySet<string> = new Set(["marker", "record", "name"]);
+
+/**
+ * One node's `facts`, keeping only the fields of chant's `EngineFacts` and
+ * only values of the shape it declares. Undefined when nothing is left.
+ */
+function engineFactsOf(value: unknown): EngineFacts | undefined {
+  const f = asRecord(value);
+  const out: EngineFacts = {};
+  const ownership = asString(f.ownership);
+  if (ownership && OWNERSHIPS.has(ownership)) out.ownership = ownership as EngineFacts["ownership"];
+  const ownedBy = asString(f.ownedBy);
+  if (ownedBy && OWNED_BY.has(ownedBy)) out.ownedBy = ownedBy as EngineFacts["ownedBy"];
+  const markers = asRecord(f.markers);
+  const encoding = asString(markers.encoding);
+  const source = asString(markers.source);
+  if ((encoding === "plain" || encoding === "escaped" || encoding === "digest") && (source === "live" || source === "record")) {
+    out.markers = {
+      ...(asString(markers.owner) ? { owner: asString(markers.owner) } : {}),
+      ...(asString(markers.address) ? { address: asString(markers.address) } : {}),
+      encoding,
+      source,
+    };
+  }
+  const cloudIds = asArray(f.cloudIds)
+    .map((c) => ({ kind: asString(asRecord(c).kind), value: asString(asRecord(c).value) }))
+    .filter((c): c is NonNullable<EngineFacts["cloudIds"]>[number] =>
+      c.value !== undefined && ["import-id", "arn", "provider-id", "self-link", "k8s-uid"].includes(c.kind ?? ""),
+    );
+  if (cloudIds.length > 0) out.cloudIds = cloudIds;
+  const history = asRecord(f.recordVersions);
+  if (typeof history.kept === "boolean") {
+    out.recordVersions = {
+      kept: history.kept,
+      versions: asArray(history.versions).flatMap((v) => {
+        const r = asRecord(v);
+        const id = asString(r.id);
+        const writtenAt = asString(r.writtenAt);
+        return id && writtenAt ? [{ id, writtenAt, current: r.current === true, deleted: r.deleted === true }] : [];
+      }),
+    };
+  }
+  const observedAt = asString(f.observedAt);
+  if (observedAt) out.observedAt = observedAt;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Read an engine graph document (`choudoufu live-graph -json`, chant#4527's
+ * schema) for one root into chant's id space. Node ids are choudoufu's
+ * addresses (the #4520 ruling, Q2): a block node is the entity
+ * {@link entityKeyFor} names; an instance node (`instanceOf`) belongs to its
+ * block's entity, and as an edge endpoint it is the live instance node id
+ * core's `observedInstanceNodeId` gives. A node with no address (an estate
+ * the configuration reads, `estate:<name>`) has no chant entity, so its
+ * edges are left out. Edges keep their grain; one without a grain is left out.
+ *
+ * Throws when the document is not an engine graph document.
+ */
+export function readEngineGraph(root: string, document: unknown): EngineGraphRead {
+  const doc = asRecord(document);
+  const engineGraph = asRecord(asRecord(doc.meta).engineGraph);
+  if (doc.version !== 1 || engineGraph.format !== 1 || !Array.isArray(doc.nodes)) {
+    throw new Error("not an engine graph document (want GraphIR version 1 with meta.engineGraph format 1)");
+  }
+  const blocks = new Map<string, EngineFacts>();
+  const instances = new Map<string, Map<string, EngineFacts>>();
+  const nodeIds = new Map<string, string>();
+
+  for (const entry of doc.nodes) {
+    const node = asRecord(entry);
+    const id = asString(node.id);
+    const address = asString(asRecord(node.attrs).address);
+    if (!id || !address) continue;
+    const facts = engineFactsOf(node.facts);
+    const instanceOf = asString(node.instanceOf);
+    if (instanceOf) {
+      const block = entityKeyFor(root, instanceOf);
+      const key = asString(node.instanceKey);
+      const scope = asString(node.instanceScope);
+      const liveId = observedInstanceNodeId(block, {
+        address: id,
+        ...(key !== undefined ? { key } : {}),
+        ...(scope !== undefined ? { scope } : {}),
+      });
+      if (liveId) nodeIds.set(id, liveId);
+      if (facts) {
+        let byAddress = instances.get(block);
+        if (!byAddress) instances.set(block, (byAddress = new Map()));
+        byAddress.set(id, facts);
+      }
+      continue;
+    }
+    const key = entityKeyFor(root, id);
+    nodeIds.set(id, key);
+    if (facts) blocks.set(key, facts);
+  }
+
+  const edges: IREdge[] = [];
+  const seen = new Set<string>();
+  for (const entry of asArray(doc.edges)) {
+    const edge = asRecord(entry);
+    const grain = asString(edge.grain);
+    if (!grain || !GRAINS.has(grain)) continue;
+    const from = nodeIds.get(asString(edge.from) ?? "");
+    const to = nodeIds.get(asString(edge.to) ?? "");
+    if (!from || !to || from === to) continue;
+    const viaAttr = asString(edge.viaAttr);
+    const key = `${from}\0${to}\0${viaAttr ?? ""}\0${grain}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ from, to, kind: "ref", ...(viaAttr ? { viaAttr } : {}), grain: grain as EdgeGrain });
+  }
+  return { blocks, instances, edges };
+}
+
+/**
+ * `resources` with {@link readEngineGraph}'s facts on them: a block's on
+ * `ResourceMetadata.facts`, an instance's on its `instances` entry of the
+ * same address. Nothing else changes, and nothing is added for an entity the
+ * read did not return.
+ */
+export function withEngineFacts(
+  resources: Record<string, ResourceMetadata>,
+  read: EngineGraphRead,
+): Record<string, ResourceMetadata> {
+  const out: Record<string, ResourceMetadata> = {};
+  for (const [name, meta] of Object.entries(resources)) {
+    const facts = read.blocks.get(name);
+    const byAddress = read.instances.get(name);
+    const instances = byAddress && meta.instances
+      ? meta.instances.map((inst) => {
+          const f = byAddress.get(inst.address);
+          return f ? { ...inst, facts: f } : inst;
+        })
+      : meta.instances;
+    out[name] = {
+      ...meta,
+      ...(facts ? { facts } : {}),
+      ...(instances ? { instances } : {}),
+    };
+  }
+  return out;
+}
+
+/**
+ * Run `choudoufu live-graph -json -from-plan=<file>` over the document a
+ * live root's bind handed off, and read it (#4528). Never throws: facts are
+ * extra, so a failure is a note and no facts.
+ */
+async function engineGraphFor(
+  root: string,
+  cwd: string | undefined,
+  deps: TerraformReadDeps,
+  handoff: LivePlanHandoff,
+): Promise<{ read?: EngineGraphRead; note?: string }> {
+  if (!deps.liveGraph || handoff.json === undefined) return {};
+  let scratch: string | undefined;
+  try {
+    let file = handoff.file;
+    if (!file) {
+      scratch = mkdtempSync(join(tmpdir(), "chant-live-graph-"));
+      file = join(scratch, livePlanDocumentFile(root));
+      writeFileSync(file, JSON.stringify(handoff.json));
+    }
+    const graph = await deps.liveGraph({ root, ...(cwd ? { cwd } : {}), fromPlan: file, ...(handoff.estate ? { estate: handoff.estate } : {}) });
+    if (!graph.supported) {
+      return {
+        note:
+          `terraform.roots.${root}: engine facts are absent: this choudoufu has no \`live-graph -from-plan\` ` +
+          `(${graph.detail}), which needs v${MIN_CHOUDOUFU_GRAPH_VERSION} or later; the rest of the read is unchanged`,
+      };
+    }
+    return { read: readEngineGraph(root, graph.json) };
+  } catch (err) {
+    const message = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    return {
+      note: `terraform.roots.${root}: engine facts are absent: \`choudoufu live-graph -json -from-plan\` failed (${message}); the rest of the read is unchanged`,
+    };
+  } finally {
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /* ──────────────────── the estate beyond the declaration ─────────────────── */
@@ -1157,6 +1412,12 @@ export interface TerraformReadDeps {
   livePlan: typeof choudoufuLivePlanDocument;
   liveLs: typeof choudoufuLiveLs;
   /**
+   * The engine graph read on a live root (#4528). Optional so a test that
+   * never asks for facts need not stub it; omitted, no facts are read and no
+   * note is added.
+   */
+  liveGraph?: typeof choudoufuLiveGraph;
+  /**
    * The plan depth's read (#4358). Optional so a test that never asks for the
    * plan depth need not stub it; omitted, the real activity runs.
    */
@@ -1168,6 +1429,7 @@ const REAL_DEPS: TerraformReadDeps = {
   show: terraformShow,
   livePlan: choudoufuLivePlanDocument,
   liveLs: choudoufuLiveLs,
+  liveGraph: choudoufuLiveGraph,
   planRead: terraformPlanRead,
 };
 
@@ -1494,9 +1756,10 @@ function livePlanDepthAdapter(
   cwd: string | undefined,
   deps: TerraformReadDeps,
   outcome: { answered: LivePlanDepthAnswer; note: string; read?: RootRead },
+  handoff: LivePlanHandoff = {},
 ): ObserverAdapter<LivePlanDepthIndex> {
   const where = cwd ? { cwd } : {};
-  const live = liveAdapter(root, cwd, deps);
+  const live = liveAdapter(root, cwd, deps, handoff);
   const planRead = deps.planRead ?? terraformPlanRead;
   const firstLine = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
   let command = "";
@@ -1642,6 +1905,15 @@ export async function describeResources(
   // an overlay exists to prevent.
   const sources: Record<string, string> = {};
   const rootReads: Record<string, RootRead> = {};
+  const edges: IREdge[] = [];
+  // A live root's observation with the engine graph's facts and edges on it (#4528).
+  const withEngineGraph = async (root: string, handoff: LivePlanHandoff, observed: ReturnType<typeof normalizeObservation>) => {
+    const graph = await engineGraphFor(root, options.cwd, deps, handoff);
+    if (graph.note) notes.push(graph.note);
+    if (!graph.read) return observed;
+    edges.push(...graph.read.edges);
+    return { ...observed, resources: withEngineFacts(observed.resources, graph.read) };
+  };
   const depthOf = byRoot.size > 0 ? await observeDepths(options, notes) : () => "state" as const;
   for (const [root, declared] of byRoot) {
     // One fact decides the whole read, and the parse already recorded it on
@@ -1658,15 +1930,18 @@ export async function describeResources(
         // Both reads (#4371): `live-plan` for ownership, the plan for the
         // attributes on what it bound. `sources` is known only after the read.
         const outcome: { answered: LivePlanDepthAnswer; note: string; read?: RootRead } = { answered: "live", note: "" };
-        const read = await observeEntities(declared, livePlanDepthAdapter(root, options.cwd, deps, outcome));
+        const handoff: LivePlanHandoff = {};
+        const read = await observeEntities(declared, livePlanDepthAdapter(root, options.cwd, deps, outcome, handoff));
         for (const entity of declared) sources[entity.name] = outcome.answered;
         if (outcome.read) rootReads[`terraform.roots.${root}`] = outcome.read;
         if (outcome.note) notes.push(outcome.note);
-        parts.push(normalizeObservation(read));
+        parts.push(await withEngineGraph(root, handoff, normalizeObservation(read)));
         continue;
       }
       for (const entity of declared) sources[entity.name] = "live";
-      parts.push(normalizeObservation(await observeEntities(declared, liveAdapter(root, options.cwd, deps))));
+      const handoff: LivePlanHandoff = {};
+      const read = await observeEntities(declared, liveAdapter(root, options.cwd, deps, handoff));
+      parts.push(await withEngineGraph(root, handoff, normalizeObservation(read)));
       continue;
     }
     if (depth === "plan") {
@@ -1717,5 +1992,5 @@ export async function describeResources(
 
   // A planned create's plan attributes (#4372) ride beside the verdict, never
   // in `resources`: the block stays absent.
-  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations, rootReads);
+  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations, rootReads, edges);
 }

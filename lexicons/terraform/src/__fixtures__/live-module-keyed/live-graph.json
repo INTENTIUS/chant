@@ -1,0 +1,259 @@
+{
+  "version": 1,
+  "meta": {
+    "engineGraph": {
+      "format": 1,
+      "engine": {
+        "name": "choudoufu"
+      },
+      "scope": {
+        "kind": "estate",
+        "estate": "module-keyed-estate"
+      },
+      "markerScheme": {
+        "ownerKey": "tofu-estate",
+        "addressKey": "tofu-address",
+        "continuationKeys": [
+          "tofu-address-2",
+          "tofu-address-3",
+          "tofu-address-4"
+        ],
+        "encoding": {
+          "tags": "escaped",
+          "labels": "escaped"
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "id": "module.app.aws_cloudwatch_log_group.logs",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app.aws_cloudwatch_log_group.logs"
+      },
+      "sourceLoc": {
+        "file": "modules/app/main.tf",
+        "line": 15
+      }
+    },
+    {
+      "id": "module.app.aws_eip.pool",
+      "kind": "aws_eip",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app.aws_eip.pool"
+      },
+      "sourceLoc": {
+        "file": "modules/app/main.tf",
+        "line": 8
+      }
+    },
+    {
+      "id": "module.app[0].aws_cloudwatch_log_group.logs",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app[0].aws_cloudwatch_log_group.logs"
+      },
+      "physicalId": "/module-keyed-estate/app-0",
+      "instanceOf": "module.app.aws_cloudwatch_log_group.logs",
+      "instanceScope": "module.app[0]",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/module-keyed-estate/app-0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "module.app[0].aws_eip.pool[0]",
+      "kind": "aws_eip",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app[0].aws_eip.pool[0]"
+      },
+      "physicalId": "eipalloc-0a41c7d2e9b3f5061",
+      "instanceOf": "module.app.aws_eip.pool",
+      "instanceKey": "[0]",
+      "instanceScope": "module.app[0]",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "module-keyed-estate",
+          "address": "module.app:0.aws_eip.pool:0",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "eipalloc-0a41c7d2e9b3f5061"
+          }
+        ]
+      }
+    },
+    {
+      "id": "module.app[0].aws_eip.pool[1]",
+      "kind": "aws_eip",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app[0].aws_eip.pool[1]"
+      },
+      "physicalId": "eipalloc-0b52d8e3fac4061f2",
+      "instanceOf": "module.app.aws_eip.pool",
+      "instanceKey": "[1]",
+      "instanceScope": "module.app[0]",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "module-keyed-estate",
+          "address": "module.app:0.aws_eip.pool:1",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "eipalloc-0b52d8e3fac4061f2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "module.app[1].aws_cloudwatch_log_group.logs",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app[1].aws_cloudwatch_log_group.logs"
+      },
+      "instanceOf": "module.app.aws_cloudwatch_log_group.logs",
+      "instanceScope": "module.app[1]",
+      "facts": {
+        "ownership": "pending"
+      }
+    },
+    {
+      "id": "module.app[1].aws_eip.pool[0]",
+      "kind": "aws_eip",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app[1].aws_eip.pool[0]"
+      },
+      "physicalId": "eipalloc-0c63e9f40bd5172a3",
+      "instanceOf": "module.app.aws_eip.pool",
+      "instanceKey": "[0]",
+      "instanceScope": "module.app[1]",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "module-keyed-estate",
+          "address": "module.app:1.aws_eip.pool:0",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "eipalloc-0c63e9f40bd5172a3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "module.app[1].aws_eip.pool[1]",
+      "kind": "aws_eip",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.app[1].aws_eip.pool[1]"
+      },
+      "physicalId": "eipalloc-0d74fa051ce6283b4",
+      "instanceOf": "module.app.aws_eip.pool",
+      "instanceKey": "[1]",
+      "instanceScope": "module.app[1]",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "module-keyed-estate",
+          "address": "module.app:1.aws_eip.pool:1",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "eipalloc-0d74fa051ce6283b4"
+          }
+        ]
+      }
+    },
+    {
+      "id": "module.edge.aws_cloudwatch_log_group.front",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.edge.aws_cloudwatch_log_group.front"
+      },
+      "sourceLoc": {
+        "file": "modules/edge/main.tf",
+        "line": 5
+      }
+    },
+    {
+      "id": "module.edge[\"east\"].aws_cloudwatch_log_group.front",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.edge[\"east\"].aws_cloudwatch_log_group.front"
+      },
+      "physicalId": "/module-keyed-estate/edge-east",
+      "instanceOf": "module.edge.aws_cloudwatch_log_group.front",
+      "instanceScope": "module.edge[\"east\"]",
+      "facts": {
+        "ownership": "unowned",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/module-keyed-estate/edge-east"
+          }
+        ]
+      }
+    },
+    {
+      "id": "module.edge[\"west\"].aws_cloudwatch_log_group.front",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "module.edge[\"west\"].aws_cloudwatch_log_group.front"
+      },
+      "physicalId": "/module-keyed-estate/edge-west",
+      "instanceOf": "module.edge.aws_cloudwatch_log_group.front",
+      "instanceScope": "module.edge[\"west\"]",
+      "facts": {
+        "ownership": "foreign",
+        "markers": {
+          "owner": "other-estate",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/module-keyed-estate/edge-west"
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [],
+  "groups": {}
+}

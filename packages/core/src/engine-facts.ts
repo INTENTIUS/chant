@@ -17,9 +17,20 @@
  * types and ./lifecycle/index-document.ts (`npm run generate:graph-schema`).
  */
 import type { GraphIR } from "./graph-ir";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The format of {@link EngineGraphMeta}. Moves only for a change a reader could not ignore. */
 export const ENGINE_GRAPH_FORMAT = 1;
+
+/**
+ * The first chant that writes {@link EngineFacts} on `ResourceMetadata.facts`
+ * and `IRNode.facts`, and the observation `edges` with their grain: the
+ * terraform lexicon's read of `choudoufu live-graph -json -from-plan`
+ * (chant#4528). A reader that shows facts treats an older chant's graph as
+ * carrying none. The engine side's floor is the terraform lexicon's
+ * `MIN_CHOUDOUFU_GRAPH_VERSION`.
+ */
+export const ENGINE_FACTS_FLOOR = NEXT_RELEASE;
 
 /** The marker values an engine read or recorded for one node. */
 export interface EngineMarkers {
