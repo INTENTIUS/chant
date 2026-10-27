@@ -502,6 +502,7 @@ export default defineConfig({
 								{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 								{ label: 'Build-Time Parameters', slug: 'concepts/build-time-parameters' },
 								{ label: 'Trunk and Releases', slug: 'concepts/trunk-and-releases' },
+								{ label: 'CI Products on chant', slug: 'concepts/ci-products' },
 								{ label: 'Where Values Come From', slug: 'concepts/where-values-come-from' },
 								{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 								{ label: 'State and Governance', slug: 'concepts/governance' },
