@@ -475,6 +475,10 @@ export function snapshotStorageKey(lexicon: string, stack?: string): string {
 /**
  * Write a state snapshot JSON to the orphan branch.
  *
+ * Nothing in chant calls this since #4519: snapshots go through the index
+ * store (./snapshot-store.ts), whose default is `refs/chant/snapshots`. Kept
+ * for code outside chant that wrote snapshots here itself.
+ *
  * Pipeline: hash-object → mktree → commit-tree → update-ref
  */
 export async function writeSnapshot(
@@ -487,12 +491,14 @@ export async function writeSnapshot(
 }
 
 /**
- * Read a snapshot from the orphan branch.
+ * Read a snapshot from the orphan branch. Since #4519 this is the read side
+ * of the read-only orphan-branch store (./snapshot-store.ts); chant's own
+ * readers go through the store.
  */
 export async function readSnapshot(
   environment: string,
   lexicon: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<string | null> {
   return readBlobFromPath(environment, `${lexicon}.json`, opts);
 }
@@ -507,7 +513,7 @@ export async function readSnapshotAt(
   environment: string,
   lexicon: string,
   ref: string,
-  opts?: { cwd?: string },
+  opts?: LedgerLocation,
 ): Promise<string | null> {
   const rt = getRuntime();
   const dir = await ledgerDir(environment, opts);
@@ -704,7 +710,7 @@ export async function readEnvironmentSnapshots(
  * List snapshot history from the orphan branch.
  */
 export async function listSnapshots(
-  opts?: { cwd?: string; environment?: string },
+  opts?: LedgerLocation & { environment?: string },
 ): Promise<Array<{ commit: string; date: string; message: string }>> {
   const rt = getRuntime();
   // A member sees the commits that touched its own ledger (#2538); the flat

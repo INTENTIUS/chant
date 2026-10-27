@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { LifecycleSnapshot } from "./types";
 
-// `replaySnapshots` reads the orphan branch through this one function, so the
-// stored set is the whole input surface.
+// `replaySnapshots` reads the index store (#4519) through this one function,
+// so the stored set is the whole input surface.
 const stored = new Map<string, string>();
-vi.mock("./git", () => ({
-  readEnvironmentSnapshots: async (): Promise<Map<string, string>> => stored,
-}));
+vi.mock("./snapshot-store", async () => {
+  const { fakeSnapshotStore } = await import("./snapshot-store-fake");
+  return {
+    resolveSnapshotStore: async () => fakeSnapshotStore({ keys: async () => [...stored.keys()] }),
+    readEnvironmentSnapshotsFrom: async (): Promise<Map<string, string>> => stored,
+  };
+});
 
 const { replaySnapshots } = await import("./replay");
 

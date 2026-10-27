@@ -24,6 +24,19 @@ vi.mock("../../lifecycle/git", () => ({
   fetchLifecycle: () => fetchLifecycleMock(),
   readEnvironmentSnapshots: (...args: unknown[]) => readEnvironmentSnapshotsMock(...args),
 }));
+// `snapshot(env)` reads the index store (#4519); this one hands the read to the mocks above.
+vi.mock("../../lifecycle/snapshot-store", async () => {
+  const { fakeSnapshotStore } = await import("../../lifecycle/snapshot-store-fake");
+  const store = fakeSnapshotStore({
+    fetch: async () => {
+      await fetchLifecycleMock();
+    },
+  });
+  return {
+    resolveSnapshotStore: async () => store,
+    readEnvironmentSnapshotsFrom: async (_store: unknown, environment: string) => readEnvironmentSnapshotsMock(environment),
+  };
+});
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
   return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };

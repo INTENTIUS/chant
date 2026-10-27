@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { LexiconPlugin } from "../../lexicon";
 import type { ToolDefinition, ToolHandler } from "./types";
-import { readSnapshot } from "../../lifecycle/git";
+import { resolveSnapshotStore } from "../../lifecycle/snapshot-store";
 import { build } from "../../build";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { takeSnapshot } from "../../lifecycle/snapshot";
@@ -71,8 +71,9 @@ export function createDiffTool(plugins: LexiconPlugin[]): ToolRegistration {
       const currentDigest = computeBuildDigest(buildResult);
       const lexicons = lexiconFilter ? [lexiconFilter] : buildResult.manifest.lexicons;
       const results: Record<string, unknown> = {};
+      const store = await resolveSnapshotStore();
       for (const lex of lexicons) {
-        const content = await readSnapshot(env, lex);
+        const content = await store.readLatest(env, lex);
         let previousDigest = undefined;
         if (content) {
           const snapshot: LifecycleSnapshot = JSON.parse(content);

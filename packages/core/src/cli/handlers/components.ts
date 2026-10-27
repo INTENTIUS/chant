@@ -28,7 +28,8 @@
  */
 import { resolve, join, dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { getHeadCommit, fetchLifecycle, pushLifecycle, readSnapshot, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { getHeadCommit, fetchLifecycle, pushLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { resolveSnapshotStore } from "../../lifecycle/snapshot-store";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
 import {
   appendReleaseRecord,
@@ -519,18 +520,27 @@ async function observeComponentStacks(
  * snapshot is no baseline, never an error: with none, nothing can have changed
  * since, and the status falls back to identity and presence.
  */
+/** Stores already fetched in this process, so a status over many lexicons fetches once. */
+const fetchedBaselineStores = new WeakSet<object>();
+
 async function readStatusBaseline(
   environment: string,
   lexicon: string,
   stacks: Array<string | undefined>,
 ): Promise<{ resources: Record<string, ResourceMetadata> | undefined; timestamps: Map<string, string> }> {
   const keys = [...new Set([...stacks.filter((s): s is string => !!s).map((s) => snapshotStorageKey(lexicon, s)), snapshotStorageKey(lexicon)])];
+  // Through the index store (#4519); a store that cannot be built is no baseline, like a missing snapshot.
+  const store = await resolveSnapshotStore().catch(() => null);
+  if (store && !fetchedBaselineStores.has(store)) {
+    fetchedBaselineStores.add(store);
+    await store.fetch();
+  }
   let resources: Record<string, ResourceMetadata> | undefined;
   const timestamps = new Map<string, string>();
   for (const key of keys) {
     let snap: LifecycleSnapshot | undefined;
     try {
-      const content = await readSnapshot(environment, key);
+      const content = store ? await store.readLatest(environment, key) : null;
       snap = content ? (JSON.parse(content) as LifecycleSnapshot) : undefined;
     } catch {
       snap = undefined;

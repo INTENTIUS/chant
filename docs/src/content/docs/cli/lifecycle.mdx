@@ -23,7 +23,7 @@ chant lifecycle gc [--yes] [--push] [--json] [--verbose]
 
 ## Description
 
-`chant lifecycle` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. A snapshot lets `diff` compare the current build against what was last deployed and, with `--live`, against what is in the cloud now.
+`chant lifecycle` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to the project's [snapshot store](#where-snapshots-are-kept), the `refs/chant/snapshots` ref by default. A snapshot lets `diff` compare the current build against what was last deployed and, with `--live`, against what is in the cloud now.
 
 The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
 
@@ -42,7 +42,35 @@ The `--src <dir>` flag overrides `sourceDir` for a single invocation. Use the sa
 
 ### `lifecycle snapshot <env>`
 
-Query the provider API for the current deployed state, then save a snapshot to the `chant/lifecycle` orphan branch.
+Query the provider API for the current deployed state, then save a snapshot to the snapshot store.
+
+### Where snapshots are kept
+
+A snapshot is an index of what was observed. It is derived and stamped with the commit and the time it was read, and no deploy, teardown or plan decision ever reads it, so losing the store costs history and the cost of observing again, never correctness. The same store holds the other indexes: a cloud read behold types into a graph, and the graphs choudoufu and plunge print ([#4519](https://github.com/INTENTIUS/chant/issues/4519)).
+
+Pick the store with `snapshots` in `chant.config.ts`, or with `CHANT_SNAPSHOT_STORE` for one run:
+
+| Store | Where | History |
+|---|---|---|
+| `git-ref` (default) | `refs/chant/snapshots` in the repository, with indexes under `_index/` on the same ref. No branch is created | the ref's commits |
+| `local` | a directory, `.chant/store` unless `dir` names another, for a laptop or a CI cache | none: the latest file only |
+| `s3` | a bucket under a prefix of its own (`bucket`, `prefix`, `region`, `endpoint`) | the bucket's object versions, so turn versioning on |
+| `none` | nowhere: every command still runs, as if no snapshot had been taken | none |
+| `orphan-branch` | the `chant/lifecycle` branch, read-only | the branch's commits |
+
+```ts
+// chant.config.ts
+export default {
+  lexicons: ["aws"],
+  snapshots: { store: "s3", bucket: "acme-chant", prefix: "infra/chant", region: "eu-west-1" },
+};
+```
+
+The default store also reads the `chant/lifecycle` branch when `refs/chant/snapshots` has no snapshot, so snapshots written by an older chant stay readable. Nothing writes snapshots to the branch any more. Op records (gates, run ledgers, deploy records, releases) still live on `chant/lifecycle`.
+
+A push of `refs/chant/snapshots` needs no branch protection, CI trigger or pull request UI to know about it. Fetch it in another clone with `git fetch origin 'refs/chant/snapshots:refs/chant/snapshots'`; chant's own commands fetch it before they read.
+
+An `s3` store given an `endpoint` (an emulator, MinIO) signs with explicit credentials only: `credentials` in the config, or `CHANT_SNAPSHOT_S3_ACCESS_KEY_ID` and `CHANT_SNAPSHOT_S3_SECRET_ACCESS_KEY`. It never reads `AWS_ACCESS_KEY_ID`, a profile or an instance role, so a run against an emulator cannot sign with a real account's keys. Without an endpoint it reads `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
 
 ```bash
 chant lifecycle snapshot dev
@@ -212,7 +240,7 @@ No live value at all, not even a provider default, gets marked `[SUSPICIOUS: ...
 
 #### `--update-baseline` — accept a deviation
 
-Some deviations are permanent facts of the account: a mandatory tag another team stamps on everything, a setting an org policy flips on. `--update-baseline` records every property deviation the run reported as **accepted**, into `<env>/observation-baseline.json` on the `chant/lifecycle` orphan branch.
+Some deviations are permanent facts of the account: a mandatory tag another team stamps on everything, a setting an org policy flips on. `--update-baseline` records every property deviation the run reported as **accepted**, into `.chant/observation-baseline/<env>.json` in the project. Commit the file with the change that needed it, so the acceptance is reviewed in the same pull request. `observationBaseline` in `chant.config.ts` (or `CHANT_OBSERVATION_BASELINE_STORE`) can put it on `refs/chant/observation-baseline` (`git-ref`), in the s3 store (`s3`), or nowhere (`none`). A baseline an older chant wrote to `<env>/observation-baseline.json` on `chant/lifecycle` is still read when the file is absent.
 
 ```bash
 chant lifecycle diff prod --live                     # see what's there
@@ -223,7 +251,7 @@ Acceptance is value-bound. The accepted value stops alerting; a later change *aw
 
 #### `--between <refA> <refB>` — two saved snapshots
 
-Every `snapshot` is a commit on the `chant/lifecycle` orphan branch (list them with `lifecycle log`). `--between` diffs two of them against **each other**. The comparison is read-only and runs no build and no cloud query. It answers "what changed in the cloud between Tuesday and Thursday" without reference to source.
+Every `snapshot` is a version in the snapshot store: a commit on `refs/chant/snapshots`, or an object version id or a time on s3 (list them with `lifecycle log`). `--between` diffs two of them against **each other**. The comparison is read-only and runs no build and no cloud query. It answers "what changed in the cloud between Tuesday and Thursday" without reference to source.
 
 ```bash
 chant lifecycle log prod                      # find the two commits
@@ -461,14 +489,7 @@ On EKS, AKS and GKE, kubeconfig authentication is an exec credential plugin (`aw
 
 ### Concurrent snapshots
 
-Snapshots are pushed to the orphan `chant/lifecycle` branch with `git push --force-with-lease`. If two operators (or a CI job + a human) take a snapshot for the same remote at the same time, the second push is **rejected** rather than silently overwriting the first. You'll see:
-
-```
-error: Another snapshot completed for chant/lifecycle after this run started (env: prod).
-hint:  Pull and retry: `git fetch origin chant/lifecycle:chant/lifecycle` && `chant lifecycle snapshot prod`.
-```
-
-Pull the remote ref and re-run. The first snapshot is kept, and the second runs against the updated baseline.
+Snapshots are pushed to `refs/chant/snapshots` with `git push --force-with-lease`. If two operators (or a CI job and a person) take a snapshot for the same remote at the same time, the second push is refused, and chant fetches the ref, writes its own snapshots again on top of what the first one pushed, and pushes once more. Both snapshots are kept. If the remote keeps moving, the command warns and leaves the snapshot in the local ref for the next snapshot to push.
 
 ### `lifecycle affected`
 
@@ -682,7 +703,7 @@ When `sourceDir` already matches the target revision the command says so and exi
 
 ### `lifecycle log [env]`
 
-List the history of snapshots. Omit `env` to show all environments.
+List the history of snapshots in the store, newest first. Omit `env` to show all environments.
 
 ```bash
 chant lifecycle log         # all environments

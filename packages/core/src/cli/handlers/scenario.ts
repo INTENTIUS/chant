@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { commandBuildParams } from "../build-params-cli";
 import { build, type BuildResult } from "../../build";
-import { readEnvironmentSnapshots, fetchLifecycle } from "../../lifecycle/git";
+import { readEnvironmentSnapshotsFrom, resolveSnapshotStore } from "../../lifecycle/snapshot-store";
 import { buildChangeSet, type ChangeSet, type ChangeSetEntry } from "../../lifecycle/change-set";
 import {
   planReceipts,
@@ -88,11 +88,11 @@ export async function runScenarioCheck(ctx: CommandContext): Promise<number> {
   // of any one scenario's fixture.
   const receipts = collectEffectReceipts(buildResult.entities);
 
-  // `snapshot(env)` reads the chant/lifecycle orphan branch — fetch once,
-  // up front, the same pre-read `runLifecyclePlan` does, rather than once per
-  // scenario that needs it.
+  // `snapshot(env)` reads the index store (#4519) — fetch once, up front,
+  // the same pre-read `runLifecyclePlan` does, rather than once per scenario
+  // that needs it.
   if ([...scenarios.values()].some((s) => s.given.kind === "env")) {
-    await fetchLifecycle();
+    await (await resolveSnapshotStore()).fetch();
   }
 
   const results: Array<{ entityName: string; scenario: ScenarioDeclaration; verdict: ScenarioVerdict; env: string }> = [];
@@ -234,9 +234,10 @@ async function resolveGiven(given: ScenarioGiven): Promise<GivenResolution> {
     };
   }
 
-  const stored = await readEnvironmentSnapshots(given.env);
+  const store = await resolveSnapshotStore();
+  const stored = await readEnvironmentSnapshotsFrom(store, given.env);
   if (stored.size === 0) {
-    const error = `no recorded snapshot for environment "${given.env}" on chant/lifecycle — record one with \`chant lifecycle snapshot ${given.env}\``;
+    const error = `no recorded snapshot for environment "${given.env}" in ${store.where} — record one with \`chant lifecycle snapshot ${given.env}\`, or name a checked-in fixture`;
     return { env: given.env, perLexicon: new Map(), error, behaviour: { missing: error } };
   }
   const perLexicon = new Map<string, LifecycleSnapshot>();

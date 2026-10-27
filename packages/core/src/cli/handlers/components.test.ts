@@ -44,6 +44,15 @@ vi.mock("../../lifecycle/git", () => ({
   StaleLifecycleBranchError: class StaleLifecycleBranchError extends Error {},
 }));
 
+// The status baseline is read through the index store (#4519); this one hands the read to the mock above.
+vi.mock("../../lifecycle/snapshot-store", async () => {
+  const { fakeSnapshotStore } = await import("../../lifecycle/snapshot-store-fake");
+  const store = fakeSnapshotStore({
+    readLatest: async (environment, key) => (await readSnapshotMock(environment, key)) as string | null,
+  });
+  return { resolveSnapshotStore: async () => store };
+});
+
 vi.mock("../../lifecycle/build-ledger-store", () => ({
   findBuildManifestByArtifactDigest: (...args: unknown[]) => findBuildManifestByArtifactDigestMock(...args),
   readBuildManifest: (...args: unknown[]) => readBuildManifestMock(...args),
