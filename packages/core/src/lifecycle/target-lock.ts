@@ -35,6 +35,7 @@ import {
   RefCASConflictError,
   writeBlobToPath,
 } from "./git";
+import { lockRowsConflict } from "./lock-rows";
 import { resolveMemberLedger } from "./member-ledger";
 
 /** The directory on `chant/lifecycle` that holds the lock files. */
@@ -134,8 +135,12 @@ export function renderTargetLocks(file: TargetLockFile): string {
   return `${JSON.stringify({ version: 1, locks }, null, 2)}\n`;
 }
 
-/** Fetch `chant/lifecycle`, refusing a ledger this checkout cannot read: a lock decided on a stale branch is no lock. */
-async function fetchForLocks(cwd?: string): Promise<void> {
+/**
+ * Fetch `chant/lifecycle`, refusing a ledger this checkout cannot read: a
+ * lock decided on a stale branch is no lock. The row leases of
+ * ./resource-lock.ts (#4552) fetch through it too.
+ */
+export async function fetchForLocks(cwd?: string): Promise<void> {
   const fetched = await fetchLifecycleStatus({ cwd });
   if (fetched.status === "diverged") throw new Error(`the local ${STATE_BRANCH} has forked from ${fetched.remote}'s, so the locks cannot be read: ${fetched.stderr}`);
   if (fetched.status === "unreachable") throw new Error(`cannot fetch ${STATE_BRANCH} from ${fetched.remote}, so the locks cannot be read${fetched.stderr ? `: ${fetched.stderr}` : ""}`);
@@ -164,14 +169,24 @@ function openMemo(isOpen?: PullRequestOpen): PullRequestOpen {
   };
 }
 
-/** The locks on `targets` that an open pull request other than `pr` holds, by target. */
+/**
+ * The locks on `targets` that an open pull request other than `pr` holds, by
+ * target. Under the resource grain (#4552, ruling C) a `stack` row and the
+ * `urn` rows of that stack conflict, so a lock on either holds the other.
+ */
 async function heldIn(file: TargetLockFile, targets: readonly string[], pr: number | null, open: PullRequestOpen): Promise<HeldTargetLock[]> {
   const held: HeldTargetLock[] = [];
-  for (const target of [...new Set(targets)].sort()) {
-    const l = file.locks[target];
-    if (l && l.pr !== pr && (await open(l.pr))) held.push({ target, ...l });
+  const seen = new Set<string>();
+  for (const wanted of [...new Set(targets)].sort()) {
+    for (const [target, l] of Object.entries(file.locks)) {
+      if (seen.has(target) || !lockRowsConflict(wanted, target)) continue;
+      if (l.pr !== pr && (await open(l.pr))) {
+        seen.add(target);
+        held.push({ target, ...l });
+      }
+    }
   }
-  return held;
+  return held.sort((a, b) => (a.target < b.target ? -1 : a.target > b.target ? 1 : 0));
 }
 
 /**
@@ -186,7 +201,7 @@ export async function heldTargetLocks(gate: string, targets: readonly string[], 
 }
 
 /** The local tip of `chant/lifecycle`, or "" when there is none. */
-async function localTip(cwd?: string): Promise<string> {
+export async function localTip(cwd?: string): Promise<string> {
   const out = await getRuntime().spawn(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${STATE_BRANCH}`], { cwd });
   return out.exitCode === 0 ? out.stdout.trim() : "";
 }
@@ -197,7 +212,7 @@ async function localTip(cwd?: string): Promise<string> {
  * writer pushed. Done only when `parent`, the tip before the write, is in
  * the remote's history, so no other local commit is lost. Throws otherwise.
  */
-async function dropRefusedWrite(remote: string, ours: string, parent: string, cwd?: string): Promise<void> {
+export async function dropRefusedWrite(remote: string, ours: string, parent: string, cwd?: string): Promise<void> {
   const rt = getRuntime();
   const env = { LC_ALL: "C", LANGUAGE: "" };
   const probe = await rt.spawn(["git", "fetch", "--force", remote, `${STATE_BRANCH}:${PROBE_REF}`], { cwd, env });

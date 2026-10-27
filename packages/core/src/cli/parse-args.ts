@@ -483,6 +483,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant lock --stage plan|apply|lock` (#4293): how the lock was taken.
       result.lockStage = args[++i];
       if (!result.lockStage || result.lockStage.startsWith("-")) throw new Error("--stage needs plan, apply or lock: --stage <stage>");
+    } else if (arg === "--alive") {
+      // `chant lock --alive <run>` (#4552): print whether a run holding rows or the repo lock tag still runs.
+      result.aliveRun = args[++i];
+      if (!result.aliveRun || result.aliveRun.startsWith("-")) throw new Error("--alive needs a run id: --alive <run>");
     } else if (arg === "--from-report") {
       // `chant lock --from-report <pr-plan.json>` (#4293): lock the components a pull-request report lists.
       result.fromReport = args[++i];

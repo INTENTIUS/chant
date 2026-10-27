@@ -301,6 +301,14 @@ export type CiWorkflow = "trunk-curated" | "trunk-curated+apply-on-merge" | "app
  */
 export type CiLocks = "apply" | "plan";
 
+/**
+ * What one apply holds while it applies, and what a pull request's target
+ * locks name under `ci.locks` (#4552, ../lifecycle/lock-rows.ts). `target`:
+ * the component, root or stack. `resource`: one row per changed resource.
+ * `repo`: one apply at a time in the repository.
+ */
+export type CiLockGrain = "target" | "resource" | "repo";
+
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
   green: CiGreen | null;
@@ -308,6 +316,8 @@ export interface CiDeclaration {
   workflow?: CiWorkflow;
   /** `ci.locks` (#4293): when a pull request takes its target locks; absent when the declaration sets none, and then nothing is locked. */
   locks?: CiLocks;
+  /** `ci.lockGrain` (#4552): the grain every member takes unless it names its own; absent when the declaration sets none, and then each member takes its lexicon's default. */
+  lockGrain?: CiLockGrain;
   /**
    * `ci.reportUrl` (#4160): where the pull-request jobs copy their reports
    * and `chant ci run` keeps the run index, `<reportUrl>/runs/index.json`.
@@ -706,6 +716,8 @@ export interface Member {
   ciWorkflow: CiWorkflow | null;
   /** The member's own `ci.hooks` (#4288), run after the top level's; null when it names none. */
   ciHooks: CiHooks | null;
+  /** The member's own `ci.lockGrain` (#4552), which wins over the top level's; null when it names none. */
+  ciLockGrain: CiLockGrain | null;
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -1028,6 +1040,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       security: [...((e.security as SecurityGroup[] | undefined) ?? [])],
       ciWorkflow: ((e.ci as { workflow?: CiWorkflow } | undefined)?.workflow) ?? null,
       ciHooks: ciHooksOf((e.ci as { hooks?: unknown } | undefined)?.hooks, `${pointer}/ci/hooks`, at),
+      ciLockGrain: ((e.ci as { lockGrain?: CiLockGrain } | undefined)?.lockGrain) ?? null,
       suppress,
       pointer,
     };
@@ -1353,7 +1366,7 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
+  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const workflow = {
@@ -1362,6 +1375,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     ...(block.branches !== undefined ? { branches: globMap(block.branches) } : {}),
     ...(block.labels !== undefined ? { labels: globMap(block.labels) } : {}),
     ...(block.locks !== undefined ? { locks: block.locks } : {}),
+    ...(block.lockGrain !== undefined ? { lockGrain: block.lockGrain } : {}),
     ...(policy ? { policy } : {}),
     ...(block.identity?.cloud !== undefined ? { identity: { cloud: cloudIdentityOf(block.identity.cloud, at) } } : {}),
     ...(block.prEnvironment !== undefined

@@ -151,7 +151,9 @@ import {
 } from "../op/activities/terraform";
 import { terraformPlanMoved } from "../exit-codes";
 import { terraformPlanShape } from "../plan-shape";
-import { terraformChangeSetPart } from "../change-set";
+import { plannerForBinary, terraformChangeSetPart } from "../change-set";
+import { terraformDefaultLockGrain, terraformLockGrainRefusal, terraformLockRows, terraformLockRowsFromPart } from "../lock-rows";
+import type { LockRow } from "@intentius/chant/lifecycle/lock-rows";
 import type { TerraformConfig } from "../config";
 import { rootTexts } from "../compose/hcl";
 import { declaredVariables } from "../compose/root";
@@ -198,6 +200,8 @@ interface PlannedRoot {
   planJson?: string;
   /** The cone the plan covered, when asked for one (#4545). */
   cone?: PlanCone;
+  /** A choudoufu root's rows on the resource lock grain (#4552), from the plan's `show -json`. */
+  lockRows?: LockRow[];
 }
 
 /** The lock timeout a step's plan and apply pass (#4545). */
@@ -481,6 +485,8 @@ function isPlannedRoot(value: unknown): value is PlannedRoot {
 interface ChoudoufuWavePlannedRoot {
   planDigest: string;
   choudoufu: { planSetFile: string; setDigest: string };
+  /** The root's rows on the resource lock grain (#4552), from its embedded plan. */
+  lockRows?: LockRow[];
 }
 
 function isChoudoufuWavePlan(value: unknown): value is ChoudoufuWavePlannedRoot {
@@ -521,6 +527,14 @@ async function readsForRun(input: TerraformApplyStepInput): Promise<TerraformApp
   return read.input;
 }
 
+/** The engine a root plans with (#4552): the configured binary's, else the plan's planner. */
+async function plannerOf(input: TerraformApplyStepInput, plan?: CapabilityPlan): Promise<"terraform" | "tofu" | "choudoufu" | undefined> {
+  const binary = (await rootDir(input).catch(() => undefined))?.binary;
+  if (binary !== undefined) return plannerForBinary(binary) as "terraform" | "tofu" | "choudoufu";
+  const planner = plan?.changeSet?.member.planner;
+  return planner === "terraform" || planner === "tofu" || planner === "choudoufu" ? planner : "terraform";
+}
+
 export const terraformApplyCapability: Capability<TerraformApplyStepInput, TerraformApplyStepOutput> = {
   kind: "terraform-apply",
   // A root's apply has no undo short of applying the previous configuration,
@@ -544,14 +558,17 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       const artifact: ChoudoufuWavePlannedRoot = {
         planDigest: set.planDigest,
         choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
+        lockRows: terraformLockRows(input.root, set.changeSet.member.scope, set.json),
       };
       return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet, outputs: terraformPlannedOutputs(set.json), shape: terraformPlanShape(set.json, input.root) };
     }
     const { changeSet, json, ...planned } = await planRoot(input, targets);
+    // #4552: a choudoufu root's rows, keyed from the plan document while it is at hand.
+    const lockRows = changeSet?.member.planner === "choudoufu" ? terraformLockRows(input.root, changeSet.member.scope, json) : undefined;
     return {
       member: input.root,
       planDigest: planned.planDigest,
-      artifact: planned,
+      artifact: { ...planned, ...(lockRows ? { lockRows } : {}) },
       ...(changeSet ? { changeSet } : {}),
       outputs: terraformPlannedOutputs(json),
       shape: terraformPlanShape(json, input.root),
@@ -575,6 +592,20 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
       : terraformComposeGroup.groupFallback(ctx, members),
   // #4542: the root's files, which a release cut records and a promote under it plans.
   releaseInputs: (input, ctx) => terraformReleaseInputs(input, ctx),
+  // #4552: resource under choudoufu, the root under Terraform, tofu and Terragrunt, which refuse resource by name.
+  async defaultLockGrain(input, plan) {
+    return terraformDefaultLockGrain(await plannerOf(input, plan));
+  },
+  async lockGrainRefusal(input, grain, plan) {
+    if (grain !== "resource") return undefined;
+    const binary = (await rootDir(input).catch(() => undefined))?.binary;
+    return terraformLockGrainRefusal(grain, await plannerOf(input, plan), binary);
+  },
+  lockRows(input, plan) {
+    const kept = (plan.artifact as { lockRows?: LockRow[] } | undefined)?.lockRows;
+    if (Array.isArray(kept)) return kept;
+    return plan.changeSet ? terraformLockRowsFromPart(input.root, plan.changeSet) : [];
+  },
   planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
   runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {

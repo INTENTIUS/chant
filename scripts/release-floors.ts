@@ -91,6 +91,10 @@ const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: str
   { file: "packages/core/src/workspace/declaration.schema.json", text: "organization or organization:admin. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
   { file: "docs/src/content/docs/guide/security-cloud-identities.mdx", text: "needs chant {v} or newer as its `minReader` (`PULUMI_CLOUD_IDENTITY_FLOOR`)", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`apiUrl` (default `https://api.pulumi.com`). Needs a `minReader` of {v} or newer.", count: 1, floor: "PULUMI_CLOUD_IDENTITY_FLOOR" },
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "Read from the declaration at base. Added in schema 1 by chant {v}, so a declaration that uses it sets minReader to {v} or newer.", count: 1, floor: "CI_LOCK_GRAIN_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "`ci.lockGrain` needs a `minReader` of `{v}` or newer.", count: 1, floor: "CI_LOCK_GRAIN_FLOOR" },
+  { file: "packages/core/src/workspace/pr-report.schema.json", text: "Added within contract version 1 by #4552, written by chant {v} and newer.", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `pr-report` | `lockTargets` | {v} |", count: 1, floor: "PR_REPORT_LOCK_TARGETS_FLOOR" },
 ];
 
 interface Args {

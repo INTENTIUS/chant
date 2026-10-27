@@ -91,6 +91,8 @@ import { resolveCiJob } from "../lifecycle/release-ledger";
 import type { OpRunRecordInput, OpRunStepRecord, OpRunWave } from "./runtime";
 import type { ChangeSetDocument, ChangeSetPart } from "../change-set";
 import type { CapabilityRegistry } from "../components/capability";
+import type { LockGrain } from "../lifecycle/lock-rows";
+import type { LockLiveness } from "../lifecycle/resource-lock";
 import type { GatePolicyExec } from "../gate-policy";
 import {
   applyOpWaveStep,
@@ -733,6 +735,21 @@ export interface RunOpWaveOptions {
   capabilities?: CapabilityRegistry;
   /** How a hold's policy engine and cost estimator run (#4545). Default: spawned in `cwd`. */
   holdExec?: GatePolicyExec;
+  /**
+   * The lock grain a `step`'s runs take (#4552). Default: `ci.lockGrain` of
+   * the member holding `cwd`, read from the declaration at the wave's base,
+   * else each run's lexicon default.
+   */
+  lockGrain?: LockGrain;
+  /**
+   * The gate whose rows file (`_locks/rows/<gate>.json`, #4552) a `step`'s
+   * runs lease on the resource grain. Default `pr-apply`, the pull-request
+   * loop's, so an apply on merge and an apply before merge read one file; a
+   * pipeline whose loop names another gate passes it.
+   */
+  lockGate?: string;
+  /** Whether a run holding rows still runs (#4552). Default: the forge's answer, with the lease's age. */
+  lockLiveness?: LockLiveness;
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -960,16 +977,17 @@ function planRuns(at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string;
  * commands ({@link planRuns}).
  */
 async function planWaveRuns(
-  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities">; steps?: Map<string, OpWaveStepPlan> },
+  at: { spec: OpWavesSpec; k: number; wave: OpWave; cwd: string; exec: OpWaveExec; options: Pick<RunOpWaveOptions, "capabilities" | "lockGrain" | "base">; steps?: Map<string, OpWaveStepPlan> },
   runs: readonly OpWaveRun[],
   discover = false,
 ): Promise<PlannedRuns> {
   const { spec, k, wave, cwd } = at;
   if (!spec.step) return planRuns(at, runs, discover);
   const registry = await opWaveRegistry(at.options, cwd, at.options.capabilities);
+  const lockGrain = at.options.lockGrain ?? (await declaredLockGrain(cwd, (at as { gateRule?: { base: string } }).gateRule?.base ?? at.options.base));
   const plans: OpWaveStepPlan[] = [];
   for (const run of runs) {
-    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target) }, run);
+    const plan = await planOpWaveStep({ spec, wave, cwd, registry, planPath: opWavePlanPath(spec, k, run.target), lockGrain }, run);
     at.steps?.set(run.target, plan);
     plans.push(plan);
   }
@@ -983,6 +1001,54 @@ async function planWaveRuns(
   const parts = new Map(plans.flatMap((p) => (p.part ? [[p.target, p.part] as const] : [])));
   const changeSet = opWaveStepChangeSet(plans);
   return { members, ...(parts.size > 0 ? { parts } : {}), ...(changeSet ? { changeSet } : {}) };
+}
+
+/**
+ * `ci.lockGrain` of the member holding `cwd` (#4552), read at `base`, behind
+ * a dynamic import so the wave-job runtime bundle leaves the declaration
+ * reader out. Null when none is declared or the declaration cannot be read
+ * there: each run then takes its lexicon's default.
+ */
+async function declaredLockGrain(cwd: string, base: string | undefined): Promise<LockGrain | null> {
+  try {
+    const { ciLockGrainAt } = await import("../workspace/ci-lock-grain");
+    return ciLockGrainAt(cwd, base);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lease the rows of a wave's runs on the resource grain (#4552), before
+ * anything of the wave applies, all in one take. A held row makes the wave
+ * apply nothing with the `held` outcome, exit 5, naming the run that holds it.
+ */
+async function leaseWaveRows(
+  options: RunOpWaveOptions,
+  ctx: WaveContext,
+  runs: readonly OpWaveRun[],
+): Promise<{ release(): Promise<boolean> } | OpWaveApplyOutcome | { failed: string } | undefined> {
+  const rows = runs.flatMap((r) => {
+    const lock = ctx.steps?.get(r.target)?.lock;
+    return lock?.grain === "resource" ? lock.rows : [];
+  });
+  if (rows.length === 0) return undefined;
+  const { leaseLockRows } = await import("../lifecycle/resource-lock");
+  const { PR_APPLY_GATE } = await import("../pr-loop");
+  const gate = options.lockGate ?? PR_APPLY_GATE;
+  let leased: Awaited<ReturnType<typeof leaseLockRows>>;
+  try {
+    leased = await leaseLockRows(gate, rows, { cwd: ctx.cwd, ...(options.lockLiveness ? { alive: options.lockLiveness } : {}) });
+  } catch (err) {
+    return { failed: `wave ${ctx.k} (${ctx.wave.name}): could not hold the rows its runs change in ${gate}, so nothing was applied: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!leased.ok) {
+    const first = leased.held[0]!.holder;
+    return { outcome: "held", reason: leased.message, holder: { run: first.run, ...(first.url ? { url: first.url } : {}) } };
+  }
+  for (const h of leased.tookOver) ctx.log(`wave ${ctx.k} (${ctx.wave.name}): took over the rows of run ${h.run}, which is gone`);
+  ctx.log(`wave ${ctx.k} (${ctx.wave.name}): holds ${leased.lease.keys.length} row${leased.lease.keys.length === 1 ? "" : "s"} of ${gate} while it applies`);
+  return leased.lease;
 }
 
 /** A wave's cost hold over its plans (#4545): each changing run priced, the sum against `approveAbove`. */
@@ -2831,6 +2897,37 @@ async function applyStage(
     holds.push(...before.holds);
   }
   if (!(await settleHolds(options, ctx, decision, holds, recordPath))) return;
+  // #4552: on the resource grain the wave holds the rows its runs change, before its approval is spent.
+  const lease = spec.step ? await leaseWaveRows(options, ctx, runs) : undefined;
+  if (lease && "failed" in lease) {
+    failed(ctx, lease.failed);
+    return;
+  }
+  if (lease && "outcome" in lease) {
+    log(`wave ${k} (${wave.name}): applied nothing: ${lease.reason}`);
+    result.outcome = lease;
+    result.exitCode = CHANT_EXIT.held;
+    if (recordPath) writeRecord(recordPath, decision, result);
+    return;
+  }
+  try {
+    await applyLeased(options, ctx, decision, runs, planned, byApply, recordPath);
+  } finally {
+    if (lease && !(await lease.release())) log(`wave ${k} (${wave.name}): could not let go of the rows it held; the next apply takes them over once this run is gone`);
+  }
+}
+
+/** {@link applyStage} once its holds are settled and, on the resource grain, its rows held. */
+async function applyLeased(
+  options: RunOpWaveOptions,
+  ctx: WaveContext,
+  decision: OpWaveDecision,
+  runs: readonly OpWaveRun[],
+  planned: ReadonlyMap<string, OpWaveMember>,
+  byApply: boolean,
+  recordPath?: string,
+): Promise<void> {
+  const { spec, k, wave, log, result } = ctx;
   if (!(await spendApproval(options, ctx, decision))) return;
   if (!(await spendOverrides(ctx, decision))) return;
   if (recordPath && (decision.spentAt || decision.overridesSpentAt)) writeRecord(recordPath, decision, result);
