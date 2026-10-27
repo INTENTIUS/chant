@@ -21,12 +21,23 @@
  * chart named from a repository, is left as written. A target cut before
  * #4155 is pinned as it was then: template fields only, other paths read from
  * the checkout.
+ *
+ * A step whose capability answers `releaseInputs` (#4542), as `terraform-apply`
+ * does for its root, is pointed at the component's recorded files as one
+ * layout: every file the target records for the component is written under
+ * `.chant/release-templates/<digest>/` at its path from the member's
+ * directory, so a root's `../modules/x` still resolves, and the step's field
+ * names the copy of the directory it runs in. The step then plans the
+ * release's files against the environment, and the release gate binds that
+ * plan. A step whose directory the release does not record is left as
+ * written.
  */
 
 import { mkdirSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { DriverComponent, DriverGate, DriverPhase, DriverStep } from "./driver";
-import { recordedFields, recordedInputRefs, TEMPLATE_FIELDS, templateRefs, type RecordedInputRef } from "./release-compile";
+import { recordedFields, recordedInputRefs, stepReleaseInputs, TEMPLATE_FIELDS, templateRefs, type RecordedInputRef } from "./release-compile";
+import type { CapabilityRegistry } from "./capability";
 import { templateBytesDigest, type Release, type ReleaseTarget } from "../lifecycle/release-store";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
@@ -96,6 +107,7 @@ export async function pinReleaseTemplates(
   release: Release,
   target: ReleaseTarget,
   readTemplate: TemplateReader,
+  layout?: { registry: CapabilityRegistry; memberDir: string },
 ): Promise<{ components: DriverComponent[]; files: PinnedTemplate[] } | { errors: string[] }> {
   const errors: string[] = [];
   const files: PinnedTemplate[] = [];
@@ -104,6 +116,26 @@ export async function pinReleaseTemplates(
   const full = target.trees !== undefined;
   for (const component of components) {
     const replace = new Map<string, string>();
+    // #4542: steps whose capability names their files, pointed at the component's recorded layout.
+    const stepPins = new Map<DriverStep, { field: string; value: string }>();
+    if (full && layout) {
+      let base: string | null | undefined;
+      for (const { step, answer } of await stepReleaseInputs(component, layout.registry, layout.memberDir)) {
+        if ("unbound" in answer) continue;
+        if (!target.trees!.some((t) => t.component === component.name && t.path === answer.dir)) continue;
+        if (base === undefined) {
+          const pinned = await pinLayout(component.name, target, readTemplate);
+          if ("errors" in pinned) {
+            errors.push(...pinned.errors);
+            base = null;
+          } else {
+            files.push(...pinned.files);
+            base = pinned.base;
+          }
+        }
+        if (base !== null) stepPins.set(step, { field: answer.field, value: answer.dir === "." ? base : join(base, answer.dir) });
+      }
+    }
     const refs: RecordedInputRef[] = full ? recordedInputRefs(component) : templateRefs(component).map((r) => ({ ...r, required: true }));
     for (const ref of refs) {
       if (replace.has(ref.value)) continue;
@@ -142,6 +174,8 @@ export async function pinReleaseTemplates(
         if (isPhase(step)) return rewrite(step);
         if (isGate(step)) return step;
         const next: DriverStep = { ...step };
+        const pin = stepPins.get(step);
+        if (pin) next[pin.field] = pin.value;
         for (const field of full ? recordedFields(step.kind) : TEMPLATE_FIELDS) {
           const v = next[field];
           if (typeof v === "string" && replace.has(v)) next[field] = replace.get(v);
@@ -198,6 +232,36 @@ async function pinTree(
   const digest = computePlanDigest("directory", read.map(({ rel, digest }) => ({ path: rel, digest })));
   const path = join(RELEASE_TEMPLATES_DIR, digest.replace(/:/g, "_"), basename(dir));
   return { path, files: read.map((r) => ({ path: join(path, r.rel), content: r.content, ...(r.encoding ? { encoding: r.encoding } : {}) })) };
+}
+
+/**
+ * Every file the target records for `component`, under
+ * `.chant/release-templates/<digest>/` at its path from the member's
+ * directory (#4542). The digest is a plan digest over the paths and their
+ * digests, so the base names the layout and a gate approval bound to a plan
+ * of it still matches on a re-run.
+ */
+async function pinLayout(
+  component: string,
+  target: ReleaseTarget,
+  readTemplate: TemplateReader,
+): Promise<{ base: string; files: PinnedTemplate[] } | { errors: string[] }> {
+  const errors: string[] = [];
+  const read: Array<{ path: string; content: string; encoding?: "base64"; digest: string }> = [];
+  for (const e of target.templates.filter((t) => t.component === component)) {
+    if (e.path.startsWith("/") || e.path.split("/").includes("..")) {
+      errors.push(`component "${component}": "${e.path}" is not a path inside the member's directory; refusing to write it`);
+      continue;
+    }
+    const got = await readChecked(component, e.path, e, target, readTemplate);
+    if ("error" in got) errors.push(got.error);
+    else read.push({ path: e.path, content: got.content, digest: e.digest, ...(e.encoding ? { encoding: e.encoding } : {}) });
+  }
+  if (errors.length > 0) return { errors };
+  read.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const digest = computePlanDigest("release-layout", read.map(({ path, digest }) => ({ path, digest })));
+  const base = join(RELEASE_TEMPLATES_DIR, digest.replace(/:/g, "_"));
+  return { base, files: read.map((r) => ({ path: join(base, r.path), content: r.content, ...(r.encoding ? { encoding: r.encoding } : {}) })) };
 }
 
 /**

@@ -134,6 +134,7 @@ import { rootTexts } from "../compose/hcl";
 import { declaredVariables } from "../compose/root";
 import { terraformComposeGroup } from "./compose-group";
 import { markPlaceholderDriven, placeholderVars, waitingHole } from "./placeholder-preview";
+import { terraformReleaseInputs } from "./release-inputs";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -143,6 +144,8 @@ export interface TerraformApplyStepInput {
   vars?: Record<string, unknown>;
   /** Where the `chant.config.*` search starts. Default: the current directory. */
   cwd?: string;
+  /** The root's files from here instead of its entry's `dir` (#4542): a promote under a release sets it to the recorded copy. */
+  dir?: string;
 }
 
 /** What `terraform-apply` returns. `outputs` is what a dependent's `stackOutput()` reads. */
@@ -161,7 +164,7 @@ interface PlannedRoot {
   planDigest: string;
 }
 
-const rootArgs = (input: TerraformApplyStepInput) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}) });
+const rootArgs = (input: TerraformApplyStepInput) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}), ...(input.dir ? { dir: input.dir } : {}) });
 
 function requireRoot(input: TerraformApplyStepInput): void {
   if (typeof input.root !== "string" || input.root === "") {
@@ -290,8 +293,9 @@ async function rootDir(input: TerraformApplyStepInput): Promise<{ dir: string; b
   const start = resolve(input.cwd ?? process.cwd());
   const { config, configPath } = await loadChantConfigUpward(start);
   const terraform = (config as { terraform?: TerraformConfig }).terraform;
-  const dir = terraform?.roots?.[input.root]?.dir;
-  if (dir === undefined) return undefined;
+  const declared = terraform?.roots?.[input.root]?.dir;
+  if (declared === undefined) return undefined;
+  const dir = input.dir ?? declared;
   return { dir: resolve(configPath ? dirname(configPath) : start, dir), ...(terraform?.binary ? { binary: terraform.binary } : {}) };
 }
 
@@ -466,7 +470,13 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
   // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.
   groupReads: (ctx, members) => terraformComposeGroup.groupReads(ctx, members),
-  groupFallback: (ctx, members) => terraformComposeGroup.groupFallback(ctx, members),
+  // #4542: a member pointed at a release's recorded copy plans alone, since a composition reads the declared roots.
+  groupFallback: async (ctx, members) =>
+    members.some((m) => typeof m.step.dir === "string")
+      ? { kind: "release-copy", reason: "a member deploys a release's recorded copy of its root, which a composition does not read" }
+      : terraformComposeGroup.groupFallback(ctx, members),
+  // #4542: the root's files, which a release cut records and a promote under it plans.
+  releaseInputs: (input, ctx) => terraformReleaseInputs(input, ctx),
   planGroup: (ctx, members) => terraformComposeGroup.planGroup(ctx, members),
   runGroup: (ctx, run, members) => terraformComposeGroup.runGroup(ctx, run, members),
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
