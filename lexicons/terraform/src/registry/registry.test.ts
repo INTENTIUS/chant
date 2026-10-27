@@ -202,3 +202,61 @@ describe("loopback server", () => {
     }
   });
 });
+
+describe("credentials (chant#4563)", () => {
+  /** A registry that refuses any request without the bearer token, as a private registry or the edge function with auth on does. */
+  const guarded = (mem: ReturnType<typeof memoryStore>, token: string, seen: (string | null)[]): RegistryFetch => {
+    const inner = handlerFetch(registryHandler(storeFiles({ read: async (k) => ({ body: mem.objects.get(k)?.body }) })));
+    return async (url, init) => {
+      const auth = new Headers(init?.headers).get("authorization");
+      seen.push(auth);
+      return auth === `Bearer ${token}` ? inner(url, init) : new Response(null, { status: 401 });
+    };
+  };
+
+  it("sends TF_TOKEN_<host> on discovery, versions and download", async () => {
+    const mem = memoryStore();
+    const { location } = await publishOne(mem);
+    const seen: (string | null)[] = [];
+    const fetch = guarded(mem, "s3cret", seen);
+    const credentials = { env: { TF_TOKEN_modules_test: "s3cret" }, readFile: () => undefined };
+    expect(await registryVersions("modules.test/acme/net/generic", { fetch, credentials })).toEqual(["0.1.0"]);
+    expect(await registryLocation("modules.test/acme/net/generic", "0.1.0", { fetch, credentials, reads: "terraform" })).toBe(location);
+    expect(seen).toHaveLength(4);
+    expect(seen.every((a) => a === "Bearer s3cret")).toBe(true);
+  });
+
+  it("reads the token from credentials.tfrc.json when no variable is set", async () => {
+    const mem = memoryStore();
+    await publishOne(mem);
+    const tfrc = join("/home/u", ".terraform.d", "credentials.tfrc.json");
+    const credentials = { env: { HOME: "/home/u" }, platform: "linux", readFile: (p: string) => (p === tfrc ? JSON.stringify({ credentials: { "modules.test": { token: "f1" } } }) : undefined) };
+    expect(await registryVersions("modules.test/acme/net/generic", { fetch: guarded(mem, "f1", []), credentials })).toEqual(["0.1.0"]);
+  });
+
+  it("names the variable to set when the registry wants a token, and never prints one", async () => {
+    const mem = memoryStore();
+    await publishOne(mem);
+    const none = { env: {}, readFile: () => undefined };
+    await expect(registryVersions("modules.test/acme/net/generic", { fetch: guarded(mem, "s3cret", []), credentials: none })).rejects.toThrow("set TF_TOKEN_modules_test");
+    const wrong = registryVersions("modules.test/acme/net/generic", { fetch: guarded(mem, "s3cret", []), token: "nope" });
+    await expect(wrong).rejects.toThrow("refused the token");
+    await expect(wrong).rejects.not.toThrow("nope");
+  });
+
+  it("sends no token when told not to, and none with a signed tarball URL", async () => {
+    const mem = memoryStore();
+    await publishOne(mem);
+    const seen: (string | null)[] = [];
+    await expect(registryVersions("modules.test/acme/net/generic", { fetch: guarded(mem, "s3cret", seen), token: false })).rejects.toThrow(RegistryError);
+    expect(seen).toEqual([null]);
+    const tarballSeen: (string | null)[] = [];
+    const probe: RegistryFetch = async (_url, init) => {
+      tarballSeen.push(new Headers(init?.headers).get("authorization"));
+      return new Response(new Uint8Array(gzipSync(Buffer.from("x"))), { status: 200 });
+    };
+    await fetchTarball("https://modules.test/x.tar.gz?expires=1&sig=abc", { fetch: probe, token: "s3cret" });
+    await fetchTarball("https://modules.test/x.tar.gz", { fetch: probe, token: "s3cret" });
+    expect(tarballSeen).toEqual([null, "Bearer s3cret"]);
+  });
+});

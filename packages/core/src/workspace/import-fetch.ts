@@ -4,8 +4,10 @@
  * Reads the Terraform Cloud API or the Spacelift GraphQL API into the input
  * documents `import-source.ts` maps. The transport is a parameter, so a test
  * feeds fixture responses and nothing here is reached without a token. A
- * token is read from `--token`, else `TFE_TOKEN` / `TF_TOKEN_app_terraform_io`
- * for Terraform Cloud and `SPACELIFT_API_TOKEN` for Spacelift. Only reads:
+ * token is read from `--token`, else `TFE_TOKEN`, else the Terraform CLI's
+ * own lookup for app.terraform.io (`TF_TOKEN_app_terraform_io`, then the CLI
+ * config and credentials.tfrc.json; ../terraform/credentials.ts) for
+ * Terraform Cloud, and `SPACELIFT_API_TOKEN` for Spacelift. Only reads:
  * every request is a GET, or a GraphQL query with no mutation.
  */
 

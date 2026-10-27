@@ -8,8 +8,15 @@
  * takes the JSON body's `location` on a 200 and the header otherwise, and the
  * default takes either, header first. A test that wants to know whether
  * Terraform can install from a registry asks with `reads: "terraform"`.
+ *
+ * Every request to the registry's host carries the token the CLIs would send
+ * it (chant#4563): `TF_TOKEN_<host>`, else the CLI config's or
+ * credentials.tfrc.json's `credentials` block, found by core's
+ * `terraform/credentials` reader. The token goes in the `Authorization`
+ * header and nowhere else; an error names the variable to set, never a value.
  */
 import { gunzipSync } from "node:zlib";
+import { credentialsHost, terraformToken, tokenVariable, type CredentialsOptions } from "@intentius/chant/terraform/credentials";
 import { DISCOVERY, parseRegistrySource } from "./address";
 import { DOWNLOAD_HEADER, readVersions } from "./writer";
 
@@ -32,15 +39,33 @@ export interface RegistryReadOptions {
   fetch?: RegistryFetch;
   /** The URL scheme service discovery is fetched over. Default https, as both CLIs use. */
   scheme?: "https" | "http";
+  /**
+   * The bearer token sent to the registry's host. Default: the one the CLIs
+   * would send (`TF_TOKEN_<host>`, then the credentials files). `false` sends none.
+   */
+  token?: string | false;
+  /** Where the default token lookup reads (a test passes its own env and files). */
+  credentials?: CredentialsOptions;
 }
 
-const httpGet = async (fetchFn: RegistryFetch, url: string): Promise<Response> => {
+/** The token a read sends to a host, by the options. */
+export const readToken = (host: string, o: RegistryReadOptions): string | undefined => (o.token === false ? undefined : (o.token ?? terraformToken(host, o.credentials)));
+
+const httpGet = async (fetchFn: RegistryFetch, url: string, token?: string): Promise<Response> => {
   try {
-    return await fetchFn(url, { method: "GET", redirect: "follow" });
+    return await fetchFn(url, { method: "GET", redirect: "follow", ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) });
   } catch (e) {
     const cause = (e as { cause?: { message?: string } }).cause?.message;
     throw new RegistryError(`${url}: ${(e as Error).message}${cause ? ` (${cause})` : ""}`);
   }
+};
+
+/** The error for a status that is not OK, saying where a token goes when the registry refused one. */
+const answered = (url: string, status: number, host: string, token: string | undefined): RegistryError => {
+  if (status !== 401 && status !== 403) return new RegistryError(`${url} answered ${status}`);
+  const variable = tokenVariable(host);
+  const where = variable ? `${variable} or a credentials "${credentialsHost(host)}" block` : `a credentials "${credentialsHost(host) ?? host}" block in credentials.tfrc.json`;
+  return new RegistryError(token ? `${url} answered ${status}: the registry refused the token for ${host}` : `${url} answered ${status}: the registry wants a token; set ${where}`);
 };
 
 const optionsOf = (o: RegistryFetch | RegistryReadOptions | undefined): RegistryReadOptions => (typeof o === "function" ? { fetch: o } : (o ?? {}));
@@ -49,8 +74,9 @@ const optionsOf = (o: RegistryFetch | RegistryReadOptions | undefined): Registry
 export async function modulesBase(host: string, options?: RegistryFetch | RegistryReadOptions): Promise<string> {
   const o = optionsOf(options);
   const disco = `${o.scheme ?? "https"}://${host}/${DISCOVERY}`;
-  const res = await httpGet(o.fetch ?? globalFetch, disco);
-  if (!res.ok) throw new RegistryError(`${disco} answered ${res.status}`);
+  const token = readToken(host, o);
+  const res = await httpGet(o.fetch ?? globalFetch, disco, token);
+  if (!res.ok) throw answered(disco, res.status, host, token);
   let base: unknown;
   try {
     base = ((await res.json()) as Record<string, unknown>)["modules.v1"];
@@ -67,10 +93,11 @@ export async function registryVersions(source: string, options?: RegistryFetch |
   const o = optionsOf(options);
   const s = parseRegistrySource(source);
   if (!s) throw new RegistryError(`${source} is not a registry source`);
-  const url = `${await modulesBase(s.host, o)}${s.namespace}/${s.name}/${s.system}/versions`;
-  const res = await httpGet(o.fetch ?? globalFetch, url);
+  const token = readToken(s.host, o);
+  const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/versions`;
+  const res = await httpGet(o.fetch ?? globalFetch, url, token);
   if (res.status === 404) return [];
-  if (!res.ok) throw new RegistryError(`${url} answered ${res.status}`);
+  if (!res.ok) throw answered(url, res.status, s.host, token);
   return readVersions(await res.text());
 }
 
@@ -101,10 +128,11 @@ export async function registryLocation(source: string, version: string, options?
   const o = optionsOf(options) as RegistryLocationOptions;
   const s = parseRegistrySource(source);
   if (!s) throw new RegistryError(`${source} is not a registry source`);
-  const url = `${await modulesBase(s.host, o)}${s.namespace}/${s.name}/${s.system}/${version}/download`;
-  const res = await httpGet(o.fetch ?? globalFetch, url);
+  const token = readToken(s.host, o);
+  const url = `${await modulesBase(s.host, { ...o, token: token ?? false })}${s.namespace}/${s.name}/${s.system}/${version}/download`;
+  const res = await httpGet(o.fetch ?? globalFetch, url, token);
   if (res.status === 404) throw new RegistryError(`${s.host}/${s.namespace}/${s.name}/${s.system} has no version ${version}`);
-  if (!res.ok) throw new RegistryError(`${url} answered ${res.status}`);
+  if (!res.ok) throw answered(url, res.status, s.host, token);
   const reads = o.reads ?? "either";
   let location = await locationFromAnswer(res, reads);
   if (!location) {
@@ -114,11 +142,18 @@ export async function registryLocation(source: string, version: string, options?
   return location;
 }
 
-/** The module archive a tarball location holds, uncompressed: the bytes a release's digest is of. */
+/**
+ * The module archive a tarball location holds, uncompressed: the bytes a
+ * release's digest is of. The host's token goes along only when the location
+ * has no query string; a signed URL carries its own grant, and a bucket
+ * refuses a request that has both a signature and an `Authorization` header.
+ */
 export async function fetchTarball(location: string, options?: RegistryFetch | RegistryReadOptions): Promise<Buffer> {
   const o = optionsOf(options);
-  const res = await httpGet(o.fetch ?? globalFetch, location);
-  if (!res.ok) throw new RegistryError(`${location} answered ${res.status}`);
+  const u = new URL(location);
+  const token = u.search || (u.protocol !== "https:" && u.protocol !== "http:") ? undefined : readToken(u.host, o);
+  const res = await httpGet(o.fetch ?? globalFetch, location, token);
+  if (!res.ok) throw answered(location, res.status, u.host, token);
   const body = Buffer.from(await res.arrayBuffer());
   try {
     return gunzipSync(body);
