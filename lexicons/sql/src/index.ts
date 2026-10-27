@@ -72,4 +72,6 @@ export {
   type SqlApplyStepInput,
   type SqlApplyStepOutput,
 } from "./capability-plugin";
+// The lock grain of a SQL member (#4571): target, with resource refused by name.
+export { sqlDefaultLockGrain, sqlLockGrainRefusal, type SqlLockGrainKind } from "./lock-grain";
 export { YODEL_COMMANDS, YODEL_OPTIONAL_FLAGS, runAllowedYodel, allowedYodelArgv, type YodelRunner, type YodelRun } from "./yodel-run";
