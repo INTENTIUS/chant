@@ -130,6 +130,25 @@ export const MIN_CHOUDOUFU_WAVES_VERSION = "0.22.0";
 export const MIN_CHOUDOUFU_ESTATES_VERSION = "0.31.0";
 
 /**
+ * The choudoufu release whose `live-graph -json -from-plan=<file>` prints the
+ * engine graph document (chant#4520's design section 4, choudoufu#2285), the
+ * one `describeResources()` reads engine facts from on a live root
+ * (chant#4528). choudoufu's changelog lists the command under
+ * `v0.32.0 (Unreleased)`, so this is the version it releases as. The chant
+ * side of the same contract, the first chant that writes those facts, is
+ * `ENGINE_FACTS_FLOOR` in core's engine-facts.ts, which is NEXT_RELEASE
+ * until the cut.
+ *
+ * Not a refusal. Facts are for people and never feed a decision, so a
+ * choudoufu without the command (a usage error, see
+ * {@link classifyLiveGraphFailure}) leaves `facts` absent with one note
+ * naming this version, and the rest of the read is unchanged. The check is
+ * the capability, not the version string: a local or dev build names a
+ * version below this or none at all, and still carries the command.
+ */
+export const MIN_CHOUDOUFU_GRAPH_VERSION = "0.32.0";
+
+/**
  * Where a choudoufu root's wave files live, relative to the project root:
  * `<root>/plan-set.json` (the set plan document chant planned and the
  * approver approved), `<root>/resume-<digest>.json` (choudoufu's resume
@@ -660,6 +679,37 @@ export function choudoufuLivePlanCommand(opts: {
   if (opts.noColor) parts.push("-no-color");
   if (opts.estate !== undefined) parts.push(`-estate=${quoteArg(opts.estate)}`);
   return parts.join(" ");
+}
+
+/**
+ * `live-graph -json -from-plan=<file> [-estate=<estate>]` (choudoufu#2285).
+ * No `DIR` argument: like {@link choudoufuLiveCheckCommand}, the activity
+ * runs in the root directory, which is DIR's default. `-estate` follows
+ * {@link choudoufuLivePlanCommand}'s rule: only for a root that does not
+ * name its own estate. `-history` is never passed: record versions take a
+ * listing per record and `s3:ListBucketVersions`, and an observation read
+ * has no use for them (the #4520 ruling, Q6: opt-in).
+ */
+export function choudoufuLiveGraphCommand(opts: { binary: string; fromPlan: string; estate?: string }): string {
+  const parts = [opts.binary, "live-graph", "-json", `-from-plan=${quoteArg(opts.fromPlan)}`];
+  if (opts.estate !== undefined) parts.push(`-estate=${quoteArg(opts.estate)}`);
+  return parts.join(" ");
+}
+
+/**
+ * Whether a failed `live-graph` run is a choudoufu that has no such command
+ * or flag (`"unsupported"`), or a real failure (`"failed"`). Older builds
+ * answer an unknown command two ways: the new CLI prints `OpenTofu has no
+ * command named "live-graph"` and exits 1 (cmd/choudoufu/command_main.go),
+ * and the older mitchellh/cli path prints its usage and exits 127. A build
+ * whose `live-graph` predates `-from-plan` fails the flag parse with `flag
+ * provided but not defined`.
+ */
+export function classifyLiveGraphFailure(code: unknown, output: string): "unsupported" | "failed" {
+  if (code === 127) return "unsupported";
+  if (/no command named "?live-graph"?/i.test(output)) return "unsupported";
+  if (/flag provided but not defined: -(?:from-plan|json|estate)\b/.test(output)) return "unsupported";
+  return "failed";
 }
 
 /** `live-ls -estate=<estate> -json [-consistent]`. */
@@ -2045,6 +2095,65 @@ export async function choudoufuLivePlan(
     ...unowned,
     ...parseChoudoufuPlanSummary(text),
   };
+}
+
+/** What {@link choudoufuLiveGraph} resolved. */
+export type ChoudoufuLiveGraphResult =
+  | {
+      /** choudoufu printed the engine graph document. */
+      supported: true;
+      /** The document, parsed: a GraphIR v1 with `meta.engineGraph` (chant#4527's schema). */
+      json: unknown;
+      /** Absolute path of the root module directory. */
+      dir: string;
+    }
+  | {
+      /** This choudoufu has no `live-graph -from-plan` (older than {@link MIN_CHOUDOUFU_GRAPH_VERSION}). */
+      supported: false;
+      /** choudoufu's own first line, for the note. */
+      detail: string;
+      dir: string;
+    };
+
+export interface ChoudoufuLiveGraphArgs extends TerraformRootArgs {
+  /** Absolute path of the `live-plan -json` document this graph takes its facts from. */
+  fromPlan: string;
+  /** The estate (`-estate`), for a root that does not declare its own. */
+  estate?: string;
+}
+
+/**
+ * `choudoufu live-graph -json -from-plan=<file>` (choudoufu#2285, read by
+ * chant#4528): the root's graph as one engine graph document, its facts taken
+ * from a `live-plan -json` document this process already read. No second live
+ * read: choudoufu builds the graph from the configuration and that file
+ * alone, starts no provider and calls no cloud, so facts and verdicts come
+ * from the same refresh (choudoufu #1014).
+ *
+ * A usage error ({@link classifyLiveGraphFailure}) resolves `supported:
+ * false` rather than throwing, since the caller degrades to no facts; any
+ * other failure throws with choudoufu's output. Warnings (an empty scope
+ * estate, a plan without `observed_at`) go to stderr and are echoed like
+ * every other activity's.
+ */
+export async function choudoufuLiveGraph(args: ChoudoufuLiveGraphArgs, signal?: AbortSignal): Promise<ChoudoufuLiveGraphResult> {
+  const resolved = await resolveRoot(args, signal);
+  const { binary, dir } = resolved;
+  const env = terraformEnvironment(resolved.root);
+  const estateFlag: { estate?: string } = resolved.estate === undefined && args.estate !== undefined ? { estate: args.estate } : {};
+  const cmd = choudoufuLiveGraphCommand({ binary, fromPlan: args.fromPlan, ...estateFlag });
+  try {
+    const { stdout, stderr } = await run(cmd, dir, env, signal);
+    if (stderr) console.error(stderr);
+    return { supported: true, json: JSON.parse(liveDocumentFrom(stdout)), dir };
+  } catch (err) {
+    const failure = err as ExecFailure;
+    if (typeof failure.code !== "number") throw err;
+    const output = `${failure.stderr ?? ""}\n${failure.stdout ?? ""}`;
+    const detail = output.trim().split("\n").find((line) => line.trim() !== "")?.trim() ?? `exit ${failure.code}`;
+    if (classifyLiveGraphFailure(failure.code, output) === "unsupported") return { supported: false, detail, dir };
+    throw new Error(`${binary} live-graph failed in ${dir} (exit ${failure.code})${detail ? `\n${output.trim()}` : ""}`);
+  }
 }
 
 /**

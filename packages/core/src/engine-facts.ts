@@ -24,9 +24,13 @@ export const ENGINE_GRAPH_FORMAT = 1;
 
 /**
  * The first chant whose graph carries `nodes[].facts` and `edges[].grain`
- * (#4527, #4529): a live read through an engine, and a plunge member's
- * checked-in `engine-graph.json` in the pulumi lexicon's member read. A
- * reader treats a graph from an older chant as having neither.
+ * (#4527, #4529, #4528): a live read through an engine (the terraform
+ * lexicon's read of `choudoufu live-graph -json -from-plan`, which writes
+ * `ResourceMetadata.facts` and the observation's `edges`), and a plunge
+ * member's checked-in `engine-graph.json` in the pulumi lexicon's member
+ * read. A reader treats a graph from an older chant as having neither. The
+ * engine side's floor for the terraform read is that lexicon's
+ * `MIN_CHOUDOUFU_GRAPH_VERSION`.
  */
 export const ENGINE_FACTS_FLOOR = NEXT_RELEASE;
 

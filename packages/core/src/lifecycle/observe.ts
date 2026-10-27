@@ -96,6 +96,8 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
+    // Edge endpoints are resource ids, so they re-key with them (#4528).
+    ...(obs.edges ? { edges: obs.edges.map((e) => ({ ...e, from: `${stackName}::${e.from}`, to: `${stackName}::${e.to}` })) } : {}),
   };
 }
 
@@ -518,13 +520,16 @@ function pushObservation(
   // Dependencies ride alongside the managed resources so they become nodes, and
   // carry `referencedBy` so every consumer can still tell the two apart.
   const hasDependencies = Object.keys(dependencies.resources).length > 0;
+  // The read's own edges (#4528, an engine's graph) and the dependency
+  // closure's ride together; `buildLiveGraphIr` dedupes them.
+  const edges = [...(observed.edges ?? []), ...dependencies.edges];
   observations.push({
     lexicon,
     resources: hasDependencies
       ? { ...observed.resources, ...dependencies.resources }
       : observed.resources,
     ...(unobservedNames.length > 0 ? { unobserved: observed.unobserved } : {}),
-    ...(dependencies.edges.length > 0 ? { edges: dependencies.edges } : {}),
+    ...(edges.length > 0 ? { edges } : {}),
     ...(observed.stackExports && Object.keys(observed.stackExports).length > 0
       ? { stackExports: observed.stackExports }
       : {}),
