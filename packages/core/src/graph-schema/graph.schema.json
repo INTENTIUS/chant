@@ -113,7 +113,7 @@
       "additionalProperties": false
     },
     "CoverageEntry": {
-      "description": "What a read looked at, per type and location. A node can be absent only where this says `listed`.",
+      "description": "What a read looked at, per type and location. A node can be absent only where this says `listed`. `\"*\"` in `listedType` or `location` means every type or every location (behold#1029's lister writes it for a run with `types` or `locations` of `\"*\"`); indexCoverageFor honours it.",
       "type": "object",
       "properties": {
         "listedType": {
@@ -943,6 +943,29 @@
         "facts": {
           "description": "Live-only: what an ownership engine (choudoufu, plunge) observed about this node (#4520, #4527), copied from `ResourceMetadata.facts` or read from the engine's graph document. For people and for readers that show the graph. Nothing in chant decides from it, and ownership keeps its own meaning. Absent unless an engine supplied it. See `./engine-facts.ts`.",
           "$ref": "#/$defs/EngineFacts"
+        },
+        "listedType": {
+          "description": "Indexed nodes only (#4521, behold#1025): the inventory API's own type name, as the cloud lister read it: `AWS::S3::Bucket`, `microsoft.storage/storageaccounts`, `storage.googleapis.com/Bucket`, `apps/v1/Deployment`. Absent on every node a cloud listing did not make.",
+          "type": "string"
+        },
+        "location": {
+          "description": "Indexed nodes only: the region or location the object was listed in, `global` for a global type, a namespace or `cluster` for Kubernetes.",
+          "type": "string"
+        },
+        "nativeId": {
+          "description": "Indexed nodes only: the identifier the listing returned, Cloud Control's `Identifier`, the ARM id, the asset `name`, or `namespace/name`.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Indexed nodes only: tags or labels as read, masked by key. Where markers come from.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "unmappedKind": {
+          "description": "Indexed nodes only: true when no lexicon kind maps the listed type. The node keeps `kind` = listedType and `lexicon` = the substrate, and is never dropped (#4521).",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1090,6 +1113,10 @@
           "type": "string"
         },
         "location": {
+          "type": "string"
+        },
+        "command": {
+          "description": "A command the person can run themselves, never run by the source (a GCP API to enable).",
           "type": "string"
         }
       },

@@ -1,0 +1,56 @@
+{
+  "listing": "v1",
+  "source": { "name": "behold-lister", "version": "0.0.0-fixture" },
+  "scope": { "substrate": "azure", "scopeId": "00000000-0000-0000-0000-000000000001", "locations": "*", "types": "*" },
+  "startedAt": "2026-10-26T09:00:00.000Z",
+  "completedAt": "2026-10-26T09:00:02.000Z",
+  "resources": [
+    {
+      "listedType": "microsoft.storage/storageaccounts",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Storage/storageAccounts/shopassets",
+      "cloudIds": [
+        { "kind": "provider-id", "value": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Storage/storageAccounts/shopassets" },
+        { "kind": "provider-id", "value": "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/shop/providers/microsoft.storage/storageaccounts/shopassets" }
+      ],
+      "tags": { "tofu-estate": "shop" },
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Storage/storageAccounts/shopassets",
+        "name": "shopassets",
+        "type": "microsoft.storage/storageaccounts",
+        "location": "eastus",
+        "resourceGroup": "shop",
+        "subscriptionId": "00000000-0000-0000-0000-000000000001",
+        "kind": "StorageV2",
+        "sku": { "name": "Standard_LRS", "tier": "Standard" },
+        "properties": {
+          "minimumTlsVersion": "TLS1_2",
+          "supportsHttpsTrafficOnly": true,
+          "provisioningState": "Succeeded",
+          "primaryEndpoints": { "blob": "https://shopassets.blob.core.windows.net/" }
+        }
+      },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "microsoft.network/virtualnetworks/subnets",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Network/virtualNetworks/shop-vnet/subnets/apps",
+      "cloudIds": [{ "kind": "provider-id", "value": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Network/virtualNetworks/shop-vnet/subnets/apps" }],
+      "tags": {},
+      "properties": { "name": "apps", "type": "microsoft.network/virtualnetworks/subnets", "properties": { "addressPrefix": "10.0.1.0/24" } },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    },
+    {
+      "listedType": "microsoft.contoso/widgets",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Contoso/widgets/w1",
+      "cloudIds": [{ "kind": "provider-id", "value": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/shop/providers/Microsoft.Contoso/widgets/w1" }],
+      "tags": {},
+      "properties": { "name": "w1", "type": "microsoft.contoso/widgets", "properties": { "connectionString": "<masked>", "size": 3 } },
+      "observedAt": "2026-10-26T09:00:01.000Z"
+    }
+  ],
+  "coverage": [{ "listedType": "*", "location": "*", "verdict": "listed" }],
+  "notes": []
+}

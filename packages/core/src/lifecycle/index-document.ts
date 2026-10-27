@@ -101,7 +101,12 @@ export interface IndexStamp {
   digest: string;
 }
 
-/** What a read looked at, per type and location. A node can be absent only where this says `listed`. */
+/**
+ * What a read looked at, per type and location. A node can be absent only
+ * where this says `listed`. `"*"` in `listedType` or `location` means every
+ * type or every location (behold#1029's lister writes it for a run with
+ * `types` or `locations` of `"*"`); {@link indexCoverageFor} honours it.
+ */
 export interface CoverageEntry {
   listedType: string;
   location: string;
@@ -115,6 +120,29 @@ export interface IndexNote {
   message: string;
   listedType?: string;
   location?: string;
+  /** A command the person can run themselves, never run by the source (a GCP API to enable). */
+  command?: string;
+}
+
+/**
+ * The coverage entry that speaks for one (type, location), or undefined when
+ * none does (not observed). An exact entry wins over a wildcard one, and a
+ * wildcard on one side over a wildcard on both.
+ */
+export function indexCoverageFor(coverage: readonly CoverageEntry[], listedType: string, location: string): CoverageEntry | undefined {
+  let best: CoverageEntry | undefined;
+  let bestScore = -1;
+  for (const e of coverage) {
+    const typeHit = e.listedType === listedType ? 2 : e.listedType === "*" ? 0 : -1;
+    const locHit = e.location === location ? 1 : e.location === "*" ? 0 : -1;
+    if (typeHit < 0 || locHit < 0) continue;
+    const score = typeHit + locHit;
+    if (score > bestScore) {
+      best = e;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 /** One index version. */
