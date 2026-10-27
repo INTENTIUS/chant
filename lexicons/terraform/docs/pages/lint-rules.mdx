@@ -970,20 +970,34 @@ A root that is live (`terraform.binary: "choudoufu"` plus a declared estate, as 
 `live` block or an `estate.chdf.hcl` sidecar) whose `terraform` block also carries
 a `backend "<type>"` or `cloud {}` block.
 
-**Why it matters.** Under live markers there is no state to store: prior state is a
-projection of the `tofu-estate` and `tofu-address` tags, rebuilt from the live
-system every run. choudoufu refuses the combination at `init`, before any command
-runs ("Both a backend and a live configuration are present"), so the root never
-plans. TF001 is the same block read the other way round and does not fire on a
-live root.
+**Why it matters.** choudoufu accepts both blocks beside a live declaration and
+ignores them with a warning (INTENTIUS/choudoufu#2213, which replaced the old
+refusal at `init`). Terragrunt's `remote_state` and Atmos write a backend block on
+every run, so refusing it meant a user could not switch the binary and change
+nothing else. The two blocks still differ in what they do:
 
-**The fix.** Remove the `backend` or `cloud` block from a live root. If the root is
-meant to stay on stock state, drop the estate declaration instead and switch
-`terraform.binary` back to `terraform` or `tofu`.
+- A `backend` block configures no state: nothing is read or written there and
+  `init -migrate-state` is refused. An apply publishes the estate's non-sensitive
+  outputs to the location it names, so `terraform_remote_state` readers keep
+  working. When the live declaration has no `record_store`, choudoufu derives the
+  record store from the backend's bucket (s3, gcs and azurerm) and prints it on
+  every `init` and `plan` (INTENTIUS/choudoufu#2293). An explicit `record_store`
+  wins. TF024 reports this at `info`, naming where records will go.
+- A `cloud` block is dropped entirely: no outputs are published to it and no store
+  is derived from it. TF024 reports this at `warning`.
+
+TF001 is the same block read the other way round and does not fire on a live root.
+
+**The fix.** Nothing, for a `backend` block you keep for its outputs or as the
+record store's source. Declare `record_store` in the `live` block or the sidecar to
+put records somewhere else. Remove a `cloud` block, or swap it for a `backend`
+block if other roots read this estate's outputs. If the root is meant to stay on
+stock state, drop the estate declaration and switch `terraform.binary` back to
+`terraform` or `tofu`.
 
 **Prior art.** choudoufu `RuleStateBackend`
 ([`internal/live/lint`](https://github.com/INTENTIUS/choudoufu/tree/main/internal/live/lint)),
-equivalent: the identical condition, checked the same way at `init`.
+equivalent: the same condition, which choudoufu also reports as a warning.
 
 ```hcl
 terraform {

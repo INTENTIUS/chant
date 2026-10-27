@@ -30,8 +30,8 @@
  * module's `terraform` block is skipped here rather than read as if it were
  * the root's.
  *
- * Does not fire on a live root (#2103): a `backend` block is exactly what
- * choudoufu refuses there (TF024's territory), and the fallback to local
+ * Does not fire on a live root (#2103): choudoufu ignores a `backend` block
+ * there (TF024 reports what it still does with it), and the fallback to local
  * state this check warns about does not apply, since a live root keeps no
  * state file at all, local or remote.
  */

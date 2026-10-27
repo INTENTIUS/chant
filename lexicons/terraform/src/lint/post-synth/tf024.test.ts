@@ -13,18 +13,39 @@ async function ctxFor(fixture: string, root = "estate"): Promise<PostSynthContex
 }
 
 describe("TF024: live root declares a backend or cloud block", () => {
-  test("flags a live root with a backend block", async () => {
+  test("reports a backend block as ignored, at info, with the store derived from it", async () => {
     const diags = tf024.check(await ctxFor("live-with-backend"));
     expect(diags).toHaveLength(1);
     expect(diags[0].checkId).toBe("TF024");
-    expect(diags[0].message).toContain("backend");
-    expect(diags[0].message).toContain("Both a backend and a live");
+    expect(diags[0].severity).toBe("info");
+    expect(diags[0].message).toContain('backend "s3"');
+    expect(diags[0].message).toContain("ignores it");
+    expect(diags[0].message).toContain("-migrate-state");
+    expect(diags[0].message).toContain("derives the record store");
+    expect(diags[0].message).not.toContain("refuses this at init");
   });
 
-  test("flags a live root with a cloud block", async () => {
+  test("says an explicit record_store wins over the backend", async () => {
+    const diags = tf024.check(await ctxFor("live-with-record-store"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe("info");
+    expect(diags[0].message).toContain("record_store the live declaration names");
+    expect(diags[0].message).not.toContain("derives the record store");
+  });
+
+  test("keys on an estate.chdf.hcl sidecar as well as a live block", async () => {
+    const diags = tf024.check(await ctxFor("sidecar-with-backend"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('backend "gcs"');
+    expect(diags[0].message).toContain("derives the record store");
+  });
+
+  test("warns on a cloud block, which choudoufu drops entirely", async () => {
     const diags = tf024.check(await ctxFor("live-with-cloud"));
     expect(diags).toHaveLength(1);
-    expect(diags[0].message).toContain("cloud");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("cloud block");
+    expect(diags[0].message).toContain("no record store is derived");
   });
 
   test("passes a live root with neither block", async () => {

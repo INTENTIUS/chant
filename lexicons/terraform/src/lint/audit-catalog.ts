@@ -88,10 +88,11 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     tier: "merge-worthy",
     fixKind: "guidance",
     category: "correctness",
-    title: "Live root declares a backend or cloud block, which choudoufu refuses",
+    title: "Live root declares a backend or cloud block, which choudoufu ignores",
     remediation:
-      "Remove the `backend`/`cloud` block from the live root's terraform block; a live root's prior " +
-      "state is a projection rebuilt from the live system every run, so there is no state to store.",
+      "Keep a `backend` block if other roots read this estate's outputs or the record store should be " +
+      "derived from its bucket; declare `record_store` to put records elsewhere. Remove a `cloud` block, " +
+      "which choudoufu drops entirely, or swap it for a `backend` block.",
     yamlBased: false,
   },
   TF025: {
