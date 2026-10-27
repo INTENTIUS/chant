@@ -1,0 +1,61 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "prior_state": {
+    "values": {
+      "root_module": {
+        "resources": [
+          { "address": "aws_s3_bucket.logs", "mode": "managed", "type": "aws_s3_bucket", "values": { "bucket": "acme-logs", "tags": { "team": "data" } } },
+          { "address": "aws_lambda_function.worker", "mode": "managed", "type": "aws_lambda_function", "values": { "function_name": "acme-worker", "memory_size": 128 } },
+          { "address": "aws_iam_role.runner", "mode": "managed", "type": "aws_iam_role", "values": { "name": "acme-runner", "arn": "arn:aws:iam::000000000000:role/acme-runner" } }
+        ]
+      }
+    }
+  },
+  "resource_drift": [
+    {
+      "address": "aws_s3_bucket.logs",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "logs",
+      "change": { "actions": ["update"], "before": { "bucket": "acme-logs", "tags": { "team": "data" } }, "after": { "bucket": "acme-logs", "tags": { "team": "ops" } } }
+    },
+    {
+      "address": "aws_lambda_function.worker",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "worker",
+      "change": { "actions": ["delete"], "before": { "function_name": "acme-worker", "memory_size": 128 }, "after": null }
+    },
+    {
+      "address": "aws_sqs_queue.jobs",
+      "mode": "managed",
+      "type": "aws_sqs_queue",
+      "name": "jobs",
+      "change": { "actions": ["create"], "before": null, "after": { "name": "acme-jobs", "id": "https://sqs.local/000000000000/acme-jobs" } }
+    },
+    {
+      "address": "aws_iam_role.runner",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "runner",
+      "change": { "actions": ["update"], "before": { "name": "", "arn": "arn:aws:iam::000000000000:role/acme-runner" }, "after": { "name": "", "arn": "arn:aws:iam::000000000000:role/acme-runner", "max_session_duration": 7200 } }
+    },
+    {
+      "address": "data.aws_caller_identity.me",
+      "mode": "data",
+      "type": "aws_caller_identity",
+      "name": "me",
+      "change": { "actions": ["update"], "before": { "account_id": "000000000000" }, "after": { "account_id": "000000000001" } }
+    }
+  ],
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.logs",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "logs",
+      "change": { "actions": ["no-op"], "before": { "bucket": "acme-logs", "tags": { "team": "ops" } }, "after": { "bucket": "acme-logs", "tags": { "team": "ops" } } }
+    }
+  ]
+}
