@@ -29,7 +29,6 @@ import {
   type SubstrateTarget,
 } from "./cloud-index";
 import type { IndexDocument } from "./index-document";
-import { NEXT_RELEASE } from "../release-floors";
 import { createSnapshotStore } from "./snapshot-store";
 
 const ACCOUNT = "000000000000";
@@ -141,8 +140,8 @@ function capture() {
 const noLexicons: RunCloudIndexOptions["lexicons"] = async () => ({ lexicons: [] });
 
 describe("the floor", () => {
-  it("names the next release", () => {
-    expect(CLOUD_INDEX_FLOOR).toBe(NEXT_RELEASE);
+  it("names 0.124.54, where it shipped", () => {
+    expect(CLOUD_INDEX_FLOOR).toBe("0.124.54");
   });
 });
 

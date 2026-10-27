@@ -3,7 +3,6 @@ import { describe, it, expect } from "vitest";
 import { buildGraphIr, buildLiveGraphIr, entityFacts, sourceOverlayGraphs, type GraphIR, type LiveObservation } from "./graph-ir";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { ENGINE_FACTS_FLOOR, type EngineFacts } from "./engine-facts";
-import { NEXT_RELEASE } from "./release-floors";
 
 const facts: EngineFacts = {
   ownership: "bound",
@@ -172,7 +171,7 @@ describe("buildGraphIr: an entity's facts and reference grain (#4529)", () => {
     ]);
   });
 
-  it("names its floor as the next release", () => {
-    expect(ENGINE_FACTS_FLOOR).toBe(NEXT_RELEASE);
+  it("names its floor as 0.124.54, where it shipped", () => {
+    expect(ENGINE_FACTS_FLOOR).toBe("0.124.54");
   });
 });

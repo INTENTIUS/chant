@@ -38,7 +38,6 @@ import { normalizeObservation } from "@intentius/chant/observation";
 import type { Declarable } from "@intentius/chant/declarable";
 import { buildLiveGraphIr } from "@intentius/chant/graph-ir";
 import { ENGINE_FACTS_FLOOR } from "@intentius/chant/engine-facts";
-import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 import {
   describeResources,
   readEngineGraph,
@@ -406,7 +405,7 @@ describe("the floors (#4528)", () => {
     expect(isOlderVersion(MIN_CHOUDOUFU_VERSION, MIN_CHOUDOUFU_GRAPH_VERSION)).toBe(true);
   });
 
-  it("the chant floor for writing facts is the next release", () => {
-    expect(ENGINE_FACTS_FLOOR).toBe(NEXT_RELEASE);
+  it("the chant floor for writing facts shipped in 0.124.54", () => {
+    expect(ENGINE_FACTS_FLOOR).toBe("0.124.54");
   });
 });
