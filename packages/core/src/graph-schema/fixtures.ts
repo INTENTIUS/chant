@@ -9,7 +9,8 @@
  * emitters keep (choudoufu#2285, plunge#40).
  */
 import type { EngineGraphDocument } from "../engine-facts";
-import { indexDocumentDigest, indexScopeKey, type CloudIndexScope, type IndexDocument } from "../lifecycle/index-document";
+import type { AdoptionFile } from "../lifecycle/adoption-file";
+import { indexDocumentDigest, indexScopeKey, indexVersionName, type CloudIndexScope, type IndexDocument } from "../lifecycle/index-document";
 
 /** What `choudoufu live-graph -json -from-plan=<file> -history` prints for a small estate. */
 const choudoufu: EngineGraphDocument = {
@@ -234,16 +235,33 @@ const index: IndexDocument = {
   notes: [{ kind: "no-catalog", message: "no reference catalog for AWS::SQS::Queue", listedType: "AWS::SQS::Queue" }],
 };
 
+/**
+ * An adoption file over ./index.json (#4536): its one bucket adopted as a
+ * Terraform address with the engine type given. A Go reader (choudoufu#2286)
+ * reads this file with index.json and accepts it.
+ */
+const adopt: AdoptionFile = {
+  adopt: "v1",
+  index: {
+    scopeKey: index.stamp.scopeKey,
+    version: indexVersionName(index.stamp.observedAt, index.stamp.digest),
+    digest: index.stamp.digest,
+  },
+  select: [{ node: "aws/000000000000/us-east-1/AWS::S3::Bucket/web-logs", as: "aws_s3_bucket.web_logs", type: "aws_s3_bucket" }],
+};
+
 /** Each fixture by file name (without `.json`). */
 export const GRAPH_SCHEMA_FIXTURES = {
   "choudoufu.engine-graph": choudoufu,
   "plunge.engine-graph": plunge,
   index,
+  adopt,
 } as const;
 
 /** The `$defs` entry each fixture validates against. */
-export const GRAPH_SCHEMA_FIXTURE_DEFS: Record<keyof typeof GRAPH_SCHEMA_FIXTURES, "EngineGraphDocument" | "IndexDocument"> = {
+export const GRAPH_SCHEMA_FIXTURE_DEFS: Record<keyof typeof GRAPH_SCHEMA_FIXTURES, "EngineGraphDocument" | "IndexDocument" | "AdoptionFile"> = {
   "choudoufu.engine-graph": "EngineGraphDocument",
   "plunge.engine-graph": "EngineGraphDocument",
   index: "IndexDocument",
+  adopt: "AdoptionFile",
 };

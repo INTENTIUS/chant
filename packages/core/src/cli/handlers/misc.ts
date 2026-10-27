@@ -395,6 +395,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       output: args.output,
       force: args.force,
       report: args.reportFile,
+      adoptOut: args.adoptOut,
       src: args.src,
     });
     printImportResult(result);

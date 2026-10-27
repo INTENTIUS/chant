@@ -2,16 +2,19 @@
  * Generates the graph JSON Schema set from chant core's TypeScript types
  * (#4527; schema home ruled on INTENTIUS/behold#1025 Q5, 2026-10-26).
  *
- * One schema file, ./graph.schema.json, covers both documents a Go engine or
+ * One schema file, ./graph.schema.json, covers the documents a Go engine or
  * a non-chant reader has to write or read without importing chant:
  *
  * - `EngineGraphDocument` (../engine-facts.ts): what `choudoufu live-graph
  *   -json` and `plunge graph --json` print, a `GraphIR` at version 1 with
  *   `meta.engineGraph`, node `facts` and edge `grain`;
- * - `IndexDocument` (../lifecycle/index-document.ts): one index version.
+ * - `IndexDocument` (../lifecycle/index-document.ts): one index version;
+ * - `AdoptionFile` (../lifecycle/adoption-file.ts): the `adopt: "v1"` file
+ *   choudoufu, plunge and chant adopt indexed resources from (#4536).
  *
  * Each is a `$defs` entry, so a test validates against
- * `<$id>#/$defs/EngineGraphDocument` or `<$id>#/$defs/IndexDocument`. The
+ * `<$id>#/$defs/EngineGraphDocument`, `<$id>#/$defs/IndexDocument` or
+ * `<$id>#/$defs/AdoptionFile`. The
  * fixtures in ./fixtures are written from ./fixtures.ts, which the compiler
  * checks against the same types.
  *
@@ -53,6 +56,7 @@ export const GRAPH_SCHEMA_FIXTURE_DIR = join(here, "fixtures");
 const ROOTS: ReadonlyArray<{ file: string; name: string }> = [
   { file: join(coreSrc, "engine-facts.ts"), name: "EngineGraphDocument" },
   { file: join(coreSrc, "lifecycle", "index-document.ts"), name: "IndexDocument" },
+  { file: join(coreSrc, "lifecycle", "adoption-file.ts"), name: "AdoptionFile" },
 ];
 
 type Schema = Record<string, unknown>;
@@ -233,7 +237,7 @@ export function generateGraphSchema(): Schema {
     $id: GRAPH_SCHEMA_ID,
     title: "chant-graph/v1",
     description:
-      "Generated from chant core's TypeScript types (packages/core/src/engine-facts.ts, packages/core/src/lifecycle/index-document.ts) by `npm run generate:graph-schema`; do not edit by hand. Two documents: an engine graph (`#/$defs/EngineGraphDocument`, what `choudoufu live-graph -json` and `plunge graph --json` print, chant#4520) and an index version (`#/$defs/IndexDocument`, behold#1025). Objects are closed so a writer's test catches a misspelled field; a reader ignores fields it does not know.",
+      "Generated from chant core's TypeScript types (packages/core/src/engine-facts.ts, packages/core/src/lifecycle/index-document.ts, packages/core/src/lifecycle/adoption-file.ts) by `npm run generate:graph-schema`; do not edit by hand. Three documents: an engine graph (`#/$defs/EngineGraphDocument`, what `choudoufu live-graph -json` and `plunge graph --json` print, chant#4520), an index version (`#/$defs/IndexDocument`, behold#1025) and an adoption file (`#/$defs/AdoptionFile`, the `adopt: v1` input choudoufu, plunge and chant adopt from, chant#4536). Objects are closed so a writer's test catches a misspelled field; a reader ignores fields it does not know.",
     anyOf: roots,
     $defs: defs,
   };

@@ -12,6 +12,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { MASKED } from "../../deep-observation";
 import type { LexiconPlugin } from "../../lexicon";
 import { indexDocumentDigest, indexScopeKey, type CloudIndexScope, type IndexDocument } from "../../lifecycle/index-document";
+import { adoptionFileProblemsAgainst, type AdoptionFile } from "../../lifecycle/adoption-file";
 import { importFromIndex, INDEX_IMPORT_REPORT_FILE } from "./import-index";
 
 const dirs: string[] = [];
@@ -98,5 +99,19 @@ describe("importFromIndex", () => {
     const result = await importFromIndex({ index: p, selection: { all: true }, output: join(scratch(), "o"), plugins: [plugin], declaredEntities: new Map() });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/does not hold index documents/);
+  });
+
+  test("--adopt-out writes the adoption file for what was imported, valid against the index (#4536)", async () => {
+    const out = join(scratch(), "out");
+    const adoptOut = join(scratch(), "adopt.json");
+    const result = await importFromIndex({ index: indexFile(), selection: { all: true }, output: out, adoptOut, plugins: [plugin], declaredEntities: new Map() });
+    expect(result.success).toBe(true);
+    const adopt = JSON.parse(readFileSync(adoptOut, "utf-8")) as AdoptionFile;
+    expect(adopt.adopt).toBe("v1");
+    expect(adopt.select).toEqual([
+      { node: nodes[1].id, as: "Db1", type: "Fake::Db" },
+      { node: nodes[0].id, as: "Net1", type: "Fake::Net" },
+    ]);
+    expect(adoptionFileProblemsAgainst(adopt, DOC)).toEqual([]);
   });
 });

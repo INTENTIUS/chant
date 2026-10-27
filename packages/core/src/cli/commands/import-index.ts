@@ -11,12 +11,15 @@
  * `--report <path>`) names every selected resource's identity and cloud ids,
  * what was imported, declared or unsupported, each reference and each
  * parameter. The adoption step (INTENTIUS/choudoufu#2284) reads it.
+ * `--adopt-out <file>` also writes the adoption file (`adopt: v1`, #4536)
+ * that adopts every imported resource as its logical id.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join, relative, resolve } from "path";
 import type { GeneratedFile } from "../../import/generator";
 import type { LexiconPlugin } from "../../lexicon";
 import type { DeclaredEntity } from "../../lifecycle/identity-match";
+import { adoptionFileFromImportReport, adoptionFileJson } from "../../lifecycle/adoption-file";
 import type { IndexDocument } from "../../lifecycle/index-document";
 import {
   declaredNodes,
@@ -40,6 +43,8 @@ export interface IndexImportOptions {
   force?: boolean;
   /** Where to write the report; defaults to `<output>/chant-index-import.json`. */
   report?: string;
+  /** Where to write the adoption file for what was imported (`--adopt-out`, #4536). */
+  adoptOut?: string;
   /** The project whose declared entities are checked (defaults to the current directory). */
   projectDir?: string;
   /** The project's source directory (`--src`; defaults to `sourceDir` from chant.config, then the project). */
@@ -234,6 +239,14 @@ export async function importFromIndex(options: IndexImportOptions): Promise<Inde
   };
   for (const file of files) write(join(outputDir, file.path), file.content, file.path);
   write(reportPath, indexImportReportJson(plan.report), relative(outputDir, reportPath) || reportPath);
+  if (options.adoptOut) {
+    const adoptPath = resolve(options.adoptOut);
+    try {
+      write(adoptPath, adoptionFileJson(adoptionFileFromImportReport(plan.report)), relative(outputDir, adoptPath) || adoptPath);
+    } catch (err) {
+      return { success: false, generatedFiles, warnings, error: `no adoption file written: ${err instanceof Error ? err.message : String(err)}`, report: plan.report };
+    }
+  }
 
   const lexicons = [...new Set(plan.groups.map((g) => g.lexicon))];
   return {
