@@ -26,9 +26,14 @@ export const LEXICONS = [
 		{ label: 'Prometheus', href: '/lexicons/prometheus/' },
 		{ label: 'Grafana', href: '/lexicons/grafana/' },
 	] },
+	{ label: 'Terraform and Pulumi', links: [
+		{ label: 'Terraform and OpenTofu', href: '/lexicons/terraform/' },
+		{ label: 'choudoufu', href: '/lexicons/terraform/ops/#choudoufu' },
+		{ label: 'Pulumi', href: '/lexicons/pulumi/' },
+		{ label: 'plunge', href: '/lexicons/pulumi/plunge/' },
+	] },
 	{ label: 'Also', links: [
 		{ label: 'Docker', href: '/lexicons/docker/' },
-		{ label: 'Terraform', href: '/lexicons/terraform/' },
 		{ label: 'SQL', href: '/lexicons/sql/' },
 		{ label: 'Cedar', href: '/lexicons/cedar/' },
 		{ label: 'Fountain', href: '/lexicons/fountain/' },
@@ -43,8 +48,8 @@ export const NEXT = [
 		{ label: 'Agents Start Here', href: '/agents/' },
 	] },
 	{ label: 'Learn', links: [
-		{ label: 'What chant is', href: '/concepts/overview/' },
-		{ label: 'How chant compares', href: '/concepts/comparison/' },
+		{ label: 'Overview', href: '/concepts/overview/' },
+		{ label: 'Works with Terraform, OpenTofu and Pulumi', href: '/concepts/comparison/' },
 		{ label: 'Choosing Your Deployment Model', href: '/concepts/deployment-paths/' },
 	] },
 	{ label: 'Look up', links: [

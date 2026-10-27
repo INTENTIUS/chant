@@ -6,24 +6,20 @@ diataxis: explanation
 
 import { Aside } from '@astrojs/starlight/components';
 
-Drift is the gap between what you declared in source and what's actually deployed. Most IaC tools track it through an authoritative state file. chant has no authoritative state file. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection. For where this sits in the broader model — the dial from observe to reconcile to authoritative — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
+Drift is the gap between your declared source and the deployed system. chant tracks drift from snapshots and live reads. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection. For where this sits in the broader model — the dial from observe to reconcile to authoritative — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
 
 ## The observational snapshot model
 
-`chant lifecycle snapshot <env>` writes a record of what was observed in the cloud at a point in time. It's stored in the project's [snapshot store](/chant/cli/lifecycle/#where-snapshots-are-kept), the `refs/chant/snapshots` ref in your repo by default. There's no central state server, no lock file, no encrypted backend.
+`chant lifecycle snapshot <env>` writes a record of the cloud as observed at a point in time. It's stored in the project's [snapshot store](/chant/cli/lifecycle/#where-snapshots-are-kept), the `refs/chant/snapshots` ref in your repo by default. The store needs no server of its own.
 
-This is the opposite of how Terraform, Pulumi, and CDK/CloudFormation think about state. Those tools treat state as **authoritative** — the state file *is* the truth, and `apply` reconciles the cloud to match. The state file must be locked during writes, secured against tampering, and protected from corruption because deployments depend on it.
+A snapshot here is a record of a read and never drives an apply. Terraform and Pulumi roots keep their own state, and choudoufu and plunge can run them with chant's ownership markers.
 
-chant's snapshots are **observational**. They're a forensic record: "this is what we saw at 10:42 UTC on Tuesday." Snapshots don't drive deployments — they exist to be diffed against. This has three consequences:
+chant's snapshots are **observational**. Each one is a record of a read at a point in time, such as 10:42 UTC on Tuesday. Deployments never read a snapshot, and its job is to be diffed against. So a snapshot has these properties:
 
-| Authoritative state (Terraform, Pulumi, CDK) | Observational state (chant) |
-|---|---|
-| State must be locked; concurrent writes corrupt | A stale snapshot is inconvenient, not dangerous |
-| Sensitive data leaks into state file | Thin snapshots record metadata only; deep property trees [mask secret-bearing names](#secret-masking) before anything is written |
-| Bad state breaks deploys | Bad snapshot is a record problem; deploys query live APIs |
-| `apply` knows exactly what to change | Precise change set comes from live projection (`lifecycle plan`); chant computes it but never auto-applies |
-
-For the broader trade-off comparison, see [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) in the comparison guide.
+- A stale snapshot is only a stale record.
+- Thin snapshots record metadata only, and deep property trees [mask secret-bearing names](#secret-masking) before anything is written.
+- A bad snapshot is a record problem, since deploys query live APIs.
+- The change set comes from the live projection (`lifecycle plan`). chant computes it and never applies it on its own.
 
 ## Resources and artifacts
 
@@ -184,18 +180,18 @@ The pragmatic test: would you act on a drift signal if it fired right now? If ye
 
 ## Trade-offs
 
-chant's observational model is a deliberate choice, not a missing feature. The costs:
+chant's observational model has these costs:
 
 - **No automatic remediation.** Drift tells you something changed; it doesn't snap the cloud back. That's an agent or a human decision because the right answer is domain-specific.
 - **It plans, but never applies.** chant computes a precise create/update/delete change set against live — [`chant lifecycle plan`](/chant/cli/lifecycle/) reads ownership from the live marker, not the snapshot — but it stops at the artifact. Executing it is your tooling's job: a CI job, an agent, or a [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) / [`ApplyOp`](/chant/guide/reconciling-lifecycle/). The diff is informational; the plan is actionable; neither mutates the cloud.
 - **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots)).
 - **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) lists where coverage exists today.
 
-Read these trade-offs in context in [How chant compares](/chant/concepts/comparison/#trade-offs).
+[Works with](/chant/concepts/comparison/#trade-offs) lists chant's other trade-offs.
 
 ## See also
 
 - [`chant lifecycle`](/chant/cli/lifecycle/) — CLI reference for snapshot, show, diff, log
 - [Watching Lifecycle](/chant/guide/watching-lifecycle/) — turn `lifecycle diff --live` into a scheduled Op
 - [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors plugging into the pipeline
-- [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) — the cross-tool comparison
+- [Works with](/chant/concepts/comparison/) — Terraform, OpenTofu and Pulumi estates in a chant workspace

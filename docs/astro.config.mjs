@@ -79,7 +79,7 @@ export default defineConfig({
 					description:
 						'chant is a TypeScript-first infrastructure tool: typed resources in, spec-native output (CloudFormation, GitLab CI, Kubernetes YAML, and more) out, validated by semantic lint rules, with an optional deployment lifecycle on top: Ops that run in-process or on a fountain steward.',
 					details:
-						'- Agents: start at /agents/ for a copy-paste setup prompt, then /guide/agent-integration/ for the skills, MCP tools, and Ops surfaces available after `chant init`.\n- No YAML, no DSL: infrastructure is exported TypeScript, type-checked against a provider lexicon.\n- No authoritative state file: `chant build` synthesizes deterministically from source; drift and apply are computed against the live system.',
+						'- Agents: start at /agents/ for a copy-paste setup prompt, then /guide/agent-integration/ for the skills, MCP tools, and Ops surfaces available after `chant init`.\n- TypeScript in, native files out: infrastructure is exported TypeScript, type-checked against a provider lexicon.\n- Ownership lives in markers on the cloud resources. `chant build` is deterministic, and drift and apply are computed against the live system.\n- Terraform, OpenTofu and Pulumi users: the terraform and pulumi lexicons read your roots and programs as they are. choudoufu (an OpenTofu fork) and plunge (a Pulumi fork) run them with chant\'s ownership markers. See /concepts/comparison/.',
 					// The agent prompt page is the entry point machine readers want
 					// first — surface it ahead of the human getting-started page.
 					promote: ['agents', 'index*'],
@@ -105,6 +105,7 @@ export default defineConfig({
 						{ label: 'GCP and Azure', link: '/for/gcp-azure/' },
 						{ label: 'CI pipelines', link: '/for/ci/' },
 						{ label: 'Fly and containers', link: '/for/fly/' },
+						{ label: 'Terraform and Pulumi', link: '/for/terraform-pulumi/' },
 						{ label: 'I work with a coding agent', link: '/for/agents/' },
 						{ label: 'I run a platform team', link: '/for/platform/' },
 						{ label: 'I ship releases from trunk', link: '/for/releases/' },
@@ -120,7 +121,7 @@ export default defineConfig({
 						{ label: 'From Zero to a Promoted Release', slug: 'tutorials/zero-to-promoted-release' },
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
 						{ label: 'Agent Observability on k3d', slug: 'tutorials/agent-observability' },
-						{ label: 'Carve out of Terraform', slug: 'tutorials/terraform-carve-out' },
+						{ label: 'Move One Terraform Resource to a Native Lexicon', slug: 'tutorials/terraform-carve-out' },
 						{ label: 'Run Ops on a Fountain Steward', slug: 'tutorials/fountain-steward' },
 						{
 							label: 'Fly',
@@ -492,9 +493,9 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Introduction', slug: 'getting-started/introduction' },
-								{ label: 'What chant is', slug: 'concepts/overview' },
+								{ label: 'Overview', slug: 'concepts/overview' },
 								{ label: 'Philosophy', slug: 'concepts/philosophy' },
-								{ label: 'How chant compares', slug: 'concepts/comparison' },
+								{ label: 'Works with', slug: 'concepts/comparison' },
 								{ label: 'Lifecycle Models', slug: 'concepts/lifecycle-models' },
 								{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
 								{ label: 'Components', slug: 'concepts/components' },

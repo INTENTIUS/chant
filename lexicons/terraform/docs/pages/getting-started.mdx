@@ -13,7 +13,9 @@ prompt: |
 Most chant lexicons ask you to declare infrastructure in TypeScript. This one
 starts from the `.tf` files you already have. You name the root modules, chant
 parses them, and the blocks join the build as entities that the post-synth
-checks can read. Nothing is written back over the HCL.
+checks can read. Nothing is written back over the HCL. To run a root with
+ownership markers on its resources, set `binary` to `"choudoufu"` (see
+[Ops](../ops/#choudoufu)).
 
 ## Install
 
@@ -65,8 +67,10 @@ terraform: {
 },
 ```
 
-`binary` is `"terraform"` or `"tofu"`. The two are wire-compatible for
-everything this lexicon does, so the choice is recorded rather than guessed.
+`binary` is `"terraform"`, `"tofu"` or `"choudoufu"`. terraform and tofu are
+wire-compatible for everything this lexicon does, so the choice is recorded
+rather than guessed. choudoufu runs a root as stock OpenTofu until the root
+declares an estate ([Ops](../ops/#choudoufu)).
 
 The binary also says which files of a root are its configuration, as it does
 for the binary itself. Under `"terraform"` (and when `binary` is unset) a root

@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-pulumi
 
-Pulumi lexicon for [chant](https://intentius.io/chant/). It declares no resource types. It supplies the `pulumi` workspace member kind and reads a Pulumi program four ways:
+Pulumi lexicon for [chant](https://intentius.io/chant/). It adds your Pulumi program to a chant workspace as it is, on stock Pulumi or on [plunge](https://github.com/INTENTIUS/plunge), a Pulumi fork that keeps chant's ownership markers on each resource. It declares no resource types. It supplies the `pulumi` workspace member kind and reads a Pulumi program four ways:
 
 | Read | Source | Module |
 |---|---|---|

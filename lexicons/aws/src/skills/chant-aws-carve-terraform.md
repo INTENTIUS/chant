@@ -1,20 +1,26 @@
 ---
 skill: chant-aws-carve-terraform
-description: Demo carving a resource out of Terraform into native chant — advise, emit, audit, bridge, apply — fully offline
+description: Demo moving one Terraform resource to native CloudFormation, fully offline (advise, emit, audit, bridge, apply); Terraform keeps the rest
 user-invocable: true
 ---
 
-# Carve a resource out of Terraform (demo)
+# Move one Terraform resource to CloudFormation (demo)
 
-Use this skill to cleanly demonstrate chant's Terraform carve-out flow for
-someone. The whole demo runs **offline** — no cloud account, no Terraform
-binary, no state backend. It carves an AWS S3 bucket out of a small Terraform
-estate into native chant source, patches the survivors, and plans the
-graduation.
+Use this skill to demonstrate chant's carve flow, which moves one resource
+from a Terraform estate to chant source for the AWS lexicon. The whole demo
+runs **offline**, with no cloud account, Terraform binary or state backend. It
+moves an S3 bucket from a small Terraform estate to chant source, patches the
+resources that stay in Terraform, and plans the graduation.
 
 ## When to use
 
-- Someone asks "how does chant move things off Terraform?"
+- Someone asks how chant can manage one resource from a Terraform root as
+  native CloudFormation.
+- Someone on Terraform or OpenTofu asks how to get chant's ownership markers
+  on their resources. Point them at choudoufu instead
+  (`terraform.binary: "choudoufu"`, see
+  https://intentius.io/chant/lexicons/terraform/ops/#choudoufu). Their roots
+  stay in OpenTofu.
 - You want to show the advise → emit → audit → bridge → apply loop end to end.
 - You are evaluating whether a Terraform estate is worth carving.
 
@@ -40,12 +46,12 @@ Walk the person through the output. That is the whole demo.
 
 From `examples/terraform-carve-out`, with `TF=./terraform`:
 
-1. **Advise — what is cheap to carve.**
+1. **Advise: rank the resources.**
    ```bash
    chant carve advise --from ./terraform
    ```
    Point out the three bands: clean leaves (carve now), carvable with edits,
-   and leave-in-Terraform. `aws_s3_bucket.assets` is a clean leaf held back one
+   and stays in Terraform (`leave in Terraform` in the JSON). `aws_s3_bucket.assets` is a clean leaf held back one
    notch by the Lambda that reads it; `random_pet` has no native mapping.
 
 2. **Emit — adopt the bucket into chant source, offline, from state.**
@@ -68,9 +74,9 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
    chant build ./carveout/src --lexicon aws
    ```
    The first build fails, deliberately: the post-synth audit refuses the
-   adopted bucket because Terraform managed it without a public-access block or
-   a TLS-only policy. This is a feature of carving: chant immediately tells the
-   person what is wrong with what they adopted. Show the fix (add
+   adopted bucket because it has no public-access block or TLS-only policy.
+   This is a feature of carving: chant tells the person which settings the
+   adopted resource is missing. Show the fix (add
    `PublicAccessBlockConfiguration` and a companion `S3BucketPolicy` with an
    `aws:SecureTransport = false` Deny — the tutorial page has the exact code),
    then re-run the build and show the valid CloudFormation template.
@@ -96,7 +102,8 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
 
 - Nothing is destroyed or applied; every step before graduation is reversible
   with `terraform import`.
-- You carve one resource at a time. The gnarly long tail stays in Terraform.
+- You carve one resource at a time. Everything else stays in Terraform, where
+  it already works.
 - `advise` and `bridge` work against **any** Terraform tree — offer to point
   them at the person's own estate.
 

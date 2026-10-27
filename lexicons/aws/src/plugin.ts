@@ -596,7 +596,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     {
       file: "chant-aws-carve-terraform.md",
       name: "chant-aws-carve-terraform",
-      description: "Demo carving a resource out of Terraform into native chant — advise, emit, audit, bridge, apply — fully offline",
+      description: "Demo moving one Terraform resource to native CloudFormation, fully offline (advise, emit, audit, bridge, apply); Terraform keeps the rest",
       triggers: [
         { type: "context", value: "terraform" },
         { type: "context", value: "carve" },
@@ -620,12 +620,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         {
           title: "Run the offline demo",
           description: "Demo the full advise → emit → bridge → apply loop with no cloud",
-          input: "Show me how chant carves a resource out of Terraform",
+          input: "Show me how chant moves one resource from Terraform to CloudFormation",
           output: "cd examples/terraform-carve-out && ./demo.sh",
         },
         {
           title: "Adopt a resource from state",
-          description: "Emit native chant source for a Terraform-managed resource, offline",
+          description: "Emit chant source for the AWS lexicon from a Terraform-managed resource, offline",
           input: "Adopt aws_s3_bucket.assets into chant",
           output: "chant carve emit --from ./terraform --select aws_s3_bucket.assets --state ./terraform/terraform.tfstate",
         },

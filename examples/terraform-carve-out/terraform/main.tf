@@ -1,4 +1,4 @@
-# A small Terraform estate to practice carving out of, into native chant.
+# A small Terraform estate to practice moving one resource to CloudFormation.
 # Some resources are clean leaves; some are load-bearing; one has no native map.
 # Run the walkthrough in this example's README with `chant carve`.
 
@@ -55,7 +55,7 @@ resource "aws_subnet" "c" {
   cidr_block = "10.0.3.0/24"
 }
 
-# Leave in Terraform: an unsupported provider, no native mapping. Scored 0.
+# Stays in Terraform: an unsupported provider, no native mapping. Scored 0.
 resource "random_pet" "suffix" {
   length = 2
 }

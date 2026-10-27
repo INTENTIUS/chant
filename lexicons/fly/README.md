@@ -91,13 +91,9 @@ Lint rules run during `chant build`, before anything reaches the API:
 
 The lexicon ships a deploy Op that runs the phases boot, build, apply, verify, and teardown, and a runnable [`examples/local-fly`](../../examples/local-fly) starter. As shown above, `chant run fly` boots mudflaps, builds the plan, applies the App and Machine, waits for the machine to reach `started`, and tears the emulator down. Drop the local endpoint and set `FLY_API_TOKEN`, and the same Op deploys to a real Fly org.
 
-## Compared to a Terraform provider for Fly
+## How flyApply applies
 
-|              | Terraform for Fly                        | This lexicon                                            |
-| ------------ | ---------------------------------------- | ------------------------------------------------------- |
-| **State**    | A `.tfstate` to store, lock, and back up | None; reconciles from live state + the ownership marker |
-| **Language** | HCL                                      | TypeScript, types generated from the Machines API spec  |
-| **Testing**  | Against a real Fly org                   | Offline against the mudflaps emulator, in CI            |
+`flyApply` reconciles against the live Machines API using the ownership marker on each machine. Its types are generated from the Machines API spec, and it runs offline against the mudflaps emulator, in CI too.
 
 The same code applies to a local emulator and to a real Fly org; the only difference is the endpoint.
 

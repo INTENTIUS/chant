@@ -1,6 +1,6 @@
 ---
-title: "Carve a resource out of Terraform"
-description: "Move one resource from a Terraform estate into native chant, step by step and reversibly: advise, emit, audit, bridge, graduate."
+title: "Move One Terraform Resource to a Native Lexicon"
+description: "Hand one resource from a Terraform estate to a native lexicon such as CloudFormation, step by step and reversibly: advise, emit, audit, bridge, graduate. The rest of the estate stays in Terraform."
 diataxis: tutorial
 prompt: |
   Read https://intentius.io/chant/tutorials/terraform-carve-out/.
@@ -12,9 +12,9 @@ prompt: |
 
 import { Aside } from '@astrojs/starlight/components';
 
-This tutorial carves a single resource out of a Terraform estate into native
-chant, incrementally and reversibly. Only small, cleanly mappable pieces move;
-the long tail stays in Terraform.
+This tutorial moves one resource from a Terraform estate to a native lexicon,
+CloudFormation for an AWS resource, reversibly. Only small, cleanly mappable
+pieces move, and everything else stays where it is.
 
 **The whole flow runs offline** against the bundled estate and its state file,
 with no cloud account, Terraform binary or state backend. The one
@@ -43,7 +43,7 @@ npm install --save-dev @cdktn/hcl2json
 
 Run `chant` via `npx chant` (or add `node_modules/.bin` to your PATH).
 
-## 1. See what is cheap to carve
+## 1. Rank the resources
 
 ```bash
 cd examples/terraform-carve-out
@@ -68,7 +68,7 @@ CARVABLE — has boundary work  (1)
    64  aws_vpc.main -> AWS::EC2::VPC
        3 inbound (data-source patch each)
 
-LEAVE IN TERRAFORM  (1)
+STAYS IN TERRAFORM  (1)
     0  random_pet.suffix
        no known native mapping (unsupported provider/type)
 ```
@@ -354,7 +354,7 @@ are repointed either way, leaving one edit between you and a valid plan.
 
 ## Try it on your own estate
 
-Point it at your own Terraform. Two of the five steps work on any tree today;
+To try it on your own roots, start with `carve advise`, which only reads. Two of the five steps work on any tree today;
 the emit/apply half covers less, as the list below shows.
 
 - **`carve advise` and `carve bridge` — any Terraform tree.** Both are offline,
@@ -387,3 +387,5 @@ the emit/apply half covers less, as the list below shows.
   but not emitted, and `--env` is refused. GCP and Azure are not carved yet.
 
 See the [carve CLI reference](/chant/cli/carve-out/) for every flag.
+
+To keep a root in OpenTofu with ownership markers on its resources, see [choudoufu](/chant/lexicons/terraform/ops/#choudoufu) in the terraform lexicon's Ops page.

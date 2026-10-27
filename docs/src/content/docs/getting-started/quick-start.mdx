@@ -114,9 +114,9 @@ Op "hello" completed in 0.1s
 
 `Op`, `phase` and `shell` come from `@intentius/chant/op`, and `chant run` executes the phases in this process. A gate works here too: the run reads the gate ledger and either walks through or records that it is waiting. When an Op needs a machine of its own, a standing record, or a cadence nobody triggers, `chant run <op> --on fountain` hands the same declaration to a steward. See [Ops as teammates](/chant/concepts/durable-workflows/).
 
-## Step 6: See drift, decide what to do
+## Step 6: See drift and act on it
 
-Once resources are deployed, chant reports where the cloud and your source differ, with no hosted state file:
+Once resources are deployed, chant reports where the cloud and your source differ:
 
 ```bash
 chant lifecycle diff prod --live

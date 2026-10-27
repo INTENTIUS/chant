@@ -1,9 +1,12 @@
 # @intentius/chant-lexicon-terraform
 
-Terraform lexicon plugin for [chant](https://github.com/intentius/chant).
+Terraform and OpenTofu lexicon for [chant](https://github.com/intentius/chant).
+It reads your roots as they are, and runs them on terraform, tofu or
+[choudoufu](https://github.com/INTENTIUS/choudoufu), an OpenTofu fork that
+keeps ownership as markers on the resources.
 
-Unlike the lexicons that generate typed resource classes from an upstream
-schema, this one reads the HCL an estate already has. Name your root modules in
+This lexicon reads the HCL an estate already has, where other lexicons
+generate typed resource classes from an upstream schema. Name your root modules in
 `chant.config.ts` and each `.tf` block joins the build as an entity, so the
 post-synth checks and `chant audit` can see the root without anything being
 written back over it.
@@ -16,7 +19,7 @@ import "@intentius/chant-lexicon-terraform";
 export default {
   lexicons: ["terraform"],
   terraform: {
-    binary: "terraform", // or "tofu"
+    binary: "terraform", // or "tofu", or "choudoufu" for ownership markers
     roots: {
       app: { dir: "./terraform", workspace: "prod", varFiles: ["prod.tfvars"] },
     },

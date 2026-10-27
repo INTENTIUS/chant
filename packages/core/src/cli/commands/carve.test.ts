@@ -143,7 +143,7 @@ describe("carveAdvise", () => {
       const r = await carveAdvise({ from: dir });
       const text = formatCarveReport(r);
       expect(text).toContain("CLEAN LEAF");
-      expect(text).toContain("LEAVE IN TERRAFORM");
+      expect(text).toContain("STAYS IN TERRAFORM");
       expect(text).toContain("Advises only");
       expect(text).not.toMatch(/terraform state rm|apply|destroy/i);
     });

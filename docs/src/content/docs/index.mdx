@@ -14,9 +14,13 @@ Each lexicon is a plugin for one platform: its types, its lint rules and its out
 
 <Landing part="lexicons" />
 
+## Already on Terraform, OpenTofu or Pulumi
+
+Keep your roots and programs. The [terraform](/chant/lexicons/terraform/) and [pulumi](/chant/lexicons/pulumi/) lexicons read them as they are. [choudoufu](/chant/lexicons/terraform/ops/#choudoufu) is an OpenTofu fork that runs your roots with ownership markers on the resources. [plunge](/chant/lexicons/pulumi/plunge/) is a Pulumi fork that does the same for Pulumi programs. [Works with](/chant/concepts/comparison/) has the details.
+
 ## The lifecycle you choose
 
-The build is deterministic and keeps no authoritative state file. What happens after it is up to you, per environment: observe drift, reconcile the source from the live system, or apply the source to it. [Lifecycle Models](/chant/concepts/lifecycle-models/) compares the three.
+The build is deterministic. After it, you choose per environment: observe drift, reconcile the source from the live system, or apply the source to it. [Lifecycle Models](/chant/concepts/lifecycle-models/) compares the three.
 
 <Landing part="lifecycle" />
 

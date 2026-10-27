@@ -1,6 +1,6 @@
 ---
 title: "chant carve (emit / bridge / apply)"
-description: Carve resources out of Terraform into native chant one at a time
+description: Move Terraform resources to a native lexicon one at a time
 diataxis: reference
 ---
 
@@ -15,7 +15,7 @@ chant carve status [--from <dir>] [--json]
 
 ## Description
 
-The carve commands peel a resource out of a Terraform estate into native chant source, one resource at a time. The long tail stays in Terraform, and a resource chant cannot map is left where it is. Start with [`chant carve advise`](/chant/cli/carve/) to see what is cheap to carve.
+The carve commands move a resource from a Terraform estate to chant source for a native lexicon, one resource at a time. Everything you don't move stays in Terraform, and a resource chant cannot map is left where it is. Start with [`chant carve advise`](/chant/cli/carve/), which ranks the resources that move cleanly.
 
 A carve never destroys or recreates. It reuses the adopt-an-orphan loop: Terraform stops managing the resource, chant adopts the still-live resource, and you sit at the observe position until you turn the dial to apply. Every step before graduation is reversible with `terraform import`.
 
