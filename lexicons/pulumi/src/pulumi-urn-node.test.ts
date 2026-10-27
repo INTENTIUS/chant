@@ -81,7 +81,7 @@ describe("Pulumi URN to graph node (#4456)", () => {
   test("a child nests under its component through the parent edge", () => {
     const { entities } = readPulumiMember({ member: { dir, label: "site" } });
     const refs = (key: string) => (entities.get(key) as unknown as { references: { to: string; viaAttr: string }[] }).references;
-    expect(refs("site/corpus:index:Site$aws:s3/bucket:Bucket::docs-assets")).toContainEqual({ to: "site/corpus:index:Site::docs", viaAttr: "parent" });
+    expect(refs("site/corpus:index:Site$aws:s3/bucket:Bucket::docs-assets")).toContainEqual({ to: "site/corpus:index:Site::docs", viaAttr: "parent", grain: "instance" });
     expect(refs("site/aws:s3/bucket:Bucket::site-bucket").filter((r) => r.viaAttr === "parent")).toEqual([]);
   });
 

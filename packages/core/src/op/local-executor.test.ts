@@ -287,12 +287,20 @@ describe("runOpLocally — a failed step records the outputs it knew (#4512)", (
     const init: ActivityFn = async () => {
       throw withKnownOutputs(new Error("terraform init: backend unreachable"), { dir: "/w/estates/aws", rootPath: "estates/aws" });
     };
-    const records = await failedRecords(initConfig, new Map<string, ActivityFn>([["init", init], ["plan", async () => ({})]]));
+    let planRan = false;
+    const plan: ActivityFn = async () => {
+      planRan = true;
+      return {};
+    };
+    const records = await failedRecords(initConfig, new Map<string, ActivityFn>([["init", init], ["plan", plan]]));
     expect(records[0]).toMatchObject({ phase: "Init", fn: "init", status: "fail", error: expect.stringContaining("backend unreachable") });
     // Workspace is not among the known outputs, so it is left off.
     expect(records[0].outcomes).toEqual([{ name: "TerraformRootPath", value: "estates/aws" }]);
     expect(records[0].outcome).toEqual({ name: "TerraformRootPath", value: "estates/aws" });
-    expect(records[1]).toMatchObject({ phase: "Plan", status: "skipped" });
+    // A failed phase ends the run there: Plan does not run, and a failure (unlike
+    // a gate, a decision point or a stopped claim) leaves no record for it.
+    expect(planRan).toBe(false);
+    expect(records.filter((r) => r.phase === "Plan")).toEqual([]);
   });
 
   test("a failed step with no known outputs records no outcome, as before", async () => {
