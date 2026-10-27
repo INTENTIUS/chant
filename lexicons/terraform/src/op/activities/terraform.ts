@@ -195,6 +195,14 @@ export interface TerraformRootArgs {
    * `process.cwd()`, which is the project root under `chant run`.
    */
   cwd?: string;
+  /**
+   * The directory the root's files are read from in place of the entry's
+   * `dir`, relative to the project root (chant#4542). A promote or rollback
+   * under a release sets it to the release's recorded copy of the root; the
+   * entry's workspace, var files, backend config and estate still apply, and
+   * its var files and backend-config files resolve against this directory.
+   */
+  dir?: string;
 }
 
 export interface TerraformInitArgs extends TerraformRootArgs {
@@ -937,7 +945,7 @@ async function resolveRoot(args: TerraformRootArgs, signal?: AbortSignal): Promi
     );
   }
   const binary = terraformBinary(namespace);
-  const dir = resolve(projectRoot, root.dir);
+  const dir = resolve(projectRoot, args.dir ?? root.dir);
   await ensureChoudoufuVersion(binary, signal);
   const estate = binary === "choudoufu" ? detectLiveEstate(dir) : undefined;
   // `estate` stays what it has always been: the estate the root's own HCL

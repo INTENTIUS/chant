@@ -24,6 +24,12 @@
  * build, as a chart named from a repository, is not recorded, and the
  * promote leaves it as written.
  *
+ * Since #4542 a step whose capability answers `releaseInputs` has its files
+ * recorded the same way: `terraform-apply` names a root by key, and the
+ * terraform lexicon answers the root's directory, its local modules and its
+ * var files ({@link stepReleaseInputs}). Each directory is named in `trees`.
+ * A step whose files can't be deployed from a copy is printed and left out.
+ *
  * A project with no components (#4046) is compiled the way `chant build --env
  * <env> -o <output>` builds it ({@link compileBuildOutput}): every file that
  * build writes is a template with `component: null`, and the target's params
@@ -43,7 +49,7 @@ import { applyConfigDefaults } from "./config-defaults";
 import { fanOutRegistry } from "./fan-out-support";
 import { ARCHIVE_STEP_KINDS, BUILD_STEP_KINDS, PUBLISH_STEP_KINDS } from "./promote";
 import { DriverRunFailure, runInterpretDriver, type DriverComponent, type DriverGate, type DriverPhase, type DriverStep } from "./driver";
-import type { CapabilityRegistry } from "./capability";
+import type { CapabilityRegistry, ReleaseInputs, ReleaseInputsUnbound } from "./capability";
 import { memoryGateLedgerPort } from "../op/gate";
 import type { ReleaseArtifact, ReleaseParam } from "../lifecycle/release-store";
 
@@ -166,6 +172,51 @@ export function recordedInputRefs(component: DriverComponent): RecordedInputRef[
         out.push({ component: component.name, phase, kind: step.kind, field, value, path, required: TEMPLATE_FIELDS.includes(field) });
       }
     }
+  }
+  return out;
+}
+
+/** A step whose capability answered `releaseInputs` (#4542), with its answer. */
+export interface StepReleaseInputs {
+  phase: string;
+  /** The step object as it sits in the composition, so a promote can find it again. */
+  step: DriverStep;
+  answer: ReleaseInputs | ReleaseInputsUnbound;
+}
+
+/**
+ * The steps of `component` whose capability answers `releaseInputs` (#4542),
+ * build and publish steps left out. Paths are normalised to `/`-separated
+ * and relative to `memberDir`; one that leaves it makes the step unbound,
+ * since its copy could not sit under the member's directory. A throw is an
+ * unbound answer naming the error.
+ */
+export async function stepReleaseInputs(component: DriverComponent, registry: CapabilityRegistry, memberDir: string): Promise<StepReleaseInputs[]> {
+  const out: StepReleaseInputs[] = [];
+  for (const { phase, step } of stepsOf(component.deploy)) {
+    if (BUILD_STEP_KINDS.includes(step.kind) || PUBLISH_STEP_KINDS.includes(step.kind) || !registry.has(step.kind)) continue;
+    const capability = registry.resolve(step.kind);
+    if (!capability.releaseInputs) continue;
+    const { kind: _kind, ...input } = step;
+    let answer: ReleaseInputs | ReleaseInputsUnbound | null;
+    try {
+      answer = await capability.releaseInputs(input as never, { memberDir });
+    } catch (err) {
+      answer = { unbound: err instanceof Error ? err.message : String(err) };
+    }
+    if (answer === null) continue;
+    if ("unbound" in answer) {
+      out.push({ phase, step, answer });
+      continue;
+    }
+    const norm = (p: string): string => relative(memberDir, resolve(memberDir, p)).split("\\").join("/") || ".";
+    const paths = [...new Set(answer.paths.map(norm))].sort();
+    const outside = paths.find((p) => p === ".." || p.startsWith("../") || isAbsolute(p));
+    if (outside !== undefined) {
+      out.push({ phase, step, answer: { unbound: `it reads "${outside}", outside the member's directory, so a recorded copy can't keep its place` } });
+      continue;
+    }
+    out.push({ phase, step, answer: { field: answer.field, dir: norm(answer.dir), paths } });
   }
   return out;
 }
@@ -343,6 +394,41 @@ export async function compileEnvironment(inputs: CompileInputs, env: string): Pr
         templates.push(templateOf(ref.component, `${dir}/${under}`, resolve(inputs.projectDir, f)));
       }
       trees.push({ component: ref.component, path: dir });
+    }
+  }
+  // #4542: the files a capability names for a step that names them indirectly, as a terraform root by key.
+  let registry: CapabilityRegistry | null | undefined;
+  for (const { component } of components) {
+    const candidates = stepsOf(component.deploy).some(({ step }) => !BUILD_STEP_KINDS.includes(step.kind) && !PUBLISH_STEP_KINDS.includes(step.kind));
+    if (!candidates) continue;
+    if (registry === undefined) {
+      registry = await fanOutRegistry(inputs.projectDir, config).catch((err: unknown) => {
+        console.error(`release compile: the capability plugins did not load, so no step's own files are recorded: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
+    }
+    if (registry === null) break;
+    for (const { phase, step, answer } of await stepReleaseInputs(component, registry, inputs.projectDir)) {
+      if ("unbound" in answer) {
+        console.error(`release compile: component "${component.name}": its ${step.kind} step in phase "${phase}" is not recorded for "${env}": ${answer.unbound}`);
+        continue;
+      }
+      for (const path of answer.paths) {
+        const key = `${component.name}\u0000${path}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const file = resolve(inputs.projectDir, path);
+        if (!existsSync(file)) continue;
+        if (statSync(file).isFile()) {
+          templates.push(templateOf(component.name, path, file));
+          continue;
+        }
+        for (const f of directoryFiles(inputs.projectDir, path)) {
+          const under = relative(resolve(inputs.projectDir, path), resolve(inputs.projectDir, f)).split("\\").join("/");
+          templates.push(templateOf(component.name, path === "." ? under : `${path}/${under}`, resolve(inputs.projectDir, f)));
+        }
+        trees.push({ component: component.name, path });
+      }
     }
   }
   return {

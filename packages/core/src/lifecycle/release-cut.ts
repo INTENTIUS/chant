@@ -362,7 +362,7 @@ export interface CutPlan {
   /** The digest already cut under `label`, or this digest when it is already cut: the cut would then write no new release. */
   alreadyCut: string | null;
   /** Each environment's target: its params, and its templates by component and path. */
-  targets: Array<{ env: string; params: ReleaseTarget["params"]; templates: Array<{ component: string | null; path: string }> }>;
+  targets: Array<{ env: string; params: ReleaseTarget["params"]; templates: Array<{ component: string | null; path: string }>; trees?: ReleaseTarget["trees"] }>;
   /** The components whose artifacts would be built, and the environment each is built in. */
   build: Array<{ component: string; env: string }>;
   /** The components whose artifacts would be carried from an earlier release. */
@@ -434,7 +434,7 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
     label: req.label,
     releaseDigest,
     alreadyCut,
-    targets: targets.map((t) => ({ env: t.env, params: t.params, templates: t.templates.map(({ component, path }) => ({ component, path })) })),
+    targets: targets.map((t) => ({ env: t.env, params: t.params, templates: t.templates.map(({ component, path }) => ({ component, path })), ...(t.trees ? { trees: t.trees } : {}) })),
     build,
     reused: p.reused,
     publishSteps: [...steps.values()],

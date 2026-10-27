@@ -257,6 +257,18 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   declaredReads?(ctx: DeclaredReadsContext, members: readonly DeclaredReadMember[]): Promise<DeclaredRead[]> | DeclaredRead[];
   /**
+   * Optional (#4542): the local files a step deploys from when its input
+   * names them indirectly, as `terraform-apply` names a root by key. A
+   * release cut records them for the step's component, with their paths
+   * from the member's directory kept, and a promote or rollback under that
+   * release writes them under `.chant/release-templates/<digest>/` and sets
+   * the step's {@link ReleaseInputs.field} to the recorded copy of
+   * {@link ReleaseInputs.dir}, so the step plans the release's files. Null
+   * when the step deploys nothing local; {@link ReleaseInputsUnbound} when
+   * its files can't be deployed from a copy, which the cut prints.
+   */
+  releaseInputs?(input: In, ctx: ReleaseInputsContext): Promise<ReleaseInputs | ReleaseInputsUnbound | null> | ReleaseInputs | ReleaseInputsUnbound | null;
+  /**
    * Optional (#4435, ws-107): plan `members` as one, in one call. Declared
    * together with `runGroup`; a capability with only one of the two never
    * gets a group. Throwing makes every member plan-failed.
@@ -315,6 +327,27 @@ export interface ReportedGroupRead {
    * output it names.
    */
   output?: string;
+}
+
+/** What `releaseInputs` is asked with (#4542). */
+export interface ReleaseInputsContext {
+  /** The member's directory, which the answer's paths are relative to. */
+  memberDir: string;
+}
+
+/** The files a step deploys from (#4542), each relative to the member's directory. */
+export interface ReleaseInputs {
+  /** The step field a promote under a release sets to the recorded copy of {@link dir}. */
+  field: string;
+  /** The directory the step runs in. One of {@link paths}. */
+  dir: string;
+  /** Every directory and file the step reads, {@link dir} included. */
+  paths: string[];
+}
+
+/** A step whose files a release can't deploy from a copy (#4542), and why. */
+export interface ReleaseInputsUnbound {
+  unbound: string;
 }
 
 /** What `declaredReads` is asked with (#4466). */

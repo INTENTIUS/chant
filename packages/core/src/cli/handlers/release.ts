@@ -291,6 +291,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       console.log(`  tag ${tag ? `${tag.name}${tag.state === "present" ? " (exists)" : ""}, made here and not pushed` : "none, since the release has no label"}`);
       for (const t of plan.targets) {
         console.log(`  ${t.env}: ${t.templates.length} template(s)${t.params.length > 0 ? `, ${t.params.map((p) => `${p.name}=${p.value}`).join(" ")}` : ""}`);
+        // #4155, #4542: the directories recorded file by file, a terraform root's among them.
+        for (const tree of t.trees ?? []) console.log(`    ${tree.component ?? "-"}: ${tree.path}/ recorded`);
       }
       for (const b of plan.build) console.log(`  ${b.component}: artifacts built in ${b.env}`);
       for (const r of plan.reused) console.log(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
