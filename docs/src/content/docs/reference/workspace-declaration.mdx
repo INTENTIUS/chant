@@ -421,7 +421,7 @@ The value takes the same forms as `--report-url`: `s3://<bucket>/<prefix>`, `gs:
 
 ### Stage hooks
 
-`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `after.gate`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `apply.runBy` is refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it.
+`ci.hooks` holds the stage hooks the pull-request jobs run ([#4288](https://github.com/INTENTIUS/chant/issues/4288)). The shape is an Op waves spec's `hooks`: `before.observe`, `before.plan`, `after.plan`, `after.gate`, `before.apply` and `after.apply`, each a list of `{ command, name?, onFailure?, perRun?, targets? }`. A member's own `ci.hooks` run after the top level's. `apply.runBy` is refused with `declaration-invalid` at `/ci/hooks` (`packages/core/src/workspace/declaration.ts:1201`). The jobs read the block at base, as [Hooks on Pull-Request Jobs](/chant/guide/pull-request-hooks/) describes. A declaration with `ci.hooks` needs chant 0.124.41 or newer to read it. The `check` list holds the hooks a product's check job runs through `chant ci check` before any plan, where `onFailure: "approve"` and `{plan}` are refused ([#4556](https://github.com/INTENTIUS/chant/issues/4556)), and a declaration that uses it sets `minReader` to `0.124.55` or newer.
 
 ### Branches and labels
 

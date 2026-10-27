@@ -1913,7 +1913,7 @@
     },
     "ciHooks": {
       "type": "object",
-      "description": "Stage hooks the pull-request jobs run (#4288), in the shape an Op waves spec's hooks take: before.observe, before.plan, after.plan, before.apply and after.apply, each a list of { command, name?, onFailure?, perRun?, targets? }. targets are component names or patterns. chant components pr-plan, pr-record and pr-apply read them from the declaration at base, the top level's first and then the member's. after.gate and apply.runBy are refused. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer."
+      "description": "Stage hooks the pull-request jobs run (#4288), in the shape an Op waves spec's hooks take: before.observe, before.plan, after.plan, before.apply and after.apply, each a list of { command, name?, onFailure?, perRun?, targets? }. targets are component names or patterns. chant components pr-plan, pr-record and pr-apply read them from the declaration at base, the top level's first and then the member's. after.gate and apply.runBy are refused. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer. check (#4556) is a list of hooks a product's check job runs through chant ci check, before any plan, with onFailure fail and no {plan}; added in schema 1 by chant 0.124.55, so a declaration that uses check sets minReader to 0.124.55 or newer."
     },
     "ciPolicy": {
       "type": "object",

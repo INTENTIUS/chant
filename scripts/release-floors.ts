@@ -79,6 +79,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/declaration.schema.json", text: "added in schema 1 by chant {v}, so a declaration that uses check sets minReader to {v} or newer.", count: 1, floor: "CI_CHECK_HOOK_FLOOR" },
+  { file: "docs/src/content/docs/guide/pull-request-hooks.mdx", text: "A declaration that uses `check` sets `minReader` to chant `{v}` or newer.", count: 1, floor: "CI_CHECK_HOOK_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "and a declaration that uses it sets `minReader` to `{v}` or newer.", count: 1, floor: "CI_CHECK_HOOK_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-declaration.mdx", text: "The `gs://` and `az://` forms need a `minReader` of {v} or newer", count: 1, floor: "REPORT_URL_CLOUDS_FLOOR" },
   { file: "packages/core/src/workspace/declaration.schema.json", text: "gs:// and az:// URLs (#4554) need minReader {v} or newer.", count: 1, floor: "REPORT_URL_CLOUDS_FLOOR" },
   { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "`rows[].request` on the `gates` table, and the same columns of `chant query` | {v} |", count: 1, floor: "LEDGER_WAVE_COLUMNS_FLOOR" },

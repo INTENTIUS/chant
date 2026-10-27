@@ -9,7 +9,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { opWaveHookRuns, type OpWaveHook, type OpWaveHookMoment } from "./op-waves";
+import { opWaveHookRuns, type CiHookMoment, type OpWaveHook } from "./op-waves";
 
 /** What one moment's hooks came to, before any hold on another gate is settled. */
 export interface HookListOutcome {
@@ -42,7 +42,7 @@ export interface OpWaveHoldRequest {
 
 /** One hook's run (#3762). */
 export interface OpWaveHookOutcome {
-  moment: OpWaveHookMoment;
+  moment: CiHookMoment;
   name: string;
   /** The run, for a `perRun` hook. */
   target?: string;
@@ -110,7 +110,7 @@ export function pendingFields(value: unknown, where: string): Record<string, unk
 export interface OtherGateHold {
   label: string;
   name: string;
-  moment: OpWaveHookMoment;
+  moment: CiHookMoment;
   target?: string;
   argv: string[];
   env: Record<string, string>;
@@ -160,7 +160,7 @@ interface HookCall {
  */
 function* hookListSteps(
   at: Omit<HookPlace, "exec">,
-  moment: OpWaveHookMoment,
+  moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
@@ -230,7 +230,7 @@ function didNotRun(call: HookCall, err: unknown, log: (line: string) => void): n
  */
 export function runHookList(
   at: HookPlace,
-  moment: OpWaveHookMoment,
+  moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
@@ -254,7 +254,7 @@ export function runHookList(
 /** {@link runHookList} with an exec that returns a promise (#4334). */
 export async function runHookListAsync(
   at: Omit<HookPlace, "exec"> & { exec: OpWaveAsyncExec },
-  moment: OpWaveHookMoment,
+  moment: CiHookMoment,
   hooks: readonly OpWaveHook[] | undefined,
   runs: readonly OpWaveHookRun[],
   runsPath: string,
@@ -337,7 +337,7 @@ function stageRun(out: HookListOutcome, name: string, keep = false): StageHooksR
  * gate (`CHANT_HOLD`) is counted as a plain hold, unless `keepOtherGates` is
  * set (#4323): then it comes back in `otherGates` for the caller to settle.
  */
-export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
+export function runStageHooks(moment: CiHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksOptions): StageHooksRun {
   const place = { ...stagePlace(options), exec: options.exec ?? spawnExec };
   return stageRun(runHookList(place, moment, hooks, options.runs, options.runsFile, options.env), options.name, options.keepOtherGates);
 }
@@ -348,7 +348,7 @@ export function runStageHooks(moment: OpWaveHookMoment, hooks: readonly OpWaveHo
  * still run one after another. Give each concurrent call its own `holdFile`
  * and `runsFile`.
  */
-export async function runStageHooksAsync(moment: OpWaveHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksAsyncOptions): Promise<StageHooksRun> {
+export async function runStageHooksAsync(moment: CiHookMoment, hooks: readonly OpWaveHook[] | undefined, options: RunStageHooksAsyncOptions): Promise<StageHooksRun> {
   const place = { ...stagePlace(options), exec: options.exec ?? spawnExecAsync };
   return stageRun(await runHookListAsync(place, moment, hooks, options.runs, options.runsFile, options.env), options.name, options.keepOtherGates);
 }
