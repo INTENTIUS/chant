@@ -22,12 +22,11 @@
  * `chant import --index ... --adopt-out <file>` writes one from the import
  * report ({@link adoptionFileFromImportReport}).
  */
-import { NEXT_RELEASE } from "../release-floors";
 import { indexVersionName, type IndexDocument } from "./index-document";
 import type { IndexImportReport } from "./index-import";
 
 /** The first chant that writes or reads an adoption file. */
-export const ADOPTION_FILE_FLOOR = NEXT_RELEASE;
+export const ADOPTION_FILE_FLOOR = "0.124.54";
 
 /** The index version an adoption file reads from. */
 export interface AdoptionIndexRef {

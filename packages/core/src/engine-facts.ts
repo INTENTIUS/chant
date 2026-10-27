@@ -17,7 +17,6 @@
  * types and ./lifecycle/index-document.ts (`npm run generate:graph-schema`).
  */
 import type { GraphIR } from "./graph-ir";
-import { NEXT_RELEASE } from "./release-floors";
 
 /** The format of {@link EngineGraphMeta}. Moves only for a change a reader could not ignore. */
 export const ENGINE_GRAPH_FORMAT = 1;
@@ -32,7 +31,7 @@ export const ENGINE_GRAPH_FORMAT = 1;
  * engine side's floor for the terraform read is that lexicon's
  * `MIN_CHOUDOUFU_GRAPH_VERSION`.
  */
-export const ENGINE_FACTS_FLOOR = NEXT_RELEASE;
+export const ENGINE_FACTS_FLOOR = "0.124.54";
 
 /** The marker values an engine read or recorded for one node. */
 export interface EngineMarkers {

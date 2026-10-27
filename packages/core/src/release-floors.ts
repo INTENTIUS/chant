@@ -19,4 +19,4 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.54";
+export const NEXT_RELEASE = "0.124.55";
