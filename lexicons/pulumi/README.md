@@ -31,6 +31,18 @@ After `up`, the capability runs `stack export --stack <s>`, replaces every secre
 
 `PulumiAdoptOp` (`src/composites/pulumi-adopt-op.ts`, [#4562](https://github.com/INTENTIUS/chant/issues/4562)) adopts stock stacks onto plunge's per-resource records, the pulumi twin of `TerraformAdoptOp`. Its phases are Check (the shared bucket check on the backend's bucket), Export (`pulumi stack export --stack <s>` into a scratch file), then per stack Preview (`plunge stack adopt --json`), a gate bound to the preview's digest, and Adopt (`plunge stack adopt --json --yes`, through `runAdoptPlunge`). `from: { backend }` or `from: { file }` adopts an export with `--file`, the route from Pulumi Cloud. Gates and the run are recorded on the workspace ledger.
 
+## Gated stack operations
+
+`src/stack-ops.ts` ([#4578](https://github.com/INTENTIUS/chant/issues/4578)) runs three stack operations, each only after its gated request (#4551) is approved on the workspace ledger by someone other than the requester, under the op `pulumi-stack-ops`. The first call records the request and returns the `chant approve` command; the same call after the approval spends it, runs once, and records how it ended.
+
+| Function | Request | What runs after approval |
+|---|---|---|
+| `gatedStackExport` | `stack-export` of `<stack>` | `pulumi stack export --stack <s>` (or plunge's), written mode 600 to a file outside every git working tree; refused in CI |
+| `gatedStackCancel` | `stack-cancel` of `<stack>` with its lock id | `pulumi cancel --yes --stack <s>`, once the lock is still the approved one (read from a `file://` backend's lock directory); refused on plunge, which has no stack lock |
+| `gatedStackMove` | `stack-move` of `move:<source>:<dest>` with the URNs | `pulumi state move --source <s> --dest <d> --yes <urn>...`, or `plunge stack move --stack <s> --dest <d> <urn>... --json --yes` after plunge's plan; both stacks preview first, and the move runs only when the previews change nothing but the moved resources |
+
+The writes go through `runGatedPulumi` and `runGatedPlunge` in `src/run.ts`, whose fixed forms (`PULUMI_GATED_COMMANDS`, `PLUNGE_GATED_COMMANDS`) are the only ones allowed.
+
 ## Drift: `chant workspace drift`
 
 `chant workspace drift --member <pulumi member> [--resource <urn>] [--stream]` runs `chant lifecycle drift` in the member's reader project, which calls this lexicon's `readDrift`. A stock member is read with one `pulumi refresh --preview-only --json --target <urn>` per resource in its checked-in `stack-export.json`. A member on plunge is read with `plunge drift --resource <urn> --stream` per resource. `--resource` reads one URN. The only read is `refresh`.
