@@ -417,7 +417,7 @@ A commit that leaves the window still pending is rewritten `unbuilt`, for the re
 }
 ```
 
-The value takes the same two forms as `--report-url`: `s3://<bucket>/<prefix>` or `file://<directory>`, with an absolute directory. Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it.
+The value takes the same forms as `--report-url`: `s3://<bucket>/<prefix>`, `gs://<bucket>/<prefix>`, `az://<account>/<container>/<prefix>` or `file://<directory>`, with an absolute directory. The `gs://` and `az://` forms need a `minReader` of 0.124.55 or newer ([#4554](https://github.com/INTENTIUS/chant/issues/4554)). Any other value, an `https://` URL included, is refused with `declaration-invalid` at `/ci/reportUrl`, since no job can upload there. A trailing slash is dropped. `chant build --pr-loop`, `chant ci run`, `chant ci serve` and `chant ci runs` use it when `--report-url` is not given, and the flag wins when it is. `chant workspace ls --json` prints it as `ci.reportUrl`. The field can stand without `green`. Read by chant 0.124.32 and newer, so set `minReader` with it.
 
 ### Stage hooks
 

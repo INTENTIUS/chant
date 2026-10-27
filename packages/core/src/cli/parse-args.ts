@@ -490,7 +490,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--report-url") {
       // `chant components pr-plan|pr-apply --report-url <url>` (#4007).
       const url = args[++i];
-      if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix> or file://<directory>");
+      if (!url || url.startsWith("-")) throw new Error("--report-url needs a URL: --report-url s3://<bucket>/<prefix>, gs://<bucket>/<prefix>, az://<account>/<container>/<prefix> or file://<directory>");
       result.reportUrl = url;
     } else if (arg === "--result") {
       // `chant components pr-post --result <result>` (#4295): the plan job's own result, which fails the status when it failed.

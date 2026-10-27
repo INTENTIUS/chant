@@ -119,6 +119,11 @@
     },
     "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
     "./bucket-check/fixtures/*.json": "./src/bucket-check/fixtures/*.json",
+    "./object-store": {
+      "development": "./src/object-store/index.ts",
+      "types": "./dist/object-store/index.d.ts",
+      "default": "./src/object-store/index.ts"
+    },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",

@@ -2,9 +2,9 @@
  * The `s3` medium of the index store (#4519): objects in a bucket under a
  * prefix of their own, never a record store's prefix.
  *
- * Transport is `fetch` with a SigV4 header signature, hand-written as the aws
- * lexicon's read client is (lexicons/aws/src/api/sigv4.ts), so core takes no
- * `@aws-sdk/*` dependency. `fetch` is injectable: the conformance test runs
+ * Transport is `fetch` with a SigV4 header signature from chant's one AWS
+ * signer (../cloud-lister/sigv4.ts, #4554), so core takes no `@aws-sdk/*`
+ * dependency. `fetch` is injectable: the conformance test runs
  * against an in-process fake and nothing leaves the process.
  *
  * ## Credentials
@@ -29,7 +29,7 @@
  * versioning. A write of an index version sends `If-None-Match: *`, and a 412
  * means the version already exists.
  */
-import { createHash, createHmac } from "node:crypto";
+import { encodeRfc3986, signV4 } from "../cloud-lister/sigv4";
 
 /** Explicit credentials. */
 export interface S3StoreCredentials {
@@ -107,17 +107,12 @@ export function resolveS3Credentials(
   return { accessKeyId: id, secretAccessKey: secret, ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}) };
 }
 
-const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-const sha256Hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
-const hmac = (key: Buffer | string, data: string): Buffer => createHmac("sha256", key).update(data, "utf8").digest();
-
-/** RFC 3986 percent-encoding, as S3 signs it. */
-export function encodeRfc3986(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-}
+/** RFC 3986 percent-encoding, as S3 signs it: chant's one AWS signer's (../cloud-lister/sigv4.ts, #4554). */
+export { encodeRfc3986 };
 
 /**
- * SigV4 headers for one S3 request. S3 signs the path encoded once, which is
+ * SigV4 headers for one S3 request, signed by chant's one AWS signer
+ * (../cloud-lister/sigv4.ts, #4554). S3 signs the path encoded once, which is
  * how {@link S3Medium} builds it, so the URL's pathname is the canonical URI
  * as it stands.
  */
@@ -130,38 +125,7 @@ export function signS3Request(req: {
   credentials: S3StoreCredentials;
   now?: Date;
 }): Record<string, string> {
-  const url = new URL(req.url);
-  const timestamp = (req.now ?? new Date()).toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const day = timestamp.slice(0, 8);
-  const payloadHash = req.body.length === 0 ? EMPTY_SHA256 : sha256Hex(req.body);
-  const signable: Record<string, string> = {
-    ...Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v.trim()])),
-    host: url.host,
-    "x-amz-date": timestamp,
-    "x-amz-content-sha256": payloadHash,
-    ...(req.credentials.sessionToken ? { "x-amz-security-token": req.credentials.sessionToken } : {}),
-  };
-  const names = Object.keys(signable).sort();
-  const pairs: Array<[string, string]> = [];
-  url.searchParams.forEach((v, k) => pairs.push([encodeRfc3986(k), encodeRfc3986(v)]));
-  pairs.sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : 1) : a[0] < b[0] ? -1 : 1));
-  const canonical = [
-    req.method.toUpperCase(),
-    url.pathname || "/",
-    pairs.map(([k, v]) => `${k}=${v}`).join("&"),
-    names.map((n) => `${n}:${signable[n].replace(/\s+/g, " ")}\n`).join(""),
-    names.join(";"),
-    payloadHash,
-  ].join("\n");
-  const scope = `${day}/${req.region}/s3/aws4_request`;
-  const toSign = ["AWS4-HMAC-SHA256", timestamp, scope, sha256Hex(canonical)].join("\n");
-  const key = hmac(hmac(hmac(hmac(`AWS4${req.credentials.secretAccessKey}`, day), req.region), "s3"), "aws4_request");
-  const signature = hmac(key, toSign).toString("hex");
-  const { host: _host, ...emitted } = signable;
-  return {
-    ...emitted,
-    authorization: `AWS4-HMAC-SHA256 Credential=${req.credentials.accessKeyId}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}`,
-  };
+  return signV4({ method: req.method, url: req.url, headers: req.headers, body: req.body, region: req.region, service: "s3", credentials: req.credentials, now: req.now ?? new Date(), contentSha256: true, omitHost: true });
 }
 
 const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };

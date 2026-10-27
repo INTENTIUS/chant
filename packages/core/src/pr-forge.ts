@@ -71,6 +71,21 @@ export interface CommitStatus {
   targetUrl?: string;
 }
 
+/**
+ * One commit status as the forge reports it (#4554): each context's newest,
+ * read back by {@link PrForge.commitStatuses}. `state` is the forge's own
+ * word (`success`, `failure`, `pending`, `error` on GitHub and Forgejo;
+ * GitLab's `success`, `failed`, `running`, `canceled` and the rest).
+ */
+export interface ReadCommitStatus {
+  context: string;
+  state: string;
+  description?: string;
+  targetUrl?: string;
+  /** GitLab: whether a failed job was allowed to fail. */
+  allowFailure?: boolean;
+}
+
 /** A commit status's state, as a caller names it. */
 export type ForgeStatusState = "pending" | "running" | "success" | "failed" | "failure" | "canceled" | "error";
 
@@ -465,6 +480,36 @@ export interface PrForge {
   jobArtifact?(id: number, path: string): Promise<string | undefined>;
   /** GitLab (#4328): the target URL of the newest commit status named `context` on `sha`, or undefined when there is none or it has no URL. */
   statusUrl?(sha: string, context: string): Promise<string | undefined>;
+  /** The repository's default branch (#4554). `main` when the forge names none. */
+  defaultBranch?(): Promise<string>;
+  /**
+   * The commit statuses on `sha` (#4554): each context's newest, newest
+   * first. Commit statuses only; GitHub's check runs are not among them.
+   */
+  commitStatuses?(sha: string): Promise<ReadCommitStatus[]>;
+}
+
+/** Each context's newest status, newest first, from statuses in any order with a numeric `id` (GitLab) or newest first (GitHub, Forgejo). */
+function newestStatuses(items: unknown[], name: "context" | "name"): ReadCommitStatus[] {
+  const ordered = items.filter(isObject).map((st, i) => ({ st, at: num(st.id) ?? -i }));
+  if (name === "name") ordered.sort((a, b) => b.at - a.at);
+  const seen = new Set<string>();
+  const out: ReadCommitStatus[] = [];
+  for (const { st } of ordered) {
+    const context = str(st[name]);
+    if (!context || seen.has(context)) continue;
+    seen.add(context);
+    const description = str(st.description);
+    const targetUrl = str(st.target_url);
+    out.push({
+      context,
+      state: str(st.state) ?? str(st.status) ?? "",
+      ...(description ? { description } : {}),
+      ...(targetUrl ? { targetUrl } : {}),
+      ...(typeof st.allow_failure === "boolean" ? { allowFailure: st.allow_failure } : {}),
+    });
+  }
+  return out;
 }
 
 /**
@@ -1098,6 +1143,13 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       return out.sort((a, b) => a.number - b.number);
     },
     branchHead: branchTip,
+    async defaultBranch() {
+      const got = await api.call("GET", repo);
+      return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
+    },
+    async commitStatuses(sha) {
+      return newestStatuses(await api.list(`${repo}/commits/${sha}/statuses`, pageParams, pageSize), "context");
+    },
     async scheduledRuns(q) {
       const file = encodeURIComponent(q.workflow);
       if (kind === "github") {
@@ -1476,6 +1528,13 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
     },
     async jobArtifact(id, path) {
       return api.text(`${project}/jobs/${id}/artifacts/${path.split("/").map(encodeURIComponent).join("/")}`);
+    },
+    async defaultBranch() {
+      const got = await api.call("GET", project);
+      return (isObject(got) ? str(got.default_branch) : undefined) ?? "main";
+    },
+    async commitStatuses(sha) {
+      return newestStatuses(await api.list(`${project}/repository/commits/${sha}/statuses?all=true`, pageParams, 100), "name");
     },
     async statusUrl(sha, context) {
       const statuses = await api.list(`${project}/repository/commits/${sha}/statuses?all=true&name=${encodeURIComponent(context)}`, pageParams, 100);

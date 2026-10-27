@@ -228,7 +228,7 @@
         "reportUrl": {
           "type": "string",
           "minLength": 1,
-          "description": "Where the pull-request jobs copy their reports and events, and where chant ci run keeps the run index, <reportUrl>/runs/index.json (#4160): an s3://<bucket>/<prefix> or file://<directory> URL, as --report-url takes. chant build --pr-loop, chant ci run, chant ci serve and chant ci runs use it when --report-url is not given, and the flag wins. Readers find it in chant workspace ls --json as ci.reportUrl. Added in schema 1 by chant 0.124.32, so a declaration that uses it sets minReader to 0.124.32 or newer."
+          "description": "Where the pull-request jobs copy their reports and events, and where chant ci run keeps the run index, <reportUrl>/runs/index.json (#4160): an s3://<bucket>/<prefix>, gs://<bucket>/<prefix>, az://<account>/<container>/<prefix> or file://<directory> URL, as --report-url takes. gs:// and az:// URLs (#4554) need minReader 0.124.55 or newer. chant build --pr-loop, chant ci run, chant ci serve and chant ci runs use it when --report-url is not given, and the flag wins. Readers find it in chant workspace ls --json as ci.reportUrl. Added in schema 1 by chant 0.124.32, so a declaration that uses it sets minReader to 0.124.32 or newer."
         },
         "branches": {
           "type": "object",
