@@ -22,6 +22,20 @@ export type StoreFetch = (url: string, init: { method: string; headers: Record<s
   headers?: { get(name: string): string | null };
 }>;
 
+/**
+ * The product keys that fix a setup error (#4584), for a product that has
+ * them: terragucci passes `{ oidc: "oidc", gcp: "oidc.gcp", azure: "oidc.azure" }`.
+ * Each key a message can name is left out of chant's own wording when unset.
+ */
+export interface StoreHints {
+  /** The key that gives the job an OIDC identity for AWS, such as `oidc`. */
+  oidc?: string;
+  /** The key that gives the job a Google credentials file, such as `oidc.gcp`. */
+  gcp?: string;
+  /** The key that gives the job an Azure federated identity, such as `oidc.azure`. */
+  azure?: string;
+}
+
 export class StoreError extends Error {}
 
 /** A conditional write that lost: the object changed (412) or another write to it was in flight (409). */

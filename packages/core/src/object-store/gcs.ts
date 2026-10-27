@@ -25,7 +25,7 @@
  */
 import { createHash, createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { defaultFetch, encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, tradedIdentities, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./common";
+import { defaultFetch, encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, tradedIdentities, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch, type StoreHints } from "./common";
 import { CLOUD_TARGETS_ENV } from "../ci-identity";
 
 export const GCS_ENDPOINT = "https://storage.googleapis.com";
@@ -53,14 +53,14 @@ export interface GcsTarget {
 }
 
 /** The target from where the store is and the job's environment. `setting` names the bucket in messages, such as `reports.bucket`. */
-export function gcsFromEnv(where: { bucket: string; endpoint?: string; setting?: string }, env: NodeJS.ProcessEnv = process.env): GcsTarget {
+export function gcsFromEnv(where: { bucket: string; endpoint?: string; setting?: string; hints?: StoreHints }, env: NodeJS.ProcessEnv = process.env): GcsTarget {
   const file = env.GOOGLE_APPLICATION_CREDENTIALS;
   // A job that traded its OIDC token holds none: the trade step left the job's service account's token, and the file of every traded one.
   if (!file && env.GOOGLE_OAUTH_ACCESS_TOKEN && env[CLOUD_TARGETS_ENV]) {
     const signAs = Object.entries(tradedIdentities(env, "gcp")).find(([, v]) => v.GOOGLE_OAUTH_ACCESS_TOKEN === env.GOOGLE_OAUTH_ACCESS_TOKEN)?.[0];
     return { bucket: where.bucket, endpoint: (where.endpoint ?? GCS_ENDPOINT).replace(/\/+$/, ""), accessToken: env.GOOGLE_OAUTH_ACCESS_TOKEN, ...(signAs ? { signAs } : {}) };
   }
-  if (!file) throw new StoreError(`${where.setting ?? "the bucket"} is gs://${where.bucket}, but the job has no credentials for it: set GOOGLE_APPLICATION_CREDENTIALS to a credentials file (a job's OIDC setup writes one)`);
+  if (!file) throw new StoreError(`${where.setting ?? "the bucket"} is gs://${where.bucket}, but the job has no credentials for it: ${where.hints?.gcp ? `give the job ${where.hints.gcp} (it sets GOOGLE_APPLICATION_CREDENTIALS), or set` : "set"} GOOGLE_APPLICATION_CREDENTIALS to a credentials file${where.hints?.gcp ? "" : " (a job's OIDC setup writes one)"}`);
   return { bucket: where.bucket, endpoint: (where.endpoint ?? GCS_ENDPOINT).replace(/\/+$/, ""), credentialsFile: file };
 }
 
