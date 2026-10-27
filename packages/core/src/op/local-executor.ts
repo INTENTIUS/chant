@@ -35,6 +35,7 @@ import { contentDigest } from "../content-digest";
 import { parseDuration } from "./duration";
 import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
+import { knownOutputsOf } from "./activity-failure";
 import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateApprovalRule, type GateCheck, type GateLedgerPort, type WorkspaceGateStandIn } from "./gate";
 import { resolveWorkspaceRun, type WorkspaceRunCitation } from "./workspace-run-env";
 import { gateName } from "./gate-name";
@@ -98,7 +99,11 @@ export interface StepRecord {
    * predates the plural form. {@link StepRecord.outcomes} is the whole list.
    */
   outcome?: { name: string; value: unknown };
-  /** Every outcome attribute the step published, in authored order (#2105). Absent when it published none. */
+  /**
+   * Every outcome attribute the step published, in authored order (#2105).
+   * Absent when it published none. A failed step publishes the ones its
+   * activity knew before it failed (#4512; see `withKnownOutputs`).
+   */
   outcomes?: Array<{ name: string; value: unknown }>;
   error?: string;
   /** Set on a `gate` step that passed (#2119): who resolved it, when, and at what address. */
@@ -522,13 +527,7 @@ async function runStep(
       const result = await callWithTimeout(fn, args, timeoutMs, signal);
       if (step.id) resultsById.set(step.id, result);
       const record: StepRecord = { ...base, status: "ok", durationMs: Date.now() - start };
-      const attrs = outcomeAttributesOf(step);
-      // An attribute whose path the result does not hold is left off, rather than recorded as undefined.
-      const outcomes = attrs.map((a) => ({ name: a.name, value: resolvePath(result, a.from) })).filter((o) => o.value !== undefined);
-      if (outcomes.length > 0) {
-        record.outcomes = outcomes;
-        record.outcome = outcomes[0];
-      }
+      captureOutcomes(step, record, result);
       return { record, result };
     } catch (err) {
       // An open decision point (#2749) is not a failure and not worth a retry:
@@ -554,7 +553,26 @@ async function runStep(
       break;
     }
   }
-  return { record: { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(lastErr) } };
+  const failed: StepRecord = { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(lastErr) };
+  // #4512: a failed step still records the outcomes its activity knew before it
+  // failed, read off the last attempt's error, as terraformInit's root path.
+  const known = knownOutputsOf(lastErr);
+  if (known) captureOutcomes(step, failed, known);
+  return { record: failed };
+  }
+}
+
+/**
+ * Set `record`'s outcomes from the step's `outcomeAttribute` paths over
+ * `source`: the activity's result, or for a failed step the outputs it knew
+ * before it failed (#4512). An attribute whose path `source` does not hold is
+ * left off, rather than recorded as undefined.
+ */
+function captureOutcomes(step: ActivityStep, record: StepRecord, source: unknown): void {
+  const outcomes = outcomeAttributesOf(step).map((a) => ({ name: a.name, value: resolvePath(source, a.from) })).filter((o) => o.value !== undefined);
+  if (outcomes.length > 0) {
+    record.outcomes = outcomes;
+    record.outcome = outcomes[0];
   }
 }
 

@@ -967,11 +967,31 @@ export async function terraformInit(
     ...(args.reconfigure ? { reconfigure: true } : {}),
   });
 
-  const { stdout, stderr } = await run(cmd, dir, terraformEnvironment(root), signal);
-  report(stdout, stderr);
-
+  // Known once the root resolves, before init runs (chant#4512), so a failed
+  // init still publishes them and the ledger names the root it was for.
   const rootPath = workspaceRelativePath(dir);
-  return { dir, ...(root.workspace ? { workspace: root.workspace } : {}), ...(rootPath !== undefined ? { rootPath } : {}) };
+  const result: TerraformInitResult = { dir, ...(root.workspace ? { workspace: root.workspace } : {}), ...(rootPath !== undefined ? { rootPath } : {}) };
+
+  let out: { stdout: string; stderr: string };
+  try {
+    out = await run(cmd, dir, terraformEnvironment(root), signal);
+  } catch (err) {
+    throw withKnownOutputs(err, result);
+  }
+  report(out.stdout, out.stderr);
+  return result;
+}
+
+/**
+ * `err` carrying `outputs` as the outputs the activity knew when it failed
+ * (chant#4512): the `knownOutputs` property core's executor reads a failed
+ * step's outcome attributes from (core's `withKnownOutputs`). It is set here
+ * rather than imported so the lexicon needs no newer core; an older executor
+ * reads the error as any other failure.
+ */
+function withKnownOutputs(err: unknown, outputs: object): Error {
+  const e = err instanceof Error ? err : new Error(String(err));
+  return Object.assign(e, { knownOutputs: outputs });
 }
 
 /**

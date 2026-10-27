@@ -424,6 +424,32 @@ describe("terraformInit (#2086)", () => {
     expect(execCalls[0].opts.env?.TF_WORKSPACE).toBe("prod");
     expect(result.workspace).toBe("prod");
   });
+
+  test("a failed init carries the root it resolved as known outputs (chant#4512)", async () => {
+    const dir = project({ roots: { app: { dir: "./infra", workspace: "prod" } } });
+    // A workspace root, so the root has a workspace-relative path to publish.
+    // The walk up to it stops at the git root, so the project is one.
+    mkdirSync(join(dir, ".git"));
+    writeFileSync(join(dir, "chant.workspace.json"), JSON.stringify({ name: "w", schema: 1, members: [{ name: "app", dir: ".", kind: "chant" }] }));
+    replies.push({ match: "init", reply: execError(1, "Error: Failed to get existing workspaces: backend unreachable") });
+    const failure = await terraformInit({ root: "app", cwd: dir }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as { knownOutputs?: unknown }).knownOutputs).toEqual({ dir: resolve(dir, "infra"), workspace: "prod", rootPath: "infra" });
+  });
+
+  test("a root that does not resolve fails with no known outputs (chant#4512)", async () => {
+    const dir = project({ roots: { app: { dir: "./infra" } } });
+    const failure = await terraformInit({ root: "nope", cwd: dir }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toHaveProperty("knownOutputs");
+    expect(execCalls).toHaveLength(0);
+  });
 });
 
 // ── terraformPlan ───────────────────────────────────────────────────────────
