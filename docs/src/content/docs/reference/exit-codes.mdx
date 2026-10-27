@@ -1,6 +1,6 @@
 ---
 title: Exit Codes
-description: The exit-code table chant commands and both chant CI products share, with the terraform and pulumi lexicons' mappings of their engines' codes.
+description: The exit-code table chant commands and both chant CI products share, with each engine lexicon's mapping of its engine's codes.
 diataxis: reference
 ---
 
@@ -49,6 +49,21 @@ The pulumi lexicon maps Pulumi and plunge codes (`pulumiExitOf` in `@intentius/c
 | 1, 2 configuration, 3 authentication, 4 resource, 6 stack not found, 8 cancelled, 9 timeout, 10 await, 255 | 1 |
 
 A Pulumi older than its exit-code taxonomy exits 1 for everything, which maps to 1.
+
+The sql lexicon maps the outcomes of the versioned migration engine, sql-yodeler (`sqlExitOf` and `yodelExitOf` in `@intentius/chant-lexicon-sql`). A refusal that no approval fixes is 1; one a person can clear is 3.
+
+| Engine outcome | Code |
+|---|---|
+| applied, or nothing pending | 0 |
+| a wave plan that moved, or an approval of another digest | 4 |
+| a policy rule denies the plan and no override counts | 7 |
+| another apply holds the history lock | 5 |
+| a newer commit on the branch applies the same environment | 6 |
+| an apply stopped at its gate, pending migrations under `yodel status`, a migration the required environment has not applied, a change that needs an Op the engine does not run, a manual step | 3 |
+| drift found by `yodel drift` | 2 |
+| a checksum mismatch, a fork, an out-of-order migration, an applied migration gone from the directory, reader and writer one identity, a write run with the reader, `yodel lint` errors | 1 |
+
+A yodel on this table passes its code through. An older yodel exits 4 for every refusal and 3 for lint errors, so `yodelExitOf` with `legacy: true` reads both as 1. Its 2 stays 2 from `yodel drift` and is 3 from any other verb.
 
 ## Changes from earlier releases
 

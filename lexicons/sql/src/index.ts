@@ -47,3 +47,7 @@ export {
   type SqlFileOptions,
   type SqlFileSource,
 } from "./sql-files";
+
+// SQL engine and yodel outcomes on chant's exit-code table (#4570); also at
+// `@intentius/chant-lexicon-sql/exit-codes`.
+export { sqlExitOf, sqlPlanMoved, yodelExitOf, YODEL_LEGACY_EXIT, type SqlEngineOutcome, type YodelExitSource } from "./exit-codes";
