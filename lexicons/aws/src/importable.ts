@@ -27,7 +27,7 @@ export interface ImportabilityManifestEntry {
   kind: string;
   handlers?: readonly string[];
   primaryIdentifier?: readonly string[];
-  tagging?: { taggable: boolean; tagOnCreate?: boolean; tagUpdatable: boolean; tagProperty?: string };
+  tagging?: { taggable: boolean; tagOnCreate?: boolean; tagUpdatable: boolean; tagProperty?: string; tagShape?: "list" | "map" };
 }
 
 /** Legacy types (no handlers in the registry schema) that AWS documents as importable. */

@@ -118,6 +118,8 @@ The same index and selection give byte-identical files. The command also writes 
 
 choudoufu, plunge and chant all adopt from this file. Each one refuses a file whose digest does not match the version it loads, and a node that version does not hold. Its JSON Schema is `#/$defs/AdoptionFile` in `packages/core/src/graph-schema/graph.schema.json`.
 
+The aws lexicon writes `DeletionPolicy` and `UpdateReplacePolicy` `Retain` on every resource it imports. CloudFormation deletes at stack level, so a stack delete leaves an adopted resource in place until a person changes the policy in source. Adoption into a stack is an IMPORT change set without chant's markers, then an UPDATE that adds them and changes tags only. Each change set is reviewed before it runs. A type CloudFormation cannot import is refused by name, and so is a type whose tags can only be set at create.
+
 ## Importing agent configuration (`--agents`)
 
 `chant import --agents` is the other half of

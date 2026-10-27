@@ -142,6 +142,14 @@ describe("chant import --index on the aws fixture", () => {
     }
   });
 
+  test("every imported resource builds with DeletionPolicy and UpdateReplacePolicy Retain (#4536)", async () => {
+    const { plan, files } = importOf(doc, ALL);
+    const template = await synth(files);
+    for (const r of plan.report.resources.filter((x) => x.status === "imported")) {
+      expect(template.Resources[r.logicalId!]).toMatchObject({ DeletionPolicy: "Retain", UpdateReplacePolicy: "Retain" });
+    }
+  });
+
   test("the same index and selection give byte-identical files, in any listing order", () => {
     const first = importOf(doc, ALL);
     const shuffled = JSON.parse(raw) as ListingResult;

@@ -68,9 +68,11 @@ export interface IndexImportCodegen {
   /**
    * The resource for one indexed node: its import IR type and the
    * properties a declaration can hold (server-assigned fields left out), or
-   * why the node cannot be written.
+   * why the node cannot be written. `attributes` are resource-level
+   * attributes under the lexicon's own keys (the aws lexicon writes
+   * `DeletionPolicy: Retain` on every imported resource, #4536).
    */
-  resource(node: IRNode): { type: string; properties: Record<string, unknown> } | { unsupported: string };
+  resource(node: IRNode): { type: string; properties: Record<string, unknown>; attributes?: Record<string, unknown> } | { unsupported: string };
   /**
    * `value`, held by another node, as a reference to `target` in this
    * lexicon's IR, or undefined when the value is not one the lexicon can
@@ -440,7 +442,7 @@ export function planIndexImport(
     .sort((a, b) => byString(`${a.from}\u0000${a.rule ?? ""}\u0000${a.to}`, `${b.from}\u0000${b.rule ?? ""}\u0000${b.to}`));
 
   const reports = new Map<string, IndexImportResourceReport>();
-  const writable: Array<{ node: IRNode; codegen: IndexImportCodegen; type: string; properties: Record<string, unknown> }> = [];
+  const writable: Array<{ node: IRNode; codegen: IndexImportCodegen; type: string; properties: Record<string, unknown>; attributes?: Record<string, unknown> }> = [];
   for (const node of nodes) {
     if (!nodeSelected(node, sel)) continue;
     const doc = docOf.get(node.id)!;
@@ -477,7 +479,7 @@ export function planIndexImport(
       continue;
     }
     reports.set(node.id, { ...base, status: "imported" });
-    writable.push({ node, codegen: lexicon.indexImport, type: r.type, properties: r.properties });
+    writable.push({ node, codegen: lexicon.indexImport, type: r.type, properties: r.properties, ...(r.attributes ? { attributes: r.attributes } : {}) });
   }
 
   // Groups: lexicon + location. Global nodes join their lexicon's only regional group, when there is one.
@@ -597,7 +599,7 @@ export function planIndexImport(
 
       if (references.length > 0) report.references = references;
       if (params.length > 0) report.parameters = params;
-      resources.push({ logicalId, type: w.type, properties: props });
+      resources.push({ logicalId, type: w.type, properties: props, ...(w.attributes && Object.keys(w.attributes).length > 0 ? { attributes: w.attributes } : {}) });
     }
     const [lexicon, ...loc] = key.split("/");
     groups.push({ dir, lexicon, location: loc.join("/"), ir: { resources, parameters }, header });

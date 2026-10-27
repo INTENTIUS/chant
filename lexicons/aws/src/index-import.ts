@@ -106,12 +106,19 @@ export function awsImportReference(
   return undefined;
 }
 
+/** The resource attributes `chant import --index` writes on every resource it imports (#4536). */
+export const ADOPTED_RESOURCE_ATTRIBUTES: Readonly<Record<string, string>> = { DeletionPolicy: "Retain", UpdateReplacePolicy: "Retain" };
+
 export function createAwsIndexImport(manifest?: ReadonlyMap<string, ImportManifestEntry>): IndexImportCodegen {
   const m = () => manifest ?? defaultManifest();
   return {
     resource(node: IRNode) {
       if (!CFN_TYPE.test(node.kind)) return { unsupported: `${node.kind} is not a CloudFormation resource type` };
-      return { type: node.kind, properties: awsImportProperties(node.kind, node.attrs ?? {}, m()) };
+      // Retain on every imported resource until a person changes it in source
+      // (#4536, ruled on choudoufu#2284 Q4): CloudFormation deletes at stack
+      // level and reads no per-resource marker, so an adopted object is never
+      // deleted on the stack's word alone. Import requires a DeletionPolicy.
+      return { type: node.kind, properties: awsImportProperties(node.kind, node.attrs ?? {}, m()), attributes: { ...ADOPTED_RESOURCE_ATTRIBUTES } };
     },
     reference: (value, target) => awsImportReference(value, target, m()),
     secretParameter(name, context): ParameterIR {
