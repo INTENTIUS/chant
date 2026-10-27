@@ -49,7 +49,7 @@ describe("chant index diff", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain(`Index diff: ${SCOPE}`);
     expect(r.out).toContain('attrs.VersioningConfiguration.Status: "Suspended" -> "Enabled"');
-    expect(r.out).toContain("(not observed in the to read: read-failed)");
+    expect(r.out).toContain("(not observed in the to read: read-failed, ListResources returned ThrottlingException)");
   });
 
   it("refuses two scopes by name", async () => {

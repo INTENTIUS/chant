@@ -191,7 +191,11 @@ describe("planIndexImport", () => {
     const p = planIndexImport([DOC], { types: ["Fake::Net", "Fake::Sub"] }, LEX, { declared });
     const r = p.report.resources.find((x) => x.node === net.id)!;
     expect(r).toMatchObject({ status: "declared", entity: "network" });
-    expect(p.groups.flatMap((g) => g.ir.resources).map((x) => x.type)).not.toContain("Fake::Net");
+    // The other Fake::Net (net-2, in r2) is selected by type and not declared, so it is imported.
+    const imported = p.report.resources.filter((x) => x.status === "imported").map((x) => x.node);
+    expect(imported).not.toContain(net.id);
+    expect(imported).toEqual([far.id, sub.id].sort());
+    expect(p.groups.flatMap((g) => g.ir.resources).filter((x) => x.type === "Fake::Net")).toHaveLength(1);
     const s = p.report.resources.find((x) => x.node === sub.id)!;
     expect(s.references?.[0]).toMatchObject({ written: "literal", reason: "the target is already declared as network" });
   });

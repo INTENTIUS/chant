@@ -59,7 +59,11 @@ describe("search --index's join on the aws fixture", () => {
     expect(joins["app::assets"]).toMatchObject({ verdict: "bound", node: "aws/000000000000/us-east-1/AWS::S3::Bucket/cli-made-assets", nativeId: "cli-made-assets" });
     expect(joins["app::runner"]).toMatchObject({ verdict: "bound", node: "aws/000000000000/global/AWS::IAM::Role/cli-made-role", location: "global" });
     expect(row("assets").physicalId).toBe("cli-made-assets");
-    expect(row("assets").attrs?.Arn).toBe("arn:aws:s3:::cli-made-assets");
+    // The aws hooks prune read-only properties such as Arn from the indexed tree
+    // (#4521: an indexed tree has the shape an observed one has); the index
+    // carries the ARN as a cloud id in the node's facts.
+    expect(row("assets").attrs?.BucketName).toBe("cli-made-assets");
+    expect(row("assets").facts?.cloudIds).toContainEqual({ kind: "arn", value: "arn:aws:s3:::cli-made-assets" });
   });
 
   test("the bucket the index listed and did not find is absent", () => {
